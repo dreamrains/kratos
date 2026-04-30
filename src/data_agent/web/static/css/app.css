@@ -1,0 +1,68 @@
+/* Data Agent Web GUI — custom styles */
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+.dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+/* Prose / markdown */
+.prose { line-height: 1.75; }
+.prose p { margin-top: 0.75em; margin-bottom: 0.75em; }
+.prose pre {
+    background: #1f2937; color: #e5e7eb; border-radius: 0.5rem;
+    padding: 0.75rem 1rem; font-size: 0.8rem; overflow-x: auto; margin: 1em 0;
+}
+.dark .prose pre { background: #111827; }
+.prose table { font-size: 0.85rem; width: 100%; }
+.prose table th, .prose table td { padding: 0.5rem 0.75rem; border: 1px solid #e5e7eb; }
+.dark .prose table th, .dark .prose table td { border-color: #374151; }
+.prose ul, .prose ol { margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.5em; }
+.prose li { margin-top: 0.25em; margin-bottom: 0.25em; }
+.prose h1, .prose h2, .prose h3 { margin-top: 1.25em; margin-bottom: 0.5em; }
+
+[x-cloak] { display: none !important; }
+
+/* Textarea auto-grow */
+textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
+
+/* Action buttons (Codex/ChatGPT style) */
+.action-btn {
+    display: inline-flex; align-items: center; padding: 4px 8px;
+    border-radius: 6px; border: none; background: transparent;
+    cursor: pointer; transition: background 0.15s;
+    font-size: 12px;
+}
+.action-btn:hover { background: rgba(0,0,0,0.06); }
+.dark .action-btn:hover { background: rgba(255,255,255,0.08); }
+
+/* Task spinner */
+@keyframes task-spin { to { transform: rotate(360deg); } }
+.task-spinner {
+    animation: task-spin 1s linear infinite;
+    display: inline-block;
+}
+
+/* Tool call card left border accent */
+.tool-call-card { border-left: 3px solid #3b82f6; }
+.dark .tool-call-card { border-left-color: #60a5fa; }
+
+/* Confirmation option cards */
+.confirm-option {
+    transition: all 0.15s;
+    border: 1px solid #e5e7eb;
+}
+.confirm-option:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+.dark .confirm-option:hover {
+    border-color: #60a5fa;
+    background: rgba(96, 165, 250, 0.1);
+}
+
+/* Subtle sidebar item transition */
+.sidebar-item { transition: background 0.12s, transform 0.12s; }
+.sidebar-item:hover { transform: scale(1.005); }

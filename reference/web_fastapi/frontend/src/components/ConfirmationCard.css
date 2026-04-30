@@ -1,0 +1,92 @@
+.confirmation-card {
+  margin: 8px 42px;
+  background: #1c1c3a;
+  border: 1px solid #3a3a5e;
+  border-left: 4px solid #d29922;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.confirmation-card.answered {
+  border-left-color: #238636;
+  opacity: 0.6;
+}
+
+.confirmation-question {
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.confirmation-answered {
+  color: #238636;
+  font-size: 13px;
+}
+
+.confirmation-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.confirmation-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #e6edf3;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.confirmation-option:hover {
+  background: #1f2937;
+  border-color: #58a6ff;
+}
+
+.option-label {
+  font-weight: 500;
+}
+
+.option-desc {
+  color: #8b949e;
+  font-size: 12px;
+}
+
+.confirmation-custom {
+  display: flex;
+  gap: 6px;
+}
+
+.confirmation-custom input {
+  flex: 1;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: #e6edf3;
+  font-size: 13px;
+  outline: none;
+}
+
+.confirmation-custom input:focus {
+  border-color: #58a6ff;
+}
+
+.confirmation-custom button {
+  background: #238636;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.confirmation-custom button:disabled {
+  opacity: 0.4;
+}

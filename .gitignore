@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+sessions/
+.claude/
+project/data/
+project/objects/
+*.log

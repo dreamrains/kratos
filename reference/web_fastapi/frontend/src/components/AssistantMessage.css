@@ -1,0 +1,104 @@
+.assistant-message {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.message-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.message-avatar.user {
+  background: #1f6feb;
+  color: #fff;
+}
+
+.message-avatar.agent {
+  background: #238636;
+  color: #fff;
+}
+
+.user-message {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.user-message .message-content {
+  background: #1f2937;
+  border-radius: 12px;
+  padding: 10px 14px;
+  max-width: 80%;
+}
+
+.markdown-body {
+  line-height: 1.6;
+  max-width: 85%;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  color: #f0f6fc;
+}
+
+.markdown-body p {
+  margin: 6px 0;
+}
+
+.markdown-body code {
+  background: #161b22;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.markdown-body pre {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.markdown-body th, .markdown-body td {
+  border: 1px solid #30363d;
+  padding: 6px 12px;
+}
+
+.markdown-body th {
+  background: #161b22;
+}
+
+.error-message {
+  color: #f85149;
+  padding: 8px 12px;
+  background: #3d1214;
+  border-radius: 6px;
+  margin: 4px 42px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 100px 20px;
+  color: #8b949e;
+}
+
+.empty-state h2 {
+  font-size: 28px;
+  color: #e6edf3;
+  margin-bottom: 8px;
+}

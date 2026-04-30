@@ -1,0 +1,88 @@
+.tool-call-card {
+  margin: 4px 42px;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.tool-call-card.running {
+  border-left: 3px solid #d29922;
+}
+
+.tool-call-card.completed {
+  border-left: 3px solid #238636;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #161b22;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-call-header:hover {
+  background: #1c2129;
+}
+
+.tool-status {
+  font-size: 12px;
+}
+
+.tool-name {
+  font-weight: 600;
+  flex: 1;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+.tool-duration {
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.tool-expand {
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.tool-call-body {
+  padding: 8px 12px;
+  background: #0d1117;
+  border-top: 1px solid #21262d;
+}
+
+.tool-call-body pre {
+  margin: 4px 0;
+  padding: 8px;
+  background: #161b22;
+  border-radius: 4px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-call-body strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #8b949e;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.tool-result-summary {
+  padding: 4px 12px 8px;
+  color: #8b949e;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-result-summary:hover {
+  color: #c9d1d9;
+}

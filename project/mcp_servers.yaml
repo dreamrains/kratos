@@ -1,0 +1,32 @@
+# MCP Server 配置文件
+# Data Agent 通过 MCP (Model Context Protocol) 连接外部工具服务器
+# 取消注释并配置你需要的服务器
+
+servers:
+  # 文件系统 MCP 服务器 (stdio 传输)
+  # - name: filesystem
+  #   transport: stdio
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  #   enabled: true
+
+  # GitHub MCP 服务器 (stdio 传输)
+  # - name: github
+  #   transport: stdio
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "your-token-here"
+  #   enabled: true
+
+  # 远程 MCP 服务器 (SSE 传输)
+  # - name: remote_api
+  #   transport: sse
+  #   url: http://localhost:8000/sse
+  #   enabled: true
+
+  # 远程 MCP 服务器 (Streamable HTTP 传输)
+  # - name: remote_api_v2
+  #   transport: streamable-http
+  #   url: http://localhost:8000/mcp
+  #   enabled: false

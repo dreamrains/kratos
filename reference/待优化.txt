@@ -1,0 +1,13 @@
+skill与mcp权限设计
+1. 全局、项目对象、会话三个层级
+2. 可在不同层级实现对skill和mcp的增删、启用停用
+
+优化
+1. 输出的报告中，折线图无法展示多指标
+
+https://github.com/dreamrains/kratos.git
+
+web
+1. 对象无法删除，且点开删除按钮是会被遮挡
+2. task展示异常，对标codex、claude进行设计
+3. 大模型配置无法修改，无法填写模型名称、密钥和url

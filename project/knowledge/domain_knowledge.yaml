@@ -1,0 +1,25 @@
+analysis_rules:
+- 归因分析优先使用 SHAP 值
+- 时间序列预测默认周期 7 天
+common_pitfalls:
+- 测试渠道数据需排除（channel 前缀为 'test_'）
+- 退款订单需单独分析
+domain: ecommerce
+indicators:
+  ARPU:
+    description: 每用户平均收入
+    formula: revenue / active_users
+  GMV:
+    description: 总交易额
+    exclude_conditions: order_status = 'CANCEL'
+    formula: 商品数量 * 单价
+  conversion_rate:
+    description: 购买转化率
+    formula: 下单用户数 / 访问用户数
+learned_patterns: []
+suggested_analyses:
+- GMV 趋势分析与异常检测
+- 转化率漏斗分析（访问→加购→下单→支付）
+- 用户分层 RFM 分析
+- 渠道 ROI 对比分析
+- 退款率异常归因

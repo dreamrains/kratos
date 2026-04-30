@@ -1,0 +1,10 @@
+{
+  "id": 6,
+  "subject": "生成综合报告",
+  "description": "汇总所有洞察，生成结构化HTML报告",
+  "status": "completed",
+  "blockedBy": [],
+  "blocks": [],
+  "owner": "",
+  "created_at": "2026-04-30 18:16:38"
+}

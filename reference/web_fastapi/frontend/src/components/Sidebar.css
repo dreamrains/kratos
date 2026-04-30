@@ -1,0 +1,60 @@
+.sidebar-title {
+  font-size: 16px;
+  margin: 0 0 16px 0;
+  color: #f0f6fc;
+}
+
+.new-session-btn {
+  width: 100%;
+  padding: 8px;
+  background: #238636;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.new-session-btn:hover {
+  background: #2ea043;
+}
+
+.sessions-list h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #8b949e;
+  margin: 0 0 8px 0;
+}
+
+.no-sessions {
+  color: #484f58;
+  font-size: 13px;
+}
+
+.session-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 2px;
+}
+
+.session-item:hover {
+  background: #2a2a3e;
+}
+
+.session-item.active {
+  background: #1f6feb33;
+  border-left: 2px solid #1f6feb;
+}
+
+.session-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.session-meta {
+  font-size: 11px;
+  color: #8b949e;
+  margin-top: 2px;
+}

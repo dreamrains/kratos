@@ -1,0 +1,10 @@
+- confidence: 0.6
+  confirmed_by: null
+  corrections: []
+  created: '2026-04-28'
+  domain: general
+  evidence: {}
+  id: exp_f33059
+  pattern: sales volume drops significantly during holiday season spring festival
+  source_session_id: ''
+  status: draft
