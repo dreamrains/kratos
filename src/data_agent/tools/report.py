@@ -99,7 +99,14 @@ REPORT_TEMPLATE_DETAILED = Template("""<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>{{ title }}</title>
 {% if has_charts %}
-<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"></script>
+<script>
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="/static/js/plotly-3.5.0.min.js"><\/script>');
+}
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"><\/script>');
+}
+</script>
 {% endif %}
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
@@ -164,6 +171,15 @@ summary { cursor: pointer; color: #0f3460; font-size: 14px; }
 {% if rendered_summary %}
 <div class="md-content">
 {{ rendered_summary }}
+</div>
+{% elif top_insights %}
+<div class="md-content">
+<p>基于数据分析的核心发现：</p>
+<ul>
+{% for insight in top_insights[:3] %}
+<li><strong>{{ insight.title }}</strong> — {{ insight.description_html | replace('<div class=\"md-content\">', '') | replace('</div>', '') | striptags | truncate(120) }}</li>
+{% endfor %}
+</ul>
 </div>
 {% endif %}
 
@@ -239,7 +255,14 @@ REPORT_TEMPLATE_EXECUTIVE = Template("""<!DOCTYPE html>
 <meta charset="UTF-8">
 <title>{{ title }}</title>
 {% if has_charts %}
-<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"></script>
+<script>
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="/static/js/plotly-3.5.0.min.js"><\/script>');
+}
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"><\/script>');
+}
+</script>
 {% endif %}
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
@@ -398,6 +421,17 @@ def generate_report(
     # 自动提取 data_scope（如果为空）
     if not data_scope:
         data_scope = _extract_data_scope()
+
+    # Summary 兜底：从 insights 自动生成摘要
+    if not summary and insight_list:
+        summary_parts = []
+        for item in insight_list[:5]:
+            t = item.get("title", "")
+            d = item.get("description", "")
+            if t:
+                summary_parts.append(f"- **{t}**: {d[:100]}" if d else f"- **{t}**")
+        if summary_parts:
+            summary = "### 核心发现\n\n" + "\n".join(summary_parts)
 
     # 渲染 summary markdown → HTML
     rendered_summary = _markdown_to_html(summary)
@@ -768,7 +802,14 @@ def export_conversation(
 <meta charset="UTF-8">
 <title>{{ title }}</title>
 {% if has_charts %}
-<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"></script>
+<script>
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="/static/js/plotly-3.5.0.min.js"><\/script>');
+}
+if (typeof Plotly === 'undefined') {
+  document.write('<script src="https://cdn.plot.ly/plotly-3.5.0.min.js" crossorigin="anonymous"><\/script>');
+}
+</script>
 {% endif %}
 <style>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;

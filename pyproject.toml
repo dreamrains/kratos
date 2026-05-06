@@ -37,7 +37,7 @@ dev = [
 ]
 
 [project.scripts]
-data-agent = "data_agent.main:main"
+kratos = "data_agent.main:main"
 data-agent-web = "data_agent.web.entry:main"
 
 [build-system]

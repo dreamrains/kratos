@@ -10,3 +10,10 @@ sessions/
 project/data/
 project/objects/
 *.log
+
+# Large vendor files (downloaded on first run)
+src/data_agent/web/static/js/plotly-*.min.js
+
+# Temp files
+Bn
+B?

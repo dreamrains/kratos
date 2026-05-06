@@ -16,6 +16,10 @@ def main():
     lifecycle = AgentLifecycle()
     lifecycle.initialize()
 
+    # Ensure vendor JS files are available
+    from data_agent.web.vendor_check import ensure_vendor_files
+    ensure_vendor_files()
+
     from data_agent.web.app import create_app
     app = create_app()
     app.config["lifecycle"] = lifecycle

@@ -46,6 +46,15 @@ def bind_object():
     return jsonify(result), 400
 
 
+@objects_bp.delete("/objects/<path:object_name>")
+def delete_object(object_name):
+    mgr = get_object_manager()
+    ok = mgr.delete(object_name)
+    if ok:
+        return jsonify({"deleted": object_name})
+    return jsonify({"error": "Object not found"}), 404
+
+
 @objects_bp.post("/objects/unbind")
 def unbind_object():
     """Unbind current session from its object."""

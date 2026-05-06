@@ -25,7 +25,7 @@ def _save_chart(fig: go.Figure, title: str = "chart") -> str:
         output_dir = session_charts_dir(session_id)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
-        fig.write_html(str(path), include_plotlyjs="cdn")
+        fig.write_html(str(path), include_plotlyjs=False)
         # 导出 PNG 静态图片（用于 PDF 嵌入）
         try:
             png_path = output_dir / f"{chart_id}.png"
@@ -42,7 +42,7 @@ def _save_chart(fig: go.Figure, title: str = "chart") -> str:
         output_dir.mkdir(parents=True, exist_ok=True)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
-        fig.write_html(str(path), include_plotlyjs="cdn")
+        fig.write_html(str(path), include_plotlyjs=False)
         return f"Chart saved: charts/{chart_id}.html"
 
 
@@ -53,6 +53,52 @@ _current_session_id = ""
 def set_chart_session(session_id: str):
     global _current_session_id
     _current_session_id = session_id
+
+
+def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:
+    """根据各列数值量级自动分组 Y 轴。
+
+    量级差异超过 50 倍的列分配到不同轴，最多 3 个轴。
+    返回分组列表，每组一个 Y 轴。
+    """
+    if len(y_cols) <= 1:
+        return [y_cols]
+
+    max_vals = {}
+    for col in y_cols:
+        if col in df.columns:
+            s = pd.to_numeric(df[col], errors="coerce").dropna()
+            max_vals[col] = s.abs().max() if len(s) > 0 else 0
+
+    if not max_vals:
+        return [y_cols]
+
+    # 按最大值排序
+    sorted_cols = sorted(max_vals.keys(), key=lambda c: max_vals[c], reverse=True)
+
+    groups: list[list[str]] = [[sorted_cols[0]]]
+    for col in sorted_cols[1:]:
+        placed = False
+        for group in groups:
+            group_max = max(max_vals[c] for c in group)
+            val = max_vals[col]
+            if val == 0 or group_max == 0:
+                continue
+            ratio = max(group_max / val, val / group_max)
+            if ratio < 50:
+                group.append(col)
+                placed = True
+                break
+        if not placed:
+            groups.append([col])
+
+    # 最多 3 个轴，超出则合并到最近的组
+    while len(groups) > 3:
+        smallest = min(groups, key=len)
+        groups.remove(smallest)
+        groups[-1].extend(smallest)
+
+    return groups
 
 
 @registry.register(
@@ -95,7 +141,26 @@ def create_chart(
     try:
         if chart_type == "line":
             if x_col and y_col:
-                fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode="lines+markers", name=y_col))
+                y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
+                axis_groups = _detect_axis_groups(df, y_cols)
+                use_multi_axis = len(axis_groups) > 1
+
+                for axis_idx, group in enumerate(axis_groups):
+                    yaxis_name = "y" if axis_idx == 0 else f"y{axis_idx + 1}"
+                    for col in group:
+                        fig.add_trace(go.Scatter(
+                            x=df[x_col], y=df[col], mode="lines+markers",
+                            name=col, yaxis=yaxis_name,
+                        ))
+
+                if use_multi_axis:
+                    for axis_idx in range(1, len(axis_groups)):
+                        fig.update_layout(**{
+                            f"yaxis{axis_idx + 1}": dict(
+                                overlaying="y", side="right",
+                                title=dict(text=", ".join(axis_groups[axis_idx])),
+                            )
+                        })
             else:
                 numeric_cols = df.select_dtypes(include="number").columns[:3]
                 for col in numeric_cols:
@@ -103,7 +168,28 @@ def create_chart(
 
         elif chart_type == "bar":
             if x_col and y_col:
-                fig.add_trace(go.Bar(x=df[x_col], y=df[y_col], name=y_col))
+                y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
+                if len(y_cols) > 1:
+                    axis_groups = _detect_axis_groups(df, y_cols)
+                    use_multi_axis = len(axis_groups) > 1
+
+                    for axis_idx, group in enumerate(axis_groups):
+                        yaxis_name = "y" if axis_idx == 0 else f"y{axis_idx + 1}"
+                        for col in group:
+                            fig.add_trace(go.Bar(
+                                x=df[x_col], y=df[col], name=col, yaxis=yaxis_name,
+                            ))
+
+                    if use_multi_axis:
+                        for axis_idx in range(1, len(axis_groups)):
+                            fig.update_layout(**{
+                                f"yaxis{axis_idx + 1}": dict(
+                                    overlaying="y", side="right",
+                                    title=dict(text=", ".join(axis_groups[axis_idx])),
+                                )
+                            })
+                else:
+                    fig.add_trace(go.Bar(x=df[x_col], y=df[y_col], name=y_col))
             else:
                 numeric_cols = df.select_dtypes(include="number").columns[:5]
                 for col in numeric_cols:

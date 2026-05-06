@@ -269,17 +269,6 @@ class AgentLoop:
                 break
 
         # 判断任务级别
-        level = _classify_task(user_input) if user_input else "standard"
-
-        # Chat 模式：不传工具列表
-        if level == "chat":
-            tool_list = ""
-
-        project_rules, domain_knowledge, experience_log = get_knowledge_instances()
-        rules_prompt = project_rules.get_rules_for_prompt(object_name=active_obj, session_id=sid)
-        domain_prompt = domain_knowledge.get_for_prompt(object_name=active_obj, session_id=sid)
-        experience_prompt = experience_log.get_for_prompt(object_name=active_obj, session_id=sid)
-
         datasets = workspace.list_datasets()
         context_parts = []
         if datasets:
@@ -289,6 +278,17 @@ class AgentLoop:
                     f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
                 )
         session_ctx = "\n".join(context_parts) if context_parts else ""
+
+        level = _classify_task(user_input, session_ctx) if user_input else "standard"
+
+        # Chat 模式：不传工具列表
+        if level == "chat":
+            tool_list = ""
+
+        project_rules, domain_knowledge, experience_log = get_knowledge_instances()
+        rules_prompt = project_rules.get_rules_for_prompt(object_name=active_obj, session_id=sid)
+        domain_prompt = domain_knowledge.get_for_prompt(object_name=active_obj, session_id=sid)
+        experience_prompt = experience_log.get_for_prompt(object_name=active_obj, session_id=sid)
 
         # Chat 模式：跳过技能信息
         skill_descriptions = ""

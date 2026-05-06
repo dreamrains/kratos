@@ -10,16 +10,19 @@
         <!-- Header -->
         <div class="p-4 border-b border-gray-200 dark:border-gray-800">
             <div class="flex items-center justify-between">
+                <h1 class="text-lg font-semibold text-gray-800 dark:text-gray-200">Data Agent</h1>
                 <div class="flex items-center gap-1">
                     <!-- Settings gear -->
+                    <button @click="compactContext()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" :disabled="!currentSessionId || isCompact" :class="{'opacity-40 cursor-not-allowed': !currentSessionId || isCompact}" title="Compress context">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+                    </button>
                     <button @click="loadConfig()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" title="LLM Settings">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     </button>
-                    <h1 class="text-lg font-semibold text-gray-800 dark:text-gray-200">Data Agent</h1>
+                    <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" title="New session">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                    </button>
                 </div>
-                <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" title="New session">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-                </button>
             </div>
             <!-- Search -->
             <div class="mt-3 relative">
@@ -60,13 +63,6 @@
                                     <button @click.stop="togglePopover('obj-' + obj.name, $event)" class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 transition-opacity">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                     </button>
-                                    <div x-show="activePopover === 'obj-' + obj.name" x-transition class="absolute left-0 top-full mt-1 w-36 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
-                                        <button @click="deleteObject(obj.name); activePopover = null"
-                                                class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                            Delete
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
                             <!-- Sessions under object -->
@@ -77,29 +73,10 @@
                                          :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'">
                                         <div class="flex items-center justify-between">
                                             <span class="truncate flex-1 text-xs" x-text="s.summary || s.session_id"></span>
-                                            <div class="relative" data-popover>
+                                            <div class="relative" data-popover data-popover-right>
                                                 <button @click.stop="togglePopover('s-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-opacity">
                                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                                 </button>
-                                                <div x-show="activePopover === 's-' + s.session_id" x-transition class="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
-                                                    <button @click="showSessionArtifacts(s.session_id)" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                                                        Artifacts
-                                                    </button>
-                                                    <button @click="exportSession(s.session_id, 'html')" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                                                        Export HTML
-                                                    </button>
-                                                    <button @click="exportSession(s.session_id, 'markdown')" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                                                        Export Markdown
-                                                    </button>
-                                                    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
-                                                    <button @click="deleteSession(s.session_id); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
-                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                                        Delete
-                                                    </button>
-                                                </div>
                                             </div>
                                         </div>
                                         <p class="text-[10px] text-gray-400 mt-0.5" x-text="s.saved_at"></p>
@@ -123,29 +100,10 @@
                              :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800'">
                             <div class="flex items-center justify-between">
                                 <p class="text-sm truncate flex-1 text-gray-700 dark:text-gray-300" x-text="s.summary || s.session_id"></p>
-                                <div class="relative" data-popover>
+                                <div class="relative" data-popover data-popover-right>
                                     <button @click.stop="togglePopover('u-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 transition-opacity">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                     </button>
-                                    <div x-show="activePopover === 'u-' + s.session_id" x-transition class="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
-                                        <button @click="showSessionArtifacts(s.session_id)" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                                            Artifacts
-                                        </button>
-                                        <button @click="exportSession(s.session_id, 'html')" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                                            Export HTML
-                                        </button>
-                                        <button @click="exportSession(s.session_id, 'markdown')" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                                            Export Markdown
-                                        </button>
-                                        <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
-                                        <button @click="deleteSession(s.session_id); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
-                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                            Delete
-                                        </button>
-                                    </div>
                                 </div>
                             </div>
                             <p class="text-[11px] text-gray-400 mt-0.5" x-text="s.saved_at"></p>
@@ -187,32 +145,74 @@
             <button @click="connectionError = ''" class="text-red-400 hover:text-red-600 text-xs">Dismiss</button>
         </div>
 
-        <!-- Task panel (collapsible) -->
-        <div x-show="activeTasks.length > 0" x-transition class="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-            <button @click="tasksExpanded = !tasksExpanded" class="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800">
-                <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Tasks</span>
+        <!-- Task panel — Codex style -->
+        <div x-show="activeTasks.length > 0 || activeSteps.length > 0" x-transition class="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60">
+            <button @click="tasksExpanded = !tasksExpanded" class="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors">
                 <div class="flex items-center gap-2">
-                    <span class="text-[11px] text-gray-400" x-text="taskProgress + ' completed'"></span>
-                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-180': tasksExpanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Tasks</span>
+                    <span x-show="activeTasks.length > 0" class="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400" x-text="taskProgress"></span>
                 </div>
+                <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-180': tasksExpanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
             </button>
-            <div x-show="tasksExpanded" x-transition class="px-4 pb-2 space-y-1">
+            <div x-show="tasksExpanded" x-transition class="px-3 pb-3 space-y-2">
+                <!-- Active streaming steps (when LLM is running) -->
+                <template x-if="activeSteps.length > 0">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+                        <div class="px-3 py-2 flex items-center gap-2 bg-brand-50 dark:bg-brand-500/10 border-b border-gray-200 dark:border-gray-700">
+                            <svg class="w-3.5 h-3.5 text-brand-500 animate-spin shrink-0" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            <span class="text-xs font-medium text-brand-700 dark:text-brand-300">Running</span>
+                            <span class="text-[10px] text-gray-400 ml-auto" x-text="activeSteps.filter(s => s.status === 'done').length + '/' + activeSteps.length + ' steps'"></span>
+                        </div>
+                        <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+                            <template x-for="(step, si) in activeSteps" :key="step.tool_call_id">
+                                <div class="px-3 py-1.5 flex items-center gap-2 group/step">
+                                    <template x-if="step.status === 'done'">
+                                        <svg class="w-3 h-3 text-green-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                                    </template>
+                                    <template x-if="step.status === 'running'">
+                                        <svg class="w-3 h-3 text-brand-500 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                    </template>
+                                    <span class="text-xs font-mono text-gray-700 dark:text-gray-300" x-text="step.name"></span>
+                                    <span x-show="step.duration_ms > 0" class="text-[10px] text-gray-400 ml-auto" x-text="(step.duration_ms / 1000).toFixed(1) + 's'"></span>
+                                    <button @click="step._expanded = !step._expanded" class="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 opacity-0 group-hover/step:opacity-100 transition-opacity shrink-0">
+                                        <svg class="w-3 h-3 transition-transform" :class="{ 'rotate-90': step._expanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                                    </button>
+                                </div>
+                                <div x-show="step._expanded" class="px-3 pb-2 bg-gray-50 dark:bg-gray-900/50">
+                                    <pre class="text-[10px] bg-white dark:bg-gray-800 rounded p-1.5 overflow-x-auto text-gray-600 dark:text-gray-400" x-text="typeof step.arguments === 'string' ? step.arguments : JSON.stringify(step.arguments, null, 2)"></pre>
+                                    <pre x-show="step.result_summary" class="text-[10px] bg-white dark:bg-gray-800 rounded p-1.5 overflow-x-auto max-h-32 overflow-y-auto mt-1 text-gray-600 dark:text-gray-400" x-text="step.result_summary"></pre>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+                <!-- Backend tasks -->
                 <template x-for="t in activeTasks" :key="t.id">
-                    <div class="flex items-center gap-2 py-0.5 group/task">
-                        <template x-if="t.status === 'completed'">
-                            <svg class="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                        </template>
-                        <template x-if="t.status === 'in_progress'">
-                            <svg class="w-3.5 h-3.5 text-amber-500 shrink-0 task-spinner" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                        </template>
-                        <template x-if="t.status === 'pending'">
-                            <svg class="w-3.5 h-3.5 text-gray-300 dark:text-gray-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
-                        </template>
-                        <span class="text-xs flex-1 truncate" :class="t.status === 'completed' ? 'text-gray-400 line-through' : 'text-gray-700 dark:text-gray-300'" x-text="(t.blockedBy && t.blockedBy.length ? '(blocked) ' : '') + '#' + t.id + ': ' + t.subject"></span>
-                        <span x-show="t.session_id && t.session_id !== currentSessionId" class="text-[10px] text-gray-400 shrink-0" x-text="t.session_id"></span>
-                        <button x-show="t.status === 'completed'" @click="deleteTask(t.id)" class="opacity-0 group-hover/task:opacity-100 text-gray-400 hover:text-red-500 p-0.5 rounded transition-opacity">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-                        </button>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
+                        <div class="px-3 py-2 flex items-center gap-2 group/task cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors" @click="toggleTask(t.id)">
+                            <template x-if="t.status === 'completed'">
+                                <svg class="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                            </template>
+                            <template x-if="t.status === 'in_progress'">
+                                <svg class="w-3.5 h-3.5 text-blue-500 shrink-0 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            </template>
+                            <template x-if="t.status === 'pending'">
+                                <svg class="w-3.5 h-3.5 text-gray-300 dark:text-gray-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+                            </template>
+                            <div class="flex-1 min-w-0">
+                                <span class="text-xs truncate block" :class="t.status === 'completed' ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300 font-medium'" x-text="(t.blockedBy && t.blockedBy.length ? '⏸ ' : '') + t.subject"></span>
+                                <span x-show="t.description" class="task-description block truncate mt-0.5" x-text="t.description ? t.description.substring(0, 80) + (t.description.length > 80 ? '...' : '') : ''"></span>
+                            </div>
+                            <button x-show="t.status === 'completed'" @click.stop="deleteTask(t.id)" class="opacity-0 group-hover/task:opacity-100 text-gray-400 hover:text-red-500 p-0.5 rounded transition-opacity shrink-0">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                            <svg class="w-3 h-3 text-gray-400 transition-transform shrink-0" :class="{ 'rotate-90': isTaskExpanded(t.id) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                        </div>
+                        <div x-show="isTaskExpanded(t.id)" x-transition class="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700/50">
+                            <p><span class="text-gray-400">ID:</span> <span x-text="t.id"></span></p>
+                            <p x-show="t.description"><span class="text-gray-400">Description:</span> <span x-text="t.description"></span></p>
+                            <p x-show="t.blockedBy && t.blockedBy.length"><span class="text-gray-400">Blocked by:</span> <span x-text="t.blockedBy.join(', ')"></span></p>
+                        </div>
                     </div>
                 </template>
             </div>
@@ -249,22 +249,6 @@
 
                             <!-- Assistant turn -->
                             <div x-show="turn.role === 'assistant'" class="space-y-3">
-                                <!-- Tool calls -->
-                                <template x-for="(tc, ti) in turn.toolCalls" :key="ti">
-                                    <div class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm tool-call-card">
-                                        <button @click="tc._expanded = !tc._expanded"
-                                                class="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                                            <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-90': tc._expanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-                                            <span class="text-xs font-mono text-brand-600 dark:text-brand-400" x-text="tc.name"></span>
-                                            <span class="text-xs text-gray-400" x-text="(tc.duration_ms / 1000).toFixed(1) + 's'"></span>
-                                        </button>
-                                        <div x-show="tc._expanded" class="px-3 pb-3">
-                                            <pre class="text-xs bg-gray-50 dark:bg-gray-800 rounded p-2 overflow-x-auto" x-text="JSON.stringify(tc.arguments, null, 2)"></pre>
-                                            <pre x-show="tc.result_summary" class="text-xs bg-gray-50 dark:bg-gray-800 rounded p-2 overflow-x-auto max-h-60 overflow-y-auto mt-2" x-text="tc.result_summary"></pre>
-                                        </div>
-                                    </div>
-                                </template>
-
                                 <!-- Chart artifacts -->
                                 <template x-for="(art, ai) in turn.artifacts" :key="ai">
                                     <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-900 shadow-sm">
@@ -282,32 +266,141 @@
                                     </div>
                                 </template>
 
-                                <!-- Thinking -->
-                                <div x-show="turn.isThinking && !turn.content" class="flex items-center gap-2 text-gray-400 text-sm py-1">
+                                <!-- Thinking (shown only when no active steps in task panel) -->
+                                <div x-show="turn.isThinking && !turn.content && activeSteps.length === 0" class="flex items-center gap-2 text-gray-400 text-sm py-1">
                                     <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                                     <span x-text="turn.thinkingText || 'Analyzing...'"></span>
                                 </div>
 
-                                <!-- Markdown content -->
+                                <!-- Final markdown content (revealed after turn_end) -->
                                 <div x-show="turn.content" class="prose prose-sm dark:prose-invert max-w-none leading-7" x-html="renderMarkdown(turn.content)"></div>
 
-                                <!-- Confirmation dialog (upgraded) -->
-                                <div x-show="turn.confirmation" class="bg-white dark:bg-gray-900 border border-brand-200 dark:border-brand-700 rounded-xl p-4 shadow-sm">
-                                    <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1" x-text="turn.confirmation && turn.confirmation.question"></p>
-                                    <p x-show="turn.confirmation && turn.confirmation.context" class="text-xs text-gray-400 mb-3" x-text="turn.confirmation && turn.confirmation.context"></p>
-                                    <div class="flex flex-wrap gap-2">
-                                        <template x-for="(opt, oi) in (turn.confirmation && turn.confirmation.options || [])" :key="oi">
-                                            <button @click="resumeConfirmation(turn.confirmation.suspension_id, opt.value || opt.label)"
-                                                    :disabled="turn.confirmation && turn.confirmation._resuming"
-                                                    class="confirm-option px-4 py-2 text-sm rounded-lg hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    x-text="opt.label"></button>
+                                <!-- Confirmation dialog — redesigned for ask_user_question -->
+                                <template x-if="turn.confirmation">
+                                    <div class="bg-white dark:bg-gray-900 border border-brand-200 dark:border-brand-700 rounded-xl shadow-sm overflow-hidden">
+                                        <!-- Multi-question mode -->
+                                        <template x-if="_isMultiQuestion(turn.confirmation)">
+                                            <div>
+                                                <!-- Progress bar -->
+                                                <div class="h-1 bg-gray-100 dark:bg-gray-800">
+                                                    <div class="h-full bg-brand-500 transition-all duration-300"
+                                                         :style="'width:' + ((turn.confirmation._state.currentStep / _parseMultiQuestions(turn.confirmation).length) * 100) + '%'"></div>
+                                                </div>
+                                                <!-- Step indicator -->
+                                                <div class="px-4 pt-3 pb-1 flex items-center gap-2">
+                                                    <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-brand-50 dark:bg-brand-500/10 text-brand-600 dark:text-brand-300 font-medium"
+                                                          x-text="'Question ' + (turn.confirmation._state.currentStep + 1) + '/' + _parseMultiQuestions(turn.confirmation).length"></span>
+                                                </div>
+                                                <!-- Current question -->
+                                                <div class="px-4 pb-4">
+                                                    <template x-if="turn.confirmation._state.currentStep < _parseMultiQuestions(turn.confirmation).length">
+                                                        <div>
+                                                            <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-3"
+                                                               x-text="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].question"></p>
+                                                            <!-- Options for current multi-question -->
+                                                            <template x-if="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options && _parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options.length > 0">
+                                                                <div class="space-y-2 mb-3">
+                                                                    <template x-for="(opt, oi) in _parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options" :key="oi">
+                                                                        <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
+                                                                               :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                                                            <template x-if="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
+                                                                                <input type="checkbox" class="mt-0.5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                                       :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
+                                                                                       @change="_toggleMultiSelect(turn.confirmation._state, opt.value || opt.label)">
+                                                                            </template>
+                                                                            <template x-if="!_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
+                                                                                <input type="radio" class="mt-0.5 border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                                       :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
+                                                                                       @change="turn.confirmation._state.selectedOptions = [opt.value || opt.label]">
+                                                                            </template>
+                                                                            <div class="flex-1 min-w-0">
+                                                                                <span class="text-sm text-gray-800 dark:text-gray-200" x-text="opt.label"></span>
+                                                                                <p x-show="opt.description" class="text-xs text-gray-400 mt-0.5" x-text="opt.description"></p>
+                                                                            </div>
+                                                                        </label>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                            <!-- Free text input -->
+                                                            <div class="mt-2">
+                                                                <input type="text" x-model="turn.confirmation._state.freeText"
+                                                                       placeholder="Or type your answer..."
+                                                                       @keydown.enter.prevent="_submitConfirmation(turn)"
+                                                                       class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+                                                            </div>
+                                                            <!-- Action buttons -->
+                                                            <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                                                                <button @click="_skipConfirmation(turn)"
+                                                                        :disabled="turn.confirmation._resuming"
+                                                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50">Skip</button>
+                                                                <div class="flex gap-2">
+                                                                    <button @click="_cancelConfirmation(turn)"
+                                                                            :disabled="turn.confirmation._resuming"
+                                                                            class="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">Cancel</button>
+                                                                    <button @click="_submitConfirmation(turn)"
+                                                                            :disabled="turn.confirmation._resuming"
+                                                                            class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                            x-text="turn.confirmation._state.currentStep < _parseMultiQuestions(turn.confirmation).length - 1 ? 'Next' : 'Submit'"></button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
                                         </template>
+
+                                        <!-- Single question mode -->
+                                        <template x-if="!_isMultiQuestion(turn.confirmation)">
+                                            <div class="p-4">
+                                                <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1" x-text="turn.confirmation.question"></p>
+                                                <!-- Options with descriptions -->
+                                                <template x-if="turn.confirmation.options && turn.confirmation.options.length > 0">
+                                                    <div class="space-y-2 mt-3">
+                                                        <template x-for="(opt, oi) in turn.confirmation.options" :key="oi">
+                                                            <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
+                                                                   :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'">
+                                                                <input type="radio" class="mt-0.5 border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                       :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
+                                                                       @change="turn.confirmation._state.selectedOptions = [opt.value || opt.label]">
+                                                                <div class="flex-1 min-w-0">
+                                                                    <span class="text-sm text-gray-800 dark:text-gray-200" x-text="opt.label"></span>
+                                                                    <p x-show="opt.description" class="text-xs text-gray-400 mt-0.5" x-text="opt.description"></p>
+                                                                </div>
+                                                            </label>
+                                                        </template>
+                                                    </div>
+                                                </template>
+                                                <!-- Free text input -->
+                                                <div class="mt-3">
+                                                    <input type="text" x-model="turn.confirmation._state.freeText"
+                                                           placeholder="Or type your answer..."
+                                                           @keydown.enter.prevent="_submitConfirmation(turn)"
+                                                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+                                                </div>
+                                                <!-- Action buttons -->
+                                                <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                                                    <button @click="_skipConfirmation(turn)"
+                                                            :disabled="turn.confirmation._resuming"
+                                                            class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50">Skip</button>
+                                                    <div class="flex gap-2">
+                                                        <button @click="_cancelConfirmation(turn)"
+                                                                :disabled="turn.confirmation._resuming"
+                                                                class="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">Cancel</button>
+                                                        <button @click="_submitConfirmation(turn)"
+                                                                :disabled="turn.confirmation._resuming"
+                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">Submit</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Resuming overlay -->
+                                        <div x-show="turn.confirmation && turn.confirmation._resuming" class="px-4 py-3 flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-400">
+                                            <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                            Processing your response...
+                                        </div>
                                     </div>
-                                    <div x-show="turn.confirmation && turn.confirmation._resuming" class="flex items-center gap-2 mt-3 text-xs text-gray-400">
-                                        <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                        Processing...
-                                    </div>
-                                </div>
+                                </template>
 
                                 <!-- Action bar -->
                                 <div class="flex items-center gap-1 pt-1.5">
@@ -339,24 +432,73 @@
                                   placeholder="Describe your data analysis task..." rows="1"
                                   class="w-full resize-none bg-transparent px-4 py-3 pr-20 text-sm leading-relaxed focus:outline-none" :disabled="isLoading"></textarea>
                         <div class="absolute right-2 bottom-2 flex items-center gap-1">
-                            <label class="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-                                <input type="file" class="hidden" accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.parquet" @change="uploadFile($event)">
+                            <label class="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
+                                <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                                <svg x-show="isUploading" class="w-5 h-5 task-spinner" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                <input type="file" multiple class="hidden" accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.parquet" @change="uploadFile($event)">
                             </label>
-                            <button @click="sendMessage()" :disabled="isLoading || !inputText.trim()"
+                            <button @click="sendMessage()" :disabled="isLoading || (!inputText.trim() && !uploadedFiles.length)"
                                     class="p-2 rounded-xl bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/></svg>
                             </button>
                         </div>
                     </div>
-                    <div x-show="uploadedFile" class="mt-1.5 text-xs text-gray-500 flex items-center gap-1 px-1">
-                        <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                        <span x-text="uploadedFile"></span>
+                    <div x-show="uploadedFiles.length > 0" x-transition class="mt-1.5 text-xs flex flex-wrap items-center gap-1.5 px-1">
+                        <template x-for="(fname, fi) in uploadedFiles" :key="fi">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-500/30">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                <span x-text="fname" class="max-w-[140px] truncate"></span>
+                                <button @click="uploadedFiles.splice(fi, 1)" class="ml-0.5 text-green-400 hover:text-green-600 dark:hover:text-green-200">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </span>
+                        </template>
+                        <span x-show="uploadedFiles.length > 0" class="text-[10px] text-gray-400 dark:text-gray-500 pl-1">
+                            <span x-text="uploadedFiles.length"></span> file(s) attached
+                        </span>
                     </div>
                 </div>
             </div>
         </div>
     </main>
+
+    <!-- Global Popover (fixed position, escapes overflow containers) -->
+    <div x-show="activePopover" x-transition.opacity @click="activePopover = null" class="fixed inset-0 z-[60]" style="pointer-events: none;">
+        <div x-show="activePopover" @click.stop class="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1"
+             :style="popoverPos.align === 'right' ? { top: popoverPos.top + 'px', right: popoverPos.right + 'px', width: '176px' } : { top: popoverPos.top + 'px', left: popoverPos.left + 'px', width: '144px' }"
+             style="pointer-events: auto;">
+            <!-- Object popover: Delete -->
+            <template x-if="activePopover && activePopover.startsWith('obj-')">
+                <button @click="deleteObject(activePopover.slice(4)); activePopover = null"
+                        class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    Delete
+                </button>
+            </template>
+            <!-- Session popover: Artifacts / Export / Delete -->
+            <template x-if="activePopover && (activePopover.startsWith('s-') || activePopover.startsWith('u-'))">
+                <div>
+                    <button @click="showSessionArtifacts(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                        Artifacts
+                    </button>
+                    <button @click="exportSession(popoverTargetId, 'html'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                        Export HTML
+                    </button>
+                    <button @click="exportSession(popoverTargetId, 'markdown'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        Export Markdown
+                    </button>
+                    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <button @click="deleteSession(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Delete
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
 
     <!-- Config Modal -->
     <div x-show="configModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="configModal.show = false">
@@ -368,7 +510,7 @@
                 <div>
                     <label class="text-xs font-medium text-gray-500 mb-1 block">Model Name</label>
                     <input x-model="configModal.model_id" type="text" list="model-suggestions"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
                     <datalist id="model-suggestions">
                         <template x-for="m in availableModels" :key="m"><option :value="m" x-text="m"></option></template>
                     </datalist>
@@ -376,13 +518,13 @@
                 <div>
                     <label class="text-xs font-medium text-gray-500 mb-1 block">API Base URL</label>
                     <input x-model="configModal.api_base" type="text" placeholder="https://api.openai.com/v1"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
                 </div>
                 <div>
                     <label class="text-xs font-medium text-gray-500 mb-1 block">API Key</label>
                     <input x-model="configModal.api_key" type="password"
                            :placeholder="configModal.has_key ? configModal.key_masked : 'Enter API key'"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
                 </div>
             </div>
             <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-2">

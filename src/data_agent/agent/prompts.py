@@ -10,6 +10,23 @@ AGENT_CHAT = """\
 - 不要主动调用分析工具，除非用户明确要求分析
 - 如果用户的问题实际需要数据分析，建议用户明确描述分析需求
 
+## 数据上下文快答
+如果 session_context 中有数据描述信息（如已加载的数据集名称、行列数、字段列表），你可以直接基于上下文回答简单查询：
+- "列名是什么/有哪些字段" → 直接列出 session_context 中的字段
+- "数据有多少行/多大" → 直接回答 session_context 中的行列数
+- "上次分析了什么/结论是什么" → 基于上下文简要回顾
+- "数据范围是什么" → 直接回答
+只有当用户的问题需要实际计算、统计或深度分析时，才建议用户使用分析功能。
+
+## Markdown 格式能力
+你的回复支持完整 Markdown 渲染，包括：标题(h1-h6)、代码块(带语法高亮)、表格、引用、列表。
+你可以直接在回复中使用 Mermaid 图表来可视化信息：
+- 流程图：```mermaid 后用 flowchart 语法
+- 时序图：```mermaid 后用 sequenceDiagram 语法
+- 饼图：```mermaid 后用 pie 语法
+- 思维导图：```mermaid 后用 mindmap 语法
+适合在解释概念、梳理逻辑时使用，让回复更直观。
+
 {session_context}
 
 可用工具：无（纯对话模式）
@@ -40,6 +57,15 @@ group_by: 列名, agg: 列A: [sum, mean], 列B: [count]
 ## 回复格式
 - 简洁直接，先给结论，再附关键数据
 - 不需要置信度评估和方法说明
+
+## Markdown 格式能力
+你的回复支持完整 Markdown 渲染，包括：标题(h1-h6)、代码块(带语法高亮)、表格、引用、列表。
+你可以直接在回复中使用 Mermaid 图表来可视化数据，无需调用 create_chart：
+- 饼图：```mermaid pie title 分布 "A": 30 "B": 50 "C": 20```
+- 柱状图/折线图：```mermaid xychart-beta ```
+- 流程图、时序图、甘特图、思维导图等
+对于简单的数据可视化（如占比、对比、趋势），优先使用 Mermaid 直接在文本中出图。
+只有需要交互式图表或复杂可视化时才调用 create_chart 工具。
 
 可用工具：{tool_list}
 {skill_descriptions}
@@ -89,12 +115,28 @@ AGENT_STANDARD = """\
 - **置信度**：高/中/低 + 原因
 - **建议**：可执行的下一步
 
+## Markdown 格式能力
+你的回复支持完整 Markdown 渲染，包括：标题(h1-h6)、代码块(带语法高亮)、表格、引用、列表。
+你可以直接在回复中使用 Mermaid 图表来可视化数据，无需调用 create_chart：
+- 饼图：```mermaid pie title 分布 "A": 30 "B": 50 "C": 20```
+- 柱状图/折线图：```mermaid xychart-beta ```
+- 流程图、时序图、甘特图、思维导图等
+对于简单的数据可视化（如占比、对比、趋势概览），优先使用 Mermaid 直接在文本中出图。
+只有需要精确交互式图表或复杂可视化时才调用 create_chart 工具。
+
 ## 数据加载后行为
 当 load_data 的返回结果包含 [data_profile] 块时：
 - 这是自动数据画像结果，已在上下文中可用
 - 不要向用户复述或主动展示这些内容
 - 仅当用户的意图模糊（如"看看这数据"、"分析一下"）时，基于画像结果提供 2-3 个分析方向建议
 - 当用户有明确分析意图时，直接执行，不要推荐其他方向
+
+## 上下文复用规则（★强制）
+当 [data_profile] 已在对话上下文中时：
+- **禁止**重新调用 quick_profile / describe_dataset / detect_data_quality / assess_readiness
+- **禁止**重新调用 preview_data（除非用户明确要求查看更多行）
+- 直接使用已有信息回答关于数据结构、字段、质量的查询
+- 用户追问时复用之前的分析结果，除非用户明确要求重新分析
 
 ## 数据粒度约束（★重要）
 分析前必须先查看 data_profile 中的 grain 和 grain_hint 字段：
@@ -249,8 +291,21 @@ AGENT_FULL = """\
 - 详细解释放在 description 中，confidence 只写等级
 
 **summary 参数**：
+- **必须提供**，不能为空
 - 使用 Markdown 格式撰写核心摘要
 - 包含：数据范围概述、核心指标表格（| 语法）、3-5 条核心洞察（**加粗** 关键数字）
+- 示例格式：
+  ```
+  基于 N 条数据分析（时间段），覆盖 X 个维度。
+
+  | 指标 | 数值 |
+  |------|------|
+  | 总量 | **X万** |
+
+  **核心发现**：
+  1. 发现一 — 关键数字
+  2. 发现二 — 关键数字
+  ```
 
 **data_scope 参数**：
 - 填写数据的时间范围和维度信息，如 "2021年3月~11月，共248天"
@@ -276,6 +331,18 @@ AGENT_FULL = """\
 - **方法说明**：使用了什么分析方法，为什么选择这个方法
 - **置信度**：高/中/低 + 原因（样本量、数据质量、方法限制等）
 - **建议**：基于结论的可执行下一步（如适用）
+
+## Markdown 格式能力
+你的回复支持完整 Markdown 渲染，包括：标题(h1-h6)、代码块(带语法高亮)、表格、引用、列表。
+你可以直接在回复中使用 Mermaid 图表来可视化数据，无需调用 create_chart：
+- 饼图：```mermaid pie title 分布 "A": 30 "B": 50 "C": 20```
+- 柱状图/折线图：```mermaid xychart-beta ```
+- 流程图（flowchart）：梳理分析思路或业务流程
+- 时序图（sequenceDiagram）：展示系统交互或数据流向
+- 甘特图（gantt）：展示项目进度或分析计划
+- 思维导图（mindmap）：展示分析框架或知识结构
+对于简单的数据可视化（如占比、对比、趋势概览），优先使用 Mermaid 直接在文本中出图。
+只有需要精确交互式图表或复杂可视化时才调用 create_chart 工具。
 
 ## 洞察质量标准
 每条洞察必须满足：
@@ -322,6 +389,13 @@ AGENT_FULL = """\
 - 不要向用户复述或主动展示这些内容
 - 仅当用户的意图模糊（如"看看这数据"、"分析一下"）时，基于画像结果提供 2-3 个分析方向建议
 - 当用户有明确分析意图时，直接执行，不要推荐其他方向
+
+## 上下文复用规则（★强制）
+当 [data_profile] 已在对话上下文中时：
+- **禁止**重新调用 quick_profile / describe_dataset / detect_data_quality / assess_readiness
+- **禁止**重新调用 preview_data（除非用户明确要求查看更多行）
+- 直接使用已有信息回答关于数据结构、字段、质量的查询
+- 用户追问时复用之前的分析结果，除非用户明确要求重新分析
 
 ## 数据粒度约束（★重要）
 分析前必须先查看 data_profile 中的 grain 和 grain_hint 字段：
@@ -373,6 +447,12 @@ _DATA_CONTEXT_KEYWORDS = [
     "数据", "数据集", "字段", "列名", "行数", "图表", "报告", "指标",
 ]
 
+_CONTEXT_QUICK_KEYWORDS = [
+    "列名", "字段名", "有哪些列", "列是什么", "多少行", "多少列",
+    "数据范围", "数据概览", "上次结论", "上次分析", "分析到哪了",
+    "继续", "然后呢",
+]
+
 _QUICK_KEYWORDS = [
     "汇总", "导出", "转换", "筛选", "过滤", "排序", "重命名", "选择",
     "合并", "透视", "分组", "按周", "按月", "按天", "按季", "按年",
@@ -387,7 +467,7 @@ _FULL_KEYWORDS = [
 ]
 
 
-def _classify_task(user_input: str) -> str:
+def _classify_task(user_input: str, session_context: str = "") -> str:
     """根据用户输入推断任务复杂度等级。返回 chat/quick/standard/full。"""
     text = user_input.lower()
 
@@ -401,6 +481,13 @@ def _classify_task(user_input: str) -> str:
     quick_exclusion = ["分析", "趋势", "分布", "相关", "为什么", "归因", "对比", "比较", "预测"]
     if quick_hits >= 1 and not any(kw in text for kw in quick_exclusion):
         return "quick"
+
+    # 2.5 上下文快答：session 已加载数据 + 简单查询 → chat（直接从上下文回答）
+    has_session_data = bool(session_context and ("rows" in session_context or "cols" in session_context))
+    if has_session_data:
+        context_quick_hits = sum(1 for kw in _CONTEXT_QUICK_KEYWORDS if kw in text)
+        if context_quick_hits >= 1:
+            return "chat"
 
     # 3. Chat 检测：无数据上下文 + 问候/知识问答/极短输入
     has_data_ctx = any(kw in text for kw in _DATA_CONTEXT_KEYWORDS)
@@ -435,7 +522,7 @@ def build_system_prompt(
     user_input: str = "",
 ) -> str:
     """动态构建完整的系统提示词。根据 user_input 自动选择模板级别。"""
-    level = _classify_task(user_input) if user_input else "standard"
+    level = _classify_task(user_input, session_context) if user_input else "standard"
 
     if level == "chat":
         base = AGENT_CHAT

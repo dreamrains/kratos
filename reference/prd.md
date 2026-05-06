@@ -1,8 +1,18 @@
 # 数据分析专家型 Agent 需求文档
 
-> **文档状态**：V9.0 分析质量与交互优化
+> **文档状态**：V9.1 分析效率与体验优化
 > **目标开发平台**：Claude Code
 > **核心定位**：具备业务分析师思维、可对话、可自动出报告、可监控的协作型分析专家
+>
+> **V9.1 变更摘要**：
+> - **Task 面板展示优化**：Alpine 响应式刷新（spread operator 强制引用变更）+ 300ms 防抖避免频繁 API 调用 + description 预览 + 蓝色 in_progress spinner + 完成绿/进行蓝/待定灰视觉区分
+> - **报告文件链接可点击**：marked.js 自定义 text renderer，正则匹配 `sessions/.../*.html|pdf|md|png` 路径自动转为 `<a href="/files/...">` 可点击链接
+> - **HTML 报告 Plotly 本地化**：Plotly JS 下载到 `web/static/js/` 本地文件（~4.8MB），图表 HTML 使用 `include_plotlyjs=False` 去除内嵌，报告模板改为本地优先 + CDN fallback 三级检测（typeof → local → CDN）
+> - **核心结论摘要兜底**：`generate_report()` summary 为空时自动从前 5 条 insights 提取标题+描述生成摘要，Jinja 模板增加 `{% elif top_insights %}` fallback 分支
+> - **多指标图表自动多纵轴**：新增 `_detect_axis_groups()` 函数，量级差异超 50 倍自动分组到不同 Y 轴（最多 3 轴），line 和 bar 类型均支持
+> - **意图分类上下文快答**：`_classify_task()` 增加 `session_context` 参数，当 session 已加载数据时"列名/行数/数据范围"等简单查询直接走 CHAT 模式从上下文回答，不触发工具调用
+> - **冗余工具调用优化**：Prompt 层 STANDARD/FULL 新增"上下文复用规则"强制禁止 data_profile 已存在时重新调用 quick_profile/describe_dataset；代码层 `quick_profile()` 增加 workspace metadata 缓存（shape 不变直接返回）
+> - **Web 端 manual compact**：新增 `POST /api/compact` 端点调用 `compact_history()` 压缩当前 session 消息，返回 token 前后对比；侧边栏增加压缩按钮（disabled when no session）
 >
 > **V9.0 变更摘要**：
 > - **数据粒度自动识别**：`quick_profile` 新增 `_detect_grain()` 函数，自动推断数据粒度（individual/daily_aggregate/weekly_aggregate/monthly_aggregate/multi_dimension_aggregate/aggregate/unknown），通过 `grain` + `grain_hint` 字段输出，防止从聚合数据推导个体级结论
@@ -335,8 +345,8 @@ Report Generator 按金字塔原理模板生成报告（★V6.0 重构）：
 4. 若未找到 → 通过 `ask_user_question` 询问用户定义口径，确认后自动追加到 `project_rules.md` 的数据字典中。后续分析永久生效。
 5. 不作为独立子流程，嵌入意图分析的自然对话中。
 
-**意图分类规则**（★V8.0 四级分类）：
-- **CHAT**：无数据上下文关键词的问候（你好/hello）、感谢（谢谢/thanks）、纯知识问答（什么是X/解释一下X）、极短输入（<8字）且无分析意图。行为：纯对话，无工具调用
+**意图分类规则**（★V8.0 四级分类，★V9.1 上下文快答）：
+- **CHAT**：无数据上下文关键词的问候（你好/hello）、感谢（谢谢/thanks）、纯知识问答（什么是X/解释一下X）、极短输入（<8字）且无分析意图。★V9.1 新增：**上下文快答**——session 已加载数据时，"列名/行数/数据范围/上次结论"等简单查询走 CHAT，直接从 session_context 回答。行为：纯对话，无工具调用
 - **QUICK**：含"汇总/导出/筛选/排序/分组/计算"等操作关键词，且不含"分析/趋势/为什么"等分析意图。行为：直接执行，1-3轮
 - **STANDARD**：单维度分析、趋势、分布、相关性等明确分析意图。行为：4步分析流程
 - **FULL**：含"报告/完整分析/全面分析/出个报告"等关键词。行为：完整7阶段流程
@@ -344,6 +354,7 @@ Report Generator 按金字塔原理模板生成报告（★V6.0 重构）：
 **关键设计**：
 - 知识问答检测（"什么是X"/"解释X"/"介绍X"）优先于分析意图，防止"什么是回归分析"被误判为 standard
 - Quick 检测在 Chat 之前执行，防止"按月分组汇总"被误判为 chat
+- ★V9.1 **上下文快答在 Quick 之后、Chat 之前检测**（步骤 2.5），避免"列名是什么"在有数据时触发工具调用
 
 **输出结构示例**：
 ```json
@@ -499,7 +510,7 @@ T4: attribution_analysis (依赖 T2, T3)
 - **图表自动嵌入**：从 session charts 目录自动提取 Plotly 图表嵌入报告，无需手动传递 charts_html
 - **置信度智能解析**：_parse_confidence() 将中英文混合文本（如"高 - r²=0.9"）映射为标准 high/medium/low
 - **方法内联**：移除独立 Methodology 章节，方法说明嵌入对应洞察卡片
-- **条件性 Plotly CDN**：有图表时自动在 report head 加载 Plotly JS
+- **条件性 Plotly 加载**：★V9.1 三级检测（typeof → 本地 → CDN fallback），有图表时自动在 report head 加载 Plotly JS
 
 **双风格输出**：
 
@@ -527,6 +538,7 @@ T4: attribution_analysis (依赖 T2, T3)
 - `quick_profile(name)` ★V5.0 New → **一次性返回数据全貌**：shape + 列类型推断 + 质量评估 + 就绪度 + warnings + suggested_next。替代分别调用 describe_dataset + detect_data_quality + assess_readiness 的 3 轮开销。prompt 中引导 LLM 默认使用 quick_profile。
   - ★V9.0 **粒度检测**：自动调用 `_detect_grain()` 推断数据粒度，输出 `grain`（枚举值：individual/daily_aggregate/weekly_aggregate/monthly_aggregate/multi_dimension_aggregate/aggregate/unknown）和 `grain_hint`（自然语言提示）。检测规则：ID列→个体级、日期列行数比+间隔→时间聚合、fill_ratio→多维聚合 vs 事件明细、聚合关键词→聚合数据。
   - ★V8.0 **compact 模式**：`quick_profile(name, compact=True)` 压缩列信息（正常列为 `col_name(type)` 字符串，有问题列保留详情），增加 summary 字段（numeric/category/date 计数），整体节省 50%+ token。load_data 静默探查使用紧凑模式，LLM 直接调用仍返回完整格式。
+  - ★V9.1 **结果缓存**：workspace metadata 存储 `_profile_cache` + `_profile_shape`，shape 不变直接返回缓存；`load_data()` 和 `transform_data()` 后自动失效缓存。Prompt 层 STANDARD/FULL 新增"上下文复用规则（★强制）"，禁止 data_profile 已存在时重新调用。
 
 **Data Readiness Pipeline**（★V8.0 静默探查增强）：
 
@@ -572,15 +584,19 @@ LLM 根据严重级别决定后续行为：Info 附在分析结果中；Warning 
 - `regression_analysis(target, features, method='auto', cv_folds=0)` → 线性/弹性网络/梯度提升。★V5.0：新增 cv_folds 参数。
 - `attribution_analysis(target, features, method='shap')` → 渠道归因、特征归因
 
-**L5 可视化**（★V6.1 增强）
+**L5 可视化**（★V6.1 增强，★V9.1 多轴）
 - `create_chart(chart_type, data, params)` → 支持：line, bar, stacked_bar, scatter, box, histogram, heatmap, pie。默认使用 Plotly。
 - 图表自动保存至**会话目录** `sessions/{id}/charts/`，并注册到 Artifact 清单。
 - **★V6.1** 同时导出 PNG 静态图片（用于 PDF 嵌入），与 HTML 同名同目录。
+- **★V9.1** 多指标自动多纵轴：line/bar 多列时自动检测量级差异（>50x），分组到不同 Y 轴（最多 3 轴），`_detect_axis_groups()` 函数实现
+- **★V9.1** 图表 HTML 使用 `include_plotlyjs=False`，不内嵌 Plotly JS，由报告/页面统一加载
 - `get_chart_entries(session_id)` → 返回图表结构化条目列表（含 filename/title/html）。
 - `match_chart(entries, keyword)` → 根据关键词子串匹配图表条目（支持中英文）。
 
-**L6 报告**（★V6.0 重构）
+**L6 报告**（★V6.0 重构，★V9.1 优化）
 - `generate_report(title, insights, charts_html, summary, style, data_scope)` → 金字塔结构 HTML 报告，Markdown 自动渲染，图表自动嵌入。insights 为 JSON 数组，confidence 必须为 high/medium/low 三选一
+- **★V9.1 summary 兜底**：summary 为空时自动从前 5 条 insights 提取 title+description 生成摘要；Jinja 模板增加 `{% elif top_insights %}` fallback
+- **★V9.1 Plotly 本地化**：三套模板改为三级检测（typeof Plotly → 本地 `/static/js/plotly-3.5.0.min.js` → CDN fallback），图表 HTML 不内嵌 Plotly JS
 - `export_report_markdown(title, insights, summary)` → 导出 Markdown 格式（金字塔结构）
 - `export_report_pdf(html_path)` → HTML 转 PDF（via xhtml2pdf，纯 Python，Windows 兼容）
 - `export_conversation(title, format, include_charts)` ★V6.0 New → 将对话分析结果导出为 HTML 或 Markdown
@@ -980,7 +996,7 @@ class CommandRegistry:
 |------|---------|---------|------|
 | `help` | `/help` | 帮助按钮 | 显示帮助信息 |
 | `report` | `/report` | "生成报告"按钮 | 对当前数据生成完整分析报告 |
-| `compact` | `/compact` | 设置菜单 | 手动压缩上下文 |
+| `compact` | `/compact` | 侧边栏压缩按钮 | ★V9.1 手动压缩上下文（`POST /api/compact`），返回前后 token 对比 |
 | `clear` | `/clear` | 新对话按钮 | 清空对话历史 |
 | `data` | `/data <path>` | 文件上传 | 预加载数据文件 |
 | `bind` | `/bind <object>` | 拖拽到项目 | ★V4.0 绑定当前会话到对象（支持换绑，自动迁移知识） |
@@ -1071,7 +1087,7 @@ class CommandRegistry:
 
 Agent 架构从 V1 起即考虑 CLI 与 Web GUI 双端适配。核心原则：**业务逻辑层与展示层分离**。
 
-**★V4.0 Web GUI 状态**：原 FastAPI + React 方案已暂停（代码移至 `reference/web_fastapi/` 备用）。后续计划采用 **Flask + Jinja2 + HTMX** 方案，实现服务端渲染 + 轻量交互，快速验证。所有核心逻辑已设计为纯函数/类方法，Flask 路由仅需薄壳封装即可。
+**★V4.0 Web GUI 状态**：原 FastAPI + React 方案已暂停（代码移至 `reference/web_fastapi/` 备用）。当前已采用 **Flask + Alpine.js + SSE** 方案实现 Web GUI，功能包括：SSE 流式聊天、Alpine.js 响应式 UI、Task 面板、文件上传、Artifact 查看、对话导出、上下文压缩。★V9.1 新增：报告文件链接自动可点击、侧边栏 compact 按钮。
 
 **适配器模式**：
 
@@ -1133,11 +1149,35 @@ migrate_session_knowledge(session_id, from_obj, to_obj) -> dict
 
 ### 4.18 未来扩展点
 
-- **★V4.0 Flask Web GUI**：基于 Flask + Jinja2 + HTMX 的 Web 界面，优先级最低，CLI 核心功能稳定后启动。技术栈：Flask 服务端渲染、HTMX 局部更新、SSE 流式聊天、Tailwind CDN 样式。
+- **★V4.0 Flask Web GUI**：已实现 Flask + Alpine.js + SSE 方案。★V9.1 持续优化中：报告文件链接可点击、Plotly 本地化加速、侧边栏 compact 按钮。
 - **多数据源连接**：SQL 直连、更多 MCP 服务器集成。
 - **团队协同**：项目空间、权限、评论、审核流。
 - **主动监控引擎**：定时分析 + 异常预警推送。
 - **经验演化闭环**：自动从分析结果提取经验模式。
+
+---
+
+## 五-A、改进记录（★V9.1）
+
+**V9.1 已完成改进**：
+
+| # | 优化项 | 改动文件 | 实现方式 | 状态 |
+|---|--------|----------|----------|------|
+| 1 | Task 面板展示优化 | app.js, index.html, app.css, chat.py | `loadTasks()` 使用 spread operator 强制 Alpine 响应式刷新；`task_update` SSE 事件改用 300ms 防抖（`_debouncedLoadTasks`）；Task 卡片展示 description 前 80 字符预览；in_progress 蓝色 `animate-spin` spinner 替代旧 amber 样式；CSS 新增 `.task-completed/.task-in-progress/.task-pending` 状态色 | ✅ 已完成 |
+| 2 | 报告文件链接可点击 | app.js, app.css | `_setupMarked()` 新增自定义 `text` renderer，正则匹配 `sessions/.../*.{html,pdf,md,png}` 路径，自动转为 `<a href="/files/{encoded}" target="_blank" class="file-link">`；支持 Chart saved / Report generated / PDF exported / Markdown report / Conversation exported 五种前缀；CSS 新增 `.file-link` 虚线下划线样式 | ✅ 已完成 |
+| 3 | HTML 报告 Plotly 本地化 | visualization.py, report.py, web/static/js/ | 下载 Plotly 3.5.0 JS（~4.8MB）到 `web/static/js/plotly-3.5.0.min.js`；`_save_chart()` 使用 `include_plotlyjs=False`（session 和非 session 路径）；三套报告模板（DETAILED/EXECUTIVE/conversation）改为三级检测：`typeof Plotly === 'undefined'` → 本地 `/static/js/` → CDN `cdn.plot.ly` fallback | ✅ 已完成 |
+| 4 | 核心结论摘要兜底 | report.py, prompts.py | `generate_report()` summary 为空时自动从前 5 条 insights 提取 title+description 生成摘要（`### 核心发现\n- **title**: desc`）；Jinja 模板增加 `{% elif top_insights %}` 分支展示前 3 条洞察；AGENT_FULL 阶段 7 强化 summary 参数要求（"必须提供"+ 示例格式含数据范围概述 + 核心指标表格 + 3-5 条核心洞察） | ✅ 已完成 |
+| 5 | 多指标图表自动多纵轴 | visualization.py | 新增 `_detect_axis_groups(df, y_cols)` 函数：计算各列最大值，量级差异 > 50 倍分到不同 Y 轴，最多 3 轴；`create_chart()` line 类型多列时自动检测并使用 `yaxis='y2'/'y3'` + `overlaying='y'` + `side='right'` layout；bar 类型多列场景同步支持 | ✅ 已完成 |
+| 6 | 意图分类上下文快答 | prompts.py, loop.py | `_classify_task()` 新增 `session_context` 参数；新增 `_CONTEXT_QUICK_KEYWORDS` 列表（列名/字段名/多少行/数据范围/上次结论等）；新增步骤 2.5 上下文快答检测：session 已加载数据 + 简单查询关键词 → 直接 CHAT；`AGENT_CHAT` 新增"数据上下文快答"指令段，支持从 session_context 直接回答简单查询 | ✅ 已完成 |
+| 7 | 冗余工具调用优化 | prompts.py, data_understand.py, loop.py | Prompt 层：STANDARD/FULL 新增"上下文复用规则（★强制）"，禁止 data_profile 已存在时重新调用 quick_profile/describe_dataset/detect_data_quality/preview_data；代码层：`quick_profile()` 增加 workspace metadata 缓存（`_profile_cache` + `_profile_shape`），shape 不变直接返回缓存；`load_data()` 后自动失效缓存 | ✅ 已完成 |
+| 8 | Web 端 manual compact | commands.py, app.js, index.html | 新增 `POST /api/compact` 端点：调用 `compact_history()` 压缩当前 session 消息（token_threshold=0 强制压缩），返回 before/after token 对比；侧边栏 header 新增压缩按钮（向下箭头 SVG），`:disabled` 当无 session 或正在压缩时 | ✅ 已完成 |
+
+**关键设计决策**：
+- **多轴阈值 50x**：通过测试"游戏互推数据"（曝光次数 ~68000 vs 有效点击 ~1000，ratio=68x）和 test_sales.csv（sales/users 量级接近）确认 50x 阈值合理
+- **Plotly 三级检测**：`typeof Plotly === 'undefined'` 检测确保同一页面多个图表只加载一次 Plotly，本地优先保证 Web 服务内秒开，CDN fallback 兜底 file:// 直接打开场景
+- **上下文快答优先于 CHAT 检测**：步骤 2.5 插入在 Quick 之后、Chat 之前，避免"列名是什么"在有数据时被误判为需要工具调用
+- **缓存基于 shape 校验**：`_profile_shape` 记录 `(rows, cols)` 元组，shape 变化（如 transform_data 后）自动失效，避免返回过时的 profile 结果
+- **Compact 路由前缀**：前端 `compactContext()` 调用 `/api/compact`（commands_bp 注册在 `/api` 前缀下），测试确认所有 67 项检查通过
 
 ---
 
@@ -1236,17 +1276,19 @@ migrate_session_knowledge(session_id, from_obj, to_obj) -> dict
 | `STANDARD` | 单维度分析/趋势/分布/相关性 | ~1045 chars | 3-6 轮 | 4 步分析流程 + 策略表子集 + 置信度 |
 | `FULL` | 完整报告/全面分析/归因/预测 | ~3356 chars | 7+ 轮 | 完整 7 阶段流程 + 多假设竞争 + 任务管理 |
 
-**推断逻辑**（★V8.0 更新）：
+**推断逻辑**（★V8.0 更新，★V9.1 上下文快答）：
 1. 输入含"报告/完整分析/全面分析" → FULL（优先级最高）
 2. 输入含"汇总/导出/筛选/排序/按周/按月"且不含"分析/趋势/为什么" → QUICK
-3. 输入无数据上下文关键词 + 含问候/知识问答关键词 → CHAT
-4. 其他 → STANDARD
+3. ★V9.1 session 已加载数据 + 输入含"列名/行数/数据范围/上次结论"等上下文查询关键词 → CHAT（直接从上下文回答）
+4. 输入无数据上下文关键词 + 含问候/知识问答关键词 → CHAT
+5. 其他 → STANDARD
 
-**CHAT 模式行为规则**（★V8.0）：
+**CHAT 模式行为规则**（★V8.0，★V9.1 上下文快答）：
 - 友好、简洁地回答用户问题
 - 不调用分析工具（tool_list 为空）
 - 不注入 domain_knowledge 和 experience_log
 - 仅注入 session_context（保留数据上下文以便结合回答）
+- ★V9.1 **数据上下文快答**：当 session_context 包含数据描述信息时，可直接回答简单查询（列名/行数/数据范围/上次结论），只有需要实际计算时才建议使用分析功能
 - 如果用户的问题实际需要数据分析，建议用户明确描述分析需求
 
 **各级模板共同包含的指令**：

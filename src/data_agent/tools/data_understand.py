@@ -338,9 +338,18 @@ def _has_aggregate_keywords(columns_info: list[dict]) -> bool:
     ),
 )
 def quick_profile(name: str, compact: bool = False) -> str:
+    from data_agent.session.workspace import workspace
+
+    # Check cache: if profile was already computed for this dataset and data hasn't changed
+    cached = workspace.get_metadata(name, "_profile_cache")
+    cached_shape = workspace.get_metadata(name, "_profile_shape")
     df, err = get_df(name)
     if err:
         return err
+
+    current_shape = f"{df.shape[0]}x{df.shape[1]}"
+    if cached and cached_shape == current_shape and not compact:
+        return cached
 
     rows, cols = df.shape
     columns_info = []
@@ -484,7 +493,15 @@ def quick_profile(name: str, compact: bool = False) -> str:
             "suggested_next": suggested_next[:5],
         }
 
-    return json.dumps(result, ensure_ascii=False, indent=2)
+    output = json.dumps(result, ensure_ascii=False, indent=2)
+
+    # Cache the result for future calls (full mode only, not compact)
+    if not compact:
+        from data_agent.session.workspace import workspace
+        workspace.set_metadata(name, "_profile_cache", output)
+        workspace.set_metadata(name, "_profile_shape", f"{rows}x{cols}")
+
+    return output
 
 
 @registry.register(
