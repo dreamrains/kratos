@@ -10,7 +10,8 @@ import pandas as pd
 from scipy import stats as sp_stats
 
 from data_agent.session.workspace import workspace
-from data_agent.tools._utils import get_df, safe_jsonify
+from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range
+from data_agent.tools.registry import ToolResult
 from data_agent.tools.registry import registry
 
 
@@ -151,6 +152,11 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
 @registry.register(
     name="correlation_analysis",
     description="计算数值列之间的相关系数矩阵。返回高相关性列表，完整矩阵自动持久化。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "columns": {"description": "数值列，逗号分隔，为空则分析所有数值列"},
+        "method": {"description": "相关系数方法", "enum": ["pearson", "spearman", "kendall"]},
+    },
 )
 def correlation_analysis(name: str, columns: str = "", method: str = "pearson") -> str:
     df, err = get_df(name)
@@ -262,6 +268,11 @@ def distribution_analysis(name: str, columns: str = "") -> str:
 @registry.register(
     name="segmentation_analysis",
     description="基于特征进行用户/数据分群（KMeans聚类）。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "features": {"description": "分群特征列，逗号分隔"},
+        "n_clusters": {"description": "聚类数量"},
+    },
 )
 def segmentation_analysis(name: str, features: str, n_clusters: int = 3) -> str:
     df, err = get_df(name)
@@ -366,3 +377,685 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
         result["cohorts"].append(row)
 
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@registry.register(
+    name="compare_periods",
+    description=(
+        "比较两个时间段的数据差异。自动计算各指标的变化量和变化率。"
+        "period 参数格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'/'last_week'/'this_week'。"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "date_col": {"description": "日期列名"},
+        "metrics": {"description": "要比较的指标列，逗号分隔，为空则比较所有数值列"},
+        "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
+        "period_b": {"description": "时间段 B（对比期），格式同上"},
+        "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
+    },
+)
+def compare_periods(
+    name: str,
+    date_col: str = "",
+    metrics: str = "",
+    period_a: str = "",
+    period_b: str = "",
+    dimensions: str = "",
+) -> str:
+    df, err = get_df(name)
+    if err:
+        return err
+
+    date_col, dc_err = resolve_date_col(df, date_col)
+    if dc_err:
+        return f"Error: {dc_err}"
+
+    if date_col not in df.columns:
+        return f"Error: 列 '{date_col}' 不存在。可用: {list(df.columns)}"
+
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col])
+
+    ref_date = df[date_col].max().normalize()
+
+    if not period_a or not period_b:
+        return "Error: 请指定 period_a 和 period_b 参数"
+
+    pa = parse_period_range(period_a, ref_date)
+    pb = parse_period_range(period_b, ref_date)
+    if not pa or not pb:
+        return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
+
+    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
+    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    df_a = df[mask_a]
+    df_b = df[mask_b]
+
+    if df_a.empty or df_b.empty:
+        return json.dumps({"error": "某个时间段内没有数据", "period_a_rows": len(df_a), "period_b_rows": len(df_b)}, ensure_ascii=False)
+
+    # 指标列
+    if metrics:
+        metric_cols = [c.strip() for c in metrics.split(",")]
+    else:
+        metric_cols = list(df.select_dtypes(include=[np.number]).columns)
+    metric_cols = [c for c in metric_cols if c in df.columns]
+    if not metric_cols:
+        return "Error: 没有可比较的数值列"
+
+    dim_cols = [c.strip() for c in dimensions.split(",") if c.strip()] if dimensions else []
+
+    result = {
+        "period_a": {"label": period_a, "range": [str(pa[0].date()), str(pa[1].date())], "rows": len(df_a)},
+        "period_b": {"label": period_b, "range": [str(pb[0].date()), str(pb[1].date())], "rows": len(df_b)},
+    }
+
+    if dim_cols:
+        result["dimensions"] = dim_cols
+        result["comparisons"] = []
+        for _, grp_a in df_a.groupby(dim_cols):
+            key = tuple(str(grp_a[dim].iloc[0]) for dim in dim_cols)
+            match_mask = pd.Series(True, index=df_b.index)
+            for dim, val in zip(dim_cols, key):
+                match_mask &= df_b[dim].astype(str) == val
+            grp_b = df_b[match_mask]
+            row = {"dimension": " / ".join(key)}
+            for col in metric_cols:
+                va = grp_a[col].sum() if len(grp_a) > 0 else 0
+                vb = grp_b[col].sum() if len(grp_b) > 0 else 0
+                diff = float(vb) - float(va)
+                pct = (diff / abs(float(va)) * 100) if float(va) != 0 else None
+                row[col] = {"a": round(float(va), 4), "b": round(float(vb), 4), "diff": round(diff, 4), "change_pct": round(pct, 2) if pct is not None else None}
+            result["comparisons"].append(row)
+    else:
+        result["metrics"] = {}
+        for col in metric_cols:
+            va = float(df_a[col].sum())
+            vb = float(df_b[col].sum())
+            diff = vb - va
+            pct = (diff / abs(va) * 100) if va != 0 else None
+            result["metrics"][col] = {
+                "period_a": round(va, 4),
+                "period_b": round(vb, 4),
+                "diff": round(diff, 4),
+                "change_pct": round(pct, 2) if pct is not None else None,
+            }
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@registry.register(
+    name="top_n",
+    description="获取按指定列排序的 Top N 记录。常用于查找销量最高/最低的产品、用户等。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "sort_by": {"description": "排序依据的列名"},
+        "n": {"description": "返回记录数"},
+        "ascending": {"description": "是否升序（False=从大到小）"},
+        "columns": {"description": "返回的列，逗号分隔，为空则返回所有列"},
+    },
+)
+def top_n(name: str, sort_by: str = "", n: int = 10, ascending: bool = False, columns: str = "") -> str:
+    df, err = get_df(name)
+    if err:
+        return err
+
+    if not sort_by:
+        num_cols = list(df.select_dtypes(include=[np.number]).columns)
+        if not num_cols:
+            return "Error: 没有可排序的数值列，请指定 sort_by 参数"
+        sort_by = num_cols[0]
+
+    if sort_by not in df.columns:
+        return f"Error: 列 '{sort_by}' 不存在。可用: {list(df.columns)}"
+
+    sorted_df = df.sort_values(by=sort_by, ascending=ascending)
+
+    if columns:
+        col_list = [c.strip() for c in columns.split(",")]
+        col_list = [c for c in col_list if c in sorted_df.columns]
+        if col_list:
+            sorted_df = sorted_df[col_list]
+
+    top = sorted_df.head(n)
+
+    result = {
+        "sort_by": sort_by,
+        "ascending": ascending,
+        "n": len(top),
+        "records": json.loads(top.to_json(orient="records", date_format="iso", force_ascii=False)),
+    }
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@registry.register(
+    name="contribute_decomposition",
+    description=(
+        "贡献度分解：将指标的总变化拆解为各维度的贡献比例。"
+        "适用于环比/同比变动的归因分析（回答'为什么X变了'）。"
+        "metric 为目标指标列，dimension 为拆解维度列。"
+        "period_a/period_b 格式同 compare_periods（'YYYY-MM-DD~YYYY-MM-DD' 或快捷词）。"
+        "agg_func: sum 时使用绝对值加法分解，mean 时使用加权分解（适用于均值指标如ARPU）。"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "metric": {"description": "目标指标列"},
+        "dimension": {"description": "拆解维度列"},
+        "date_col": {"description": "日期列名"},
+        "period_a": {"description": "基准期，格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
+        "period_b": {"description": "对比期，格式同上"},
+        "agg_func": {"description": "聚合方式", "enum": ["sum", "mean"]},
+    },
+)
+def contribute_decomposition(
+    name: str,
+    metric: str,
+    dimension: str,
+    date_col: str = "",
+    period_a: str = "",
+    period_b: str = "",
+    agg_func: str = "sum",
+) -> str:
+    df, err = get_df(name)
+    if err:
+        return err
+
+    if metric not in df.columns:
+        return f"Error: 列 '{metric}' 不存在。可用: {list(df.columns)}"
+    if dimension not in df.columns:
+        return f"Error: 列 '{dimension}' 不存在。可用: {list(df.columns)}"
+
+    date_col, dc_err = resolve_date_col(df, date_col)
+    if dc_err:
+        return f"Error: {dc_err}"
+
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col, metric, dimension])
+
+    ref_date = df[date_col].max().normalize()
+    pa = parse_period_range(period_a, ref_date)
+    pb = parse_period_range(period_b, ref_date)
+    if not pa or not pb:
+        return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
+
+    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
+    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    df_a = df[mask_a]
+    df_b = df[mask_b]
+
+    if df_a.empty or df_b.empty:
+        return json.dumps({"error": "某个时间段内没有数据"}, ensure_ascii=False)
+
+    # 获取所有维度值（取两个时期的并集）
+    all_dim_values = sorted(set(df_a[dimension].unique()) | set(df_b[dimension].unique()))
+
+    if agg_func == "sum":
+        # 绝对值加法分解: total_change = sum(contribution[v])
+        total_a = float(df_a[metric].sum())
+        total_b = float(df_b[metric].sum())
+        total_change = total_b - total_a
+
+        decomposition = []
+        for v in all_dim_values:
+            va = float(df_a.loc[df_a[dimension] == v, metric].sum())
+            vb = float(df_b.loc[df_b[dimension] == v, metric].sum())
+            contrib = vb - va
+            pct = (contrib / abs(total_change) * 100) if total_change != 0 else None
+            decomposition.append({
+                "value": str(v),
+                "period_a": round(va, 4),
+                "period_b": round(vb, 4),
+                "contribution": round(contrib, 4),
+                "contribution_pct": round(pct, 2) if pct is not None else None,
+                "direction": "positive" if contrib > 0 else "negative" if contrib < 0 else "neutral",
+            })
+    else:
+        # mean 加权分解: total_change ≈ sum(weight_change + level_change)
+        total_a = float(df_a[metric].mean())
+        total_b = float(df_b[metric].mean())
+        total_change = total_b - total_a
+        n_a, n_b = len(df_a), len(df_b)
+
+        decomposition = []
+        for v in all_dim_values:
+            grp_a = df_a[df_a[dimension] == v]
+            grp_b = df_b[df_b[dimension] == v]
+            mean_a_v = float(grp_a[metric].mean()) if len(grp_a) > 0 else 0
+            mean_b_v = float(grp_b[metric].mean()) if len(grp_b) > 0 else 0
+            weight_a = len(grp_a) / n_a if n_a > 0 else 0
+            weight_b = len(grp_b) / n_b if n_b > 0 else 0
+
+            # 加权分解
+            weight_effect = (weight_b - weight_a) * (mean_a_v - total_a)
+            level_effect = weight_b * (mean_b_v - mean_a_v)
+            contrib = weight_effect + level_effect
+
+            pct = (contrib / abs(total_change) * 100) if total_change != 0 else None
+            decomposition.append({
+                "value": str(v),
+                "period_a_mean": round(mean_a_v, 4),
+                "period_b_mean": round(mean_b_v, 4),
+                "weight_a": round(weight_a, 4),
+                "weight_b": round(weight_b, 4),
+                "contribution": round(contrib, 4),
+                "contribution_pct": round(pct, 2) if pct is not None else None,
+                "direction": "positive" if contrib > 0 else "negative" if contrib < 0 else "neutral",
+            })
+
+    # 排序：按绝对贡献度降序
+    decomposition.sort(key=lambda x: -abs(x["contribution"]))
+
+    total_pct = round(total_change / abs(total_a) * 100, 2) if total_a != 0 else None
+
+    top_neg = [d["value"] for d in decomposition if d["direction"] == "negative"][:3]
+    top_pos = [d["value"] for d in decomposition if d["direction"] == "positive"][:3]
+
+    data = {
+        "metric": metric,
+        "dimension": dimension,
+        "agg_func": agg_func,
+        "period_a": {"label": period_a, "range": [str(pa[0].date()), str(pa[1].date())], "value": round(total_a, 4)},
+        "period_b": {"label": period_b, "range": [str(pb[0].date()), str(pb[1].date())], "value": round(total_b, 4)},
+        "total_change": round(total_change, 4),
+        "total_change_pct": total_pct,
+        "decomposition": decomposition,
+        "top_negative": top_neg,
+        "top_positive": top_pos,
+    }
+
+    # CLI summary
+    summary_lines = [
+        f"指标 '{metric}' {period_a}→{period_b} 变化: {total_change:+.4f} ({total_pct:+.2f}%)" if total_pct is not None else f"指标 '{metric}' 变化: {total_change:+.4f}",
+        f"按 '{dimension}' 拆解:",
+    ]
+    for d in decomposition[:5]:
+        pct_str = f" ({d['contribution_pct']:+.1f}%)" if d["contribution_pct"] is not None else ""
+        summary_lines.append(f"  {d['value']}: {d['contribution']:+.4f}{pct_str}")
+    if top_neg:
+        summary_lines.append(f"主要下降因素: {', '.join(top_neg)}")
+    if top_pos:
+        summary_lines.append(f"主要增长因素: {', '.join(top_pos)}")
+
+    return ToolResult(
+        summary="\n".join(summary_lines),
+        data=data,
+        suggested_next="compare_periods 查看更多指标的变化",
+    )
+
+
+@registry.register(
+    name="funnel_analysis",
+    description=(
+        "漏斗转化分析。支持三种数据格式：\n"
+        "- steps 模式（场景A）：事件明细数据，指定 user_col/event_col，"
+        "  steps 为有序事件列表（逗号分隔），自动统计每步用户数和转化率。\n"
+        "- aggregate 模式（场景B）：预聚合的步骤数据，指定 step_col/count_col，"
+        "  steps 为步骤名称列表（逗号分隔，按顺序）。\n"
+        "- rates 模式（场景C）：宽表多列率数据，指定 rate_cols（逗号分隔），"
+        "  每列代表一个累积转化率（相对于第一步），自动推算步骤间转化率。\n"
+        "mode 为 auto 时自动检测数据格式。dimension 参数可选，按维度分组生成子漏斗。"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "mode": {"description": "分析模式", "enum": ["auto", "steps", "aggregate", "rates"]},
+        "user_col": {"description": "用户ID列（steps 模式）"},
+        "event_col": {"description": "事件类型列（steps 模式）"},
+        "time_col": {"description": "事件时间列（steps 模式，可选）"},
+        "steps": {"description": "步骤名称列表（逗号分隔）"},
+        "step_col": {"description": "步骤名称列（aggregate 模式）"},
+        "count_col": {"description": "计数值列（aggregate 模式）"},
+        "rate_cols": {"description": "累积转化率列名（逗号分隔，rates 模式）"},
+        "dimension": {"description": "维度列名（可选，按维度分组）"},
+        "window_hours": {"description": "步骤间最大时间窗口（小时，0=不限制，steps 模式）"},
+    },
+)
+def funnel_analysis(
+    name: str,
+    mode: str = "auto",
+    user_col: str = "",
+    event_col: str = "",
+    time_col: str = "",
+    steps: str = "",
+    step_col: str = "",
+    count_col: str = "",
+    rate_cols: str = "",
+    dimension: str = "",
+    window_hours: int = 0,
+) -> str:
+    df, err = get_df(name)
+    if err:
+        return err
+
+    # Auto-detect mode
+    if mode == "auto":
+        if user_col and event_col and steps:
+            mode = "steps"
+        elif step_col and count_col:
+            mode = "aggregate"
+        elif rate_cols:
+            mode = "rates"
+        else:
+            # 尝试基于数据结构推断
+            cols_lower = {c.lower(): c for c in df.columns}
+            if any(k in cols_lower for k in ["user_id", "uid", "openid"]) and any(
+                k in cols_lower for k in ["event", "action", "event_type"]
+            ):
+                mode = "steps"
+            elif any(k in cols_lower for k in ["step", "stage", "阶段", "步骤"]):
+                mode = "aggregate"
+            else:
+                # 检查是否有多个率列
+                rate_cols_found = [
+                    c for c in df.columns
+                    if any(kw in c.lower() for kw in ("率", "rate", "ratio", "pct"))
+                    and pd.api.types.is_numeric_dtype(df[c])
+                ]
+                if len(rate_cols_found) >= 2:
+                    rate_cols = ",".join(rate_cols_found)
+                    mode = "rates"
+                else:
+                    return "Error: 无法自动检测漏斗模式。请指定 mode 和相应参数。"
+
+    if mode == "steps":
+        return _funnel_steps(df, name, user_col, event_col, time_col, steps, dimension, window_hours)
+    elif mode == "aggregate":
+        return _funnel_aggregate(df, name, step_col, count_col, steps, dimension)
+    elif mode == "rates":
+        return _funnel_rates(df, name, rate_cols, dimension)
+    else:
+        return f"Error: 不支持的模式 '{mode}'。可用: auto, steps, aggregate, rates"
+
+
+def _funnel_steps(
+    df: pd.DataFrame, name: str, user_col: str, event_col: str,
+    time_col: str, steps: str, dimension: str, window_hours: int,
+) -> str:
+    """场景A：事件明细数据的漏斗分析。"""
+    step_list = [s.strip() for s in steps.split(",") if s.strip()]
+    if len(step_list) < 2:
+        return "Error: steps 至少需要 2 个步骤"
+
+    for col in [user_col, event_col]:
+        if col not in df.columns:
+            return f"Error: 列 '{col}' 不存在。可用: {list(df.columns)}"
+
+    if time_col and time_col not in df.columns:
+        return f"Error: 时间列 '{time_col}' 不存在"
+
+    # 检查所有步骤是否在数据中存在
+    existing_events = set(df[event_col].dropna().unique())
+    missing_steps = [s for s in step_list if s not in existing_events]
+    if missing_steps:
+        return f"Error: 步骤 {missing_steps} 在 '{event_col}' 列中不存在。可用事件: {list(existing_events)[:20]}"
+
+    dim_values = [None]
+    if dimension:
+        if dimension not in df.columns:
+            return f"Error: 维度列 '{dimension}' 不存在"
+        dim_values = list(df[dimension].dropna().unique())
+
+    overall_steps_data = {s: set() for s in step_list}
+    dim_funnels = {}
+
+    for dv in dim_values:
+        sub_df = df if dv is None else df[df[dimension] == dv]
+        step_counts = {s: 0 for s in step_list}
+
+        for uid, user_events in sub_df.groupby(user_col):
+            user_step_times = {}
+            for i, step in enumerate(step_list):
+                mask = user_events[event_col] == step
+                step_events = user_events[mask]
+                if step_events.empty:
+                    break
+
+                if time_col and time_col in step_events.columns:
+                    first_time = pd.to_datetime(step_events[time_col]).min()
+                    if i > 0 and step_list[i - 1] in user_step_times:
+                        if first_time < user_step_times[step_list[i - 1]]:
+                            break
+                        if window_hours > 0:
+                            elapsed = (first_time - user_step_times[step_list[i - 1]]).total_seconds() / 3600
+                            if elapsed > window_hours:
+                                break
+                    user_step_times[step] = first_time
+                else:
+                    user_step_times[step] = True
+
+                step_counts[step] += 1
+                if dv is None:
+                    overall_steps_data[step].add(uid)
+
+        funnel_steps_list = []
+        for i, step in enumerate(step_list):
+            count = step_counts[step]
+            entry = {"step": step, "count": count}
+            if i > 0:
+                prev_count = step_counts[step_list[i - 1]]
+                entry["step_conversion"] = round(count / prev_count, 4) if prev_count > 0 else 0
+            funnel_steps_list.append(entry)
+
+        overall_conv = round(step_counts[step_list[-1]] / step_counts[step_list[0]], 4) if step_counts[step_list[0]] > 0 else 0
+
+        if dv is not None:
+            dim_funnels[str(dv)] = {
+                "overall_conversion": overall_conv,
+                "steps": funnel_steps_list,
+            }
+        else:
+            dim_funnels["all"] = {
+                "overall_conversion": overall_conv,
+                "steps": funnel_steps_list,
+            }
+
+    # 构建总漏斗（无维度时）
+    final_steps = dim_funnels.get("all", {}).get("steps", [])
+    if not final_steps and dim_funnels:
+        final_steps = list(dim_funnels.values())[0]["steps"]
+
+    # 找最大流失点
+    biggest_drop = None
+    for i in range(1, len(final_steps)):
+        if final_steps[i].get("step_conversion") is not None:
+            drop_rate = 1 - final_steps[i]["step_conversion"]
+            if biggest_drop is None or drop_rate > biggest_drop["drop_rate"]:
+                biggest_drop = {
+                    "from": final_steps[i - 1]["step"],
+                    "to": final_steps[i]["step"],
+                    "drop_rate": round(drop_rate, 4),
+                }
+
+    data = {
+        "mode": "steps",
+        "steps": final_steps,
+        "overall_conversion": final_steps[-1]["count"] / final_steps[0]["count"] if final_steps and final_steps[0]["count"] > 0 else 0,
+        "biggest_drop": biggest_drop,
+        "dimension_funnels": dim_funnels if dimension else None,
+    }
+
+    summary_lines = [f"漏斗分析（事件明细）: {' → '.join(step_list)}"]
+    for s in final_steps:
+        conv = f" (转化: {s['step_conversion']:.1%})" if "step_conversion" in s else ""
+        summary_lines.append(f"  {s['step']}: {s['count']}{conv}")
+    if biggest_drop:
+        summary_lines.append(f"最大流失: {biggest_drop['from']} → {biggest_drop['to']} (流失率 {biggest_drop['drop_rate']:.1%})")
+
+    return ToolResult(
+        summary="\n".join(summary_lines),
+        data=data,
+        suggested_next="contribute_decomposition 分析各维度转化差异",
+    )
+
+
+def _funnel_aggregate(
+    df: pd.DataFrame, name: str, step_col: str, count_col: str,
+    steps: str, dimension: str,
+) -> str:
+    """场景B：预聚合步骤数据的漏斗分析。"""
+    if step_col not in df.columns or count_col not in df.columns:
+        return f"Error: 列不存在。可用: {list(df.columns)}"
+
+    step_order = [s.strip() for s in steps.split(",") if s.strip()] if steps else None
+
+    dim_values = [None]
+    if dimension:
+        if dimension not in df.columns:
+            return f"Error: 维度列 '{dimension}' 不存在"
+        dim_values = list(df[dimension].dropna().unique())
+
+    dim_funnels = {}
+
+    for dv in dim_values:
+        sub_df = df if dv is None else df[df[dimension] == dv]
+
+        if step_order:
+            ordered_steps = step_order
+        else:
+            ordered_steps = list(sub_df.sort_values(count_col, ascending=False)[step_col].values)
+
+        funnel_steps_list = []
+        prev_count = None
+        for i, step_name in enumerate(ordered_steps):
+            row = sub_df[sub_df[step_col] == step_name]
+            count = int(row[count_col].sum()) if not row.empty else 0
+            entry = {"step": str(step_name), "count": count}
+            if i > 0 and prev_count and prev_count > 0:
+                entry["step_conversion"] = round(count / prev_count, 4)
+            funnel_steps_list.append(entry)
+            prev_count = count
+
+        overall_conv = round(funnel_steps_list[-1]["count"] / funnel_steps_list[0]["count"], 4) if funnel_steps_list and funnel_steps_list[0]["count"] > 0 else 0
+        dim_funnels[str(dv) if dv is not None else "all"] = {
+            "overall_conversion": overall_conv,
+            "steps": funnel_steps_list,
+        }
+
+    final_steps = dim_funnels.get("all", {}).get("steps", [])
+    if not final_steps and dim_funnels:
+        final_steps = list(dim_funnels.values())[0]["steps"]
+
+    biggest_drop = None
+    for i in range(1, len(final_steps)):
+        if final_steps[i].get("step_conversion") is not None:
+            drop_rate = 1 - final_steps[i]["step_conversion"]
+            if biggest_drop is None or drop_rate > biggest_drop["drop_rate"]:
+                biggest_drop = {
+                    "from": final_steps[i - 1]["step"],
+                    "to": final_steps[i]["step"],
+                    "drop_rate": round(drop_rate, 4),
+                }
+
+    data = {
+        "mode": "aggregate",
+        "steps": final_steps,
+        "overall_conversion": final_steps[-1]["count"] / final_steps[0]["count"] if final_steps and final_steps[0]["count"] > 0 else 0,
+        "biggest_drop": biggest_drop,
+        "dimension_funnels": dim_funnels if dimension else None,
+    }
+
+    summary_lines = [f"漏斗分析（预聚合数据）:"]
+    for s in final_steps:
+        conv = f" (转化: {s['step_conversion']:.1%})" if "step_conversion" in s else ""
+        summary_lines.append(f"  {s['step']}: {s['count']}{conv}")
+    if biggest_drop:
+        summary_lines.append(f"最大流失: {biggest_drop['from']} → {biggest_drop['to']} (流失率 {biggest_drop['drop_rate']:.1%})")
+
+    return ToolResult(
+        summary="\n".join(summary_lines),
+        data=data,
+        suggested_next="create_chart(funnel) 可视化漏斗",
+    )
+
+
+def _funnel_rates(
+    df: pd.DataFrame, name: str, rate_cols: str, dimension: str,
+) -> str:
+    """场景C：宽表多列率数据的漏斗分析。"""
+    cols = [c.strip() for c in rate_cols.split(",") if c.strip()]
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        return f"Error: 列不存在: {missing}。可用: {list(df.columns)}"
+
+    for c in cols:
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            return f"Error: 列 '{c}' 不是数值类型"
+
+    dim_values = [None]
+    if dimension:
+        if dimension not in df.columns:
+            return f"Error: 维度列 '{dimension}' 不存在"
+        dim_values = list(df[dimension].dropna().unique())
+
+    dim_funnels = {}
+
+    for dv in dim_values:
+        sub_df = df if dv is None else df[df[dimension] == dv]
+
+        # 使用均值作为代表性转化率
+        cumulative_rates = []
+        for c in cols:
+            rate_val = float(sub_df[c].mean())
+            cumulative_rates.append(min(rate_val, 1.0))  # cap at 100%
+
+        funnel_steps_list = []
+        for i, (col, cum_rate) in enumerate(zip(cols, cumulative_rates)):
+            entry = {"step": col, "cumulative_rate": round(cum_rate, 4)}
+            if i == 0:
+                entry["count"] = 10000  # 假设基准量
+            else:
+                entry["count"] = int(round(cum_rate * 10000))
+
+            if i > 0 and cumulative_rates[i - 1] > 0:
+                step_conv = cum_rate / cumulative_rates[i - 1]
+                entry["step_conversion"] = round(step_conv, 4)
+            elif i == 0:
+                entry["step_conversion"] = 1.0
+
+            funnel_steps_list.append(entry)
+
+        overall_conv = round(cumulative_rates[-1], 4) if cumulative_rates else 0
+        dim_funnels[str(dv) if dv is not None else "all"] = {
+            "overall_conversion": overall_conv,
+            "steps": funnel_steps_list,
+        }
+
+    final_steps = dim_funnels.get("all", {}).get("steps", [])
+    if not final_steps and dim_funnels:
+        final_steps = list(dim_funnels.values())[0]["steps"]
+
+    biggest_drop = None
+    for i in range(1, len(final_steps)):
+        if final_steps[i].get("step_conversion") is not None:
+            drop_rate = 1 - final_steps[i]["step_conversion"]
+            if biggest_drop is None or drop_rate > biggest_drop["drop_rate"]:
+                biggest_drop = {
+                    "from": final_steps[i - 1]["step"],
+                    "to": final_steps[i]["step"],
+                    "drop_rate": round(drop_rate, 4),
+                }
+
+    data = {
+        "mode": "rates",
+        "steps": final_steps,
+        "overall_conversion": final_steps[-1]["cumulative_rate"] if final_steps else 0,
+        "biggest_drop": biggest_drop,
+        "dimension_funnels": dim_funnels if dimension else None,
+        "note": "rate_cols 为累积转化率，step_conversion 为步骤间转化率",
+    }
+
+    summary_lines = [f"漏斗分析（率列模式）:"]
+    for s in final_steps:
+        conv = f" (步骤转化: {s['step_conversion']:.1%})" if "step_conversion" in s and s["step_conversion"] < 1 else ""
+        cum = f" 累积: {s['cumulative_rate']:.1%}" if "cumulative_rate" in s else ""
+        summary_lines.append(f"  {s['step']}: {cum}{conv}")
+    if biggest_drop:
+        summary_lines.append(f"最大流失: {biggest_drop['from']} → {biggest_drop['to']} (流失率 {biggest_drop['drop_rate']:.1%})")
+
+    return ToolResult(
+        summary="\n".join(summary_lines),
+        data=data,
+        suggested_next="ab_test 检验维度间转化率差异显著性",
+    )

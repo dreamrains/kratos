@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from data_agent.session.workspace import workspace
-from data_agent.tools._utils import get_df, persist_detail
+from data_agent.tools._utils import get_df, persist_detail, validate_pandas_expr
 from data_agent.tools.registry import registry
 
 
@@ -174,6 +174,10 @@ def derive_field(name: str, field_name: str, expression: str) -> str:
     df, err = get_df(name)
     if err:
         return err
+
+    err = validate_pandas_expr(expression)
+    if err:
+        return f"Error: 表达式不安全 — {err}"
 
     try:
         new_col = df.eval(expression)
@@ -478,6 +482,14 @@ def quick_profile(name: str, compact: bool = False) -> str:
         # 移除 None 值以节省 token
         result["summary"] = {k: v for k, v in result["summary"].items() if v is not None}
     else:
+        # 非 compact 模式：追加 interpret_dataset 的推荐分析路径
+        suggested_analyses = []
+        try:
+            classified = _classify_columns(df)
+            suggested_analyses = _build_suggested_analyses(classified, grain_info)
+        except Exception:
+            pass
+
         result = {
             "shape": [rows, cols],
             "columns": columns_info,
@@ -491,6 +503,7 @@ def quick_profile(name: str, compact: bool = False) -> str:
             "readiness": readiness,
             "warnings": quality_issues + warnings,
             "suggested_next": suggested_next[:5],
+            "suggested_analyses": suggested_analyses[:5],
         }
 
     output = json.dumps(result, ensure_ascii=False, indent=2)
@@ -616,3 +629,343 @@ def assess_readiness(name: str, intent: str = "") -> str:
         "rows": rows,
         "cols": cols,
     }, ensure_ascii=False, indent=2)
+
+
+# ── 业务语义理解 ──────────────────────────────────────────
+
+# 率类指标关键词
+_RATE_KEYWORDS = (
+    "率", "rate", "ratio", "pct", "percent", "占比", "转化", "留存", "付费率",
+    "完成率", "成功率", "点击率", "渗透率", "覆盖率",
+)
+
+# 行业主题模板
+_THEME_PATTERNS: dict[str, list[str]] = {
+    "游戏": ["arpu", "arppu", "dau", "mau", "ltv", "留存", "付费", "游戏", "渠道", "充值", "wa", "wap"],
+    "电商": ["gmv", "客单价", "复购", "uv", "pv", "转化率", "订单", "商品", "购物车", "退货"],
+    "广告营销": ["ctr", "cvr", "cpm", "cpc", "cpa", "曝光", "点击", "投放", "roi", "roas", "素材"],
+    "金融": ["余额", "贷款", "利率", "逾期", "坏账", "资产", "负债", "净值", "收益", "波动率"],
+    "内容/社交": ["点赞", "评论", "分享", "收藏", "关注", "粉丝", "帖子", "播放", "互动"],
+}
+
+# 分析路径策略矩阵
+_ANALYSIS_STRATEGY: list[dict] = [
+    {
+        "conditions": {"has_time": True, "has_dimensions": True},
+        "analyses": [
+            {"direction": "趋势分析", "tools": ["analyze_time_series"], "priority": 1},
+            {"direction": "维度对比", "tools": ["compare_periods", "ab_test"], "priority": 2},
+            {"direction": "变动归因", "tools": ["contribute_decomposition"], "priority": 3},
+        ],
+    },
+    {
+        "conditions": {"has_time": True, "has_dimensions": False},
+        "analyses": [
+            {"direction": "趋势分析", "tools": ["analyze_time_series"], "priority": 1},
+            {"direction": "异常检测", "tools": ["distribution_analysis"], "priority": 2},
+            {"direction": "趋势预测", "tools": ["forecast"], "priority": 3},
+        ],
+    },
+    {
+        "conditions": {"has_time": False, "has_dimensions": True},
+        "analyses": [
+            {"direction": "分组对比", "tools": ["ab_test", "transform_data(group_aggregate)"], "priority": 1},
+            {"direction": "相关性分析", "tools": ["correlation_analysis"], "priority": 2},
+        ],
+    },
+    {
+        "conditions": {"has_time": False, "has_dimensions": False},
+        "analyses": [
+            {"direction": "分布分析", "tools": ["distribution_analysis"], "priority": 1},
+            {"direction": "异常检测", "tools": ["detect_data_quality"], "priority": 2},
+            {"direction": "相关性分析", "tools": ["correlation_analysis"], "priority": 3},
+        ],
+    },
+]
+
+
+def _classify_columns(df: pd.DataFrame) -> dict:
+    """将 DataFrame 的列分类为 id/time/dimension/metric 等角色。"""
+    rows = len(df)
+    id_cols = []
+    time_cols = []
+    dim_cols = []
+    key_metrics = []
+    rate_metrics = []
+    other_numeric = []
+    other_text = []
+
+    id_patterns = ["id", "uid", "user_id", "order_id", "device_id", "uuid", "openid"]
+
+    for col in df.columns:
+        nunique = df[col].nunique()
+        missing_pct = df[col].isnull().sum() / rows * 100 if rows > 0 else 0
+        col_lower = col.lower().replace(" ", "").replace("_", "")
+
+        # ID 列
+        if any(p in col_lower for p in id_patterns) and nunique >= rows * 0.8:
+            id_cols.append({"column": col, "unique_count": nunique})
+            continue
+
+        # 时间列
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            time_cols.append(col)
+            continue
+        if df[col].dtype == object:
+            try:
+                pd.to_datetime(df[col].dropna().head(20))
+                time_cols.append(col)
+                continue
+            except (ValueError, TypeError):
+                pass
+
+        # 率类指标
+        col_orig_lower = col.lower()
+        if any(kw in col_orig_lower for kw in _RATE_KEYWORDS):
+            if pd.api.types.is_numeric_dtype(df[col]):
+                rate_metrics.append({"column": col, "is_rate": True, "unique_count": nunique})
+                continue
+
+        # 类别维度
+        if not pd.api.types.is_numeric_dtype(df[col]) and nunique < max(rows * 0.05, 2) and nunique >= 2:
+            dim_cols.append({"column": col, "unique_count": nunique})
+            continue
+
+        # 数值列
+        if pd.api.types.is_numeric_dtype(df[col]):
+            if nunique > 2:
+                key_metrics.append({"column": col, "is_rate": False, "unique_count": nunique})
+            else:
+                other_numeric.append(col)
+            continue
+
+        other_text.append(col)
+
+    # 按 variance rank 排序 key_metrics
+    if key_metrics:
+        metric_variances = []
+        for m in key_metrics:
+            vals = df[m["column"]].dropna()
+            var = float(vals.var()) if len(vals) > 1 else 0
+            metric_variances.append((m, var))
+        metric_variances.sort(key=lambda x: -x[1])
+        key_metrics = [
+            {**m, "variance_rank": i + 1}
+            for i, (m, _) in enumerate(metric_variances)
+        ]
+
+    return {
+        "id_columns": id_cols,
+        "time_columns": time_cols,
+        "dimensions": dim_cols,
+        "key_metrics": key_metrics[:8],
+        "rate_metrics": rate_metrics,
+        "other_numeric": other_numeric,
+        "other_text": other_text,
+    }
+
+
+def _detect_time_range(df: pd.DataFrame, time_cols: list[str]) -> dict | None:
+    """检测时间列的数据范围。要求 time_cols 中的列已经是 datetime 类型。"""
+    if not time_cols:
+        return None
+    col = time_cols[0]
+    vals = df[col].dropna()
+    if len(vals) == 0:
+        return None
+    mn, mx = vals.min(), vals.max()
+    span = (mx - mn).days if hasattr(mx - mn, "days") else 0
+    return {
+        "column": col,
+        "min": str(mn)[:10],
+        "max": str(mx)[:10],
+        "span_days": span,
+    }
+
+
+def _match_theme(columns_classified: dict) -> tuple[str, str]:
+    """基于列名关键词匹配行业主题。返回 (theme, confidence)。"""
+    all_cols_lower = set()
+    for m in columns_classified.get("key_metrics", []):
+        all_cols_lower.add(m["column"].lower())
+    for m in columns_classified.get("rate_metrics", []):
+        all_cols_lower.add(m["column"].lower())
+    for d in columns_classified.get("dimensions", []):
+        all_cols_lower.add(d["column"].lower())
+
+    best_theme = "unknown"
+    best_score = 0
+    for theme, keywords in _THEME_PATTERNS.items():
+        score = sum(1 for kw in keywords if any(kw in c for c in all_cols_lower))
+        if score > best_score:
+            best_score = score
+            best_theme = theme
+
+    confidence = "high" if best_score >= 3 else "medium" if best_score >= 2 else "low"
+    return best_theme, confidence
+
+
+def _build_suggested_analyses(
+    columns_classified: dict,
+    grain_info: dict,
+) -> list[dict]:
+    """根据数据特征构建推荐分析路径。"""
+    has_time = bool(columns_classified.get("time_columns"))
+    has_dims = bool(columns_classified.get("dimensions"))
+    has_ids = bool(columns_classified.get("id_columns"))
+    has_rates = bool(columns_classified.get("rate_metrics"))
+
+    # 匹配策略矩阵
+    matched = []
+    for strategy in _ANALYSIS_STRATEGY:
+        cond = strategy["conditions"]
+        if cond.get("has_time") == has_time and cond.get("has_dimensions") == has_dims:
+            matched = strategy["analyses"]
+            break
+
+    # 追加基于特殊特征的推荐
+    extras = []
+    if has_ids:
+        extras.append({"direction": "漏斗/留存分析", "tools": ["funnel_analysis", "cohort_analysis"], "priority": 4})
+    if has_rates:
+        extras.append({"direction": "率指标变动追踪", "tools": ["compare_periods", "contribute_decomposition"], "priority": 4})
+
+    # 率类指标追加提示
+    result = list(matched)
+    for e in extras:
+        if not any(a["direction"] == e["direction"] for a in result):
+            result.append(e)
+
+    # 排序并添加 reason
+    result.sort(key=lambda x: x["priority"])
+    for r in result:
+        r.setdefault("reason", "")
+
+    # 为每个推荐生成 reason
+    reasons = {
+        "趋势分析": "检测指标的时间走向和周期性",
+        "维度对比": "比较不同分组间的差异",
+        "变动归因": "拆解指标变化的驱动因素",
+        "异常检测": "识别偏离正常范围的数据点",
+        "趋势预测": "基于历史数据预测未来趋势",
+        "分组对比": "比较不同群体间的关键差异",
+        "相关性分析": "发现指标间的关联关系",
+        "分布分析": "了解数据的分布特征和集中趋势",
+        "漏斗/留存分析": "追踪用户转化路径或留存情况",
+        "率指标变动追踪": "率类指标的小幅变动也值得关注",
+    }
+    for r in result:
+        r["reason"] = reasons.get(r["direction"], "")
+
+    return result[:6]
+
+
+@registry.register(
+    name="interpret_dataset",
+    description=(
+        "推断数据集的业务语义：列角色分类、分析信号检测、推荐分析路径。"
+        "输出结构化数据供分析引擎使用，不含 LLM 推断（由 prompt 层完成）。"
+    ),
+)
+def interpret_dataset(name: str) -> str:
+    from data_agent.tools.registry import ToolResult, ArtifactRef
+
+    df, err = get_df(name)
+    if err:
+        return err
+
+    rows, cols = df.shape
+
+    # 0. 确保字符串日期列被转为 datetime（与 load_data 中 auto_clean 行为一致）
+    for col in df.columns:
+        if df[col].dtype == object and col not in (df.select_dtypes(include=[np.number]).columns):
+            sample = df[col].dropna().head(20)
+            if len(sample) > 0:
+                try:
+                    pd.to_datetime(sample)
+                    df = df.copy()
+                    df[col] = pd.to_datetime(df[col], errors="coerce")
+                except (ValueError, TypeError):
+                    pass
+
+    # 1. 列分类
+    classified = _classify_columns(df)
+
+    # 2. 时间范围
+    time_range = _detect_time_range(df, classified["time_columns"])
+
+    # 3. 粒度检测（复用已有逻辑）
+    columns_info = []
+    for col in df.columns:
+        dtype = str(df[col].dtype)
+        missing_pct = round(df[col].isnull().sum() / rows * 100, 2) if rows > 0 else 0
+        nunique = int(df[col].nunique())
+        likely_type = "unknown"
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            likely_type = "date"
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            likely_type = "number"
+        elif nunique / rows < 0.05 if rows > 0 else False:
+            likely_type = "category"
+        else:
+            likely_type = "text"
+        columns_info.append({
+            "name": col, "dtype": dtype, "likely_type": likely_type,
+            "missing_pct": missing_pct, "unique_values": nunique,
+        })
+    grain_info = _detect_grain(df, columns_info)
+
+    # 4. 分析信号
+    signals = {
+        "has_time": bool(classified["time_columns"]),
+        "has_dimensions": len(classified["dimensions"]) > 0,
+        "has_rates": len(classified["rate_metrics"]) > 0,
+        "has_ids": len(classified["id_columns"]) > 0,
+        "metric_count": len(classified["key_metrics"]) + len(classified["rate_metrics"]),
+        "dimension_count": len(classified["dimensions"]),
+    }
+
+    # 5. 推荐分析路径
+    suggested = _build_suggested_analyses(classified, grain_info)
+
+    # 6. 主题匹配
+    theme, theme_confidence = _match_theme(classified)
+
+    # 构建结果
+    data = {
+        "theme": theme,
+        "theme_confidence": theme_confidence,
+        "grain": grain_info["grain"],
+        "grain_hint": grain_info["grain_hint"],
+        "columns_classified": classified,
+        "data_shape": {"rows": rows, "columns": cols},
+        "time_range": time_range,
+        "analysis_signals": signals,
+        "suggested_analyses": suggested,
+    }
+
+    # CLI summary
+    summary_parts = [f"数据集 '{name}' ({rows}×{cols})"]
+    if theme != "unknown":
+        summary_parts.append(f"行业主题: {theme} (置信度: {theme_confidence})")
+    summary_parts.append(f"粒度: {grain_info['grain']}")
+    if classified["key_metrics"]:
+        metric_names = [m["column"] for m in classified["key_metrics"][:5]]
+        summary_parts.append(f"关键指标: {', '.join(metric_names)}")
+    if classified["dimensions"]:
+        dim_names = [d["column"] for d in classified["dimensions"][:5]]
+        summary_parts.append(f"维度: {', '.join(dim_names)}")
+    if time_range:
+        summary_parts.append(f"时间范围: {time_range['min']} ~ {time_range['max']} ({time_range['span_days']}天)")
+    if suggested:
+        summary_parts.append("推荐分析:")
+        for s in suggested[:3]:
+            summary_parts.append(f"  {s['priority']}. {s['direction']} — {s['reason']}")
+
+    summary = "\n".join(summary_parts)
+
+    return ToolResult(
+        summary=summary,
+        data=data,
+        suggested_next=suggested[0]["tools"][0] if suggested else None,
+    )

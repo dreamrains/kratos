@@ -1,10 +1,37 @@
 # 数据分析专家型 Agent 需求文档
 
-> **文档状态**：V9.1 分析效率与体验优化
+> **文档状态**：V11.0 分析引擎增强
 > **目标开发平台**：Claude Code
 > **核心定位**：具备业务分析师思维、可对话、可自动出报告、可监控的协作型分析专家
 >
-> **V9.1 变更摘要**：
+> **V11.0 变更摘要**：
+> - **共享分析引擎**：新增 `AGENT_ANALYSIS_ENGINE` 常量（~80行），包含策略表、多视角思考规则、工具映射表、数据加载行为、动态模糊意图引导、数据粒度约束、上下文复用规则。注入到 STANDARD 和 FULL 两个模式，消除此前两份模板的重复内容
+> - **业务语义理解（interpret_dataset）**：新增工具，自动推断列角色（ID/时间/维度/指标/率指标）、检测分析信号、匹配行业主题（游戏/电商/广告营销/金融/内容社交）、推荐分析路径。`load_data` 加载后自动调用
+> - **贡献度分解（contribute_decomposition）**：新增工具，将指标总变化拆解为各维度贡献。支持 sum（绝对值加法分解）和 mean（加权分解）两种聚合模式，返回 ToolResult
+> - **漏斗分析（funnel_analysis）**：新增工具，支持三种数据格式：steps（事件明细，含用户跟踪和时间窗口）、aggregate（预聚合步骤计数）、rates（宽表累积率列）。auto 模式自动检测数据格式。可选维度分组
+> - **情景模拟（what_if_simulation）**：新增工具，支持三级模拟：sensitivity（参数敏感性，含反向推算）、predict（基于回归模型预测，自动训练）、optimize（约束目标规划）
+> - **多视角思考**：Prompt 层要求每个关键结论经过三视角自检（验证视角/业务视角/因果视角），防止误读数据
+> - **自我反驳机制**：FULL 模式报告阶段增加 Phase 3.8，扫描洞察列表中的矛盾结论并用数据验证
+> - **Prompt 重构**：STANDARD 模式改为 5 步流程（新增策略制定环节）；FULL 模式增加 Phase 1.8 策略制定、Phase 3.5 贡献归因（要求竞争假设）、漏斗类型洞察
+> - **意图分类增强**：规则 2.7——已有数据上下文时，分析意图词（趋势/对比/归因等）不降级为 chat
+> - **共享日期函数**：`_utils.py` 新增 `resolve_date_col()` 和 `parse_period_range()`，`compare_periods` 和 `contribute_decomposition` 共用
+> - **漏斗图可视化**：`create_chart` 新增 funnel 类型，使用 Plotly `go.Funnel`
+> - **`interpret_dataset` 入口类型保护**：自动扫描 object 列并尝试转为 datetime，确保下游分析函数拿到正确类型（与 `auto_clean` 行为对齐）
+> - **测试**：`test_v10_new.py` 新增 88 个测试覆盖全部新功能；`test_tools_comprehensive.py` 110 个回归测试全部通过
+>
+> **V10.1 变更摘要**：
+> - **Schema 增强**：14 个工具添加 `schema_overrides`，关键参数增加 enum 约束和 description
+> - **分组激活重置**：新增 `reset_groups()` 方法，每轮重新计算活跃工具
+> - **错误恢复下沉**：`format_result()` 统一错误恢复提示，支持自定义 `recovery_hint`
+> - **Middleware 机制**：`ToolRegistry` 新增 before/after hooks
+> - **Core 组瘦身**：core 工具 15→9 个
+> - **ToolResult.suggested_next**：结构化返回新增建议下一步字段
+> - **新增 compare_periods**：时间段对比工具
+> - **新增 top_n**：排序取 Top N 工具
+> - **安全加固**：AST 级表达式验证（derive_field/filter/run_python）、路径穿越防护、SQL 注入防护、文件名注入防护
+> - **ToolSearch 元工具**：搜索注册中心，自动激活匹配工具所在分组
+>
+> **V9.1 变更摘要** :
 > - **Task 面板展示优化**：Alpine 响应式刷新（spread operator 强制引用变更）+ 300ms 防抖避免频繁 API 调用 + description 预览 + 蓝色 in_progress spinner + 完成绿/进行蓝/待定灰视觉区分
 > - **报告文件链接可点击**：marked.js 自定义 text renderer，正则匹配 `sessions/.../*.html|pdf|md|png` 路径自动转为 `<a href="/files/...">` 可点击链接
 > - **HTML 报告 Plotly 本地化**：Plotly JS 下载到 `web/static/js/` 本地文件（~4.8MB），图表 HTML 使用 `include_plotlyjs=False` 去除内嵌，报告模板改为本地优先 + CDN fallback 三级检测（typeof → local → CDN）
@@ -1517,3 +1544,100 @@ monitoring_rules:
 当 `deseasonalize: true` 时，监控引擎在执行异常检测前，先调用 `analyze_time_series` 的 STL 分解获取季节性成分，对残差序列做 `std_dev` 检测。避免将周期性波动（如周末DAU天然下降）误判为异常。
 
 监控引擎根据规则触发微型分析流程，生成预警卡片推送。
+
+---
+
+## 八、版本变更日志
+
+### V10.1 — 工具调用系统优化 + 安全加固
+
+#### A. 工具调用系统优化（11 项）
+
+| # | 改进项 | 说明 |
+|---|--------|------|
+| 1 | Schema 增强 | 14 个工具添加 `schema_overrides`（参数 description + enum 约束） |
+| 2 | 分组激活重置 | 每轮 `reset_groups()` 重新计算活跃工具，避免跨轮污染 |
+| 3 | 错误恢复下沉 | `format_result()` 统一错误恢复提示，loop.py 删除内联恢复逻辑 |
+| 4 | Middleware 机制 | before/after hooks 支持日志、计时等横切关注点 |
+| 5 | Core 组瘦身 | 15→9 工具，token 节省约 65% |
+| 6 | Task 独立分组 | task_create/update/get/list 移出 core |
+| 7 | derive_features 移至 ml | 从 eda 移到 ml 组 |
+| 8 | ToolResult.suggested_next | 结构化返回值支持推荐下一步工具 |
+| 9 | compare_periods | 新增时段对比工具，支持快捷词（last_month/this_month） |
+| 10 | top_n | 新增 Top N 排名工具 |
+| 11 | causal_analysis schema | 补充缺失的 method enum 和参数描述 |
+
+#### B. 延后项实施（4 项）
+
+| # | 改进项 | 说明 |
+|---|--------|------|
+| D | 导出工具合并 | `export_report_markdown` + `export_report_pdf` + `export_data` → `export_output`（output_type 调度） |
+| E | 工具前置条件 | `requires` 声明 + 运行时校验（shap_analysis → regression_analysis/classification） |
+| 3 | run_python 风险分级 | `_assess_risk()` 基于代码模式返回 low/high，输出含 `risk_level` 字段 |
+| 4 | ToolSearch 元工具 | `tool_search` 搜索注册中心，自动激活匹配工具所在分组 |
+
+#### C. 安全加固（6 项）
+
+| # | 安全修复 | 影响范围 | 防御方式 |
+|---|---------|---------|---------|
+| S1 | derive_field eval RCE | `data_understand.py` | AST 级表达式验证 `validate_pandas_expr()` |
+| S2 | filter query RCE | `data_transform.py` | AST 级表达式验证 `validate_pandas_expr()` |
+| S3 | run_python 沙盒逃逸 | `sandbox.py` | AST 级代码验证 `validate_python_code()`，替代字符串匹配 |
+| S4 | 路径穿越（load_data） | `data_io.py` `_resolve_source()` | 敏感系统路径阻止 + 相对路径白名单搜索 |
+| S5 | 路径穿越（export_data） | `data_io.py` `export_data()` | `validate_path_in_allowed()` 输出路径校验 |
+| S6 | SQL 注入 | `data_io.py` `load_sql()` | `validate_sql_query()` 仅允许 SELECT/WITH |
+| S7 | 文件名注入 | `file_ops.py` | `sanitize_filename()` 清理路径分隔符 |
+
+#### D. 测试覆盖
+
+- `tests/test_v10.py`：84 个测试（Schema、分组、middleware、新工具、安全、集成）
+- `tests/test_full_system.py`：48 pass / 4 skip（全系统回归）
+
+---
+
+### V11.0 — 分析引擎增强
+
+#### A. 新增工具（4 个）
+
+| # | 工具名 | 分组 | 功能 |
+|---|--------|------|------|
+| 1 | `interpret_dataset` | eda | 推断数据集业务语义：列角色分类（ID/时间/维度/指标/率指标）、分析信号检测、行业主题匹配（游戏/电商/广告营销/金融/内容社交）、推荐分析路径。`load_data` 加载后自动调用，结果注入 `[data_interpretation]` 标签 |
+| 2 | `contribute_decomposition` | eda/stats | 贡献度分解：将指标总变化拆解为各维度贡献。支持 `sum`（绝对值加法分解）和 `mean`（加权分解，适用于均值指标如 ARPU）。返回 ToolResult |
+| 3 | `funnel_analysis` | eda | 漏斗转化分析。三种数据格式：steps（事件明细，含用户跟踪、时间窗口、维度分组）、aggregate（预聚合步骤计数）、rates（宽表累积率列）。`mode=auto` 自动检测 |
+| 4 | `what_if_simulation` | ml | 情景模拟与影响分析。三级：sensitivity（参数敏感性，含反向推算 target_value）、predict（基于回归模型预测，自动训练）、optimize（约束目标规划，反推各维度所需变化量） |
+
+#### B. Prompt 重构
+
+| # | 改进项 | 说明 |
+|---|--------|------|
+| 1 | AGENT_ANALYSIS_ENGINE | 共享分析引擎常量（~80行），包含策略表、多视角思考规则、工具映射表、数据加载行为、上下文复用规则等。注入到 STANDARD 和 FULL 模板，消除重复 |
+| 2 | STANDARD 5步流程 | 新增"策略制定"步骤：根据 data_interpretation 信号选择分析方向和工具序列 |
+| 3 | FULL Phase 增强 | Phase 1.8（策略制定）、Phase 3.5（贡献归因，要求竞争假设）、Phase 3.8（自我反驳机制——扫描洞察矛盾并用数据验证） |
+| 4 | 多视角思考 | 每个关键结论经过三视角自检：验证视角（数据是否支持）、业务视角（是否有实际意义）、因果视角（是否可能混淆） |
+| 5 | 意图分类规则 2.7 | 已有数据上下文时，分析意图词（趋势/对比/归因/漏斗/模拟等）不降级为 chat |
+| 6 | FULL 关键词扩展 | 新增"漏斗分析/转化分析/贡献分析/情景模拟"触发 FULL 模式 |
+
+#### C. 基础设施改进
+
+| # | 改进项 | 说明 |
+|---|--------|------|
+| 1 | 共享日期函数 | `_utils.py` 新增 `resolve_date_col()`（自动推断日期列）和 `parse_period_range()`（解析快捷词和日期范围）。`compare_periods` 和 `contribute_decomposition` 共用 |
+| 2 | Registry 分组更新 | eda 组新增 interpret_dataset/contribute_decomposition/funnel_analysis；ml 组新增 what_if_simulation；stats 组新增 contribute_decomposition |
+| 3 | 关键词映射扩展 | eda 增加"漏斗/转化/贡献/归因/拆解/分解"；ml 增加"模拟/what-if/whatif/如果/假设"；stats 增加"贡献/拆解/分解" |
+| 4 | 漏斗图类型 | `create_chart` 新增 funnel 图表类型，使用 Plotly `go.Funnel` |
+| 5 | 类型保护 | `interpret_dataset` 入口自动扫描 object 列转为 datetime，与 `auto_clean` 行为对齐，确保下游函数始终拿到正确类型 |
+| 6 | `load_data` 集成 | 加载后自动调用 `interpret_dataset`，结果以 `[data_interpretation]` 标签注入上下文 |
+
+#### D. Bug 修复
+
+| # | Bug | 根因 | 修复 |
+|---|-----|------|------|
+| 1 | `_detect_time_range` 字符串减法崩溃 | 时间列为字符串类型时 min/max 返回字符串，减法报 TypeError | `interpret_dataset` 入口处统一将 object 列转为 datetime（根本修复） |
+| 2 | `simulation.py` set 运算兼容性 | `set(list \| list)` 语法不合法 | 改为 `set() \| set()` |
+
+#### E. 测试覆盖
+
+- `tests/test_v10_new.py`：88 个测试（共享函数、interpret_dataset、contribute_decomposition、funnel_analysis 3模式、what_if_simulation 3级、可视化漏斗图、registry、prompt、load_data集成、ToolResult双模式）
+- `tests/test_tools_comprehensive.py`：110 个回归测试
+- `tests/test_v91.py`：67 个系统测试（路径和检查逻辑已适配新结构）
+- 总计 **265 个测试全部通过**

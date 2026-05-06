@@ -103,7 +103,16 @@ def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:
 
 @registry.register(
     name="create_chart",
-    description="创建图表。chart_type: line/bar/stacked_bar/scatter/box/histogram/heatmap/pie。data_json 为 JSON 数据或数据集名称。",
+    description="创建图表。chart_type: line/bar/stacked_bar/scatter/box/histogram/heatmap/pie/funnel。data_json 为 JSON 数据或数据集名称。",
+    schema_overrides={
+        "chart_type": {"description": "图表类型", "enum": ["line", "bar", "stacked_bar", "scatter", "box", "histogram", "heatmap", "pie", "funnel"]},
+        "data": {"description": "数据集名称"},
+        "title": {"description": "图表标题"},
+        "x_col": {"description": "X 轴列名"},
+        "y_col": {"description": "Y 轴列名，逗号分隔支持多列"},
+        "color_col": {"description": "颜色分组列"},
+        "data_json": {"description": "JSON 格式数据"},
+    },
 )
 def create_chart(
     chart_type: str,
@@ -133,7 +142,9 @@ def create_chart(
         if "main" in datasets:
             df = workspace.get("main")
         elif datasets:
-            df = workspace.get(list(datasets.keys())[0])
+            # 选择行数最多的数据集作为最合理的默认值
+            largest = max(datasets.items(), key=lambda kv: kv[1].get("rows", 0))
+            df = workspace.get(largest[0])
 
     if df is None:
         return "Error: 没有可用数据。请先加载数据或提供 data_json。"
@@ -240,6 +251,25 @@ def create_chart(
                 zmin=-1, zmax=1,
             ))
 
+        elif chart_type == "funnel":
+            import plotly.express as px
+            if data_json:
+                try:
+                    funnel_data = json.loads(data_json) if isinstance(data_json, str) else data_json
+                except (json.JSONDecodeError, TypeError):
+                    return "Error: funnel 图需要通过 data_json 提供 JSON 格式的步骤数据"
+            elif df is not None and "step" in df.columns and "count" in df.columns:
+                funnel_data = [{"step": str(row.get("step", "")), "count": float(row.get("count", 0))} for row in df.to_dict("records")]
+            else:
+                return "Error: funnel 图需要通过 data_json 提供步骤数据，格式: [{\"step\": \"步骤名\", \"count\": 数量}]"
+
+            fig = go.Figure(go.Funnel(
+                y=[s.get("step", s.get("label", "")) for s in funnel_data],
+                x=[s.get("count", s.get("value", 0)) for s in funnel_data],
+                textinfo="value+percent initial+percent previous",
+                marker={"color": px.colors.qualitative.Plotly[:len(funnel_data)]},
+            ))
+
         elif chart_type == "pie":
             col = y_col or x_col
             if col and col in df.columns:
@@ -249,7 +279,7 @@ def create_chart(
                 return "Error: pie 图需要指定一个列"
 
         else:
-            return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie"
+            return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie, funnel"
 
         fig.update_layout(title=title, template="plotly_white")
         path = _save_chart(fig, title)

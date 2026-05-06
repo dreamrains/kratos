@@ -8,16 +8,25 @@ import pandas as pd
 
 from data_agent.config import get_config
 from data_agent.session.workspace import workspace
+from data_agent.tools._utils import validate_path_in_allowed, validate_sql_query, sanitize_filename
 from data_agent.tools.registry import registry
 
 
 def _resolve_source(source: str) -> Path:
+    cfg = get_config()
+
     p = Path(source)
     if p.is_absolute():
-        if not p.exists():
+        # 绝对路径：阻止明显的系统目录穿越，但允许项目相关路径
+        resolved = p.resolve()
+        # 阻止敏感系统路径
+        sensitive = ['/etc/', '/proc/', '/sys/', '/root/', 'C:\\Windows\\', 'C:\\Users\\']
+        for prefix in sensitive:
+            if str(resolved).startswith(prefix):
+                raise ValueError(f"不允许访问系统路径: {source}")
+        if not resolved.exists():
             raise FileNotFoundError(f"File not found: {p}")
-        return p
-    cfg = get_config()
+        return resolved
 
     # 如果绑定了对象，优先搜索对象 data 目录
     if workspace.active_object:
@@ -114,6 +123,19 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         except Exception:
             pass  # 探查失败不影响数据加载
 
+        # 业务语义理解：自动推断数据主题、关键指标、推荐路径
+        try:
+            from data_agent.tools.data_understand import interpret_dataset
+            interp_result = interpret_dataset(name)
+            # interpret_dataset 返回 ToolResult，取 summary 用于上下文注入
+            from data_agent.tools.registry import ToolResult
+            if isinstance(interp_result, ToolResult):
+                report_parts.append(f"\n[data_interpretation]\n{interp_result.summary}\n[/data_interpretation]")
+            else:
+                report_parts.append(f"\n[data_interpretation]\n{interp_result}\n[/data_interpretation]")
+        except Exception:
+            pass  # 推断失败不影响数据加载
+
         if applied:
             report_parts.append("\n自动类型清洗:")
             for item in applied:
@@ -153,8 +175,11 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
 )
 def load_sql(connection_string: str, query: str, name: str = "main") -> str:
     try:
-        import sqlalchemy
+        sql_err = validate_sql_query(query)
+        if sql_err:
+            return f"Error: {sql_err}"
 
+        import sqlalchemy
         engine = sqlalchemy.create_engine(connection_string)
         df = pd.read_sql(query, engine)
         engine.dispose()
@@ -173,28 +198,22 @@ def export_data(name: str, path: str, fmt: str = "csv") -> str:
         return f"Error: 数据集 '{name}' 不存在。可用: {list(workspace.list_datasets().keys())}"
 
     cfg = get_config()
-    # 如果绑定了对象，优先导出到对象 data 目录
+
+    # 允许的输出目录：data_dir + project_resolved（放宽限制，允许导出到项目子目录）
+    allowed_dirs = [cfg.data_dir, cfg.project_resolved]
+
+    # 确定输出基础目录并校验路径安全
     if workspace.active_object:
         from data_agent.object_manager import get_object_manager
-        mgr = get_object_manager()
-        obj_data_dir = mgr.get_data_dir(workspace.active_object)
+        obj_data_dir = get_object_manager().get_data_dir(workspace.active_object)
         if obj_data_dir:
-            out_path = obj_data_dir / path
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                if fmt == "csv":
-                    df.to_csv(out_path, index=False, encoding="utf-8-sig")
-                elif fmt == "excel":
-                    df.to_excel(out_path, index=False)
-                elif fmt == "json":
-                    df.to_json(out_path, orient="records", force_ascii=False, indent=2)
-                else:
-                    return f"Error: Unsupported export format '{fmt}'"
-                return f"数据集 '{name}' 已导出到 {path} ({fmt}) [对象: {workspace.active_object}]"
-            except Exception as e:
-                return f"Error exporting: {e}"
+            allowed_dirs.insert(0, obj_data_dir)
 
-    out_path = cfg.data_dir / path
+    try:
+        out_path = validate_path_in_allowed(path, allowed_dirs)
+    except ValueError:
+        return f"Error: 导出路径超出允许范围（允许: data/, 项目根目录）"
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -209,6 +228,47 @@ def export_data(name: str, path: str, fmt: str = "csv") -> str:
         return f"数据集 '{name}' 已导出到 {path} ({fmt})"
     except Exception as e:
         return f"Error exporting: {e}"
+
+
+@registry.register(
+    name="export_output",
+    description=(
+        "统一导出接口。支持三种输出类型：\n"
+        "- data: 导出数据集为 csv/excel/json 文件（需要 name, path, fmt 参数）\n"
+        "- report_md: 将洞察导出为 Markdown 报告（需要 title, insights, summary 参数）\n"
+        "- report_pdf: 将 HTML 报告转换为 PDF（需要 html_path 参数）"
+    ),
+    schema_overrides={
+        "output_type": {"description": "导出类型", "enum": ["data", "report_md", "report_pdf"]},
+        "name": {"description": "数据集名称（output_type=data 时使用）"},
+        "path": {"description": "输出文件路径（output_type=data 时使用）"},
+        "fmt": {"description": "数据格式（output_type=data 时使用）", "enum": ["csv", "excel", "json"]},
+        "title": {"description": "报告标题（report_md 时使用）"},
+        "insights": {"description": "洞察 JSON 数组（report_md 时使用）"},
+        "summary": {"description": "摘要内容（report_md 时使用）"},
+        "html_path": {"description": "HTML 报告路径（report_pdf 时使用）"},
+    },
+)
+def export_output(
+    output_type: str,
+    name: str = "",
+    path: str = "",
+    fmt: str = "csv",
+    title: str = "Data Analysis Report",
+    insights: str = "[]",
+    summary: str = "",
+    html_path: str = "",
+) -> str:
+    if output_type == "data":
+        return export_data(name=name, path=path, fmt=fmt)
+    elif output_type == "report_md":
+        from data_agent.tools.report import export_report_markdown
+        return export_report_markdown(title=title, insights=insights, summary=summary)
+    elif output_type == "report_pdf":
+        from data_agent.tools.report import export_report_pdf
+        return export_report_pdf(html_path=html_path)
+    else:
+        return f"Error: 不支持的 output_type '{output_type}'。可用: data, report_md, report_pdf"
 
 
 @registry.register(

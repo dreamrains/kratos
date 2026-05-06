@@ -430,10 +430,10 @@ def test_tool_call_optimization():
     module = "7.ToolOptimize"
     prompts_py = (PROJECT_ROOT / "src/data_agent/agent/prompts.py").read_text(encoding="utf-8")
 
-    # 7.1 Prompt 层：上下文复用规则
+    # 7.1 Prompt 层：上下文复用规则（V10 后合并到共享引擎 AGENT_ANALYSIS_ENGINE）
     prompt_count = prompts_py.count("上下文复用规则")
-    if prompt_count >= 2:  # STANDARD + FULL
-        record(module, "上下文复用规则 (STANDARD+FULL)", "PASS", f"{prompt_count} 处")
+    if prompt_count >= 1:  # 至少在共享引擎中出现
+        record(module, "上下文复用规则 (共享引擎)", "PASS", f"{prompt_count} 处")
     else:
         record(module, "上下文复用规则", "FAIL", f"仅 {prompt_count} 处")
 
@@ -537,7 +537,7 @@ def test_manual_compact():
 # ──────────────────────────────────────────────────────────
 def test_integration():
     module = "Int"
-    test_data = PROJECT_ROOT / "reference/workspace/test_sales.csv"
+    test_data = PROJECT_ROOT / "reference/test_doc/test_sales.csv"
 
     if not test_data.exists():
         record(module, "test_sales.csv 存在", "FAIL", "文件不存在")
@@ -605,7 +605,7 @@ def test_integration():
             record(module, "报告摘要兜底集成", "FAIL", str(e))
 
         # I5: 用 游戏互推.xlsx 检测多轴
-        xlsx_path = PROJECT_ROOT / "reference/workspace/游戏互推.xlsx"
+        xlsx_path = PROJECT_ROOT / "reference/test_doc/游戏互推.xlsx"
         if xlsx_path.exists():
             try:
                 df2 = pd.read_excel(str(xlsx_path))
