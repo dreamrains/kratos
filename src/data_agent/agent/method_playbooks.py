@@ -313,8 +313,6 @@ def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -
 
 
 def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
-    if intent.intent_type == "analysis_guidance" and has_data:
-        return "data_understanding"
     if _has_any(text, ["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化", "娴佸け", "杞寲"]):
         return "funnel_conversion"
     if _has_any(text, ["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"]):
@@ -329,6 +327,8 @@ def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
         return "trend_period_comparison"
     if _has_any(text, ["top", "overview", "summary", "distribution", "概览", "分布", "排名"]):
         return "metric_overview"
+    if intent.intent_type == "analysis_guidance" and has_data:
+        return "data_understanding"
     return "data_understanding" if has_data else "data_understanding"
 
 

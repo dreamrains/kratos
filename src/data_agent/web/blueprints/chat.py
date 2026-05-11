@@ -13,20 +13,31 @@ from data_agent.web.event_bus import SSEEvent, EventQueue
 chat_bp = Blueprint("chat", __name__)
 
 
-def _token_usage(loop) -> dict:
+def _token_usage(loop) -> dict | None:
     from data_agent.agent.compact import estimate_tokens
+    from data_agent.config import get_config
+    from data_agent.web.blueprints.sessions import _get_model_context_window
+
+    cfg = get_config()
+    context_window = _get_model_context_window(cfg.model_id)
+    if context_window is None:
+        return None
+
     used = estimate_tokens(loop.messages)
-    threshold = loop.token_threshold
-    return {"used": used, "threshold": threshold, "pct": round(used / max(threshold, 1) * 100)}
+    return {"used": used, "threshold": context_window, "pct": min(round(used / max(context_window, 1) * 100), 100)}
 
 
 def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
     """Drain a stream_turn/resume generator into the EventQueue (runs in background thread)."""
+    def _pct_payload():
+        tu = _token_usage(loop)
+        return tu if tu else {}
+
     try:
         for event in gen:
             etype = event["type"]
             if etype == "llm_call_start":
-                eq.put(SSEEvent("llm_call_start", {"round": event["round"], **_token_usage(loop)}))
+                eq.put(SSEEvent("llm_call_start", {"round": event["round"], **_pct_payload()}))
             elif etype == "tool_call":
                 eq.put(SSEEvent("tool_call", {
                     "tool_call_id": event["tool_call_id"],
@@ -59,7 +70,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "session_id": loop.session_id,
                     "turn_id": turn_id,
                     "status": "suspended",
-                    **_token_usage(loop),
+                    **_pct_payload(),
                 }))
                 return
             elif etype == "error":
@@ -68,7 +79,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
             "session_id": loop.session_id,
             "turn_id": turn_id,
             "status": "completed",
-            **_token_usage(loop),
+            **_pct_payload(),
         }))
     except Exception as e:
         eq.put(SSEEvent("error", {"message": str(e)}))
@@ -78,6 +89,10 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
             "status": "error",
         }))
     finally:
+        try:
+            loop._auto_save()
+        except Exception:
+            pass
         eq.close()
 
 
@@ -116,7 +131,11 @@ def chat():
     sid = agent_loop.session_id
 
     def run_in_thread():
-        eq.put(SSEEvent("turn_start", {"session_id": sid, "turn_id": turn_id, **_token_usage(agent_loop)}))
+        eq.put(SSEEvent("turn_start", {
+            "session_id": sid,
+            "turn_id": turn_id,
+            **(_token_usage(agent_loop) or {}),
+        }))
         _feed_events(eq, agent_loop, turn_id, agent_loop.stream_turn(message))
 
     t = threading.Thread(target=run_in_thread, daemon=True)
@@ -142,7 +161,11 @@ def resume_chat():
     sid = agent_loop.session_id
 
     def run_in_thread():
-        eq.put(SSEEvent("turn_start", {"session_id": sid, "turn_id": turn_id, **_token_usage(agent_loop)}))
+        eq.put(SSEEvent("turn_start", {
+            "session_id": sid,
+            "turn_id": turn_id,
+            **(_token_usage(agent_loop) or {}),
+        }))
         _feed_events(eq, agent_loop, turn_id,
                      agent_loop.resume_turn_streaming(suspension_id, user_response))
 
