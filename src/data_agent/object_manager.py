@@ -57,6 +57,41 @@ class ObjectManager:
         logger.info("Object created", extra={"extra_data": {"name": name}})
         return meta
 
+    # ── Project terminology aliases (Phase 1 compatibility) ─────────────
+
+    def create_project(self, name: str, description: str = "") -> dict:
+        return self.create(name, description)
+
+    def list_projects(self, status: str = "") -> list[dict]:
+        return self.list_objects(status=status)
+
+    def get_project(self, name: str) -> Optional[dict]:
+        return self.get(name)
+
+    def get_project_dir(self, name: str) -> Optional[Path]:
+        return self.get_dir(name)
+
+    def get_project_data_dir(self, name: str) -> Optional[Path]:
+        return self.get_data_dir(name)
+
+    def get_project_knowledge_dir(self, name: str) -> Optional[Path]:
+        return self.get_knowledge_dir(name)
+
+    def rename_project(self, old_name: str, new_name: str) -> Optional[dict]:
+        return self.rename(old_name, new_name)
+
+    def archive_project(self, name: str) -> Optional[dict]:
+        return self.archive(name)
+
+    def delete_project(self, name: str) -> bool:
+        return self.delete(name)
+
+    def bind_session_to_project(self, name: str, session_id: str) -> Optional[dict]:
+        return self.bind_session(name, session_id)
+
+    def unbind_session_from_project(self, name: str, session_id: str) -> Optional[dict]:
+        return self.unbind_session(name, session_id)
+
     def list_objects(self, status: str = "") -> list[dict]:
         """列出所有对象。可选按 status 过滤。"""
         results = []
@@ -104,6 +139,24 @@ class ObjectManager:
             return obj_dir / "knowledge"
         return None
 
+    def rename(self, old_name: str, new_name: str) -> Optional[dict]:
+        """Rename an object (directory + update meta)."""
+        old_dir = self._objects_dir / old_name
+        new_dir = self._objects_dir / new_name
+
+        if not old_dir.is_dir():
+            return None
+        if new_dir.exists():
+            return f"error: Object '{new_name}' already exists"
+
+        old_dir.rename(new_dir)
+        meta = yaml.safe_load((new_dir / "meta.yaml").read_text(encoding="utf-8")) or {}
+        meta["name"] = new_name
+        self._save_meta(new_name, meta)
+
+        logger.info("Object renamed", extra={"extra_data": {"from": old_name, "to": new_name}})
+        return meta
+
     def archive(self, name: str) -> Optional[dict]:
         """归档对象。"""
         return self._update_status(name, "archived")
@@ -113,12 +166,25 @@ class ObjectManager:
         return self._update_status(name, "active")
 
     def delete(self, name: str) -> bool:
-        """删除对象（仅删除对象目录，不影响全局知识）。"""
+        """删除对象。同时解除所有关联会话的绑定。"""
         obj_dir = self._objects_dir / name
         if not obj_dir.is_dir():
             return False
+
+        # Cascade unbind all sessions before deleting
+        meta = self.get(name)
+        unbound_count = 0
+        if meta:
+            for session_id in meta.get("sessions", []):
+                try:
+                    from data_agent.session.history import update_session_meta
+                    update_session_meta(session_id, {"object_name": None})
+                    unbound_count += 1
+                except Exception:
+                    pass
+
         shutil.rmtree(obj_dir)
-        logger.info("Object deleted", extra={"extra_data": {"name": name}})
+        logger.info("Object deleted", extra={"extra_data": {"name": name, "unbound_sessions": unbound_count}})
         return True
 
     def bind_session(self, name: str, session_id: str) -> Optional[dict]:
@@ -223,3 +289,8 @@ def get_object_manager() -> ObjectManager:
     if _object_manager is None:
         _object_manager = ObjectManager()
     return _object_manager
+
+
+def get_project_manager() -> ObjectManager:
+    """User-facing alias backed by ObjectManager for Phase 1 compatibility."""
+    return get_object_manager()

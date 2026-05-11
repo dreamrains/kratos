@@ -104,6 +104,15 @@ class AgentConfig(BaseSettings):
         return p
 
     @property
+    def projects_dir(self) -> Path:
+        """User-facing project directory alias.
+
+        Phase 1 keeps the existing objects/ storage for compatibility while all
+        new APIs expose the friendlier "project" terminology.
+        """
+        return self.objects_dir
+
+    @property
     def knowledge_dir(self) -> Path:
         p = self.project_resolved / "knowledge"
         p.mkdir(parents=True, exist_ok=True)

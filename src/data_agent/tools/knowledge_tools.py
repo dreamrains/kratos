@@ -33,10 +33,24 @@ def set_active_session(session_id: Optional[str]) -> None:
 
 
 def get_active_object() -> Optional[str]:
+    try:
+        from data_agent.agent.context import get_current_context
+        ctx = get_current_context()
+        if ctx is not None:
+            return ctx.project_name
+    except Exception:
+        pass
     return _active_object
 
 
 def get_active_session_id() -> Optional[str]:
+    try:
+        from data_agent.agent.context import get_current_context
+        ctx = get_current_context()
+        if ctx is not None:
+            return ctx.session_id
+    except Exception:
+        pass
     return _active_session_id
 
 
@@ -56,7 +70,7 @@ def _ensure_instances():
 def show_project_rules() -> str:
     _ensure_instances()
     return _project_rules.get_rules_for_prompt(
-        object_name=_active_object, session_id=_active_session_id
+        object_name=get_active_object(), session_id=get_active_session_id()
     )
 
 
@@ -66,8 +80,9 @@ def show_project_rules() -> str:
 )
 def update_project_rules(content: str) -> str:
     _ensure_instances()
-    if _active_object:
-        return _project_rules.update_object_rules(_active_object, content)
+    active_object = get_active_object()
+    if active_object:
+        return _project_rules.update_object_rules(active_object, content)
     return _project_rules.update(content)
 
 
@@ -79,7 +94,7 @@ def show_domain_knowledge() -> str:
     import yaml
     _ensure_instances()
     data = _domain_knowledge.get_merged(
-        object_name=_active_object, session_id=_active_session_id
+        object_name=get_active_object(), session_id=get_active_session_id()
     )
     return yaml.dump(data, allow_unicode=True, default_flow_style=False)
 
@@ -90,7 +105,7 @@ def show_domain_knowledge() -> str:
 )
 def set_domain(domain_name: str) -> str:
     _ensure_instances()
-    return _domain_knowledge.set_domain(domain_name, object_name=_active_object)
+    return _domain_knowledge.set_domain(domain_name, object_name=get_active_object())
 
 
 @registry.register(
@@ -101,7 +116,7 @@ def show_experience_log() -> str:
     import json
     _ensure_instances()
     entries = _experience_log.get_merged_entries(
-        object_name=_active_object, session_id=_active_session_id
+        object_name=get_active_object(), session_id=get_active_session_id()
     )
     if not entries:
         return "经验日志为空。"

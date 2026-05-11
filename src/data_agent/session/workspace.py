@@ -1,4 +1,4 @@
-"""工作空间管理，存储已加载的数据集，支持对象绑定和变换血缘追踪。"""
+"""工作空间管理，存储已加载的数据集，支持项目绑定和变换血缘追踪。"""
 
 from __future__ import annotations
 
@@ -14,38 +14,65 @@ logger = get_logger("workspace")
 
 
 class Workspace:
-    """管理工作空间中的数据集快照，支持分析对象绑定和变换血缘。"""
+    """管理工作空间中的数据集快照，支持分析项目绑定和变换血缘。"""
 
     def __init__(self):
         self._datasets: dict[str, pd.DataFrame] = {}
         self._metadata: dict[str, dict[str, Any]] = {}
         self._derived_lineage: dict[str, dict[str, Any]] = {}
         self._transform_log: list[dict[str, Any]] = []
-        self._active_object: Optional[str] = None
+        self._active_project: Optional[str] = None
 
     @property
     def active_object(self) -> Optional[str]:
-        return self._active_object
+        """Backward-compatible alias for active_project."""
+        return self._active_project
+
+    @property
+    def active_project(self) -> Optional[str]:
+        return self._active_project
 
     def set_object(self, name: str) -> str:
-        """绑定到分析对象。"""
+        """Backward-compatible alias for set_project."""
+        return self.set_project(name)
+
+    def set_project(self, name: str) -> str:
+        """绑定到分析项目。"""
         from data_agent.object_manager import get_object_manager
 
         mgr = get_object_manager()
         meta = mgr.get(name)
         if meta is None:
-            return f"Error: 对象 '{name}' 不存在。"
+            return f"Error: 项目 '{name}' 不存在。"
 
-        self._active_object = name
-        logger.info("Object activated", extra={"extra_data": {"object": name}})
-        return f"已切换到对象 '{name}'"
+        self._active_project = name
+        try:
+            from data_agent.agent.context import get_current_context
+            ctx = get_current_context()
+            if ctx is not None:
+                ctx.project_name = name
+        except Exception:
+            pass
+        logger.info("Project activated", extra={"extra_data": {"project": name}})
+        return f"已切换到项目 '{name}'"
 
     def clear_object(self) -> str:
-        """解除对象绑定，切回 inbox 模式。"""
-        old = self._active_object
-        self._active_object = None
+        """Backward-compatible alias for clear_project."""
+        return self.clear_project()
+
+    def clear_project(self) -> str:
+        """解除项目绑定，切回 inbox 模式。"""
+        old = self._active_project
+        self._active_project = None
+        try:
+            from data_agent.agent.context import get_current_context
+            ctx = get_current_context()
+            if ctx is not None:
+                ctx.project_name = None
+        except Exception:
+            pass
         if old:
-            logger.info("Object deactivated", extra={"extra_data": {"object": old}})
+            logger.info("Project deactivated", extra={"extra_data": {"project": old}})
         return "已切回到 inbox 模式"
 
     def add(self, name: str, df: pd.DataFrame) -> str:
@@ -119,5 +146,43 @@ class Workspace:
         return f"数据集 '{name}' 不存在"
 
 
-# 全局工作空间
-workspace = Workspace()
+class WorkspaceProxy:
+    """Compatibility facade that resolves to the current AgentContext workspace."""
+
+    def __init__(self):
+        self._default = Workspace()
+
+    def current(self) -> Workspace:
+        try:
+            from data_agent.agent.context import get_current_context
+            ctx = get_current_context()
+            if ctx is not None:
+                if ctx.workspace is None:
+                    ctx.workspace = Workspace()
+                return ctx.workspace
+        except Exception:
+            pass
+        return self._default
+
+    def __getattr__(self, name):
+        return getattr(self.current(), name)
+
+    @property
+    def _datasets(self):
+        return self.current()._datasets
+
+    @property
+    def _metadata(self):
+        return self.current()._metadata
+
+    @property
+    def active_object(self) -> Optional[str]:
+        return self.current().active_object
+
+    @property
+    def active_project(self) -> Optional[str]:
+        return self.current().active_project
+
+
+# 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。
+workspace = WorkspaceProxy()

@@ -20,7 +20,7 @@ def _save_chart(fig: go.Figure, title: str = "chart") -> str:
     """保存图表到当前会话的 output 目录，同时导出 PNG 静态图片用于 PDF 嵌入。"""
     from data_agent.session.history import session_charts_dir, register_artifact
 
-    session_id = _current_session_id
+    session_id = current_session_id()
     if session_id:
         output_dir = session_charts_dir(session_id)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
@@ -53,6 +53,17 @@ _current_session_id = ""
 def set_chart_session(session_id: str):
     global _current_session_id
     _current_session_id = session_id
+
+
+def current_session_id() -> str:
+    try:
+        from data_agent.agent.context import get_current_context
+        ctx = get_current_context()
+        if ctx is not None:
+            return ctx.session_id
+    except Exception:
+        pass
+    return _current_session_id
 
 
 def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:

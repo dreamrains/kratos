@@ -159,11 +159,12 @@ def _print_help() -> None:
 - `/data <path>` - 预加载数据文件
 - `/bind <object>` - 绑定当前会话到对象（支持换绑）
 - `/unbind` - 解除当前会话的对象绑定
-- `/object create <name>` - 创建分析对象
-- `/object list` - 列出所有对象
-- `/object switch <name>` - 切换到对象（同 /bind）
-- `/object info` - 显示当前对象信息
-- `/object archive <name>` - 归档对象
+- `/project create <name>` - 创建分析项目（`/object` 仍兼容）
+- `/project list` - 列出所有项目
+- `/project switch <name>` - 切换到项目（同 /bind）
+- `/project info` - 显示当前项目信息
+- `/project rename <old> <new>` - 重命名项目
+- `/project archive <name>` - 归档项目
 - `/inbox` - 切换到无归属模式（同 /unbind）
 - `/migrate <filename>` - 将 inbox 文件迁移到当前对象
 - `/tasks` - 列出项目任务（跨会话）
@@ -818,8 +819,26 @@ def run_repl() -> None:
                 console.print(f"[green]对象 '{name}' 已归档[/green]")
             else:
                 console.print(f"[red]对象 '{name}' 不存在[/red]")
+        elif action == "rename":
+            parts2 = name.split(maxsplit=1) if name else []
+            if len(parts2) < 2:
+                console.print("[yellow]Usage: /object rename <old_name> <new_name>[/yellow]")
+                return None
+            old_n, new_n = parts2[0], parts2[1]
+            result = mgr.rename(old_n, new_n)
+            if result is None:
+                console.print(f"[red]对象 '{old_n}' 不存在[/red]")
+            elif isinstance(result, str):
+                console.print(f"[red]{result}[/red]")
+            else:
+                if workspace.active_object == old_n:
+                    from data_agent.session.history import bind_session_to_object
+                    workspace.set_object(new_n)
+                    set_active_object(new_n)
+                    loop.invalidate_prompt_cache()
+                console.print(f"[green]对象 '{old_n}' 已重命名为 '{new_n}'[/green]")
         else:
-            console.print("[yellow]Unknown action. Use: create|list|switch|info|archive[/yellow]")
+            console.print("[yellow]Unknown action. Use: create|list|switch|info|archive|rename[/yellow]")
         return None
 
     def cmd_bind(args: str):
@@ -1002,7 +1021,8 @@ def run_repl() -> None:
     CMD.register("artifacts", cmd_artifacts, "列出或删除会话输出物")
     CMD.register("skill", cmd_skill, "技能管理 (load/unload/install/uninstall)")
     CMD.register("mcp", cmd_mcp, "MCP 服务器管理")
-    CMD.register("object", cmd_object, "对象管理 (create/list/switch/info/archive)")
+    CMD.register("object", cmd_object, "对象管理 (create/list/switch/info/archive)，兼容旧命令")
+    CMD.register("project", cmd_object, "项目管理 (create/list/switch/info/archive)")
     CMD.register("inbox", cmd_inbox, "切回到 inbox 模式")
     CMD.register("migrate", cmd_migrate, "将 inbox 文件迁移到当前对象")
     CMD.register("rewind", cmd_rewind, "回退对话到之前的状态")

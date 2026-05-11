@@ -33,6 +33,10 @@ _CONFIDENCE_MAP_LOW = ("low", "低", "很低", "极低")
 _CONFIDENCE_MAP_MEDIUM = ("medium", "中", "中等", "一般", "中高", "中低")
 
 
+def _zip_confidence(level: str, keywords: tuple) -> list[tuple[str, str]]:
+    return [(level, kw) for kw in keywords]
+
+
 def _parse_confidence(raw: str) -> tuple[str, str]:
     """解析置信度字段为 (level, detail)。
 
@@ -46,15 +50,16 @@ def _parse_confidence(raw: str) -> tuple[str, str]:
         return raw_lower, raw
     # 只检查分隔符前的部分，避免 "中 - ...较高..." 误匹配
     prefix = raw_lower.split("-")[0].split("—")[0].split("–")[0].strip()
-    for kw in _CONFIDENCE_MAP_HIGH:
+    # 按关键词长度降序检查，避免 "高" 误匹配 "中高"
+    all_keywords = [
+        *_zip_confidence("high", _CONFIDENCE_MAP_HIGH),
+        *_zip_confidence("low", _CONFIDENCE_MAP_LOW),
+        *_zip_confidence("medium", _CONFIDENCE_MAP_MEDIUM),
+    ]
+    all_keywords.sort(key=lambda x: len(x[1]), reverse=True)
+    for level, kw in all_keywords:
         if kw in prefix:
-            return "high", raw
-    for kw in _CONFIDENCE_MAP_LOW:
-        if kw in prefix:
-            return "low", raw
-    for kw in _CONFIDENCE_MAP_MEDIUM:
-        if kw in prefix:
-            return "medium", raw
+            return level, raw
     return "medium", raw
 
 
@@ -377,10 +382,11 @@ def _prepare_insight(item: dict, chart_entries: list = None, used_filenames: set
 def _output_dir_for_session():
     """获取当前会话的报告输出目录。"""
     from data_agent.session.history import session_reports_dir
-    from data_agent.tools.visualization import _current_session_id
+    from data_agent.tools.visualization import current_session_id
 
-    if _current_session_id:
-        return session_reports_dir(_current_session_id), _current_session_id
+    sid = current_session_id()
+    if sid:
+        return session_reports_dir(sid), sid
 
     cfg = get_config()
     output_dir = cfg.project_resolved / "reports"
@@ -519,10 +525,6 @@ def generate_report(
     return f"Report generated: reports/{filename}"
 
 
-@registry.register(
-    name="export_report_markdown",
-    description="将报告导出为 Markdown 格式。",
-)
 def export_report_markdown(
     title: str = "Data Analysis Report",
     insights: str = "[]",
@@ -600,10 +602,6 @@ def _generate_chart_images(charts_dir: Path) -> dict[str, str]:
     return images
 
 
-@registry.register(
-    name="export_report_pdf",
-    description="将 HTML 报告转换为 PDF（内嵌静态图表）。",
-)
 def _cjk_pdf_css() -> str:
     """返回 CJK 兼容的 CSS 片段，注入 HTML 用于 PDF 渲染。
 
@@ -734,9 +732,9 @@ def export_conversation(
         list_artifacts,
         register_artifact,
     )
-    from data_agent.tools.visualization import _current_session_id
+    from data_agent.tools.visualization import current_session_id
 
-    session_id = _current_session_id
+    session_id = current_session_id()
     if not session_id:
         return "Error: 无当前会话，无法导出"
 

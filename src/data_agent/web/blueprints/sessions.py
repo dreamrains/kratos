@@ -19,10 +19,21 @@ from data_agent.session.history import (
 sessions_bp = Blueprint("sessions", __name__)
 
 
+def _get_model_context_window(model_id: str) -> int | None:
+    """Try to get the actual context window (max_input_tokens) for the model."""
+    try:
+        import litellm
+        info = litellm.get_model_info(model_id)
+        return info.get("max_input_tokens") or info.get("max_tokens")
+    except Exception:
+        return None
+
+
 @sessions_bp.get("/sessions")
 def get_sessions():
     object_name = request.args.get("object_name", "")
-    return jsonify(list_sessions(object_name=object_name))
+    project_name = request.args.get("project_name", "")
+    return jsonify(list_sessions(object_name=object_name, project_name=project_name))
 
 
 @sessions_bp.get("/sessions/<session_id>")
@@ -30,6 +41,31 @@ def get_session(session_id: str):
     data = load_session(session_id)
     if not data:
         return jsonify({"error": "Session not found"}), 404
+
+    # Attach token usage — use real model context window when available
+    from data_agent.agent.compact import estimate_tokens
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    context_window = _get_model_context_window(cfg.model_id)
+
+    if context_window is not None:
+        manager = current_app.config["agent_manager"]
+        loop = manager.get(session_id)
+        if loop and loop.messages:
+            used = estimate_tokens(loop.messages)
+        else:
+            messages = data.get("messages", [])
+            used = estimate_tokens(messages) if messages else 0
+
+        data["token_usage"] = {
+            "used": used,
+            "threshold": context_window,
+            "pct": min(round(used / max(context_window, 1) * 100), 100),
+        }
+    else:
+        data["token_usage"] = None
+
     return jsonify(data)
 
 
@@ -111,39 +147,47 @@ def rewind_session(session_id: str):
     manager = current_app.config["agent_manager"]
     loop = manager.get(session_id)
 
-    if not loop:
-        return jsonify({"error": "Session not found or not active"}), 404
+    # Try in-memory loop first, fall back to loading from disk
+    if loop and loop.messages:
+        messages = loop.messages
+    else:
+        data = load_session(session_id)
+        if not data:
+            return jsonify({"error": "Session not found"}), 404
+        messages = data.get("messages", [])
 
-    rounds = _get_rounds(loop.messages)
+    rounds = _get_rounds(messages)
     if round_num > len(rounds):
         return jsonify({"error": f"Round {round_num} exceeds total rounds ({len(rounds)})"}), 400
 
     messages_to_keep = sum(len(r) for r in rounds[:round_num])
-    removed = len(loop.messages) - messages_to_keep
+    removed = len(messages) - messages_to_keep
 
     if removed == 0:
         return jsonify({"message": "Already at the latest state", "removed": 0})
 
     # Save snapshot for undo
-    import uuid
     from datetime import datetime
-    snapshots_dir = Path(loop.session_id) / "rewind_snapshots"
+    snapshots_dir = Path(session_id) / "rewind_snapshots"
     if not snapshots_dir.is_absolute():
         from data_agent.config import get_config
-        snapshots_dir = get_config().sessions_resolved / loop.session_id / "rewind_snapshots"
+        snapshots_dir = get_config().sessions_resolved / session_id / "rewind_snapshots"
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     snapshot_path = snapshots_dir / f"rewind_{ts}.json"
     snapshot_path.write_text(
-        json.dumps({"messages": loop.messages, "rewound_at": ts}, default=str, ensure_ascii=False, indent=2),
+        json.dumps({"messages": messages, "rewound_at": ts}, default=str, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
-    loop.messages = loop.messages[:messages_to_keep]
+    truncated = messages[:messages_to_keep]
+
+    if loop and loop.messages:
+        loop.messages = truncated
 
     # Persist the truncated history
     from data_agent.session.history import save_session
-    save_session(loop.messages, session_id)
+    save_session(truncated, session_id)
 
     return jsonify({
         "message": f"Rewound to round {round_num}, removed {removed} messages",

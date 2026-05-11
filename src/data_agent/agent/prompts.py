@@ -66,6 +66,7 @@ group_by: 列名, agg: 列A: [sum, mean], 列B: [count]
 - 流程图、时序图、甘特图、思维导图等
 对于简单的数据可视化（如占比、对比、趋势），优先使用 Mermaid 直接在文本中出图。
 只有需要交互式图表或复杂可视化时才调用 create_chart 工具。
+★禁止在回复中直接输出 Plotly JSON（如 {"data": [...], "layout": {...}}），必须通过 create_chart 工具生成交互式图表。
 
 可用工具：{tool_list}
 {skill_descriptions}
@@ -133,6 +134,7 @@ AGENT_STANDARD = """\
 - 流程图、时序图、甘特图、思维导图等
 对于简单的数据可视化（如占比、对比、趋势概览），优先使用 Mermaid 直接在文本中出图。
 只有需要精确交互式图表或复杂可视化时才调用 create_chart 工具。
+★禁止在回复中直接输出 Plotly JSON（如 {"data": [...], "layout": {...}}），必须通过 create_chart 工具生成交互式图表。
 
 ## ask_user_question 使用策略
 ask_user_question 支持单问题和多问题两种模式：
@@ -212,7 +214,6 @@ AGENT_FULL = """\
 ### 阶段 1.8：分析策略制定
 - 基于 [data_interpretation] 中的 suggested_analyses 和 analysis_signals 确定分析方向
 - 根据策略表选择工具链
-- 用 task_create 规划 3-5 个分析任务（每个是一个具体分析目标，不是流程阶段）
 
 ### 阶段 2：全局描述性统计
 - 核心指标的分布特征（均值、中位数、分位数、偏度）
@@ -294,9 +295,6 @@ AGENT_FULL = """\
 - 无需手动传递 charts_html 参数（留空即可）
 - 建议在阶段 3-6 中适时调用 create_chart 生成趋势图、对比图等
 
-复杂分析（3+步骤）时，先用 task_create 规划分析步骤，再逐步执行并用 task_update 标记完成。
-每个 task 是一个具体目标（如"分析收入趋势"），不是流程阶段。
-
 ## 回复格式
 每条分析回复遵循以下结构：
 - **结论**：一句话核心发现（放在最前面）
@@ -317,6 +315,7 @@ AGENT_FULL = """\
 - 思维导图（mindmap）：展示分析框架或知识结构
 对于简单的数据可视化（如占比、对比、趋势概览），优先使用 Mermaid 直接在文本中出图。
 只有需要精确交互式图表或复杂可视化时才调用 create_chart 工具。
+★禁止在回复中直接输出 Plotly JSON（如 {"data": [...], "layout": {...}}），必须通过 create_chart 工具生成交互式图表。
 
 ## 洞察质量标准
 每条洞察必须满足：
@@ -346,11 +345,6 @@ AGENT_FULL = """\
 - 数据中出现大量 null/零值/重复，无法确定是正常还是质量问题
 - 统计检验结果不显著（p > 0.05），无法确定该接受零假设还是数据量不足
 - 数据中存在无法解释的业务术语或编码
-
-## 任务管理
-复杂分析（3+步骤）时，先用 task_create 规划分析步骤，再逐步执行。
-每个 task 是一个具体目标（如"分析收入趋势"），不是流程阶段。
-执行时用 task_update 标记 in_progress，完成后标记 completed。
 
 ## 行为准则
 - 不虚构数据或假设数据内容
@@ -479,6 +473,24 @@ AGENT_ANALYSIS_ENGINE = """\
 - 建议可行的替代分析方向，但如果用户坚持，可以在结论中明确标注数据限制后继续
 - 所有结论必须与数据粒度匹配
 
+### 任务规划规则（★重要）
+判断是否需要任务规划：
+- **简单查询（1-2 步）**：直接执行，不需要 task_create
+- **中等分析（3 步）**：用户明确要求多维度分析时规划
+- **复杂分析（4+ 步）**：必须先用 task_create 规划 3-5 个具体分析目标
+
+任务规划规则：
+- **批量创建**：使用 task_create(tasks='[...]') 一次性创建所有任务，避免多次调用浪费轮次
+- 每个 task 是一个具体分析目标（如"分析收入趋势"、"找出流失原因"），不是流程阶段
+- 创建完成后，按顺序逐个执行：task_update(status="in_progress") → 执行分析 → task_update(status="completed")
+- **批量更新**：连续完成多个任务时，使用 task_update(updates='[{"task_id": 1, "status": "completed"}, ...]') 一次更新多个任务状态
+- 收到新的复杂请求时，先调用 task_list 检查现有任务：
+  - 如果新请求与已有任务相关 → 更新/扩展已有任务
+  - 如果完全不同 → 用 task_update(status="deleted") 清理旧任务，重新规划
+  - 如果有部分重叠 → 保留相关任务，删除不相关的，补充新任务
+- "全面分析/出报告/完整分析"等请求 → 始终先规划任务
+- **所有任务完成后必须输出综合回应**：不要以 task_update(status="completed") 作为最后一个动作。完成全部任务后，必须再发起一轮回复，汇总各任务的分析发现，给出综合判断。回应形式根据分析内容自行决定（文字、表格、图表均可）。
+
 ### 上下文复用规则（★强制）
 当 [data_profile] 已在对话上下文中时：
 - **禁止**重新调用 quick_profile / describe_dataset / detect_data_quality / assess_readiness
@@ -490,6 +502,21 @@ AGENT_ANALYSIS_ENGINE = """\
 
 def _classify_task(user_input: str, session_context: str = "") -> str:
     """根据用户输入推断任务复杂度等级。返回 chat/quick/standard/full。"""
+    from data_agent.agent.intent import plan_turn_intent
+    intent = plan_turn_intent(user_input, session_context)
+    if intent.intent_type == "chat":
+        return "chat"
+    if intent.intent_type == "operation":
+        return "quick"
+    if intent.intent_type == "report":
+        return "full"
+    # analysis_guidance / data_requirement / direct_analysis 走 STANDARD；
+    # 具体行为由 TurnIntent 注入的策略约束决定。
+    return "standard"
+
+
+def _legacy_classify_task(user_input: str, session_context: str = "") -> str:
+    """旧关键词复杂度判断，保留为调试参考。"""
     text = user_input.lower()
 
     # 1. Full 优先级最高
@@ -549,6 +576,9 @@ def build_system_prompt(
     user_input: str = "",
 ) -> str:
     """动态构建完整的系统提示词。根据 user_input 自动选择模板级别。"""
+    from data_agent.agent.intent import plan_turn_intent
+
+    turn_intent = plan_turn_intent(user_input, session_context) if user_input else None
     level = _classify_task(user_input, session_context) if user_input else "standard"
 
     if level == "chat":
@@ -586,5 +616,34 @@ def build_system_prompt(
         injections.append(f"<loaded_skills>\n{skill_instructions}\n</loaded_skills>")
 
     if injections:
-        return formatted + "\n\n" + "\n\n".join(injections)
+        intent_prompt = _format_turn_intent_prompt(turn_intent) if turn_intent else ""
+        return formatted + "\n\n" + intent_prompt + "\n\n" + "\n\n".join(injections)
+    if turn_intent:
+        return formatted + "\n\n" + _format_turn_intent_prompt(turn_intent)
     return formatted
+
+
+def _format_turn_intent_prompt(turn_intent) -> str:
+    if turn_intent is None:
+        return ""
+    data = turn_intent.to_dict()
+    return f"""\
+<turn_intent>
+{data}
+</turn_intent>
+
+## 本轮执行策略
+- intent_type 决定本轮主动作，不要只按 chat/quick/standard/full 模式机械执行。
+- data_requirement：不要假装已有数据，先输出数据需求清单，区分必须数据、建议数据、缺失后的结论限制。
+- analysis_guidance：如果已有数据，先基于数据结构推荐 2-3 条分析路径并说明原因；不要直接生成完整报告。
+- direct_analysis：先形成简短 AnalysisSpec（目标、指标、维度、时间范围、方法、限制），再调用工具执行。
+- report：先确保已有证据和图表；证据不足时先补分析，不要空泛出报告。
+- operation：直接完成用户要求的数据操作，避免额外探索。
+
+## 结构化分析产物
+当本轮涉及分析咨询或执行时，在自然语言中显式给出或维护以下结构：
+- DataRequirement：必须数据、建议数据、缺失限制。
+- AnalysisSpec：goal、question_type、metrics、dimensions、time_scope、required_data、method_plan、limitations。
+- EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence。
+- 当形成明确 AnalysisSpec 或关键 EvidenceRecord 时，使用 record_analysis_spec / record_evidence_record 保存，便于报告和后续追问复用。
+"""

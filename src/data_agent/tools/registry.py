@@ -86,6 +86,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "transform_data", "derive_field",
         "run_python", "ask_user_question", "create_chart",
         "tool_search",
+        "record_analysis_spec", "record_evidence_record",
     },
     "eda": {
         "analyze_time_series", "correlation_analysis",
@@ -271,28 +272,53 @@ class ToolRegistry:
 
     def activate_groups(self, groups: set[str]) -> None:
         """激活指定的工具分组。"""
-        self._active_groups.update(groups - {"core"})
+        self._get_active_groups().update(groups - {"core"})
 
     def activate_groups_for_text(self, text: str) -> set[str]:
         """根据文本内容推断并激活需要的工具分组，返回新激活的分组。"""
-        new_groups = infer_groups_from_text(text) - self._active_groups
+        active = self._get_active_groups()
+        new_groups = infer_groups_from_text(text) - active
         if new_groups:
-            self._active_groups.update(new_groups)
+            active.update(new_groups)
         return new_groups
 
     def reset_groups(self) -> None:
         """重置活跃工具分组为默认状态（仅 core）。应在每轮 turn 开始时调用。"""
+        ctx = self._current_context()
+        if ctx is not None:
+            ctx.reset_turn_state()
+            return
         self._active_groups = {"core"}
         self._executed_tools.clear()
+
+    def _current_context(self):
+        try:
+            from data_agent.agent.context import get_current_context
+            return get_current_context()
+        except Exception:
+            return None
+
+    def _get_active_groups(self) -> set[str]:
+        ctx = self._current_context()
+        if ctx is not None:
+            return ctx.active_tool_groups
+        return self._active_groups
+
+    def _get_executed_tools(self) -> set[str]:
+        ctx = self._current_context()
+        if ctx is not None:
+            return ctx.executed_tools
+        return self._executed_tools
 
     def _active_tool_names(self) -> set[str]:
         """获取当前活跃的所有工具名称。"""
         self._ensure_discovered()
         lookup = _build_tool_to_group()
+        active_groups = self._get_active_groups()
         names: set[str] = set()
         for tool_name in self._tools:
             group = lookup.get(tool_name, "core")
-            if group in self._active_groups:
+            if group in active_groups:
                 names.add(tool_name)
         # 未在分组中定义的工具默认包含（如 MCP 工具）
         for tool_name in self._tools:
@@ -313,8 +339,9 @@ class ToolRegistry:
         """根据 LLM 调用的工具名称，自动扩展相关工具分组。"""
         lookup = _build_tool_to_group()
         group = lookup.get(tool_name)
-        if group and group not in self._active_groups:
-            self._active_groups.add(group)
+        active = self._get_active_groups()
+        if group and group not in active:
+            active.add(group)
 
     # === Registration ===
 
@@ -397,7 +424,8 @@ class ToolRegistry:
 
         # 前置条件检查
         if tool.requires:
-            missing = [r for r in tool.requires if r not in self._executed_tools]
+            executed = self._get_executed_tools()
+            missing = [r for r in tool.requires if r not in executed]
             if missing:
                 return ToolResult(
                     summary=json.dumps({
@@ -425,7 +453,7 @@ class ToolRegistry:
                 result = tool.func(**params)
 
             tool_result = _to_tool_result(result)
-            self._executed_tools.add(name)
+            self._get_executed_tools().add(name)
 
         except ToolTimeoutError:
             tool_result = ToolResult(
@@ -435,6 +463,10 @@ class ToolRegistry:
                 )
             )
         except Exception as e:
+            # UserConfirmationRequired 必须透传给 AgentLoop 的 suspension 机制
+            from data_agent.agent.loop import UserConfirmationRequired as _UCC
+            if isinstance(e, _UCC):
+                raise
             tool_result = ToolResult(
                 summary=json.dumps({"error": str(e)}, ensure_ascii=False)
             )

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from data_agent.config import get_config
+from data_agent.tools._utils import sanitize_filename
 from data_agent.tools.registry import registry
 
 
@@ -19,11 +20,12 @@ def _safe_path(p: str) -> Path:
 
 def _get_session_output_dir() -> Optional[Path]:
     """获取当前会话的 output 目录，无会话时返回 None。"""
-    from data_agent.tools.visualization import _current_session_id
-    if not _current_session_id:
+    from data_agent.tools.visualization import current_session_id
+    session_id = current_session_id()
+    if not session_id:
         return None
     from data_agent.config import get_config
-    d = get_config().sessions_resolved / _current_session_id / "output"
+    d = get_config().sessions_resolved / session_id / "output"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -52,18 +54,20 @@ def read_file(path: str, limit: Optional[int] = None) -> str:
     description="写入内容到文件。path 为相对路径。文件会保存到当前会话的 output 目录中，并自动注册到会话清单。",
 )
 def write_file(path: str, content: str) -> str:
-    from data_agent.tools.visualization import _current_session_id
+    from data_agent.tools.visualization import current_session_id
 
+    safe_name = sanitize_filename(path)
     session_dir = _get_session_output_dir()
     if session_dir:
-        fp = session_dir / path
+        session_id = current_session_id()
+        fp = session_dir / safe_name
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(content, encoding="utf-8")
 
         # 注册到会话 artifact 清单
         from data_agent.session.history import register_artifact
-        artifact_path = f"sessions/{_current_session_id}/output/{path}"
-        register_artifact(_current_session_id, artifact_path, "file", path)
+        artifact_path = f"sessions/{session_id}/output/{safe_name}"
+        register_artifact(session_id, artifact_path, "file", path)
         return f"Wrote {len(content)} bytes to {artifact_path}"
     else:
         fp = _safe_path(path)

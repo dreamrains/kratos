@@ -145,13 +145,18 @@ def save_session(
         "data_file": data_file,
         "message_count": len(messages),
         "summary": summary,
+        "project_name": None,
         "object_name": None,
     }
     if extra_meta:
-        # extra_meta 中的 object_name 覆盖默认值
-        if "object_name" in extra_meta:
-            meta["object_name"] = extra_meta.pop("object_name")
-        meta.update(extra_meta)
+        extra = dict(extra_meta)
+        # project_name is canonical; object_name remains a backward-compatible alias.
+        project_name = extra.pop("project_name", None)
+        object_name = extra.pop("object_name", None)
+        active_project = project_name if project_name is not None else object_name
+        meta["project_name"] = active_project
+        meta["object_name"] = active_project
+        meta.update(extra)
     (sdir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # conversation.json
@@ -208,13 +213,15 @@ def load_session(session_id: str) -> Optional[dict]:
         "message_count": len(messages),
         "messages": messages,
         "summary": meta.get("summary", ""),
-        "object_name": meta.get("object_name"),
+        "project_name": meta.get("project_name") or meta.get("object_name"),
+        "object_name": meta.get("object_name") or meta.get("project_name"),
     }
 
 
-def list_sessions(object_name: str = "") -> list[dict]:
-    """列出所有会话摘要。支持按对象名过滤。"""
+def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
+    """列出所有会话摘要。支持按项目名过滤，object_name 为兼容别名。"""
     results = []
+    filter_project = project_name or object_name
     for d in sorted(_sessions_dir().iterdir(), reverse=True):
         if not d.is_dir():
             continue
@@ -223,10 +230,10 @@ def list_sessions(object_name: str = "") -> list[dict]:
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            obj_name = meta.get("object_name")
-            # 按对象过滤
-            if object_name:
-                if obj_name != object_name:
+            proj_name = meta.get("project_name") or meta.get("object_name")
+            # 按项目过滤
+            if filter_project:
+                if proj_name != filter_project:
                     continue
             results.append({
                 "session_id": meta["session_id"],
@@ -235,7 +242,8 @@ def list_sessions(object_name: str = "") -> list[dict]:
                 "data_file": meta.get("data_file", ""),
                 "message_count": meta.get("message_count", 0),
                 "summary": meta.get("summary", ""),
-                "object_name": obj_name,
+                "project_name": proj_name,
+                "object_name": proj_name,
             })
         except (json.JSONDecodeError, KeyError):
             continue
@@ -250,6 +258,11 @@ def update_session_meta(session_id: str, updates: dict) -> bool:
         return False
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        updates = dict(updates)
+        if "project_name" in updates or "object_name" in updates:
+            project_name = updates.get("project_name", updates.get("object_name"))
+            updates["project_name"] = project_name
+            updates["object_name"] = project_name
         meta.update(updates)
         meta_path.write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -281,7 +294,7 @@ def bind_session_to_object(session_id: str, object_name: str) -> dict:
     current_object = None
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        current_object = meta.get("object_name")
+        current_object = meta.get("project_name") or meta.get("object_name")
 
     # 已绑定同一对象，无需操作
     if current_object == object_name:
@@ -323,7 +336,7 @@ def bind_session_to_object(session_id: str, object_name: str) -> dict:
     mgr.bind_session(object_name, session_id)
 
     # 更新会话 meta
-    update_session_meta(session_id, {"object_name": object_name})
+    update_session_meta(session_id, {"project_name": object_name, "object_name": object_name})
 
     return {
         "success": True,
@@ -343,7 +356,7 @@ def unbind_session_from_object(session_id: str) -> dict:
         return {"success": True, "message": "会话不存在或无绑定", "from_object": None}
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    current_object = meta.get("object_name")
+    current_object = meta.get("project_name") or meta.get("object_name")
     if not current_object:
         return {"success": True, "message": "会话未绑定任何对象", "from_object": None}
 
@@ -352,13 +365,32 @@ def unbind_session_from_object(session_id: str) -> dict:
     mgr.unbind_session(current_object, session_id)
 
     # 更新会话 meta
-    update_session_meta(session_id, {"object_name": None})
+    update_session_meta(session_id, {"project_name": None, "object_name": None})
 
     return {
         "success": True,
         "message": f"会话已从对象 '{current_object}' 解绑",
         "from_object": current_object,
     }
+
+
+def bind_session_to_project(session_id: str, project_name: str) -> dict:
+    """绑定会话到项目。兼容实现复用旧 object 存储。"""
+    result = bind_session_to_object(session_id, project_name)
+    if result.get("success"):
+        result["project_name"] = project_name
+        result["from_project"] = result.get("from_object")
+        result["message"] = result["message"].replace("对象", "项目")
+    return result
+
+
+def unbind_session_from_project(session_id: str) -> dict:
+    """解除会话的项目绑定。"""
+    result = unbind_session_from_object(session_id)
+    if result.get("success"):
+        result["from_project"] = result.get("from_object")
+        result["message"] = result["message"].replace("对象", "项目")
+    return result
 
 
 # ── 会话分支 ─────────────────────────────────────────────
@@ -386,7 +418,8 @@ def branch_session(parent_id: str, branch_name: str = "") -> dict:
         "data_file": parent_data.get("data_file", ""),
         "message_count": len(parent_data["messages"]),
         "summary": parent_data.get("summary", ""),
-        "object_name": parent_data.get("object_name"),
+        "project_name": parent_data.get("project_name") or parent_data.get("object_name"),
+        "object_name": parent_data.get("object_name") or parent_data.get("project_name"),
         "forked_from": parent_id,
         "branch_name": branch_name,
     }

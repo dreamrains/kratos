@@ -19,6 +19,13 @@ from data_agent.agent.compact import (
     compact_history,
     estimate_tokens,
 )
+from data_agent.agent.context import (
+    AgentContext,
+    set_current_context,
+    reset_current_context,
+    use_agent_context,
+)
+from data_agent.session.workspace import Workspace, workspace
 
 logger = get_logger("loop")
 
@@ -82,10 +89,11 @@ class SuspensionManager:
 
 class UserConfirmationRequired(Exception):
     """Raised by ask_user_question in non-CLI mode to trigger suspension."""
-    def __init__(self, question: str, options: list[dict], context: str = ""):
+    def __init__(self, question: str, options: list[dict], context: str = "", multi_select: bool = False):
         self.question = question
         self.options = options
         self.context = context
+        self.multi_select = multi_select
         super().__init__(question)
 
 
@@ -143,12 +151,19 @@ class AgentLoop:
         client: Optional[LLMClient] = None,
         session_id: Optional[str] = None,
         object_name: Optional[str] = None,
+        project_name: Optional[str] = None,
     ):
         global _skill_loader, _mcp_manager, _mcp_bridge
 
         cfg = get_config()
         self.client = client or LLMClient()
         self.session_id = session_id or uuid.uuid4().hex[:12]
+        active_project = project_name or object_name
+        self.context = AgentContext(
+            session_id=self.session_id,
+            project_name=active_project,
+            workspace=Workspace(),
+        )
         self.messages: list[dict] = []
         self.token_threshold = cfg.token_threshold
         self._last_data_file = ""
@@ -159,11 +174,13 @@ class AgentLoop:
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
 
         # 对象绑定
-        if object_name:
-            workspace.set_object(object_name)
+        if active_project:
+            token = set_current_context(self.context)
+            workspace.set_project(active_project)
             from data_agent.tools.knowledge_tools import set_active_object, set_active_session
-            set_active_object(object_name)
+            set_active_object(active_project)
             set_active_session(self.session_id)
+            reset_current_context(token)
 
         # 初始化 SkillLoader（支持全局 + 项目级目录）
         if _skill_loader is None:
@@ -207,9 +224,11 @@ class AgentLoop:
         if data is None:
             return
 
-        obj_name = data.get("object_name")
+        obj_name = data.get("project_name") or data.get("object_name")
         if obj_name:
-            workspace.set_object(obj_name)
+            self.context.project_name = obj_name
+            with use_agent_context(self.context):
+                workspace.set_project(obj_name)
             set_active_object(obj_name)
             logger.info("Object context restored", extra={"extra_data": {"object": obj_name}})
 
@@ -257,7 +276,7 @@ class AgentLoop:
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
         tool_list = ", ".join(registry.tool_names)
-        active_obj = workspace.active_object
+        active_obj = workspace.active_project
         sid = self.session_id
 
         # 提取最近用户输入用于任务级别推断
@@ -326,10 +345,11 @@ class AgentLoop:
 
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
-        if self._prompt_cache_dirty or not self._prompt_cache:
-            self._prompt_cache = self._build_system_prompt()
-            self._prompt_cache_dirty = False
-        return self._prompt_cache
+        with use_agent_context(self.context):
+            if self._prompt_cache_dirty or not self._prompt_cache:
+                self._prompt_cache = self._build_system_prompt()
+                self._prompt_cache_dirty = False
+            return self._prompt_cache
 
     def _build_interrupt_context(self, user_input: str) -> str:
         """Build context hint when the previous turn was interrupted."""
@@ -373,7 +393,9 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         # 根据用户输入激活相关工具分组
-        new_groups = registry.activate_groups_for_text(user_input)
+        with use_agent_context(self.context):
+            registry.reset_groups()
+            new_groups = registry.activate_groups_for_text(user_input)
         if new_groups:
             logger.info("Activated tool groups", extra={"extra_data": {"groups": list(new_groups)}})
         try:
@@ -412,6 +434,9 @@ class AgentLoop:
         self._interrupt_event.clear()
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
+        with use_agent_context(self.context):
+            registry.reset_groups()
+            registry.activate_groups_for_text(user_input)
         try:
             result = self._loop()
         except Exception as e:
@@ -432,19 +457,20 @@ class AgentLoop:
 
     def _auto_save(self) -> None:
         """自动保存会话状态。增量推送新消息到 JSONL + 全量保存。"""
-        from data_agent.session.history import save_session, push_messages
-        # 增量推送上次保存后新增的消息
-        new_msgs = self.messages[self._last_jsonl_idx:]
-        if new_msgs:
-            push_messages(self.session_id, new_msgs)
-            self._last_jsonl_idx = len(self.messages)
-        # 全量保存（会合并 JSONL 并清空）
-        save_session(
-            self.messages,
-            self.session_id,
-            data_file=self._last_data_file,
-            extra_meta=self._build_session_meta(),
-        )
+        with use_agent_context(self.context):
+            from data_agent.session.history import save_session, push_messages
+            # 增量推送上次保存后新增的消息
+            new_msgs = self.messages[self._last_jsonl_idx:]
+            if new_msgs:
+                push_messages(self.session_id, new_msgs)
+                self._last_jsonl_idx = len(self.messages)
+            # 全量保存（会合并 JSONL 并清空）
+            save_session(
+                self.messages,
+                self.session_id,
+                data_file=self._last_data_file,
+                extra_meta=self._build_session_meta(),
+            )
 
     def _build_session_meta(self) -> dict:
         """构建丰富的 session 元数据。"""
@@ -456,7 +482,8 @@ class AgentLoop:
             loaded_skills = [s.name for s in self._skill_loader.list_loaded()]
 
         return {
-            "object_name": workspace.active_object,
+            "project_name": workspace.active_project,
+            "object_name": workspace.active_project,
             "datasets": {
                 name: {"rows": info["rows"], "columns": info["columns"]}
                 for name, info in datasets.items()
@@ -657,6 +684,7 @@ class AgentLoop:
     def stream_turn(self, user_input: str):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
         import time
+        set_current_context(self.context)
 
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
@@ -666,16 +694,26 @@ class AgentLoop:
             self.messages.append({"role": "user", "content": context})
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
+        registry.reset_groups()
         registry.activate_groups_for_text(user_input)
 
-        max_rounds = 30
         final_text = ""
+        round_num = 0
         self._ensure_mcp_initialized()
 
-        for round_num in range(1, max_rounds + 1):
+        while True:
+            round_num += 1
+
             if self._interrupt_event.is_set():
                 yield {"type": "error", "message": "Turn interrupted by user"}
                 return
+
+            # Safety valve: force summary at high round count
+            if round_num == 300:
+                self.messages.append({"role": "user", "content": (
+                    "分析已进行超过 300 轮工具调用。请立即停止调用工具，"
+                    "基于已获得的所有数据和分析结果输出总结报告。"
+                )})
 
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
@@ -743,13 +781,21 @@ class AgentLoop:
                 yield {"type": "error", "message": "Turn interrupted by user"}
                 return
 
-        # Max rounds reached
-        if not final_text:
-            yield {"type": "text_delta", "text": "达到最大轮次限制。"}
+            # Safety valve: hard stop at 310 rounds
+            if round_num >= 310:
+                logger.warning("Safety valve triggered", extra={"extra_data": {
+                    "session": self.session_id, "rounds": round_num,
+                }})
+                if not final_text:
+                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
+                self._maybe_archive(user_input, final_text)
+                self._auto_save()
+                return
 
     def resume_turn_streaming(self, suspension_id: str, user_response: str):
         """Generator variant of resume_turn for SSE streaming."""
         from pathlib import Path
+        set_current_context(self.context)
 
         sessions_dir = Path(get_config().project_resolved) / "sessions"
         mgr = SuspensionManager(sessions_dir)
@@ -766,13 +812,22 @@ class AgentLoop:
         )})
         mgr.remove(suspension_id)
 
-        max_rounds = 30
         final_text = ""
+        round_num = 0
 
-        for round_num in range(1, max_rounds + 1):
+        while True:
+            round_num += 1
+
             if self._interrupt_event.is_set():
                 yield {"type": "error", "message": "Turn interrupted by user"}
                 return
+
+            # Safety valve: force summary at high round count
+            if round_num == 300:
+                self.messages.append({"role": "user", "content": (
+                    "分析已进行超过 300 轮工具调用。请立即停止调用工具，"
+                    "基于已获得的所有数据和分析结果输出总结报告。"
+                )})
 
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
@@ -836,22 +891,43 @@ class AgentLoop:
                 yield {"type": "error", "message": "Turn interrupted by user"}
                 return
 
-        if not final_text:
-            yield {"type": "text_delta", "text": "达到最大轮次限制。"}
+            # Safety valve: hard stop at 310 rounds
+            if round_num >= 310:
+                logger.warning("Safety valve triggered", extra={"extra_data": {
+                    "session": self.session_id, "rounds": round_num,
+                }})
+                if not final_text:
+                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
+                self._maybe_archive("", final_text)
+                self._auto_save()
+                return
 
     def _loop(self) -> LoopResult:
+        """Run the agent loop inside this session's AgentContext."""
+        with use_agent_context(self.context):
+            return self._loop_impl()
+
+    def _loop_impl(self) -> LoopResult:
         """循环调用 LLM 直到获得最终文本回复。"""
-        max_rounds = 30
         final_text = ""
+        round_num = 0
 
         # 惰性初始化 MCP
         self._ensure_mcp_initialized()
 
-        for _ in range(max_rounds):
+        while True:
+            round_num += 1
             # 协作式中断检查
             if self._interrupt_event.is_set():
                 logger.info("Turn interrupted by user")
                 return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
+
+            # Safety valve: force summary at high round count
+            if round_num == 300:
+                self.messages.append({"role": "user", "content": (
+                    "分析已进行超过 300 轮工具调用。请立即停止调用工具，"
+                    "基于已获得的所有数据和分析结果输出总结报告。"
+                )})
 
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
@@ -948,10 +1024,19 @@ class AgentLoop:
                     "content": tool_msg_content,
                 })
 
-        return FinalResponse(content=final_text or "达到最大轮次限制。")
+            # Safety valve: hard stop at 310 rounds
+            if round_num >= 310:
+                logger.warning("Safety valve triggered", extra={"extra_data": {
+                    "session": self.session_id, "rounds": round_num,
+                }})
+                return FinalResponse(content=final_text or "分析已完成。（已达到安全轮次上限）")
 
     def _maybe_archive(self, user_input: str, reply: str) -> None:
         """当有实质性分析结果时自动归档。"""
+        with use_agent_context(self.context):
+            return self._maybe_archive_impl(user_input, reply)
+
+    def _maybe_archive_impl(self, user_input: str, reply: str) -> None:
         from data_agent.session.workspace import workspace
         from data_agent.session.history import archive_analysis
 
