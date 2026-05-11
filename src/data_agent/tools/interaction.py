@@ -340,18 +340,45 @@ def _ask_multiple(questions: list[dict]) -> dict:
                     "。提供 questions 时忽略 question/options/multi_select 参数。"
                 ),
             },
+            "confirmation_type": {
+                "type": "string",
+                "description": "结构化确认类型：scope_confirmation/data_requirement_confirmation/method_confirmation/data_quality_confirmation/follow_up_choice",
+            },
+            "blocking_reason": {
+                "type": "string",
+                "description": "为什么需要用户确认；用于 CLI/Web 展示和分析状态记录。",
+            },
+            "state_updates": {
+                "type": "string",
+                "description": "用户回答后要合并到 AnalysisSessionState 的 JSON 对象。",
+            },
+            "related_task_id": {
+                "type": "integer",
+                "description": "关联的 task id，可选。",
+            },
+            "related_spec_id": {
+                "type": "string",
+                "description": "关联的 AnalysisSpec id，可选。",
+            },
         },
-        "required": ["question"],
+        "required": [],
     },
 )
 def ask_user_question(
-    question: str,
+    question: str = "",
     options: str = "",
     multi_select: bool = False,
     preview: str = "",
     questions: str = "",
+    confirmation_type: str = "",
+    blocking_reason: str = "",
+    state_updates: str = "",
+    related_task_id: int = 0,
+    related_spec_id: str = "",
 ) -> str:
     """向用户展示问题并获取回答。支持单问题和多问题模式。"""
+
+    from data_agent.agent.loop import UserConfirmationRequired
 
     # ── 多问题模式 ──
     if questions:
@@ -362,24 +389,23 @@ def ask_user_question(
 
         if isinstance(parsed_questions, list) and parsed_questions:
             # 限制最多 4 个问题
-            parsed_questions = parsed_questions[:4]
+            parsed_questions = parsed_questions[:3]
 
-            # Web/suspension mode
-            if _check_web_mode():
-                from data_agent.agent.loop import UserConfirmationRequired
-                # 多问题合并为单个 suspension
-                combined_q = "; ".join(q.get("question", "") for q in parsed_questions)
-                all_options = []
-                for q in parsed_questions:
-                    all_options.extend(q.get("options", []))
-                raise UserConfirmationRequired(
-                    question=combined_q,
-                    options=all_options,
-                    context=json.dumps(parsed_questions, ensure_ascii=False),
-                )
-
-            result = _ask_multiple(parsed_questions)
-            return json.dumps(result, ensure_ascii=False)
+            # 统一使用 suspension 模式（CLI 和 Web）
+            combined_q = "; ".join(q.get("question", "") for q in parsed_questions)
+            all_options = []
+            for q in parsed_questions:
+                all_options.extend(q.get("options", []))
+            raise UserConfirmationRequired(
+                question=combined_q,
+                options=all_options,
+                context=json.dumps(parsed_questions, ensure_ascii=False),
+                confirmation_type=confirmation_type,
+                blocking_reason=blocking_reason,
+                state_updates=state_updates,
+                related_task_id=related_task_id,
+                related_spec_id=related_spec_id,
+            )
 
     # ── 解析单问题选项 ──
     parsed_options = []
@@ -389,15 +415,15 @@ def ask_user_question(
         except json.JSONDecodeError:
             parsed_options = [{"label": opt.strip(), "description": ""} for opt in options.split(",")]
 
-    # Web/suspension mode
-    if _check_web_mode():
-        from data_agent.agent.loop import UserConfirmationRequired
-        raise UserConfirmationRequired(
-            question=question,
-            options=parsed_options,
-            context="",
-        )
-
-    # ── 单问题交互 ──
-    result = _ask_single(question, parsed_options, multi_select, preview)
-    return json.dumps(result, ensure_ascii=False)
+    # 统一使用 suspension 模式（CLI 和 Web）
+    raise UserConfirmationRequired(
+        question=question,
+        options=parsed_options,
+        context="",
+        multi_select=multi_select,
+        confirmation_type=confirmation_type,
+        blocking_reason=blocking_reason,
+        state_updates=state_updates,
+        related_task_id=related_task_id,
+        related_spec_id=related_spec_id,
+    )

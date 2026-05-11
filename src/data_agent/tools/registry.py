@@ -4,6 +4,7 @@ import inspect
 import json
 import re
 import time
+from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -56,6 +57,53 @@ class ToolResult:
         return self.to_cli()
 
 
+@dataclass
+class ToolCapability:
+    """Metadata that lets analysis workflows reason about tool abilities."""
+
+    capability_id: str
+    category: str = ""
+    problem_types: list[str] = field(default_factory=list)
+    input_contract: dict[str, Any] = field(default_factory=dict)
+    output_contract: dict[str, Any] = field(default_factory=dict)
+    evidence_fields: list[str] = field(default_factory=list)
+    risk_level: str = "low"
+    requires_confirmation: bool = False
+    dependencies: list[str] = field(default_factory=list)
+    fallback_tools: list[str] = field(default_factory=list)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any] | None) -> "ToolCapability | None":
+        if not data:
+            return None
+        return ToolCapability(
+            capability_id=str(data.get("capability_id") or ""),
+            category=str(data.get("category") or ""),
+            problem_types=list(data.get("problem_types") or []),
+            input_contract=dict(data.get("input_contract") or {}),
+            output_contract=dict(data.get("output_contract") or {}),
+            evidence_fields=list(data.get("evidence_fields") or []),
+            risk_level=str(data.get("risk_level") or "low"),
+            requires_confirmation=bool(data.get("requires_confirmation", False)),
+            dependencies=list(data.get("dependencies") or []),
+            fallback_tools=list(data.get("fallback_tools") or []),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "capability_id": self.capability_id,
+            "category": self.category,
+            "problem_types": self.problem_types,
+            "input_contract": self.input_contract,
+            "output_contract": self.output_contract,
+            "evidence_fields": self.evidence_fields,
+            "risk_level": self.risk_level,
+            "requires_confirmation": self.requires_confirmation,
+            "dependencies": self.dependencies,
+            "fallback_tools": self.fallback_tools,
+        }
+
+
 def _to_tool_result(result: Any) -> ToolResult:
     """Normalize any tool return to ToolResult."""
     if isinstance(result, ToolResult):
@@ -86,7 +134,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "transform_data", "derive_field",
         "run_python", "ask_user_question", "create_chart",
         "tool_search",
-        "record_analysis_spec", "record_evidence_record",
+        "record_data_requirement", "record_analysis_spec", "record_evidence_record",
     },
     "eda": {
         "analyze_time_series", "correlation_analysis",
@@ -124,6 +172,60 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
 }
 
+
+def _cap(
+    capability_id: str,
+    category: str,
+    problem_types: list[str],
+    *,
+    evidence_fields: list[str] | None = None,
+    risk_level: str = "low",
+    requires_confirmation: bool = False,
+    dependencies: list[str] | None = None,
+    fallback_tools: list[str] | None = None,
+) -> ToolCapability:
+    return ToolCapability(
+        capability_id=capability_id,
+        category=category,
+        problem_types=problem_types,
+        evidence_fields=evidence_fields or [],
+        risk_level=risk_level,
+        requires_confirmation=requires_confirmation,
+        dependencies=dependencies or [],
+        fallback_tools=fallback_tools or [],
+    )
+
+
+DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
+    "list_data": _cap("data.list", "data_view", ["data_understanding"]),
+    "preview_data": _cap("data.preview", "data_view", ["data_understanding"]),
+    "describe_dataset": _cap("data.describe", "profile", ["data_understanding"], evidence_fields=["schema", "rows", "columns"]),
+    "quick_profile": _cap("data.profile", "profile", ["data_understanding", "quality"], evidence_fields=["schema", "missingness", "distribution"]),
+    "detect_data_quality": _cap("data.quality", "quality", ["quality"], evidence_fields=["missingness", "duplicates", "outliers"]),
+    "compare_periods": _cap("analysis.period_compare", "trend", ["trend", "attribution"], evidence_fields=["periods", "metric_delta"]),
+    "analyze_time_series": _cap("analysis.time_series", "trend", ["trend", "monitoring"], evidence_fields=["trend", "seasonality"]),
+    "contribute_decomposition": _cap("analysis.dimension_decomposition", "decomposition", ["attribution", "diagnosis"], evidence_fields=["drivers", "contribution"]),
+    "top_n": _cap("analysis.top_n", "decomposition", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
+    "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
+    "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
+    "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
+    "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["effect_size", "significance"], risk_level="medium", requires_confirmation=True),
+    "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
+    "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
+    "forecast": _cap("analysis.forecast", "prediction", ["prediction", "monitoring"], evidence_fields=["forecast", "interval"], risk_level="medium", requires_confirmation=True),
+    "regression_analysis": _cap("analysis.regression", "modeling", ["drivers", "prediction"], evidence_fields=["coefficients", "fit"]),
+    "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "features"], risk_level="medium", requires_confirmation=True),
+    "run_python": _cap("fallback.python", "fallback", ["custom"], risk_level="medium"),
+    "ask_user_question": _cap("interaction.confirmation", "confirmation", ["confirmation"], risk_level="low"),
+    "record_data_requirement": _cap("artifact.data_requirement", "analysis_artifact", ["planning"], evidence_fields=["required_data", "limitations"]),
+    "record_analysis_spec": _cap("artifact.analysis_spec", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "limitations"]),
+    "record_evidence_record": _cap("artifact.evidence_record", "evidence", ["evidence"], evidence_fields=["claim", "method", "confidence"]),
+    "task_create": _cap("workflow.task_create", "workflow", ["planning", "execution"]),
+    "task_update": _cap("workflow.task_update", "workflow", ["execution"]),
+    "generate_report": _cap("report.generate", "report", ["report"], evidence_fields=["evidence_records", "limitations"]),
+    "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
+}
+
 # Keywords that trigger group activation
 _GROUP_KEYWORDS: dict[str, list[str]] = {
     "report": ["报告", "完整分析", "全面分析", "综合分析", "分析报告", "完整报告"],
@@ -158,7 +260,7 @@ def infer_groups_from_text(text: str) -> set[str]:
 
 
 class ToolDefinition:
-    __slots__ = ("name", "description", "func", "parameters", "origin", "recovery_hint", "requires")
+    __slots__ = ("name", "description", "func", "parameters", "origin", "recovery_hint", "requires", "capability")
 
     def __init__(
         self,
@@ -169,6 +271,7 @@ class ToolDefinition:
         origin: str = "native",
         recovery_hint: str = "",
         requires: list[str] | None = None,
+        capability: ToolCapability | dict[str, Any] | None = None,
     ):
         self.name = name
         self.description = description
@@ -177,6 +280,7 @@ class ToolDefinition:
         self.origin = origin
         self.recovery_hint = recovery_hint
         self.requires = requires or []
+        self.capability = ToolCapability.from_dict(capability) if isinstance(capability, dict) else capability
 
     def to_llm_schema(self) -> dict:
         desc = self.description
@@ -246,6 +350,7 @@ class ToolRegistry:
         self._before_hooks: list[Callable] = []
         self._after_hooks: list[Callable] = []
         self._executed_tools: set[str] = set()
+        self._capabilities: dict[str, ToolCapability] = {}
 
     def _ensure_discovered(self) -> None:
         """惰性发现：首次访问工具列表时自动扫描 tools 包。"""
@@ -353,6 +458,7 @@ class ToolRegistry:
         schema_overrides: Optional[dict[str, dict]] = None,
         recovery_hint: Optional[str] = None,
         requires: Optional[list[str]] = None,
+        capability: ToolCapability | dict[str, Any] | None = None,
     ) -> Callable:
         """装饰器，注册一个工具函数。
 
@@ -380,7 +486,10 @@ class ToolRegistry:
                 origin="native",
                 recovery_hint=recovery_hint or "",
                 requires=requires or [],
+                capability=capability or DEFAULT_TOOL_CAPABILITIES.get(tool_name),
             )
+            if self._tools[tool_name].capability is not None:
+                self._capabilities[tool_name] = self._tools[tool_name].capability
             return func
 
         return decorator
@@ -394,6 +503,7 @@ class ToolRegistry:
         origin: str = "native",
         recovery_hint: str = "",
         requires: Optional[list[str]] = None,
+        capability: ToolCapability | dict[str, Any] | None = None,
     ):
         """直接注册一个工具函数。"""
         tool_params = parameters or _build_schema(func)
@@ -405,7 +515,43 @@ class ToolRegistry:
             origin=origin,
             recovery_hint=recovery_hint,
             requires=requires or [],
+            capability=capability or DEFAULT_TOOL_CAPABILITIES.get(name),
         )
+        if self._tools[name].capability is not None:
+            self._capabilities[name] = self._tools[name].capability
+
+    def set_capability(self, tool_name: str, capability: ToolCapability | dict[str, Any]) -> None:
+        cap = ToolCapability.from_dict(capability) if isinstance(capability, dict) else capability
+        if cap is None:
+            return
+        self._capabilities[tool_name] = cap
+        if tool_name in self._tools:
+            self._tools[tool_name].capability = cap
+
+    def capability_for(self, tool_name: str) -> dict[str, Any] | None:
+        cap = self._capabilities.get(tool_name)
+        if cap is None and tool_name in DEFAULT_TOOL_CAPABILITIES:
+            cap = DEFAULT_TOOL_CAPABILITIES[tool_name]
+        return cap.to_dict() if cap else None
+
+    def capability_definitions(self, active_only: bool = False) -> list[dict[str, Any]]:
+        self._ensure_discovered()
+        names = self._active_tool_names() if active_only else set(self._tools)
+        results = []
+        for name in sorted(names):
+            cap = self.capability_for(name)
+            if cap:
+                cap = dict(cap)
+                cap["tool_name"] = name
+                results.append(cap)
+        return results
+
+    def tools_for_capability(self, capability_id: str) -> list[str]:
+        matches = []
+        for cap in self.capability_definitions(active_only=False):
+            if cap.get("capability_id") == capability_id:
+                matches.append(cap["tool_name"])
+        return matches
 
     # === Execution ===
 
@@ -495,8 +641,9 @@ class ToolRegistry:
 
     def _run_with_timeout(self, func: Callable, params: dict, timeout: int) -> Any:
         """在线程池中运行工具函数，超时则取消。Windows 兼容。"""
+        ctx = copy_context()
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(func, **params)
+            future = pool.submit(lambda: ctx.run(func, **params))
             try:
                 return future.result(timeout=timeout)
             except FuturesTimeout:

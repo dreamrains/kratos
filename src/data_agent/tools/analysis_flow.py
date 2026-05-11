@@ -23,13 +23,21 @@ def _session_id() -> str:
         return ""
 
 
-def _write_analysis_artifact(kind: str, payload: dict) -> str:
+def _current_state():
+    try:
+        from data_agent.agent.analysis_state import current_analysis_state
+        return current_analysis_state()
+    except Exception:
+        return None
+
+
+def _write_analysis_artifact(kind: str, payload: dict) -> dict:
     from data_agent.config import get_config
     from data_agent.session.history import register_artifact
 
     sid = _session_id()
     if not sid:
-        return json.dumps({"error": "无当前会话，无法保存分析产物"}, ensure_ascii=False)
+        return {"error": "无当前会话，无法保存分析产物"}
 
     out_dir = get_config().sessions_resolved / sid / "analysis_flow"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -39,7 +47,44 @@ def _write_analysis_artifact(kind: str, payload: dict) -> str:
 
     artifact_path = f"sessions/{sid}/analysis_flow/{path.name}"
     register_artifact(sid, artifact_path, kind, payload.get("goal") or payload.get("claim") or kind)
-    return json.dumps({"saved": artifact_path, "type": kind}, ensure_ascii=False)
+    return {"saved": artifact_path, "type": kind, "payload": payload}
+
+
+@registry.register(
+    name="record_data_requirement",
+    description=(
+        "保存数据需求 DataRequirement。requirement_json 必须包含 goal、must_have_data、"
+        "recommended_data、optional_data、missing_limitations、minimum_viable_analysis。"
+    ),
+)
+def record_data_requirement(requirement_json: str) -> str:
+    try:
+        payload = json.loads(requirement_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "requirement_json 必须是有效 JSON"}, ensure_ascii=False)
+    required = [
+        "goal",
+        "must_have_data",
+        "recommended_data",
+        "optional_data",
+        "missing_limitations",
+        "minimum_viable_analysis",
+    ]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"DataRequirement 缺少字段: {missing}"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_data_requirement(payload)
+        state.save()
+
+    result = _write_analysis_artifact("data_requirement", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["requirement_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)
 
 
 @registry.register(
@@ -58,7 +103,24 @@ def record_analysis_spec(spec_json: str) -> str:
     missing = [k for k in required if k not in payload]
     if missing:
         return json.dumps({"error": f"AnalysisSpec 缺少字段: {missing}"}, ensure_ascii=False)
-    return _write_analysis_artifact("analysis_spec", payload)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.set_analysis_spec(payload)
+        state.save()
+
+    result = _write_analysis_artifact("analysis_spec", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["analysis_spec_id"] = payload.get("id")
+
+    try:
+        from data_agent.tools.task_tools import create_workflow_tasks_from_spec
+        result["workflow"] = create_workflow_tasks_from_spec(payload)
+    except Exception as e:
+        result["workflow_error"] = str(e)
+    return json.dumps(result, ensure_ascii=False)
 
 
 @registry.register(
@@ -77,4 +139,15 @@ def record_evidence_record(record_json: str) -> str:
     missing = [k for k in required if k not in payload]
     if missing:
         return json.dumps({"error": f"EvidenceRecord 缺少字段: {missing}"}, ensure_ascii=False)
-    return _write_analysis_artifact("evidence_record", payload)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_evidence_record(payload)
+        state.save()
+
+    result = _write_analysis_artifact("evidence_record", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["evidence_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)

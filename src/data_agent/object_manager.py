@@ -178,7 +178,7 @@ class ObjectManager:
             for session_id in meta.get("sessions", []):
                 try:
                     from data_agent.session.history import update_session_meta
-                    update_session_meta(session_id, {"object_name": None})
+                    update_session_meta(session_id, {"project_name": None, "object_name": None})
                     unbound_count += 1
                 except Exception:
                     pass

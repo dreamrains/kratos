@@ -14,6 +14,25 @@ from typing import Optional
 from data_agent.config import get_config
 
 
+WORKFLOW_FIELDS = {
+    "workflow_id": "",
+    "project_name": "",
+    "stage": "",
+    "node_type": "",
+    "analysis_spec_id": "",
+    "required_data": [],
+    "expected_output": "",
+    "evidence_ids": [],
+    "confirmation_ids": [],
+    "result_summary": "",
+    "limitations": "",
+    "confidence": "",
+    "required_capability": "",
+    "evidence_requirements": [],
+    "confirmation_policy": {},
+}
+
+
 class TaskManager:
     """基于文件的任务管理器。
 
@@ -51,12 +70,23 @@ class TaskManager:
         p = self._path(tid)
         if not p.exists():
             raise ValueError(f"Task {tid} not found")
-        return json.loads(p.read_text(encoding="utf-8"))
+        return self._normalize(json.loads(p.read_text(encoding="utf-8")))
 
     def _save(self, task: dict) -> None:
+        task = self._normalize(task)
         self._path(task["id"]).write_text(
             json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    def _normalize(self, task: dict) -> dict:
+        for key, value in WORKFLOW_FIELDS.items():
+            if key not in task:
+                task[key] = list(value) if isinstance(value, list) else value
+        task.setdefault("session_id", "")
+        task.setdefault("owner", "")
+        task.setdefault("blockedBy", [])
+        task.setdefault("blocks", [])
+        return task
 
     def _clear_dependency(self, completed_id: int) -> None:
         """完成时从所有其他任务的 blockedBy 中移除 completed_id。"""
@@ -74,6 +104,7 @@ class TaskManager:
         subject: str,
         description: str = "",
         session_id: str = "",
+        **workflow_fields,
     ) -> dict:
         """创建新任务。"""
         task = {
@@ -87,6 +118,9 @@ class TaskManager:
             "session_id": session_id,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+        for key in WORKFLOW_FIELDS:
+            if key in workflow_fields and workflow_fields[key] is not None:
+                task[key] = workflow_fields[key]
         self._save(task)
         return task
 
@@ -103,6 +137,7 @@ class TaskManager:
         owner: Optional[str] = None,
         addBlocks: Optional[list[int]] = None,
         addBlockedBy: Optional[list[int]] = None,
+        **workflow_fields,
     ) -> Optional[dict]:
         """更新任务。status 可选值：pending / in_progress / completed / deleted。"""
         try:
@@ -139,6 +174,10 @@ class TaskManager:
         if addBlockedBy is not None:
             task["blockedBy"] = list(set(task.get("blockedBy", []) + addBlockedBy))
 
+        for key in WORKFLOW_FIELDS:
+            if key in workflow_fields and workflow_fields[key] is not None:
+                task[key] = workflow_fields[key]
+
         self._save(task)
         return task
 
@@ -146,17 +185,27 @@ class TaskManager:
         tasks = []
         for f in sorted(self.dir.glob("task_*.json")):
             try:
-                tasks.append(json.loads(f.read_text(encoding="utf-8")))
+                tasks.append(self._normalize(json.loads(f.read_text(encoding="utf-8"))))
             except (json.JSONDecodeError, OSError):
                 continue
         return tasks
 
+    def list_for_scope(self, session_id: str = "", project_name: str = "") -> list[dict]:
+        tasks = self.list_all()
+        scoped = [
+            t for t in tasks
+            if (session_id and t.get("session_id") == session_id)
+            or (project_name and t.get("project_name") == project_name)
+        ]
+        others = [t for t in tasks if t not in scoped]
+        return scoped + others
+
     def list_by_status(self, status: str) -> list[dict]:
         return [t for t in self.list_all() if t.get("status") == status]
 
-    def format_list(self) -> str:
+    def format_list(self, session_id: str = "", project_name: str = "") -> str:
         """纯文本格式化任务列表。"""
-        tasks = self.list_all()
+        tasks = self.list_for_scope(session_id=session_id, project_name=project_name) if (session_id or project_name) else self.list_all()
         if not tasks:
             return "No tasks."
         lines = []
@@ -164,7 +213,11 @@ class TaskManager:
             status = t.get("status", "pending")
             marker = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]", "deleted": "[-]"}.get(status, "[?]")
             blocked = f" (blocked by: {t.get('blockedBy', [])})" if t.get("blockedBy") else ""
-            lines.append(f"{marker} #{t['id']}: {t['subject']}{blocked}")
+            workflow = f" [{t.get('stage')}/{t.get('node_type')}]" if t.get("stage") or t.get("node_type") else ""
+            capability = f" capability={t.get('required_capability')}" if t.get("required_capability") else ""
+            evidence = f" evidence={len(t.get('evidence_ids') or [])}" if t.get("evidence_ids") else ""
+            scope = " *" if (session_id and t.get("session_id") == session_id) or (project_name and t.get("project_name") == project_name) else ""
+            lines.append(f"{marker} #{t['id']}: {t['subject']}{workflow}{capability}{evidence}{blocked}{scope}")
         done = sum(1 for t in tasks if t["status"] == "completed")
         lines.append(f"\n({done}/{len(tasks)} completed)")
         return "\n".join(lines)

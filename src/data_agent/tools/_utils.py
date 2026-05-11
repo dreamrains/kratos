@@ -44,10 +44,10 @@ def persist_detail(session_id: str, tool_call_id: str, data: dict) -> Path:
     """
     from data_agent.config import get_config
     cfg = get_config()
-    detail_dir = cfg.project_resolved / "sessions" / session_id / "tool_outputs"
+    detail_dir = cfg.sessions_resolved / session_id / "tool_outputs"
     detail_dir.mkdir(parents=True, exist_ok=True)
     path = detail_dir / f"{tool_call_id}_detail.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return path
 
 

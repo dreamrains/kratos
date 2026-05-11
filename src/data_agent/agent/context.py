@@ -22,6 +22,7 @@ class AgentContext:
     executed_tools: set[str] = field(default_factory=set)
     loaded_skills: list[str] = field(default_factory=list)
     mcp_visible: bool = True
+    analysis_state: object | None = None
 
     @property
     def object_name(self) -> Optional[str]:

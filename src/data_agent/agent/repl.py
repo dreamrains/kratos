@@ -510,7 +510,38 @@ def run_repl() -> None:
         return f"加载并预览数据文件: {args}"
 
     def cmd_tasks(args: str):
-        console.print(task_manager.format_list())
+        from data_agent.session.workspace import workspace
+        console.print(task_manager.format_list(session_id=loop.session_id, project_name=workspace.active_project or ""))
+        return None
+
+    def cmd_analysis(args: str):
+        from data_agent.agent.analysis_state import (
+            analysis_state_summary,
+            load_analysis_state,
+            reset_analysis_state,
+        )
+        from data_agent.session.workspace import workspace
+
+        action = (args or "status").strip().lower()
+        if action == "reset":
+            state = reset_analysis_state(loop.session_id, workspace.active_project)
+            loop.context.analysis_state = state
+            console.print("[green]Analysis state reset for current session.[/green]")
+            return None
+
+        state = load_analysis_state(loop.session_id, workspace.active_project)
+        loop.context.analysis_state = state
+
+        if action in ("", "status"):
+            console.print(analysis_state_summary(state) or "No analysis state.")
+        elif action == "requirements":
+            console.print_json(data=state.data_requirements)
+        elif action == "spec":
+            console.print_json(data=state.analysis_spec or {})
+        elif action == "evidence":
+            console.print_json(data=state.evidence_records)
+        else:
+            console.print("[yellow]Usage: /analysis status|requirements|spec|evidence|reset[/yellow]")
         return None
 
     def cmd_save(args: str):
@@ -1013,6 +1044,7 @@ def run_repl() -> None:
     CMD.register("bind", cmd_bind, "绑定当前会话到对象")
     CMD.register("unbind", cmd_unbind, "解除会话的对象绑定")
     CMD.register("tasks", cmd_tasks, "列出项目任务")
+    CMD.register("analysis", cmd_analysis, "分析状态管理 (status/requirements/spec/evidence/reset)")
     CMD.register("save", cmd_save, "保存当前会话")
     CMD.register("sessions", cmd_sessions, "列出已保存的会话")
     CMD.register("sessions switch", cmd_sessions_switch, "切换到指定会话（保留当前会话状态）")

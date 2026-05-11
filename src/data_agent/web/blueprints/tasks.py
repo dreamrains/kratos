@@ -38,6 +38,15 @@ def create_task():
         subject=subject,
         description=data.get("description", ""),
         session_id=data.get("session_id", ""),
+        workflow_id=data.get("workflow_id", ""),
+        project_name=data.get("project_name", ""),
+        stage=data.get("stage", ""),
+        node_type=data.get("node_type", ""),
+        analysis_spec_id=data.get("analysis_spec_id", ""),
+        required_data=data.get("required_data", []),
+        expected_output=data.get("expected_output", ""),
+        evidence_ids=data.get("evidence_ids", []),
+        confirmation_ids=data.get("confirmation_ids", []),
     )
     return jsonify(task), 201
 
@@ -52,6 +61,14 @@ def update_task(task_id: int):
         owner=data.get("owner"),
         addBlocks=data.get("addBlocks"),
         addBlockedBy=data.get("addBlockedBy"),
+        stage=data.get("stage"),
+        node_type=data.get("node_type"),
+        result_summary=data.get("result_summary"),
+        evidence_ids=data.get("evidence_ids"),
+        confirmation_ids=data.get("confirmation_ids"),
+        limitations=data.get("limitations"),
+        confidence=data.get("confidence"),
+        expected_output=data.get("expected_output"),
     )
     if not task:
         return jsonify({"error": f"Task {task_id} not found"}), 404

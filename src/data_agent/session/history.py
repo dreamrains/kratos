@@ -274,7 +274,7 @@ def update_session_meta(session_id: str, updates: dict) -> bool:
 
 # ── 动态绑定/解绑 ────────────────────────────────────────
 
-def bind_session_to_object(session_id: str, object_name: str) -> dict:
+def _legacy_bind_session_to_object_with_auto_promotion(session_id: str, object_name: str) -> dict:
     """绑定会话到对象。处理换绑（先解绑旧对象）和知识迁移。
 
     Returns:
@@ -371,6 +371,61 @@ def unbind_session_from_object(session_id: str) -> dict:
         "success": True,
         "message": f"会话已从对象 '{current_object}' 解绑",
         "from_object": current_object,
+    }
+
+
+def bind_session_to_object(session_id: str, object_name: str) -> dict:
+    """Bind a session to a project/object without promoting knowledge.
+
+    Binding is only an ownership reference; project knowledge promotion must be
+    requested explicitly.
+    """
+    from data_agent.object_manager import get_object_manager
+
+    mgr = get_object_manager()
+    if mgr.get(object_name) is None:
+        return {"success": False, "message": f"Object '{object_name}' not found", "from_object": None}
+
+    sdir = _session_dir(session_id)
+    meta_path = sdir / "meta.json"
+    current_object = None
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        current_object = meta.get("project_name") or meta.get("object_name")
+
+    if current_object == object_name:
+        return {"success": True, "message": f"Session already bound to object '{object_name}'", "from_object": current_object}
+
+    if current_object:
+        mgr.unbind_session(current_object, session_id)
+
+    mgr.bind_session(object_name, session_id)
+    update_session_meta(session_id, {"project_name": object_name, "object_name": object_name})
+    return {
+        "success": True,
+        "message": f"Session bound to object '{object_name}'" + (f" from '{current_object}'" if current_object else ""),
+        "from_object": current_object,
+    }
+
+
+def promote_session_knowledge_to_project(session_id: str, project_name: str) -> dict:
+    """Explicitly promote session-level knowledge into a project/object."""
+    from data_agent.knowledge.experience import get_experience_log
+    from data_agent.knowledge.domain import get_domain_knowledge
+    from data_agent.knowledge.rules import get_project_rules
+    from data_agent.object_manager import get_object_manager
+
+    mgr = get_object_manager()
+    if mgr.get(project_name) is None:
+        return {"success": False, "message": f"Project '{project_name}' not found"}
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "project_name": project_name,
+        "experience": get_experience_log().promote_to_object(session_id, project_name),
+        "domain": get_domain_knowledge().promote_to_object(session_id, project_name),
+        "rules": get_project_rules().promote_to_object(session_id, project_name),
     }
 
 

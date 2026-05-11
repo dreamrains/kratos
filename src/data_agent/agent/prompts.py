@@ -647,3 +647,27 @@ def _format_turn_intent_prompt(turn_intent) -> str:
 - EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence。
 - 当形成明确 AnalysisSpec 或关键 EvidenceRecord 时，使用 record_analysis_spec / record_evidence_record 保存，便于报告和后续追问复用。
 """
+ 
+def _format_turn_intent_prompt(turn_intent) -> str:
+    if turn_intent is None:
+        return ""
+    data = turn_intent.to_dict()
+    return f"""\
+<turn_intent>
+{data}
+</turn_intent>
+
+## 本轮执行策略
+- intent_type 决定本轮主动作，不要只按 chat/quick/standard/full 模式机械执行。
+- data_requirement：不要假装已有数据；输出数据需求清单，区分必须数据、建议数据、可选数据、缺失限制和最小可行分析；形成清单后调用 record_data_requirement。
+- analysis_guidance：如果已有数据，先基于数据结构推荐 2-3 条分析路径并说明原因；不要直接生成完整报告。
+- direct_analysis：先形成 AnalysisSpec，调用 record_analysis_spec 保存并创建 workflow tasks，再按 task 执行分析。
+- report：优先消费 EvidenceRecord；证据不足时先补分析，不要空泛出报告。
+- operation：直接完成用户要求的数据操作，避免额外探索和 workflow task。
+
+## 结构化分析产物
+- DataRequirement：goal、must_have_data、recommended_data、optional_data、missing_limitations、minimum_viable_analysis。
+- AnalysisSpec：goal、question_type、metrics、dimensions、time_scope、required_data、method_plan、limitations。
+- EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence。
+- 形成明确 DataRequirement、AnalysisSpec 或 EvidenceRecord 时，使用 record_data_requirement / record_analysis_spec / record_evidence_record 保存。
+- 决策、预测、因果评估类分析在执行前必须用 ask_user_question 做 method_confirmation，说明 blocking_reason，并提供 state_updates。"""

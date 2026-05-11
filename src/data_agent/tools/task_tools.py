@@ -1,18 +1,18 @@
-"""任务管理工具，参考 Claude Code 的 TaskCreate/TaskUpdate 设计。
+"""Task management tools.
 
-复杂分析时，LLM 先用 task_create 规划步骤，再逐步 task_update 跟踪进度。
-每个 task 是一个具体目标，不是流程阶段。
+Tasks remain backward-compatible todos, with optional analysis-workflow fields
+used by the consulting analysis flow.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Optional
 
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
 
-# 当前会话 ID（由 AgentLoop 设置）
 _current_session_id: str = ""
 
 
@@ -21,37 +21,166 @@ def set_task_session(session_id: str):
     _current_session_id = session_id
 
 
-def _session_id() -> str:
+def _context():
     try:
         from data_agent.agent.context import get_current_context
-        ctx = get_current_context()
-        if ctx is not None:
-            return ctx.session_id
+        return get_current_context()
     except Exception:
-        pass
+        return None
+
+
+def _session_id() -> str:
+    ctx = _context()
+    if ctx is not None:
+        return ctx.session_id
     return _current_session_id
+
+
+def _project_name() -> str:
+    ctx = _context()
+    if ctx is not None and ctx.project_name:
+        return ctx.project_name
+    return ""
+
+
+def _json_or_value(value, default=None):
+    if value in (None, ""):
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _workflow_fields_from_dict(data: dict) -> dict:
+    fields = {}
+    for key in (
+        "workflow_id",
+        "project_name",
+        "stage",
+        "node_type",
+        "analysis_spec_id",
+        "required_data",
+        "expected_output",
+        "evidence_ids",
+        "confirmation_ids",
+        "result_summary",
+        "limitations",
+        "confidence",
+        "required_capability",
+        "evidence_requirements",
+        "confirmation_policy",
+    ):
+        if key in data:
+            fields[key] = data[key]
+    return fields
+
+
+def create_workflow_tasks_from_spec(spec: dict) -> dict:
+    method_plan = spec.get("method_plan") or []
+    if isinstance(method_plan, str):
+        method_plan = [line.strip() for line in method_plan.splitlines() if line.strip()]
+    if not isinstance(method_plan, list):
+        method_plan = []
+
+    workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
+    spec_id = spec.get("id", "")
+    created = []
+    for idx, step in enumerate(method_plan, 1):
+        if isinstance(step, dict):
+            subject = step.get("subject") or step.get("title") or step.get("step") or f"分析步骤 {idx}"
+            description = step.get("description") or step.get("method") or json.dumps(step, ensure_ascii=False)
+            node_type = step.get("node_type") or "analysis"
+            expected_output = step.get("expected_output", "")
+            required_data = step.get("required_data", spec.get("required_data", []))
+            required_capability = step.get("required_capability", "")
+            evidence_requirements = step.get("evidence_requirements", [])
+            confirmation_policy = step.get("confirmation_policy", {})
+        else:
+            subject = str(step)
+            description = str(step)
+            node_type = "analysis"
+            expected_output = ""
+            required_data = spec.get("required_data", [])
+            required_capability = ""
+            evidence_requirements = []
+            confirmation_policy = {}
+
+        task = task_manager.create(
+            subject=subject[:120],
+            description=description,
+            session_id=_session_id(),
+            workflow_id=workflow_id,
+            project_name=_project_name(),
+            stage="execute",
+            node_type=node_type,
+            analysis_spec_id=spec_id,
+            required_data=required_data,
+            expected_output=expected_output,
+            required_capability=required_capability,
+            evidence_requirements=evidence_requirements,
+            confirmation_policy=confirmation_policy,
+        )
+        created.append(task)
+    return {"workflow_id": workflow_id, "created": len(created), "task_ids": [t["id"] for t in created]}
 
 
 @registry.register(
     name="task_create",
     description=(
-        "创建分析任务。subject 为简短标题（祈使句如 '分析收入趋势'），"
-        "description 为详细描述。"
-        "复杂分析应先创建任务规划再逐步执行。"
-        "支持批量创建：传入 tasks JSON 数组可一次性创建多个任务，减少轮次消耗。"
+        "创建分析任务。支持单个任务、批量 tasks JSON，以及从 AnalysisSpec 创建 workflow task。"
+        "复杂分析应先形成 AnalysisSpec，再用任务节点执行 method_plan。"
     ),
     schema_overrides={
         "tasks": {"description": '批量创建模式：JSON 数组 [{"subject": "...", "description": "..."}]'},
+        "analysis_spec_json": {"description": "可选：AnalysisSpec JSON，用于从 method_plan 批量创建 workflow task"},
     },
 )
 def task_create(
     subject: str = "",
     description: str = "",
     tasks: str = "",
+    analysis_spec_json: str = "",
+    workflow_id: str = "",
+    project_name: str = "",
+    stage: str = "",
+    node_type: str = "",
+    analysis_spec_id: str = "",
+    required_data: str = "",
+    expected_output: str = "",
+    evidence_ids: str = "",
+    confirmation_ids: str = "",
+    required_capability: str = "",
+    evidence_requirements: str = "",
+    confirmation_policy: str = "",
 ) -> str:
-    """创建新任务。支持单个或批量创建。"""
+    if analysis_spec_json:
+        try:
+            spec = json.loads(analysis_spec_json)
+        except json.JSONDecodeError:
+            return json.dumps({"error": "analysis_spec_json 必须是有效 JSON"}, ensure_ascii=False)
+        return json.dumps(create_workflow_tasks_from_spec(spec), ensure_ascii=False, indent=2)
+
+    common_fields = {
+        "workflow_id": workflow_id,
+        "project_name": project_name or _project_name(),
+        "stage": stage,
+        "node_type": node_type,
+        "analysis_spec_id": analysis_spec_id,
+        "required_data": _json_or_value(required_data, []),
+        "expected_output": expected_output,
+        "evidence_ids": _json_or_value(evidence_ids, []),
+        "confirmation_ids": _json_or_value(confirmation_ids, []),
+        "required_capability": required_capability,
+        "evidence_requirements": _json_or_value(evidence_requirements, []),
+        "confirmation_policy": _json_or_value(confirmation_policy, {}),
+    }
+
     if tasks:
-        # 批量创建模式
         try:
             task_list_data = json.loads(tasks)
         except json.JSONDecodeError:
@@ -63,21 +192,23 @@ def task_create(
         for t in task_list_data:
             if not isinstance(t, dict):
                 continue
+            fields = {**common_fields, **_workflow_fields_from_dict(t)}
             task = task_manager.create(
                 subject=t.get("subject", ""),
                 description=t.get("description", ""),
-                session_id=_session_id(),
+                session_id=t.get("session_id") or _session_id(),
+                **fields,
             )
             created.append(task)
         return json.dumps({"created": len(created), "tasks": created}, ensure_ascii=False, indent=2)
 
-    # 单个创建模式
     if not subject:
         return json.dumps({"error": "subject 不能为空"}, ensure_ascii=False)
     task = task_manager.create(
         subject=subject,
         description=description,
         session_id=_session_id(),
+        **common_fields,
     )
     return json.dumps(task, ensure_ascii=False, indent=2)
 
@@ -85,14 +216,11 @@ def task_create(
 @registry.register(
     name="task_update",
     description=(
-        "更新任务状态。status 可选：pending/in_progress/completed/deleted。"
-        "开始执行时设为 in_progress，完成后设为 completed。"
-        "支持批量更新：传入 updates JSON 数组可一次性更新多个任务，减少轮次消耗。"
-        "addBlocks 指定此任务完成后才可执行的任务 ID 列表。"
-        "addBlockedBy 指定必须先完成的任务 ID 列表。"
+        "更新任务状态和分析工作流字段。status 可选：pending/in_progress/completed/deleted。"
+        "支持批量 updates JSON。"
     ),
     schema_overrides={
-        "updates": {"description": '批量更新模式：JSON 数组 [{"task_id": 1, "status": "completed"}, ...]'},
+        "updates": {"description": '批量更新模式：JSON 数组 [{"task_id": 1, "status": "completed"}]'},
     },
 )
 def task_update(
@@ -102,10 +230,19 @@ def task_update(
     addBlocks: Optional[str] = None,
     addBlockedBy: Optional[str] = None,
     updates: str = "",
+    result_summary: str = "",
+    evidence_ids: str = "",
+    confirmation_ids: str = "",
+    limitations: str = "",
+    confidence: str = "",
+    stage: str = "",
+    node_type: str = "",
+    expected_output: str = "",
+    required_capability: str = "",
+    evidence_requirements: str = "",
+    confirmation_policy: str = "",
 ) -> str:
-    """更新任务。支持单个或批量更新。"""
     if updates:
-        # 批量更新模式
         try:
             update_list = json.loads(updates)
         except json.JSONDecodeError:
@@ -120,31 +257,41 @@ def task_update(
             tid = u.get("task_id")
             if not tid:
                 continue
-            blocks = u.get("addBlocks")
-            blocked_by = u.get("addBlockedBy")
             task = task_manager.update(
                 tid,
                 status=u.get("status"),
                 owner=u.get("owner"),
-                addBlocks=blocks if isinstance(blocks, list) else (json.loads(blocks) if isinstance(blocks, str) else None),
-                addBlockedBy=blocked_by if isinstance(blocked_by, list) else (json.loads(blocked_by) if isinstance(blocked_by, str) else None),
+                addBlocks=_json_or_value(u.get("addBlocks")),
+                addBlockedBy=_json_or_value(u.get("addBlockedBy")),
+                **_workflow_fields_from_dict(u),
             )
             if task:
                 results.append(task)
         return json.dumps({"updated": len(results), "tasks": results}, ensure_ascii=False, indent=2)
 
-    # 单个更新模式
     if not task_id:
         return json.dumps({"error": "task_id 不能为空"}, ensure_ascii=False)
-    blocks = json.loads(addBlocks) if addBlocks else None
-    blocked_by = json.loads(addBlockedBy) if addBlockedBy else None
 
+    fields = {
+        "result_summary": result_summary or None,
+        "evidence_ids": _json_or_value(evidence_ids) if evidence_ids else None,
+        "confirmation_ids": _json_or_value(confirmation_ids) if confirmation_ids else None,
+        "limitations": limitations or None,
+        "confidence": confidence or None,
+        "stage": stage or None,
+        "node_type": node_type or None,
+        "expected_output": expected_output or None,
+        "required_capability": required_capability or None,
+        "evidence_requirements": _json_or_value(evidence_requirements) if evidence_requirements else None,
+        "confirmation_policy": _json_or_value(confirmation_policy) if confirmation_policy else None,
+    }
     task = task_manager.update(
         task_id,
         status=status or None,
         owner=owner or None,
-        addBlocks=blocks,
-        addBlockedBy=blocked_by,
+        addBlocks=_json_or_value(addBlocks),
+        addBlockedBy=_json_or_value(addBlockedBy),
+        **fields,
     )
     if task is None:
         return json.dumps({"error": f"Task {task_id} not found"}, ensure_ascii=False)
@@ -164,7 +311,7 @@ def task_get(task_id: int) -> str:
 
 @registry.register(
     name="task_list",
-    description="列出所有分析任务及状态。",
+    description="列出分析任务及状态。默认优先显示当前 session/project 的 workflow task。",
 )
 def task_list() -> str:
-    return task_manager.format_list()
+    return task_manager.format_list(session_id=_session_id(), project_name=_project_name())

@@ -46,6 +46,11 @@ class SuspendedForConfirmation:
     options: list[dict]
     context: str
     snapshot: dict  # serialized messages
+    confirmation_type: str = ""
+    blocking_reason: str = ""
+    state_updates: str = ""
+    related_task_id: int = 0
+    related_spec_id: str = ""
 
 
 LoopResult = FinalResponse | SuspendedForConfirmation
@@ -66,6 +71,11 @@ class SuspensionManager:
             "options": suspension.options,
             "context": suspension.context,
             "snapshot": suspension.snapshot,
+            "confirmation_type": suspension.confirmation_type,
+            "blocking_reason": suspension.blocking_reason,
+            "state_updates": suspension.state_updates,
+            "related_task_id": suspension.related_task_id,
+            "related_spec_id": suspension.related_spec_id,
         }, default=str, ensure_ascii=False))
         return str(path)
 
@@ -80,6 +90,11 @@ class SuspensionManager:
             options=data["options"],
             context=data["context"],
             snapshot=data["snapshot"],
+            confirmation_type=data.get("confirmation_type", ""),
+            blocking_reason=data.get("blocking_reason", ""),
+            state_updates=data.get("state_updates", ""),
+            related_task_id=int(data.get("related_task_id") or 0),
+            related_spec_id=data.get("related_spec_id", ""),
         )
 
     def remove(self, suspension_id: str):
@@ -89,11 +104,27 @@ class SuspensionManager:
 
 class UserConfirmationRequired(Exception):
     """Raised by ask_user_question in non-CLI mode to trigger suspension."""
-    def __init__(self, question: str, options: list[dict], context: str = "", multi_select: bool = False):
+    def __init__(
+        self,
+        question: str,
+        options: list[dict],
+        context: str = "",
+        multi_select: bool = False,
+        confirmation_type: str = "",
+        blocking_reason: str = "",
+        state_updates: str = "",
+        related_task_id: int = 0,
+        related_spec_id: str = "",
+    ):
         self.question = question
         self.options = options
         self.context = context
         self.multi_select = multi_select
+        self.confirmation_type = confirmation_type
+        self.blocking_reason = blocking_reason
+        self.state_updates = state_updates
+        self.related_task_id = related_task_id
+        self.related_spec_id = related_spec_id
         super().__init__(question)
 
 
@@ -164,6 +195,8 @@ class AgentLoop:
             project_name=active_project,
             workspace=Workspace(),
         )
+        from data_agent.agent.analysis_state import load_analysis_state
+        self.context.analysis_state = load_analysis_state(self.session_id, active_project)
         self.messages: list[dict] = []
         self.token_threshold = cfg.token_threshold
         self._last_data_file = ""
@@ -297,6 +330,13 @@ class AgentLoop:
                     f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
                 )
         session_ctx = "\n".join(context_parts) if context_parts else ""
+        try:
+            from data_agent.agent.analysis_state import analysis_state_summary
+            analysis_ctx = analysis_state_summary(self.context.analysis_state)
+            if analysis_ctx:
+                session_ctx = (session_ctx + "\n\n" if session_ctx else "") + "<analysis_state>\n" + analysis_ctx + "\n</analysis_state>"
+        except Exception:
+            pass
 
         level = _classify_task(user_input, session_ctx) if user_input else "standard"
 
@@ -351,6 +391,26 @@ class AgentLoop:
                 self._prompt_cache_dirty = False
             return self._prompt_cache
 
+    def _prepare_analysis_turn(self, user_input: str):
+        from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+        from data_agent.agent.intent import plan_turn_intent
+        from data_agent.session.workspace import workspace
+
+        datasets = workspace.list_datasets()
+        context_parts = []
+        for name, info in datasets.items():
+            context_parts.append(
+                f"- {name}: {info['rows']} rows x {info['columns']} cols, "
+                f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
+            )
+        session_ctx = "\n".join(context_parts)
+        intent = plan_turn_intent(user_input, session_ctx)
+        controller = AnalysisFlowController(self.session_id, self.context.project_name)
+        state = controller.load_state()
+        self.context.analysis_state = state
+        controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
+        return controller.activate_tool_groups(registry, intent, state, user_input)
+
     def _build_interrupt_context(self, user_input: str) -> str:
         """Build context hint when the previous turn was interrupted."""
         from data_agent.session.task_manager import task_manager
@@ -394,8 +454,7 @@ class AgentLoop:
         self._prompt_cache_dirty = True
         # 根据用户输入激活相关工具分组
         with use_agent_context(self.context):
-            registry.reset_groups()
-            new_groups = registry.activate_groups_for_text(user_input)
+            new_groups = self._prepare_analysis_turn(user_input)
         if new_groups:
             logger.info("Activated tool groups", extra={"extra_data": {"groups": list(new_groups)}})
         try:
@@ -435,8 +494,7 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         with use_agent_context(self.context):
-            registry.reset_groups()
-            registry.activate_groups_for_text(user_input)
+            self._prepare_analysis_turn(user_input)
         try:
             result = self._loop()
         except Exception as e:
@@ -458,6 +516,11 @@ class AgentLoop:
     def _auto_save(self) -> None:
         """自动保存会话状态。增量推送新消息到 JSONL + 全量保存。"""
         with use_agent_context(self.context):
+            if self.context.analysis_state is not None:
+                try:
+                    self.context.analysis_state.save()
+                except Exception:
+                    pass
             from data_agent.session.history import save_session, push_messages
             # 增量推送上次保存后新增的消息
             new_msgs = self.messages[self._last_jsonl_idx:]
@@ -495,11 +558,12 @@ class AgentLoop:
     def resume_turn(self, suspension_id: str, user_response: str) -> LoopResult:
         """Resume after user answers a suspended question. Web mode."""
         from pathlib import Path
-        sessions_dir = Path(get_config().project_resolved) / "sessions"
+        sessions_dir = get_config().sessions_resolved
         mgr = SuspensionManager(sessions_dir)
         susp = mgr.load(suspension_id)
         if not susp:
             return FinalResponse(content=f"Error: suspension {suspension_id} not found")
+        self._resolve_confirmation(susp, user_response)
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response suspension_id=\"{suspension_id}\">\n"
@@ -535,6 +599,7 @@ class AgentLoop:
                 self.cli_pauser.resume()
 
             answer = result.get("answer", "cancelled")
+            self._resolve_confirmation(susp, answer)
 
             self.messages.append({"role": "user", "content": (
                 f"<confirmation_response suspension_id=\"{susp.suspension_id}\">\n"
@@ -554,6 +619,47 @@ class AgentLoop:
             else:
                 # None (max rounds) or unexpected
                 return loop_result.content if hasattr(loop_result, "content") else "达到最大轮次限制。"
+
+    def _register_confirmation(self, susp: SuspendedForConfirmation) -> None:
+        with use_agent_context(self.context):
+            try:
+                from data_agent.agent.analysis_state import current_analysis_state
+                state = current_analysis_state()
+                if state is None:
+                    return
+                state.add_confirmation({
+                    "id": susp.suspension_id,
+                    "suspension_id": susp.suspension_id,
+                    "question": susp.question,
+                    "options": susp.options,
+                    "context": susp.context,
+                    "confirmation_type": susp.confirmation_type,
+                    "blocking_reason": susp.blocking_reason,
+                    "state_updates": susp.state_updates,
+                    "related_task_id": susp.related_task_id,
+                    "related_spec_id": susp.related_spec_id,
+                })
+                state.save()
+            except Exception as e:
+                logger.warning("Failed to register confirmation", extra={"extra_data": {"error": str(e)}})
+
+    def _resolve_confirmation(self, susp: SuspendedForConfirmation, answer: str) -> None:
+        with use_agent_context(self.context):
+            try:
+                from data_agent.agent.analysis_state import current_analysis_state
+                state = current_analysis_state()
+                if state is not None:
+                    state.resolve_confirmation(susp.suspension_id, answer)
+                    state.save()
+                if susp.related_task_id:
+                    from data_agent.session.task_manager import task_manager
+                    task_manager.update(
+                        susp.related_task_id,
+                        confirmation_ids=[susp.suspension_id],
+                        result_summary=f"用户确认: {answer}",
+                    )
+            except Exception as e:
+                logger.warning("Failed to resolve confirmation", extra={"extra_data": {"error": str(e)}})
 
     def _stream_llm_round(self, round_num: int):
         """Execute one LLM round using streaming. Yields SSE event dicts.
@@ -628,7 +734,7 @@ class AgentLoop:
                 tool_result = registry.execute(tc.name, tc.arguments)
             except UserConfirmationRequired as ucc:
                 from pathlib import Path
-                sessions_dir = Path(get_config().project_resolved) / "sessions"
+                sessions_dir = get_config().sessions_resolved
                 mgr = SuspensionManager(sessions_dir)
                 susp = SuspendedForConfirmation(
                     suspension_id=uuid.uuid4().hex[:8],
@@ -636,7 +742,13 @@ class AgentLoop:
                     options=ucc.options,
                     context=ucc.context,
                     snapshot={"messages": self._serialize_messages()},
+                    confirmation_type=ucc.confirmation_type,
+                    blocking_reason=ucc.blocking_reason,
+                    state_updates=ucc.state_updates,
+                    related_task_id=ucc.related_task_id,
+                    related_spec_id=ucc.related_spec_id,
                 )
+                self._register_confirmation(susp)
                 mgr.save(susp)
                 self.messages.append({
                     "role": "tool",
@@ -649,6 +761,8 @@ class AgentLoop:
                     "question": susp.question,
                     "options": susp.options,
                     "context": susp.context,
+                    "confirmation_type": susp.confirmation_type,
+                    "blocking_reason": susp.blocking_reason,
                 }
                 return  # stop processing further tool calls
 
@@ -694,8 +808,7 @@ class AgentLoop:
             self.messages.append({"role": "user", "content": context})
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
-        registry.reset_groups()
-        registry.activate_groups_for_text(user_input)
+        self._prepare_analysis_turn(user_input)
 
         final_text = ""
         round_num = 0
@@ -797,7 +910,7 @@ class AgentLoop:
         from pathlib import Path
         set_current_context(self.context)
 
-        sessions_dir = Path(get_config().project_resolved) / "sessions"
+        sessions_dir = get_config().sessions_resolved
         mgr = SuspensionManager(sessions_dir)
         susp = mgr.load(suspension_id)
         if not susp:
@@ -982,7 +1095,7 @@ class AgentLoop:
                 except UserConfirmationRequired as ucc:
                     # Web mode: suspension - save state and return
                     from pathlib import Path
-                    sessions_dir = Path(get_config().project_resolved) / "sessions"
+                    sessions_dir = get_config().sessions_resolved
                     mgr = SuspensionManager(sessions_dir)
                     susp = SuspendedForConfirmation(
                         suspension_id=uuid.uuid4().hex[:8],
@@ -990,7 +1103,13 @@ class AgentLoop:
                         options=ucc.options,
                         context=ucc.context,
                         snapshot={"messages": self._serialize_messages()},
+                        confirmation_type=ucc.confirmation_type,
+                        blocking_reason=ucc.blocking_reason,
+                        state_updates=ucc.state_updates,
+                        related_task_id=ucc.related_task_id,
+                        related_spec_id=ucc.related_spec_id,
                     )
+                    self._register_confirmation(susp)
                     mgr.save(susp)
                     # Tell LLM we're waiting
                     self.messages.append({
