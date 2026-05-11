@@ -65,6 +65,7 @@ def test_selector_maps_common_questions_to_playbooks():
         ("analyze where the conversion funnel loses the most users", "direct_analysis", "funnel_conversion"),
         ("will users keep purchasing after the first order", "direct_analysis", "retention_lifecycle"),
         ("forecast next month revenue and estimate ROI", "direct_analysis", "forecast_decision_simulation"),
+        ("evaluate whether the savings card is worth long-term operation; include retention and cost", "direct_analysis", "evaluation_causal"),
     ]
 
     for user_input, expected_intent, expected_playbook in cases:
@@ -118,6 +119,21 @@ def test_controller_writes_playbook_selection_to_state_and_activates_capability(
     }
     assert "analysis.dimension_decomposition" in capabilities
     assert "eda" in registry._get_active_groups()
+
+
+def test_english_business_requests_are_direct_analysis():
+    context = _loaded_context("date, revenue, cost, user_id, funnel_step")
+    cases = [
+        ("Analyze the rewarded video funnel from request to completed watch", "funnel_conversion"),
+        ("Forecast next month revenue and ROI trend", "forecast_decision_simulation"),
+        ("Evaluate whether the savings card is worth long-term operation and discuss retention", "evaluation_causal"),
+    ]
+
+    for text, expected_playbook in cases:
+        intent = plan_turn_intent(text, context)
+        assert intent.intent_type == "direct_analysis"
+        selection = select_playbooks(text, intent, AnalysisSessionState(session_id="english_direct"), context)
+        assert selection.primary_playbook_id == expected_playbook
 
 
 def test_controller_creates_workflow_tasks_for_direct_analysis(tmp_path):

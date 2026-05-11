@@ -93,6 +93,19 @@ _ANALYSIS_KEYWORDS = (
 )
 
 
+_DATA_REQUIREMENT_KEYWORDS += (
+    "what data", "which data", "data required", "required data", "data requirements",
+    "need data", "what datasets", "which datasets",
+)
+
+_ANALYSIS_KEYWORDS += (
+    "trend", "compare", "comparison", "why", "reason", "decline", "drop", "driver",
+    "decomposition", "attribution", "forecast", "predict", "prediction", "evaluate",
+    "evaluation", "effect", "causal", "worth", "long-term", "long term", "funnel",
+    "conversion", "drop-off", "dropoff", "retention", "churn", "roi", "what-if",
+)
+
+
 def infer_data_state(session_context: str = "") -> DataState:
     if session_context and ("rows" in session_context or "columns:" in session_context):
         return "data_loaded"

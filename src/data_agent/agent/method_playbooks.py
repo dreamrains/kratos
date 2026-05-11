@@ -313,15 +313,15 @@ def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -
 
 
 def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
-    if _has_any(text, ["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化", "娴佸け", "杞寲"]):
+    if _has_any(text, ["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"]):
         return "funnel_conversion"
+    if _has_any(text, ["evaluate", "evaluation", "effect", "causal", "ab test", "a/b", "worth", "continue operating", "keep operating", "long term operation", "long-term operation", "long-term", "长期运营", "是否值得"]):
+        return "evaluation_causal"
     if _has_any(text, ["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"]):
         return "retention_lifecycle"
     if _has_any(text, ["forecast", "predict", "prediction", "roi", "what-if", "simulate", "budget", "预测", "预估"]):
         return "forecast_decision_simulation"
-    if _has_any(text, ["effect", "causal", "ab test", "a/b", "worth", "continue operating", "keep operating", "long term operation", "长期运营", "是否值得", "鏄惁鍊煎緱"]):
-        return "evaluation_causal"
-    if _has_any(text, ["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因", "鍘熷洜", "涓轰粈涔"]):
+    if _has_any(text, ["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"]):
         return "driver_decomposition"
     if _has_any(text, ["trend", "period", "month", "week", "同比", "环比", "趋势"]):
         return "trend_period_comparison"
