@@ -120,6 +120,34 @@ def test_controller_writes_playbook_selection_to_state_and_activates_capability(
     assert "eda" in registry._get_active_groups()
 
 
+def test_controller_creates_workflow_tasks_for_direct_analysis(tmp_path):
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+    try:
+        state = AnalysisSessionState(session_id="controller_workflow", project_name=None)
+        intent = plan_turn_intent("why did revenue decline", _loaded_context())
+        intent.intent_type = "direct_analysis"
+        intent.data_state = "data_loaded"
+
+        controller = AnalysisFlowController("controller_workflow")
+        controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
+        first_tasks = task_manager.list_for_scope(session_id="controller_workflow")
+        controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
+        second_tasks = task_manager.list_for_scope(session_id="controller_workflow")
+
+        assert state.analysis_spec is not None
+        assert state.analysis_spec.get("workflow_id")
+        assert len(first_tasks) == len(state.analysis_spec["method_plan"])
+        assert len(second_tasks) == len(first_tasks)
+        assert {t.get("analysis_spec_id") for t in first_tasks} == {state.analysis_spec["id"]}
+        assert "analysis.dimension_decomposition" in {t.get("required_capability") for t in first_tasks}
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
 def test_playbook_analysis_spec_creates_workflow_tasks_with_capability(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val

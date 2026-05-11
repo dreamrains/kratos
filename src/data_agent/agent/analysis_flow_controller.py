@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from data_agent.agent.analysis_state import (
     AnalysisSessionState,
     analysis_state_summary,
@@ -9,6 +11,7 @@ from data_agent.agent.analysis_state import (
 )
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
+from data_agent.session.task_manager import task_manager
 
 
 class AnalysisFlowController:
@@ -29,7 +32,72 @@ class AnalysisFlowController:
         if intent.intent_type in {"data_requirement", "analysis_guidance", "direct_analysis", "report"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
+        if intent.intent_type == "direct_analysis" and state.analysis_spec:
+            self.ensure_workflow_tasks(state)
         state.save()
+
+    def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
+        """Create workflow tasks for the current AnalysisSpec once per session.
+
+        The LLM may still call task_create explicitly, but core workflow task
+        creation should not depend on it remembering to do so.
+        """
+        spec = state.analysis_spec or {}
+        method_plan = spec.get("method_plan") or []
+        if not isinstance(method_plan, list) or not method_plan:
+            return {"created": 0, "task_ids": []}
+
+        spec_id = spec.get("id") or uuid.uuid4().hex[:10]
+        spec["id"] = spec_id
+        workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
+        spec["workflow_id"] = workflow_id
+        state.analysis_spec = spec
+
+        existing = [
+            t for t in task_manager.list_all()
+            if t.get("session_id") == self.session_id
+            and (
+                (spec_id and t.get("analysis_spec_id") == spec_id)
+                or (workflow_id and t.get("workflow_id") == workflow_id)
+            )
+        ]
+        if existing:
+            return {"created": 0, "task_ids": [t["id"] for t in existing]}
+
+        created = []
+        for idx, step in enumerate(method_plan, 1):
+            if isinstance(step, dict):
+                subject = step.get("step") or step.get("name") or f"Analysis step {idx}"
+                expected_output = step.get("expected_output", "")
+                node_type = step.get("node_type", "analysis")
+                required_capability = step.get("required_capability", "")
+                evidence_requirements = step.get("evidence_requirements") or []
+                confirmation_policy = step.get("confirmation_policy") or spec.get("confirmation_policy") or {}
+            else:
+                subject = str(step)
+                expected_output = ""
+                node_type = "analysis"
+                required_capability = ""
+                evidence_requirements = []
+                confirmation_policy = spec.get("confirmation_policy") or {}
+
+            created.append(task_manager.create(
+                subject=subject,
+                description=expected_output,
+                session_id=self.session_id,
+                workflow_id=workflow_id,
+                project_name=self.project_name or state.project_name or "",
+                stage="execute",
+                node_type=node_type,
+                analysis_spec_id=spec_id,
+                required_data=spec.get("required_data") or [],
+                expected_output=expected_output,
+                required_capability=required_capability,
+                evidence_requirements=evidence_requirements,
+                confirmation_policy=confirmation_policy,
+            ))
+
+        return {"created": len(created), "task_ids": [t["id"] for t in created]}
 
     def activate_tool_groups(self, registry, intent: TurnIntent, state: AnalysisSessionState, user_input: str) -> set[str]:
         """Activate tool groups using intent/state first, keywords as fallback."""
