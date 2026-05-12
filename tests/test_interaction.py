@@ -387,6 +387,80 @@ class TestAskUserQuestionTool:
         parsed = json.loads(exc_info.value.context)
         assert len(parsed) == 4
 
+    def test_multi_question_suspension_keeps_options_per_question_only(self):
+        """Multi-question suspensions should not flatten every option into one prompt."""
+        from data_agent.agent.loop import UserConfirmationRequired
+        questions = [
+            {"question": "Q1", "options": [{"label": "A1"}, {"label": "B1"}]},
+            {"question": "Q2", "options": [{"label": "A2"}, {"label": "B2"}]},
+        ]
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="ignored", questions=json.dumps(questions))
+
+        e = exc_info.value
+        assert json.loads(e.context) == questions
+        assert e.options == []
+
+
+class TestCliSuspensionHandling:
+    def test_cli_multi_question_suspension_prompts_sequentially(self):
+        """CLI should answer each question separately when context has questions."""
+        from data_agent.agent.loop import AgentLoop, SuspendedForConfirmation
+
+        questions = [
+            {"question": "Q1", "options": [{"label": "A1"}, {"label": "B1"}]},
+            {"question": "Q2", "options": [{"label": "A2"}, {"label": "B2"}]},
+        ]
+        loop = AgentLoop(session_id="cli_multi_question_test")
+        susp = SuspendedForConfirmation(
+            suspension_id="s1",
+            question="Q1; Q2",
+            options=[{"label": "A1"}, {"label": "B1"}, {"label": "A2"}, {"label": "B2"}],
+            context=json.dumps(questions),
+            snapshot={"messages": []},
+        )
+
+        with patch.object(loop, "_resolve_confirmation") as mock_resolve, \
+                patch.object(loop, "_loop", return_value=MagicMock(content="done")), \
+                patch("data_agent.tools.interaction._ask_multiple", return_value={
+                    "answers": [
+                        {"question": "Q1", "answer": "A1"},
+                        {"question": "Q2", "answer": "B2"},
+                    ],
+                    "count": 2,
+                }) as mock_ask_multiple, \
+                patch("data_agent.tools.interaction._ask_single") as mock_ask_single:
+            result = loop._handle_cli_suspension(susp)
+
+        assert result == "done"
+        mock_ask_multiple.assert_called_once_with(questions)
+        mock_ask_single.assert_not_called()
+        answer = mock_resolve.call_args.args[1]
+        assert "Q1: Q1 => A1" in answer
+        assert "Q2: Q2 => B2" in answer
+
+    def test_cli_suspension_preserves_multi_select(self):
+        """Single-question CLI suspensions should pass multi_select through to _ask_single."""
+        from data_agent.agent.loop import AgentLoop, SuspendedForConfirmation
+
+        loop = AgentLoop(session_id="cli_multi_select_test")
+        susp = SuspendedForConfirmation(
+            suspension_id="s2",
+            question="Pick many",
+            options=[{"label": "A"}, {"label": "B"}],
+            context="",
+            snapshot={"messages": []},
+            multi_select=True,
+        )
+
+        with patch.object(loop, "_resolve_confirmation"), \
+                patch.object(loop, "_loop", return_value=MagicMock(content="done")), \
+                patch("data_agent.tools.interaction._ask_single", return_value={"answer": "A, B"}) as mock_ask_single:
+            result = loop._handle_cli_suspension(susp)
+
+        assert result == "done"
+        assert mock_ask_single.call_args.kwargs["multi_select"] is True
+
     def test_invalid_questions_json_falls_to_single(self):
         """无效 questions JSON 回退到单问题模式。"""
         from data_agent.agent.loop import UserConfirmationRequired

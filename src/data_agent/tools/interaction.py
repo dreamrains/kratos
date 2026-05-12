@@ -389,16 +389,13 @@ def ask_user_question(
 
         if isinstance(parsed_questions, list) and parsed_questions:
             # 限制最多 4 个问题
-            parsed_questions = parsed_questions[:3]
+            parsed_questions = parsed_questions[:4]
 
             # 统一使用 suspension 模式（CLI 和 Web）
             combined_q = "; ".join(q.get("question", "") for q in parsed_questions)
-            all_options = []
-            for q in parsed_questions:
-                all_options.extend(q.get("options", []))
             raise UserConfirmationRequired(
                 question=combined_q,
-                options=all_options,
+                options=[],
                 context=json.dumps(parsed_questions, ensure_ascii=False),
                 confirmation_type=confirmation_type,
                 blocking_reason=blocking_reason,

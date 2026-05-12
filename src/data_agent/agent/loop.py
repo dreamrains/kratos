@@ -51,6 +51,7 @@ class SuspendedForConfirmation:
     options: list[dict]
     context: str
     snapshot: dict  # serialized messages
+    multi_select: bool = False
     confirmation_type: str = ""
     blocking_reason: str = ""
     state_updates: str = ""
@@ -76,6 +77,7 @@ class SuspensionManager:
             "options": suspension.options,
             "context": suspension.context,
             "snapshot": suspension.snapshot,
+            "multi_select": suspension.multi_select,
             "confirmation_type": suspension.confirmation_type,
             "blocking_reason": suspension.blocking_reason,
             "state_updates": suspension.state_updates,
@@ -95,6 +97,7 @@ class SuspensionManager:
             options=data["options"],
             context=data["context"],
             snapshot=data["snapshot"],
+            multi_select=bool(data.get("multi_select", False)),
             confirmation_type=data.get("confirmation_type", ""),
             blocking_reason=data.get("blocking_reason", ""),
             state_updates=data.get("state_updates", ""),
@@ -614,22 +617,41 @@ class AgentLoop:
         Pauses CLI output before displaying the question so it's not overwritten.
         Loops to handle multiple consecutive suspensions.
         """
-        from data_agent.tools.interaction import _ask_single
+        from data_agent.tools.interaction import _ask_multiple, _ask_single
 
         while True:
             if self.cli_pauser:
                 self.cli_pauser.pause()
 
-            result = _ask_single(
-                question_text=susp.question,
-                options=susp.options,
-                multi_select=False,
-            )
+            parsed_questions = []
+            if susp.context:
+                try:
+                    parsed = json.loads(susp.context)
+                    if isinstance(parsed, list) and parsed and all(isinstance(q, dict) for q in parsed):
+                        parsed_questions = parsed
+                except json.JSONDecodeError:
+                    parsed_questions = []
+
+            if parsed_questions:
+                result = _ask_multiple(parsed_questions)
+            else:
+                result = _ask_single(
+                    question_text=susp.question,
+                    options=susp.options,
+                    multi_select=susp.multi_select,
+                )
 
             if self.cli_pauser:
                 self.cli_pauser.resume()
 
-            answer = result.get("answer", "cancelled")
+            if parsed_questions:
+                answers = result.get("answers", [])
+                answer = "; ".join(
+                    f"Q{i + 1}: {item.get('question', '')} => {item.get('answer', 'skipped')}"
+                    for i, item in enumerate(answers)
+                ) or "skipped"
+            else:
+                answer = result.get("answer", "cancelled")
             self._resolve_confirmation(susp, answer)
 
             self.messages.append({"role": "user", "content": (
@@ -795,6 +817,7 @@ class AgentLoop:
                     options=ucc.options,
                     context=ucc.context,
                     snapshot={"messages": self._serialize_messages()},
+                    multi_select=ucc.multi_select,
                     confirmation_type=ucc.confirmation_type,
                     blocking_reason=ucc.blocking_reason,
                     state_updates=ucc.state_updates,
@@ -814,6 +837,7 @@ class AgentLoop:
                     "question": susp.question,
                     "options": susp.options,
                     "context": susp.context,
+                    "multi_select": susp.multi_select,
                     "confirmation_type": susp.confirmation_type,
                     "blocking_reason": susp.blocking_reason,
                 }
@@ -1181,6 +1205,7 @@ class AgentLoop:
                         options=ucc.options,
                         context=ucc.context,
                         snapshot={"messages": self._serialize_messages()},
+                        multi_select=ucc.multi_select,
                         confirmation_type=ucc.confirmation_type,
                         blocking_reason=ucc.blocking_reason,
                         state_updates=ucc.state_updates,
