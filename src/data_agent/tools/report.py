@@ -179,18 +179,18 @@ def _export_pdf_from_html(session_id: str, html_artifact_path: str, title: str) 
 def _records_to_markdown(title: str, goal: str, records: list[dict[str, Any]], brief: bool = False) -> str:
     lines = [f"# {title}", "", f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_", ""]
     if goal:
-        lines.extend([f"目标：{goal}", ""])
-    heading = "## 关键结论" if brief else "## 一页结论摘要"
+        lines.extend([f"Goal: {goal}", ""])
+    heading = "## Key Conclusions" if brief else "## One-Page Conclusion"
     lines.extend([heading, ""])
     for record in records:
         lines.extend([
-            f"### {record.get('claim', '未命名结论')}",
+            f"### {record.get('claim', 'Untitled finding')}",
             f"- Evidence ID: `{record.get('id', '-')}`",
-            f"- 数据集: {record.get('dataset', '-')}",
-            f"- 方法: {record.get('method', '-')}",
-            f"- 结果: {record.get('result_summary', '-')}",
-            f"- 可靠性: {record.get('confidence', '-')}",
-            f"- 限制: {record.get('limitations', '-')}",
+            f"- Dataset: {record.get('dataset', '-')}",
+            f"- Method: {record.get('method', '-')}",
+            f"- Result: {record.get('result_summary', '-')}",
+            f"- Confidence: {record.get('confidence', '-')}",
+            f"- Limitations: {record.get('limitations', '-')}",
             "",
         ])
         if not brief:
@@ -201,7 +201,7 @@ def _records_to_markdown(title: str, goal: str, records: list[dict[str, Any]], b
 
 
 def _append_statistical_details(lines: list[str], record: dict[str, Any]) -> None:
-    lines.extend(["#### 核心指标与统计说明", ""])
+    lines.extend(["#### Core Metrics And Statistical Details", ""])
     details = []
     for field in _STAT_DETAIL_FIELDS:
         value = record.get(field)
@@ -210,12 +210,12 @@ def _append_statistical_details(lines: list[str], record: dict[str, Any]) -> Non
         rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
         details.append((field, rendered))
     if details:
-        lines.extend(["| 字段 | 内容 |", "| --- | --- |"])
+        lines.extend(["| Field | Value |", "| --- | --- |"])
         for field, rendered in details:
             lines.append(f"| {field} | {rendered} |")
         lines.append("")
     else:
-        lines.extend(["暂无结构化统计说明。", ""])
+        lines.extend(["No structured statistical details recorded.", ""])
 
 
 def _statistical_gap_lines(records: list[dict[str, Any]]) -> list[str]:
@@ -227,48 +227,69 @@ def _statistical_gap_lines(records: list[dict[str, Any]]) -> list[str]:
     })
     if not missing:
         return []
-    return ["## 统计说明缺口", "", "以下字段尚未在 EvidenceRecord 中沉淀，正式解读时需要谨慎：", "", *[f"- `{field}`" for field in missing], ""]
+    return ["## Statistical Detail Gaps / 统计说明缺口", "", "These fields are not yet recorded in EvidenceRecord and should be treated cautiously:", "", *[f"- `{field}`" for field in missing], ""]
 
+def _statistical_quality_lines(records: list[dict[str, Any]]) -> list[str]:
+    lines = ["## Statistical Explanation Quality", ""]
+    for record in records:
+        gaps = record.get("statistical_detail_gaps")
+        if gaps is None:
+            gaps = [field for field in _STAT_DETAIL_FIELDS if record.get(field) in (None, "", [], {})]
+        status = "complete" if not gaps else "needs supplementation"
+        lines.append(f"- `{record.get('id', '-')}` {record.get('claim', '')}: {status}")
+        if gaps:
+            lines.append(f"  - Missing: {', '.join(str(gap) for gap in gaps)}")
+    lines.append("")
+    return lines
 
 def _formal_markdown(title: str, goal: str, records: list[dict[str, Any]], insights: list[dict[str, Any]]) -> str:
     lines = [f"# {title}", "", f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_", ""]
     if goal:
-        lines.extend([f"目标：{goal}", ""])
-    lines.extend(["## 一页结论摘要", ""])
+        lines.extend([f"Goal: {goal}", ""])
+    lines.extend(["## One-Page Conclusion / 一页结论摘要", ""])
     for record in records[:5]:
-        lines.append(f"- **{record.get('claim', '未命名结论')}**：{record.get('result_summary', '')}（可靠性：{record.get('confidence', '-')}）")
+        lines.append(f"- **{record.get('claim', 'Untitled finding')}**: {record.get('result_summary', '')} (confidence: {record.get('confidence', '-')})")
     lines.append("")
-    lines.extend(["## 核心结论与业务含义", ""])
+    lines.extend(["## Expert Insights / 核心结论与业务含义", ""])
     for insight in insights:
+        conclusion = insight.get("conclusion") or insight.get("title") or "Insight"
+        business_meaning = insight.get("business_meaning") or insight.get("summary") or ""
+        recommendation_confidence = insight.get("recommendation_confidence") or insight.get("confidence") or "-"
+        next_analysis = insight.get("next_analysis") or []
+        if isinstance(next_analysis, str):
+            next_analysis = [next_analysis]
         lines.extend([
-            f"### {insight.get('title', '洞察')}",
-            insight.get("summary", ""),
-            f"- 建议: {insight.get('recommendation', '-')}",
-            f"- 限制: {insight.get('limitations', '-')}",
-            f"- 可靠性: {insight.get('confidence', '-')}",
+            f"### {conclusion}",
+            business_meaning,
+            f"- Statistical explanation: {insight.get('statistical_explanation', '-')}",
+            f"- Recommendation: {insight.get('recommendation', '-')}",
+            f"- Recommendation confidence: {recommendation_confidence}",
+            f"- Limitations: {insight.get('limitations', '-')}",
+            f"- Next analysis: {', '.join(str(item) for item in next_analysis) if next_analysis else '-'}",
             "",
         ])
     if not insights:
         for record in records:
-            lines.extend([f"### {record.get('claim', '结论')}", record.get("result_summary", ""), ""])
-    lines.extend(["## 核心指标表与统计说明", ""])
+            lines.extend([f"### {record.get('claim', 'Conclusion')}", record.get("result_summary", ""), ""])
+    lines.extend(["## Core Metrics And Statistical Explanation", ""])
     for record in records:
         lines.append(f"### Evidence `{record.get('id', '-')}`")
         _append_statistical_details(lines, record)
-    lines.extend(["## 证据链与图表", ""])
+    lines.extend(_statistical_quality_lines(records))
+    lines.extend(["## Evidence Chain And Charts", ""])
     for record in records:
         lines.extend([
             f"- `{record.get('id', '-')}` {record.get('claim', '')}",
-            f"  - 数据集: {record.get('dataset', '-')}",
-            f"  - 工具: {', '.join(record.get('tool_calls') or [])}",
+            f"  - Dataset: {record.get('dataset', '-')}",
+            f"  - Tools: {', '.join(record.get('tool_calls') or [])}",
         ])
     lines.append("")
-    lines.extend(["## 限制、可靠性与不能下结论的部分", ""])
+    lines.extend(["## Limitations, Reliability, And Boundaries / 限制、可靠性与不能下结论的部分", ""])
     for record in records:
         lines.append(f"- `{record.get('id', '-')}` {record.get('limitations', '-')}; confidence={record.get('confidence', '-')}")
     lines.append("")
-    lines.extend(["## 建议行动与后续补分析任务", "", "- 优先补齐统计说明缺口、数据口径和必要的对照/验证数据。", ""])
-    lines.extend(["## 附录：方法、数据范围、EvidenceRecord 索引", ""])
+    lines.extend(["## Recommendations And Next Analysis", "", "- Prioritize statistical gaps, metric definitions, and needed validation data.", ""])
+    lines.extend(["## Appendix: Methods, Data Scope, EvidenceRecord Index", ""])
     for record in records:
         lines.append(f"- `{record.get('id', '-')}` method={record.get('method', '-')}, dataset={record.get('dataset', '-')}")
     lines.append("")
@@ -280,19 +301,28 @@ def _evidence_to_insights(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     insights = []
     for record in records:
         insights.append({
-            "title": record.get("claim", "结论"),
+            "conclusion": record.get("claim", "Conclusion"),
+            "business_meaning": record.get("result_summary", ""),
+            "title": record.get("claim", "Conclusion"),
             "summary": record.get("result_summary", ""),
             "evidence_ids": [record.get("id")] if record.get("id") else [],
             "chart_ids": [],
-            "recommendation": "基于该证据制定下一步验证或行动。",
+            "statistical_explanation": record.get("method_detail") or record.get("calculation_method") or "",
+            "recommendation": "Define the next validation or action from this evidence.",
+            "recommendation_confidence": record.get("confidence", "medium"),
             "limitations": record.get("limitations", ""),
             "confidence": record.get("confidence", ""),
+            "next_analysis": [],
             "output_type": "finding",
         })
     return insights
 
-
-def _validated_chart_entries(session_id: str, evidence_ids: set[str] | None = None) -> list[dict[str, Any]]:
+def _validated_chart_entries(
+    session_id: str,
+    evidence_ids: set[str] | None = None,
+    *,
+    include_exploratory: bool = False,
+) -> list[dict[str, Any]]:
     from data_agent.session.history import session_charts_dir
 
     charts_dir = session_charts_dir(session_id)
@@ -304,7 +334,10 @@ def _validated_chart_entries(session_id: str, evidence_ids: set[str] | None = No
             continue
         if meta.get("validation_status") not in {"valid", "warning"}:
             continue
-        if meta.get("purpose") not in {"evidence", "insight"}:
+        allowed_purposes = {"evidence", "insight"}
+        if include_exploratory:
+            allowed_purposes.add("exploratory")
+        if meta.get("purpose") not in allowed_purposes:
             continue
         chart_evidence_ids = set(meta.get("evidence_ids") or [])
         if evidence_ids and chart_evidence_ids and not chart_evidence_ids.intersection(evidence_ids):
@@ -315,11 +348,16 @@ def _validated_chart_entries(session_id: str, evidence_ids: set[str] | None = No
         html = html_path.read_text(encoding="utf-8")
         warning = ""
         if meta.get("validation_status") == "warning":
-            warning = "<p class=\"warning\">图表警告：" + escape("; ".join(meta.get("validation_warnings") or [])) + "</p>"
+            warning = "<p class=\"warning\">Chart warning: " + escape("; ".join(meta.get("validation_warnings") or [])) + "</p>"
+        purpose = str(meta.get("purpose") or "")
+        section_label = "Supplemental chart / 补充图表" if purpose == "exploratory" else "Evidence chart / 证据图表"
         entries.append({
             "chart_id": meta.get("chart_id") or meta_path.stem,
             "title": meta.get("title") or meta_path.stem,
-            "html": f"<div class=\"chart-container\"><h3>{escape(str(meta.get('title') or meta_path.stem))}</h3>{warning}{html}</div>",
+            "html": (
+                f"<div class=\"chart-container\"><p class=\"metadata\">{section_label}</p>"
+                f"<h3>{escape(str(meta.get('title') or meta_path.stem))}</h3>{warning}{html}</div>"
+            ),
             "metadata": meta,
         })
     return entries
@@ -386,10 +424,10 @@ def generate_formal_report(title: str = "Formal Analysis Report", format: str = 
             "missing": ["evidence_records"],
             "tasks_created": tasks_created,
         })
-    insights = list(getattr(state, "insight_records", []) or []) or _evidence_to_insights(records)
+    insights = (list(getattr(state, "expert_insights", []) or []) or list(getattr(state, "insight_records", []) or []) or _evidence_to_insights(records))
     markdown = _formal_markdown(title, goal, records, insights)
     evidence_ids = {record.get("id") for record in records if record.get("id")}
-    chart_entries = _validated_chart_entries(session_id, evidence_ids)
+    chart_entries = _validated_chart_entries(session_id, evidence_ids, include_exploratory=True)
     charts_html = "\n".join(entry["html"] for entry in chart_entries)
     fmt = "markdown" if format in {"md", "markdown"} else format
     if fmt == "markdown":
@@ -467,7 +505,12 @@ def generate_report(
     session_id = _session_id()
     if not session_id:
         return _json_result({"error": "No active session", "error_type": "no_session"})
-    markdown = f"# {title}\n\n{summary or '暂无摘要。'}\n"
+    markdown = f"# {title}\n\n{summary or 'No summary available.'}\n"
     html = _html_from_markdown(title, markdown)
     artifact_path = _write_report_artifact(session_id, title, html, "html", "report", "brief")
     return _json_result({"status": "exported", "type": "brief", "format": "html", "artifact_path": artifact_path})
+
+
+
+
+

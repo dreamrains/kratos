@@ -174,7 +174,7 @@ AGENT_FULL = """\
 9. 漏斗分析 → funnel_analysis
 10. 情景模拟 → what_if_simulation
 11. 预测 → forecast
-12. 报告 → generate_report
+12. 报告 → generate_formal_report / generate_analysis_brief
 13. run_python → 仅当以上工具确实无法满足需求时使用
 
 禁止：
@@ -246,7 +246,19 @@ AGENT_FULL = """\
 
 **报告结构遵循金字塔原理：先给结论，再给证据。**
 
-调用 generate_report 时，参数要求：
+报告输出工具规则：
+- 正式报告使用 generate_formal_report；简要结论使用 generate_analysis_brief。
+- 不要再把完整 insights 交给旧 generate_report；generate_report 仅作为兼容旧调用的轻量包装。
+- 在生成正式报告前，核心结论必须先保存为 EvidenceRecord，并尽量生成配套 create_chart 图表。
+- 如果图表用于支撑结论，create_chart 必须传入 purpose="evidence" 或 purpose="insight"，并在 evidence_ids 中填写对应 EvidenceRecord ID。
+
+调用 record_evidence_record 时，参数要求：
+- 核心指标和核心结论必须包含专业统计学说明字段：sample_size、time_scope、calculation_method、method_detail。
+- 对比/效果类结论必须尽量包含 significance（p_value、alpha、是否显著）、effect_size 或 confidence_interval。
+- 相关/驱动类结论必须尽量包含 correlation（Pearson/Spearman 系数、p_value、方向）或回归/模型诊断指标。
+- 如果某类统计说明不适用，必须在 limitations 或 method_detail 中说明原因；不要只给文字结论。
+
+旧 generate_report 参数要求（仅兼容历史调用）：
 
 **insights 参数**（JSON 数组），每个元素格式：
 ```json
@@ -294,6 +306,7 @@ AGENT_FULL = """\
 - 未关联的图表自动归入 PART 3（支撑证据）
 - 无需手动传递 charts_html 参数（留空即可）
 - 建议在阶段 3-6 中适时调用 create_chart 生成趋势图、对比图等
+- 支撑核心结论的图表不要停留在默认 exploratory；必须用 purpose="evidence" 或 purpose="insight" 绑定证据。
 
 ## 回复格式
 每条分析回复遵循以下结构：
@@ -321,6 +334,7 @@ AGENT_FULL = """\
 每条洞察必须满足：
 - **具体**：精确到维度、数值、时间范围，不用"有所变化"等模糊表述
 - **可验证**：附方法说明，读者可以复现
+- **统计学说明充分**：核心指标、核心结论需要说明样本量、计算口径、相关性系数/显著性/效应量/置信区间等适用统计证据
 - **有行动价值**：每条洞察必须回答"这对我意味着什么"
 - **区分因果与相关**：相关不等于因果，必须明确标注
 
@@ -331,7 +345,7 @@ AGENT_FULL = """\
 - 此规则在归因分析（阶段 3.5）和驱动分析（阶段 5）中也适用，不仅在报告阶段
 
 ## 自我反驳机制（★报告阶段强制）
-在提交 generate_report 之前，执行以下检查：
+在提交 generate_formal_report 之前，执行以下检查：
 1. 扫描所有 insight，寻找逻辑矛盾（如 insight A 说"X 持续上升"，insight B 说"X 在 Q3 大幅下降"）
 2. 如果发现矛盾：重新验证双方原始数据，确认是真实的业务张力还是分析误差，在报告中明确标注
 3. 检查所有"驱动因素"类结论是否列出了至少 1 个被排除的替代假设
@@ -450,6 +464,28 @@ AGENT_ANALYSIS_ENGINE = """\
 | 漏斗转化 | funnel_analysis | cohort_analysis |
 | 情景模拟 | what_if_simulation(sensitivity) | what_if_simulation(predict) |
 | 目标规划 | what_if_simulation(optimize) | — |
+
+### 图表与证据绑定（★重要）
+- 图表是辅助说明和论证手段，不是所有分析的硬性要求；先判断 visualization_strategy 是否需要图表。
+- 支撑核心指标或核心结论的图表，调用 create_chart 时必须传 purpose="evidence" 或 purpose="insight"。
+- 已经有 EvidenceRecord ID 时，必须在 create_chart 的 evidence_ids 中填写对应 ID。
+- 如果图表只是探索过程产物，可以保留默认 exploratory；但正式报告会优先展示 evidence/insight 图表。
+- 每个核心 EvidenceRecord 应尽量包含 sample_size、calculation_method、method_detail，以及适用的 significance、correlation、confidence_interval。
+
+### 用户可见输出规则（★重要）
+- generate_analysis_brief 仅用于快速摘要、中间进度导出或证据缺口摘要。
+- 完整分析、全面分析、报告、业务目标分析的默认最终输出必须是专业分析结果，而不是 EvidenceRecord 列表或 brief。
+- 专业分析结果必须遵循金字塔原理：先给核心结论，再给指标表、统计说明、必要图表或表格、业务解释、限制、建议可信度和下一步分析方向。
+- 如果缺少统计检验、方法说明、样本量、业务解释、建议可信度、下一步分析或关键数据，应继续补分析；只有数据本身不支持时，才在结果中说明无法补齐的原因和结论边界。
+
+### 专业分析流程骨架（★强制）
+完整分析默认按 6 阶段推进：
+1. 问题定性：调用或形成 AnalysisObjective，识别 question_type、business_object、decision_risk、analysis_depth、requires_counterfactual。
+2. 分析计划：形成 AnalysisPlan，包含 playbook_stack、method_plan、statistical_validation_plan、visualization_strategy、limitations、output_sections、next_analysis_candidates，并用 record_analysis_plan 保存。
+3. 探索性分析：将趋势、分布、分组、异常、候选因素保存为 record_exploratory_finding；探索发现不能直接作为最终专家结论。
+4. 验证性分析：关键发现必须保存为 record_validated_finding，包含 validation_status、validation_method、statistical_explanation、limitations；效果/影响类问题必须体现 control_group_check/counterfactual_check/causal_boundary。
+5. 证据合成：将验证后或明确限制的发现沉淀为 record_evidence_record。
+6. 专家输出：用 record_expert_insight 保存面向用户的结论，必须包含 conclusion、business_meaning、evidence_ids、statistical_explanation、limitations、recommendation、recommendation_confidence、next_analysis。
 
 ### 数据加载后行为（★更新）
 当 load_data 返回包含 [data_profile] 和 [data_interpretation] 块时：
@@ -644,16 +680,20 @@ def _format_turn_intent_prompt(turn_intent) -> str:
 - intent_type 决定本轮主动作，不要只按 chat/quick/standard/full 模式机械执行。
 - data_requirement：不要假装已有数据，先输出数据需求清单，区分必须数据、建议数据、缺失后的结论限制。
 - analysis_guidance：如果已有数据，先基于数据结构推荐 2-3 条分析路径并说明原因；不要直接生成完整报告。
-- direct_analysis：先形成简短 AnalysisSpec（目标、指标、维度、时间范围、方法、限制），再调用工具执行。
-- report：先确保已有证据和图表；证据不足时先补分析，不要空泛出报告。
+- direct_analysis：先形成 AnalysisObjective 和 AnalysisPlan（目标、指标、维度、方法、统计验证计划、visualization_strategy、限制、输出结构），再调用工具执行。
+- report：先确保已有 ExpertInsight、EvidenceRecord 和表达充分性；证据或专家解释不足时先补分析，不要空泛出报告。
 - operation：直接完成用户要求的数据操作，避免额外探索。
 
 ## 结构化分析产物
 当本轮涉及分析咨询或执行时，在自然语言中显式给出或维护以下结构：
 - DataRequirement：必须数据、建议数据、缺失限制。
-- AnalysisSpec：goal、question_type、metrics、dimensions、time_scope、required_data、method_plan、limitations。
+- AnalysisObjective：question_type、business_object、decision_risk、analysis_depth、requires_counterfactual、expected_outputs。
+- AnalysisPlan：goal、analysis_objective、playbook_stack、method_plan、statistical_validation_plan、visualization_strategy、limitations、output_sections、next_analysis_candidates。
+- ExploratoryFinding：finding、method、evidence、candidate_hypotheses、limitations。
+- ValidatedFinding：claim、validation_status、validation_method、statistical_explanation、limitations。
 - EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence。
-- 当形成明确 AnalysisSpec 或关键 EvidenceRecord 时，使用 record_analysis_spec / record_evidence_record 保存，便于报告和后续追问复用。
+- ExpertInsight：conclusion、business_meaning、evidence_ids、statistical_explanation、limitations、recommendation、recommendation_confidence、next_analysis。
+- 当形成明确结构化产物时，使用 record_analysis_objective / record_analysis_plan / record_exploratory_finding / record_validated_finding / record_evidence_record / record_expert_insight 保存，便于报告和后续追问复用。
 """
  
 def _format_turn_intent_prompt(turn_intent) -> str:
@@ -669,13 +709,14 @@ def _format_turn_intent_prompt(turn_intent) -> str:
 - intent_type 决定本轮主动作，不要只按 chat/quick/standard/full 模式机械执行。
 - data_requirement：不要假装已有数据；输出数据需求清单，区分必须数据、建议数据、可选数据、缺失限制和最小可行分析；形成清单后调用 record_data_requirement。
 - analysis_guidance：如果已有数据，先基于数据结构推荐 2-3 条分析路径并说明原因；不要直接生成完整报告。
-- direct_analysis：先形成 AnalysisSpec，调用 record_analysis_spec 保存并创建 workflow tasks，再按 task 执行分析。
-- report：优先消费 EvidenceRecord；证据不足时先补分析，不要空泛出报告。
+- direct_analysis：先形成 AnalysisObjective 和 AnalysisPlan，调用 record_analysis_plan 保存并创建 workflow tasks，再按 task 执行分析。
+- report：优先消费 ExpertInsight、EvidenceRecord 和 visualization_strategy；证据、统计说明或业务解释不足时先补分析，不要空泛出报告。正式报告用 generate_formal_report，简报用 generate_analysis_brief。
 - operation：直接完成用户要求的数据操作，避免额外探索和 workflow task。
 
 ## 结构化分析产物
 - DataRequirement：goal、must_have_data、recommended_data、optional_data、missing_limitations、minimum_viable_analysis。
-- AnalysisSpec：goal、question_type、metrics、dimensions、time_scope、required_data、method_plan、limitations。
-- EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence。
-- 形成明确 DataRequirement、AnalysisSpec 或 EvidenceRecord 时，使用 record_data_requirement / record_analysis_spec / record_evidence_record 保存。
+- AnalysisPlan：goal、analysis_objective、playbook_stack、metrics、dimensions、time_scope、required_data、method_plan、statistical_validation_plan、visualization_strategy、limitations、output_sections。
+- EvidenceRecord：claim、dataset、method、tool_calls、result_summary、limitations、confidence、sample_size、time_scope、calculation_method、method_detail、significance、correlation、confidence_interval。
+- ExpertInsight：conclusion、business_meaning、evidence_ids、statistical_explanation、limitations、recommendation、recommendation_confidence、next_analysis。
+- 形成明确 DataRequirement、AnalysisObjective、AnalysisPlan、ExploratoryFinding、ValidatedFinding、EvidenceRecord 或 ExpertInsight 时，使用对应 record_* 工具保存。
 - 决策、预测、因果评估类分析在执行前必须用 ask_user_question 做 method_confirmation，说明 blocking_reason，并提供 state_updates。"""

@@ -23,9 +23,11 @@ def main():
     from data_agent.web.app import create_app
     app = create_app()
     app.config["lifecycle"] = lifecycle
+    host = os.environ.get("DATA_AGENT_WEB_HOST", "127.0.0.1")
+    port = int(os.environ.get("DATA_AGENT_WEB_PORT", "5001"))
 
     try:
-        app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
+        app.run(host=host, port=port, threaded=True, debug=False)
     finally:
         lifecycle.shutdown()
 

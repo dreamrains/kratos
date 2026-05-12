@@ -30,6 +30,13 @@ function chatApp() {
 
         // Artifacts modal
         artifactsModal: { show: false, sessionId: '', items: [] },
+        sessionArtifacts: [],
+        lastWorkbenchResult: null,
+
+        // Workbench capabilities and analysis state
+        capabilities: null,
+        analysisState: null,
+        workbenchTab: 'analysis',
 
         // Bind-to-object modal
         _bindModal: { show: false, sessionId: '' },
@@ -96,6 +103,7 @@ function chatApp() {
             await Promise.all([
                 this.loadSessions(),
                 this.loadObjects(),
+                this.loadCapabilities(),
                 this.loadModelInfo(),
                 this.loadTasks(),
             ]);
@@ -149,6 +157,20 @@ function chatApp() {
             return `${done}/${active.length}`;
         },
 
+        get analysisSummary() {
+            return (this.analysisState && this.analysisState.summary) || {
+                goal: '',
+                stage: 'discover',
+                data_state: 'unknown',
+                requirements: 0,
+                has_spec: false,
+                evidence_records: 0,
+                insight_records: 0,
+                pending_confirmations: 0,
+                recommended_paths: 0,
+            };
+        },
+
         get popoverTargetId() {
             if (!this.activePopover) return '';
             if (this.activePopover.startsWith('s-')) return this.activePopover.slice(2);
@@ -158,6 +180,13 @@ function chatApp() {
         },
 
         // --- Model ---
+
+        async loadCapabilities() {
+            try {
+                const res = await fetch('/api/capabilities');
+                if (res.ok) this.capabilities = await res.json();
+            } catch {}
+        },
 
         async loadModelInfo() {
             try {
@@ -263,6 +292,9 @@ function chatApp() {
             this._saveCurrentState();
             this.currentSessionId = null;
             this.activeObjectName = '';
+            this.analysisState = null;
+            this.sessionArtifacts = [];
+            this.lastWorkbenchResult = null;
             this.turns = [];
             this.isLoading = false;
             this.tokenPct = 0;
@@ -276,6 +308,7 @@ function chatApp() {
             this.currentSessionId = sessionId;
             this._restoreState(sessionId);
             this.activeObjectName = '';
+            this.lastWorkbenchResult = null;
 
             // Load fresh data from backend if not already loaded
             const state = this._getSessionState(sessionId);
@@ -306,6 +339,11 @@ function chatApp() {
                 const sess = this.sessions.find(s => s.session_id === sessionId);
                 if (sess) this.activeObjectName = sess.object_name || '';
             }
+            await Promise.all([
+                this.loadAnalysisState(sessionId),
+                this.loadSessionArtifacts(sessionId),
+                this.loadTasks(),
+            ]);
             this._scrollToBottom();
         },
 
@@ -329,7 +367,7 @@ function chatApp() {
 
         async loadObjects() {
             try {
-                const res = await fetch('/api/objects');
+                const res = await fetch('/api/projects');
                 this.objects = await res.json();
             } catch {}
         },
@@ -338,7 +376,7 @@ function chatApp() {
             const name = this.newObjectName.trim();
             if (!name) return;
             try {
-                const res = await fetch('/api/objects', {
+                const res = await fetch('/api/projects', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name }),
@@ -349,15 +387,15 @@ function chatApp() {
                     await this.loadObjects();
                 } else {
                     const data = await res.json();
-                    alert(data.error || 'Failed to create object');
+                    alert(data.error || 'Failed to create project');
                 }
             } catch {}
         },
 
         async deleteObject(objectName) {
-            if (!confirm(`Delete object "${objectName}" and unbind all its sessions?`)) return;
+            if (!confirm(`Delete project "${objectName}" and unbind all its sessions?`)) return;
             try {
-                const res = await fetch(`/api/objects/${encodeURIComponent(objectName)}`, { method: 'DELETE' });
+                const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}`, { method: 'DELETE' });
                 if (res.ok) {
                     await this.loadObjects();
                     await this.loadSessions();
@@ -372,7 +410,7 @@ function chatApp() {
             const newName = prompt(`Rename "${objectName}" to:`, objectName);
             if (!newName || newName === objectName) return;
             try {
-                const res = await fetch(`/api/objects/${encodeURIComponent(objectName)}/rename`, {
+                const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}/rename`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ new_name: newName }),
@@ -398,7 +436,7 @@ function chatApp() {
                 return;
             }
             try {
-                const res = await fetch('/api/objects/bind', {
+                const res = await fetch('/api/projects/bind', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: sessionId, name: objectName }),
@@ -421,7 +459,7 @@ function chatApp() {
 
         async unbindSession(sessionId) {
             try {
-                const res = await fetch('/api/objects/unbind', {
+                const res = await fetch('/api/projects/unbind', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: sessionId }),
@@ -463,6 +501,19 @@ function chatApp() {
             }
         },
 
+        async loadSessionArtifacts(sessionId = this.currentSessionId) {
+            if (!sessionId || sessionId === '_pending_') {
+                this.sessionArtifacts = [];
+                return;
+            }
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}/artifacts-list`);
+                this.sessionArtifacts = res.ok ? await res.json() : [];
+            } catch {
+                this.sessionArtifacts = [];
+            }
+        },
+
         async deleteArtifactFromModal(index) {
             if (!confirm('Delete this artifact?')) return;
             try {
@@ -475,14 +526,58 @@ function chatApp() {
 
         async exportSession(sessionId, format = 'html') {
             this.activePopover = null;
-            window.open(`/api/sessions/${sessionId}/export?format=${format}`, '_blank');
+            await this.exportConversation(format, sessionId);
+        },
+
+        async loadAnalysisState(sessionId = this.currentSessionId) {
+            if (!sessionId || sessionId === '_pending_') {
+                this.analysisState = null;
+                return;
+            }
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}/analysis`);
+                this.analysisState = res.ok ? await res.json() : null;
+            } catch {
+                this.analysisState = null;
+            }
+        },
+
+        async resetAnalysisState() {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
+            if (!confirm('Reset analysis state for this session? Conversation and artifacts are kept.')) return;
+            const res = await fetch(`/api/sessions/${this.currentSessionId}/analysis/reset`, { method: 'POST' });
+            if (res.ok) this.analysisState = await res.json();
+        },
+
+        async exportConversation(format = 'html', sessionId = this.currentSessionId) {
+            if (!sessionId || sessionId === '_pending_') return;
+            const res = await fetch(`/api/sessions/${sessionId}/export?format=${format}`);
+            const result = await res.json();
+            this.lastWorkbenchResult = result;
+            await this.loadSessionArtifacts(sessionId);
+            this._openArtifactResult(result);
+        },
+
+        async generateSessionReport(type = 'brief', format = 'html') {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
+            const res = await fetch(`/api/sessions/${this.currentSessionId}/report?type=${type}&format=${format}`);
+            const result = await res.json();
+            this.lastWorkbenchResult = result;
+            await Promise.all([this.loadSessionArtifacts(this.currentSessionId), this.loadTasks(), this.loadAnalysisState(this.currentSessionId)]);
+            this._openArtifactResult(result);
+        },
+
+        _openArtifactResult(result) {
+            const path = result && (result.artifact_path || result.fallback_artifact_path);
+            if (path) window.open(this.artifactUrl(path), '_blank');
         },
 
         // --- Tasks ---
 
         async loadTasks() {
             try {
-                const res = await fetch('/api/tasks');
+                const query = this.currentSessionId && this.currentSessionId !== '_pending_' ? `?session_id=${encodeURIComponent(this.currentSessionId)}` : '';
+                const res = await fetch('/api/tasks' + query);
                 const newTasks = await res.json();
                 this.tasks = [...newTasks];
                 if (this.activeTasks.some(t => t.status === 'in_progress')) {
@@ -1153,6 +1248,10 @@ function chatApp() {
                         question: data.question,
                         options: data.options || [],
                         context: data.context || '',
+                        confirmation_type: data.confirmation_type || '',
+                        blocking_reason: data.blocking_reason || '',
+                        related_task_id: data.related_task_id || '',
+                        related_spec_id: data.related_spec_id || '',
                         _resuming: false,
                         _state: this._initConfirmationState(),
                     };

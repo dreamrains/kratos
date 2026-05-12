@@ -29,6 +29,23 @@ def _state_path(session_id: str) -> Path:
     return get_config().sessions_resolved / session_id / "analysis_state.json"
 
 
+def _insight_record_to_expert_insight(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": record.get("id"),
+        "created_at": record.get("created_at"),
+        "conclusion": record.get("title") or record.get("conclusion") or "",
+        "business_meaning": record.get("summary") or record.get("business_meaning") or "",
+        "evidence_ids": list(record.get("evidence_ids") or []),
+        "chart_ids": list(record.get("chart_ids") or []),
+        "statistical_explanation": record.get("statistical_explanation") or "",
+        "limitations": record.get("limitations") or "",
+        "recommendation": record.get("recommendation") or "",
+        "recommendation_confidence": record.get("recommendation_confidence") or record.get("confidence") or "medium",
+        "next_analysis": record.get("next_analysis") or [],
+        "presentation_sufficiency": record.get("presentation_sufficiency") or "sufficient",
+    }
+
+
 @dataclass
 class AnalysisSessionState:
     session_id: str
@@ -37,8 +54,13 @@ class AnalysisSessionState:
     stage: str = "discover"
     data_state: str = "unknown"
     data_requirements: list[dict[str, Any]] = field(default_factory=list)
+    analysis_objective: dict[str, Any] | None = None
+    analysis_plan: dict[str, Any] | None = None
     analysis_spec: dict[str, Any] | None = None
+    exploratory_findings: list[dict[str, Any]] = field(default_factory=list)
+    validated_findings: list[dict[str, Any]] = field(default_factory=list)
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
+    expert_insights: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
@@ -55,8 +77,13 @@ class AnalysisSessionState:
             stage=stage,
             data_state=data_state,
             data_requirements=list(data.get("data_requirements") or []),
+            analysis_objective=data.get("analysis_objective"),
+            analysis_plan=data.get("analysis_plan") or data.get("analysis_spec"),
             analysis_spec=data.get("analysis_spec"),
+            exploratory_findings=list(data.get("exploratory_findings") or []),
+            validated_findings=list(data.get("validated_findings") or []),
             evidence_records=list(data.get("evidence_records") or []),
+            expert_insights=list(data.get("expert_insights") or data.get("insight_records") or []),
             insight_records=list(data.get("insight_records") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
@@ -71,8 +98,13 @@ class AnalysisSessionState:
             "stage": self.stage,
             "data_state": self.data_state,
             "data_requirements": self.data_requirements,
+            "analysis_objective": self.analysis_objective,
+            "analysis_plan": self.analysis_plan,
             "analysis_spec": self.analysis_spec,
+            "exploratory_findings": self.exploratory_findings,
+            "validated_findings": self.validated_findings,
             "evidence_records": self.evidence_records,
+            "expert_insights": self.expert_insights,
             "insight_records": self.insight_records,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
@@ -103,8 +135,48 @@ class AnalysisSessionState:
         item.setdefault("id", uuid.uuid4().hex[:10])
         item.setdefault("created_at", _now())
         self.analysis_spec = item
+        self.analysis_plan = item
+        if isinstance(item.get("analysis_objective"), dict):
+            self.analysis_objective = item["analysis_objective"]
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
+        return item
+
+    def set_analysis_objective(self, objective: dict[str, Any]) -> dict[str, Any]:
+        item = dict(objective)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.analysis_objective = item
+        self.goal = item.get("goal") or self.goal
+        self.stage = "scope"
+        return item
+
+    def set_analysis_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        item = dict(plan)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.analysis_plan = item
+        self.analysis_spec = item
+        if isinstance(item.get("analysis_objective"), dict):
+            self.analysis_objective = item["analysis_objective"]
+        self.goal = item.get("goal") or self.goal
+        self.stage = "plan"
+        return item
+
+    def add_exploratory_finding(self, finding: dict[str, Any]) -> dict[str, Any]:
+        item = dict(finding)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.exploratory_findings.append(item)
+        self.stage = "execute"
+        return item
+
+    def add_validated_finding(self, finding: dict[str, Any]) -> dict[str, Any]:
+        item = dict(finding)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.validated_findings.append(item)
+        self.stage = "execute"
         return item
 
     def add_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -121,6 +193,16 @@ class AnalysisSessionState:
         item.setdefault("created_at", _now())
         item.setdefault("output_type", "finding")
         self.insight_records.append(item)
+        self.expert_insights.append(_insight_record_to_expert_insight(item))
+        self.stage = "execute"
+        return item
+
+    def add_expert_insight(self, record: dict[str, Any]) -> dict[str, Any]:
+        item = dict(record)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        item.setdefault("presentation_sufficiency", "sufficient")
+        self.expert_insights.append(item)
         self.stage = "execute"
         return item
 
@@ -208,8 +290,13 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- stage: {state.stage}",
         f"- data_state: {state.data_state}",
         f"- data_requirements: {len(state.data_requirements)}",
+        f"- has_analysis_objective: {bool(state.analysis_objective)}",
+        f"- has_analysis_plan: {bool(state.analysis_plan)}",
         f"- has_analysis_spec: {bool(state.analysis_spec)}",
+        f"- exploratory_findings: {len(state.exploratory_findings)}",
+        f"- validated_findings: {len(state.validated_findings)}",
         f"- evidence_records: {len(state.evidence_records)}",
+        f"- expert_insights: {len(state.expert_insights)}",
         f"- insight_records: {len(state.insight_records)}",
         f"- pending_confirmations: {len(pending)}",
     ]
@@ -222,3 +309,111 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
                 paths.append(f"{i}. {path}")
         lines.append("- last_recommended_paths:\n  " + "\n  ".join(paths))
     return "\n".join(lines)
+
+
+def analysis_completeness_summary(state: AnalysisSessionState | None, require_charts: bool = False) -> dict[str, Any]:
+    """Compatibility summary for older callers.
+
+    ``require_charts`` is intentionally ignored. Chart presence is no longer a
+    hard quality gate; use ``analysis_quality_summary`` for the expert flow.
+    """
+    if state is None:
+        return {"status": "incomplete", "missing": ["analysis_state"], "counts": {}}
+
+    records = list(state.evidence_records or [])
+    insights = list(state.insight_records or [])
+    missing: list[str] = []
+
+    if not records:
+        missing.append("evidence_records")
+    if any(record.get("statistical_detail_status") == "missing" for record in records):
+        missing.append("statistical_details")
+    if not insights:
+        missing.append("expert_synthesis")
+
+    return {
+        "status": "complete" if not missing else "incomplete",
+        "missing": sorted(set(missing)),
+        "counts": {
+            "evidence_records": len(records),
+            "insight_records": len(insights),
+        },
+    }
+
+
+def analysis_quality_summary(state: AnalysisSessionState | None) -> dict[str, Any]:
+    """Evaluate whether the analysis is ready for expert-facing output."""
+    if state is None:
+        return {"status": "incomplete_can_continue", "missing": ["analysis_state"], "counts": {}}
+
+    missing: list[str] = []
+    objective = state.analysis_objective or {}
+    plan = state.analysis_plan or state.analysis_spec or {}
+    exploratory = list(state.exploratory_findings or [])
+    validated = list(state.validated_findings or [])
+    evidence = list(state.evidence_records or [])
+    insights = list(state.expert_insights or [])
+
+    if not objective:
+        missing.append("analysis_objective")
+    if not plan:
+        missing.append("analysis_plan")
+    if not exploratory and not plan.get("exploration_not_needed_reason"):
+        missing.append("exploratory_findings")
+    if not validated:
+        missing.append("validated_findings")
+    if not evidence:
+        missing.append("evidence_records")
+    if not insights:
+        missing.append("expert_insights")
+
+    if any(record.get("statistical_detail_status") == "missing" for record in evidence):
+        missing.append("statistical_details")
+
+    for record in evidence:
+        if record.get("sample_size") in (None, "", [], {}):
+            missing.append("sample_size")
+        if record.get("time_scope") in (None, "", [], {}):
+            missing.append("time_scope")
+        if record.get("calculation_method") in (None, "", [], {}):
+            missing.append("calculation_method")
+        if record.get("method_detail") in (None, "", [], {}):
+            missing.append("method_detail")
+
+    if objective.get("requires_counterfactual"):
+        counterfactual_fields = ("counterfactual_check", "control_group_check", "causal_boundary")
+        has_explicit_counterfactual_check = any(
+            item.get(key) not in (None, "", [], {})
+            for item in [plan, *validated, *evidence, *insights]
+            for key in counterfactual_fields
+        )
+        if not has_explicit_counterfactual_check:
+            missing.append("counterfactual_check")
+
+    for insight in insights:
+        if not insight.get("business_meaning"):
+            missing.append("business_meaning")
+        if insight.get("recommendation_confidence") not in {"high", "medium", "low"}:
+            missing.append("recommendation_confidence")
+        if not insight.get("next_analysis"):
+            missing.append("next_analysis")
+        if insight.get("presentation_sufficiency") not in {"sufficient", "not_needed"}:
+            missing.append("presentation_sufficiency")
+
+    status = "complete"
+    unique_missing = sorted(set(missing))
+    if unique_missing:
+        limited_markers = ("data_limited", "not_applicable", "cannot_validate")
+        validation_limited = any(str(item.get("validation_status", "")).lower() in limited_markers for item in validated)
+        status = "incomplete_data_limited" if validation_limited else "incomplete_can_continue"
+
+    return {
+        "status": status,
+        "missing": unique_missing,
+        "counts": {
+            "exploratory_findings": len(exploratory),
+            "validated_findings": len(validated),
+            "evidence_records": len(evidence),
+            "expert_insights": len(insights),
+        },
+    }

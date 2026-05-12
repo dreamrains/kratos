@@ -13,7 +13,9 @@ tools_required:
   - distribution_analysis
   - attribution_analysis
   - segmentation_analysis
-  - generate_report
+  - record_evidence_record
+  - create_chart
+  - generate_formal_report
 task_template:
   - id: T1
     tool: describe_dataset
@@ -48,7 +50,7 @@ task_template:
     params: {name: main, n_clusters: 3}
     depends_on: ["T3"]
   - id: T9
-    tool: generate_report
+    tool: generate_formal_report
     params: {name: main}
     depends_on: ["T4", "T5", "T6", "T7", "T8"]
 ---
@@ -73,10 +75,13 @@ task_template:
 - segmentation_analysis：基于特征的用户/数据分群
 
 ### 阶段 4：报告生成（T9）
-- generate_report：汇总所有分析结果，生成完整报告
-- 默认使用 detailed 风格，如用户要求简洁则用 executive 风格
+- record_evidence_record：先沉淀核心结论、方法、样本量、显著性/相关性等统计说明
+- create_chart：为核心结论生成配套图表，支撑报告的图表需设置 purpose="evidence" 或 purpose="insight"
+- generate_formal_report：消费 EvidenceRecord 和已验证图表，生成完整报告
+- 如用户要求简洁摘要，则使用 generate_analysis_brief
 
 ## 注意事项
 - 每个阶段完成后用 task_update 标记为 completed
 - 如果某工具报错，尝试用替代方法或 ask_user_question 请求指导
 - 分析过程中发现的洞察需要遵循多假设竞争规则
+- 核心指标、核心结论必须尽量包含专业统计学说明，例如 sample_size、calculation_method、significance、correlation、confidence_interval

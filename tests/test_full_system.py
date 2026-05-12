@@ -811,7 +811,9 @@ def test_full_report_skill():
     assert full_report.task_template is not None, "should have task_template"
     assert len(full_report.task_template) >= 5, f"should have >=5 steps, got {len(full_report.task_template)}"
     # Check required tools
-    assert "generate_report" in full_report.tools_required, "should require generate_report"
+    assert "generate_formal_report" in full_report.tools_required, "should require generate_formal_report"
+    assert "record_evidence_record" in full_report.tools_required, "should require evidence records"
+    assert "create_chart" in full_report.tools_required, "should require chart generation"
     return True
 
 test("full_report Skill 模板", test_full_report_skill)

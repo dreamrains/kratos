@@ -15,6 +15,10 @@ def _get_manager():
 @tasks_bp.get("/tasks")
 def list_tasks():
     mgr = _get_manager()
+    session_id = request.args.get("session_id", "")
+    project_name = request.args.get("project_name", "")
+    if session_id or project_name:
+        return jsonify(mgr.list_for_scope(session_id=session_id, project_name=project_name))
     return jsonify(mgr.list_all())
 
 
@@ -47,6 +51,9 @@ def create_task():
         expected_output=data.get("expected_output", ""),
         evidence_ids=data.get("evidence_ids", []),
         confirmation_ids=data.get("confirmation_ids", []),
+        required_capability=data.get("required_capability", ""),
+        evidence_requirements=data.get("evidence_requirements", []),
+        confirmation_policy=data.get("confirmation_policy", {}),
     )
     return jsonify(task), 201
 
@@ -69,6 +76,9 @@ def update_task(task_id: int):
         limitations=data.get("limitations"),
         confidence=data.get("confidence"),
         expected_output=data.get("expected_output"),
+        required_capability=data.get("required_capability"),
+        evidence_requirements=data.get("evidence_requirements"),
+        confirmation_policy=data.get("confirmation_policy"),
     )
     if not task:
         return jsonify({"error": f"Task {task_id} not found"}), 404

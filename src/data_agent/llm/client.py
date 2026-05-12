@@ -159,7 +159,7 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
-            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout) as e:
+            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError) as e:
                 last_error = e
                 if attempt < self._MAX_RETRIES:
                     import time
@@ -253,7 +253,7 @@ class LLMClient:
                     tc_accum.clear()
                 else:
                     raise
-            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout):
+            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError):
                 if attempt < self._MAX_RETRIES:
                     import time
                     delay = self._RETRY_BASE_DELAY * (2 ** attempt)

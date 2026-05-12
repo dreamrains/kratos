@@ -339,6 +339,43 @@ def test_golden_savings_card_effect_evaluation(tmp_path):
     assert_final_boundary(result, ["limitation", "confidence"])
 
 
+def test_feature_effect_goal_selects_business_playbook_stack():
+    from data_agent.agent.intent import plan_turn_intent
+    from data_agent.agent.method_playbooks import select_playbooks
+
+    ctx = (
+        "- orders: 7206 rows x 8 cols, columns: user_id, payment, pay_time, user_type\n"
+        "- feature_orders: 71 rows x 5 cols, columns: user_id, product_name, price, pay_time"
+    )
+    user_input = "分析某个产品功能对用户付费行为的影响，包含收益、付费前后变化，并告诉我还能分析哪些维度"
+    intent = plan_turn_intent(user_input, ctx)
+
+    selection = select_playbooks(user_input, intent, dataset_profile=ctx)
+    ids = [selection.primary_playbook_id] + selection.supporting_playbook_ids
+
+    assert "product_feature_analysis" in ids
+    assert "effect_evaluation" in ids
+    assert "revenue_profitability" in ids
+    assert "user_behavior_analysis" in ids
+
+
+def test_marketing_campaign_goal_selects_business_playbook_stack():
+    from data_agent.agent.intent import plan_turn_intent
+    from data_agent.agent.method_playbooks import select_playbooks
+
+    ctx = "- campaign_orders: 5000 rows x 9 cols, columns: user_id, campaign_id, revenue, cost, order_time, channel, is_exposed"
+    user_input = "分析这次营销活动是否有效，包含收入、成本、用户行为变化，并给出还能继续分析的方向"
+    intent = plan_turn_intent(user_input, ctx)
+
+    selection = select_playbooks(user_input, intent, dataset_profile=ctx)
+    ids = [selection.primary_playbook_id] + selection.supporting_playbook_ids
+
+    assert "effect_evaluation" in ids
+    assert "revenue_profitability" in ids
+    assert "user_behavior_analysis" in ids
+    assert "growth_opportunity" in ids
+
+
 def test_golden_revenue_decline_attribution(tmp_path):
     case = revenue_decline_case()
     assert_intent(case)

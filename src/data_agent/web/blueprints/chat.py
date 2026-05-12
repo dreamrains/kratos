@@ -65,6 +65,10 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "question": event["question"],
                     "options": event["options"],
                     "context": event["context"],
+                    "confirmation_type": event.get("confirmation_type"),
+                    "blocking_reason": event.get("blocking_reason"),
+                    "related_task_id": event.get("related_task_id"),
+                    "related_spec_id": event.get("related_spec_id"),
                 }))
                 eq.put(SSEEvent("turn_end", {
                     "session_id": loop.session_id,

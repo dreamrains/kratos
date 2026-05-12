@@ -1,4 +1,4 @@
-"""Method playbooks for consulting-style data analysis workflows.
+﻿"""Method playbooks for consulting-style data analysis workflows.
 
 Playbooks are intentionally medium-structured.  They guide data requirements,
 workflow tasks, evidence, and limitations without hard-coding final business
@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.analysis_objective import infer_analysis_objective
 from data_agent.agent.intent import TurnIntent
 
 
@@ -71,6 +72,10 @@ def _pb(
     confirmation: dict[str, Any] | None = None,
     optional: list[str] | None = None,
     risk_level: str = "low",
+    chart_suggestions: list[str] | None = None,
+    visualization_strategy: list[dict[str, Any]] | None = None,
+    statistical_requirements: list[str] | None = None,
+    output_sections: list[str] | None = None,
 ) -> MethodPlaybook:
     return MethodPlaybook(
         id=id,
@@ -103,8 +108,47 @@ def _pb(
         output_policy={
             "default_outputs": ["data requirement or analysis plan", "evidence-backed conclusion", "limitations", "next steps"],
             "style": "explain methods and boundaries in plain language for non-expert users",
+            "visualization_strategy": visualization_strategy or _chart_names_to_strategy(chart_suggestions or []),
+            "statistical_requirements": statistical_requirements or [],
+            "output_sections": output_sections or [],
+            "next_analysis_suggestions": ["validate key assumptions", "deepen segment analysis", "check data limitations"],
         },
     )
+
+
+def _chart_names_to_strategy(chart_names: list[str]) -> list[dict[str, Any]]:
+    if not chart_names:
+        return [{
+            "needed": False,
+            "purpose": "explanation",
+            "reason": "Use tables or text when they explain the finding more clearly than a chart.",
+            "chart_type": "none",
+            "fallback_presentation": "metric_table_or_text",
+        }]
+    return [
+        {
+            "needed": True,
+            "purpose": "evidence",
+            "reason": f"Use {name} only when it improves explanation or validation.",
+            "chart_type": _infer_chart_type(name),
+            "chart_name": name,
+            "fallback_presentation": "metric_table_or_statistical_explanation",
+        }
+        for name in chart_names
+    ]
+
+
+def _infer_chart_type(name: str) -> str:
+    lower = name.lower()
+    if "trend" in lower:
+        return "line"
+    if "distribution" in lower:
+        return "histogram"
+    if "correlation" in lower:
+        return "heatmap"
+    if "table" in lower:
+        return "table"
+    return "bar"
 
 
 PLAYBOOKS: dict[str, MethodPlaybook] = {
@@ -227,6 +271,111 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         confirmation={"requires_confirmation": True, "confirmation_type": "method_confirmation", "blocking_reason": "causal or decision analysis needs method and metric confirmation"},
         risk_level="high",
     ),
+    "product_feature_analysis": _pb(
+        id="product_feature_analysis",
+        name="Product Feature Analysis",
+        description="Analyze feature adoption, value, user behavior impact, and optimization opportunities.",
+        question_types=["evaluation", "diagnostic", "opportunity"],
+        typical_user_goals=["analyze feature effect", "understand feature value", "find feature optimization directions"],
+        must_have=["feature exposure or usage", "user_id or entity_id", "outcome metric"],
+        recommended=["pre/post window", "control or non-user group", "usage frequency", "segment dimensions"],
+        optional=["feature cost", "user attributes", "qualitative feedback"],
+        minimum="Feature users and at least one outcome metric; stronger effect claims require a comparable control or pre/post design.",
+        method_plan=[
+            {"step": "define feature exposure, target users, and outcome metrics", "node_type": "method", "required_capability": "data.profile", "expected_output": "feature analysis design", "evidence_requirements": ["feature exposure", "outcome metric"]},
+            {"step": "compare behavior before and after feature usage", "node_type": "analysis", "required_capability": "analysis.period_compare", "expected_output": "before-after metric comparison", "evidence_requirements": ["metric_delta", "sample_size"]},
+            {"step": "segment feature users by behavior or value", "node_type": "analysis", "required_capability": "analysis.top_n", "expected_output": "high-value segments and usage patterns", "evidence_requirements": ["segment", "metric"]},
+        ],
+        evidence=["feature exposure", "metric delta", "sample size", "segment pattern"],
+        limitations=["feature users may be self-selected; feature impact is not causal without a credible comparison design"],
+        chart_suggestions=["feature_kpi_comparison", "segment_comparison", "usage_distribution"],
+        statistical_requirements=["sample_size", "calculation_method", "effect_size", "significance"],
+        output_sections=["core_conclusion", "feature_value", "behavior_change", "limitations", "next_analysis"],
+    ),
+    "effect_evaluation": _pb(
+        id="effect_evaluation",
+        name="Effect Evaluation",
+        description="Evaluate whether a feature, campaign, policy, or intervention changed target outcomes.",
+        question_types=["evaluation", "causal", "decision"],
+        typical_user_goals=["evaluate effect", "measure impact", "decide whether an intervention worked"],
+        must_have=["treatment or exposure", "outcome metric", "observation window"],
+        recommended=["control group", "pre-period outcome", "assignment rule", "confounders"],
+        optional=["experiment metadata", "matching variables"],
+        minimum="Treatment/exposure and outcome data; without control group, only observational before-after conclusions are allowed.",
+        method_plan=[
+            {"step": "validate treatment, outcome, time window, and comparison design", "node_type": "data_check", "required_capability": "data.profile", "expected_output": "effect evaluation readiness", "evidence_requirements": ["treatment", "outcome", "comparison group"]},
+            {"step": "estimate observed effect and statistical support", "node_type": "analysis", "required_capability": "analysis.experiment", "expected_output": "effect size, significance, and confidence boundary", "evidence_requirements": ["effect_size", "significance", "sample_size"]},
+            {"step": "state causal limitations and alternative explanations", "node_type": "evidence", "required_capability": "artifact.evidence_record", "expected_output": "bounded effect conclusion", "evidence_requirements": ["assumptions", "limitations"]},
+        ],
+        evidence=["effect size", "significance", "sample size", "comparison design", "assumptions"],
+        limitations=["without randomization or a credible control group, causal claims are limited"],
+        confirmation={"requires_confirmation": True, "confirmation_type": "method_confirmation", "blocking_reason": "effect evaluation needs metric, window, and comparison design confirmation"},
+        risk_level="high",
+        chart_suggestions=["trend_context", "before_after_comparison", "effect_size_table"],
+        statistical_requirements=["sample_size", "effect_size", "significance", "confidence_interval"],
+        output_sections=["core_conclusion", "effect_estimate", "statistical_support", "causal_boundary", "next_analysis"],
+    ),
+    "revenue_profitability": _pb(
+        id="revenue_profitability",
+        name="Revenue And Profitability",
+        description="Analyze revenue, cost, ROI, net value, and profitability assumptions.",
+        question_types=["description", "evaluation", "decision"],
+        typical_user_goals=["analyze revenue", "calculate cost and profit", "measure ROI"],
+        must_have=["revenue metric", "cost or subsidy metric"],
+        recommended=["time window", "product or campaign dimension", "user count", "refund or discount rules"],
+        optional=["fixed cost", "gross margin", "lifetime value"],
+        minimum="Revenue data plus at least one explicit or bounded cost assumption.",
+        method_plan=[
+            {"step": "calculate revenue, cost, and net value", "node_type": "analysis", "required_capability": "analysis.top_n", "expected_output": "revenue-cost-profit table", "evidence_requirements": ["revenue", "cost", "net_value"]},
+            {"step": "analyze revenue and cost composition by key dimensions", "node_type": "analysis", "required_capability": "analysis.dimension_decomposition", "expected_output": "profitability drivers", "evidence_requirements": ["contribution", "dimension"]},
+        ],
+        evidence=["revenue", "cost", "net value", "cost assumptions"],
+        limitations=["profitability is incomplete when cost definitions or downstream value are missing"],
+        chart_suggestions=["revenue_cost_composition", "net_value_waterfall"],
+        statistical_requirements=["calculation_method", "time_scope", "sample_size"],
+        output_sections=["core_conclusion", "financial_breakdown", "cost_assumptions", "sensitivity", "next_analysis"],
+    ),
+    "user_behavior_analysis": _pb(
+        id="user_behavior_analysis",
+        name="User Behavior Analysis",
+        description="Analyze user frequency, monetary value, preferences, paths, distribution, and segments.",
+        question_types=["description", "diagnostic", "opportunity"],
+        typical_user_goals=["understand user behavior", "analyze payment behavior", "find behavior segments"],
+        must_have=["user_id or entity_id", "behavior event or metric"],
+        recommended=["event_time", "amount metric", "segment dimensions", "before/after flag"],
+        optional=["channel", "cohort", "user attributes"],
+        minimum="User-level or entity-level behavior data with at least one measurable event or metric.",
+        method_plan=[
+            {"step": "summarize frequency, amount, and distribution", "node_type": "analysis", "required_capability": "data.describe", "expected_output": "behavior metric summary", "evidence_requirements": ["frequency", "amount", "distribution"]},
+            {"step": "compare behavior by segment or period", "node_type": "analysis", "required_capability": "analysis.period_compare", "expected_output": "segment or period behavior comparison", "evidence_requirements": ["segment", "metric_delta"]},
+            {"step": "inspect behavior relationships and drivers", "node_type": "analysis", "required_capability": "analysis.correlation", "expected_output": "behavior correlation summary", "evidence_requirements": ["correlation"]},
+        ],
+        evidence=["frequency", "amount", "distribution", "segment", "correlation"],
+        limitations=["behavior changes may reflect selection, seasonality, or observation-window effects"],
+        chart_suggestions=["behavior_distribution", "segment_comparison", "correlation_heatmap"],
+        statistical_requirements=["sample_size", "distribution", "correlation", "significance"],
+        output_sections=["core_conclusion", "behavior_metrics", "segments", "statistical_support", "next_analysis"],
+    ),
+    "growth_opportunity": _pb(
+        id="growth_opportunity",
+        name="Growth Opportunity",
+        description="Identify follow-up analysis dimensions, optimization opportunities, and experiment ideas.",
+        question_types=["opportunity", "decision"],
+        typical_user_goals=["find more analysis dimensions", "recommend optimization directions", "plan next experiments"],
+        must_have=["current findings or target metric"],
+        recommended=["segments", "channels", "product attributes", "cost and outcome metrics"],
+        optional=["benchmarks", "experiment capacity"],
+        minimum="At least one current finding or target metric to expand from.",
+        method_plan=[
+            {"step": "identify expandable dimensions and hypotheses", "node_type": "method", "required_capability": "data.describe", "expected_output": "ranked follow-up analysis directions", "evidence_requirements": ["dimension", "hypothesis"]},
+            {"step": "prioritize opportunities by impact, confidence, and data availability", "node_type": "evidence", "required_capability": "artifact.insight_record", "expected_output": "opportunity shortlist", "evidence_requirements": ["impact", "confidence", "data_needed"]},
+        ],
+        evidence=["dimension", "hypothesis", "impact", "data needed"],
+        limitations=["opportunities are hypotheses unless validated with additional analysis or experiments"],
+        chart_suggestions=["opportunity_matrix"],
+        statistical_requirements=["impact_estimate", "confidence_reason"],
+        output_sections=["next_analysis", "opportunity_prioritization", "data_needed"],
+    ),
     "forecast_decision_simulation": _pb(
         id="forecast_decision_simulation",
         name="Forecast & Decision Simulation",
@@ -315,14 +464,20 @@ def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -
 def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
     if _has_any(text, ["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"]):
         return "funnel_conversion"
+    if _has_any(text, ["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"]):
+        return "forecast_decision_simulation"
+    if _has_any(text, ["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"]):
+        return "driver_decomposition"
+    if _has_any(text, ["功能", "feature", "产品功能", "付费行为", "用户行为"]):
+        return "product_feature_analysis"
+    if _has_any(text, ["活动", "campaign", "营销", "是否有效", "效果", "impact"]):
+        return "effect_evaluation"
     if _has_any(text, ["evaluate", "evaluation", "effect", "causal", "ab test", "a/b", "worth", "continue operating", "keep operating", "long term operation", "long-term operation", "long-term", "长期运营", "是否值得"]):
         return "evaluation_causal"
     if _has_any(text, ["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"]):
         return "retention_lifecycle"
-    if _has_any(text, ["forecast", "predict", "prediction", "roi", "what-if", "simulate", "budget", "预测", "预估"]):
-        return "forecast_decision_simulation"
-    if _has_any(text, ["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"]):
-        return "driver_decomposition"
+    if _has_any(text, ["收益", "收入", "成本", "利润", "roi", "profit", "revenue", "cost", "net value"]):
+        return "revenue_profitability"
     if _has_any(text, ["trend", "period", "month", "week", "同比", "环比", "趋势"]):
         return "trend_period_comparison"
     if _has_any(text, ["top", "overview", "summary", "distribution", "概览", "分布", "排名"]):
@@ -334,7 +489,15 @@ def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
 
 def _choose_supporting(text: str, primary: str) -> list[str]:
     supporting: list[str] = []
-    if primary == "evaluation_causal":
+    if primary == "product_feature_analysis":
+        supporting.extend(["effect_evaluation", "revenue_profitability", "user_behavior_analysis", "growth_opportunity"])
+    elif primary == "effect_evaluation":
+        supporting.extend(["revenue_profitability", "user_behavior_analysis", "growth_opportunity"])
+    elif primary == "revenue_profitability":
+        supporting.extend(["effect_evaluation", "user_behavior_analysis", "growth_opportunity"])
+    elif primary == "user_behavior_analysis":
+        supporting.extend(["metric_overview", "growth_opportunity"])
+    elif primary == "evaluation_causal":
         supporting.extend(["retention_lifecycle", "forecast_decision_simulation", "metric_overview"])
     elif primary == "forecast_decision_simulation":
         supporting.extend(["trend_period_comparison", "metric_overview"])
@@ -344,6 +507,12 @@ def _choose_supporting(text: str, primary: str) -> list[str]:
         supporting.extend(["metric_overview"])
     elif primary == "data_understanding":
         supporting.extend(["metric_overview", "trend_period_comparison"])
+    if _has_any(text, ["收益", "收入", "成本", "利润", "roi", "revenue", "cost"]) and "revenue_profitability" not in supporting and primary != "revenue_profitability":
+        supporting.append("revenue_profitability")
+    if _has_any(text, ["用户行为", "付费行为", "behavior", "frequency"]) and "user_behavior_analysis" not in supporting and primary != "user_behavior_analysis":
+        supporting.append("user_behavior_analysis")
+    if _has_any(text, ["还能分析", "继续分析", "分析方向", "opportunity", "next analysis"]) and "growth_opportunity" not in supporting and primary != "growth_opportunity":
+        supporting.append("growth_opportunity")
     if _has_any(text, ["roi", "cost", "budget", "成本", "预算"]) and "forecast_decision_simulation" not in supporting and primary != "forecast_decision_simulation":
         supporting.append("forecast_decision_simulation")
     return [sid for sid in supporting if sid != primary]
@@ -394,10 +563,45 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
         })
     metrics = _infer_metrics(user_input)
     dimensions = _infer_dimensions(user_input)
+    output_policies = [playbook.output_policy] + [PLAYBOOKS[sid].output_policy for sid in supporting if sid in PLAYBOOKS]
+    visualization_strategy = []
+    seen_strategy = set()
+    for policy in output_policies:
+        for item in policy.get("visualization_strategy") or []:
+            if not isinstance(item, dict):
+                continue
+            key = (item.get("chart_name"), item.get("purpose"), item.get("chart_type"), item.get("needed"))
+            if key in seen_strategy:
+                continue
+            seen_strategy.add(key)
+            visualization_strategy.append(dict(item))
+    statistical_requirements = sorted({
+        item
+        for policy in output_policies
+        for item in (policy.get("statistical_requirements") or [])
+    })
+    output_sections = []
+    for policy in output_policies:
+        for section in policy.get("output_sections") or []:
+            if section not in output_sections:
+                output_sections.append(section)
+    playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
+    objective = infer_analysis_objective(user_input, "")
     return {
         "goal": user_input.strip() or playbook.name,
+        "analysis_objective": objective,
+        "analysis_plan_version": "expert_flow_v2",
         "playbook_id": playbook.id,
         "supporting_playbook_ids": supporting,
+        "playbook_stack": playbook_stack,
+        "workflow_stages": [
+            "question_framing",
+            "analysis_planning",
+            "exploratory_analysis",
+            "validation_analysis",
+            "evidence_synthesis",
+            "expert_output",
+        ],
         "question_type": playbook.question_types[0] if playbook.question_types else "description",
         "metrics": metrics,
         "dimensions": dimensions,
@@ -407,7 +611,21 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
         "limitations": playbook.limitation_policy.get("required_limitations", []),
         "evidence_policy": playbook.evidence_policy,
         "confirmation_policy": playbook.confirmation_policy,
+        "visualization_strategy": visualization_strategy,
+        "statistical_requirements": statistical_requirements,
+        "statistical_validation_plan": statistical_requirements,
+        "output_sections": output_sections,
+        "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
+
+
+def _next_analysis_candidates(output_policies: list[dict[str, Any]]) -> list[str]:
+    candidates: list[str] = []
+    for policy in output_policies:
+        for item in policy.get("next_analysis_suggestions") or []:
+            if item not in candidates:
+                candidates.append(item)
+    return candidates
 
 
 def _selection_reason(playbook: MethodPlaybook, has_data: bool, supporting: list[str]) -> str:
@@ -439,3 +657,4 @@ def _infer_dimensions(text: str) -> list[str]:
 
 def _has_any(text: str, needles: list[str]) -> bool:
     return any(needle.lower() in text for needle in needles)
+

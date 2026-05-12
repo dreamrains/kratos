@@ -86,6 +86,36 @@ def test_build_system_prompt_escapes_literal_json_examples():
         assert "Plotly JSON" in prompt
 
 
+def test_report_prompt_uses_evidence_backed_report_tools_and_statistical_details():
+    from data_agent.agent.prompts import build_system_prompt
+
+    loaded = "- main: 10 rows x 3 cols, columns: date, revenue, channel"
+    prompt = build_system_prompt(
+        tool_list="create_chart, record_evidence_record, generate_analysis_brief, generate_formal_report",
+        session_context=loaded,
+        user_input="generate a complete analysis report",
+    )
+
+    assert "generate_formal_report" in prompt
+    assert "generate_analysis_brief" in prompt
+    assert "purpose=\"evidence\"" in prompt
+    assert "sample_size" in prompt
+    assert "significance" in prompt
+
+
+def test_complete_analysis_prompt_positions_brief_as_auxiliary():
+    from data_agent.agent.prompts import build_system_prompt
+
+    prompt = build_system_prompt(
+        tool_list="record_evidence_record, create_chart, generate_analysis_brief, generate_formal_report",
+        session_context="- main: 10 rows x 3 cols, columns: user_id, revenue, date",
+        user_input="请完整分析功能效果，并告诉我还有哪些维度可以分析",
+    )
+
+    assert "generate_analysis_brief 仅用于快速摘要" in prompt
+    assert "默认最终输出必须是专业分析结果" in prompt
+
+
 def test_data_command_parses_multiple_quoted_paths_and_context():
     from data_agent.agent.repl import _format_data_command_prompt, _parse_data_command_args
 

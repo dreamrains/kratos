@@ -311,6 +311,43 @@ def generate_session_report(session_id: str):
     return jsonify(json.loads(payload))
 
 
+def _analysis_state_payload(state) -> dict:
+    pending = [c for c in state.pending_confirmations if c.get("status") == "pending"]
+    return {
+        "state": state.to_dict(),
+        "summary": {
+            "goal": state.goal,
+            "stage": state.stage,
+            "data_state": state.data_state,
+            "requirements": len(state.data_requirements),
+            "has_spec": bool(state.analysis_spec),
+            "evidence_records": len(state.evidence_records),
+            "insight_records": len(state.insight_records),
+            "pending_confirmations": len(pending),
+            "recommended_paths": len(state.last_recommended_paths),
+        },
+    }
+
+
+@sessions_bp.get("/sessions/<session_id>/analysis")
+def get_analysis_state(session_id: str):
+    """Return the session-scoped analysis state for Web workbench panels."""
+    from data_agent.agent.analysis_state import load_analysis_state
+
+    state = load_analysis_state(session_id)
+    return jsonify(_analysis_state_payload(state))
+
+
+@sessions_bp.post("/sessions/<session_id>/analysis/reset")
+def reset_session_analysis_state(session_id: str):
+    """Reset analysis state without deleting conversation, datasets, or artifacts."""
+    from data_agent.agent.analysis_state import load_analysis_state, reset_analysis_state
+
+    project_name = load_analysis_state(session_id).project_name
+    state = reset_analysis_state(session_id, project_name=project_name)
+    return jsonify(_analysis_state_payload(state))
+
+
 # ── Session Artifacts ───────────────────────────────────────
 
 

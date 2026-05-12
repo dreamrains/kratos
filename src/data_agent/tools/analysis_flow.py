@@ -8,6 +8,25 @@ from datetime import datetime
 from data_agent.tools.registry import registry
 
 
+_STAT_DETAIL_FIELDS = [
+    "metrics",
+    "sample_size",
+    "time_scope",
+    "calculation_method",
+    "method_detail",
+    "significance",
+    "correlation",
+    "confidence_interval",
+]
+
+
+def _mark_statistical_detail_status(payload: dict) -> dict:
+    gaps = [field for field in _STAT_DETAIL_FIELDS if payload.get(field) in (None, "", [], {})]
+    payload["statistical_detail_gaps"] = gaps
+    payload["statistical_detail_status"] = "complete" if not gaps else "missing"
+    return payload
+
+
 def _session_id() -> str:
     try:
         from data_agent.agent.context import get_current_context
@@ -106,7 +125,7 @@ def record_analysis_spec(spec_json: str) -> str:
 
     state = _current_state()
     if state is not None:
-        payload = state.set_analysis_spec(payload)
+        payload = state.set_analysis_plan(payload)
         state.save()
 
     result = _write_analysis_artifact("analysis_spec", payload)
@@ -124,10 +143,97 @@ def record_analysis_spec(spec_json: str) -> str:
 
 
 @registry.register(
+    name="record_analysis_plan",
+    description="Save an AnalysisPlan JSON for the expert analysis flow.",
+)
+def record_analysis_plan(plan_json: str) -> str:
+    try:
+        payload = json.loads(plan_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "plan_json must be valid JSON"}, ensure_ascii=False)
+    required = ["goal", "method_plan", "visualization_strategy"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"AnalysisPlan missing fields: {missing}"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.set_analysis_plan(payload)
+        state.save()
+
+    result = _write_analysis_artifact("analysis_plan", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["analysis_plan_id"] = payload.get("id")
+
+    try:
+        from data_agent.tools.task_tools import create_workflow_tasks_from_spec
+        result["workflow"] = create_workflow_tasks_from_spec(payload)
+    except Exception as e:
+        result["workflow_error"] = str(e)
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_exploratory_finding",
+    description="Save an ExploratoryFinding JSON. Exploratory findings are candidates, not final conclusions.",
+)
+def record_exploratory_finding(finding_json: str) -> str:
+    try:
+        payload = json.loads(finding_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "finding_json must be valid JSON"}, ensure_ascii=False)
+    if "finding" not in payload:
+        return json.dumps({"error": "ExploratoryFinding missing fields: ['finding']"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_exploratory_finding(payload)
+        state.save()
+
+    result = _write_analysis_artifact("exploratory_finding", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["exploratory_finding_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_validated_finding",
+    description="Save a ValidatedFinding JSON with validation status, method, statistics, and limitations.",
+)
+def record_validated_finding(finding_json: str) -> str:
+    try:
+        payload = json.loads(finding_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "finding_json must be valid JSON"}, ensure_ascii=False)
+    required = ["claim", "validation_status", "validation_method", "statistical_explanation", "limitations"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"ValidatedFinding missing fields: {missing}"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_validated_finding(payload)
+        state.save()
+
+    result = _write_analysis_artifact("validated_finding", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["validated_finding_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
     name="record_evidence_record",
     description=(
         "Save an EvidenceRecord JSON with claim, dataset, method, tool_calls, "
-        "result_summary, limitations, and confidence."
+        "result_summary, limitations, confidence, and statistical details such as "
+        "metrics, sample_size, calculation_method, significance, correlation, "
+        "effect size, or confidence_interval when available."
     ),
 )
 def record_evidence_record(record_json: str) -> str:
@@ -149,6 +255,7 @@ def record_evidence_record(record_json: str) -> str:
             "allowed": sorted(allowed_confidence),
         }, ensure_ascii=False)
     payload["confidence"] = confidence
+    _mark_statistical_detail_status(payload)
 
     state = _current_state()
     if state is not None:
@@ -160,6 +267,35 @@ def record_evidence_record(record_json: str) -> str:
     if state is not None:
         result["state_stage"] = state.stage
         result["evidence_id"] = payload.get("id")
+    result["statistical_detail_status"] = payload.get("statistical_detail_status")
+    result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_analysis_objective",
+    description="Save an AnalysisObjective JSON for question framing and risk/depth classification.",
+)
+def record_analysis_objective(objective_json: str) -> str:
+    try:
+        payload = json.loads(objective_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "objective_json must be valid JSON"}, ensure_ascii=False)
+    required = ["question_type", "business_object", "decision_risk", "analysis_depth", "requires_counterfactual", "expected_outputs"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"AnalysisObjective missing fields: {missing}"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.set_analysis_objective(payload)
+        state.save()
+
+    result = _write_analysis_artifact("analysis_objective", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["analysis_objective_id"] = payload.get("id")
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -190,4 +326,52 @@ def record_insight_record(record_json: str) -> str:
     if state is not None:
         result["state_stage"] = state.stage
         result["insight_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_expert_insight",
+    description=(
+        "Save an ExpertInsight JSON with conclusion, business_meaning, evidence_ids, "
+        "statistical_explanation, limitations, recommendation, recommendation_confidence, and next_analysis."
+    ),
+)
+def record_expert_insight(record_json: str) -> str:
+    try:
+        payload = json.loads(record_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "record_json must be valid JSON"}, ensure_ascii=False)
+    required = [
+        "conclusion",
+        "business_meaning",
+        "evidence_ids",
+        "statistical_explanation",
+        "limitations",
+        "recommendation",
+        "recommendation_confidence",
+        "next_analysis",
+    ]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"ExpertInsight missing fields: {missing}"}, ensure_ascii=False)
+
+    confidence = str(payload.get("recommendation_confidence", "")).strip().lower()
+    if confidence not in {"high", "medium", "low"}:
+        return json.dumps({
+            "error": f"Invalid recommendation_confidence: {payload.get('recommendation_confidence')}",
+            "error_type": "invalid_recommendation_confidence",
+            "allowed": ["high", "medium", "low"],
+        }, ensure_ascii=False)
+    payload["recommendation_confidence"] = confidence
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_expert_insight(payload)
+        state.save()
+
+    result = _write_analysis_artifact("expert_insight", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["expert_insight_id"] = payload.get("id")
     return json.dumps(result, ensure_ascii=False)

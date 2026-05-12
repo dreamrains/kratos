@@ -134,6 +134,87 @@ def test_formal_report_lists_statistical_detail_gaps(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
+def test_formal_report_embeds_valid_exploratory_charts_as_supplemental_evidence(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    session_id = "formal_exploratory_chart"
+    ctx = AgentContext(session_id=session_id, workspace=Workspace())
+    ctx.analysis_state = AnalysisSessionState(session_id=session_id, goal="省钱卡分析")
+    ctx.analysis_state.evidence_records.append({
+        "id": "ev_card",
+        "claim": "购卡后人均付费下降",
+        "dataset": "orders",
+        "method": "period comparison",
+        "tool_calls": ["compare_periods", "create_chart"],
+        "result_summary": "购卡后人均实收金额下降 31.8%",
+        "limitations": "缺少未购卡对照组",
+        "confidence": "medium",
+        "sample_size": 123,
+        "calculation_method": "后30天人均实收 / 前30天人均实收 - 1",
+    })
+    chart_dir = session_charts_dir(session_id)
+    (chart_dir / "购卡前后核心指标对比_abc123.html").write_text(
+        '<div id="c" class="plotly-graph-div"></div><script>Plotly.newPlot("c", [], {})</script>',
+        encoding="utf-8",
+    )
+    (chart_dir / "购卡前后核心指标对比_abc123.json").write_text(json.dumps({
+        "chart_id": "购卡前后核心指标对比_abc123",
+        "filename": "购卡前后核心指标对比_abc123.html",
+        "title": "购卡前后核心指标对比",
+        "purpose": "exploratory",
+        "validation_status": "valid",
+        "validation_warnings": [],
+        "evidence_ids": [],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(report.generate_formal_report(format="html"))
+
+        assert result["chart_count"] == 1
+        html = (tmp_path / result["artifact_path"]).read_text(encoding="utf-8")
+        assert "购卡前后核心指标对比" in html
+        assert "补充图表" in html
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_formal_report_prioritizes_expert_synthesis_over_raw_evidence(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ctx = AgentContext(session_id="expert_report", workspace=Workspace())
+    ctx.analysis_state = AnalysisSessionState(session_id="expert_report", goal="功能效果分析")
+    ctx.analysis_state.evidence_records.append({
+        "id": "ev_1",
+        "claim": "未能证明功能提升付费",
+        "dataset": "orders",
+        "method": "Mann-Whitney U",
+        "tool_calls": ["ab_test"],
+        "result_summary": "p=0.25, d=-0.22",
+        "limitations": "缺少对照组",
+        "confidence": "medium",
+        "sample_size": 123,
+        "significance": {"p_value": 0.25},
+    })
+    ctx.analysis_state.insight_records.append({
+        "title": "未能证明功能提升付费",
+        "summary": "前后差异不显著，且缺少未使用功能的对照组。",
+        "evidence_ids": ["ev_1"],
+        "chart_ids": [],
+        "recommendation": "补充对照组后做 DID 或匹配分析。",
+        "limitations": "观察性前后对比不能证明因果。",
+        "confidence": "medium",
+        "output_type": "finding",
+    })
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(report.generate_formal_report(format="markdown"))
+        content = (tmp_path / result["artifact_path"]).read_text(encoding="utf-8")
+        assert content.index("核心结论与业务含义") < content.index("Evidence `ev_1`")
+        assert "补充对照组后做 DID" in content
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_legacy_generate_report_does_not_embed_unvalidated_charts(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     session_id = "legacy_report"

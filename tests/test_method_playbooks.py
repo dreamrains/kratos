@@ -17,7 +17,7 @@ def _loaded_context(columns: str = "date, revenue, channel") -> str:
     return f"- main: 10 rows x 3 cols, columns: {columns}"
 
 
-def test_eight_method_playbooks_are_complete():
+def test_method_playbooks_are_complete():
     expected = {
         "data_understanding",
         "metric_overview",
@@ -27,6 +27,11 @@ def test_eight_method_playbooks_are_complete():
         "retention_lifecycle",
         "evaluation_causal",
         "forecast_decision_simulation",
+        "product_feature_analysis",
+        "effect_evaluation",
+        "revenue_profitability",
+        "user_behavior_analysis",
+        "growth_opportunity",
     }
     assert {p.id for p in list_playbooks()} == expected
 
@@ -83,6 +88,21 @@ def test_selector_maps_common_questions_to_playbooks():
             if step.get("required_capability")
         }
         assert capabilities
+
+
+def test_business_playbook_analysis_spec_contains_visualization_strategy_and_stats():
+    ctx = _loaded_context("user_id, revenue, pay_time, feature_type, period")
+    intent = plan_turn_intent("分析功能效果和收益", ctx)
+    selection = select_playbooks("分析功能效果和收益", intent, AnalysisSessionState(session_id="business_spec"), ctx)
+
+    spec = selection.analysis_spec
+
+    assert spec is not None
+    assert "visualization_strategy" in spec
+    assert "required_charts" not in spec
+    assert "statistical_requirements" in spec
+    assert "effect_size" in spec["statistical_requirements"]
+    assert any(item.get("chart_name") == "before_after_comparison" for item in spec["visualization_strategy"])
 
 
 def test_selector_handles_no_data_business_question_as_requirement():

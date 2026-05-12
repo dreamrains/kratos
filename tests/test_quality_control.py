@@ -41,3 +41,52 @@ def test_evidence_record_rejects_unknown_confidence_level():
 
     assert result["error_type"] == "invalid_confidence"
     assert "speculative" in result["allowed"]
+
+
+def test_core_evidence_record_marks_missing_statistical_details(tmp_path):
+    ctx = AgentContext(session_id="quality_stats", workspace=Workspace())
+    ctx.analysis_state = AnalysisSessionState(session_id="quality_stats")
+    payload = {
+        "claim": "购卡后付费金额下降",
+        "dataset": "orders",
+        "method": "before-after comparison",
+        "tool_calls": ["compare_periods"],
+        "result_summary": "购卡后人均实收下降 31.8%。",
+        "limitations": "缺少未购卡对照组。",
+        "confidence": "medium",
+        "is_core": True,
+    }
+
+    with use_agent_context(ctx):
+        result = json.loads(record_evidence_record(json.dumps(payload, ensure_ascii=False)))
+
+    assert result["statistical_detail_status"] == "missing"
+    record = ctx.analysis_state.evidence_records[0]
+    assert record["statistical_detail_status"] == "missing"
+    assert "sample_size" in record["statistical_detail_gaps"]
+    assert "significance" in record["statistical_detail_gaps"]
+
+
+def test_analysis_completeness_flags_missing_core_quality_fields():
+    from data_agent.agent.analysis_state import analysis_completeness_summary
+
+    state = AnalysisSessionState(session_id="complete_check", goal="evaluate feature effect")
+    state.evidence_records.append({
+        "id": "ev_1",
+        "claim": "功能上线后付费下降",
+        "dataset": "orders",
+        "method": "before-after",
+        "tool_calls": ["compare_periods"],
+        "result_summary": "下降 31.8%",
+        "limitations": "缺少对照组",
+        "confidence": "medium",
+        "statistical_detail_status": "missing",
+        "statistical_detail_gaps": ["sample_size", "significance"],
+    })
+
+    summary = analysis_completeness_summary(state, require_charts=True)
+
+    assert summary["status"] == "incomplete"
+    assert "statistical_details" in summary["missing"]
+    assert "charts" not in summary["missing"]
+    assert "expert_synthesis" in summary["missing"]
