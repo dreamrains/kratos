@@ -81,14 +81,14 @@ class SuspensionManager:
             "state_updates": suspension.state_updates,
             "related_task_id": suspension.related_task_id,
             "related_spec_id": suspension.related_spec_id,
-        }, default=str, ensure_ascii=False))
+        }, default=str, ensure_ascii=False), encoding="utf-8")
         return str(path)
 
     def load(self, suspension_id: str) -> SuspendedForConfirmation | None:
         path = self._dir / f"suspension_{suspension_id}.json"
         if not path.exists():
             return None
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         return SuspendedForConfirmation(
             suspension_id=data["suspension_id"],
             question=data["question"],
