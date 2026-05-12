@@ -64,6 +64,8 @@ class AnalysisFlowController:
 
     def is_tool_blocked_by_confirmation(self, state: AnalysisSessionState, tool_name: str) -> bool:
         cap = registry.capability_for(tool_name)
+        if not cap:
+            return False
         capability_id = cap.get("capability_id", "")
         return self.is_capability_blocked_by_confirmation(state, capability_id)
 

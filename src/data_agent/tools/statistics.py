@@ -19,6 +19,12 @@ from data_agent.tools.registry import registry
         "进行 A/B 测试统计检验。比较两组之间的指标差异。"
         "auto 模式自动判断正态性并选择检验方法，附加 Levene 方差齐性检验。"
     ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "group_col": {"description": "分组列名（二值列，区分实验组和对照组）"},
+        "metric_col": {"description": "指标列名"},
+        "method": {"description": "检验方法", "enum": ["auto", "ttest", "mannwhitneyu", "chi2"]},
+    },
 )
 def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") -> str:
     df, err = get_df(name)
@@ -33,6 +39,28 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         return f"Error: 分组列只有 {len(groups)} 个唯一值，至少需要 2 个"
 
     g1_name, g2_name = str(groups[0]), str(groups[1])
+
+    # chi2 直接使用列联表，不需要 float 转换
+    if method == "chi2":
+        contingency = pd.crosstab(df[group_col], df[metric_col])
+        if contingency.size < 4:
+            return "Error: chi2 检验需要每组至少 2 个类别"
+        stat, p_value, dof, expected = sp_stats.chi2_contingency(contingency)
+        result = {
+            "group_col": group_col,
+            "metric_col": metric_col,
+            "groups": {g1_name: {"n": int(contingency.loc[groups[0]].sum())},
+                       g2_name: {"n": int(contingency.loc[groups[1]].sum())}},
+            "method": "chi2",
+            "test": {
+                "statistic": round(float(stat), 4),
+                "p_value": round(float(p_value), 6),
+                "dof": int(dof),
+                "significant": bool(p_value < 0.05),
+            },
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
     g1 = df[df[group_col] == groups[0]][metric_col].dropna().values.astype(float)
     g2 = df[df[group_col] == groups[1]][metric_col].dropna().values.astype(float)
 
@@ -99,16 +127,6 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
             "p_value": round(float(p_value), 6),
             "significant": bool(p_value < 0.05),
         }
-    elif method == "chi2":
-        contingency = pd.crosstab(df[group_col], df[metric_col])
-        stat, p_value, dof, expected = sp_stats.chi2_contingency(contingency)
-        result["test"] = {
-            "statistic": round(float(stat), 4),
-            "p_value": round(float(p_value), 6),
-            "dof": int(dof),
-            "significant": bool(p_value < 0.05),
-        }
-
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -121,6 +139,13 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         "time_col（期次列，0=预处理/1=处理后）→ method。"
         "示例：causal_analysis(name='数据集', treatment_col='group', outcome_col='revenue', time_col='period')"
     ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "treatment_col": {"description": "处理组标识列（0=控制组/1=处理组）"},
+        "outcome_col": {"description": "结果变量列"},
+        "time_col": {"description": "期次列（0=预处理/1=处理后）"},
+        "method": {"description": "分析方法", "enum": ["did"]},
+    },
 )
 def causal_analysis(name: str, treatment_col: str, outcome_col: str = "", target_col: str = "", time_col: str = "", method: str = "did") -> str:
     # 兼容 outcome_col 和 target_col 两种命名
@@ -217,6 +242,11 @@ def causal_analysis(name: str, treatment_col: str, outcome_col: str = "", target
 @registry.register(
     name="shap_analysis",
     description="使用 SHAP 值分析已训练模型的特征重要性。需要先通过 regression_analysis 或 classification 训练模型。",
+    requires=["regression_analysis", "classification"],
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "目标变量列"},
+    },
 )
 def shap_analysis(name: str, target_col: str) -> str:
     from data_agent.tools.ml import _trained_models

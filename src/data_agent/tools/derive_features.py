@@ -23,6 +23,13 @@ from data_agent.tools.registry import registry
         "onehot_encoding（独热编码，params: drop_first=true/false）。"
         "columns 指定目标列（逗号分隔）。save_as 指定保存为新数据集名称。"
     ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "feature_type": {"description": "特征类型", "enum": ["time_features", "lag_features", "rolling_features", "ratio_features", "bin_features", "onehot_encoding"]},
+        "columns": {"description": "目标列，逗号分隔"},
+        "params": {"description": "特征参数，JSON 格式"},
+        "save_as": {"description": "保存为新数据集名称"},
+    },
 )
 def derive_features(
     name: str,

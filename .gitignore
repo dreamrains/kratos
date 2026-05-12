@@ -9,6 +9,12 @@ sessions/
 .claude/
 project/data/
 project/objects/
+project/reports/
+project/tasks/
+project/sessions/
+project/*.txt
+project/inbox/*.xlsx
+reference/
 *.log
 
 # Large vendor files (downloaded on first run)

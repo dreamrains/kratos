@@ -52,6 +52,25 @@ class AgentLifecycle:
             "tools": registry.tool_names,
         }})
 
+        # 3b. 注册默认工具中间件（日志）
+        _log = get_logger("tool_exec")
+
+        def _before_log(name: str, params: dict) -> None:
+            _log.info("Tool call", extra={"extra_data": {
+                "tool": name,
+                "args_keys": list(params.keys()),
+            }})
+
+        def _after_log(name: str, params: dict, result, duration_ms: float) -> None:
+            _log.info("Tool done", extra={"extra_data": {
+                "tool": name,
+                "duration_ms": round(duration_ms, 1),
+                "is_error": result.to_cli().startswith('{"error":'),
+            }})
+
+        registry.add_before_hook(_before_log)
+        registry.add_after_hook(_after_log)
+
         # 4. 技能发现延迟到 AgentLoop.__init__() 中执行（避免重复初始化）
 
         # 5. MCP 初始化在 AgentLoop.__init__() 中按需执行

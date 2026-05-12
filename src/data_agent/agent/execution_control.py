@@ -18,10 +18,13 @@ class BudgetExceeded(RuntimeError):
 class ToolExecutionBudget:
     profile: str = "analysis"
     max_tool_calls: int | None = None
+    # Kept for backward compatibility with older tests/config, but chart calls
+    # are no longer limited by count. Chart quality gates decide value.
     max_chart_calls: int | None = None
     max_fallback_calls: int | None = None
     max_consecutive_errors: int = 3
     max_repeated_tool_errors: int = 2
+    max_elapsed_seconds: float | None = None
     soft_ratio: float = 0.60
     restrict_ratio: float = 0.85
 
@@ -34,8 +37,6 @@ class ToolExecutionBudget:
         tool_calls, chart_calls, fallback_calls = defaults.get(self.profile, defaults["analysis"])
         if self.max_tool_calls is None:
             self.max_tool_calls = tool_calls
-        if self.max_chart_calls is None:
-            self.max_chart_calls = chart_calls
         if self.max_fallback_calls is None:
             self.max_fallback_calls = fallback_calls
 
@@ -50,7 +51,9 @@ class TurnExecutionState:
     fallback_calls: int = 0
     consecutive_errors: int = 0
     repeated_errors: dict[str, int] = field(default_factory=dict)
+    seen_calls: dict[str, int] = field(default_factory=dict)
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
+    pending_fallback_resolution: bool = False
 
     @property
     def should_converge(self) -> bool:
@@ -59,9 +62,8 @@ class TurnExecutionState:
     @property
     def should_restrict_exploration(self) -> bool:
         tool_limit = self.tool_calls >= math.ceil((self.budget.max_tool_calls or 0) * self.budget.restrict_ratio)
-        chart_limit = self.chart_calls >= math.ceil((self.budget.max_chart_calls or 0) * self.budget.restrict_ratio)
         fallback_limit = self.fallback_calls >= math.ceil((self.budget.max_fallback_calls or 0) * self.budget.restrict_ratio)
-        return tool_limit or chart_limit or fallback_limit
+        return tool_limit or fallback_limit
 
     @property
     def elapsed_seconds(self) -> float:
@@ -72,12 +74,18 @@ class TurnExecutionState:
 
     def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         args = args or {}
+        if self.budget.max_elapsed_seconds is not None and self.elapsed_seconds >= self.budget.max_elapsed_seconds:
+            raise BudgetExceeded("Time budget reached; summarize current evidence and stop calling tools.")
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             raise BudgetExceeded("Tool call budget reached; summarize current evidence and stop calling tools.")
-        if tool_name == "create_chart" and self.chart_calls >= (self.budget.max_chart_calls or 0):
-            raise BudgetExceeded("Chart budget reached; use text tables or summarize instead.")
         if tool_name == "run_python" and self.fallback_calls >= (self.budget.max_fallback_calls or 0):
             raise BudgetExceeded("Fallback Python budget reached; use structured tools or ask for clarification.")
+        if self.pending_fallback_resolution and tool_name not in self._fallback_resolution_tools():
+            raise BudgetExceeded(
+                "Fallback Python result must be resolved into evidence, limitations, task state, or user confirmation before more exploration."
+            )
+        if self._is_low_value_duplicate(tool_name, args):
+            raise BudgetExceeded(f"Low-value duplicate tool call for {tool_name}; reuse existing evidence or change the analysis angle.")
         key = self._error_key(tool_name, args)
         if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
             raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
@@ -90,10 +98,15 @@ class TurnExecutionState:
 
     def record_tool_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         self.tool_calls += 1
+        key = self._error_key(tool_name, args or {})
+        self.seen_calls[key] = self.seen_calls.get(key, 0) + 1
         if tool_name == "create_chart":
             self.chart_calls += 1
         if tool_name == "run_python":
             self.fallback_calls += 1
+            self.pending_fallback_resolution = True
+        elif tool_name in self._fallback_resolution_tools():
+            self.pending_fallback_resolution = False
 
     def record_tool_success(self) -> None:
         self.consecutive_errors = 0
@@ -122,6 +135,29 @@ class TurnExecutionState:
 
     def _error_key(self, tool_name: str, args: dict[str, Any]) -> str:
         return f"{tool_name}:{self._args_hash(args)}"
+
+    def _is_low_value_duplicate(self, tool_name: str, args: dict[str, Any]) -> bool:
+        low_value_tools = {
+            "create_chart",
+            "preview_data",
+            "describe_dataset",
+            "quick_profile",
+            "detect_data_quality",
+        }
+        if tool_name not in low_value_tools:
+            return False
+        return self.seen_calls.get(self._error_key(tool_name, args), 0) > 0
+
+    @staticmethod
+    def _fallback_resolution_tools() -> set[str]:
+        return {
+            "record_evidence_record",
+            "record_analysis_spec",
+            "record_data_requirement",
+            "record_insight_record",
+            "task_update",
+            "ask_user_question",
+        }
 
     @staticmethod
     def _args_hash(args: dict[str, Any]) -> str:

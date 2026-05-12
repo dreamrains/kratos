@@ -16,7 +16,7 @@ from data_agent.tools._utils import get_df
 from data_agent.tools.registry import registry
 
 
-def _save_chart(fig: go.Figure, title: str = "chart") -> str:
+def _save_chart(fig: go.Figure, title: str = "chart", metadata: dict | None = None) -> str:
     """保存图表到当前会话的 output 目录，同时导出 PNG 静态图片用于 PDF 嵌入。"""
     from data_agent.session.history import session_charts_dir, register_artifact
 
@@ -26,6 +26,13 @@ def _save_chart(fig: go.Figure, title: str = "chart") -> str:
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
         fig.write_html(str(path), include_plotlyjs=False)
+        if metadata is not None:
+            meta = dict(metadata)
+            meta["chart_id"] = chart_id
+            meta["filename"] = path.name
+            (output_dir / f"{chart_id}.json").write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         # 导出 PNG 静态图片（用于 PDF 嵌入）
         try:
             png_path = output_dir / f"{chart_id}.png"
@@ -43,6 +50,13 @@ def _save_chart(fig: go.Figure, title: str = "chart") -> str:
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
         fig.write_html(str(path), include_plotlyjs=False)
+        if metadata is not None:
+            meta = dict(metadata)
+            meta["chart_id"] = chart_id
+            meta["filename"] = path.name
+            (output_dir / f"{chart_id}.json").write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         return f"Chart saved: charts/{chart_id}.html"
 
 
@@ -112,6 +126,93 @@ def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:
     return groups
 
 
+def _chart_error(message: str, warnings: list[str]) -> str:
+    return json.dumps({
+        "error": message,
+        "error_type": "chart_validation",
+        "validation_warnings": warnings,
+    }, ensure_ascii=False)
+
+
+def _looks_like_identifier(col: str, series: pd.Series) -> bool:
+    name = col.lower()
+    if any(token in name for token in ("id", "user", "uid", "account")):
+        unique_ratio = series.nunique(dropna=True) / max(len(series), 1)
+        return unique_ratio > 0.7
+    return False
+
+
+def _is_date_like(series: pd.Series) -> bool:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return True
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    parsed = pd.to_datetime(series.dropna().astype(str), errors="coerce")
+    return len(parsed) > 0 and parsed.notna().mean() >= 0.8
+
+
+def _validate_chart_spec(
+    df: pd.DataFrame,
+    chart_type: str,
+    data_name: str,
+    title: str,
+    x_col: str,
+    y_col: str,
+    color_col: str,
+) -> tuple[dict | None, str | None]:
+    warnings: list[str] = []
+    y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
+
+    if x_col and x_col not in df.columns:
+        return None, _chart_error(f"x_col '{x_col}' not found", [f"missing x_col: {x_col}"])
+    for col in y_cols:
+        if col not in df.columns:
+            return None, _chart_error(f"y_col '{col}' not found", [f"missing y_col: {col}"])
+        numeric = pd.to_numeric(df[col], errors="coerce")
+        if numeric.notna().sum() == 0:
+            return None, _chart_error(f"y_col '{col}' is empty or non-numeric", [f"invalid y_col: {col}"])
+
+    if color_col and color_col not in df.columns:
+        return None, _chart_error(f"color_col '{color_col}' not found", [f"missing color_col: {color_col}"])
+
+    title_l = title.lower()
+    time_terms = ("trend", "time", "daily", "weekly", "monthly", "趋势", "月度", "每日", "按月", "时间")
+    if chart_type == "line" and x_col and any(term in title_l for term in time_terms):
+        if _looks_like_identifier(x_col, df[x_col]):
+            return None, _chart_error(
+                "time trend chart cannot use an identifier-like x axis",
+                [f"identifier-like x axis: {x_col}"],
+            )
+        if not _is_date_like(df[x_col]) and df[x_col].nunique(dropna=True) > 24:
+            warnings.append(f"x axis '{x_col}' is not date-like or pre-aggregated")
+
+    if x_col and df[x_col].nunique(dropna=True) > 50 and chart_type in {"bar", "line"}:
+        warnings.append(f"x axis '{x_col}' has too many categories; aggregate or use Top N")
+
+    if len(y_cols) > 1 and x_col:
+        grouped = df.groupby(x_col, dropna=False)[y_cols].apply(lambda g: g.notna().all())
+        missing_cols = sorted({col for _, row in grouped.iterrows() for col in y_cols if not bool(row[col])})
+        if missing_cols:
+            warnings.append(f"missing metric values by x group: {', '.join(missing_cols)}")
+
+    metadata = {
+        "title": title,
+        "chart_type": chart_type,
+        "dataset": data_name,
+        "x_col": x_col,
+        "y_cols": y_cols,
+        "color_col": color_col,
+        "aggregation": "",
+        "filters": {},
+        "row_count": int(len(df)),
+        "missing_summary": {col: int(df[col].isna().sum()) for col in ([x_col] if x_col else []) + y_cols if col in df.columns},
+        "evidence_ids": [],
+        "validation_status": "warning" if warnings else "valid",
+        "validation_warnings": warnings,
+    }
+    return metadata, None
+
+
 @registry.register(
     name="create_chart",
     description="创建图表。chart_type: line/bar/stacked_bar/scatter/box/histogram/heatmap/pie/funnel。data_json 为 JSON 数据或数据集名称。",
@@ -133,11 +234,14 @@ def create_chart(
     y_col: str = "",
     color_col: str = "",
     data_json: str = "",
+    purpose: str = "exploratory",
+    evidence_ids: str = "",
 ) -> str:
     fig = go.Figure()
 
     # 获取数据
     df = None
+    data_name = data
     if data and data in workspace.list_datasets():
         df = workspace.get(data)
     elif data_json:
@@ -152,15 +256,33 @@ def create_chart(
         datasets = workspace.list_datasets()
         if "main" in datasets:
             df = workspace.get("main")
+            data_name = "main"
         elif datasets:
             # 选择行数最多的数据集作为最合理的默认值
             largest = max(datasets.items(), key=lambda kv: kv[1].get("rows", 0))
             df = workspace.get(largest[0])
+            data_name = largest[0]
 
     if df is None:
         return "Error: 没有可用数据。请先加载数据或提供 data_json。"
 
     try:
+        metadata, validation_error = _validate_chart_spec(df, chart_type, data_name, title, x_col, y_col, color_col)
+        if validation_error:
+            return validation_error
+        if metadata is not None:
+            allowed_purposes = {"exploratory", "evidence", "insight"}
+            normalized_purpose = (purpose or "exploratory").strip().lower()
+            if normalized_purpose not in allowed_purposes:
+                return _chart_error(
+                    f"invalid chart purpose: {purpose}",
+                    [f"purpose must be one of {sorted(allowed_purposes)}"],
+                )
+            metadata["purpose"] = normalized_purpose
+            metadata["evidence_ids"] = [
+                item.strip() for item in (evidence_ids or "").split(",") if item.strip()
+            ]
+
         if chart_type == "line":
             if x_col and y_col:
                 y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
@@ -293,7 +415,7 @@ def create_chart(
             return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie, funnel"
 
         fig.update_layout(title=title, template="plotly_white")
-        path = _save_chart(fig, title)
+        path = _save_chart(fig, title, metadata)
         return path
 
     except Exception as e:

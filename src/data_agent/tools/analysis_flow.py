@@ -1,4 +1,4 @@
-"""Tools for persisting structured analysis planning artifacts."""
+﻿"""Tools for persisting structured analysis planning artifacts."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _write_analysis_artifact(kind: str, payload: dict) -> dict:
 
     sid = _session_id()
     if not sid:
-        return {"error": "无当前会话，无法保存分析产物"}
+        return {"error": "鏃犲綋鍓嶄細璇濓紝鏃犳硶淇濆瓨鍒嗘瀽浜х墿"}
 
     out_dir = get_config().sessions_resolved / sid / "analysis_flow"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -53,15 +53,15 @@ def _write_analysis_artifact(kind: str, payload: dict) -> dict:
 @registry.register(
     name="record_data_requirement",
     description=(
-        "保存数据需求 DataRequirement。requirement_json 必须包含 goal、must_have_data、"
-        "recommended_data、optional_data、missing_limitations、minimum_viable_analysis。"
+        "Save a DataRequirement JSON with goal, must_have_data, recommended_data, "
+        "optional_data, missing_limitations, and minimum_viable_analysis."
     ),
 )
 def record_data_requirement(requirement_json: str) -> str:
     try:
         payload = json.loads(requirement_json)
     except json.JSONDecodeError:
-        return json.dumps({"error": "requirement_json 必须是有效 JSON"}, ensure_ascii=False)
+        return json.dumps({"error": "requirement_json 蹇呴』鏄湁鏁?JSON"}, ensure_ascii=False)
     required = [
         "goal",
         "must_have_data",
@@ -72,7 +72,7 @@ def record_data_requirement(requirement_json: str) -> str:
     ]
     missing = [k for k in required if k not in payload]
     if missing:
-        return json.dumps({"error": f"DataRequirement 缺少字段: {missing}"}, ensure_ascii=False)
+        return json.dumps({"error": f"DataRequirement 缂哄皯瀛楁: {missing}"}, ensure_ascii=False)
 
     state = _current_state()
     if state is not None:
@@ -90,19 +90,19 @@ def record_data_requirement(requirement_json: str) -> str:
 @registry.register(
     name="record_analysis_spec",
     description=(
-        "保存本轮分析方案 AnalysisSpec。spec_json 必须包含 goal、question_type、"
-        "metrics、dimensions、time_scope、required_data、method_plan、limitations。"
+        "Save an AnalysisSpec JSON with goal, question_type, metrics, "
+        "dimensions, required_data, method_plan, and limitations."
     ),
 )
 def record_analysis_spec(spec_json: str) -> str:
     try:
         payload = json.loads(spec_json)
     except json.JSONDecodeError:
-        return json.dumps({"error": "spec_json 必须是有效 JSON"}, ensure_ascii=False)
+        return json.dumps({"error": "spec_json 蹇呴』鏄湁鏁?JSON"}, ensure_ascii=False)
     required = ["goal", "question_type", "metrics", "dimensions", "required_data", "method_plan", "limitations"]
     missing = [k for k in required if k not in payload]
     if missing:
-        return json.dumps({"error": f"AnalysisSpec 缺少字段: {missing}"}, ensure_ascii=False)
+        return json.dumps({"error": f"AnalysisSpec 缂哄皯瀛楁: {missing}"}, ensure_ascii=False)
 
     state = _current_state()
     if state is not None:
@@ -126,19 +126,29 @@ def record_analysis_spec(spec_json: str) -> str:
 @registry.register(
     name="record_evidence_record",
     description=(
-        "保存分析证据 EvidenceRecord。record_json 必须包含 claim、dataset、method、"
-        "tool_calls、result_summary、limitations、confidence。"
+        "Save an EvidenceRecord JSON with claim, dataset, method, tool_calls, "
+        "result_summary, limitations, and confidence."
     ),
 )
 def record_evidence_record(record_json: str) -> str:
     try:
         payload = json.loads(record_json)
     except json.JSONDecodeError:
-        return json.dumps({"error": "record_json 必须是有效 JSON"}, ensure_ascii=False)
+        return json.dumps({"error": "record_json 蹇呴』鏄湁鏁?JSON"}, ensure_ascii=False)
     required = ["claim", "dataset", "method", "tool_calls", "result_summary", "limitations", "confidence"]
     missing = [k for k in required if k not in payload]
     if missing:
-        return json.dumps({"error": f"EvidenceRecord 缺少字段: {missing}"}, ensure_ascii=False)
+        return json.dumps({"error": f"EvidenceRecord 缂哄皯瀛楁: {missing}"}, ensure_ascii=False)
+
+    allowed_confidence = {"high", "medium", "low", "speculative"}
+    confidence = str(payload.get("confidence", "")).strip().lower()
+    if confidence not in allowed_confidence:
+        return json.dumps({
+            "error": f"Invalid confidence level: {payload.get('confidence')}",
+            "error_type": "invalid_confidence",
+            "allowed": sorted(allowed_confidence),
+        }, ensure_ascii=False)
+    payload["confidence"] = confidence
 
     state = _current_state()
     if state is not None:
@@ -150,4 +160,34 @@ def record_evidence_record(record_json: str) -> str:
     if state is not None:
         result["state_stage"] = state.stage
         result["evidence_id"] = payload.get("id")
+    return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="record_insight_record",
+    description=(
+        "Save an InsightRecord JSON with title, summary, evidence_ids, "
+        "chart_ids, recommendation, limitations, confidence, and output_type."
+    ),
+)
+def record_insight_record(record_json: str) -> str:
+    try:
+        payload = json.loads(record_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "record_json 蹇呴』鏄湁鏁?JSON"}, ensure_ascii=False)
+    required = ["title", "summary", "evidence_ids", "chart_ids", "recommendation", "limitations", "confidence", "output_type"]
+    missing = [k for k in required if k not in payload]
+    if missing:
+        return json.dumps({"error": f"InsightRecord 缂哄皯瀛楁: {missing}"}, ensure_ascii=False)
+
+    state = _current_state()
+    if state is not None:
+        payload = state.add_insight_record(payload)
+        state.save()
+
+    result = _write_analysis_artifact("insight_record", payload)
+    result.pop("payload", None)
+    if state is not None:
+        result["state_stage"] = state.stage
+        result["insight_id"] = payload.get("id")
     return json.dumps(result, ensure_ascii=False)

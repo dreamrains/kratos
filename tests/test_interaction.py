@@ -289,105 +289,123 @@ class TestAskMultiple:
 # ══════════════════════════════════════════════════════════
 
 class TestAskUserQuestionTool:
-    """测试工具注册入口函数。"""
+    """测试工具注册入口函数。ask_user_question 现在统一使用 suspension 模式。"""
 
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_single_question_with_options(self, mock_input, mock_web):
-        mock_input.return_value = "2"
-        result_str = ask_user_question(
-            question="选择数据类型",
-            options=json.dumps(SAMPLE_OPTIONS),
-        )
-        result = json.loads(result_str)
-        assert result["answer"] == "Excel 文件"
-        assert result["is_free_input"] is False
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_single_question_no_options(self, mock_input, mock_web):
-        mock_input.return_value = "自由文本回答"
-        result_str = ask_user_question(question="描述你的需求")
-        result = json.loads(result_str)
-        assert result["answer"] == "自由文本回答"
-        assert result["is_free_input"] is True
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_single_question_multi_select(self, mock_input, mock_web):
-        mock_input.return_value = "1,3"
-        result_str = ask_user_question(
-            question="选择分析类型",
-            options=json.dumps(SAMPLE_MULTI_OPTIONS),
-            multi_select=True,
-        )
-        result = json.loads(result_str)
-        assert result["answer"] == "趋势分析, 分布分析"
-        assert result.get("multi_select") is True
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_multi_question_mode(self, mock_input, mock_web):
-        """多问题模式：questions 参数优先于 question。"""
-        mock_input.side_effect = ["1", "2"]
-        questions = [
-            {"question": "选择数据类型", "options": SAMPLE_OPTIONS[:2]},
-            {"question": "选择分析类型", "options": SAMPLE_MULTI_OPTIONS[:2]},
-        ]
-        result_str = ask_user_question(
-            question="ignored",
-            questions=json.dumps(questions),
-        )
-        result = json.loads(result_str)
-        assert result["count"] == 2
-        assert result["answers"][0]["answer"] == "CSV 文件"
-        assert result["answers"][1]["answer"] == "对比分析"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_options_comma_separated_fallback(self, mock_input, mock_web):
-        """选项 JSON 解析失败时回退到逗号分隔。"""
-        mock_input.return_value = "1"
-        result_str = ask_user_question(
-            question="选择颜色",
-            options="红色,蓝色,绿色",
-        )
-        result = json.loads(result_str)
-        assert result["answer"] == "红色"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_skip_returns_skipped(self, mock_input, mock_web):
-        mock_input.return_value = ""
-        result_str = ask_user_question(
-            question="选择数据类型",
-            options=json.dumps(SAMPLE_OPTIONS),
-        )
-        result = json.loads(result_str)
-        assert result["answer"] == "skipped"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=True)
-    def test_web_mode_raises_exception(self, mock_web):
-        """Web 模式下抛出 UserConfirmationRequired 而非等待输入。"""
+    def test_single_question_with_options(self):
+        """单问题 + 选项：抛出异常，携带正确的 question/options/multi_select。"""
         from data_agent.agent.loop import UserConfirmationRequired
-        with pytest.raises(UserConfirmationRequired):
+        with pytest.raises(UserConfirmationRequired) as exc_info:
             ask_user_question(
                 question="选择数据类型",
                 options=json.dumps(SAMPLE_OPTIONS),
             )
+        e = exc_info.value
+        assert e.question == "选择数据类型"
+        assert len(e.options) == 3
+        assert e.options[0]["label"] == "CSV 文件"
+        assert e.multi_select is False
 
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=True)
-    def test_web_mode_multi_question_raises(self, mock_web):
+    def test_single_question_no_options(self):
+        """无选项：抛出异常，options 为空。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="描述你的需求")
+        e = exc_info.value
+        assert e.question == "描述你的需求"
+        assert e.options == []
+
+    def test_single_question_multi_select(self):
+        """multi_select=True 时传递到异常。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(
+                question="选择分析类型",
+                options=json.dumps(SAMPLE_MULTI_OPTIONS),
+                multi_select=True,
+            )
+        e = exc_info.value
+        assert e.multi_select is True
+        assert len(e.options) == 3
+
+    def test_multi_question_mode(self):
+        """多问题模式：context 携带完整 questions JSON。"""
         from data_agent.agent.loop import UserConfirmationRequired
         questions = [
-            {"question": "Q1", "options": SAMPLE_OPTIONS[:2]},
-            {"question": "Q2", "options": []},
+            {"question": "选择数据类型", "options": SAMPLE_OPTIONS[:2]},
+            {"question": "选择分析类型", "options": SAMPLE_MULTI_OPTIONS[:2]},
         ]
-        with pytest.raises(UserConfirmationRequired):
+        with pytest.raises(UserConfirmationRequired) as exc_info:
             ask_user_question(
                 question="ignored",
                 questions=json.dumps(questions),
             )
+        e = exc_info.value
+        parsed = json.loads(e.context)
+        assert len(parsed) == 2
+        assert parsed[0]["question"] == "选择数据类型"
+        # question 是合并的
+        assert "选择数据类型" in e.question
+        assert "选择分析类型" in e.question
+
+    def test_options_comma_separated_fallback(self):
+        """选项 JSON 解析失败时回退到逗号分隔。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(
+                question="选择颜色",
+                options="红色,蓝色,绿色",
+            )
+        e = exc_info.value
+        assert len(e.options) == 3
+        assert e.options[0]["label"] == "红色"
+
+    def test_empty_options_string(self):
+        """空 options 字符串。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="Q1", options="")
+        assert exc_info.value.options == []
+
+    def test_invalid_json_options_fallback_to_comma(self):
+        """无效 JSON 选项回退到逗号分隔。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="Q1", options="a,b,c")
+        e = exc_info.value
+        assert len(e.options) == 3
+        assert e.options[1]["label"] == "b"
+
+    def test_multi_question_capped_at_four(self):
+        """超过 4 个问题会被截断。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        questions = [{"question": f"Q{i}", "options": [{"label": "A"}, {"label": "B"}]} for i in range(6)]
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(
+                question="ignored",
+                questions=json.dumps(questions),
+            )
+        parsed = json.loads(exc_info.value.context)
+        assert len(parsed) == 4
+
+    def test_invalid_questions_json_falls_to_single(self):
+        """无效 questions JSON 回退到单问题模式。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(
+                question="单问题",
+                questions="invalid json",
+            )
+        e = exc_info.value
+        assert e.question == "单问题"
+        assert e.context == ""
+
+    def test_options_without_description(self):
+        """选项无 description 字段。"""
+        from data_agent.agent.loop import UserConfirmationRequired
+        opts = [{"label": "选项A"}, {"label": "选项B"}]
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="选择", options=json.dumps(opts))
+        assert exc_info.value.options[0]["label"] == "选项A"
 
 
 # ══════════════════════════════════════════════════════════
@@ -434,73 +452,21 @@ class TestRobustInput:
 # ══════════════════════════════════════════════════════════
 
 class TestOptionParsing:
-    """测试各种选项格式的解析。"""
+    """测试各种选项格式的解析。选项解析逻辑仍在 ask_user_question 中，
+    但现在通过 UserConfirmationRequired 异常验证。"""
 
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_empty_options_string(self, mock_input, mock_web):
-        mock_input.return_value = "自由输入"
-        result_str = ask_user_question(question="Q1", options="")
-        result = json.loads(result_str)
-        assert result["answer"] == "自由输入"
-        assert result["is_free_input"] is True
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_invalid_json_options_fallback_to_comma(self, mock_input, mock_web):
-        mock_input.return_value = "2"
-        result_str = ask_user_question(question="Q1", options="a,b,c")
-        result = json.loads(result_str)
-        assert result["answer"] == "b"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_two_options_minimum(self, mock_input, mock_web):
-        mock_input.return_value = "1"
+    def test_two_options_minimum(self):
+        """至少 2 个选项。"""
+        from data_agent.agent.loop import UserConfirmationRequired
         opts = [{"label": "是"}, {"label": "否"}]
-        result_str = ask_user_question(question="确认？", options=json.dumps(opts))
-        result = json.loads(result_str)
-        assert result["answer"] == "是"
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="确认？", options=json.dumps(opts))
+        assert len(exc_info.value.options) == 2
 
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_four_options_maximum(self, mock_input, mock_web):
-        mock_input.return_value = "4"
+    def test_four_options_maximum(self):
+        """最多 4 个选项。"""
+        from data_agent.agent.loop import UserConfirmationRequired
         opts = [{"label": f"选项{i}"} for i in range(1, 5)]
-        result_str = ask_user_question(question="选择", options=json.dumps(opts))
-        result = json.loads(result_str)
-        assert result["answer"] == "选项4"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_invalid_questions_json_falls_to_single(self, mock_input, mock_web):
-        """无效 questions JSON 回退到单问题模式。"""
-        mock_input.return_value = "回答内容"
-        result_str = ask_user_question(
-            question="单问题",
-            questions="invalid json",
-        )
-        result = json.loads(result_str)
-        assert result["answer"] == "回答内容"
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_questions_capped_at_four(self, mock_input, mock_web):
-        """超过 4 个问题会被截断。"""
-        mock_input.side_effect = ["1"] * 4
-        questions = [{"question": f"Q{i}", "options": [{"label": "A"}, {"label": "B"}]} for i in range(6)]
-        result_str = ask_user_question(
-            question="ignored",
-            questions=json.dumps(questions),
-        )
-        result = json.loads(result_str)
-        assert result["count"] == 4  # 截断为 4
-
-    @patch("data_agent.tools.interaction._check_web_mode", return_value=False)
-    @patch("data_agent.tools.interaction._robust_input")
-    def test_options_without_description(self, mock_input, mock_web):
-        mock_input.return_value = "1"
-        opts = [{"label": "选项A"}, {"label": "选项B"}]
-        result_str = ask_user_question(question="选择", options=json.dumps(opts))
-        result = json.loads(result_str)
-        assert result["answer"] == "选项A"
+        with pytest.raises(UserConfirmationRequired) as exc_info:
+            ask_user_question(question="选择", options=json.dumps(opts))
+        assert len(exc_info.value.options) == 4

@@ -364,6 +364,12 @@ def suggest_column_types(name: str) -> str:
 @registry.register(
     name="apply_type_conversion",
     description="对指定列执行类型转换。column 为列名，target_type 为: datetime/numeric/percentage_to_float/bool/category/date_int_to_datetime/numeric_with_suffix。也可以传 auto=true 自动应用所有建议转换。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "column": {"description": "目标列名"},
+        "target_type": {"description": "目标类型", "enum": ["datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
+        "auto": {"description": "是否自动应用所有建议转换"},
+    },
 )
 def apply_type_conversion(
     name: str,
@@ -441,6 +447,13 @@ _OUTLIER_STRATEGIES = {
         "outlier_strategy: mark（标记不处理）/ cap（截断到IQR边界）/ drop（删除行）。"
         "columns 为空则处理所有列，否则只处理指定列（逗号分隔）。"
     ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "missing_strategy": {"description": "缺失值处理策略", "enum": ["drop", "fill_mean", "fill_median", "fill_mode", "fill_constant"]},
+        "outlier_strategy": {"description": "异常值处理策略", "enum": ["mark", "cap", "drop"]},
+        "columns": {"description": "目标列，逗号分隔，为空则处理所有列"},
+        "fill_value": {"description": "fill_constant 策略的填充值"},
+    },
 )
 def clean_data(
     name: str,

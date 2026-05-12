@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import uuid
+from dataclasses import dataclass
 
 if sys.platform == "win32":
     os.system("")
@@ -30,6 +32,53 @@ from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import ToolResult
 
 console = Console()
+
+
+@dataclass(frozen=True)
+class DataCommandArgs:
+    paths: list[str]
+    context: str = ""
+
+    @property
+    def data_file(self) -> str:
+        return "; ".join(self.paths)
+
+
+def _parse_data_command_args(args: str) -> DataCommandArgs:
+    """Parse `/data` arguments into file paths plus optional business context."""
+    text = (args or "").strip()
+    if not text:
+        return DataCommandArgs(paths=[])
+
+    matches = list(re.finditer(r'"([^"]+)"|\'([^\']+)\'', text))
+    if matches:
+        paths = [(m.group(1) or m.group(2) or "").strip() for m in matches]
+        spans = [m.span() for m in matches]
+        chunks = []
+        cursor = 0
+        for start, end in spans:
+            chunks.append(text[cursor:start])
+            cursor = end
+        chunks.append(text[cursor:])
+        context = re.sub(r"[ \t]+", " ", "".join(chunks)).strip()
+        return DataCommandArgs(paths=[p for p in paths if p], context=context)
+
+    lines = text.splitlines()
+    first = lines[0].strip()
+    paths = [p for p in first.split() if p]
+    context = "\n".join(lines[1:]).strip()
+    return DataCommandArgs(paths=paths, context=context)
+
+
+def _format_data_command_prompt(parsed: DataCommandArgs) -> str:
+    lines = ["请加载并预览以下数据文件："]
+    for idx, path in enumerate(parsed.paths, 1):
+        lines.append(f"{idx}. {path}")
+    if parsed.context:
+        lines.append("")
+        lines.append("用户补充说明：")
+        lines.append(parsed.context)
+    return "\n".join(lines)
 
 
 class _CLIPauser:
@@ -474,13 +523,26 @@ def run_repl() -> None:
         return None
 
     def cmd_report(args: str):
-        return "请对当前数据进行完整分析并生成报告，遵循完整报告分析流程的 7 个阶段。"
+        parts = args.strip().split() if args else []
+        report_type = parts[0].lower() if parts else "brief"
+        fmt = parts[1].lower() if len(parts) > 1 else "html"
+        if report_type not in ("brief", "formal"):
+            fmt = report_type if report_type in ("html", "md", "markdown", "pdf") else fmt
+            report_type = "brief"
+        if fmt == "md":
+            fmt = "markdown"
+        if fmt not in ("html", "markdown", "pdf"):
+            fmt = "html"
+        tool_name = "generate_formal_report" if report_type == "formal" else "generate_analysis_brief"
+        return f"请使用 {tool_name} 工具生成{report_type}报告，format={fmt}。报告只能消费已有 EvidenceRecord 和已验证图表；证据不足时返回缺口清单。"
 
     def cmd_export(args: str):
         fmt = args.strip().lower() if args else "html"
-        if fmt not in ("html", "markdown", "md"):
+        if fmt not in ("html", "markdown", "md", "pdf"):
             fmt = "html"
         format_str = "markdown" if fmt in ("markdown", "md") else "html"
+        if fmt == "pdf":
+            format_str = "pdf"
         return f"请将当前对话中的分析结果导出为{format_str}格式文件，使用 export_conversation 工具。"
 
     def cmd_compact(args: str):
@@ -506,8 +568,12 @@ def run_repl() -> None:
         if not args:
             console.print("[yellow]Usage: /data <文件路径>[/yellow]")
             return None
-        loop._last_data_file = args.strip("\"'")
-        return f"加载并预览数据文件: {args}"
+        parsed = _parse_data_command_args(args)
+        if not parsed.paths:
+            console.print("[yellow]Usage: /data <文件路径>[/yellow]")
+            return None
+        loop._last_data_file = parsed.data_file
+        return _format_data_command_prompt(parsed)
 
     def cmd_tasks(args: str):
         from data_agent.session.workspace import workspace

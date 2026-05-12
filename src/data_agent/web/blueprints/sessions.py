@@ -203,6 +203,15 @@ def rewind_session(session_id: str):
 def export_session(session_id: str):
     """Export session analysis results as HTML or Markdown file."""
     fmt = request.args.get("format", "html").lower()
+    if fmt in ("html", "markdown", "md", "pdf"):
+        from data_agent.agent.context import AgentContext, use_agent_context
+        from data_agent.session.workspace import Workspace
+        from data_agent.tools.report import export_conversation
+
+        ctx = AgentContext(session_id=session_id, workspace=Workspace())
+        with use_agent_context(ctx):
+            return jsonify(json.loads(export_conversation(format=fmt)))
+
     if fmt not in ("html", "markdown", "md"):
         fmt = "html"
 
@@ -277,6 +286,29 @@ code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}}
             "Content-Disposition": f"attachment; filename={filename}",
         },
     )
+
+
+@sessions_bp.get("/sessions/<session_id>/report")
+def generate_session_report(session_id: str):
+    """Generate a conversation, brief, or formal report for a session."""
+    report_type = request.args.get("type", "brief").lower()
+    fmt = request.args.get("format", "html").lower()
+
+    from data_agent.agent.analysis_state import load_analysis_state
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.session.workspace import Workspace
+    from data_agent.tools.report import export_conversation, generate_analysis_brief, generate_formal_report
+
+    ctx = AgentContext(session_id=session_id, workspace=Workspace())
+    ctx.analysis_state = load_analysis_state(session_id)
+    with use_agent_context(ctx):
+        if report_type == "conversation":
+            payload = export_conversation(format=fmt)
+        elif report_type == "formal":
+            payload = generate_formal_report(format=fmt)
+        else:
+            payload = generate_analysis_brief(format=fmt)
+    return jsonify(json.loads(payload))
 
 
 # ── Session Artifacts ───────────────────────────────────────

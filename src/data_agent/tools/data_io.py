@@ -19,10 +19,21 @@ def _resolve_source(source: str) -> Path:
     if p.is_absolute():
         # 绝对路径：阻止明显的系统目录穿越，但允许项目相关路径
         resolved = p.resolve()
-        # 阻止敏感系统路径
-        sensitive = ['/etc/', '/proc/', '/sys/', '/root/', 'C:\\Windows\\', 'C:\\Users\\']
+        # 阻止敏感系统路径；用户显式传入的桌面/文档数据文件允许读取。
+        resolved_str = str(resolved)
+        resolved_norm = resolved_str.replace("\\", "/").lower()
+        sensitive = (
+            "/etc/",
+            "/proc/",
+            "/sys/",
+            "/root/",
+            "c:/windows/",
+            "c:/program files/",
+            "c:/program files (x86)/",
+            "c:/programdata/microsoft/",
+        )
         for prefix in sensitive:
-            if str(resolved).startswith(prefix):
+            if resolved_norm.startswith(prefix):
                 raise ValueError(f"不允许访问系统路径: {source}")
         if not resolved.exists():
             raise FileNotFoundError(f"File not found: {p}")
@@ -262,11 +273,11 @@ def export_output(
     if output_type == "data":
         return export_data(name=name, path=path, fmt=fmt)
     elif output_type == "report_md":
-        from data_agent.tools.report import export_report_markdown
-        return export_report_markdown(title=title, insights=insights, summary=summary)
+        from data_agent.tools.report import generate_analysis_brief
+        return generate_analysis_brief(title=title, format="markdown")
     elif output_type == "report_pdf":
-        from data_agent.tools.report import export_report_pdf
-        return export_report_pdf(html_path=html_path)
+        from data_agent.tools.report import generate_formal_report
+        return generate_formal_report(title=title, format="pdf")
     else:
         return f"Error: 不支持的 output_type '{output_type}'。可用: data, report_md, report_pdf"
 

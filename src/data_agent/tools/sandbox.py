@@ -98,7 +98,7 @@ def _assess_risk(code: str) -> str:
     ),
     recovery_hint="请检查代码语法是否正确，确保只使用 pd/np/get_dataset 等安全接口。",
 )
-def run_python(code: str, timeout: int = 30) -> str:
+def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
     if not code.strip():
         return json.dumps({"error": "代码不能为空"}, ensure_ascii=False)
 
@@ -125,7 +125,15 @@ def run_python(code: str, timeout: int = 30) -> str:
     except Exception as e:
         return json.dumps({"error": f"执行失败: {e}"}, ensure_ascii=False)
 
-    response = {"output": stdout[:20000] if stdout else "", "risk_level": risk}
+    response = {
+        "output": stdout[:20000] if stdout else "",
+        "risk_level": risk,
+        "fallback_policy": {
+            "role": "supplemental",
+            "purpose": purpose,
+            "purpose_missing": not bool((purpose or "").strip()),
+        },
+    }
     if result:
         response["result"] = result
 

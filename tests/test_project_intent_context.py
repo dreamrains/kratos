@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pandas as pd
 
@@ -64,6 +65,64 @@ def test_turn_intent_planner_core_cases():
     vague_loaded = plan_turn_intent("review dataset structure and suggest useful analysis paths", loaded)
     assert vague_loaded.intent_type in ("analysis_guidance", "direct_analysis")
     assert vague_loaded.recommended_action in ("propose_methods", "run_analysis")
+
+
+def test_build_system_prompt_escapes_literal_json_examples():
+    from data_agent.agent.prompts import build_system_prompt
+
+    loaded = "- main: 10 rows x 3 cols, columns: date, revenue, channel"
+    cases = [
+        "filter revenue",
+        "analyze revenue trend",
+        "generate a complete analysis report",
+    ]
+
+    for user_input in cases:
+        prompt = build_system_prompt(
+            tool_list="load_data, create_chart",
+            session_context=loaded,
+            user_input=user_input,
+        )
+        assert "Plotly JSON" in prompt
+
+
+def test_data_command_parses_multiple_quoted_paths_and_context():
+    from data_agent.agent.repl import _format_data_command_prompt, _parse_data_command_args
+
+    args = (
+        '"C:\\Users\\duguy\\Desktop\\card_flow.xlsx" '
+        '"C:\\Users\\duguy\\Desktop\\card_orders.xlsx"\n'
+        "# 概述\n"
+        "分析省钱卡收益"
+    )
+
+    parsed = _parse_data_command_args(args)
+
+    assert parsed.paths == [
+        "C:\\Users\\duguy\\Desktop\\card_flow.xlsx",
+        "C:\\Users\\duguy\\Desktop\\card_orders.xlsx",
+    ]
+    assert parsed.context == "# 概述\n分析省钱卡收益"
+    assert parsed.data_file == "C:\\Users\\duguy\\Desktop\\card_flow.xlsx; C:\\Users\\duguy\\Desktop\\card_orders.xlsx"
+
+    prompt = _format_data_command_prompt(parsed)
+    assert "card_flow.xlsx" in prompt
+    assert "card_orders.xlsx" in prompt
+    assert "分析省钱卡收益" in prompt
+
+
+def test_load_data_does_not_classify_user_desktop_as_system_path():
+    if sys.platform != "win32":
+        return
+
+    from data_agent.tools.data_io import _resolve_source
+
+    try:
+        _resolve_source("C:\\Users\\duguy\\Desktop\\missing_data_file.xlsx")
+    except FileNotFoundError:
+        pass
+    except ValueError as exc:
+        raise AssertionError("user Desktop files should not be treated as system paths") from exc
 
 
 def test_session_project_name_is_canonical_and_object_compatible(tmp_path):

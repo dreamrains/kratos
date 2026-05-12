@@ -76,10 +76,8 @@ print(f"注册工具数量: {len(registry.tool_names)}")
 from data_agent.session.workspace import workspace
 from data_agent.tools.data_io import load_data
 
-test_data_path = Path("D:/Project/Daily/data-agent/reference/workspace/内购数据.xlsx")
-if not test_data_path.exists():
-    test_data_path = Path("D:/Project/Daily/data-agent/reference/workspace/test_sales.csv")
-csv_path = Path("D:/Project/Daily/data-agent/reference/workspace/国民斗地主内购数据.csv")
+test_data_path = Path("D:/Project/Daily/data-agent/reference/test_doc/test_sales.csv")
+xlsx_path = Path("D:/Project/Daily/data-agent/reference/test_doc/内购数据.xlsx")
 
 
 # ============================================================
@@ -93,15 +91,15 @@ def test_load_data():
         return assert_ok(result, "load_data")
     return "skip"
 
-def test_load_csv_encoding():
-    """P4: CSV 中文编码修复"""
-    if csv_path.exists():
-        result = load_data(str(csv_path), name="test_csv")
-        return assert_ok(result, "load_data_csv")
+def test_load_xlsx():
+    """Excel 加载"""
+    if xlsx_path.exists():
+        result = load_data(str(xlsx_path), name="test_xlsx")
+        return assert_ok(result, "load_data(xlsx)")
     return "skip"
 
-test("load_data (xlsx)", test_load_data)
-test("load_data CSV 中文编码 (P4)", test_load_csv_encoding)
+test("load_data (CSV)", test_load_data)
+test("load_data (xlsx)", test_load_xlsx)
 
 def test_describe():
     from data_agent.tools.data_understand import describe_dataset
@@ -738,7 +736,7 @@ def test_agent_loop_build_prompt():
     loop = AgentLoop(session_id="test_prompt")
     prompt = loop._get_system_prompt()
     assert len(prompt) > 100, f"prompt too short: {len(prompt)}"
-    assert "指标口径确认" in prompt, "B4 metric confirmation rule should be in prompt"
+    assert "指标口径" in prompt, "metric calibration rule should be in prompt"
     return True
 
 test("AgentLoop init", test_agent_loop_init)

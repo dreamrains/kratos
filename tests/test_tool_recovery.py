@@ -64,6 +64,14 @@ def test_run_python_sandbox_error_contains_recovery_hint():
     assert "describe_dataset" in " ".join(result["alternatives"])
 
 
+def test_run_python_result_marks_fallback_policy_and_purpose():
+    result = json.loads(run_python("1 + 1", purpose="quick unsupported calculation check"))
+
+    assert result["result"] == "2"
+    assert result["fallback_policy"]["role"] == "supplemental"
+    assert result["fallback_policy"]["purpose"] == "quick unsupported calculation check"
+
+
 def test_task_create_inherits_current_analysis_spec(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val

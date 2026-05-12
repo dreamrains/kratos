@@ -7,6 +7,7 @@ import json
 import pandas as pd
 
 from data_agent.session.workspace import workspace
+from data_agent.tools._utils import validate_pandas_expr
 from data_agent.tools.registry import registry
 
 
@@ -25,6 +26,12 @@ from data_agent.tools.registry import registry
         "sort（排序: params: by, ascending=true/false）。"
         "save_as 指定保存为新数据集名称，为空则覆盖原数据集。"
     ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "operation": {"description": "操作类型", "enum": ["merge", "pivot", "filter", "select", "rename", "group_aggregate", "resample", "sort"]},
+        "params": {"description": "操作参数，JSON 格式"},
+        "save_as": {"description": "保存为新数据集名称，为空则覆盖原数据集"},
+    },
 )
 def transform_data(
     name: str,
@@ -36,6 +43,22 @@ def transform_data(
     if df is None:
         available = list(workspace.list_datasets().keys())
         return json.dumps({"error": f"数据集 '{name}' 不存在。可用: {available}"}, ensure_ascii=False)
+
+    # 当 save_as 未指定时，自动生成名称（不覆盖源数据集）
+    target_name = save_as
+    if not target_name:
+        # 简化操作名作为后缀：group_aggregate → grouped, resample → resampled 等
+        _op_suffix = {
+            "filter": "filtered", "select": "selected", "sort": "sorted",
+            "rename": "renamed", "group_aggregate": "grouped",
+            "resample": "resampled", "pivot": "pivoted", "merge": "merged",
+        }
+        suffix = _op_suffix.get(operation, operation)
+        candidate = f"{name}_{suffix}"
+        # 如果恰好与源名相同（不太可能），加数字后缀
+        if candidate == name:
+            candidate = f"{name}_{operation}_1"
+        target_name = candidate
 
     try:
         p = json.loads(params) if params else {}
@@ -74,6 +97,9 @@ def transform_data(
             condition = p.get("condition", "")
             if not condition:
                 return json.dumps({"error": "filter 需要 condition 参数"}, ensure_ascii=False)
+            err = validate_pandas_expr(condition)
+            if err:
+                return json.dumps({"error": f"条件不安全 — {err}"}, ensure_ascii=False)
             result = df.query(condition)
 
         elif operation == "select":
@@ -190,7 +216,6 @@ def transform_data(
     except Exception as e:
         return json.dumps({"error": f"变换失败: {e}"}, ensure_ascii=False)
 
-    target_name = save_as or name
     workspace.add(target_name, result)
     # 记录变换血缘
     workspace.log_transform(name, operation, target_name, json.dumps({k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")}, ensure_ascii=False) if p else "")

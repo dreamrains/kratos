@@ -20,7 +20,7 @@ def _loaded_context() -> str:
 
 
 def test_budget_soft_and_hard_thresholds():
-    state = TurnExecutionState(ToolExecutionBudget(profile="interactive", max_tool_calls=5, max_chart_calls=2, max_fallback_calls=2))
+    state = TurnExecutionState(ToolExecutionBudget(profile="interactive", max_tool_calls=5, max_fallback_calls=2))
 
     state.record_tool_call("list_data", {})
     state.record_tool_call("describe_dataset", {})
@@ -40,6 +40,76 @@ def test_budget_soft_and_hard_thresholds():
         assert "tool call budget" in str(exc).lower()
     else:
         raise AssertionError("expected hard budget to stop further tool calls")
+
+
+def test_chart_calls_are_not_limited_by_chart_count():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=20, max_fallback_calls=2))
+
+    for idx in range(8):
+        args = {"chart_type": "bar", "data": "pay", "x_col": "month", "y_col": f"metric_{idx}"}
+        state.ensure_can_call("create_chart", args)
+        state.record_tool_call("create_chart", args)
+        state.record_tool_success()
+
+    assert state.chart_calls == 8
+    assert state.should_restrict_exploration is False
+
+
+def test_duplicate_chart_call_is_treated_as_low_value_exploration():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=20))
+    args = {"chart_type": "bar", "data": "pay", "x_col": "month", "y_col": "revenue"}
+
+    state.ensure_can_call("create_chart", args)
+    state.record_tool_call("create_chart", args)
+    state.record_tool_success()
+
+    try:
+        state.ensure_can_call("create_chart", args)
+    except BudgetExceeded as exc:
+        assert "duplicate" in str(exc).lower() or "low-value" in str(exc).lower()
+    else:
+        raise AssertionError("expected duplicate chart to be blocked")
+
+
+def test_elapsed_time_budget_blocks_more_tools():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_elapsed_seconds=1))
+    state.started_at -= 2
+
+    try:
+        state.ensure_can_call("list_data", {})
+    except BudgetExceeded as exc:
+        assert "time budget" in str(exc).lower()
+    else:
+        raise AssertionError("expected elapsed time budget to block tool calls")
+
+
+def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch):
+    from data_agent.agent.compact import persist_large_output
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "sessions_dir", tmp_path / "sessions")
+    output = persist_large_output("large_output", "tc_big", "x" * 20000)
+
+    assert "<persisted-output>" in output
+    assert len(output) < 3000
+    assert (tmp_path / "sessions" / "large_output" / "tool_outputs" / "tc_big.txt").exists()
+
+
+def test_run_python_success_requires_resolution_before_more_exploration():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis", max_tool_calls=20))
+
+    state.ensure_can_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
+    state.record_tool_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
+    state.record_tool_success()
+
+    try:
+        state.ensure_can_call("preview_data", {"name": "main"})
+    except BudgetExceeded as exc:
+        assert "fallback python result" in str(exc).lower()
+    else:
+        raise AssertionError("expected fallback result to require evidence or limitation resolution")
+
+    state.ensure_can_call("record_evidence_record", {"record_json": "{}"})
 
 
 def test_repeated_tool_error_is_blocked_after_two_failures():
@@ -80,6 +150,19 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
+
+
+def test_confirmation_gate_ignores_tools_without_capability_metadata():
+    state = AnalysisSessionState(session_id="gate_unknown_tool")
+    state.analysis_spec = {
+        "confirmation_policy": {"requires_confirmation": True},
+        "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
+    }
+    state.pending_confirmations = [{"id": "method_gate", "status": "pending"}]
+
+    controller = AnalysisFlowController("gate_unknown_tool")
+
+    assert controller.is_tool_blocked_by_confirmation(state, "list_files") is False
 
 
 class _OneToolClient:

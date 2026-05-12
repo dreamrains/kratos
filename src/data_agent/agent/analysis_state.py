@@ -39,6 +39,7 @@ class AnalysisSessionState:
     data_requirements: list[dict[str, Any]] = field(default_factory=list)
     analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
+    insight_records: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     updated_at: str = field(default_factory=_now)
@@ -56,6 +57,7 @@ class AnalysisSessionState:
             data_requirements=list(data.get("data_requirements") or []),
             analysis_spec=data.get("analysis_spec"),
             evidence_records=list(data.get("evidence_records") or []),
+            insight_records=list(data.get("insight_records") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             updated_at=data.get("updated_at") or _now(),
@@ -71,6 +73,7 @@ class AnalysisSessionState:
             "data_requirements": self.data_requirements,
             "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
+            "insight_records": self.insight_records,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
             "updated_at": self.updated_at,
@@ -109,6 +112,15 @@ class AnalysisSessionState:
         item.setdefault("id", uuid.uuid4().hex[:10])
         item.setdefault("created_at", _now())
         self.evidence_records.append(item)
+        self.stage = "execute"
+        return item
+
+    def add_insight_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        item = dict(record)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        item.setdefault("output_type", "finding")
+        self.insight_records.append(item)
         self.stage = "execute"
         return item
 
@@ -198,6 +210,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- data_requirements: {len(state.data_requirements)}",
         f"- has_analysis_spec: {bool(state.analysis_spec)}",
         f"- evidence_records: {len(state.evidence_records)}",
+        f"- insight_records: {len(state.insight_records)}",
         f"- pending_confirmations: {len(pending)}",
     ]
     if state.last_recommended_paths:

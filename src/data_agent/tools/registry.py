@@ -134,7 +134,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "transform_data", "derive_field",
         "run_python", "ask_user_question", "create_chart",
         "tool_search",
-        "record_data_requirement", "record_analysis_spec", "record_evidence_record",
+        "record_data_requirement", "record_analysis_spec", "record_evidence_record", "record_insight_record",
     },
     "eda": {
         "analyze_time_series", "correlation_analysis",
@@ -156,7 +156,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "contribute_decomposition",
     },
     "report": {
-        "generate_report",
+        "generate_report", "generate_analysis_brief", "generate_formal_report", "export_conversation",
     },
     "clean": {
         "suggest_column_types", "apply_type_conversion", "clean_data",
@@ -220,9 +220,13 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "record_data_requirement": _cap("artifact.data_requirement", "analysis_artifact", ["planning"], evidence_fields=["required_data", "limitations"]),
     "record_analysis_spec": _cap("artifact.analysis_spec", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "limitations"]),
     "record_evidence_record": _cap("artifact.evidence_record", "evidence", ["evidence"], evidence_fields=["claim", "method", "confidence"]),
+    "record_insight_record": _cap("artifact.insight_record", "insight", ["evidence", "report"], evidence_fields=["evidence_ids", "chart_ids", "limitations"]),
     "task_create": _cap("workflow.task_create", "workflow", ["planning", "execution"]),
     "task_update": _cap("workflow.task_update", "workflow", ["execution"]),
     "generate_report": _cap("report.generate", "report", ["report"], evidence_fields=["evidence_records", "limitations"]),
+    "generate_analysis_brief": _cap("report.brief", "report", ["report", "summary"], evidence_fields=["evidence_records", "limitations"]),
+    "generate_formal_report": _cap("report.formal", "report", ["report"], evidence_fields=["evidence_records", "chart_artifacts", "limitations"]),
+    "export_conversation": _cap("report.conversation_export", "report", ["export"], evidence_fields=["conversation"]),
     "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
 }
 
