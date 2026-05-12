@@ -20,11 +20,57 @@ _trained_models: dict = {}
 @registry.register(
     name="forecast",
     description="时间序列预测。支持 Prophet 和简单统计方法。返回诊断指标（MAPE、RMSE、季节性强度）。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "预测目标列"},
+        "date_col": {"description": "日期列名"},
+        "periods": {"description": "预测期数"},
+        "method": {"description": "预测方法", "enum": ["auto", "simple", "prophet"]},
+    },
 )
+def _forecast_error(message: str, error_type: str = "tool_error", field: str = "") -> str:
+    return json.dumps({"error": message, "error_type": error_type, "field": field}, ensure_ascii=False)
+
+
+def _coerce_forecast_periods(periods) -> tuple[int | None, str]:
+    try:
+        value = int(periods)
+    except (TypeError, ValueError):
+        return None, "periods must be an integer"
+    if value <= 0:
+        return None, "periods must be greater than 0"
+    if value > 365:
+        return None, "periods must be <= 365"
+    return value, ""
+
+
+def _infer_forecast_date_col(df: pd.DataFrame) -> str:
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            return str(col)
+    for col in df.columns:
+        col_name = str(col).lower()
+        if any(token in col_name for token in ("date", "time", "日期", "时间")):
+            parsed = pd.to_datetime(df[col], errors="coerce")
+            if parsed.notna().sum() >= max(3, int(len(df) * 0.5)):
+                return str(col)
+    return ""
+
+
 def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto") -> str:
+    periods_value, periods_error = _coerce_forecast_periods(periods)
+    if periods_error:
+        return _forecast_error(periods_error, "invalid_parameter", "periods")
+    periods = periods_value
     df, err = get_df(name)
     if err:
         return err
+
+    if target_col not in df.columns:
+        return _forecast_error(f"Column '{target_col}' not found. Available columns: {list(df.columns)}", "missing_column", "target_col")
+
+    if not date_col:
+        date_col = _infer_forecast_date_col(df)
 
     if target_col not in df.columns:
         return f"Error: 列 '{target_col}' 不存在。可用: {list(df.columns)}"
@@ -37,6 +83,8 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
         ts = df[[target_col]].dropna().copy()
 
     values = ts[target_col].values.astype(float)
+    if len(values) < 10:
+        return _forecast_error(f"Too few data points ({len(values)}); at least 10 are required.", "insufficient_data", "name")
     if len(values) < 10:
         return f"Error: 数据点太少 ({len(values)})，至少需要 10 个"
 
@@ -75,6 +123,9 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
 
         result = {
             "method": "moving_average_trend",
+            "periods": periods,
+            "date_col": date_col,
+            "fallback_used": False,
             "window": window,
             "trend_slope": round(float(trend_slope), 4),
             "last_observed": round(float(values[-1]), 4),
@@ -142,11 +193,25 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
         except ImportError:
             from data_agent.utils.logging import get_logger
             get_logger("tools").warning("Prophet not available, falling back to simple forecast")
-            return forecast(name, target_col, date_col, periods, "simple")
+            raw = forecast(name, target_col, date_col, periods, "simple")
+            try:
+                result = json.loads(raw)
+                result["fallback_used"] = True
+                result["fallback_reason"] = "prophet_not_available"
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except json.JSONDecodeError:
+                return raw
         except (AttributeError, Exception) as e:
             from data_agent.utils.logging import get_logger
             get_logger("tools").warning(f"Prophet failed: {e}, falling back to simple forecast")
-            return forecast(name, target_col, date_col, periods, "simple")
+            raw = forecast(name, target_col, date_col, periods, "simple")
+            try:
+                result = json.loads(raw)
+                result["fallback_used"] = True
+                result["fallback_reason"] = f"prophet_failed: {e}"
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except json.JSONDecodeError:
+                return raw
 
     return f"Error: 不支持的方法 '{method}'。可用: auto, simple, prophet"
 
@@ -154,6 +219,13 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
 @registry.register(
     name="classification",
     description="分类模型训练和评估。支持 cv_folds 交叉验证。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "目标分类列"},
+        "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
+        "method": {"description": "分类方法", "enum": ["auto", "logistic", "rf"]},
+        "cv_folds": {"description": "交叉验证折数，0表示不交叉验证"},
+    },
 )
 def classification(name: str, target_col: str, features: str = "", method: str = "auto", cv_folds: int = 0) -> str:
     from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
@@ -255,6 +327,13 @@ def classification(name: str, target_col: str, features: str = "", method: str =
 @registry.register(
     name="regression_analysis",
     description="回归分析。支持线性回归、弹性网络、梯度提升。支持 cv_folds 交叉验证。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "目标回归列"},
+        "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
+        "method": {"description": "回归方法", "enum": ["auto", "linear", "rf", "gbrt"]},
+        "cv_folds": {"description": "交叉验证折数，0表示不交叉验证"},
+    },
 )
 def regression_analysis(name: str, target_col: str, features: str = "", method: str = "auto", cv_folds: int = 0) -> str:
     from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
@@ -336,6 +415,11 @@ def regression_analysis(name: str, target_col: str, features: str = "", method: 
 @registry.register(
     name="attribution_analysis",
     description="归因分析：识别目标变量的关键驱动因素，基于特征重要性和相关性。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "目标变量列"},
+        "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
+    },
 )
 def attribution_analysis(name: str, target_col: str, features: str = "") -> str:
     df, err = get_df(name)

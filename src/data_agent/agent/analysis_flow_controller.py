@@ -12,6 +12,7 @@ from data_agent.agent.analysis_state import (
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
 from data_agent.session.task_manager import task_manager
+from data_agent.tools.registry import registry
 
 
 class AnalysisFlowController:
@@ -34,7 +35,67 @@ class AnalysisFlowController:
             apply_selection_to_state(state, selection)
         if intent.intent_type == "direct_analysis" and state.analysis_spec:
             self.ensure_workflow_tasks(state)
+            self.ensure_confirmation_task(state)
         state.save()
+
+    def has_pending_confirmation(self, state: AnalysisSessionState) -> bool:
+        return any(c.get("status", "pending") == "pending" for c in state.pending_confirmations)
+
+    def is_high_risk_capability(self, capability_id: str, spec: dict | None = None) -> bool:
+        high_risk = {
+            "analysis.causal",
+            "analysis.forecast",
+            "analysis.experiment",
+            "analysis.classification",
+        }
+        if capability_id in high_risk:
+            return True
+        text = " ".join(str(v).lower() for v in (spec or {}).values() if isinstance(v, (str, int, float)))
+        return any(term in text for term in ("roi", "what-if", "decision", "决策", "投入产出"))
+
+    def is_capability_blocked_by_confirmation(self, state: AnalysisSessionState, capability_id: str) -> bool:
+        spec = state.analysis_spec or {}
+        policy = spec.get("confirmation_policy") or {}
+        if not policy.get("requires_confirmation") and not self.is_high_risk_capability(capability_id, spec):
+            return False
+        if not self.is_high_risk_capability(capability_id, spec):
+            return False
+        return self.has_pending_confirmation(state)
+
+    def is_tool_blocked_by_confirmation(self, state: AnalysisSessionState, tool_name: str) -> bool:
+        cap = registry.capability_for(tool_name)
+        capability_id = cap.get("capability_id", "")
+        return self.is_capability_blocked_by_confirmation(state, capability_id)
+
+    def ensure_confirmation_task(self, state: AnalysisSessionState) -> dict | None:
+        if not self.has_pending_confirmation(state):
+            return None
+        spec = state.analysis_spec or {}
+        spec_id = spec.get("id", "")
+        workflow_id = spec.get("workflow_id", "")
+        existing = [
+            t for t in task_manager.list_all()
+            if t.get("session_id") == self.session_id
+            and t.get("node_type") == "confirmation"
+            and (not spec_id or t.get("analysis_spec_id") == spec_id)
+        ]
+        if existing:
+            return existing[0]
+        pending = next((c for c in state.pending_confirmations if c.get("status", "pending") == "pending"), {})
+        policy = spec.get("confirmation_policy") or {}
+        return task_manager.create(
+            subject="Confirm analysis method and metric scope",
+            description=pending.get("blocking_reason") or policy.get("blocking_reason") or "Confirmation required before high-risk analysis.",
+            session_id=self.session_id,
+            workflow_id=workflow_id,
+            project_name=self.project_name or state.project_name or "",
+            stage="plan",
+            node_type="confirmation",
+            analysis_spec_id=spec_id,
+            confirmation_ids=[pending.get("id")] if pending.get("id") else [],
+            confirmation_policy=policy or {"requires_confirmation": True},
+            required_capability="interaction.confirmation",
+        )
 
     def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
         """Create workflow tasks for the current AnalysisSpec once per session.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from contextlib import redirect_stdout
@@ -68,6 +69,24 @@ def _run_code(code: str, timeout: int) -> tuple[str, str]:
     return stdout_buf.getvalue(), result_repr
 
 
+# 风险分级：基于代码内容检测
+_HIGH_RISK_PATTERNS = [
+    re.compile(r'\.to_csv\(|\.to_excel\(|\.to_json\(', re.IGNORECASE),
+    re.compile(r'\.to_sql\(|\.to_parquet\(', re.IGNORECASE),
+    re.compile(r'remove|delete|drop|unlink|rmdir|shutil', re.IGNORECASE),
+    re.compile(r'\.reset_index\(.*drop.*True', re.IGNORECASE),
+    re.compile(r'del\s+\w+', re.IGNORECASE),
+]
+
+
+def _assess_risk(code: str) -> str:
+    """评估代码风险等级。返回 'low' | 'high'。"""
+    for pattern in _HIGH_RISK_PATTERNS:
+        if pattern.search(code):
+            return "high"
+    return "low"
+
+
 @registry.register(
     name="run_python",
     description=(
@@ -77,17 +96,25 @@ def _run_code(code: str, timeout: int) -> tuple[str, str]:
         "代码执行超时 30 秒。返回 stdout 和最后一个表达式的值。"
         "适用于现有工具无法覆盖的自定义分析需求。"
     ),
+    recovery_hint="请检查代码语法是否正确，确保只使用 pd/np/get_dataset 等安全接口。",
 )
 def run_python(code: str, timeout: int = 30) -> str:
     if not code.strip():
         return json.dumps({"error": "代码不能为空"}, ensure_ascii=False)
 
-    # 安全检查：阻止危险操作
-    dangerous = ["__import__", "import os", "import sys", "import subprocess",
-                 "open(", ".system(", ".popen(", ".exec(", "__builtins__"]
-    for d in dangerous:
-        if d in code:
-            return json.dumps({"error": f"不允许的操作: {d}"}, ensure_ascii=False)
+    # AST 级别安全检查（替代字符串匹配，防绕过）
+    from data_agent.tools._utils import validate_python_code
+    ast_err = validate_python_code(code)
+    if ast_err:
+        return json.dumps({
+            "error": f"安全检查: {ast_err}",
+            "error_type": "sandbox_violation",
+            "alternatives": ["describe_dataset", "preview_data", "list_data", "transform_data"],
+        }, ensure_ascii=False)
+        return json.dumps({"error": f"安全检查: {ast_err}"}, ensure_ascii=False)
+
+    # 风险评估
+    risk = _assess_risk(code)
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -98,7 +125,7 @@ def run_python(code: str, timeout: int = 30) -> str:
     except Exception as e:
         return json.dumps({"error": f"执行失败: {e}"}, ensure_ascii=False)
 
-    response = {"output": stdout[:20000] if stdout else ""}
+    response = {"output": stdout[:20000] if stdout else "", "risk_level": risk}
     if result:
         response["result"] = result
 

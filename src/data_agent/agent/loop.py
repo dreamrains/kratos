@@ -25,6 +25,11 @@ from data_agent.agent.context import (
     reset_current_context,
     use_agent_context,
 )
+from data_agent.agent.execution_control import (
+    BudgetExceeded,
+    ToolExecutionBudget,
+    TurnExecutionState,
+)
 from data_agent.session.workspace import Workspace, workspace
 
 logger = get_logger("loop")
@@ -389,6 +394,9 @@ class AgentLoop:
             if self._prompt_cache_dirty or not self._prompt_cache:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
+            hint = self._execution_prompt_hint()
+            if hint:
+                return self._prompt_cache + f"\n\n<execution_control>\n{hint}\n</execution_control>"
             return self._prompt_cache
 
     def _prepare_analysis_turn(self, user_input: str):
@@ -406,10 +414,33 @@ class AgentLoop:
         session_ctx = "\n".join(context_parts)
         intent = plan_turn_intent(user_input, session_ctx)
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
-        state = controller.load_state()
+        state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
+        profile = "deep" if intent.intent_type == "report" else ("interactive" if intent.intent_type in {"chat", "operation"} else "analysis")
+        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(profile=profile))
         return controller.activate_tool_groups(registry, intent, state, user_input)
+
+    def _execution_prompt_hint(self) -> str:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return ""
+        return turn_state.prompt_hint()
+
+    def _is_tool_blocked_by_confirmation(self, tool_name: str) -> bool:
+        from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return False
+        controller = AnalysisFlowController(self.session_id, self.context.project_name)
+        return controller.is_tool_blocked_by_confirmation(state, tool_name)
+
+    def _blocked_tool_message(self, tool_name: str) -> str:
+        return (
+            f"Tool '{tool_name}' requires structured confirmation before execution. "
+            "I will keep the analysis at the planning stage until the user confirms the method, scope, or metric assumptions."
+        )
 
     def _build_interrupt_context(self, user_input: str) -> str:
         """Build context hint when the previous turn was interrupted."""
@@ -721,6 +752,28 @@ class AgentLoop:
                 return
             logger.info("Stream tool call", extra={"extra_data": {"tool": tc.name}})
             registry.expand_from_tool_call(tc.name)
+            turn_state = getattr(self.context, "turn_state", None)
+            if self._is_tool_blocked_by_confirmation(tc.name):
+                blocked = self._blocked_tool_message(tc.name)
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
+                })
+                yield {"type": "error", "message": blocked}
+                return
+            if turn_state is not None:
+                try:
+                    turn_state.ensure_can_call(tc.name, tc.arguments)
+                except BudgetExceeded as exc:
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                    })
+                    yield {"type": "error", "message": str(exc)}
+                    return
+                turn_state.record_tool_call(tc.name, tc.arguments)
             yield {
                 "type": "tool_call",
                 "tool_call_id": tc.id,
@@ -772,6 +825,8 @@ class AgentLoop:
 
             tool_msg_content = output
             if output.startswith('{"error":') or output.startswith('{"error": '):
+                if turn_state is not None:
+                    turn_state.record_tool_error(tc.name, tc.arguments, output)
                 tool_msg_content = (
                     f"{output}\n"
                     "[系统提示] 工具执行失败。请按以下策略恢复：\n"
@@ -780,6 +835,9 @@ class AgentLoop:
                     "3. 如果是数据质量问题，先用 detect_data_quality 评估数据状态\n"
                     "4. 如果无法自行恢复，通过 ask_user_question 请求用户提供更多上下文"
                 )
+
+            elif turn_state is not None:
+                turn_state.record_tool_success()
 
             self.messages.append({
                 "role": "tool",
@@ -1089,6 +1147,26 @@ class AgentLoop:
 
                 # 根据调用的工具动态扩展工具分组
                 registry.expand_from_tool_call(tc.name)
+                turn_state = getattr(self.context, "turn_state", None)
+                if self._is_tool_blocked_by_confirmation(tc.name):
+                    blocked = self._blocked_tool_message(tc.name)
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
+                    })
+                    return FinalResponse(content=blocked)
+                if turn_state is not None:
+                    try:
+                        turn_state.ensure_can_call(tc.name, tc.arguments)
+                    except BudgetExceeded as exc:
+                        self.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                        })
+                        return FinalResponse(content=str(exc))
+                    turn_state.record_tool_call(tc.name, tc.arguments)
 
                 try:
                     tool_result = registry.execute(tc.name, tc.arguments)
@@ -1127,6 +1205,8 @@ class AgentLoop:
                 # 工具错误恢复：为 LLM 提供恢复提示
                 tool_msg_content = output
                 if output.startswith('{"error":') or output.startswith('{"error": '):
+                    if turn_state is not None:
+                        turn_state.record_tool_error(tc.name, tc.arguments, output)
                     tool_msg_content = (
                         f"{output}\n"
                         "[系统提示] 工具执行失败。请按以下策略恢复：\n"
@@ -1136,6 +1216,8 @@ class AgentLoop:
                         "4. 如果无法自行恢复，通过 ask_user_question 请求用户提供更多上下文"
                     )
                     logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": output[:200]}})
+                elif turn_state is not None:
+                    turn_state.record_tool_success()
 
                 self.messages.append({
                     "role": "tool",

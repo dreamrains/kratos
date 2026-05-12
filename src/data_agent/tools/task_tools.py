@@ -43,6 +43,13 @@ def _project_name() -> str:
     return ""
 
 
+def _current_analysis_spec() -> dict:
+    ctx = _context()
+    state = getattr(ctx, "analysis_state", None) if ctx is not None else None
+    spec = getattr(state, "analysis_spec", None)
+    return spec if isinstance(spec, dict) else {}
+
+
 def _json_or_value(value, default=None):
     if value in (None, ""):
         return default
@@ -165,19 +172,20 @@ def task_create(
             return json.dumps({"error": "analysis_spec_json 必须是有效 JSON"}, ensure_ascii=False)
         return json.dumps(create_workflow_tasks_from_spec(spec), ensure_ascii=False, indent=2)
 
+    current_spec = _current_analysis_spec()
     common_fields = {
-        "workflow_id": workflow_id,
+        "workflow_id": workflow_id or current_spec.get("workflow_id", ""),
         "project_name": project_name or _project_name(),
-        "stage": stage,
+        "stage": stage or ("execute" if current_spec else ""),
         "node_type": node_type,
-        "analysis_spec_id": analysis_spec_id,
+        "analysis_spec_id": analysis_spec_id or current_spec.get("id", ""),
         "required_data": _json_or_value(required_data, []),
         "expected_output": expected_output,
         "evidence_ids": _json_or_value(evidence_ids, []),
         "confirmation_ids": _json_or_value(confirmation_ids, []),
         "required_capability": required_capability,
         "evidence_requirements": _json_or_value(evidence_requirements, []),
-        "confirmation_policy": _json_or_value(confirmation_policy, {}),
+        "confirmation_policy": _json_or_value(confirmation_policy, current_spec.get("confirmation_policy", {})),
     }
 
     if tasks:

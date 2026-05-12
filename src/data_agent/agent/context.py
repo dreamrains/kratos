@@ -23,6 +23,7 @@ class AgentContext:
     loaded_skills: list[str] = field(default_factory=list)
     mcp_visible: bool = True
     analysis_state: object | None = None
+    turn_state: object | None = None
 
     @property
     def object_name(self) -> Optional[str]:
@@ -37,6 +38,7 @@ class AgentContext:
         """Reset per-turn tool routing state."""
         self.active_tool_groups = {"core"}
         self.executed_tools.clear()
+        self.turn_state = None
 
 
 _current_context: ContextVar[AgentContext | None] = ContextVar(
