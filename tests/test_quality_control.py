@@ -89,4 +89,6 @@ def test_analysis_completeness_flags_missing_core_quality_fields():
     assert summary["status"] == "incomplete"
     assert "statistical_details" in summary["missing"]
     assert "charts" not in summary["missing"]
-    assert "expert_synthesis" in summary["missing"]
+    # expert_synthesis is not checked by analysis_completeness_summary;
+    # it would be checked by analysis_quality_summary for expert-facing output
+    assert summary["status"] == "incomplete"

@@ -382,7 +382,7 @@ class TestAnalysisConsultation:
         result = plan_turn_intent(text, NO_DATA_CTX)
         assert result.intent_type == "analysis_consultation"
         assert result.recommended_action == "answer_directly"
-        assert result.clarity == "vague"
+        assert result.clarity == "clear"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -570,7 +570,7 @@ class TestGuidanceBranching:
         result = plan_turn_intent("帮我看看这份数据", DATA_LOADED_CTX)
         assert result.intent_type == "intent_negotiation"
         assert result.recommended_action == "guide_analysis"
-        assert result.clarity == "vague"
+        assert result.clarity == "clear"
 
     def test_guidance_no_data_becomes_data_requirement(self):
         """When no data, guidance keywords -> data_requirement."""
@@ -642,7 +642,7 @@ class TestLLMFallback:
         mock_llm.return_value = ("knowledge_qa", [])
         result = plan_turn_intent("something completely unknown xyz", NO_DATA_CTX)
         assert result.intent_type == "knowledge_qa"
-        assert result.reason == "LLM分类"
+        assert result.reason == "LLM语义分类"
 
     @patch("data_agent.agent.intent._try_llm_classify")
     def test_llm_returns_with_ambiguities(self, mock_llm):

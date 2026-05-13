@@ -37,7 +37,7 @@ cases = [
     ("解释一下什么是回归分析", "conversation"), ("介绍一下RFM分析方法", "conversation"),
     ("分析一下销售趋势", "guidance"), ("帮我看看这数据", "guidance"),
     ("预测下季度销售", "guidance"), ("出个报告", "analysis"), ("完整分析", "analysis"),
-    ("帮我算一下总销售额", "guidance"), ("导出数据为csv", "quick"),
+    ("帮我算一下总销售额", "quick"), ("导出数据为csv", "quick"),
     ("按月分组汇总", "quick"), ("排序", "quick"),
 ]
 for inp, expected in cases:

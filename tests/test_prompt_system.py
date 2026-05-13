@@ -4,10 +4,10 @@ import pytest
 
 from data_agent.agent.prompts import (
     AGENT_ANALYSIS,
-    AGENT_ANALYSIS_ENGINE,
     AGENT_CONVERSATION,
     AGENT_GUIDANCE,
     AGENT_QUICK,
+    AGENT_STRATEGY_SHARED,
     _MERMAID_QUICK_REF,
     _classify_task,
     _format_turn_intent_prompt,
@@ -55,10 +55,10 @@ class TestConversationMode:
             tool_list="list_data, run_python",
             user_input=greeting,
         )
-        assert "可用工具：无" in prompt
-        # Mermaid reference must be present in every level
-        assert "Mermaid" in prompt
-        # Must NOT contain tool list
+        assert "get_analysis_summary" in prompt
+        # Conversation mode does NOT get Mermaid reference (no visualization needed)
+        assert "Mermaid" not in prompt
+        # Must NOT contain the main tool list
         assert "list_data" not in prompt
 
     def test_conversation_no_domain_knowledge(self):
@@ -67,7 +67,7 @@ class TestConversationMode:
             domain_knowledge="this is domain knowledge",
             user_input="你好",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
         assert "this is domain knowledge" not in prompt
 
     def test_conversation_no_skill_instructions(self):
@@ -76,7 +76,7 @@ class TestConversationMode:
             skill_instructions="do something special",
             user_input="你好",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
         assert "do something special" not in prompt
         assert "<loaded_skills>" not in prompt
 
@@ -86,7 +86,7 @@ class TestConversationMode:
             skill_descriptions="skill_a: does A",
             user_input="你好",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
         assert "skill_a" not in prompt
 
     def test_conversation_session_context_wrapped(self):
@@ -106,44 +106,44 @@ class TestConversationMode:
             user_input="你好",
         )
         assert "Always respond in English" in prompt
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
 
     def test_conversation_short_input(self):
         prompt = build_system_prompt(
             tool_list="list_data",
             user_input="ok",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
 
     def test_conversation_knowledge_qa(self):
         prompt = build_system_prompt(
             tool_list="list_data",
             user_input="什么是相关性分析",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
 
     def test_conversation_analysis_consultation(self):
         prompt = build_system_prompt(
             tool_list="list_data",
             user_input="怎么分析这份数据比较好",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
 
     def test_conversation_result_followup(self):
         prompt = build_system_prompt(
             tool_list="list_data",
             user_input="为什么说销售额在下降",
         )
-        assert "可用工具：无" in prompt
+        assert "get_analysis_summary" in prompt
 
-    def test_conversation_mermaid_reference_included(self):
+    def test_conversation_mermaid_reference_not_included(self):
+        """Conversation mode does not include Mermaid reference."""
         prompt = build_system_prompt(
             tool_list="list_data",
             user_input="你好",
         )
-        assert "pie title" in prompt
-        assert "xychart-beta" in prompt
-        assert "禁止在回复中直接输出 Plotly JSON" in prompt
+        assert "pie title" not in prompt
+        assert "xychart-beta" not in prompt
 
 
 # ── 2. QUICK mode ────────────────────────────────────────────
@@ -709,9 +709,10 @@ class TestPromptConstants:
         assert "Plotly JSON" in _MERMAID_QUICK_REF
 
     def test_conversation_template_markers(self):
-        assert "可用工具：无" in AGENT_CONVERSATION
-        assert "{_mermaid_ref}" in AGENT_CONVERSATION
+        assert "get_analysis_summary" in AGENT_CONVERSATION
         assert "{session_context}" in AGENT_CONVERSATION
+        # Conversation mode no longer includes Mermaid reference
+        assert "{_mermaid_ref}" not in AGENT_CONVERSATION
 
     def test_quick_template_markers(self):
         assert "{tool_list}" in AGENT_QUICK
@@ -730,13 +731,16 @@ class TestPromptConstants:
         assert "{_mermaid_ref}" in AGENT_ANALYSIS
 
     def test_analysis_engine_content(self):
-        assert "分析策略表" in AGENT_ANALYSIS_ENGINE
-        assert "多视角思考" in AGENT_ANALYSIS_ENGINE
-        assert "模糊意图引导" in AGENT_ANALYSIS_ENGINE
+        # Strategy table is now in the shared block, merged into AGENT_ANALYSIS
+        assert "分析策略表" in AGENT_STRATEGY_SHARED
+        # Multi-view thinking is now merged into AGENT_ANALYSIS directly
+        assert "多视角思考" in AGENT_ANALYSIS
+        # Vague intent guidance is now in AGENT_ANALYSIS directly
+        assert "模糊意图引导" in AGENT_ANALYSIS
 
     def test_conversation_behavior_rules(self):
         assert "友好" in AGENT_CONVERSATION
-        assert "不调用任何工具" in AGENT_CONVERSATION
+        assert "get_analysis_summary" in AGENT_CONVERSATION
 
     def test_analysis_output_format(self):
         assert "核心结论" in AGENT_ANALYSIS

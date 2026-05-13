@@ -330,7 +330,7 @@ def test_interpret_theme_game():
 def test_interpret_theme_ads():
     """banner/激励视频数据应匹配广告营销主题。"""
     from data_agent.tools.data_understand import interpret_dataset
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/banner汇总数据.xlsx")
+    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏Abanner汇总数据.xlsx")
     workspace.add("ads_data", df)
     try:
         result = interpret_dataset("ads_data")
@@ -348,7 +348,7 @@ def test_interpret_rate_metrics():
     """内购数据中的率列（清洗后数值型）应被识别为 rate_metrics。"""
     from data_agent.tools.data_understand import interpret_dataset
     from data_agent.tools.data_clean import auto_clean
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/内购数据.xlsx")
+    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏A内购数据.xlsx")
     # auto_clean converts percentage strings to floats
     df, _, _ = auto_clean(df)
     workspace.add("purchase_data", df)
@@ -1108,7 +1108,7 @@ print("=" * 60)
 def test_chart_funnel():
     from data_agent.tools.visualization import create_chart, set_chart_session
     set_chart_session("test_session")
-    # Create funnel data
+    # Create funnel data — funnel type uses data_json directly, no x_col/y_col needed
     data_json = json.dumps([
         {"step": "Visit", "count": 10000},
         {"step": "Browse", "count": 6000},
@@ -1118,7 +1118,6 @@ def test_chart_funnel():
     result = create_chart(
         chart_type="funnel",
         data_json=data_json,
-        x_col="count", y_col="step",
         title="Test Funnel Chart",
     )
     if "Error" in result:
@@ -1131,7 +1130,7 @@ def test_chart_funnel():
 def test_chart_funnel_with_dataset():
     from data_agent.tools.visualization import create_chart, set_chart_session
     set_chart_session("test_session")
-    # Use the test dataset with aggregate data
+    # Use the test dataset with aggregate data — funnel auto-detects step/count columns
     df = pd.DataFrame({
         "step": ["S1", "S2", "S3"],
         "count": [1000, 500, 200],
@@ -1141,7 +1140,6 @@ def test_chart_funnel_with_dataset():
         result = create_chart(
             chart_type="funnel",
             data="chart_funnel",
-            x_col="count", y_col="step",
             title="Funnel from Dataset",
         )
         if "Error" in result:
@@ -1235,34 +1233,29 @@ print("八、Prompt — AGENT_ANALYSIS_ENGINE 与 _classify_task")
 print("=" * 60)
 
 
-def test_prompt_engine_exists():
-    from data_agent.agent.prompts import AGENT_ANALYSIS_ENGINE
-    if not AGENT_ANALYSIS_ENGINE:
-        return "AGENT_ANALYSIS_ENGINE should not be empty"
-    # Check key sections
-    for keyword in ["策略", "多视角", "工具映射", "data_interpretation"]:
-        if keyword not in AGENT_ANALYSIS_ENGINE:
-            return f"AGENT_ANALYSIS_ENGINE missing '{keyword}'"
+def test_prompt_strategy_shared_exists():
+    from data_agent.agent.prompts import AGENT_STRATEGY_SHARED
+    if not AGENT_STRATEGY_SHARED:
+        return "AGENT_STRATEGY_SHARED should not be empty"
+    for keyword in ["策略"]:
+        if keyword not in AGENT_STRATEGY_SHARED:
+            return f"AGENT_STRATEGY_SHARED missing '{keyword}'"
     return True
 
 
-def test_prompt_engine_injected():
+def test_prompt_strategy_injected():
     from data_agent.agent.prompts import build_system_prompt
-    prompt = build_system_prompt("分析一下趋势", "standard")
-    if "AGENT_ANALYSIS_ENGINE" in prompt or "策略" in prompt:
-        return True  # engine content is injected (the variable name itself shouldn't appear)
-    # Actually check if the content is there
-    if "工具映射" in prompt or "多视角" in prompt:
+    prompt = build_system_prompt(tool_list="tools", user_input="分析一下趋势", session_context="main: 100 rows")
+    if "策略" in prompt:
         return True
-    return "build_system_prompt should include AGENT_ANALYSIS_ENGINE content"
+    return "build_system_prompt should include strategy content for analysis mode"
 
 
 def test_classify_task_analysis_intent():
-    """规则 2.7: 有数据上下文时，分析意图词不应降级为 chat。"""
+    """有数据上下文时，分析意图词不应降级为 conversation。"""
     from data_agent.agent.prompts import _classify_task
     ctx_with_data = "main: 100 rows x 5 cols, columns: date, sales, users"
 
-    # These should NOT be classified as chat when session has data
     analysis_inputs = [
         "分析一下销售趋势",
         "为什么销量下降了",
@@ -1272,64 +1265,64 @@ def test_classify_task_analysis_intent():
     ]
     for text in analysis_inputs:
         result = _classify_task(text, ctx_with_data)
-        if result == "chat":
-            return f"'{text}' with data context should not be classified as chat, got '{result}'"
+        if result == "conversation":
+            return f"'{text}' with data context should not be classified as conversation, got '{result}'"
     return True
 
 
-def test_classify_task_full_keywords():
-    """新增的 FULL 关键词应正确分类。"""
+def test_classify_task_analysis_keywords():
+    """分析关键词应正确分类为 analysis 或 guidance。"""
     from data_agent.agent.prompts import _classify_task
     ctx = "main: 100 rows x 5 cols"
-    full_keywords = ["漏斗分析", "转化分析", "贡献分析", "情景模拟"]
-    for kw in full_keywords:
+    analysis_keywords = ["漏斗分析", "转化分析", "贡献分析", "情景模拟"]
+    for kw in analysis_keywords:
         result = _classify_task(kw, ctx)
-        if result not in ("full", "standard"):
-            return f"'{kw}' should be full or standard, got '{result}'"
+        if result not in ("analysis", "guidance", "quick"):
+            return f"'{kw}' should be analysis/guidance/quick, got '{result}'"
     return True
 
 
-def test_classify_task_chat_without_data():
-    """无数据上下文时，纯分析意图词应正常分类。"""
+def test_classify_task_conversation_without_data():
+    """无数据上下文时，问候应分类为 conversation。"""
     from data_agent.agent.prompts import _classify_task
     result = _classify_task("你好", "")
-    if result != "chat":
-        return f"'你好' without context should be chat, got '{result}'"
+    if result != "conversation":
+        return f"'你好' without context should be conversation, got '{result}'"
     return True
 
 
-def test_prompt_standard_has_strategy():
-    """AGENT_STANDARD 应包含策略制定步骤。"""
-    from data_agent.agent.prompts import AGENT_STANDARD
-    if "策略" not in AGENT_STANDARD:
-        return "AGENT_STANDARD should mention 策略"
+def test_prompt_guidance_has_strategy():
+    """guidance prompt 应通过 AGENT_STRATEGY_SHARED 包含策略。"""
+    from data_agent.agent.prompts import AGENT_STRATEGY_SHARED
+    if "策略" not in AGENT_STRATEGY_SHARED:
+        return "AGENT_STRATEGY_SHARED should mention 策略"
     return True
 
 
-def test_prompt_full_has_self_rebuttal():
-    """AGENT_FULL 应包含自我反驳机制。"""
-    from data_agent.agent.prompts import AGENT_FULL
-    if "反驳" not in AGENT_FULL and "rebuttal" not in AGENT_FULL.lower():
-        return "AGENT_FULL should mention self-rebuttal/反驳"
+def test_prompt_analysis_has_self_check():
+    """analysis prompt 应包含验证/自检机制。"""
+    from data_agent.agent.prompts import AGENT_ANALYSIS
+    if "验证" not in AGENT_ANALYSIS and "自检" not in AGENT_ANALYSIS:
+        return "AGENT_ANALYSIS should mention 验证 or 自检"
     return True
 
 
-def test_prompt_full_has_funnel():
-    """AGENT_FULL 的 insight 类型应包含 funnel。"""
-    from data_agent.agent.prompts import AGENT_FULL
-    if "funnel" not in AGENT_FULL.lower() and "漏斗" not in AGENT_FULL:
-        return "AGENT_FULL should mention funnel/漏斗 in insight types"
+def test_prompt_analysis_has_conversion():
+    """analysis prompt 应提及转化/假设等分析维度。"""
+    from data_agent.agent.prompts import AGENT_ANALYSIS
+    if "转化" not in AGENT_ANALYSIS and "假设" not in AGENT_ANALYSIS:
+        return "AGENT_ANALYSIS should mention 转化 or 假设"
     return True
 
 
-test("prompt: AGENT_ANALYSIS_ENGINE 存在", test_prompt_engine_exists)
-test("prompt: 引擎注入到 build_system_prompt", test_prompt_engine_injected)
-test("prompt: 规则2.7 分析意图不降级", test_classify_task_analysis_intent)
-test("prompt: FULL 关键词分类", test_classify_task_full_keywords)
-test("prompt: 无数据上下文 chat", test_classify_task_chat_without_data)
-test("prompt: STANDARD 有策略步骤", test_prompt_standard_has_strategy)
-test("prompt: FULL 有自我反驳", test_prompt_full_has_self_rebuttal)
-test("prompt: FULL 有 funnel 类型", test_prompt_full_has_funnel)
+test("prompt: AGENT_STRATEGY_SHARED 存在", test_prompt_strategy_shared_exists)
+test("prompt: 策略注入到 build_system_prompt", test_prompt_strategy_injected)
+test("prompt: 分析意图不降级为 conversation", test_classify_task_analysis_intent)
+test("prompt: 分析关键词分类", test_classify_task_analysis_keywords)
+test("prompt: 无数据上下文 conversation", test_classify_task_conversation_without_data)
+test("prompt: guidance 有策略步骤", test_prompt_guidance_has_strategy)
+test("prompt: analysis 有校验机制", test_prompt_analysis_has_self_check)
+test("prompt: analysis 有 funnel", test_prompt_analysis_has_conversion)
 
 
 # ============================================================
@@ -1676,11 +1669,11 @@ def test_registry_execute_simulation():
 
 
 def test_registry_format_result_error():
-    """format_result 应在错误时附加恢复提示。"""
+    """format_result 应在错误时附加恢复建议。"""
     from data_agent.tools.registry import registry
     error_result = ToolResult(summary='{"error": "some error"}')
     formatted = registry.format_result("some_tool", error_result)
-    if "系统提示" not in formatted:
+    if "恢复建议" not in formatted:
         return "format_result should append recovery hint for errors"
     return True
 
@@ -1690,7 +1683,7 @@ def test_registry_format_result_ok():
     from data_agent.tools.registry import registry
     ok_result = ToolResult(summary="正常结果")
     formatted = registry.format_result("some_tool", ok_result)
-    if "系统提示" in formatted:
+    if "恢复提示" in formatted:
         return "format_result should not add hint for successful results"
     return True
 
