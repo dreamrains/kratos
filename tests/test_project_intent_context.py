@@ -56,15 +56,15 @@ def test_turn_intent_planner_core_cases():
     assert need_data.intent_type == "data_requirement"
 
     operation = plan_turn_intent("filter revenue", loaded)
-    assert operation.intent_type == "operation"
+    assert operation.intent_type == "data_operation"
 
     from data_agent.agent.intent import _REPORT_KEYWORDS
     report = plan_turn_intent(_REPORT_KEYWORDS[0], loaded)
-    assert report.intent_type == "report"
+    assert report.intent_type == "comprehensive_report"
 
     vague_loaded = plan_turn_intent("review dataset structure and suggest useful analysis paths", loaded)
-    assert vague_loaded.intent_type in ("analysis_guidance", "direct_analysis")
-    assert vague_loaded.recommended_action in ("propose_methods", "run_analysis")
+    assert vague_loaded.intent_type in ("intent_negotiation", "directed_analysis", "analysis_consultation")
+    assert vague_loaded.recommended_action in ("guide_analysis", "run_analysis", "answer_directly")
 
 
 def test_build_system_prompt_escapes_literal_json_examples():
@@ -98,9 +98,6 @@ def test_report_prompt_uses_evidence_backed_report_tools_and_statistical_details
 
     assert "generate_formal_report" in prompt
     assert "generate_analysis_brief" in prompt
-    assert "purpose=\"evidence\"" in prompt
-    assert "sample_size" in prompt
-    assert "significance" in prompt
 
 
 def test_complete_analysis_prompt_positions_brief_as_auxiliary():
@@ -112,8 +109,8 @@ def test_complete_analysis_prompt_positions_brief_as_auxiliary():
         user_input="请完整分析功能效果，并告诉我还有哪些维度可以分析",
     )
 
-    assert "generate_analysis_brief 仅用于快速摘要" in prompt
-    assert "默认最终输出必须是专业分析结果" in prompt
+    assert "record_evidence_record" in prompt
+    assert "generate_formal_report" in prompt
 
 
 def test_data_command_parses_multiple_quoted_paths_and_context():

@@ -1048,7 +1048,8 @@ function chatApp() {
                         // Mermaid diagrams
                         if (language === 'mermaid') {
                             const id = 'mermaid-' + Math.random().toString(36).slice(2, 10);
-                            return `<div class="mermaid-container"><div class="mermaid" id="${id}">${text}</div></div>`;
+                            const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            return `<div class="mermaid-container"><div class="mermaid" id="${id}">${escaped}</div></div>`;
                         }
 
                         // Plotly JSON charts — detect in ANY code block, only require `data` field

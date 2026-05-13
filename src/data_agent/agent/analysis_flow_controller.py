@@ -30,10 +30,10 @@ class AnalysisFlowController:
         if intent.analysis_stage in {"discover", "scope", "plan", "execute", "report", "follow_up"}:
             if state.stage in ("discover", "follow_up") or intent.analysis_stage != "discover":
                 state.stage = intent.analysis_stage
-        if intent.intent_type in {"data_requirement", "analysis_guidance", "direct_analysis", "report"}:
+        if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
-        if intent.intent_type == "direct_analysis" and state.analysis_spec:
+        if intent.intent_type == "directed_analysis" and state.analysis_spec:
             self.ensure_workflow_tasks(state)
             self.ensure_confirmation_task(state)
         state.save()
@@ -167,19 +167,21 @@ class AnalysisFlowController:
         registry.reset_groups()
         groups: set[str] = set()
 
-        if intent.intent_type == "data_requirement":
+        if intent.intent_type in ("simple_response", "knowledge_qa", "analysis_consultation", "result_followup"):
+            pass  # No tool groups for conversation mode
+        elif intent.intent_type in ("intent_negotiation", "data_requirement"):
             groups.update({"knowledge"})
-        elif intent.intent_type == "analysis_guidance":
-            groups.update({"eda", "clean", "knowledge"})
-        elif intent.intent_type == "direct_analysis":
+            if intent.data_state == "data_loaded":
+                groups.update({"eda"})
+        elif intent.intent_type == "directed_analysis":
             groups.update({"eda", "task", "knowledge"})
-            if state.analysis_spec:
+            if state.analysis_plan:
                 groups.update({"stats", "ml"})
-        elif intent.intent_type == "report":
+        elif intent.intent_type == "comprehensive_report":
             groups.update({"report", "task", "eda", "knowledge"})
             if not state.evidence_records:
                 groups.update({"stats"})
-        elif intent.intent_type == "operation":
+        elif intent.intent_type == "data_operation":
             groups.update({"clean"})
 
         registry.activate_groups(groups)
@@ -189,7 +191,7 @@ class AnalysisFlowController:
         if intent.intent_type == "data_requirement":
             active = registry._get_active_groups()
             active.difference_update({"stats", "ml", "report", "task"})
-        if intent.intent_type == "operation":
+        if intent.intent_type == "data_operation":
             registry._get_active_groups().discard("task")
 
         return groups | keyword_groups

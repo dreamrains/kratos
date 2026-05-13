@@ -20,20 +20,27 @@ def _loaded_context() -> str:
 
 
 def test_budget_soft_and_hard_thresholds():
-    state = TurnExecutionState(ToolExecutionBudget(profile="interactive", max_tool_calls=5, max_fallback_calls=2))
+    state = TurnExecutionState(ToolExecutionBudget(profile="interactive", max_tool_calls=6, max_fallback_calls=2))
 
     state.record_tool_call("list_data", {})
     state.record_tool_call("describe_dataset", {})
+    # run_python counts toward tool_calls and sets pending_fallback_resolution
     state.record_tool_call("run_python", {})
+    # record_evidence_record is meta, does NOT count toward tool_calls, but resolves fallback
+    state.record_tool_call("record_evidence_record", {})
 
-    assert state.should_converge is True
-    assert state.should_restrict_exploration is False
+    assert state.tool_calls == 3  # list_data + describe_dataset + run_python
+    assert state.pending_fallback_resolution is False
 
     state.record_tool_call("create_chart", {})
     state.record_tool_call("preview_data", {})
-    assert state.should_restrict_exploration is True
+    # tool_calls = 5, ceil(6*0.75) = 5 → should_converge
+    assert state.should_converge is True
+    assert state.should_restrict_exploration is False
 
-    state.record_tool_call("describe_dataset", {})
+    state.record_tool_call("analyze_time_series", {})
+    assert state.should_restrict_exploration is True  # 6 >= ceil(6*0.85) = 6
+
     try:
         state.ensure_can_call("list_data", {})
     except BudgetExceeded as exc:
@@ -135,7 +142,7 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
     try:
         state = AnalysisSessionState(session_id="gate_savings", project_name=None)
         intent = plan_turn_intent("evaluate whether the savings card is worth long-term operation", _loaded_context())
-        intent.intent_type = "direct_analysis"
+        intent.intent_type = "directed_analysis"
         intent.data_state = "data_loaded"
 
         controller = AnalysisFlowController("gate_savings")

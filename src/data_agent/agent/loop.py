@@ -159,6 +159,21 @@ def _microcompact(session_id: str, messages: list[dict]) -> None:
     micro_compact(session_id, messages)
 
 
+def _intent_to_budget_profile(intent_type: str) -> str:
+    if intent_type in ("simple_response", "knowledge_qa", "analysis_consultation", "result_followup", "data_operation"):
+        return "interactive"
+    if intent_type in ("intent_negotiation", "data_requirement"):
+        return "interactive"
+    if intent_type == "comprehensive_report":
+        return "deep"
+    return "analysis"
+
+
+def _token_budget_for_profile(profile: str, token_threshold: int) -> int:
+    ratios = {"interactive": 0.3, "analysis": 0.7, "deep": 1.0}
+    return int(token_threshold * ratios.get(profile, 0.7))
+
+
 # 模块级 SkillLoader 实例（参考 s_full.py line 546: SKILLS = SkillLoader(SKILLS_DIR)）
 _skill_loader: Optional[SkillLoader] = None
 
@@ -420,8 +435,12 @@ class AgentLoop:
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
-        profile = "deep" if intent.intent_type == "report" else ("interactive" if intent.intent_type in {"chat", "operation"} else "analysis")
-        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(profile=profile))
+        profile = _intent_to_budget_profile(intent.intent_type)
+        cfg = get_config()
+        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+            profile=profile,
+            token_budget=_token_budget_for_profile(profile, cfg.token_threshold),
+        ))
         return controller.activate_tool_groups(registry, intent, state, user_input)
 
     def _execution_prompt_hint(self) -> str:
@@ -444,6 +463,40 @@ class AgentLoop:
             f"Tool '{tool_name}' requires structured confirmation before execution. "
             "I will keep the analysis at the planning stage until the user confirms the method, scope, or metric assumptions."
         )
+
+    def _fill_remaining_tool_responses(self, tool_calls: list, start_index: int, reason: str) -> None:
+        """Add error tool responses for unprocessed tool_call_ids to keep message history valid."""
+        for tc in tool_calls[start_index:]:
+            self.messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps({"error": reason, "error_type": "early_termination"}, ensure_ascii=False),
+            })
+
+    def _repair_broken_tool_sequence(self) -> None:
+        """Scan messages for assistant tool_calls missing corresponding tool responses and fill them in."""
+        i = 0
+        while i < len(self.messages):
+            msg = self.messages[i]
+            if msg.get("role") != "assistant" or "tool_calls" not in msg:
+                i += 1
+                continue
+            # Collect expected tool_call_ids
+            expected_ids = {tc["id"] for tc in msg["tool_calls"]}
+            # Scan subsequent messages for tool responses
+            j = i + 1
+            while j < len(self.messages) and self.messages[j].get("role") == "tool":
+                expected_ids.discard(self.messages[j].get("tool_call_id"))
+                j += 1
+            # Fill in any missing responses
+            for missing_id in expected_ids:
+                self.messages.insert(j, {
+                    "role": "tool",
+                    "tool_call_id": missing_id,
+                    "content": json.dumps({"error": "Previous turn ended early", "error_type": "repaired"}, ensure_ascii=False),
+                })
+                j += 1
+            i = j
 
     def _build_interrupt_context(self, user_input: str) -> str:
         """Build context hint when the previous turn was interrupted."""
@@ -727,6 +780,10 @@ class AgentLoop:
 
         response = None
         streamed_text = ""
+
+        # Defensive: repair any broken tool_call sequences from prior turns
+        self._repair_broken_tool_sequence()
+
         try:
             for ev in self.client.stream_chat_structured(
                 messages=self.messages,
@@ -768,9 +825,10 @@ class AgentLoop:
         """Process tool calls from an LLM response. Yields SSE event dicts."""
         import time
 
-        for tc in response.tool_calls:
+        for i, tc in enumerate(response.tool_calls):
             # Check interrupt between tool calls
             if self._interrupt_event.is_set():
+                self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
                 return
             logger.info("Stream tool call", extra={"extra_data": {"tool": tc.name}})
             registry.expand_from_tool_call(tc.name)
@@ -782,6 +840,7 @@ class AgentLoop:
                     "tool_call_id": tc.id,
                     "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
                 })
+                self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Turn blocked by confirmation")
                 yield {"type": "error", "message": blocked}
                 return
             if turn_state is not None:
@@ -793,6 +852,7 @@ class AgentLoop:
                         "tool_call_id": tc.id,
                         "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                     })
+                    self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
                     yield {"type": "error", "message": str(exc)}
                     return
                 turn_state.record_tool_call(tc.name, tc.arguments)
@@ -831,6 +891,7 @@ class AgentLoop:
                     "tool_call_id": tc.id,
                     "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
                 })
+                self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Suspended for user confirmation")
                 yield {
                     "type": "suspended",
                     "suspension_id": susp.suspension_id,
@@ -1131,6 +1192,9 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            # Defensive: repair any broken tool_call sequences from prior turns
+            self._repair_broken_tool_sequence()
+
             response = self.client.chat(
                 messages=self.messages,
                 tools=registry.active_definitions() or None,
@@ -1162,9 +1226,10 @@ class AgentLoop:
                 return FinalResponse(content=final_text)
 
             # 执行工具，每条结果作为独立的 tool 消息
-            for tc in response.tool_calls:
+            for i, tc in enumerate(response.tool_calls):
                 if self._interrupt_event.is_set():
                     logger.info("Interrupted during tool execution")
+                    self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
                     return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
 
                 logger.info("Tool call", extra={"extra_data": {"tool": tc.name, "args_keys": list(tc.arguments.keys())}})
@@ -1179,6 +1244,7 @@ class AgentLoop:
                         "tool_call_id": tc.id,
                         "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
                     })
+                    self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Turn blocked by confirmation")
                     return FinalResponse(content=blocked)
                 if turn_state is not None:
                     try:
@@ -1189,6 +1255,7 @@ class AgentLoop:
                             "tool_call_id": tc.id,
                             "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                         })
+                        self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
                         return FinalResponse(content=str(exc))
                     turn_state.record_tool_call(tc.name, tc.arguments)
 
@@ -1220,6 +1287,7 @@ class AgentLoop:
                         "tool_call_id": tc.id,
                         "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
                     })
+                    self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Suspended for user confirmation")
                     return susp
 
                 output = tool_result.to_cli()
@@ -1249,6 +1317,12 @@ class AgentLoop:
                     "tool_call_id": tc.id,
                     "content": tool_msg_content,
                 })
+
+            # Track token usage for budget enforcement
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None:
+                round_tokens = _estimate_tokens(self.messages[-3:])
+                turn_state.record_token_usage(round_tokens)
 
             # Safety valve: hard stop at 310 rounds
             if round_num >= 310:

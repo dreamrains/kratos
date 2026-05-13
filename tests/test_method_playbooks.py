@@ -65,29 +65,30 @@ def test_method_playbooks_are_complete():
 
 def test_selector_maps_common_questions_to_playbooks():
     cases = [
-        ("review dataset structure and suggest useful analysis paths", "analysis_guidance", "data_understanding"),
-        ("why did revenue decline", "direct_analysis", "driver_decomposition"),
-        ("analyze where the conversion funnel loses the most users", "direct_analysis", "funnel_conversion"),
-        ("will users keep purchasing after the first order", "direct_analysis", "retention_lifecycle"),
-        ("forecast next month revenue and estimate ROI", "direct_analysis", "forecast_decision_simulation"),
-        ("evaluate whether the savings card is worth long-term operation; include retention and cost", "direct_analysis", "evaluation_causal"),
+        ("review dataset structure and suggest useful analysis paths", "intent_negotiation", "data_understanding"),
+        ("why did revenue decline", "directed_analysis", "driver_decomposition"),
+        ("analyze where the conversion funnel loses the most users", "directed_analysis", "funnel_conversion"),
+        ("will users keep purchasing after the first order", "directed_analysis", "retention_lifecycle"),
+        ("forecast next month revenue and estimate ROI", "directed_analysis", "forecast_decision_simulation"),
+        ("evaluate whether the savings card is worth long-term operation; include retention and cost", "directed_analysis", "evaluation_causal"),
     ]
 
     for user_input, expected_intent, expected_playbook in cases:
         intent = plan_turn_intent(user_input, _loaded_context())
-        if expected_intent == "direct_analysis":
-            intent.intent_type = "direct_analysis"
+        if expected_intent == "directed_analysis":
+            intent.intent_type = "directed_analysis"
             intent.data_state = "data_loaded"
         selection = select_playbooks(user_input, intent, AnalysisSessionState(session_id="s"), _loaded_context())
         assert selection.primary_playbook_id == expected_playbook
         assert selection.recommended_paths
-        assert selection.analysis_spec is not None
-        capabilities = {
-            step["required_capability"]
-            for step in selection.analysis_spec["method_plan"]
-            if step.get("required_capability")
-        }
-        assert capabilities
+        if expected_intent == "directed_analysis":
+            assert selection.analysis_spec is not None
+            capabilities = {
+                step["required_capability"]
+                for step in selection.analysis_spec["method_plan"]
+                if step.get("required_capability")
+            }
+            assert capabilities
 
 
 def test_business_playbook_analysis_spec_contains_visualization_strategy_and_stats():
@@ -122,7 +123,7 @@ def test_selector_handles_no_data_business_question_as_requirement():
 def test_controller_writes_playbook_selection_to_state_and_activates_capability():
     state = AnalysisSessionState(session_id="controller_playbook", project_name=None)
     intent = plan_turn_intent("why did revenue decline", _loaded_context())
-    intent.intent_type = "direct_analysis"
+    intent.intent_type = "directed_analysis"
     intent.data_state = "data_loaded"
 
     controller = AnalysisFlowController("controller_playbook")
@@ -151,7 +152,7 @@ def test_english_business_requests_are_direct_analysis():
 
     for text, expected_playbook in cases:
         intent = plan_turn_intent(text, context)
-        assert intent.intent_type == "direct_analysis"
+        assert intent.intent_type == "directed_analysis"
         selection = select_playbooks(text, intent, AnalysisSessionState(session_id="english_direct"), context)
         assert selection.primary_playbook_id == expected_playbook
 

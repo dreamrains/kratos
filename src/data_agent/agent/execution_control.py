@@ -14,31 +14,50 @@ class BudgetExceeded(RuntimeError):
     """Raised when a turn should stop or avoid a tool call."""
 
 
+# Meta tools: record intermediate analysis artifacts, manage tasks, interact with user.
+# These are overhead, not data analysis — exempt from tool_calls budget.
+_META_TOOLS: set[str] = {
+    "record_evidence_record",
+    "record_analysis_spec",
+    "record_data_requirement",
+    "record_insight_record",
+    "record_analysis_plan",
+    "task_create",
+    "task_update",
+    "task_list",
+    "ask_user_question",
+    "generate_formal_report",
+    "generate_analysis_brief",
+    "generate_report",
+}
+
+
 @dataclass
 class ToolExecutionBudget:
     profile: str = "analysis"
     max_tool_calls: int | None = None
-    # Kept for backward compatibility with older tests/config, but chart calls
-    # are no longer limited by count. Chart quality gates decide value.
     max_chart_calls: int | None = None
     max_fallback_calls: int | None = None
     max_consecutive_errors: int = 3
     max_repeated_tool_errors: int = 2
     max_elapsed_seconds: float | None = None
-    soft_ratio: float = 0.60
+    soft_ratio: float = 0.75
     restrict_ratio: float = 0.85
+    token_budget: int | None = None
 
     def __post_init__(self) -> None:
         defaults = {
-            "interactive": (30, 3, 3),
-            "analysis": (80, 6, 8),
-            "deep": (120, 10, 15),
+            "interactive": (50, 3, 30_000),
+            "analysis": (130, 8, 70_000),
+            "deep": (200, 15, 100_000),
         }
-        tool_calls, chart_calls, fallback_calls = defaults.get(self.profile, defaults["analysis"])
+        tool_calls, fallback_calls, token_budget = defaults.get(self.profile, defaults["analysis"])
         if self.max_tool_calls is None:
             self.max_tool_calls = tool_calls
         if self.max_fallback_calls is None:
             self.max_fallback_calls = fallback_calls
+        if self.token_budget is None:
+            self.token_budget = token_budget
 
 
 @dataclass
@@ -54,6 +73,8 @@ class TurnExecutionState:
     seen_calls: dict[str, int] = field(default_factory=dict)
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
+    estimated_tokens_used: int = 0
+    _call_order: list = field(default_factory=list)
 
     @property
     def should_converge(self) -> bool:
@@ -66,16 +87,43 @@ class TurnExecutionState:
         return tool_limit or fallback_limit
 
     @property
+    def should_stop_meta_only(self) -> bool:
+        count = 0
+        for name in reversed(self._call_order):
+            if name in _META_TOOLS:
+                count += 1
+            else:
+                break
+        return count >= 4
+
+    @property
     def elapsed_seconds(self) -> float:
         return time.monotonic() - self.started_at
 
     def record_llm_round(self) -> None:
         self.llm_rounds += 1
 
+    def record_token_usage(self, delta: int) -> None:
+        self.estimated_tokens_used += delta
+
     def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         args = args or {}
+        is_meta = tool_name in _META_TOOLS
+
+        # --- Time budget applies to all tools ---
         if self.budget.max_elapsed_seconds is not None and self.elapsed_seconds >= self.budget.max_elapsed_seconds:
             raise BudgetExceeded("Time budget reached; summarize current evidence and stop calling tools.")
+
+        # Meta tools: only error safety checks remain (bypass budget, fallback, resolution)
+        if is_meta:
+            key = self._error_key(tool_name, args)
+            if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
+                raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
+            if self.consecutive_errors >= self.budget.max_consecutive_errors:
+                raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
+            return
+
+        # --- Budget checks (non-meta tools) ---
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             raise BudgetExceeded("Tool call budget reached; summarize current evidence and stop calling tools.")
         if tool_name == "run_python" and self.fallback_calls >= (self.budget.max_fallback_calls or 0):
@@ -86,6 +134,8 @@ class TurnExecutionState:
             )
         if self._is_low_value_duplicate(tool_name, args):
             raise BudgetExceeded(f"Low-value duplicate tool call for {tool_name}; reuse existing evidence or change the analysis angle.")
+
+        # --- Error safety (non-meta tools) ---
         key = self._error_key(tool_name, args)
         if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
             raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
@@ -97,9 +147,11 @@ class TurnExecutionState:
             raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
 
     def record_tool_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
-        self.tool_calls += 1
+        if tool_name not in _META_TOOLS:
+            self.tool_calls += 1
         key = self._error_key(tool_name, args or {})
         self.seen_calls[key] = self.seen_calls.get(key, 0) + 1
+        self._call_order.append(tool_name)
         if tool_name == "create_chart":
             self.chart_calls += 1
         if tool_name == "run_python":
@@ -123,15 +175,21 @@ class TurnExecutionState:
         })
 
     def prompt_hint(self) -> str:
+        hints = []
         if self.tool_calls == 0:
             return ""
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
-            return "Execution budget reached. Stop calling tools and summarize evidence, limits, and next steps."
-        if self.should_restrict_exploration:
-            return "Execution budget is nearly exhausted. Do not start new exploratory tool paths; only record evidence or summarize."
-        if self.should_converge:
-            return "Execution budget is past the soft threshold. Converge on the current evidence and avoid unnecessary tools."
-        return ""
+            hints.append("Execution budget reached. Stop calling tools and summarize evidence, limits, and next steps.")
+        if self.budget.token_budget and self.estimated_tokens_used >= self.budget.token_budget:
+            hints.append("Token budget reached. Stop calling tools and summarize current findings.")
+        if not hints:
+            if self.should_restrict_exploration:
+                hints.append("Execution budget is nearly exhausted. Do not start new exploratory tool paths; only record evidence or summarize.")
+            elif self.should_converge:
+                hints.append("Execution budget is past the soft threshold. Converge on the current evidence and avoid unnecessary tools.")
+        if self.should_stop_meta_only:
+            hints.append("Too many consecutive meta tool calls. Produce user-visible output now instead of recording more artifacts.")
+        return " ".join(hints)
 
     def _error_key(self, tool_name: str, args: dict[str, Any]) -> str:
         return f"{tool_name}:{self._args_hash(args)}"
@@ -143,6 +201,8 @@ class TurnExecutionState:
             "describe_dataset",
             "quick_profile",
             "detect_data_quality",
+            "transform_data",
+            "assess_readiness",
         }
         if tool_name not in low_value_tools:
             return False
@@ -153,6 +213,7 @@ class TurnExecutionState:
         return {
             "record_evidence_record",
             "record_analysis_spec",
+            "record_analysis_plan",
             "record_data_requirement",
             "record_insight_record",
             "task_update",

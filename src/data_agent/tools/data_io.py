@@ -147,6 +147,38 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         except Exception:
             pass  # 推断失败不影响数据加载
 
+        # Data quality scan and feature card
+        try:
+            from data_agent.utils.data_features import (
+                scan_data_quality,
+                build_data_characteristics_card,
+                set_cached_features,
+            )
+            quality = scan_data_quality(df)
+            card = build_data_characteristics_card(name, df, quality)
+            set_cached_features(name, card)
+            report_parts.append(f"\n{card}")
+        except Exception:
+            pass
+
+        # Cross-dataset relationship hints
+        try:
+            existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
+            if existing:
+                from data_agent.utils.data_features import detect_cross_dataset_relationships
+                other_dfs = {}
+                for other_name in existing:
+                    other_df = workspace.get(other_name)
+                    if other_df is not None:
+                        other_dfs[other_name] = other_df
+                if other_dfs:
+                    relationships = detect_cross_dataset_relationships({name: df, **other_dfs})
+                    if relationships:
+                        rel_lines = [f"  {r['left']}.{r['column']} <-> {r['right']}.{r['column']} (overlap: {r['overlap_pct']:.0%})" for r in relationships[:5]]
+                        report_parts.append("\n[cross_dataset_hints]\nPossible join keys:\n" + "\n".join(rel_lines) + "\n[/cross_dataset_hints]")
+        except Exception:
+            pass
+
         if applied:
             report_parts.append("\n自动类型清洗:")
             for item in applied:

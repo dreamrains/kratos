@@ -11,7 +11,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.analysis_objective import infer_analysis_objective
 from data_agent.agent.intent import TurnIntent
 
 
@@ -420,7 +419,7 @@ def select_playbooks(
 
     recommended_paths = _recommended_paths(primary, supporting)
     requirement = _build_data_requirement(playbook, user_input, supporting)
-    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if has_data and intent.intent_type in {"direct_analysis", "analysis_guidance", "report"} else None
+    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
 
     if not has_data or intent.intent_type == "data_requirement":
         analysis_spec = None
@@ -482,7 +481,7 @@ def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
         return "trend_period_comparison"
     if _has_any(text, ["top", "overview", "summary", "distribution", "概览", "分布", "排名"]):
         return "metric_overview"
-    if intent.intent_type == "analysis_guidance" and has_data:
+    if intent.intent_type == "intent_negotiation" and has_data:
         return "data_understanding"
     return "data_understanding" if has_data else "data_understanding"
 
@@ -586,10 +585,8 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
             if section not in output_sections:
                 output_sections.append(section)
     playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
-    objective = infer_analysis_objective(user_input, "")
     return {
         "goal": user_input.strip() or playbook.name,
-        "analysis_objective": objective,
         "analysis_plan_version": "expert_flow_v2",
         "playbook_id": playbook.id,
         "supporting_playbook_ids": supporting,
