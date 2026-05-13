@@ -163,16 +163,14 @@ class AnalysisFlowController:
         return {"created": len(created), "task_ids": [t["id"] for t in created]}
 
     def activate_tool_groups(self, registry, intent: TurnIntent, state: AnalysisSessionState, user_input: str) -> set[str]:
-        """Activate tool groups using intent/state first, keywords as fallback."""
+        """Activate tool groups using intent/state first, data signals second, keywords as fallback."""
         registry.reset_groups()
         groups: set[str] = set()
 
         if intent.intent_type in ("simple_response", "knowledge_qa", "analysis_consultation", "result_followup"):
-            pass  # No tool groups for conversation mode
+            groups.update({"conversation_query"})
         elif intent.intent_type in ("intent_negotiation", "data_requirement"):
-            groups.update({"knowledge"})
-            if intent.data_state == "data_loaded":
-                groups.update({"eda"})
+            groups.update({"knowledge", "eda"})
         elif intent.intent_type == "directed_analysis":
             groups.update({"eda", "task", "knowledge"})
             if state.analysis_plan:
@@ -182,10 +180,14 @@ class AnalysisFlowController:
             if not state.evidence_records:
                 groups.update({"stats"})
         elif intent.intent_type == "data_operation":
-            groups.update({"clean"})
+            groups.update({"clean", "eda"})
 
         registry.activate_groups(groups)
         self._activate_capabilities_from_state(registry, state)
+
+        # Activate based on data features in state (interpret_dataset results)
+        self._activate_from_data_signals(registry, state)
+
         keyword_groups = registry.activate_groups_for_text(user_input)
 
         if intent.intent_type == "data_requirement":
@@ -195,6 +197,50 @@ class AnalysisFlowController:
             registry._get_active_groups().discard("task")
 
         return groups | keyword_groups
+
+    def _activate_from_data_signals(self, registry, state: AnalysisSessionState) -> None:
+        """Activate tool groups based on data features stored in analysis state.
+
+        Uses evidence_records and analysis_spec to detect data signals
+        (time columns, dimensions, metrics, etc.) and proactively enable
+        relevant tool groups.
+        """
+        spec = state.analysis_spec or {}
+        evidence = state.evidence_records or []
+
+        # Extract signal text from spec and recent evidence
+        signal_parts = []
+        for field in ("metrics", "dimensions", "time_scope"):
+            val = spec.get(field)
+            if isinstance(val, (list, str)) and val:
+                signal_parts.extend(val if isinstance(val, list) else [val])
+        for rec in evidence[-3:]:
+            for field in ("claim", "method"):
+                val = rec.get(field, "")
+                if val:
+                    signal_parts.append(str(val))
+
+        if not signal_parts:
+            return
+
+        signal_text = " ".join(signal_parts).lower()
+
+        # Time-related signals → activate eda tools for trend analysis
+        time_signals = ("date", "time", "时间", "日期", "trend", "趋势", "周期", "seasonal")
+        if any(s in signal_text for s in time_signals):
+            registry.expand_from_tool_call("analyze_time_series")
+
+        # Dimension signals → activate comparison tools
+        dim_signals = ("channel", "region", "渠道", "地区", "维度", "segment", "分组", "对比")
+        if any(s in signal_text for s in dim_signals):
+            registry.expand_from_tool_call("compare_periods")
+            registry.expand_from_tool_call("top_n")
+
+        # Funnel/conversion signals
+        funnel_signals = ("funnel", "conversion", "漏斗", "转化", "drop-off", "流失")
+        if any(s in signal_text for s in funnel_signals):
+            registry.expand_from_tool_call("funnel_analysis")
+            registry.expand_from_tool_call("cohort_analysis")
 
     def _activate_capabilities_from_state(self, registry, state: AnalysisSessionState) -> None:
         """Expand tool visibility from AnalysisSpec method-plan capabilities."""
@@ -216,3 +262,7 @@ class AnalysisFlowController:
         if not summary:
             return ""
         return "<analysis_state>\n" + summary + "\n</analysis_state>"
+
+    def check_tool_regression(self, state: AnalysisSessionState, tool_name: str, tool_result: str) -> str | None:
+        """Check if a tool result should trigger stage regression. Delegates to state."""
+        return state.check_regression_triggers(tool_name, tool_result)

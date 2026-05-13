@@ -17,7 +17,24 @@ from data_agent.tools.registry import registry
 
 @registry.register(
     name="analyze_time_series",
-    description="分析时间序列趋势、季节性和突变点。date_col 和 value_col 可自动推断（留空即可）。",
+    description=(
+        "分析时间序列趋势、季节性和突变点。"
+        "使用场景：指标随时间变化的趋势方向、周期性检测、异常时间点定位。"
+        "不适用场景：无时间列的数据、跨维度对比（用 compare_periods）。"
+        "参数说明：date_col 和 value_col 可自动推断（留空即可），target_col 为 value_col 的别名。"
+        "常见错误：日期列未转换为 datetime 类型（先用 apply_type_conversion 转换）。"
+    ),
+    recovery_hint=(
+        "时间序列分析需要日期列和数值列。"
+        "请用 describe_dataset 检查列类型：date_col 应为 datetime，value_col 应为数值。"
+        "如数据点不足 3 个，使用 distribution_analysis 替代。"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "date_col": {"description": "日期/时间列名，留空自动推断"},
+        "value_col": {"description": "数值列名，留空自动推断"},
+        "target_col": {"description": "目标列名（value_col 的别名）"},
+    },
 )
 def analyze_time_series(name: str, date_col: str = "", value_col: str = "", target_col: str = "") -> str:
     df, err = get_df(name)
@@ -151,7 +168,13 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
 
 @registry.register(
     name="correlation_analysis",
-    description="计算数值列之间的相关系数矩阵。返回高相关性列表，完整矩阵自动持久化。",
+    description=(
+        "计算数值列之间的相关系数矩阵，识别高相关性变量对。"
+        "使用场景：发现指标间的关联关系、筛选冗余特征、为归因分析提供线索。"
+        "不适用场景：类别型变量（无法计算相关系数）、非线性关系（考虑用 distribution_analysis）。"
+        "参数说明：columns 留空分析所有数值列，method 支持 pearson/spearman/kendall。"
+        "常见错误：非数值列会被自动过滤，如遗漏请用 describe_dataset 检查类型。"
+    ),
     schema_overrides={
         "name": {"description": "数据集名称"},
         "columns": {"description": "数值列，逗号分隔，为空则分析所有数值列"},
@@ -382,8 +405,17 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
 @registry.register(
     name="compare_periods",
     description=(
-        "比较两个时间段的数据差异。自动计算各指标的变化量和变化率。"
-        "period 参数格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'/'last_week'/'this_week'。"
+        "比较两个时间段的数据差异，自动计算各指标的变化量和变化率。"
+        "使用场景：环比/同比分析、活动前后效果对比、不同时期业务表现对比。"
+        "不适用场景：无时间列的数据、单时间点快照。"
+        "参数说明：period 格式为 'YYYY-MM-DD~YYYY-MM-DD' 或快捷词（last_month/this_month/last_week/this_week）。"
+        "常见错误：日期格式不匹配、时间段内无数据（先用 preview_data 确认时间范围）。"
+    ),
+    recovery_hint=(
+        "时段对比失败。常见原因："
+        "1) 日期格式不正确（需要 YYYY-MM-DD 格式或快捷词）"
+        "2) 指定时间段内无数据（用 preview_data 检查时间范围）"
+        "3) date_col 不是日期类型（用 describe_dataset 检查）"
     ),
     schema_overrides={
         "name": {"description": "数据集名称"},
@@ -487,7 +519,13 @@ def compare_periods(
 
 @registry.register(
     name="top_n",
-    description="获取按指定列排序的 Top N 记录。常用于查找销量最高/最低的产品、用户等。",
+    description=(
+        "获取按指定列排序的 Top N 记录。"
+        "使用场景：查找销量最高/最低的产品、贡献最大的客户、表现最好/最差的维度值。"
+        "不适用场景：需要全量排序（数据量太大时考虑先 group_aggregate 再 top_n）。"
+        "参数说明：sort_by 留空自动选第一个数值列，ascending=False 为降序（默认）。"
+        "常见错误：sort_by 列不存在或非数值列。"
+    ),
     schema_overrides={
         "name": {"description": "数据集名称"},
         "sort_by": {"description": "排序依据的列名"},

@@ -413,8 +413,28 @@ def select_playbooks(
 ) -> PlaybookSelection:
     text = (user_input or "").lower()
     has_data = intent.data_state == "data_loaded" or bool(dataset_profile.strip())
-    primary = _choose_primary(text, intent, has_data)
-    supporting = _choose_supporting(text, primary)
+
+    # Try LLM selection first for non-trivial inputs; fall back to keyword
+    llm_supporting: list[str] = []
+    primary: str | None = None
+    if len(text.strip()) >= 8:
+        try:
+            from data_agent.agent.llm_playbook import select_playbook_llm
+            llm_result = select_playbook_llm(
+                user_input=text,
+                data_features=dataset_profile,
+            )
+            if llm_result and llm_result.get("primary"):
+                primary = llm_result["primary"]
+                llm_supporting = llm_result.get("supporting", [])
+        except Exception:
+            pass
+
+    if not primary:
+        primary = _choose_primary(text, intent, has_data)
+
+    # Use LLM supporting if available, otherwise fall back to keyword-based
+    supporting = llm_supporting if llm_supporting else _choose_supporting(text, primary)
     playbook = PLAYBOOKS[primary]
 
     recommended_paths = _recommended_paths(primary, supporting)
@@ -460,30 +480,55 @@ def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -
     return any(item.get("playbook_id") == playbook_id for item in items)
 
 
+_HIGH_CONFIDENCE_RULES: list[tuple[list[str], str]] = [
+    (["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"], "funnel_conversion"),
+    (["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"], "forecast_decision_simulation"),
+    (["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"], "driver_decomposition"),
+    (["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"], "retention_lifecycle"),
+    (["收益", "收入", "成本", "利润", "roi", "profit", "revenue", "cost", "net value"], "revenue_profitability"),
+    (["trend", "period", "month", "week", "同比", "环比", "趋势"], "trend_period_comparison"),
+]
+
+_AMBIGUOUS_RULES: list[tuple[list[str], str]] = [
+    (["功能", "feature", "产品功能", "付费行为", "用户行为"], "product_feature_analysis"),
+    (["活动", "campaign", "营销", "是否有效", "效果", "impact"], "effect_evaluation"),
+    (["evaluate", "evaluation", "effect", "causal", "ab test", "a/b", "worth", "continue operating", "keep operating", "long term operation", "long-term operation", "long-term", "长期运营", "是否值得"], "evaluation_causal"),
+    (["top", "overview", "summary", "distribution", "概览", "分布", "排名"], "metric_overview"),
+]
+
+
 def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
-    if _has_any(text, ["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"]):
-        return "funnel_conversion"
-    if _has_any(text, ["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"]):
-        return "forecast_decision_simulation"
-    if _has_any(text, ["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"]):
-        return "driver_decomposition"
-    if _has_any(text, ["功能", "feature", "产品功能", "付费行为", "用户行为"]):
-        return "product_feature_analysis"
-    if _has_any(text, ["活动", "campaign", "营销", "是否有效", "效果", "impact"]):
-        return "effect_evaluation"
-    if _has_any(text, ["evaluate", "evaluation", "effect", "causal", "ab test", "a/b", "worth", "continue operating", "keep operating", "long term operation", "long-term operation", "long-term", "长期运营", "是否值得"]):
-        return "evaluation_causal"
-    if _has_any(text, ["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"]):
-        return "retention_lifecycle"
-    if _has_any(text, ["收益", "收入", "成本", "利润", "roi", "profit", "revenue", "cost", "net value"]):
-        return "revenue_profitability"
-    if _has_any(text, ["trend", "period", "month", "week", "同比", "环比", "趋势"]):
-        return "trend_period_comparison"
-    if _has_any(text, ["top", "overview", "summary", "distribution", "概览", "分布", "排名"]):
-        return "metric_overview"
+    # Layer 1: high-confidence keyword rules → return directly (skip LLM)
+    for keywords, playbook_id in _HIGH_CONFIDENCE_RULES:
+        if _has_any(text, keywords):
+            return playbook_id
+
+    # Layer 2: ambiguous keyword rules → tentative match (LLM may override)
+    keyword_tentative = None
+    for keywords, playbook_id in _AMBIGUOUS_RULES:
+        if _has_any(text, keywords):
+            keyword_tentative = playbook_id
+            break
+
+    # Layer 3: LLM semantic selection for non-trivial inputs
+    if len(text.strip()) >= 8:
+        try:
+            from data_agent.agent.llm_playbook import select_playbook_llm
+            llm_result = select_playbook_llm(
+                user_input=text,
+                keyword_result=keyword_tentative or "无",
+            )
+            if llm_result and llm_result.get("primary"):
+                return llm_result["primary"]
+        except Exception:
+            pass
+
+    # Layer 4: fallback to keyword tentative or default
+    if keyword_tentative:
+        return keyword_tentative
     if intent.intent_type == "intent_negotiation" and has_data:
         return "data_understanding"
-    return "data_understanding" if has_data else "data_understanding"
+    return "data_understanding"
 
 
 def _choose_supporting(text: str, primary: str) -> list[str]:

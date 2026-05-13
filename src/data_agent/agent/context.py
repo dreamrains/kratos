@@ -24,6 +24,7 @@ class AgentContext:
     mcp_visible: bool = True
     analysis_state: object | None = None
     turn_state: object | None = None
+    user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
 
     @property
     def object_name(self) -> Optional[str]:

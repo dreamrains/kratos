@@ -27,6 +27,43 @@ def _mark_statistical_detail_status(payload: dict) -> dict:
     return payload
 
 
+def _calibrate_confidence(payload: dict) -> list[str]:
+    """Auto-calibrate confidence based on evidence quality signals.
+
+    Returns list of warning strings if confidence should be downgraded.
+    Only calibrates when confidence is "high" — lower levels are kept as-is.
+    """
+    confidence = payload.get("confidence", "")
+    if confidence != "high":
+        return []
+
+    warnings: list[str] = []
+
+    # Check sample size
+    sample_size = payload.get("sample_size")
+    if sample_size is not None:
+        try:
+            n = int(str(sample_size).replace(",", "").split()[0])
+            if n < 30:
+                warnings.append(f"样本量({n})不足30，高置信度不适用")
+        except (ValueError, TypeError):
+            pass
+
+    # Check significance
+    significance = str(payload.get("significance", "")).lower()
+    if significance and "not significant" in significance:
+        warnings.append("统计不显著，不应标记高置信度")
+    elif significance and "p>" in significance:
+        warnings.append("p值大于0.05，不应标记高置信度")
+
+    # Check for missing limitations
+    limitations = payload.get("limitations")
+    if not limitations:
+        warnings.append("未声明任何局限性，高置信度需要已知限制说明")
+
+    return warnings
+
+
 def _session_id() -> str:
     try:
         from data_agent.agent.context import get_current_context
@@ -217,6 +254,16 @@ def record_evidence_record(record_json: str) -> str:
         }, ensure_ascii=False)
     payload["confidence"] = confidence
 
+    # Phase 3: Auto-calibrate confidence based on evidence quality
+    calibration_warnings = _calibrate_confidence(payload)
+    if calibration_warnings:
+        payload["calibration_warnings"] = calibration_warnings
+        original = payload["confidence"]
+        if original == "high":
+            payload["confidence"] = "medium"
+            payload["confidence_auto_downgraded"] = True
+            payload["original_confidence"] = original
+
     # Optional fields - pass through if present
     if payload.get("competing_hypotheses") is not None:
         hypotheses = payload["competing_hypotheses"]
@@ -252,4 +299,68 @@ def record_evidence_record(record_json: str) -> str:
         result["evidence_id"] = payload.get("id")
     result["statistical_detail_status"] = payload.get("statistical_detail_status")
     result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
+    if calibration_warnings:
+        result["calibration_warnings"] = calibration_warnings
+        if payload.get("confidence_auto_downgraded"):
+            result["confidence_auto_downgraded"] = True
+            result["original_confidence"] = payload.get("original_confidence")
     return json.dumps(result, ensure_ascii=False)
+
+
+@registry.register(
+    name="get_analysis_summary",
+    description="Read-only query: get a structured summary of the current analysis state including evidence records, insights, and stage. Use in conversation mode to answer questions about previous analysis results.",
+)
+def get_analysis_summary() -> str:
+    """Return a structured summary of current analysis state for conversation mode."""
+    state = _current_state()
+    if state is None:
+        return json.dumps({"info": "No active analysis state found"}, ensure_ascii=False)
+
+    from data_agent.agent.analysis_state import analysis_state_summary
+
+    summary_parts: dict[str, object] = {
+        "stage": state.stage,
+        "goal": state.goal or "-",
+        "data_state": state.data_state,
+    }
+
+    # Evidence records summary
+    evidence = state.evidence_records or []
+    if evidence:
+        evidence_summary = []
+        for rec in evidence:
+            entry = {
+                "claim": rec.get("claim", ""),
+                "confidence": rec.get("confidence", ""),
+                "method": rec.get("method", ""),
+            }
+            if rec.get("sample_size"):
+                entry["sample_size"] = rec.get("sample_size")
+            evidence_summary.append(entry)
+        summary_parts["evidence_records"] = evidence_summary
+        summary_parts["evidence_count"] = len(evidence)
+    else:
+        summary_parts["evidence_count"] = 0
+
+    # Insight records summary
+    insights = state.insight_records or []
+    if insights:
+        summary_parts["insight_records"] = [
+            {"output": ins.get("output", ""), "type": ins.get("output_type", "")}
+            for ins in insights
+        ]
+        summary_parts["insight_count"] = len(insights)
+    else:
+        summary_parts["insight_count"] = 0
+
+    # Regression history
+    if state.regression_history:
+        summary_parts["last_regression"] = state.regression_history[-1]
+
+    # Plan info
+    if state.analysis_plan:
+        summary_parts["has_plan"] = True
+        summary_parts["plan_goal"] = state.analysis_plan.get("goal", "")
+
+    return json.dumps(summary_parts, ensure_ascii=False)

@@ -118,15 +118,136 @@ class ToolTimeoutError(Exception):
 # === Default error recovery hint ===
 
 _DEFAULT_RECOVERY_HINT = (
-    "\n[系统提示] 工具执行失败。请按以下策略恢复：\n"
-    "1. 检查参数是否正确（列名是否存在、数据类型是否匹配）\n"
-    "2. 尝试使用替代工具或方法达到相同分析目标\n"
-    "3. 如果是数据质量问题，先用 detect_data_quality 评估数据状态\n"
-    "4. 如果无法自行恢复，通过 ask_user_question 请求用户提供更多上下文"
+    "\n[恢复建议] 工具执行失败。请检查参数正确性或尝试替代方法。"
 )
 
 
+def _classify_error(error_json: str) -> str:
+    """Classify error JSON into a category for targeted recovery hints."""
+    msg = error_json.lower()
+    try:
+        data = json.loads(error_json)
+        msg = data.get("error", "").lower()
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    if any(kw in msg for kw in ("列", "column")) and ("not" in msg or "不" in msg or "不存在" in msg):
+        return "missing_column"
+    if "not found" in msg or "file not found" in msg:
+        return "missing_data"
+    if "不存在" in msg:
+        return "missing_data"
+    if any(kw in msg for kw in ("type", "类型", "cannot", "无法转换", "dtype")):
+        return "type_mismatch"
+    if any(kw in msg for kw in ("timeout", "超时", "timed out", "exceeded")):
+        return "timeout"
+    if any(kw in msg for kw in ("parameter", "参数", "invalid", "无效")):
+        return "invalid_parameter"
+    if any(kw in msg for kw in ("安全", "sandbox", "not allowed", "不允许")):
+        return "sandbox_violation"
+    if any(kw in msg for kw in ("太少", "too few", "insufficient", "不足", "数据点")):
+        return "insufficient_data"
+    return "unknown"
+
+
+_ERROR_HINTS: dict[str, str] = {
+    "missing_data": (
+        "\n[恢复建议] 数据或文件不存在。"
+        "请用 list_data 查看已加载数据集，或检查文件路径是否正确。"
+    ),
+    "missing_column": (
+        "\n[恢复建议] 列名不存在。"
+        "请用 preview_data 或 describe_dataset 查看实际列名，注意列名拼写和大小写。"
+    ),
+    "type_mismatch": (
+        "\n[恢复建议] 数据类型不匹配。"
+        "请用 describe_dataset 检查列类型，或用 suggest_column_types 获取类型转换建议。"
+    ),
+    "timeout": (
+        "\n[恢复建议] 操作超时，数据量可能过大。"
+        "建议先通过 transform_data(filter) 缩小数据范围后再操作。"
+    ),
+    "invalid_parameter": (
+        "\n[恢复建议] 参数无效。"
+        "请检查参数格式和取值范围，参考工具描述中的参数说明。"
+    ),
+    "sandbox_violation": (
+        "\n[恢复建议] 代码执行被安全策略阻止。"
+        "请优先使用结构化工具（transform_data, describe_dataset 等）替代自由代码。"
+    ),
+    "insufficient_data": (
+        "\n[恢复建议] 数据不足以执行此分析。"
+        "请记录此限制，选择对数据量要求更低的分析方法。"
+    ),
+    "unknown": (
+        "\n[恢复建议] 工具执行失败。"
+        "请检查参数正确性，或使用 ask_user_question 请求用户提供更多上下文。"
+    ),
+}
+
+
+def _build_recovery_hint(error_json: str) -> str:
+    """Build a recovery hint based on error type classification."""
+    category = _classify_error(error_json)
+    return _ERROR_HINTS.get(category, _DEFAULT_RECOVERY_HINT)
+
+
 # === Tool groups and phases ===
+
+# Write-capability categories that mutate shared state (workspace, state, filesystem).
+_WRITE_CATEGORIES: frozenset[str] = frozenset({
+    "data_transform", "data_write", "artifact", "evidence",
+    "report", "visualization", "fallback", "confirmation",
+    "workflow", "interaction.confirmation",
+})
+
+
+def _is_read_only(tool_def) -> bool:
+    """Determine if a tool is safe for parallel execution based on its capability metadata.
+
+    A tool is read-only if:
+    - Its ToolCapability has risk_level == "low" AND category not in _WRITE_CATEGORIES
+    - OR it has no capability defined AND it's not in the known write-tools list
+    """
+    cap = tool_def.capability
+    if cap is not None:
+        if cap.risk_level != "low":
+            return False
+        if cap.category in _WRITE_CATEGORIES:
+            return False
+        # Tools that require confirmation are never read-only
+        if cap.requires_confirmation:
+            return False
+        return True
+
+    # Fallback: no capability metadata — check against known write-tools
+    known_write = {
+        "load_data", "load_sql", "export_data", "export_output",
+        "transform_data", "derive_field", "run_python",
+        "ask_user_question", "create_chart",
+        "record_data_requirement", "record_analysis_spec", "record_analysis_plan",
+        "record_evidence_record", "record_insight_record",
+        "generate_report", "generate_analysis_brief", "generate_formal_report",
+        "export_conversation",
+        "clean_data", "apply_type_conversion",
+        "load_skill", "update_project_rules", "set_domain", "confirm_experience",
+        "task_create", "task_update",
+    }
+    return tool_def.name not in known_write
+
+
+def get_read_only_tools(registry_instance: ToolRegistry) -> frozenset[str]:
+    """Compute the set of read-only tool names from registry metadata."""
+    registry_instance._ensure_discovered()
+    return frozenset(
+        name for name, tool in registry_instance._tools.items()
+        if _is_read_only(tool)
+    )
+
+
+# Lazy-evaluated module-level accessor for read-only tools.
+# Use get_read_only_tools(registry) for fresh computation, or READ_ONLY_TOOLS for cached.
+READ_ONLY_TOOLS: frozenset[str] = frozenset()  # Populated lazily
 
 TOOL_GROUPS: dict[str, set[str]] = {
     "core": {
@@ -171,6 +292,9 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "show_domain_knowledge", "set_domain",
         "show_experience_log", "confirm_experience",
         "load_skill", "list_skills",
+    },
+    "conversation_query": {
+        "get_analysis_summary",
     },
 }
 
@@ -636,15 +760,26 @@ class ToolRegistry:
         return tool_result
 
     def format_result(self, name: str, result: ToolResult) -> str:
-        """Format a tool result for LLM consumption, appending error recovery hints."""
+        """Format a tool result for LLM consumption, appending context-aware recovery hints."""
         output = result.to_cli()
-        if output.startswith('{"error":') or output.startswith('{"error": '):
-            hint = _DEFAULT_RECOVERY_HINT
-            tool = self._tools.get(name)
-            if tool and tool.recovery_hint:
-                hint = f"\n[系统提示] {tool.recovery_hint}"
-            return f"{output}{hint}"
-        return output
+        if not (output.startswith('{"error":') or output.startswith('{"error": ')):
+            return output
+
+        tool = self._tools.get(name)
+
+        # Priority 1: tool-specific recovery_hint
+        if tool and tool.recovery_hint:
+            hint = f"\n[恢复建议] {tool.recovery_hint}"
+        else:
+            # Priority 2: exception-type based hint
+            hint = _build_recovery_hint(output)
+
+        # Append fallback tool recommendations
+        if tool and tool.capability and tool.capability.fallback_tools:
+            fallbacks = ", ".join(tool.capability.fallback_tools)
+            hint += f"\n替代工具: {fallbacks}"
+
+        return f"{output}{hint}"
 
     def _run_with_timeout(self, func: Callable, params: dict, timeout: int) -> Any:
         """在线程池中运行工具函数，超时则取消。Windows 兼容。"""

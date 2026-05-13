@@ -215,7 +215,20 @@ def _validate_chart_spec(
 
 @registry.register(
     name="create_chart",
-    description="创建图表。chart_type: line/bar/stacked_bar/scatter/box/histogram/heatmap/pie/funnel。data_json 为 JSON 数据或数据集名称。",
+    description=(
+        "创建可视化图表。"
+        "使用场景：展示趋势（line）、对比（bar）、分布（box/histogram）、关系（scatter/heatmap）、占比（pie）、转化（funnel）。"
+        "不适用场景：数据尚未加载、需要精确数值对比（用表格输出更好）。"
+        "参数说明：data 为数据集名称，y_col 支持逗号分隔多列（自动多轴），color_col 用于分组。"
+        "常见错误：列名不存在、数值列包含非数字、x 轴类别过多（>50 时先聚合）。"
+    ),
+    recovery_hint=(
+        "图表创建失败。常见原因："
+        "1) x_col/y_col 列名不存在（用 preview_data 查看）"
+        "2) 数值列包含非数字（用 describe_dataset 检查类型）"
+        "3) 数据为空或过滤后无数据"
+        "如无法解决，可用 Mermaid 文本图表作为替代。"
+    ),
     schema_overrides={
         "chart_type": {"description": "图表类型", "enum": ["line", "bar", "stacked_bar", "scatter", "box", "histogram", "heatmap", "pie", "funnel"]},
         "data": {"description": "数据集名称"},
@@ -223,7 +236,7 @@ def _validate_chart_spec(
         "x_col": {"description": "X 轴列名"},
         "y_col": {"description": "Y 轴列名，逗号分隔支持多列"},
         "color_col": {"description": "颜色分组列"},
-        "data_json": {"description": "JSON 格式数据"},
+        "data_json": {"description": "JSON 格式数据（funnel 必须用此参数）"},
     },
 )
 def create_chart(

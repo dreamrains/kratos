@@ -14,23 +14,109 @@ from data_agent.tools.registry import registry
 @registry.register(
     name="transform_data",
     description=(
-        "对数据集执行变换操作。operation 可选: "
-        "merge（合并两个数据集，params: other_name, on/left_on/right_on, how=inner），"
-        "pivot（宽转长: params: id_vars, value_vars / 长转宽: params: index, columns, values），"
-        "filter（筛选行: params: condition，pandas query 语法），"
-        "select（选择列: params: columns 逗号分隔或列表），"
-        "rename（重命名列: params: mapping，格式 old:new,old2:new2 或 dict），"
-        "group_aggregate（分组聚合: params: group_by, agg（dict 格式，如 {\"col1\": [\"sum\", \"mean\"], \"col2\": [\"count\"]}），"
-        "或兼容旧格式 agg_func + agg_col），"
-        "resample（时间重采样: params: date_col, freq（W/M/Q/Y）, agg（dict 格式，如 {\"col1\": \"sum\", \"col2\": \"mean\"}）），"
-        "sort（排序: params: by, ascending=true/false）。"
-        "save_as 指定保存为新数据集名称，为空则覆盖原数据集。"
+        "对数据集执行变换操作。"
+        "使用场景：数据预处理（筛选/排序/重命名）、多维聚合、时间重采样、数据合并。"
+        "不适用场景：列类型转换（用 apply_type_conversion）、数据清洗（用 clean_data）。"
+        "参数说明：根据 operation 选择对应参数即可，无需所有参数都填写。"
+        "也可通过 params 传入 JSON 兼容旧格式。"
+        "常见错误：列名拼写错误、filter 条件语法错误（需 pandas query 语法）。"
     ),
-    schema_overrides={
-        "name": {"description": "数据集名称"},
-        "operation": {"description": "操作类型", "enum": ["merge", "pivot", "filter", "select", "rename", "group_aggregate", "resample", "sort"]},
-        "params": {"description": "操作参数，JSON 格式"},
-        "save_as": {"description": "保存为新数据集名称，为空则覆盖原数据集"},
+    recovery_hint=(
+        "数据变换失败。常见原因："
+        "列名不存在（用 preview_data 查看列名）、"
+        "数据类型不匹配（用 describe_dataset 检查类型）、"
+        "聚合函数名拼写错误（支持 sum/mean/count/min/max/median/std）。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "数据集名称"},
+            "operation": {
+                "type": "string",
+                "description": "操作类型",
+                "enum": ["filter", "select", "rename", "sort", "group_aggregate", "resample", "pivot", "merge"],
+            },
+            "save_as": {"type": "string", "description": "保存为新数据集名称，为空则自动生成"},
+            "params": {"type": "string", "description": "[兼容] JSON 格式参数，优先级低于结构化参数"},
+            # filter 参数
+            "condition": {"type": "string", "description": "筛选条件（pandas query 语法，如 revenue > 100）"},
+            # select 参数
+            "columns": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "要选择的列名列表",
+            },
+            # rename 参数
+            "rename_mapping": {
+                "type": "object",
+                "description": "重命名映射 {旧列名: 新列名}",
+                "additionalProperties": {"type": "string"},
+            },
+            # sort 参数
+            "sort_by": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "排序列名",
+            },
+            "ascending": {"type": "boolean", "description": "升序/降序（默认 true）"},
+            # group_aggregate 参数
+            "group_by": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "分组列名",
+            },
+            "aggregations": {
+                "type": "array",
+                "description": "聚合规则列表",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "column": {"type": "string", "description": "聚合目标列"},
+                        "functions": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["sum", "mean", "count", "min", "max", "median", "std"]},
+                            "description": "聚合函数列表",
+                        },
+                    },
+                    "required": ["column", "functions"],
+                },
+            },
+            # resample 参数
+            "date_col": {"type": "string", "description": "时间列名（resample 使用）"},
+            "freq": {
+                "type": "string",
+                "description": "重采样频率",
+                "enum": ["D", "W", "ME", "QE", "YE"],
+            },
+            "resample_agg": {
+                "type": "object",
+                "description": "重采样聚合 {列名: 聚合函数}",
+                "additionalProperties": {"type": "string"},
+            },
+            # merge 参数
+            "other_name": {"type": "string", "description": "要合并的第二个数据集名称"},
+            "merge_on": {"type": "string", "description": "合并键列名"},
+            "merge_how": {
+                "type": "string",
+                "description": "合并方式",
+                "enum": ["inner", "left", "right", "outer"],
+            },
+            # pivot 参数
+            "pivot_index": {"type": "string", "description": "pivot 索引列"},
+            "pivot_columns": {"type": "string", "description": "pivot 列名字段"},
+            "pivot_values": {"type": "string", "description": "pivot 值字段"},
+            "melt_id_vars": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "melt 操作的 ID 变量列",
+            },
+            "melt_value_vars": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "melt 操作的值变量列",
+            },
+        },
+        "required": ["name", "operation"],
     },
 )
 def transform_data(
@@ -38,6 +124,25 @@ def transform_data(
     operation: str,
     params: str = "",
     save_as: str = "",
+    # 结构化参数（由 Schema 层传递，函数内合并到 params dict）
+    condition: str = "",
+    columns: list | str | None = None,
+    rename_mapping: dict | str | None = None,
+    sort_by: list | str | None = None,
+    ascending: bool = True,
+    group_by: list | str | None = None,
+    aggregations: list | None = None,
+    date_col: str = "",
+    freq: str = "",
+    resample_agg: dict | str | None = None,
+    other_name: str = "",
+    merge_on: str = "",
+    merge_how: str = "inner",
+    pivot_index: str = "",
+    pivot_columns: str = "",
+    pivot_values: str = "",
+    melt_id_vars: list | str | None = None,
+    melt_value_vars: list | str | None = None,
 ) -> str:
     df = workspace.get(name)
     if df is None:
@@ -47,7 +152,6 @@ def transform_data(
     # 当 save_as 未指定时，自动生成名称（不覆盖源数据集）
     target_name = save_as
     if not target_name:
-        # 简化操作名作为后缀：group_aggregate → grouped, resample → resampled 等
         _op_suffix = {
             "filter": "filtered", "select": "selected", "sort": "sorted",
             "rename": "renamed", "group_aggregate": "grouped",
@@ -55,15 +159,54 @@ def transform_data(
         }
         suffix = _op_suffix.get(operation, operation)
         candidate = f"{name}_{suffix}"
-        # 如果恰好与源名相同（不太可能），加数字后缀
         if candidate == name:
             candidate = f"{name}_{operation}_1"
         target_name = candidate
 
+    # 合并结构化参数到 params dict
     try:
         p = json.loads(params) if params else {}
     except json.JSONDecodeError:
         return json.dumps({"error": "params 必须是有效的 JSON"}, ensure_ascii=False)
+
+    # 结构化参数 → params dict（结构化参数优先，覆盖 params 中的同名字段）
+    if condition and "condition" not in p:
+        p["condition"] = condition
+    if columns is not None and "columns" not in p:
+        p["columns"] = columns
+    if rename_mapping is not None and "mapping" not in p:
+        p["mapping"] = rename_mapping
+    if sort_by is not None and "by" not in p:
+        p["by"] = sort_by
+    if not ascending and "ascending" not in p:
+        p["ascending"] = ascending
+    if group_by is not None and "group_by" not in p:
+        p["group_by"] = group_by
+    if aggregations is not None and "agg" not in p:
+        # aggregations: [{"column": "x", "functions": ["sum", "mean"]}] → {"x": ["sum", "mean"]}
+        p["agg"] = {a["column"]: a["functions"] for a in aggregations if "column" in a and "functions" in a}
+    if date_col and "date_col" not in p:
+        p["date_col"] = date_col
+    if freq and "freq" not in p:
+        p["freq"] = freq
+    if resample_agg is not None and "agg" not in p:
+        p["agg"] = resample_agg
+    if other_name and "other_name" not in p:
+        p["other_name"] = other_name
+    if merge_on and "on" not in p:
+        p["on"] = merge_on
+    if merge_how != "inner" and "how" not in p:
+        p["how"] = merge_how
+    if pivot_index and "index" not in p:
+        p["index"] = pivot_index
+    if pivot_columns and "columns" not in p:
+        p["columns"] = pivot_columns
+    if pivot_values and "values" not in p:
+        p["values"] = pivot_values
+    if melt_id_vars is not None and "id_vars" not in p:
+        p["id_vars"] = melt_id_vars
+    if melt_value_vars is not None and "value_vars" not in p:
+        p["value_vars"] = melt_value_vars
 
     try:
         if operation == "merge":

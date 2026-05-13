@@ -333,7 +333,46 @@ def auto_clean(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
                 "sample": info["sample"],
             })
 
+    # Post-pass: coerce remaining object columns to numeric where possible
+    df, numeric_conversions = _try_coerce_object_to_numeric(df)
+    applied.extend(numeric_conversions)
+
     return df, applied, needs_confirm
+
+
+def _try_coerce_object_to_numeric(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+    """Post-pass: attempt pd.to_numeric on remaining object columns.
+
+    Catches columns that infer_column_type missed due to mixed types,
+    sparse nulls, or edge-case formatting. Only applies conversion when
+    >90% of non-null values convert successfully.
+    """
+    df = df.copy()
+    conversions = []
+
+    for col in df.columns:
+        if df[col].dtype != object:
+            continue
+
+        non_null = df[col].dropna()
+        if len(non_null) == 0:
+            continue
+
+        converted = pd.to_numeric(non_null, errors="coerce")
+        success_count = converted.notna().sum()
+        total_count = len(non_null)
+
+        if total_count > 0 and success_count / total_count >= 0.9:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            conversions.append({
+                "column": col,
+                "from": "object",
+                "to": str(df[col].dtype),
+                "action": "object_to_numeric",
+                "reason": f"object 列含数值数据 ({success_count}/{total_count} 成功转换)",
+            })
+
+    return df, conversions
 
 
 # ── 工具接口 ──────────────────────────────────────────────

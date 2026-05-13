@@ -286,6 +286,11 @@ class AgentLoop:
             with use_agent_context(self.context):
                 workspace.set_project(obj_name)
             set_active_object(obj_name)
+
+            # Reload analysis_state to match restored project
+            from data_agent.agent.analysis_state import load_analysis_state
+            self.context.analysis_state = load_analysis_state(self.session_id, obj_name)
+
             logger.info("Object context restored", extra={"extra_data": {"object": obj_name}})
 
         self._prompt_cache_dirty = True
@@ -327,7 +332,7 @@ class AgentLoop:
         self._interrupt_event.clear()
 
     def _build_system_prompt(self) -> str:
-        from data_agent.agent.prompts import build_system_prompt, _classify_task
+        from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
         from data_agent.session.workspace import workspace
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
@@ -342,6 +347,12 @@ class AgentLoop:
                 content = msg.get("content", "")
                 user_input = content if isinstance(content, str) else str(content)
                 break
+
+        # Detect user proficiency level
+        proficiency = self.context.user_proficiency
+        if proficiency == "auto":
+            proficiency = detect_user_proficiency(user_input, self.messages)
+            self.context.user_proficiency = proficiency
 
         # 判断任务级别
         datasets = workspace.list_datasets()
@@ -393,6 +404,7 @@ class AgentLoop:
                 skill_instructions="",
                 skill_descriptions="",
                 user_input=user_input,
+                proficiency=proficiency,
             )
 
         return build_system_prompt(
@@ -404,6 +416,7 @@ class AgentLoop:
             skill_instructions=skill_instructions,
             skill_descriptions=skill_descriptions,
             user_input=user_input,
+            proficiency=proficiency,
         )
 
     def _get_system_prompt(self) -> str:
@@ -432,6 +445,7 @@ class AgentLoop:
         session_ctx = "\n".join(context_parts)
         intent = plan_turn_intent(user_input, session_ctx)
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
+        self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
@@ -912,17 +926,24 @@ class AgentLoop:
             if output.startswith('{"error":') or output.startswith('{"error": '):
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, output)
-                tool_msg_content = (
-                    f"{output}\n"
-                    "[系统提示] 工具执行失败。请按以下策略恢复：\n"
-                    "1. 检查参数是否正确（列名是否存在、数据类型是否匹配）\n"
-                    "2. 尝试使用替代工具或方法达到相同分析目标\n"
-                    "3. 如果是数据质量问题，先用 detect_data_quality 评估数据状态\n"
-                    "4. 如果无法自行恢复，通过 ask_user_question 请求用户提供更多上下文"
-                )
+                tool_msg_content = registry.format_result(tc.name, tool_result)
+                tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
 
             elif turn_state is not None:
                 turn_state.record_tool_success()
+
+            # Phase 3: check for stage regression after tool execution
+            if self.context.analysis_state is not None:
+                fc = getattr(self, '_flow_controller', None)
+                if fc is not None:
+                    regression_msg = fc.check_tool_regression(
+                        self.context.analysis_state, tc.name, output,
+                    )
+                if regression_msg:
+                    self.messages.append({
+                        "role": "system",
+                        "content": f"[分析流程回退] {regression_msg}",
+                    })
 
             self.messages.append({
                 "role": "tool",
@@ -1163,6 +1184,170 @@ class AgentLoop:
         with use_agent_context(self.context):
             return self._loop_impl()
 
+    def _execute_tools_sequential(self, tool_calls, final_text: str) -> LoopResult | None:
+        """Execute tool calls sequentially. Returns LoopResult if the loop should exit, None to continue."""
+        for i, tc in enumerate(tool_calls):
+            if self._interrupt_event.is_set():
+                logger.info("Interrupted during tool execution")
+                self._fill_remaining_tool_responses(tool_calls, i, "Turn interrupted by user")
+                return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
+
+            logger.info("Tool call", extra={"extra_data": {"tool": tc.name, "args_keys": list(tc.arguments.keys())}})
+
+            registry.expand_from_tool_call(tc.name)
+            turn_state = getattr(self.context, "turn_state", None)
+            if self._is_tool_blocked_by_confirmation(tc.name):
+                blocked = self._blocked_tool_message(tc.name)
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
+                })
+                self._fill_remaining_tool_responses(tool_calls, i + 1, "Turn blocked by confirmation")
+                return FinalResponse(content=blocked)
+            if turn_state is not None:
+                try:
+                    turn_state.ensure_can_call(tc.name, tc.arguments)
+                except BudgetExceeded as exc:
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                    })
+                    self._fill_remaining_tool_responses(tool_calls, i + 1, str(exc))
+                    return FinalResponse(content=str(exc))
+                turn_state.record_tool_call(tc.name, tc.arguments)
+
+            result = self._execute_single_tool(tc, tool_calls, i)
+            if result is not None:
+                return result
+        return None
+
+    def _execute_single_tool(self, tc, tool_calls, index: int) -> LoopResult | None:
+        """Execute a single tool call and append result message.
+
+        Returns LoopResult if the loop should exit (suspension), None to continue.
+        """
+        import time
+
+        turn_state = getattr(self.context, "turn_state", None)
+
+        try:
+            tool_result = registry.execute(tc.name, tc.arguments)
+        except UserConfirmationRequired as ucc:
+            sessions_dir = get_config().sessions_resolved
+            mgr = SuspensionManager(sessions_dir)
+            susp = SuspendedForConfirmation(
+                suspension_id=uuid.uuid4().hex[:8],
+                question=ucc.question,
+                options=ucc.options,
+                context=ucc.context,
+                snapshot={"messages": self._serialize_messages()},
+                multi_select=ucc.multi_select,
+                confirmation_type=ucc.confirmation_type,
+                blocking_reason=ucc.blocking_reason,
+                state_updates=ucc.state_updates,
+                related_task_id=ucc.related_task_id,
+                related_spec_id=ucc.related_spec_id,
+            )
+            self._register_confirmation(susp)
+            mgr.save(susp)
+            self.messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
+            })
+            self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
+            return susp
+
+        output = tool_result.to_cli()
+        output = persist_large_output(self.session_id, tc.id, output)
+
+        tool_msg_content = output
+        if output.startswith('{"error":') or output.startswith('{"error": '):
+            if turn_state is not None:
+                turn_state.record_tool_error(tc.name, tc.arguments, output)
+            tool_msg_content = registry.format_result(tc.name, tool_result)
+            tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
+            logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": output[:200]}})
+        elif turn_state is not None:
+            turn_state.record_tool_success()
+
+        # Check for stage regression after tool execution
+        if self.context.analysis_state is not None:
+            fc = getattr(self, '_flow_controller', None)
+            if fc is not None:
+                regression_msg = fc.check_tool_regression(
+                    self.context.analysis_state, tc.name, output,
+                )
+                if regression_msg:
+                    self.messages.append({
+                        "role": "system",
+                        "content": f"[分析流程回退] {regression_msg}",
+                    })
+
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "content": tool_msg_content,
+        })
+        return None
+
+    def _execute_tools_parallel(self, tool_calls) -> list[tuple]:
+        """Execute read-only tool calls in parallel. Returns [(tc, tool_msg_content), ...]."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from contextvars import copy_context
+
+        turn_state = getattr(self.context, "turn_state", None)
+
+        # Record all tool calls for budget tracking
+        for tc in tool_calls:
+            if turn_state is not None:
+                turn_state.record_tool_call(tc.name, tc.arguments)
+
+        def _run_tool(tc):
+            try:
+                t0 = time.monotonic()
+                tool_result = registry.execute(tc.name, tc.arguments)
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                output = tool_result.to_cli()
+                output = persist_large_output(self.session_id, tc.id, output)
+
+                tool_msg_content = output
+                if output.startswith('{"error":') or output.startswith('{"error": '):
+                    if turn_state is not None:
+                        turn_state.record_tool_error(tc.name, tc.arguments, output)
+                    tool_msg_content = registry.format_result(tc.name, tool_result)
+                    tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
+                elif turn_state is not None:
+                    turn_state.record_tool_success()
+
+                return (tc, tool_msg_content)
+            except Exception as e:
+                error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
+                if turn_state is not None:
+                    turn_state.record_tool_error(tc.name, tc.arguments, error_content)
+                return (tc, error_content)
+
+        import time
+
+        results = {}
+        max_workers = min(len(tool_calls), 3)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {}
+            for tc in tool_calls:
+                ctx = copy_context()
+                future = pool.submit(lambda t=tc: ctx.run(_run_tool, t))
+                futures[future] = tc.id
+
+            for future in as_completed(futures):
+                tc_obj, content = future.result()
+                results[tc_obj.id] = (tc_obj, content)
+
+        # Return in original order
+        return [results[tc.id] for tc in tool_calls if tc.id in results]
+
     def _loop_impl(self) -> LoopResult:
         """循环调用 LLM 直到获得最终文本回复。"""
         final_text = ""
@@ -1226,97 +1411,47 @@ class AgentLoop:
                 return FinalResponse(content=final_text)
 
             # 执行工具，每条结果作为独立的 tool 消息
-            for i, tc in enumerate(response.tool_calls):
-                if self._interrupt_event.is_set():
-                    logger.info("Interrupted during tool execution")
-                    self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
-                    return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
+            tool_calls = response.tool_calls
 
-                logger.info("Tool call", extra={"extra_data": {"tool": tc.name, "args_keys": list(tc.arguments.keys())}})
+            # Check if all tool calls are read-only → parallel execution
+            from data_agent.tools.registry import get_read_only_tools
+            read_only = get_read_only_tools(registry)
+            all_read_only = len(tool_calls) > 1 and all(
+                tc.name in read_only for tc in tool_calls
+            )
 
-                # 根据调用的工具动态扩展工具分组
-                registry.expand_from_tool_call(tc.name)
-                turn_state = getattr(self.context, "turn_state", None)
-                if self._is_tool_blocked_by_confirmation(tc.name):
-                    blocked = self._blocked_tool_message(tc.name)
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps({"error": blocked, "error_type": "confirmation_required"}, ensure_ascii=False),
-                    })
-                    self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Turn blocked by confirmation")
-                    return FinalResponse(content=blocked)
-                if turn_state is not None:
-                    try:
-                        turn_state.ensure_can_call(tc.name, tc.arguments)
-                    except BudgetExceeded as exc:
+            if all_read_only:
+                # Pre-check all tools (group expansion, confirmation, budget)
+                can_parallelize = True
+                for tc in tool_calls:
+                    registry.expand_from_tool_call(tc.name)
+                    if self._is_tool_blocked_by_confirmation(tc.name):
+                        can_parallelize = False
+                        break
+                    turn_state = getattr(self.context, "turn_state", None)
+                    if turn_state is not None:
+                        try:
+                            turn_state.ensure_can_call(tc.name, tc.arguments)
+                        except BudgetExceeded:
+                            can_parallelize = False
+                            break
+
+                if can_parallelize:
+                    results = self._execute_tools_parallel(tool_calls)
+                    for tc, tool_msg_content in results:
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                            "content": tool_msg_content,
                         })
-                        self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
-                        return FinalResponse(content=str(exc))
-                    turn_state.record_tool_call(tc.name, tc.arguments)
-
-                try:
-                    tool_result = registry.execute(tc.name, tc.arguments)
-                except UserConfirmationRequired as ucc:
-                    # Web mode: suspension - save state and return
-                    from pathlib import Path
-                    sessions_dir = get_config().sessions_resolved
-                    mgr = SuspensionManager(sessions_dir)
-                    susp = SuspendedForConfirmation(
-                        suspension_id=uuid.uuid4().hex[:8],
-                        question=ucc.question,
-                        options=ucc.options,
-                        context=ucc.context,
-                        snapshot={"messages": self._serialize_messages()},
-                        multi_select=ucc.multi_select,
-                        confirmation_type=ucc.confirmation_type,
-                        blocking_reason=ucc.blocking_reason,
-                        state_updates=ucc.state_updates,
-                        related_task_id=ucc.related_task_id,
-                        related_spec_id=ucc.related_spec_id,
-                    )
-                    self._register_confirmation(susp)
-                    mgr.save(susp)
-                    # Tell LLM we're waiting
-                    self.messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
-                    })
-                    self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Suspended for user confirmation")
-                    return susp
-
-                output = tool_result.to_cli()
-
-                # 大输出持久化
-                output = persist_large_output(self.session_id, tc.id, output)
-
-                # 工具错误恢复：为 LLM 提供恢复提示
-                tool_msg_content = output
-                if output.startswith('{"error":') or output.startswith('{"error": '):
-                    if turn_state is not None:
-                        turn_state.record_tool_error(tc.name, tc.arguments, output)
-                    tool_msg_content = (
-                        f"{output}\n"
-                        "[系统提示] 工具执行失败。请按以下策略恢复：\n"
-                        "1. 检查参数是否正确（列名是否存在、数据类型是否匹配）\n"
-                        "2. 尝试使用替代工具或方法达到相同分析目标\n"
-                        "3. 如果是数据质量问题，先用 detect_data_quality 评估数据状态\n"
-                        "4. 如果无法自行恢复，通过 ask_user_question 请求用户提供更多上下文"
-                    )
-                    logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": output[:200]}})
-                elif turn_state is not None:
-                    turn_state.record_tool_success()
-
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_msg_content,
-                })
+                else:
+                    seq_result = self._execute_tools_sequential(tool_calls, final_text)
+                    if seq_result is not None:
+                        return seq_result
+            else:
+                seq_result = self._execute_tools_sequential(tool_calls, final_text)
+                if seq_result is not None:
+                    return seq_result
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)

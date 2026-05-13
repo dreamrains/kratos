@@ -1,4 +1,13 @@
-"""Intent classification with rule-based fast path and LLM fallback."""
+"""Intent classification with rule-based fast path and LLM fallback.
+
+Two-layer architecture:
+  Layer 1: Fast rule path — handles clear, unambiguous patterns (greetings,
+           confirmations, explicit report/operation keywords). Returns immediately
+           with clarity="clear" when confident.
+  Layer 2: LLM semantic classification — handles all ambiguous, vague, or
+           natural language inputs. Triggered when fast path returns no result
+           or returns a vague result.
+"""
 
 from __future__ import annotations
 
@@ -44,11 +53,11 @@ class TurnIntent:
         return asdict(self)
 
 
-# ── Keyword sets ──────────────────────────────────────────
+# ── Keyword sets for fast path ────────────────────────────
 
 _CHAT_KEYWORDS = ("你好", "hello", "hi", "谢谢", "感谢", "thanks", "thank you")
 _CONFIRMATION_KEYWORDS = (
-    "好的", "明白", "明白了", "了解", "知道了", "收到", "ok", "okay",
+    "好的", "明白", "明白了", "了解", "了解了", "知道了", "收到", "ok", "okay",
     "继续", "是的", "对", "没错", "没问题", "可以", "同意", "理解",
 )
 _KNOWLEDGE_QA_PREFIXES = (
@@ -126,100 +135,36 @@ def infer_data_state(session_context: str = "") -> DataState:
 
 
 def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
-    """Two-phase intent classification: rules first, LLM fallback for ambiguous cases."""
+    """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
     data_state = infer_data_state(session_context)
 
-    # ── Phase 1: Rule-based fast path ──
+    # ── Layer 1: Fast rule path ──
+    fast_result = _try_fast_path(text, data_state)
 
-    # Report request: check early so short keywords like "报告" are not swallowed
-    if any(k in text for k in _REPORT_KEYWORDS):
-        clarity = "vague" if len(text) < 4 else "clear"
-        ambiguities = [{"field": "用户意图", "issue": "输入过短，可能是报告请求也可能是对话"}] if clarity == "vague" else []
+    # If fast path is confident, return immediately (no LLM cost)
+    if fast_result is not None and fast_result.clarity == "clear":
+        return fast_result
+
+    # ── Layer 2: LLM semantic classification ──
+    # Triggered when fast path returns nothing or returns vague result
+    llm_result = _try_llm_classify(text, session_context)
+    if llm_result is not None:
+        intent_type, ambiguities = llm_result
         return TurnIntent(
-            intent_type="comprehensive_report",
-            clarity=clarity,
-            data_state=data_state,
-            analysis_stage="report" if data_state == "data_loaded" else "scope",
-            recommended_action="generate_report" if data_state == "data_loaded" else "request_data",
-            reason="用户请求报告或全面分析" + ("（短输入）" if clarity == "vague" else ""),
-            ambiguities=ambiguities,
-        )
-
-    # Operation keywords in short input: classify but mark vague
-    if len(text) < 4 and any(k in text for k in _OPERATION_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
-        return TurnIntent(
-            intent_type="data_operation",
-            clarity="vague",
-            data_state=data_state,
-            analysis_stage="execute",
-            recommended_action="execute_operation",
-            reason="短输入命中操作关键词，意图不明确",
-            ambiguities=[{"field": "用户意图", "issue": f"输入过短，可能需要数据操作（{text}），也可能是普通对话"}],
-        )
-
-    # Short confirmations and greetings (only if no meaningful keywords matched)
-    if text in _CONFIRMATION_KEYWORDS or len(text) < 3:
-        return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "短输入或确认语")
-    if any(k in text for k in _CHAT_KEYWORDS) and len(text) < 15:
-        return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "问候或致谢")
-
-    # Knowledge QA: "什么是X" / "解释一下X"
-    if any(text.startswith(p) for p in _KNOWLEDGE_QA_PREFIXES):
-        return _make("knowledge_qa", "clear", data_state, "follow_up", "answer_directly", "知识问答")
-
-    # Analysis consultation: "怎么分析" / "用什么方法"
-    if any(k in text for k in _ANALYSIS_CONSULT_KEYWORDS):
-        return _make("analysis_consultation", "vague", data_state, "follow_up", "answer_directly", "分析咨询或方法讨论")
-
-    # Result followup: "为什么说" / "这个结论" / "可靠吗"
-    if any(k in text for k in _RESULT_FOLLOWUP_KEYWORDS):
-        return _make("result_followup", "clear", data_state, "follow_up", "answer_directly", "追问或质疑已有分析结果")
-
-    # Data requirement (exact match, high priority)
-    if any(k in text for k in _DATA_REQUIREMENT_KEYWORDS):
-        return _make("data_requirement", "exploratory", data_state, "scope", "request_data", "用户询问分析所需数据")
-
-    # Operation (only if no analysis intent)
-    if any(k in text for k in _OPERATION_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
-        return _make("data_operation", "clear", data_state, "execute", "execute_operation", "用户请求明确的数据操作")
-
-    # Guidance: vague "分析一下" without specific direction
-    if any(k in text for k in _GUIDANCE_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
-        return _make(
-            "intent_negotiation" if data_state == "data_loaded" else "data_requirement",
-            "vague", data_state,
-            "discover" if data_state == "data_loaded" else "scope",
-            "guide_analysis" if data_state == "data_loaded" else "request_data",
-            "用户需要分析方向引导",
-        )
-
-    # Analysis keywords with specific direction
-    if any(k in text for k in _ANALYSIS_KEYWORDS):
-        return _make(
-            "directed_analysis" if data_state == "data_loaded" else "data_requirement",
-            "clear" if data_state == "data_loaded" else "vague",
-            data_state,
-            "execute" if data_state == "data_loaded" else "scope",
-            "run_analysis" if data_state == "data_loaded" else "request_data",
-            "用户提出了具体分析问题",
-        )
-
-    # ── Phase 2: LLM fallback for unclassified input ──
-    result = _try_llm_classify(text, session_context)
-    if result is not None:
-        intent_type_str, ambiguities = result
-        return TurnIntent(
-            intent_type=intent_type_str,
+            intent_type=intent_type,
             clarity="vague" if ambiguities else "clear",
             data_state=data_state,
-            analysis_stage=_stage_for(intent_type_str, data_state),
-            recommended_action=_action_for(intent_type_str, data_state),
-            reason="LLM分类",
+            analysis_stage=_stage_for(intent_type, data_state),
+            recommended_action=_action_for(intent_type, data_state),
+            reason="LLM语义分类",
             ambiguities=ambiguities,
         )
 
-    # Default fallback
+    # ── Layer 3: Fallback ──
+    # Use fast path vague result if available, otherwise default
+    if fast_result is not None:
+        return fast_result
     return _make(
         "analysis_consultation" if data_state == "data_loaded" else "intent_negotiation",
         "vague", data_state,
@@ -229,9 +174,101 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
     )
 
 
+def _try_fast_path(text: str, data_state: DataState) -> TurnIntent | None:
+    """Layer 1: rule-based classification for clear, unambiguous patterns.
+
+    Returns None when no rule matches confidently. Returns a TurnIntent with
+    clarity="clear" for confident matches, or clarity="vague" for partial matches.
+    """
+    # ── Ultra-short input (< 3 chars) ──
+    if len(text) < 3:
+        # Check operation/report keywords before falling through to conversation
+        if text in _OPERATION_KEYWORDS:
+            return _make("data_operation", "clear", data_state, "execute", "execute_operation", "短输入命中操作关键词")
+        if text == "报告":
+            return _make(
+                "comprehensive_report",
+                "clear", data_state,
+                "report" if data_state == "data_loaded" else "scope",
+                "generate_report" if data_state == "data_loaded" else "request_data",
+                "报告关键词",
+            )
+        if text in _CONFIRMATION_KEYWORDS:
+            return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "短输入确认语")
+        return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "短输入或确认语")
+
+    # ── Greetings and thanks (< 15 chars to avoid false positives) ──
+    if any(k in text for k in _CHAT_KEYWORDS) and len(text) < 15:
+        return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "问候或致谢")
+
+    # ── Confirmations ──
+    if text in _CONFIRMATION_KEYWORDS:
+        return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "确认语")
+
+    # ── Report request (high priority, check early) ──
+    if any(k in text for k in _REPORT_KEYWORDS):
+        return _make(
+            "comprehensive_report",
+            "clear", data_state,
+            "report" if data_state == "data_loaded" else "scope",
+            "generate_report" if data_state == "data_loaded" else "request_data",
+            "用户请求报告或全面分析",
+        )
+
+    # ── Knowledge QA (starts with question prefix) ──
+    if any(text.startswith(p) for p in _KNOWLEDGE_QA_PREFIXES):
+        return _make("knowledge_qa", "clear", data_state, "follow_up", "answer_directly", "知识问答")
+
+    # ── Analysis consultation ──
+    if any(k in text for k in _ANALYSIS_CONSULT_KEYWORDS):
+        return _make("analysis_consultation", "clear", data_state, "follow_up", "answer_directly", "分析咨询或方法讨论")
+
+    # ── Result followup ──
+    if any(k in text for k in _RESULT_FOLLOWUP_KEYWORDS):
+        return _make("result_followup", "clear", data_state, "follow_up", "answer_directly", "追问或质疑已有分析结果")
+
+    # ── Data requirement ──
+    if any(k in text for k in _DATA_REQUIREMENT_KEYWORDS):
+        return _make("data_requirement", "clear", data_state, "scope", "request_data", "用户询问分析所需数据")
+
+    # ── Pure data operation (only when no analysis keywords present) ──
+    if any(k in text for k in _OPERATION_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
+        if len(text) < 4:
+            return _make(
+                "data_operation", "vague", data_state, "execute", "execute_operation",
+                "短输入命中操作关键词，意图不明确",
+                [{"field": "用户意图", "issue": f"输入过短，可能需要数据操作（{text}），也可能是普通对话"}],
+            )
+        return _make("data_operation", "clear", data_state, "execute", "execute_operation", "用户请求明确的数据操作")
+
+    # ── Guidance: vague "分析一下" without specific direction ──
+    if any(k in text for k in _GUIDANCE_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
+        return _make(
+            "intent_negotiation" if data_state == "data_loaded" else "data_requirement",
+            "clear", data_state,
+            "discover" if data_state == "data_loaded" else "scope",
+            "guide_analysis" if data_state == "data_loaded" else "request_data",
+            "用户需要分析方向引导",
+        )
+
+    # ── Analysis keywords with specific direction ──
+    if any(k in text for k in _ANALYSIS_KEYWORDS):
+        return _make(
+            "directed_analysis" if data_state == "data_loaded" else "data_requirement",
+            "clear", data_state,
+            "execute" if data_state == "data_loaded" else "scope",
+            "run_analysis" if data_state == "data_loaded" else "request_data",
+            "用户提出了具体分析问题",
+        )
+
+    # ── No confident rule match → return None to trigger LLM ──
+    return None
+
+
 def _make(
     intent_type: str, clarity: str, data_state: str,
     stage: str, action: str, reason: str,
+    ambiguities: list[dict] | None = None,
 ) -> TurnIntent:
     return TurnIntent(
         intent_type=intent_type,
@@ -240,6 +277,7 @@ def _make(
         analysis_stage=stage,
         recommended_action=action,
         reason=reason,
+        ambiguities=ambiguities or [],
     )
 
 

@@ -45,6 +45,7 @@ class AnalysisSessionState:
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
+    regression_history: list[dict[str, Any]] = field(default_factory=list)
     updated_at: str = field(default_factory=_now)
 
     @classmethod
@@ -64,6 +65,7 @@ class AnalysisSessionState:
             insight_records=list(data.get("insight_records") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
+            regression_history=list(data.get("regression_history") or []),
             updated_at=data.get("updated_at") or _now(),
         )
 
@@ -81,11 +83,58 @@ class AnalysisSessionState:
             "insight_records": self.insight_records,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
+            "regression_history": self.regression_history,
             "updated_at": self.updated_at,
         }
 
     def touch(self) -> None:
         self.updated_at = _now()
+
+    def check_regression_triggers(self, tool_name: str, tool_result: str) -> str | None:
+        """Check if a tool result signals need to regress to an earlier stage.
+
+        Returns a regression message if regression occurred, None otherwise.
+        """
+        result_lower = (tool_result or "").lower()
+        old_stage = self.stage
+
+        # Data quality blocks → regress to scope
+        if tool_name in ("detect_data_quality", "quick_profile"):
+            if '"severity": "block"' in result_lower or '"severity":"block"' in result_lower:
+                if self.stage in ("plan", "execute"):
+                    self.stage = "scope"
+                    self._record_regression(old_stage, "scope", "数据质量问题严重，需要重新定义分析范围", tool_name)
+                    return "数据质量问题严重，需要重新定义分析范围"
+            if "缺失率" in result_lower and ("80%" in result_lower or "90%" in result_lower):
+                if self.stage in ("plan", "execute"):
+                    self.stage = "scope"
+                    self._record_regression(old_stage, "scope", "关键列缺失率过高，需要确认数据可用性", tool_name)
+                    return "关键列缺失率过高，需要确认数据可用性"
+
+        # Insufficient data for chosen method → regress to plan
+        if any(kw in result_lower for kw in ("insufficient", "数据点太少", "not enough data", "样本不足")):
+            if self.stage == "execute":
+                self.stage = "plan"
+                self._record_regression(old_stage, "plan", "数据不支持当前分析方法，需要调整分析计划", tool_name)
+                return "数据不支持当前分析方法，需要调整分析计划"
+
+        # Analysis result contradicts assumptions → regress to plan
+        if tool_name in ("analyze_time_series", "correlation_analysis", "compare_periods"):
+            if '"error"' in result_lower and self.stage == "execute":
+                self.stage = "plan"
+                self._record_regression(old_stage, "plan", "分析工具执行失败，需要重新规划分析方法", tool_name)
+                return "分析工具执行失败，需要重新规划分析方法"
+
+        return None
+
+    def _record_regression(self, from_stage: str, to_stage: str, reason: str, trigger_tool: str) -> None:
+        self.regression_history.append({
+            "from_stage": from_stage,
+            "to_stage": to_stage,
+            "reason": reason,
+            "trigger_tool": trigger_tool,
+            "timestamp": _now(),
+        })
 
     def save(self) -> Path:
         self.touch()
@@ -238,6 +287,9 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
             else:
                 paths.append(f"{i}. {path}")
         lines.append("- last_recommended_paths:\n  " + "\n  ".join(paths))
+    if state.regression_history:
+        last = state.regression_history[-1]
+        lines.append(f"- last_regression: {last.get('from_stage')} → {last.get('to_stage')} ({last.get('reason')})")
     return "\n".join(lines)
 
 

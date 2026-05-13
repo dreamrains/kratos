@@ -338,6 +338,9 @@ def _has_aggregate_keywords(columns_info: list[dict]) -> bool:
     name="quick_profile",
     description=(
         "一次性获取数据全貌：结构、类型推断、质量评估、就绪度。"
+        "使用场景：首次接触新数据集时快速了解数据特征。"
+        "不适用场景：只需要某个特定信息（用 describe_dataset/detect_data_quality 更轻量）。"
+        "参数说明：compact=True 返回精简版（适合 load_data 后自动调用）。"
         "替代分别调用 describe_dataset + detect_data_quality + assess_readiness。"
     ),
 )
@@ -931,6 +934,42 @@ def interpret_dataset(name: str) -> str:
     # 6. 主题匹配
     theme, theme_confidence = _match_theme(classified)
 
+    # 7. 多数据集关联分析推荐 (using shared detection function)
+    cross_dataset_hints = []
+    try:
+        existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
+        if existing:
+            from data_agent.utils.data_features import detect_cross_dataset_relationships
+            other_dfs = {}
+            for other_name in existing:
+                other_df = workspace.get(other_name)
+                if other_df is not None:
+                    other_dfs[other_name] = other_df
+            if other_dfs:
+                relationships = detect_cross_dataset_relationships({name: df, **other_dfs})
+                for rel in relationships[:5]:
+                    if rel["left"] == name:
+                        other_name = rel["right"]
+                    else:
+                        other_name = rel["left"]
+                    cross_dataset_hints.append({
+                        "other_dataset": other_name,
+                        "shared_columns": [rel["column"]],
+                        "rows_other": len(other_dfs.get(other_name, [])),
+                        "overlap_pct": rel["overlap_pct"],
+                    })
+    except Exception:
+        pass
+
+    if cross_dataset_hints:
+        for hint in cross_dataset_hints:
+            suggested.append({
+                "direction": f"关联分析: {name} × {hint['other_dataset']}",
+                "tools": ["transform_data(merge)", "correlation_analysis", "compare_periods"],
+                "priority": max(s["priority"] for s in suggested) + 1 if suggested else 4,
+                "reason": f"共享列 {hint['shared_columns'][:3]}，可通过 merge 合并后做跨数据集分析",
+            })
+
     # 构建结果
     data = {
         "theme": theme,
@@ -943,6 +982,8 @@ def interpret_dataset(name: str) -> str:
         "analysis_signals": signals,
         "suggested_analyses": suggested,
     }
+    if cross_dataset_hints:
+        data["cross_dataset_hints"] = cross_dataset_hints
 
     # CLI summary
     summary_parts = [f"数据集 '{name}' ({rows}×{cols})"]
@@ -959,7 +1000,7 @@ def interpret_dataset(name: str) -> str:
         summary_parts.append(f"时间范围: {time_range['min']} ~ {time_range['max']} ({time_range['span_days']}天)")
     if suggested:
         summary_parts.append("推荐分析:")
-        for s in suggested[:3]:
+        for s in suggested[:4]:
             summary_parts.append(f"  {s['priority']}. {s['direction']} — {s['reason']}")
 
     summary = "\n".join(summary_parts)

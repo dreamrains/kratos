@@ -87,10 +87,21 @@ def _detect_injection_patterns(df: pd.DataFrame) -> list[str]:
 
 @registry.register(
     name="load_data",
-    description="加载数据文件到工作空间。支持 CSV、Excel、JSON 格式。source 为文件路径，name 为数据集别名。"
-                "加载后自动执行类型清洗（日期、百分比等），如遇不确定的列类型会返回待确认列表，请用 ask_user_question 向用户确认。"
-                "自动扫描文本列中的可疑提示词注入模式并发出警告。"
-                "context 参数用于保存用户提供的指标定义、业务口径等补充说明。",
+    description=(
+        "加载数据文件到工作空间，自动执行类型清洗、数据概览和洞察扫描。"
+        "使用场景：分析流程的起点，所有数据必须先加载后才能分析。"
+        "不适用场景：数据库数据（用 load_sql）、已有工作空间数据（用 list_data 查看）。"
+        "参数说明：source 为文件路径（支持 CSV/Excel/JSON），name 为数据集别名。"
+        "加载后自动执行：类型清洗（日期/百分比）、数据概览、业务语义推断、主动洞察。"
+        "常见错误：文件路径不正确、编码问题（自动尝试 UTF-8 和 GBK）。"
+    ),
+    recovery_hint=(
+        "数据加载失败。请检查："
+        "1) 文件路径是否正确（支持相对路径和绝对路径）"
+        "2) 文件格式是否为 CSV/Excel/JSON"
+        "3) 文件编码（自动尝试 UTF-8 和 GBK）"
+        "4) 文件是否存在于项目数据目录或 inbox 目录中"
+    ),
 )
 def load_data(source: str, name: str = "main", fmt: str = "", context: str = "") -> str:
     try:
@@ -176,6 +187,16 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                     if relationships:
                         rel_lines = [f"  {r['left']}.{r['column']} <-> {r['right']}.{r['column']} (overlap: {r['overlap_pct']:.0%})" for r in relationships[:5]]
                         report_parts.append("\n[cross_dataset_hints]\nPossible join keys:\n" + "\n".join(rel_lines) + "\n[/cross_dataset_hints]")
+        except Exception:
+            pass
+
+        # 主动洞察扫描
+        try:
+            from data_agent.tools.auto_insight import auto_insight_scan, format_auto_insight
+            insight = auto_insight_scan(df, name)
+            insight_text = format_auto_insight(insight)
+            if insight_text:
+                report_parts.append(f"\n[data_insight]\n{insight_text}\n[/data_insight]")
         except Exception:
             pass
 

@@ -304,7 +304,7 @@ def _ask_multiple(questions: list[dict]) -> dict:
         "(2) LLM 无法判断正确性（数据异常是业务正常还是错误、分析结果与预期不符）"
         "(3) 无法理解的内容（业务术语、特殊字段含义、非标准数据格式）。"
         "支持单问题（question + options）和多问题（questions JSON 数组）两种模式。"
-        "\n\n单问题模式：question='分析方向？', options='[{\"label\": \"A. 趋势\", \"description\": \"...\"}, ...]'"
+        "\n\n单问题模式：question='分析方向？', options=[{\"label\": \"A. 趋势\", \"description\": \"...\"}, ...]"
         "\n多问题模式（需同时确认多个参数时使用）："
         "questions='[{\"question\": \"时间范围？\", \"options\": [{\"label\": \"全部\", \"description\": \"...\"}, {\"label\": \"近30天\", \"description\": \"...\"}]}, "
         "{\"question\": \"关注指标？\", \"options\": [{\"label\": \"收入\", \"description\": \"...\"}, {\"label\": \"留存\", \"description\": \"...\"}], \"multi_select\": true}]'"
@@ -317,11 +317,16 @@ def _ask_multiple(questions: list[dict]) -> dict:
                 "description": "要问的问题（单问题模式使用）",
             },
             "options": {
-                "type": "string",
-                "description": (
-                    '预置选项，JSON 数组格式: [{"label": "...", "description": "..."}]。'
-                    "至少提供 2 个选项，最多 4 个。单问题模式使用。"
-                ),
+                "type": "array",
+                "description": "预置选项列表，2-4 个。单问题模式使用。",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "description": "选项标签"},
+                        "description": {"type": "string", "description": "选项说明"},
+                    },
+                    "required": ["label"],
+                },
             },
             "multi_select": {
                 "type": "boolean",
@@ -366,7 +371,7 @@ def _ask_multiple(questions: list[dict]) -> dict:
 )
 def ask_user_question(
     question: str = "",
-    options: str = "",
+    options: list | str = "",
     multi_select: bool = False,
     preview: str = "",
     questions: str = "",
@@ -407,10 +412,16 @@ def ask_user_question(
     # ── 解析单问题选项 ──
     parsed_options = []
     if options:
-        try:
-            parsed_options = json.loads(options)
-        except json.JSONDecodeError:
-            parsed_options = [{"label": opt.strip(), "description": ""} for opt in options.split(",")]
+        if isinstance(options, list):
+            parsed_options = [
+                opt if isinstance(opt, dict) else {"label": str(opt), "description": ""}
+                for opt in options
+            ]
+        else:
+            try:
+                parsed_options = json.loads(options)
+            except json.JSONDecodeError:
+                parsed_options = [{"label": opt.strip(), "description": ""} for opt in options.split(",")]
 
     # 统一使用 suspension 模式（CLI 和 Web）
     raise UserConfirmationRequired(
