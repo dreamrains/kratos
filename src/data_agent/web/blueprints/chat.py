@@ -119,16 +119,9 @@ def chat():
     message = data.get("message", "")
     session_id = data.get("session_id")
     model_id = data.get("model_id")
-    resume_session_id = data.get("resume_session_id")
 
     manager = current_app.config["agent_manager"]
     agent_loop = manager.get_or_create(session_id=session_id, model_id=model_id)
-
-    if resume_session_id and not agent_loop.messages:
-        from data_agent.session.history import load_session
-        sdata = load_session(resume_session_id)
-        if sdata:
-            agent_loop.messages = sdata.get("messages", [])
 
     turn_id = f"t_{uuid.uuid4().hex[:6]}"
     eq = EventQueue()

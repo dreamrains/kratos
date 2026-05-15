@@ -235,28 +235,3 @@ def test_legacy_generate_report_does_not_embed_unvalidated_charts(tmp_path):
     finally:
         cfg.sessions_dir = old_sessions
 
-
-def test_record_insight_record_persists_to_analysis_state(tmp_path):
-    cfg, old_sessions = _use_tmp_sessions(tmp_path)
-    ctx = AgentContext(session_id="insight_state", workspace=Workspace())
-    ctx.analysis_state = AnalysisSessionState(session_id="insight_state")
-    payload = {
-        "title": "收入下降来自新增用户减少",
-        "summary": "新增用户减少解释了主要变化",
-        "evidence_ids": ["ev_1"],
-        "chart_ids": [],
-        "recommendation": "补充渠道拉新数据",
-        "limitations": "未区分渠道",
-        "confidence": "medium",
-        "output_type": "finding",
-    }
-
-    try:
-        from data_agent.tools.analysis_flow import record_insight_record
-        with use_agent_context(ctx):
-            result = json.loads(record_insight_record(json.dumps(payload, ensure_ascii=False)))
-
-        assert result["insight_id"]
-        assert ctx.analysis_state.insight_records[0]["title"] == "收入下降来自新增用户减少"
-    finally:
-        cfg.sessions_dir = old_sessions

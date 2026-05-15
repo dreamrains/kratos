@@ -1041,7 +1041,7 @@ def run_repl() -> None:
 
         try:
             choice = _repl_input(
-                f"选择要回退到的轮次 (1-{len(rounds)}, Esc 取消) >> ",
+                f"选择要编辑重发的轮次 (1-{len(rounds)}, Esc 取消) >> ",
                 allow_escape=True,
             ).strip()
         except (EOFError, KeyboardInterrupt):
@@ -1057,19 +1057,30 @@ def run_repl() -> None:
             console.print(f"[red]无效编号: {choice}，请输入 1-{len(rounds)}[/red]")
             return None
 
-        # Keep rounds 1..round_num, remove round_num+1..end
-        messages_to_keep = sum(len(r) for r in rounds[:round_num])
+        # Extract user message from the target round for re-editing
+        target_round = rounds[round_num - 1]
+        user_msg_text = ""
+        for msg in target_round:
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                user_msg_text = content if isinstance(content, str) else ""
+                break
+
+        # Keep rounds before the selected one
+        messages_to_keep = sum(len(r) for r in rounds[: round_num - 1])
         removed = len(loop.messages) - messages_to_keep
 
-        if removed == 0:
-            console.print("[dim]已经是最新的状态[/dim]")
-            return None
-
         try:
-            confirm = _repl_input(
-                f"保留 Round 1-{round_num}，删除 Round {round_num + 1}-{len(rounds)} ({removed} 条消息)？[y/N] ",
-                allow_escape=True,
-            ).strip().lower()
+            if removed > 0:
+                confirm = _repl_input(
+                    f"删除 Round {round_num}-{len(rounds)} ({removed} 条消息) 并编辑重发？[y/N] ",
+                    allow_escape=True,
+                ).strip().lower()
+            else:
+                confirm = _repl_input(
+                    f"删除 Round {round_num} 并编辑重发？[y/N] ",
+                    allow_escape=True,
+                ).strip().lower()
         except (EOFError, KeyboardInterrupt):
             console.print("[dim]已取消[/dim]")
             return None
@@ -1092,11 +1103,23 @@ def run_repl() -> None:
         )
 
         loop.messages = loop.messages[:messages_to_keep]
+
         console.print(
-            f"[green]已回退到 Round {round_num}，"
-            f"删除了 Round {round_num + 1}-{len(rounds)} ({removed} 条消息)[/green]"
+            f"[green]已回退到 Round {round_num} 之前，"
+            f"删除了 {removed} 条消息[/green]"
         )
         console.print("[dim]快照已保存，可用 /rewind undo 恢复[/dim]")
+
+        # Return the user message as chat input for re-editing
+        if user_msg_text:
+            console.print(f"\n[cyan]原始消息：[/cyan]{user_msg_text[:200]}")
+            console.print("[dim]按 Enter 直接发送，或修改后发送[/dim]")
+            try:
+                edited = _repl_input("data-agent >> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return None
+            if edited:
+                return edited
         return None
 
     # Register all commands

@@ -4,122 +4,136 @@
 <div class="flex h-full" x-data="chatApp()" x-init="init()">
 
     <!-- Sidebar -->
-    <aside class="w-72 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col shrink-0 transition-all duration-200"
+    <aside class="w-72 sidebar-panel border-r border-stone-200 dark:border-stone-800 flex flex-col shrink-0 transition-all duration-200"
            :class="{ 'w-0 overflow-hidden border-r-0': sidebarCollapsed }">
 
         <!-- Header -->
-        <div class="p-4 border-b border-gray-200 dark:border-gray-800">
+        <div class="p-4 border-b border-stone-200 dark:border-stone-800">
             <div class="flex items-center justify-between">
-                <h1 class="text-lg font-semibold text-gray-800 dark:text-gray-200">Data Agent</h1>
+                <h1 class="text-lg font-semibold tracking-tight text-stone-800 dark:text-stone-200">观澜</h1>
                 <div class="flex items-center gap-1">
-                    <button @click="loadConfig()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" title="LLM Settings">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <button @click="loadConfig()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="LLM 配置">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     </button>
-                    <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" title="New session">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                    <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="新建会话">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                     </button>
                 </div>
             </div>
             <!-- Search -->
             <div class="mt-3 relative">
-                <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <input x-model="sessionSearch" type="text" placeholder="Search sessions..."
-                       class="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+                <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input x-model="sessionSearch" type="text" placeholder="搜索会话..."
+                       class="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40 transition-shadow">
             </div>
         </div>
 
         <div class="flex-1 overflow-y-auto">
 
             <!-- Section: Projects -->
-            <div class="border-b border-gray-100 dark:border-gray-800">
+            <div class="border-b border-stone-100 dark:border-stone-800">
                 <div class="px-4 py-3">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Projects</span>
-                        <button @click="showNewObjectForm = !showNewObjectForm" class="p-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400">
+                        <span class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">项目</span>
+                        <button @click="showNewObjectForm = !showNewObjectForm" class="p-0.5 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                         </button>
                     </div>
                     <div x-show="showNewObjectForm" x-transition @click.outside="showNewObjectForm = false" class="mb-2">
                         <div class="flex gap-1">
-                            <input x-model="newObjectName" type="text" placeholder="Project name" @keydown.enter="createObject()"
-                                   class="flex-1 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
-                            <button @click="createObject()" class="px-2 py-1 text-xs rounded bg-brand-600 text-white hover:bg-brand-700">Add</button>
+                            <input x-model="newObjectName" type="text" placeholder="项目名称" @keydown.enter="createObject()"
+                                   class="flex-1 px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40">
+                            <button @click="createObject()" class="px-2 py-1 text-xs rounded bg-brand-600 text-white hover:bg-brand-700">添加</button>
                         </div>
                     </div>
                     <template x-for="obj in objects" :key="obj.name">
                         <div class="mt-0.5">
-                            <div class="flex items-center group rounded-md hover:bg-gray-50 dark:hover:bg-gray-800 sidebar-item">
+                            <div class="flex items-center group rounded-md hover:bg-stone-50 dark:hover:bg-stone-800 sidebar-item">
                                 <button @click="toggleObject(obj.name)" class="flex items-center gap-1.5 flex-1 px-1.5 py-1.5 text-left">
-                                    <svg class="w-3 h-3 text-gray-400 transition-transform shrink-0" :class="{ 'rotate-90': isObjectExpanded(obj.name) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-                                    <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                                    <span class="text-sm text-gray-700 dark:text-gray-300 truncate" x-text="obj.name"></span>
-                                    <span class="text-[10px] text-gray-400 ml-auto" x-text="(objectGroups[obj.name] || []).length"></span>
+                                    <svg class="w-3 h-3 text-stone-400 transition-transform shrink-0" :class="{ 'rotate-90': isObjectExpanded(obj.name) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                                    <svg class="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                                    <span class="text-sm text-stone-700 dark:text-stone-300 truncate" x-text="obj.name"></span>
+                                    <span class="text-[10px] text-stone-400 ml-auto" x-text="(objectGroups[obj.name] || []).length"></span>
                                 </button>
                                 <div class="relative" data-popover>
-                                    <button @click.stop="togglePopover('obj-' + obj.name, $event)" class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 transition-opacity">
+                                    <button @click.stop="togglePopover('obj-' + obj.name, $event)" class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-400 transition-opacity">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                     </button>
                                 </div>
                             </div>
                             <!-- Sessions under project -->
-                            <div x-show="isObjectExpanded(obj.name)" x-transition class="ml-5 border-l border-gray-200 dark:border-gray-700 pl-2 mt-0.5">
+                            <div x-show="isObjectExpanded(obj.name)" x-transition class="ml-5 border-l border-stone-200 dark:border-stone-700 pl-2 mt-0.5">
                                 <template x-for="s in (objectGroups[obj.name] || [])" :key="s.session_id">
                                     <div @click="switchSession(s.session_id)"
                                          class="px-2 py-1.5 rounded-md cursor-pointer group/sidebar sidebar-item text-sm"
-                                         :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'">
+                                         :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-800'">
                                         <div class="flex items-center justify-between">
-                                            <span class="truncate flex-1 text-xs" x-text="s.summary || s.session_id"></span>
+                                            <div class="flex items-center gap-1 min-w-0 flex-1">
+                                                <span class="truncate text-xs" x-text="s.summary || s.session_id"></span>
+                                                <span x-show="_sessionStates[s.session_id] && _sessionStates[s.session_id].isLoading"
+                                                      class="shrink-0 relative flex h-2 w-2">
+                                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                                    <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                                                </span>
+                                            </div>
                                             <div class="relative" data-popover data-popover-right>
-                                                <button @click.stop="togglePopover('s-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 transition-opacity">
+                                                <button @click.stop="togglePopover('s-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-stone-200 dark:hover:bg-stone-700 transition-opacity">
                                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                                 </button>
                                             </div>
                                         </div>
-                                        <p class="text-[10px] text-gray-400 mt-0.5" x-text="s.saved_at"></p>
+                                        <p class="text-[10px] text-stone-400 mt-0.5" x-text="s.saved_at"></p>
                                     </div>
                                 </template>
-                                <div x-show="(objectGroups[obj.name] || []).length === 0" class="text-[11px] text-gray-400 px-2 py-1">No sessions</div>
+                                <div x-show="(objectGroups[obj.name] || []).length === 0" class="text-[11px] text-stone-400 px-2 py-1">暂无会话</div>
                             </div>
                         </div>
                     </template>
-                    <div x-show="objects.length === 0" class="text-[11px] text-gray-400 py-1">No projects yet</div>
+                    <div x-show="objects.length === 0" class="text-[11px] text-stone-400 py-1">暂无项目</div>
                 </div>
             </div>
 
             <!-- Section: Uncategorized sessions -->
             <div class="p-4">
-                <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Sessions</div>
+                <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">会话</div>
                 <div class="space-y-0.5">
                     <template x-for="s in unboundSessions" :key="s.session_id">
                         <div @click="switchSession(s.session_id)"
                              class="px-2 py-2 rounded-lg cursor-pointer group/sidebar sidebar-item"
-                             :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800'">
+                             :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/30' : 'hover:bg-stone-50 dark:hover:bg-stone-800'">
                             <div class="flex items-center justify-between">
-                                <p class="text-sm truncate flex-1 text-gray-700 dark:text-gray-300" x-text="s.summary || s.session_id"></p>
+                                <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                                    <p class="text-sm truncate text-stone-700 dark:text-stone-300" x-text="s.summary || s.session_id"></p>
+                                    <span x-show="_sessionStates[s.session_id] && _sessionStates[s.session_id].isLoading"
+                                          class="shrink-0 relative flex h-2 w-2">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                        <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                                    </span>
+                                </div>
                                 <div class="relative" data-popover data-popover-right>
-                                    <button @click.stop="togglePopover('u-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 transition-opacity">
+                                    <button @click.stop="togglePopover('u-' + s.session_id, $event)" class="p-0.5 rounded opacity-0 group-hover/sidebar:opacity-100 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-400 transition-opacity">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                     </button>
                                 </div>
                             </div>
-                            <p class="text-[11px] text-gray-400 mt-0.5" x-text="s.saved_at"></p>
+                            <p class="text-[11px] text-stone-400 mt-0.5" x-text="s.saved_at"></p>
                         </div>
                     </template>
                 </div>
-                <div x-show="unboundSessions.length === 0" class="text-center text-gray-400 text-[11px] py-4">No sessions yet</div>
+                <div x-show="unboundSessions.length === 0" class="text-center text-stone-400 text-[11px] py-4">暂无会话</div>
             </div>
         </div>
     </aside>
 
     <!-- Main Area -->
-    <main class="flex-1 flex flex-col min-w-0 bg-gray-50 dark:bg-gray-950">
+    <main class="flex-1 flex flex-col min-w-0 bg-stone-50 dark:bg-stone-950">
 
         <!-- Top Bar -->
-        <header class="h-11 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 shrink-0 bg-white dark:bg-gray-900">
-            <button @click="sidebarCollapsed = !sidebarCollapsed" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 mr-2 text-gray-500">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <header class="h-11 border-b border-stone-200 dark:border-stone-800 flex items-center px-4 shrink-0 top-bar z-10">
+            <button @click="sidebarCollapsed = !sidebarCollapsed" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 mr-2 text-stone-500 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
-            <span class="text-sm text-gray-500 truncate" x-text="currentSessionId && currentSessionId !== '_pending_' ? currentSessionId : 'New Session'"></span>
+            <span class="text-sm text-stone-500 truncate font-medium" x-text="sessionTitle || (currentSessionId && currentSessionId !== '_pending_' ? currentSessionId : '新会话')"></span>
             <!-- Running indicator for background sessions -->
             <template x-for="(state, sid) in _sessionStates" :key="sid">
                 <span x-show="sid !== currentSessionId && state.isLoading"
@@ -129,49 +143,52 @@
                 </span>
             </template>
             <div class="ml-auto flex items-center gap-2">
-                <span class="hidden sm:inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-500/20"
-                      title="LLM may help plan and explain; tools and files execute locally.">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    Local execution
+                <span class="hidden sm:inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/30"
+                      title="LLM 负责规划和解释；工具和文件在本地执行。">
+                    <span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span>
+                    本地执行
                 </span>
                 <!-- Compact button (left of capacity indicator) -->
-                <button @click="compactContext()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500" :disabled="!currentSessionId || isCompact" :class="{'opacity-40 cursor-not-allowed': !currentSessionId || isCompact}" title="Compress context">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+                <button @click="compactContext()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" :disabled="!currentSessionId || isCompact" :class="{'opacity-40 cursor-not-allowed': !currentSessionId || isCompact}" title="压缩上下文">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+                </button>
+                <button @click="showRewindDialog()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" :disabled="!currentSessionId || turns.length === 0" :class="{'opacity-40 cursor-not-allowed': !currentSessionId || turns.length === 0}" title="回退对话">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </button>
                 <!-- Context indicator — only shown when real model context window is known -->
-                <div class="relative w-6 h-6" x-show="currentSessionId && tokenSupported" title="Context usage">
+                <div class="relative w-6 h-6" x-show="currentSessionId && tokenSupported" title="上下文用量">
                     <svg class="w-6 h-6 -rotate-90" viewBox="0 0 36 36">
-                        <circle cx="18" cy="18" r="14" fill="none" stroke-width="3" class="stroke-gray-200 dark:stroke-gray-700"/>
+                        <circle cx="18" cy="18" r="14" fill="none" stroke-width="3" class="stroke-stone-200 dark:stroke-stone-700"/>
                         <circle cx="18" cy="18" r="14" fill="none" stroke-width="3" stroke-linecap="round"
-                                :stroke="tokenPct > 80 ? '#ef4444' : tokenPct > 50 ? '#f59e0b' : '#3b82f6'"
+                                :stroke="tokenPct > 80 ? '#ef4444' : tokenPct > 50 ? '#f59e0b' : '#0d9488'"
                                 :stroke-dasharray="tokenPct + ' ' + (100 - tokenPct)" style="transition: stroke-dasharray 0.3s"/>
                     </svg>
                     <span class="absolute inset-0 flex items-center justify-center text-[8px] font-medium"
-                          :class="tokenPct > 80 ? 'text-red-500' : 'text-gray-500'" x-text="tokenPct + '%'"></span>
+                          :class="tokenPct > 80 ? 'text-red-500' : 'text-stone-500'" x-text="tokenPct + '%'"></span>
                 </div>
             </div>
         </header>
 
         <!-- Connection error -->
         <div x-show="connectionError" x-transition class="bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-1.5 flex items-center justify-between">
-            <span class="text-xs text-red-600 dark:text-red-400" x-text="'Error: ' + connectionError"></span>
-            <button @click="connectionError = ''" class="text-red-400 hover:text-red-600 text-xs">Dismiss</button>
+            <span class="text-xs text-red-600 dark:text-red-400" x-text="'错误：' + connectionError"></span>
+            <button @click="connectionError = ''" class="text-red-400 hover:text-red-600 text-xs">关闭</button>
         </div>
 
         <!-- Task panel — Codex style -->
-        <div x-show="activeTasks.length > 0" x-transition class="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60">
-            <button @click="tasksExpanded = !tasksExpanded" class="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/60 transition-colors">
+        <div x-show="activeTasks.length > 0" x-transition class="border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-900/60">
+            <button @click="tasksExpanded = !tasksExpanded" class="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-stone-100 dark:hover:bg-stone-800/60 transition-colors">
                 <div class="flex items-center gap-2">
-                    <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Tasks</span>
-                    <span x-show="activeTasks.length > 0" class="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400" x-text="taskProgress"></span>
+                    <span class="text-[11px] font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">任务</span>
+                    <span x-show="activeTasks.length > 0" class="text-[11px] px-1.5 py-0.5 rounded-full bg-stone-200 dark:bg-stone-700 text-stone-500 dark:text-stone-400" x-text="taskProgress"></span>
                 </div>
-                <svg class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-180': tasksExpanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                <svg class="w-3.5 h-3.5 text-stone-400 transition-transform" :class="{ 'rotate-180': tasksExpanded }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
             </button>
             <div x-show="tasksExpanded" x-transition class="px-3 pb-3 space-y-2">
                 <!-- Backend tasks -->
                 <template x-for="t in activeTasks" :key="t.id">
-                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
-                        <div class="px-3 py-2 flex items-center gap-2 group/task cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors" @click="toggleTask(t.id)">
+                    <div class="bg-white dark:bg-stone-800 rounded-lg border border-stone-200 dark:border-stone-700 overflow-hidden shadow-sm">
+                        <div class="px-3 py-2 flex items-center gap-2 group/task cursor-pointer hover:bg-stone-50 dark:hover:bg-stone-700/50 transition-colors" @click="toggleTask(t.id)">
                             <template x-if="t.status === 'completed'">
                                 <svg class="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                             </template>
@@ -179,18 +196,18 @@
                                 <svg class="w-3.5 h-3.5 text-blue-500 shrink-0 animate-spin" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             </template>
                             <template x-if="t.status === 'pending'">
-                                <svg class="w-3.5 h-3.5 text-gray-300 dark:text-gray-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+                                <svg class="w-3.5 h-3.5 text-stone-300 dark:text-stone-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
                             </template>
                             <div class="flex-1 min-w-0">
-                                <span class="text-xs truncate block" :class="t.status === 'completed' ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300 font-medium'" x-text="(t.blockedBy && t.blockedBy.length ? '⏸ ' : '') + t.subject"></span>
+                                <span class="text-xs truncate block" :class="t.status === 'completed' ? 'text-stone-500 dark:text-stone-400' : 'text-stone-700 dark:text-stone-300 font-medium'" x-text="(t.blockedBy && t.blockedBy.length ? '⏸ ' : '') + t.subject"></span>
                                 <span x-show="t.description" class="task-description block truncate mt-0.5" x-text="t.description ? t.description.substring(0, 80) + (t.description.length > 80 ? '...' : '') : ''"></span>
                             </div>
-                            <svg class="w-3 h-3 text-gray-400 transition-transform shrink-0" :class="{ 'rotate-90': isTaskExpanded(t.id) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                            <svg class="w-3 h-3 text-stone-400 transition-transform shrink-0" :class="{ 'rotate-90': isTaskExpanded(t.id) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
                         </div>
-                        <div x-show="isTaskExpanded(t.id)" x-transition class="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700/50">
-                            <p><span class="text-gray-400">ID:</span> <span x-text="t.id"></span></p>
-                            <p x-show="t.description"><span class="text-gray-400">Description:</span> <span x-text="t.description"></span></p>
-                            <p x-show="t.blockedBy && t.blockedBy.length"><span class="text-gray-400">Blocked by:</span> <span x-text="t.blockedBy.join(', ')"></span></p>
+                        <div x-show="isTaskExpanded(t.id)" x-transition class="px-3 pb-2 text-xs text-stone-500 dark:text-stone-400 border-t border-stone-100 dark:border-stone-700/50">
+                            <p><span class="text-stone-400">ID：</span> <span x-text="t.id"></span></p>
+                            <p x-show="t.description"><span class="text-stone-400">描述：</span> <span x-text="t.description"></span></p>
+                            <p x-show="t.blockedBy && t.blockedBy.length"><span class="text-stone-400">阻塞于：</span> <span x-text="t.blockedBy.join(', ')"></span></p>
                         </div>
                     </div>
                 </template>
@@ -202,12 +219,17 @@
             <div class="max-w-3xl mx-auto px-4 pt-6 pb-4">
 
                 <!-- Empty State -->
-                <div x-show="turns.length === 0" class="text-center py-24">
-                    <div class="w-14 h-14 mx-auto mb-5 rounded-2xl bg-brand-50 dark:bg-brand-500/10 flex items-center justify-center">
-                        <svg class="w-7 h-7 text-brand-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                <div x-show="turns.length === 0" class="text-center py-16 max-w-md mx-auto animate-fade-up">
+                    <div class="w-16 h-16 mx-auto mb-5 rounded-2xl empty-icon flex items-center justify-center">
+                        <svg class="w-8 h-8 text-brand-600 dark:text-brand-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
                     </div>
-                    <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-300">Data Agent</h2>
-                    <p class="text-gray-400 mt-1 text-sm">Describe your data analysis task to get started</p>
+                    <h2 class="text-lg font-semibold tracking-tight text-stone-800 dark:text-stone-200">观澜</h2>
+                    <p class="text-stone-400 mt-1.5 text-sm leading-relaxed">上传数据集或描述分析任务开始使用</p>
+                    <div class="mt-6 flex flex-col gap-2 text-left">
+                        <button @click="inputText = '分析数据中的趋势'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"分析数据中的趋势"</button>
+                        <button @click="inputText = '能发现什么洞察？'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"能发现什么洞察？"</button>
+                        <button @click="inputText = '创建关键指标的可视化'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"创建关键指标的可视化"</button>
+                    </div>
                 </div>
 
                 <!-- Turns -->
@@ -217,12 +239,12 @@
                             <!-- User message with rewind -->
                             <div x-show="turn.role === 'user'" class="flex justify-end mb-2 group/msg">
                                 <div class="flex items-end gap-1.5 max-w-[85%]">
-                                    <button @click="rewindToRound(turn.roundIndex)"
-                                            class="action-btn opacity-0 group-hover/msg:opacity-100 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 pb-0.5"
-                                            x-show="currentSessionId && !isLoading && idx < turns.length - 1" title="Rewind to here">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+                                    <button @click="rewindMessage(turn.roundIndex)"
+                                            class="action-btn opacity-0 group-hover/msg:opacity-100 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 shrink-0 pb-0.5"
+                                            x-show="currentSessionId && !isLoading" title="编辑并重新发送">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/></svg>
                                     </button>
-                                    <div class="bg-brand-600 text-white px-4 py-2.5 rounded-2xl rounded-br-md text-sm leading-relaxed whitespace-pre-wrap" x-text="turn.content"></div>
+                                    <div class="user-bubble text-white px-4 py-2.5 rounded-2xl rounded-br-md text-sm leading-relaxed whitespace-pre-wrap" x-text="turn.content"></div>
                                 </div>
                             </div>
 
@@ -230,75 +252,81 @@
                             <div x-show="turn.role === 'assistant'" class="space-y-3">
                                 <!-- Chart artifacts -->
                                 <template x-for="(art, ai) in turn.artifacts" :key="ai">
-                                    <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden bg-white dark:bg-gray-900 shadow-sm">
-                                        <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                                            <span class="text-xs text-gray-500" x-text="art.type || 'chart'"></span>
+                                    <div class="rounded-lg border border-stone-200 dark:border-stone-700 overflow-hidden bg-white dark:bg-stone-900 shadow-sm">
+                                        <div class="px-3 py-2 border-b border-stone-200 dark:border-stone-700 flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                                            <span class="text-xs text-stone-500" x-text="art.type || 'chart'"></span>
                                         </div>
-                                        <iframe :src="art.path ? ('/files/' + encodeURIComponent(art.path)) : ''"
+                                        <iframe :src="artifactUrl(art.path)"
+                                                @load="injectChartPlotly($event)"
                                                 @error="$el.style.display='none'; $el.nextElementSibling.style.display='block'"
                                                 class="w-full border-0" style="height:450px"></iframe>
-                                        <div class="hidden p-4 text-center text-gray-400 text-sm">
-                                            <p>Failed to load artifact.</p>
-                                            <a :href="'/files/' + encodeURIComponent(art.path)" target="_blank" class="text-brand-500 underline text-xs">Open in new tab</a>
+                                        <div class="hidden p-4 text-center text-stone-400 text-sm">
+                                            <p>加载产出物失败。</p>
+                                            <a :href="artifactUrl(art.path)" target="_blank" class="text-brand-500 underline text-xs">在新标签页打开</a>
                                         </div>
                                     </div>
                                 </template>
 
-                                <!-- Thinking (shown only when no active steps in task panel) -->
-                                <div x-show="turn.isThinking && !turn.content" class="flex items-center gap-2 text-gray-400 text-sm py-1">
-                                    <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                    <span x-text="turn.thinkingText || 'Analyzing...'"></span>
+                                <!-- Thinking status -->
+                                <div x-show="turn.isThinking && !turn.content" class="flex items-center gap-2.5 text-stone-400 text-sm py-2">
+                                    <span class="relative flex h-2.5 w-2.5">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+                                        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-brand-500"></span>
+                                    </span>
+                                    <span x-text="turn.thinkingText || '思考中...'" class="transition-all duration-300"></span>
                                 </div>
 
                                 <!-- Final markdown content (revealed after turn_end) -->
                                 <div x-show="turn.content" class="prose prose-sm dark:prose-invert max-w-none leading-7" x-html="renderMarkdown(turn.content)"></div>
+                                <!-- Empty reply fallback (interrupted sessions) -->
+                                <div x-show="!turn.content && !turn.isThinking && turn.artifacts.length === 0 && !turn.confirmation" class="text-xs text-stone-400 py-1">（无回复内容）</div>
 
                                 <!-- Confirmation dialog — redesigned for ask_user_question -->
                                 <template x-if="turn.confirmation">
-                                    <div class="bg-white dark:bg-gray-900 border border-brand-200 dark:border-brand-700 rounded-xl shadow-sm overflow-hidden">
+                                    <div class="bg-white dark:bg-stone-900 border border-brand-200 dark:border-brand-700 rounded-xl shadow-sm overflow-hidden">
                                         <!-- Multi-question mode -->
                                         <template x-if="_isMultiQuestion(turn.confirmation)">
                                             <div>
                                                 <!-- Progress bar -->
-                                                <div class="h-1 bg-gray-100 dark:bg-gray-800">
+                                                <div class="h-1 bg-stone-100 dark:bg-stone-800">
                                                     <div class="h-full bg-brand-500 transition-all duration-300"
                                                          :style="'width:' + ((turn.confirmation._state.currentStep / _parseMultiQuestions(turn.confirmation).length) * 100) + '%'"></div>
                                                 </div>
                                                 <!-- Step indicator -->
                                                 <div class="px-4 pt-3 pb-1 flex items-center gap-2">
                                                     <span class="text-[11px] px-1.5 py-0.5 rounded-full bg-brand-50 dark:bg-brand-500/10 text-brand-600 dark:text-brand-300 font-medium"
-                                                          x-text="'Question ' + (turn.confirmation._state.currentStep + 1) + '/' + _parseMultiQuestions(turn.confirmation).length"></span>
+                                                          x-text="'问题 ' + (turn.confirmation._state.currentStep + 1) + '/' + _parseMultiQuestions(turn.confirmation).length"></span>
                                                     <span x-show="turn.confirmation.confirmation_type" class="text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
                                                           x-text="turn.confirmation.confirmation_type"></span>
                                                 </div>
-                                                <p x-show="turn.confirmation.blocking_reason" class="px-4 pb-2 text-[11px] text-gray-400" x-text="turn.confirmation.blocking_reason"></p>
+                                                <p x-show="turn.confirmation.blocking_reason" class="px-4 pb-2 text-[11px] text-stone-400" x-text="turn.confirmation.blocking_reason"></p>
                                                 <!-- Current question -->
                                                 <div class="px-4 pb-4">
                                                     <template x-if="turn.confirmation._state.currentStep < _parseMultiQuestions(turn.confirmation).length">
                                                         <div>
-                                                            <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-3"
+                                                            <p class="text-sm font-medium text-stone-800 dark:text-stone-200 mb-3"
                                                                x-text="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].question"></p>
                                                             <!-- Options for current multi-question -->
                                                             <template x-if="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options && _parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options.length > 0">
                                                                 <div class="space-y-2 mb-3">
                                                                     <template x-for="(opt, oi) in _parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options" :key="oi">
                                                                         <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
-                                                                               :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'"
+                                                                               :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'"
                                                                                @click="!_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select && ($event.preventDefault(), _toggleSingleOption(turn.confirmation._state, opt.value || opt.label))">
                                                                             <template x-if="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
-                                                                                <input type="checkbox" class="mt-0.5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                                <input type="checkbox" class="mt-0.5 rounded border-stone-300 text-brand-600 focus:ring-brand-500"
                                                                                        :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
                                                                                        @change="_toggleMultiSelect(turn.confirmation._state, opt.value || opt.label)">
                                                                             </template>
                                                                             <template x-if="!_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
-                                                                                <input type="radio" class="mt-0.5 border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                                <input type="radio" class="mt-0.5 border-stone-300 text-brand-600 focus:ring-brand-500"
                                                                                        :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
                                                                                        tabindex="-1">
                                                                             </template>
                                                                             <div class="flex-1 min-w-0">
-                                                                                <span class="text-sm text-gray-800 dark:text-gray-200" x-text="opt.label"></span>
-                                                                                <p x-show="opt.description" class="text-xs text-gray-400 mt-0.5" x-text="opt.description"></p>
+                                                                                <span class="text-sm text-stone-800 dark:text-stone-200" x-text="opt.label"></span>
+                                                                                <p x-show="opt.description" class="text-xs text-stone-400 mt-0.5" x-text="opt.description"></p>
                                                                             </div>
                                                                         </label>
                                                                     </template>
@@ -308,23 +336,23 @@
                                                             <div class="mt-2">
                                                                 <input type="text" x-model="turn.confirmation._state.freeText"
                                                                        @input="turn.confirmation._state.selectedOptions = []"
-                                                                       placeholder="Or type your answer..."
+                                                                       placeholder="或输入你的回答..."
                                                                        @keydown.enter.prevent="_submitConfirmation(turn)"
-                                                                       class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+                                                                       class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40">
                                                             </div>
                                                             <!-- Action buttons -->
-                                                            <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                                                            <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100 dark:border-stone-800">
                                                                 <button @click="_skipConfirmation(turn)"
                                                                         :disabled="turn.confirmation._resuming"
-                                                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50">Skip</button>
+                                                                        class="text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 disabled:opacity-50">跳过</button>
                                                                 <div class="flex gap-2">
                                                                     <button @click="_cancelConfirmation(turn)"
                                                                             :disabled="turn.confirmation._resuming"
-                                                                            class="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">Cancel</button>
+                                                                            class="px-3 py-1.5 text-xs text-stone-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">取消</button>
                                                                     <button @click="_submitConfirmation(turn)"
                                                                             :disabled="turn.confirmation._resuming"
                                                                             class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                            x-text="turn.confirmation._state.currentStep < _parseMultiQuestions(turn.confirmation).length - 1 ? 'Next' : 'Submit'"></button>
+                                                                            x-text="turn.confirmation._state.currentStep < _parseMultiQuestions(turn.confirmation).length - 1 ? '下一步' : '提交'"></button>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -339,22 +367,22 @@
                                                 <div class="flex items-center gap-2 mb-2" x-show="turn.confirmation.confirmation_type || turn.confirmation.blocking_reason">
                                                     <span x-show="turn.confirmation.confirmation_type" class="text-[11px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
                                                           x-text="turn.confirmation.confirmation_type"></span>
-                                                    <span x-show="turn.confirmation.blocking_reason" class="text-[11px] text-gray-400 truncate" x-text="turn.confirmation.blocking_reason"></span>
+                                                    <span x-show="turn.confirmation.blocking_reason" class="text-[11px] text-stone-400 truncate" x-text="turn.confirmation.blocking_reason"></span>
                                                 </div>
-                                                <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mb-1" x-text="turn.confirmation.question"></p>
+                                                <p class="text-sm font-medium text-stone-800 dark:text-stone-200 mb-1" x-text="turn.confirmation.question"></p>
                                                 <!-- Options with descriptions -->
                                                 <template x-if="turn.confirmation.options && turn.confirmation.options.length > 0">
                                                     <div class="space-y-2 mt-3">
                                                         <template x-for="(opt, oi) in turn.confirmation.options" :key="oi">
                                                             <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
-                                                                   :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'"
+                                                                   :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'"
                                                                    @click.prevent="_toggleSingleOption(turn.confirmation._state, opt.value || opt.label)">
-                                                                <input type="radio" class="mt-0.5 border-gray-300 text-brand-600 focus:ring-brand-500"
+                                                                <input type="radio" class="mt-0.5 border-stone-300 text-brand-600 focus:ring-brand-500"
                                                                        :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
                                                                        tabindex="-1">
                                                                 <div class="flex-1 min-w-0">
-                                                                    <span class="text-sm text-gray-800 dark:text-gray-200" x-text="opt.label"></span>
-                                                                    <p x-show="opt.description" class="text-xs text-gray-400 mt-0.5" x-text="opt.description"></p>
+                                                                    <span class="text-sm text-stone-800 dark:text-stone-200" x-text="opt.label"></span>
+                                                                    <p x-show="opt.description" class="text-xs text-stone-400 mt-0.5" x-text="opt.description"></p>
                                                                 </div>
                                                             </label>
                                                         </template>
@@ -364,31 +392,31 @@
                                                 <div class="mt-3">
                                                     <input type="text" x-model="turn.confirmation._state.freeText"
                                                            @input="turn.confirmation._state.selectedOptions = []"
-                                                           placeholder="Or type your answer..."
+                                                           placeholder="或输入你的回答..."
                                                            @keydown.enter.prevent="_submitConfirmation(turn)"
-                                                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+                                                           class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40">
                                                 </div>
                                                 <!-- Action buttons -->
-                                                <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                                                <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100 dark:border-stone-800">
                                                     <button @click="_skipConfirmation(turn)"
                                                             :disabled="turn.confirmation._resuming"
-                                                            class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50">Skip</button>
+                                                            class="text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 disabled:opacity-50">跳过</button>
                                                     <div class="flex gap-2">
                                                         <button @click="_cancelConfirmation(turn)"
                                                                 :disabled="turn.confirmation._resuming"
-                                                                class="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50">Cancel</button>
+                                                                class="px-3 py-1.5 text-xs text-stone-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">取消</button>
                                                         <button @click="_submitConfirmation(turn)"
                                                                 :disabled="turn.confirmation._resuming"
-                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">Submit</button>
+                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">提交</button>
                                                     </div>
                                                 </div>
                                             </div>
                                         </template>
 
                                         <!-- Resuming overlay -->
-                                        <div x-show="turn.confirmation && turn.confirmation._resuming" class="px-4 py-3 flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-400">
+                                        <div x-show="turn.confirmation && turn.confirmation._resuming" class="px-4 py-3 flex items-center gap-2 bg-stone-50 dark:bg-stone-800/50 text-xs text-stone-400">
                                             <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                            Processing your response...
+                                            正在处理你的回复...
                                         </div>
                                     </div>
                                 </template>
@@ -396,11 +424,19 @@
                                 <!-- Action bar -->
                                 <div class="flex items-center gap-1 pt-1.5">
                                     <template x-if="!turn.isThinking && turn.content">
-                                        <button @click="copyToClipboard(turn.content, turn)" class="action-btn group text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" :class="{ 'text-green-500!': turn._copied }">
+                                        <button @click="copyToClipboard(turn.content, turn)" class="action-btn group text-stone-400 hover:text-stone-600 dark:hover:text-stone-300" :class="{ 'text-green-500!': turn._copied }">
                                             <svg x-show="!turn._copied" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                                             <svg x-show="turn._copied" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                                            <span class="opacity-0 group-hover:opacity-100 transition-opacity" x-text="turn._copied ? 'Copied!' : 'Copy'"></span>
+                                            <span class="opacity-0 group-hover:opacity-100 transition-opacity" x-text="turn._copied ? '已复制' : '复制'"></span>
                                         </button>
+                                    </template>
+                                    <template x-if="!turn.isThinking && turn.content">
+                                        <div class="relative" data-popover>
+                                            <button @click.stop="togglePopover('export-' + idx, $event)" class="action-btn group text-stone-400 hover:text-stone-600 dark:hover:text-stone-300">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                                                <span class="opacity-0 group-hover:opacity-100 transition-opacity">导出</span>
+                                            </button>
+                                        </div>
                                     </template>
                                 </div>
                             </div>
@@ -412,40 +448,40 @@
             <!-- Input box (merged into scrollable area) -->
             <div class="px-4 pb-4 pt-2">
                 <div class="max-w-3xl mx-auto">
-                    <div class="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 focus-within:ring-2 focus-within:ring-brand-500/50 focus-within:border-transparent transition-all shadow-sm">
-                        <textarea x-ref="inputBox" x-model="inputText" @keydown.enter.prevent="if(!$event.shiftKey) sendMessage()"
-                                  placeholder="Describe your data analysis task..." rows="1"
+                    <div class="relative input-box">
+                        <textarea x-ref="inputBox" x-model="inputText" @keydown.enter="if(!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
+                                  placeholder="描述你的数据分析任务..." rows="1"
                                   class="w-full resize-none bg-transparent px-4 py-3 pr-20 text-sm leading-relaxed focus:outline-none" :disabled="isLoading"></textarea>
                         <div class="absolute right-2 bottom-2 flex items-center gap-1">
-                            <label class="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
-                                <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                            <label class="p-2 rounded-xl hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
+                                <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
                                 <svg x-show="isUploading" class="w-5 h-5 task-spinner" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                                 <input type="file" multiple class="hidden" accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.parquet" @change="uploadFile($event)">
                             </label>
-                            <!-- Pause button (shown when LLM is responding or confirmation is active) -->
+                            <!-- Pause button -->
                             <button x-show="isLoading || hasActiveConfirmation" @click="interruptTurn()"
-                                    class="p-2 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors">
+                                    class="p-2 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors shadow-sm">
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                             </button>
-                            <!-- Send button (shown when not loading and no confirmation active) -->
+                            <!-- Send button -->
                             <button x-show="!isLoading && !hasActiveConfirmation" @click="sendMessage()" :disabled="!inputText.trim() && !uploadedFiles.length"
-                                    class="p-2 rounded-xl bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    class="p-2 rounded-xl send-btn text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/></svg>
                             </button>
                         </div>
                     </div>
                     <div x-show="uploadedFiles.length > 0" x-transition class="mt-1.5 text-xs flex flex-wrap items-center gap-1.5 px-1">
                         <template x-for="(fname, fi) in uploadedFiles" :key="fi">
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-500/30">
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/30">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                                 <span x-text="fname" class="max-w-[140px] truncate"></span>
-                                <button @click="uploadedFiles.splice(fi, 1)" class="ml-0.5 text-green-400 hover:text-green-600 dark:hover:text-green-200">
+                                <button @click="uploadedFiles.splice(fi, 1)" class="ml-0.5 text-brand-400 hover:text-brand-600 dark:hover:text-brand-200">
                                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
                             </span>
                         </template>
-                        <span x-show="uploadedFiles.length > 0" class="text-[10px] text-gray-400 dark:text-gray-500 pl-1">
-                            <span x-text="uploadedFiles.length"></span> file(s) attached
+                        <span x-show="uploadedFiles.length > 0" class="text-[10px] text-stone-400 dark:text-stone-500 pl-1">
+                            <span x-text="uploadedFiles.length"></span> 个文件已附加
                         </span>
                     </div>
                 </div>
@@ -454,123 +490,92 @@
     </main>
 
     <!-- Workbench Panel -->
-    <aside class="hidden xl:flex w-80 shrink-0 border-l border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex-col">
-        <div class="h-11 border-b border-gray-200 dark:border-gray-800 px-4 flex items-center justify-between">
+    <aside class="hidden xl:flex w-80 shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col">
+        <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-4 flex items-center justify-between">
             <div>
-                <p class="text-sm font-medium text-gray-800 dark:text-gray-200">Workbench</p>
-                <p class="text-[10px] text-gray-400" x-text="activeObjectName ? ('Project: ' + activeObjectName) : 'Unbound session'"></p>
+                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">输出</p>
+                <p class="text-[10px] text-stone-400" x-text="activeObjectName ? ('项目：' + activeObjectName) : '未绑定会话'"></p>
             </div>
-            <button @click="loadAnalysisState(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400" title="Refresh workbench">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5A9 9 0 005 8"/></svg>
-            </button>
+            <div class="flex items-center gap-2">
+                <!-- Compact analysis stage indicator -->
+                <div x-show="analysisSummary.stage" class="flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full"
+                          :class="{
+                              'bg-green-500': analysisSummary.stage === 'conclude',
+                              'bg-blue-500': ['analyze', 'execute', 'report'].includes(analysisSummary.stage),
+                              'bg-amber-500': analysisSummary.stage === 'discover',
+                              'bg-stone-400': !analysisSummary.stage
+                          }"></span>
+                    <span class="text-[10px] text-stone-400 capitalize" x-text="analysisSummary.stage"></span>
+                </div>
+                <button @click="loadAnalysisState(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" title="刷新">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5A9 9 0 005 8"/></svg>
+                </button>
+            </div>
         </div>
 
-        <div class="px-3 py-2 border-b border-gray-200 dark:border-gray-800 flex gap-1">
-            <button @click="workbenchTab = 'analysis'" class="flex-1 px-2 py-1.5 text-xs rounded-md" :class="workbenchTab === 'analysis' ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'">Analysis</button>
-            <button @click="workbenchTab = 'tasks'" class="flex-1 px-2 py-1.5 text-xs rounded-md" :class="workbenchTab === 'tasks' ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'">Tasks</button>
-            <button @click="workbenchTab = 'outputs'" class="flex-1 px-2 py-1.5 text-xs rounded-md" :class="workbenchTab === 'outputs' ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'">Outputs</button>
-        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-5">
+            <!-- Generate Report -->
+            <div>
+                <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">生成报告</h3>
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button @click="generateSessionReport('brief', 'html')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">简要 HTML</button>
+                    <button @click="generateSessionReport('formal', 'html')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">正式 HTML</button>
+                    <button @click="generateSessionReport('brief', 'markdown')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">简要 MD</button>
+                    <button @click="generateSessionReport('formal', 'markdown')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">正式 MD</button>
+                </div>
+                <p x-show="lastWorkbenchResult?.status" class="text-[11px] text-stone-400 mt-1.5" x-text="lastWorkbenchResult?.status + (lastWorkbenchResult?.reason ? ': ' + lastWorkbenchResult.reason : '')"></p>
+            </div>
 
-        <div class="flex-1 overflow-y-auto p-4 space-y-4">
-            <section x-show="workbenchTab === 'analysis'" class="space-y-4">
-                <div>
-                    <div class="flex items-center justify-between">
-                        <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Analysis State</h3>
-                        <button @click="resetAnalysisState()" class="text-[11px] text-gray-400 hover:text-red-500" :class="{'opacity-40 pointer-events-none': !currentSessionId}">Reset</button>
-                    </div>
-                    <div class="mt-2 rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-                        <div class="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-                            <p class="text-xs text-gray-400">Goal</p>
-                            <p class="text-sm text-gray-800 dark:text-gray-200 truncate" x-text="analysisSummary.goal || 'No active goal'"></p>
-                        </div>
-                        <div class="grid grid-cols-2 text-xs">
-                            <div class="px-3 py-2 border-r border-b border-gray-100 dark:border-gray-800">
-                                <p class="text-gray-400">Stage</p>
-                                <p class="font-medium text-gray-700 dark:text-gray-300" x-text="analysisSummary.stage"></p>
-                            </div>
-                            <div class="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-                                <p class="text-gray-400">Data</p>
-                                <p class="font-medium text-gray-700 dark:text-gray-300" x-text="analysisSummary.data_state"></p>
-                            </div>
-                            <div class="px-3 py-2 border-r border-gray-100 dark:border-gray-800">
-                                <p class="text-gray-400">Evidence</p>
-                                <p class="font-medium text-gray-700 dark:text-gray-300" x-text="analysisSummary.evidence_records"></p>
-                            </div>
-                            <div class="px-3 py-2">
-                                <p class="text-gray-400">Pending</p>
-                                <p class="font-medium text-gray-700 dark:text-gray-300" x-text="analysisSummary.pending_confirmations"></p>
-                            </div>
-                        </div>
-                    </div>
+            <!-- Conversation Export -->
+            <div>
+                <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">导出对话</h3>
+                <div class="grid grid-cols-3 gap-1.5">
+                    <button @click="exportConversation('html')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">HTML</button>
+                    <button @click="exportConversation('markdown')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">MD</button>
+                    <button @click="exportConversation('pdf')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">PDF</button>
                 </div>
-                <div class="space-y-2">
-                    <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Reports</h3>
-                    <div class="grid grid-cols-2 gap-2">
-                        <button @click="generateSessionReport('brief', 'html')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">Brief HTML</button>
-                        <button @click="generateSessionReport('formal', 'html')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">Formal HTML</button>
-                        <button @click="generateSessionReport('brief', 'markdown')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">Brief MD</button>
-                        <button @click="generateSessionReport('formal', 'markdown')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">Formal MD</button>
-                    </div>
-                    <p x-show="lastWorkbenchResult" class="text-[11px] text-gray-400" x-text="lastWorkbenchResult.status ? (lastWorkbenchResult.status + (lastWorkbenchResult.reason ? ': ' + lastWorkbenchResult.reason : '')) : ''"></p>
-                </div>
-            </section>
+            </div>
 
-            <section x-show="workbenchTab === 'tasks'" class="space-y-2">
-                <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Workflow Tasks</h3>
-                <template x-for="t in activeTasks" :key="t.id">
-                    <div class="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2">
-                        <div class="flex items-center justify-between gap-2">
-                            <p class="text-sm text-gray-800 dark:text-gray-200 truncate" x-text="t.subject"></p>
-                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500" x-text="t.status"></span>
-                        </div>
-                        <p class="text-[11px] text-gray-400 mt-1" x-text="[(t.stage || ''), (t.node_type || ''), (t.required_capability || '')].filter(Boolean).join(' / ')"></p>
-                    </div>
-                </template>
-                <p x-show="activeTasks.length === 0" class="text-sm text-gray-400 py-4">No workflow tasks for this session.</p>
-            </section>
-
-            <section x-show="workbenchTab === 'outputs'" class="space-y-4">
-                <div class="space-y-2">
-                    <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Conversation Export</h3>
-                    <div class="grid grid-cols-3 gap-2">
-                        <button @click="exportConversation('html')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">HTML</button>
-                        <button @click="exportConversation('markdown')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">MD</button>
-                        <button @click="exportConversation('pdf')" class="px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40" :disabled="!currentSessionId">PDF</button>
-                    </div>
+            <!-- Artifacts -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">产出物</h3>
+                    <span x-show="sessionArtifacts.length" class="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-100 dark:bg-stone-800 text-stone-400" x-text="sessionArtifacts.length"></span>
                 </div>
-                <div>
-                    <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Artifacts</h3>
-                    <div class="mt-2 space-y-1.5">
-                        <template x-for="(art, ai) in sessionArtifacts.slice(0, 8)" :key="ai">
-                            <a :href="artifactUrl(art.path)" target="_blank" class="block rounded-md px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800">
-                                <p class="text-xs text-gray-700 dark:text-gray-300 truncate" x-text="art.description || art.type || art.path"></p>
-                                <p class="text-[10px] text-gray-400 truncate" x-text="art.path"></p>
-                            </a>
-                        </template>
-                        <p x-show="sessionArtifacts.length === 0" class="text-sm text-gray-400 py-4">No artifacts yet.</p>
-                    </div>
+                <div class="space-y-1">
+                    <template x-for="(art, ai) in sessionArtifacts" :key="ai">
+                        <a :href="artifactUrl(art.path)" target="_blank" class="block rounded-md px-2.5 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 group/art transition-colors">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-stone-700 dark:text-stone-300 truncate flex-1" x-text="art.description || art.type || art.path"></p>
+                                <svg class="w-3 h-3 text-stone-300 group-hover/art:text-brand-500 shrink-0 ml-1 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                            </div>
+                            <p class="text-[10px] text-stone-400 truncate mt-0.5" x-text="art.path"></p>
+                        </a>
+                    </template>
+                    <p x-show="sessionArtifacts.length === 0" class="text-xs text-stone-400 py-4 text-center">暂无产出物</p>
                 </div>
-            </section>
+            </div>
         </div>
     </aside>
 
-    <!-- Global Popover (fixed position, escapes overflow containers) -->
+    <!-- Global Popover -->
     <div x-show="activePopover" x-transition.opacity @click="activePopover = null" class="fixed inset-0 z-[60]" style="pointer-events: none;">
-        <div x-show="activePopover" @click.stop class="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1"
+        <div id="global-popover" x-show="activePopover" @click.stop class="fixed bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-lg shadow-xl py-1"
              :style="popoverPos.align === 'right' ? { top: popoverPos.top + 'px', right: popoverPos.right + 'px', width: '176px' } : { top: popoverPos.top + 'px', left: popoverPos.left + 'px', width: '176px' }"
              style="pointer-events: auto;">
             <!-- Project popover: Rename / Delete -->
             <template x-if="activePopover && activePopover.startsWith('obj-')">
                 <div>
-                    <button @click="renameObject(activePopover.slice(4))" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="renameObject(activePopover.slice(4))" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                        Rename
+                        重命名
                     </button>
-                    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <div class="border-t border-stone-100 dark:border-stone-700 my-1"></div>
                     <button @click="deleteObject(activePopover.slice(4)); activePopover = null"
                             class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        Delete
+                        删除
                     </button>
                 </div>
             </template>
@@ -578,32 +583,32 @@
             <template x-if="activePopover && activePopover.startsWith('s-')">
                 <div>
                     <button @click="unbindSession(popoverTargetId); activePopover = null"
-                            class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                            class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-                        Remove from project
+                        移出项目
                     </button>
                     <button @click="bindSessionToObject(popoverTargetId)"
-                            class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                            class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2"
                             x-show="objects.length > 0">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                        Move to other project...
+                        移到其他项目...
                     </button>
-                    <button @click="showSessionArtifacts(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="showSessionArtifacts(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                        Artifacts
+                        产出物
                     </button>
-                    <button @click="exportSession(popoverTargetId, 'html'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="exportSession(popoverTargetId, 'html'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                        Export HTML
+                        导出 HTML
                     </button>
-                    <button @click="exportSession(popoverTargetId, 'markdown'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="exportSession(popoverTargetId, 'markdown'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                        Export Markdown
+                        导出 Markdown
                     </button>
-                    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <div class="border-t border-stone-100 dark:border-stone-700 my-1"></div>
                     <button @click="deleteSession(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        Delete
+                        删除
                     </button>
                 </div>
             </template>
@@ -611,87 +616,117 @@
             <template x-if="activePopover && activePopover.startsWith('u-')">
                 <div>
                     <button @click="bindSessionToObject(popoverTargetId)"
-                            class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                            class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2"
                             x-show="objects.length > 0">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                        Move to project...
+                        移到项目...
                     </button>
-                    <button @click="showSessionArtifacts(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="showSessionArtifacts(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                        Artifacts
+                        产出物
                     </button>
-                    <button @click="exportSession(popoverTargetId, 'html'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="exportSession(popoverTargetId, 'html'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
-                        Export HTML
+                        导出 HTML
                     </button>
-                    <button @click="exportSession(popoverTargetId, 'markdown'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2">
+                    <button @click="exportSession(popoverTargetId, 'markdown'); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                        Export Markdown
+                        导出 Markdown
                     </button>
-                    <div class="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <div class="border-t border-stone-100 dark:border-stone-700 my-1"></div>
                     <button @click="deleteSession(popoverTargetId); activePopover = null" class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        Delete
+                        删除
+                    </button>
+                </div>
+            </template>
+            <!-- Export reply popover -->
+            <template x-if="activePopover && activePopover.startsWith('export-')">
+                <div>
+                    <button @click="exportSingleReply(turns[parseInt(activePopover.slice(7))], 'html'); activePopover = null"
+                            class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                        导出为 HTML
+                    </button>
+                    <button @click="exportSingleReply(turns[parseInt(activePopover.slice(7))], 'markdown'); activePopover = null"
+                            class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        复制为 Markdown
                     </button>
                 </div>
             </template>
         </div>
     </div>
 
-    <!-- Bind-to-project modal (shown when multiple projects exist) -->
+    <!-- Bind-to-project modal -->
     <div x-show="_bindModal.show" x-transition.opacity class="fixed inset-0 z-[70] flex items-center justify-center bg-black/40" @click.self="_bindModal.show = false">
-        <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-xs mx-4" @click.stop>
-            <div class="px-5 py-3 border-b border-gray-200 dark:border-gray-800">
-                <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Move to Project</h3>
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-xs mx-4" @click.stop>
+            <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">移到项目</h3>
             </div>
             <div class="max-h-60 overflow-y-auto py-1">
                 <template x-for="obj in objects" :key="obj.name">
                     <button @click="bindSessionToObject(_bindModal.sessionId, obj.name); _bindModal.show = false"
-                            class="w-full text-left px-5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2 transition-colors">
-                        <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                        <span class="text-sm text-gray-700 dark:text-gray-300" x-text="obj.name"></span>
+                            class="w-full text-left px-5 py-2.5 hover:bg-stone-50 dark:hover:bg-stone-800 flex items-center gap-2 transition-colors">
+                        <svg class="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                        <span class="text-sm text-stone-700 dark:text-stone-300" x-text="obj.name"></span>
                     </button>
                 </template>
             </div>
-            <div class="px-5 py-2 border-t border-gray-200 dark:border-gray-800 flex justify-end">
-                <button @click="_bindModal.show = false" class="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">Cancel</button>
+            <div class="px-5 py-2 border-t border-stone-200 dark:border-stone-800 flex justify-end">
+                <button @click="_bindModal.show = false" class="px-3 py-1.5 text-xs text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">取消</button>
             </div>
         </div>
     </div>
 
     <!-- Config Modal -->
     <div x-show="configModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="configModal.show = false">
-        <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-sm mx-4" @click.stop>
-            <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-                <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">LLM Configuration</h3>
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-md mx-4" @click.stop>
+            <div class="px-5 py-4 border-b border-stone-200 dark:border-stone-800">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">LLM 配置</h3>
             </div>
             <div class="px-5 py-4 space-y-4">
                 <div>
-                    <label class="text-xs font-medium text-gray-500 mb-1 block">Model Name</label>
-                    <input x-model="configModal.model_id" type="text" list="model-suggestions"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
-                    <datalist id="model-suggestions">
-                        <template x-for="m in availableModels" :key="m"><option :value="m" x-text="m"></option></template>
-                    </datalist>
+                    <label class="text-xs font-medium text-stone-500 mb-1 block">模型名称</label>
+                    <input x-model="configModal.model_id" type="text"
+                           placeholder="如 gpt-4o, claude-sonnet-4-6"
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                    <div class="mt-1.5 text-[11px] text-stone-400 leading-relaxed flex items-start gap-1">
+                            <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <div>
+                                <p>OpenAI 兼容服务（默认）：<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">gpt-4o</code>、<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">gpt-4o-mini</code>。使用第三方 OpenAI 兼容接口时需加前缀，如 <code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">openai/deepseek-chat</code>。</p>
+                                <p class="mt-1">Anthropic 原生接口：<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">claude-sonnet-4-6</code>、<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">claude-opus-4-7</code>。需在 API 地址填写 Anthropic 端点。</p>
+                            </div>
+                        </div>
                 </div>
                 <div>
-                    <label class="text-xs font-medium text-gray-500 mb-1 block">API Base URL</label>
+                    <label class="text-xs font-medium text-stone-500 mb-1 block">API 地址</label>
                     <input x-model="configModal.api_base" type="text" placeholder="https://api.openai.com/v1"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                    <div class="mt-1.5 text-[11px] text-stone-400 leading-relaxed flex items-start gap-1">
+                            <svg class="w-3.5 h-3.5 shrink-0 mt-0.5 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <div>
+                                <p>留空则使用模型对应的默认地址。</p>
+                                <p class="mt-1">OpenAI 兼容：<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">https://api.openai.com/v1</code>（默认）</p>
+                                <p class="mt-0.5">Anthropic：<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">https://api.anthropic.com</code></p>
+                                <p class="mt-0.5">DeepSeek：<code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">https://api.deepseek.com</code></p>
+                                <p class="mt-0.5">其他 OpenAI 兼容服务填写对应的 Base URL，通常以 <code class="px-1 py-0.5 bg-stone-100 dark:bg-stone-800 rounded text-[10px] font-mono">/v1</code> 结尾。</p>
+                            </div>
+                        </div>
                 </div>
                 <div>
-                    <label class="text-xs font-medium text-gray-500 mb-1 block">API Key</label>
+                    <label class="text-xs font-medium text-stone-500 mb-1 block">API 密钥</label>
                     <input x-model="configModal.api_key" type="password"
-                           :placeholder="configModal.has_key ? configModal.key_masked : 'Enter API key'"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
+                           :placeholder="configModal.has_key ? configModal.key_masked : '输入 API 密钥'"
+                           class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-brand-500/50 font-mono">
                 </div>
             </div>
-            <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-2">
-                <button @click="configModal.show = false" class="px-4 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">Cancel</button>
+            <div class="px-5 py-3 border-t border-stone-200 dark:border-stone-800 flex justify-end gap-2">
+                <button @click="configModal.show = false" class="px-4 py-1.5 text-sm text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">取消</button>
                 <button @click="saveConfig()" :disabled="configModal.saving"
                         class="px-4 py-1.5 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50">
-                    <span x-show="!configModal.saving">Save</span>
-                    <span x-show="configModal.saving">Saving...</span>
+                    <span x-show="!configModal.saving">保存</span>
+                    <span x-show="configModal.saving">保存中...</span>
                 </button>
             </div>
         </div>
@@ -699,35 +734,97 @@
 
     <!-- Artifacts Modal -->
     <div x-show="artifactsModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="artifactsModal.show = false">
-        <div class="bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-md mx-4" @click.stop>
-            <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-                <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200">Artifacts</h3>
-                <p class="text-[11px] text-gray-400 mt-0.5" x-text="artifactsModal.sessionId"></p>
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-md mx-4" @click.stop>
+            <div class="px-5 py-4 border-b border-stone-200 dark:border-stone-800">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">产出物</h3>
+                <p class="text-[11px] text-stone-400 mt-0.5" x-text="artifactsModal.sessionId"></p>
             </div>
             <div class="max-h-72 overflow-y-auto">
                 <template x-for="(art, ai) in artifactsModal.items" :key="ai">
-                    <div class="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 group/art">
-                        <a :href="'/files/' + encodeURIComponent(art.path)" target="_blank" class="flex items-center gap-3 flex-1 min-w-0">
+                    <div class="flex items-center gap-3 px-5 py-3 hover:bg-stone-50 dark:hover:bg-stone-800 group/art">
+                        <a :href="artifactUrl(art.path)" target="_blank" class="flex items-center gap-3 flex-1 min-w-0">
                             <svg class="w-5 h-5 text-brand-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                             <div class="flex-1 min-w-0">
-                                <p class="text-sm text-gray-700 dark:text-gray-300 truncate" x-text="art.description || art.type || art.path"></p>
-                                <p class="text-[10px] text-gray-400" x-text="art.registered_at || ''"></p>
+                                <p class="text-sm text-stone-700 dark:text-stone-300 truncate" x-text="art.description || art.type || art.path"></p>
+                                <p class="text-[10px] text-stone-400" x-text="art.registered_at || ''"></p>
                             </div>
                         </a>
-                        <button @click="exportSession(artifactsModal.sessionId, 'html')" class="p-1 rounded text-gray-400 hover:text-brand-500" title="Export HTML">
+                        <button @click="exportSession(artifactsModal.sessionId, 'html')" class="p-1 rounded text-stone-400 hover:text-brand-500" title="导出 HTML">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
                         </button>
-                        <button @click="deleteArtifactFromModal(ai)" class="p-1 rounded text-gray-400 hover:text-red-500 opacity-0 group-hover/art:opacity-100 transition-opacity" title="Delete">
+                        <button @click="deleteArtifactFromModal(ai)" class="p-1 rounded text-stone-400 hover:text-red-500 opacity-0 group-hover/art:opacity-100 transition-opacity" title="删除">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                         </button>
                     </div>
                 </template>
-                <div x-show="artifactsModal.items.length === 0" class="text-center text-gray-400 text-sm py-8">No artifacts</div>
+                <div x-show="artifactsModal.items.length === 0" class="text-center text-stone-400 text-sm py-8">暂无产出物</div>
             </div>
-            <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-end">
-                <button @click="artifactsModal.show = false" class="px-4 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">Close</button>
+            <div class="px-5 py-3 border-t border-stone-200 dark:border-stone-800 flex justify-end">
+                <button @click="artifactsModal.show = false" class="px-4 py-1.5 text-sm text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">关闭</button>
             </div>
         </div>
+    </div>
+
+    <!-- Rewind Modal (toolbar button) -->
+    <div x-show="rewindModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="rewindModal.show = false">
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" @click.stop>
+            <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between shrink-0">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">回退对话</h3>
+                <button @click="rewindModal.show = false" class="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-4 text-xs text-stone-500 dark:text-stone-400 border-b border-stone-100 dark:border-stone-800">选择一个轮次，回退到该轮次之前并编辑重发。</div>
+            <div class="flex-1 overflow-y-auto p-2">
+                <div x-show="rewindModal.loading" class="flex items-center justify-center py-8 text-stone-400">
+                    <svg class="w-5 h-5 animate-spin mr-2" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    加载中...
+                </div>
+                <div x-show="!rewindModal.loading && rewindModal.rounds.length === 0" class="text-center text-stone-400 text-sm py-8">没有可回退的对话轮次。</div>
+                <template x-for="(r, ri) in rewindModal.rounds" :key="ri">
+                    <button @click="rewindModal.selectedRound = r.round"
+                            class="w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-colors"
+                            :class="rewindModal.selectedRound === r.round ? 'bg-brand-50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/30' : 'hover:bg-stone-50 dark:hover:bg-stone-800 border border-transparent'">
+                        <div class="flex items-center gap-2">
+                            <span class="text-[11px] px-1.5 py-0.5 rounded bg-stone-100 dark:bg-stone-800 text-stone-500 font-mono shrink-0" x-text="'轮次 ' + r.round"></span>
+                            <span class="text-xs text-stone-600 dark:text-stone-300 truncate" x-text="r.user_preview || '(空)'"></span>
+                        </div>
+                        <div class="mt-1 ml-[60px] text-[11px] text-stone-400 truncate" x-text="r.assistant_preview || ''"></div>
+                    </button>
+                </template>
+            </div>
+            <div class="px-5 py-3 border-t border-stone-200 dark:border-stone-800 flex justify-end gap-2 shrink-0">
+                <button @click="rewindModal.show = false" class="px-4 py-1.5 text-sm text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">取消</button>
+                <button @click="doRewind()" :disabled="!rewindModal.selectedRound || rewindModal.loading" class="px-4 py-1.5 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed">回退</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compact Dialog -->
+    <div x-show="compactDialog.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="compactDialog.show = false">
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-sm mx-4" @click.stop>
+            <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">压缩上下文</h3>
+            </div>
+            <div class="px-5 py-4">
+                <p class="text-xs text-stone-500 dark:text-stone-400 mb-3">可选：指定压缩时需要保留的重点内容：</p>
+                <input x-model="compactDialog.focus" type="text" placeholder="如：关键发现、数据摘要..."
+                       @keydown.enter="doCompact()"
+                       class="w-full px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40">
+            </div>
+            <div class="px-5 py-3 border-t border-stone-200 dark:border-stone-800 flex justify-end gap-2">
+                <button @click="compactDialog.show = false" class="px-4 py-1.5 text-sm text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">取消</button>
+                <button @click="doCompact()" :disabled="compactDialog.loading" class="px-4 py-1.5 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50">
+                    <span x-show="!compactDialog.loading">压缩</span>
+                    <span x-show="compactDialog.loading">压缩中...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div x-show="toastMessage" x-transition class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-lg bg-stone-800 dark:bg-stone-200 text-white dark:text-stone-800 text-sm shadow-lg">
+        <span x-text="toastMessage"></span>
     </div>
 
 </div>

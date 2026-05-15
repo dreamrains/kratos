@@ -26,6 +26,45 @@ def _mark_statistical_detail_status(payload: dict) -> dict:
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
 
+def _auto_generate_limitations(payload: dict) -> list[str]:
+    """Auto-generate common limitations based on analysis context."""
+    auto = []
+    method = str(payload.get("method", "")).lower()
+    limitations = payload.get("limitations", [])
+
+    # Before/after comparison without control group
+    if any(kw in method for kw in ["before_after", "前后对比", "period_compare", "compare_periods"]):
+        if not any("对照" in l for l in limitations):
+            auto.append("无对照组/随机化，结论为描述性关联而非因果关系")
+
+    # Small sample
+    sample_size = payload.get("sample_size")
+    if sample_size:
+        try:
+            n = int(str(sample_size).replace(",", "").split()[0])
+            if n < 30:
+                if not any("样本" in l for l in limitations):
+                    auto.append(f"样本量({n})不足30，统计功效有限")
+            elif n < 100:
+                if not any("样本" in l for l in limitations):
+                    auto.append(f"样本量({n})较小，结论泛化需谨慎")
+        except (ValueError, TypeError):
+            pass
+
+    # Short observation period
+    time_scope = str(payload.get("time_scope", ""))
+    if time_scope and "天" in time_scope and "月" not in time_scope:
+        if not any("时间" in l or "观察" in l for l in limitations):
+            auto.append("观察期较短，可能受短期波动影响")
+
+    # Missing statistical significance
+    significance = str(payload.get("significance", ""))
+    if not significance or significance in ("unknown", ""):
+        if not any("统计" in l or "显著" in l for l in limitations):
+            auto.append("未报告统计显著性，差异可能由随机波动导致")
+
+    return auto
+
 
 def _calibrate_confidence(payload: dict) -> list[str]:
     """Auto-calibrate confidence based on evidence quality signals.
@@ -287,6 +326,11 @@ def record_evidence_record(record_json: str) -> str:
 
     _mark_statistical_detail_status(payload)
 
+    # Auto-generate limitations based on analysis context
+    auto_lim = _auto_generate_limitations(payload)
+    if auto_lim:
+        payload["auto_generated_limitations"] = auto_lim
+
     state = _current_state()
     if state is not None:
         payload = state.add_evidence_record(payload)
@@ -299,6 +343,8 @@ def record_evidence_record(record_json: str) -> str:
         result["evidence_id"] = payload.get("id")
     result["statistical_detail_status"] = payload.get("statistical_detail_status")
     result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
+    if auto_lim:
+        result["auto_generated_limitations"] = auto_lim
     if calibration_warnings:
         result["calibration_warnings"] = calibration_warnings
         if payload.get("confidence_auto_downgraded"):

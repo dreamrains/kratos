@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
@@ -89,6 +91,43 @@ class Workspace:
         if key:
             return meta.get(key)
         return meta
+
+    # ── 持久化 ────────────────────────────────────────────
+
+    def save_meta(self, session_id: str) -> None:
+        """Save workspace metadata to session directory for later restore."""
+        from data_agent.session.history import _session_dir
+        sdir = _session_dir(session_id)
+        meta_path = sdir / "workspace_meta.json"
+
+        datasets_meta = {}
+        for name in self._datasets:
+            df = self._datasets[name]
+            datasets_meta[name] = {
+                "shape": list(df.shape),
+                "columns": list(df.columns),
+                "source_path": self._metadata.get(name, {}).get("_source_path", ""),
+                "source_fmt": self._metadata.get(name, {}).get("_source_fmt", ""),
+                "context": self._metadata.get(name, {}).get("context", ""),
+            }
+
+        meta_path.write_text(
+            json.dumps(datasets_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info("Workspace meta saved", extra={"extra_data": {"session_id": session_id, "datasets": list(datasets_meta)}})
+
+    def persist_dataset(self, session_id: str, name: str) -> str | None:
+        """Save DataFrame as parquet backup (Strategy B fallback for restore)."""
+        df = self._datasets.get(name)
+        if df is None:
+            return None
+        from data_agent.session.history import _session_dir
+        data_dir = _session_dir(session_id) / "data"
+        data_dir.mkdir(exist_ok=True)
+        path = data_dir / f"{name}.parquet"
+        df.to_parquet(path, index=False)
+        logger.info("Dataset persisted", extra={"extra_data": {"session_id": session_id, "dataset": name, "path": str(path)}})
+        return str(path)
 
     def get(self, name: str) -> Optional[pd.DataFrame]:
         return self._datasets.get(name)

@@ -93,10 +93,10 @@ _DATA_REQUIREMENT_KEYWORDS = (
 _ANALYSIS_KEYWORDS = (
     "趋势", "对比", "比较", "归因", "为什么", "原因", "预测", "异常",
     "漏斗", "转化", "贡献", "效果", "是否值得", "长期运营", "有没有",
-    "分析", "分布", "相关性", "增长", "下降", "上升",
+    "分布", "相关性", "增长", "下降", "上升",
     "trend", "compare", "why", "reason", "decline", "drop", "driver",
     "forecast", "predict", "effect", "causal", "funnel", "conversion",
-    "evaluate", "analyze", "worth",
+    "evaluate", "worth",
 )
 _GUIDANCE_KEYWORDS = (
     "不知道如何分析", "帮我看看", "看看这份数据", "分析一下",

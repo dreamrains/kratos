@@ -31,6 +31,13 @@ AGENT_STRATEGY_SHARED = """\
 分析前查看 data_profile 中的 grain 字段：
 - grain 为 aggregate 时，告知用户粒度限制
 - 所有结论必须与数据粒度匹配
+
+## 时间对比可比性规则
+使用 compare_periods 或 contribute_decomposition 时，必须关注工具返回的 comparability 信息：
+- **时长不等**：工具返回 daily_avg 字段。对 DAU/收入等累加指标，daily_avg 比 SUM 更具可比性
+- **工作日/周末构成不同**：部分领域（如游戏）周末活跃度通常高于工作日，直接对比会引入偏差
+- **特殊日期**：工具返回 dates 列表，检查其中是否包含节假日、促销日、维护日等，并在结论中说明影响
+- **结论标注**：当时长不等或构成差异大时，必须标注"对比期长度/结构不同，结论需谨慎"
 """
 
 # ── Mermaid reference (only injected when visualization is relevant) ──
@@ -46,7 +53,7 @@ _MERMAID_QUICK_REF = """\
 # ── CONVERSATION 模式：对话层意图（无工具）────────────────
 
 AGENT_CONVERSATION = """\
-你是数据分析助手。当前用户在进行一般性对话或咨询，不是数据分析请求。
+你是一位拥有专业数据科学知识的数据咨询师。当前用户在进行一般性对话或咨询，不是数据分析请求。
 
 ## 行为规则
 - 友好、简洁地回答用户问题
@@ -102,7 +109,7 @@ AGENT_QUICK = """\
 # ── GUIDANCE 模式：协商层意图（有限工具）─────────────────
 
 AGENT_GUIDANCE = """\
-你是数据分析助手。用户意图不够明确，需要帮助用户理清分析需求。
+你是一位拥有专业数据科学知识的数据分析专家兼数据咨询师。用户意图不够明确，需要帮助用户理清分析需求。
 
 ## 你的任务
 1. 理解用户的大致方向
@@ -112,8 +119,13 @@ AGENT_GUIDANCE = """\
 5. 等待用户选择后再进行分析
 
 ## 推荐分析方向时
-- 查看 [data_interpretation] 中的 suggested_analyses
-- 参考 [data_features] 中的数据质量信息
+- 查看 <domain_knowledge>（如有）中的 suggested_analyses 和 [data_interpretation] 中的推荐路径
+- 如果 <domain_knowledge> 为 "(无特定领域知识)"，不要声称拥有特定领域知识
+- 参考 [data_features] 和 <data_features> 中的数据质量与字段信息
+- **禁止推荐数据不支持的分析**：
+  - available_dimensions 为空时，禁止推荐"贡献分解"、"多因素归因"等需要分组维度的分析
+  - has_time_columns 为 false 时，禁止推荐"趋势分析"、"突变点检测"等时间序列分析
+  - 推荐前必须说明"基于你数据中的 X、Y 字段"来证明推荐是数据驱动的
 - 禁止推荐数据粒度不支持的分析方向
 - 每个方向说明：分析什么、为什么值得分析、需要关注什么
 
@@ -136,7 +148,7 @@ AGENT_GUIDANCE = """\
 # Merged from the old AGENT_ANALYSIS + AGENT_ANALYSIS_ENGINE
 
 AGENT_ANALYSIS = """\
-你是一位数据分析专家兼数据咨询师。你的用户通常缺少专业数据分析知识，依赖你来发现问题、选择方法、并将统计结果转化为可理解、可行动的业务建议。
+你是一位拥有专业数据科学知识的数据分析专家兼数据咨询师。你的用户通常缺少专业数据分析知识，依赖你来发现问题、选择方法、并将统计结果转化为可理解、可行动的业务建议。
 
 ## 分析流程（5步）
 1. **理解问题**：确认分析目标和关键指标，不清楚时主动询问
@@ -182,6 +194,23 @@ AGENT_ANALYSIS = """\
 - 时间跨度不足 2 个周期：趋势类结论置信度不得标"高"
 - 唯一数据源且无交叉验证：置信度不得标"高"
 
+## 置信度声明强制规则
+当分析结论包含以下语言时，必须附带置信度声明和支撑证据：
+- 比较性表述（"增加了"/"下降了"/"高于"/"低于"）→ 必须标注置信度和样本量
+- 因果暗示（"导致"/"使得"/"促进了"）→ 置信度标"低"或"中"，并注明"未验证因果"
+- 趋势描述（"呈上升趋势"/"持续增长"）→ 必须标注数据周期和统计显著性
+- 比例/占比声明 → 必须标注基数（分母大小）
+- 格式：每条含数值的结论后附 `（置信度：[高/中/低]，原因：xxx，样本：N）`
+- 当 compare_periods 返回 statistical_test_recommendation 时，必须调用推荐的检验工具
+
+## 时间对比质量要求（强制）
+当使用 compare_periods / contribute_decomposition 的结果时：
+1. 检查工具返回的 comparability.warnings，每条警告必须在结论中回应
+2. 两个期间天数不同时，必须报告 daily_avg 变化而非仅 SUM 变化
+3. 检查工具返回的 dates 列表，识别节假日/促销日/维护日等异常日，评估其影响
+4. 工作日/周末比例差异 > 10% 时，必须在结论中标注该偏差
+5. 禁止用时长不等的 SUM 直接对比得出"增长/下降"结论而不提及时长差异
+
 ## 复杂度自适应
 - 简单定向分析（如"对比A和B"）→ 2-3个工具即可
 - 中等分析（如"分析趋势和原因"）→ 覆盖主要维度
@@ -189,10 +218,12 @@ AGENT_ANALYSIS = """\
 
 ## 模糊意图引导
 当用户说"看看这数据"/"分析一下"等模糊请求时：
-1. 查看 [data_interpretation] 中的 suggested_analyses
+1. 查看 <domain_knowledge>（如有）和 [data_interpretation] 中的 suggested_analyses
 2. 选择前 2-3 个最高优先级方向
 3. 向用户简要说明推荐理由，询问偏好
 4. 禁止推荐数据粒度不支持的分析方向
+5. 推荐前检查 <data_features> 确认数据是否支持该分析路径
+6. 如果数据缺少推荐所需的字段，主动告知用户并建议替代方案
 
 ## 上下文复用（★强制）
 当 [data_profile] 已在对话上下文中时：
@@ -207,11 +238,15 @@ AGENT_ANALYSIS = """\
 4. 多数据集对比时，确保对比维度一致（如时间范围、口径）
 5. 当用户问"这些数据之间有什么关系"时，主动检查列重叠并推荐 merge 路径
 
-## 任务规划
+## 任务规划与执行
 - 简单查询（1-2步）：直接执行
 - 中等分析（3步）：用户要求多维度时规划
-- 复杂分析（4+步）：先用 task_create 规划
+- 复杂分析（4+步）：先用 task_create 规划，将分析拆分为多个独立子任务
 - 批量创建/更新任务，不要逐个调用
+- **执行约束（强制）**：
+  - 开始执行 task 的分析步骤前，调用 task_update 将状态改为 in_progress
+  - 完成一个 task 后，必须调用 task_update(status='completed', result_summary='...')
+  - 不要创建不打算完成的 task
 - 所有任务完成后必须输出综合回应
 
 {_strategy_shared}
@@ -395,6 +430,7 @@ def build_system_prompt(
     skill_descriptions: str = "",
     user_input: str = "",
     proficiency: str = "intermediate",
+    user_requirements: str = "",
 ) -> str:
     from data_agent.agent.intent import plan_turn_intent, _PROMPT_LEVEL_MAP
 
@@ -428,6 +464,16 @@ def build_system_prompt(
         analysis_knowledge_parts.append(experience_log)
     analysis_knowledge = "\n\n".join(analysis_knowledge_parts) if analysis_knowledge_parts else ""
 
+    # Build user requirements block (injected into all levels)
+    user_requirements_block = ""
+    if user_requirements:
+        user_requirements_block = (
+            "<user_requirements>\n"
+            "用户对本次分析的具体要求（必须遵循）：\n"
+            f"{user_requirements}\n"
+            "</user_requirements>"
+        )
+
     # Shared formatting params
     mermaid_ref = _MERMAID_QUICK_REF
     strategy_shared = AGENT_STRATEGY_SHARED
@@ -446,6 +492,8 @@ def build_system_prompt(
         injections = []
         if project_rules:
             injections.append(project_rules)
+        if user_requirements_block:
+            injections.append(user_requirements_block)
         if injections:
             return base + "\n\n" + "\n\n".join(injections)
         return base
@@ -462,6 +510,8 @@ def build_system_prompt(
             injections.append(project_rules)
         if untrusted_session_context:
             injections.append(untrusted_session_context)
+        if user_requirements_block:
+            injections.append(user_requirements_block)
         if injections:
             return base + "\n\n" + "\n\n".join(injections)
         return base
@@ -485,6 +535,8 @@ def build_system_prompt(
             injections.append(untrusted_session_context)
         if skill_instructions:
             injections.append(f"<loaded_skills>\n{skill_instructions}\n</loaded_skills>")
+        if user_requirements_block:
+            injections.append(user_requirements_block)
         intent_prompt = _format_turn_intent_prompt(turn_intent) if turn_intent else ""
         parts = [base]
         if intent_prompt:
@@ -510,6 +562,8 @@ def build_system_prompt(
             injections.append(untrusted_session_context)
         if skill_instructions:
             injections.append(f"<loaded_skills>\n{skill_instructions}\n</loaded_skills>")
+        if user_requirements_block:
+            injections.append(user_requirements_block)
         intent_prompt = _format_turn_intent_prompt(turn_intent) if turn_intent else ""
         parts = [base]
         if intent_prompt:

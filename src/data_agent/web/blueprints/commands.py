@@ -43,6 +43,7 @@ def compact_context():
 
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
+    focus = data.get("focus") or None
 
     if not session_id:
         return jsonify({"error": "session_id is required"}), 400
@@ -66,6 +67,7 @@ def compact_context():
         agent_loop.client,
         agent_loop.messages,
         agent_loop._compact_state,
+        focus=focus,
         token_threshold=0,  # Force compact regardless of threshold
     )
     agent_loop.invalidate_prompt_cache()

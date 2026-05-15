@@ -260,3 +260,96 @@ def parse_period_range(
         parts = period_str.split("~")
         return pd.Timestamp(parts[0].strip()), pd.Timestamp(parts[1].strip())
     return None
+
+
+def analyze_period_structure(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> dict:
+    """分析一个时间段的结构信息：天数、工作日/周末构成、日期列表。
+
+    Args:
+        start: 开始日期
+        end: 结束日期（包含）
+
+    Returns:
+        时段结构字典，包含 day_count / weekday_count / weekend_count / dates 等
+    """
+    start = start.normalize()
+    end = end.normalize()
+    day_count = (end - start).days + 1
+
+    date_range = pd.date_range(start, end, freq="D")
+    weekday_count = sum(1 for d in date_range if d.weekday() < 5)
+    weekend_count = day_count - weekday_count
+
+    dow_summary: dict[str, int] = {}
+    for d in date_range:
+        name = d.day_name()
+        dow_summary[name] = dow_summary.get(name, 0) + 1
+
+    result: dict = {
+        "start": str(start.date()),
+        "end": str(end.date()),
+        "day_count": day_count,
+        "weekday_count": weekday_count,
+        "weekend_count": weekend_count,
+        "weekday_ratio": round(weekday_count / day_count, 3) if day_count > 0 else 0,
+        "weekend_ratio": round(weekend_count / day_count, 3) if day_count > 0 else 0,
+        "dow_summary": dow_summary,
+    }
+
+    # 超过31天不输出逐日列表，避免过长
+    if day_count <= 31:
+        result["dates"] = [
+            {
+                "date": str(d.date()),
+                "dow": d.day_name(),
+                "is_weekend": d.weekday() >= 5,
+            }
+            for d in date_range
+        ]
+    else:
+        result["dates_note"] = f"Period spans {day_count} days; individual dates omitted"
+
+    return result
+
+
+def compare_period_structures(
+    struct_a: dict,
+    struct_b: dict,
+) -> dict:
+    """比较两个时段的结构可比性，生成评估和警告。
+
+    Args:
+        struct_a: analyze_period_structure 的输出
+        struct_b: analyze_period_structure 的输出
+
+    Returns:
+        可比性评估字典，包含 lengths_equal / warnings / daily_avg_recommended 等
+    """
+    lengths_equal = struct_a["day_count"] == struct_b["day_count"]
+    weekday_ratio_diff = round(
+        abs(struct_a["weekday_ratio"] - struct_b["weekday_ratio"]), 3
+    )
+
+    warnings: list[str] = []
+    if not lengths_equal:
+        warnings.append(
+            f"period_a has {struct_a['day_count']} days, period_b has {struct_b['day_count']} days"
+        )
+    if weekday_ratio_diff > 0.1:
+        warnings.append(
+            f"weekday/weekend ratio differs by {weekday_ratio_diff:.3f} "
+            f"(A: {struct_a['weekday_ratio']:.1%} weekday, "
+            f"B: {struct_b['weekday_ratio']:.1%} weekday)"
+        )
+
+    return {
+        "lengths_equal": lengths_equal,
+        "day_count_a": struct_a["day_count"],
+        "day_count_b": struct_b["day_count"],
+        "weekday_ratio_diff": weekday_ratio_diff,
+        "warnings": warnings,
+        "daily_avg_recommended": not lengths_equal,
+    }

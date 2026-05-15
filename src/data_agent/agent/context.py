@@ -25,6 +25,7 @@ class AgentContext:
     analysis_state: object | None = None
     turn_state: object | None = None
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
+    user_quality_requirements: str = ""  # Extracted user quality/format requirements
 
     @property
     def object_name(self) -> Optional[str]:

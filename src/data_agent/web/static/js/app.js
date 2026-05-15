@@ -5,6 +5,11 @@ function chatApp() {
         sidebarCollapsed: false,
         sessions: [],
         sessionSearch: '',
+        get sessionTitle() {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return '';
+            const s = this.sessions.find(s => s.session_id === this.currentSessionId);
+            return s ? (s.summary || s.session_id) : this.currentSessionId;
+        },
         currentSessionId: null,
         inputText: '',
         isUploading: false,
@@ -36,16 +41,30 @@ function chatApp() {
         // Workbench capabilities and analysis state
         capabilities: null,
         analysisState: null,
-        workbenchTab: 'analysis',
 
         // Bind-to-object modal
         _bindModal: { show: false, sessionId: '' },
 
         // Tasks
         tasks: [],
-        tasksExpanded: true,
+        tasksExpanded: false,
         expandedTasks: {},
         _taskDebounceTimer: null,
+
+        // Rewind modal (for toolbar button)
+        rewindModal: { show: false, rounds: [], selectedRound: null, loading: false },
+
+        // Compact dialog
+        compactDialog: { show: false, focus: '', loading: false },
+
+        // Toast notifications
+        _toastTimer: null,
+        toastMessage: '',
+
+        // Thinking animation
+        _thinkingStates: ['思考中...', '分析数据...', '生成洞察...', '处理结果...', '整理分析...', '调用工具中...'],
+        _thinkingStateIndex: 0,
+        _thinkingTimer: null,
 
         // ── Per-session state ──────────────────────
         // Stores: { turns, isLoading, tokenPct, isCompact, activeSteps, _interrupted }
@@ -112,6 +131,21 @@ function chatApp() {
                     this.activePopover = null;
                 }
             });
+            this._setupRenderObserver();
+            // Dynamic task polling: fast when tasks active, slow otherwise
+            this._taskPollInterval = setInterval(() => {
+                if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                    this.loadTasks();
+                }
+            }, 30000);
+            this._activeTaskPolling = false;
+            // Refresh on tab focus
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && this.currentSessionId) {
+                    this.loadTasks();
+                    this.loadSessionArtifacts();
+                }
+            });
         },
 
         get filteredSessions() {
@@ -125,7 +159,7 @@ function chatApp() {
 
         get objectGroups() {
             const groups = {};
-            for (const s of this.sessions) {
+            for (const s of this.filteredSessions) {
                 const key = s.object_name || '';
                 if (!groups[key]) groups[key] = [];
                 groups[key].push(s);
@@ -134,7 +168,7 @@ function chatApp() {
         },
 
         get unboundSessions() {
-            return this.sessions.filter(s => !s.object_name);
+            return this.filteredSessions.filter(s => !s.object_name);
         },
 
         get hasActiveConfirmation() {
@@ -236,7 +270,7 @@ function chatApp() {
                 this.modelName = this.configModal.model_id || this.modelName;
                 this.configModal.show = false;
             } catch (e) {
-                alert('Save failed: ' + e.message);
+                alert('保存失败：' + e.message);
             }
             this.configModal.saving = false;
         },
@@ -249,46 +283,131 @@ function chatApp() {
                 this.sessions = await res.json();
                 this.connectionError = '';
             } catch (e) {
-                this.connectionError = 'Failed to load sessions';
+                this.connectionError = '加载会话失败';
             }
         },
 
         async compactContext() {
             if (!this.currentSessionId || this.isCompact) return;
+            this.compactDialog = { show: true, focus: '', loading: false };
+        },
+
+        async doCompact() {
+            this.compactDialog.loading = true;
             this.isCompact = true;
             const state = this._getSessionState(this.currentSessionId);
             try {
+                const body = { session_id: this.currentSessionId };
+                if (this.compactDialog.focus.trim()) body.focus = this.compactDialog.focus.trim();
                 const res = await fetch('/api/compact', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: this.currentSessionId }),
+                    body: JSON.stringify(body),
                 });
                 const data = await res.json();
                 if (res.ok) {
                     state.turns.push({
                         role: 'assistant',
-                        content: data.message || 'Context compressed.',
+                        content: data.message || '上下文已压缩。',
                         ts: Date.now(),
                     });
                 } else {
                     state.turns.push({
                         role: 'assistant',
-                        content: `Compression failed: ${data.error || 'unknown error'}`,
+                        content: `压缩失败：${data.error || '未知错误'}`,
                         ts: Date.now(),
                     });
                 }
             } catch (e) {
                 state.turns.push({
                     role: 'assistant',
-                    content: `Compression failed: ${e.message}`,
+                    content: `压缩失败：${e.message}`,
                     ts: Date.now(),
                 });
             }
             this.isCompact = false;
+            this.compactDialog.show = false;
+        },
+
+        async rewindMessage(roundIndex) {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
+            if (!confirm('回退到这条消息之前？该消息及之后的所有内容将被移除，消息内容将填入输入框供编辑重发。')) return;
+            await this._doRewind(roundIndex);
+        },
+
+        async showRewindDialog() {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
+            this.rewindModal = { show: true, rounds: [], selectedRound: null, loading: true };
+            try {
+                const res = await fetch(`/api/sessions/${this.currentSessionId}/rewind-info`);
+                if (res.ok) {
+                    const data = await res.json();
+                    this.rewindModal.rounds = (data.rounds || []).map(r => ({
+                        ...r,
+                        user_preview: r.user_text || r.user_preview || '',
+                        assistant_preview: r.assistant_summary || r.assistant_preview || '',
+                    }));
+                }
+            } catch {}
+            this.rewindModal.loading = false;
+        },
+
+        async doRewind() {
+            if (!this.rewindModal.selectedRound) return;
+            const roundNum = this.rewindModal.selectedRound;
+            this.rewindModal.show = false;
+            await this._doRewind(roundNum);
+        },
+
+        async _doRewind(roundIndex) {
+            try {
+                const res = await fetch(`/api/sessions/${this.currentSessionId}/rewind`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ round: roundIndex }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    const sid = this.currentSessionId;
+                    delete this._sessionStates[sid];
+                    this.currentSessionId = null;
+                    await this.switchSession(sid);
+                    if (data.user_message) {
+                        this.inputText = data.user_message;
+                    }
+                    this.showToast('已回退，可编辑后重新发送');
+                } else {
+                    alert(data.error || '回退失败');
+                }
+            } catch (e) {
+                alert('回退失败：' + e.message);
+            }
+        },
+
+        showToast(message) {
+            this.toastMessage = message;
+            clearTimeout(this._toastTimer);
+            this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, 3000);
+        },
+
+        _startThinkingCycle(turn) {
+            this._stopThinkingCycle();
+            this._thinkingStateIndex = 0;
+            this._thinkingTimer = setInterval(() => {
+                this._thinkingStateIndex = (this._thinkingStateIndex + 1) % this._thinkingStates.length;
+                turn.thinkingText = this._thinkingStates[this._thinkingStateIndex];
+            }, 2000);
+        },
+
+        _stopThinkingCycle() {
+            if (this._thinkingTimer) {
+                clearInterval(this._thinkingTimer);
+                this._thinkingTimer = null;
+            }
         },
 
         async newSession() {
-            if (this.isLoading && !confirm('A task is running. Start new session anyway?')) return;
+            if (this.isLoading && !confirm('任务正在运行，确认新建会话？')) return;
             this._saveCurrentState();
             this.currentSessionId = null;
             this.activeObjectName = '';
@@ -332,7 +451,7 @@ function chatApp() {
                     this.tokenSupported = state.tokenSupported;
                     this.connectionError = '';
                 } catch {
-                    this.connectionError = 'Failed to load session';
+                    this.connectionError = '加载会话失败';
                 }
             } else {
                 // Find activeObjectName from sessions list
@@ -348,7 +467,7 @@ function chatApp() {
         },
 
         async deleteSession(sessionId) {
-            if (!confirm('Delete this session?')) return;
+            if (!confirm('确认删除此会话？')) return;
             const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
             // Immediately remove from local sessions array for instant UI update
             this.sessions = this.sessions.filter(s => s.session_id !== sessionId);
@@ -393,7 +512,7 @@ function chatApp() {
         },
 
         async deleteObject(objectName) {
-            if (!confirm(`Delete project "${objectName}" and unbind all its sessions?`)) return;
+            if (!confirm(`确认删除项目 "${objectName}" 并解除所有会话绑定？`)) return;
             try {
                 const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}`, { method: 'DELETE' });
                 if (res.ok) {
@@ -407,7 +526,7 @@ function chatApp() {
         },
 
         async renameObject(objectName) {
-            const newName = prompt(`Rename "${objectName}" to:`, objectName);
+            const newName = prompt(`将 "${objectName}" 重命名为：`, objectName);
             if (!newName || newName === objectName) return;
             try {
                 const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}/rename`, {
@@ -515,7 +634,7 @@ function chatApp() {
         },
 
         async deleteArtifactFromModal(index) {
-            if (!confirm('Delete this artifact?')) return;
+            if (!confirm('确认删除此产出物？')) return;
             try {
                 await fetch(`/api/sessions/${this.artifactsModal.sessionId}/artifacts/${index}`, { method: 'DELETE' });
                 this.artifactsModal.items.splice(index, 1);
@@ -544,7 +663,7 @@ function chatApp() {
 
         async resetAnalysisState() {
             if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
-            if (!confirm('Reset analysis state for this session? Conversation and artifacts are kept.')) return;
+            if (!confirm('确认重置此会话的分析状态？对话和产出物将保留。')) return;
             const res = await fetch(`/api/sessions/${this.currentSessionId}/analysis/reset`, { method: 'POST' });
             if (res.ok) this.analysisState = await res.json();
         },
@@ -582,8 +701,32 @@ function chatApp() {
                 this.tasks = [...newTasks];
                 if (this.activeTasks.some(t => t.status === 'in_progress')) {
                     this.tasksExpanded = true;
+                } else if (this.activeTasks.length > 0 && this.activeTasks.every(t => t.status === 'completed')) {
+                    setTimeout(() => { this.tasksExpanded = false; }, 3000);
                 }
+                this._updateTaskPollInterval();
             } catch {}
+        },
+
+        _updateTaskPollInterval() {
+            const hasActive = this.activeTasks.some(t => t.status === 'in_progress');
+            if (hasActive && !this._activeTaskPolling) {
+                clearInterval(this._taskPollInterval);
+                this._taskPollInterval = setInterval(() => {
+                    if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                        this.loadTasks();
+                    }
+                }, 5000);
+                this._activeTaskPolling = true;
+            } else if (!hasActive && this._activeTaskPolling) {
+                clearInterval(this._taskPollInterval);
+                this._taskPollInterval = setInterval(() => {
+                    if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                        this.loadTasks();
+                    }
+                }, 30000);
+                this._activeTaskPolling = false;
+            }
         },
 
         _debouncedLoadTasks() {
@@ -615,38 +758,31 @@ function chatApp() {
             if (btn) {
                 const rect = btn.getBoundingClientRect();
                 const isRight = btn.closest('[data-popover-right]');
-                this.popoverPos = {
-                    top: Math.round(rect.bottom + 4),
-                    left: Math.round(rect.left),
+                const viewportHeight = window.innerHeight;
+                const _pos = (top) => ({
+                    top, left: Math.round(rect.left),
                     right: Math.round(window.innerWidth - rect.right),
                     align: isRight ? 'right' : 'left',
-                };
+                });
+                // Default: position below button
+                this.popoverPos = _pos(Math.round(rect.bottom + 4));
+                // Wait for Alpine to render popover content, then flip above if it overflows
+                setTimeout(() => {
+                    const el = document.getElementById('global-popover');
+                    if (!el) return;
+                    const ph = el.offsetHeight;
+                    if (ph === 0) return;
+                    if (rect.bottom + 4 + ph > viewportHeight - 8) {
+                        this.popoverPos = _pos(Math.max(4, Math.round(rect.top - ph - 4)));
+                    }
+                }, 50);
             }
         },
 
-        // --- Rewind ---
+        // --- Rewind (toolbar alias) ---
 
         async rewindToRound(roundIndex) {
-            if (!confirm('Rewind to this point? Messages after this will be removed.')) return;
-            try {
-                const res = await fetch(`/api/sessions/${this.currentSessionId}/rewind`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ round: roundIndex }),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    // Force reload: clear cached state and re-fetch from backend
-                    const sid = this.currentSessionId;
-                    delete this._sessionStates[sid];
-                    this.currentSessionId = null; // reset so switchSession won't skip
-                    await this.switchSession(sid);
-                } else {
-                    alert(data.error || 'Rewind failed');
-                }
-            } catch (e) {
-                alert('Rewind failed: ' + e.message);
-            }
+            return this.rewindMessage(roundIndex);
         },
 
         // --- Chat ---
@@ -656,7 +792,7 @@ function chatApp() {
             if ((!text && !this.uploadedFiles.length) || this.isLoading) return;
             // Auto-attach file references if files were uploaded
             if (this.uploadedFiles.length) {
-                const fileRefs = this.uploadedFiles.map(f => `Analyze file: ${f}`).join('\n');
+                const fileRefs = this.uploadedFiles.map(f => `分析文件: ${f}`).join('\n');
                 text = text ? `${text}\n${fileRefs}` : fileRefs;
             }
             this.inputText = '';
@@ -675,8 +811,8 @@ function chatApp() {
 
             state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) });
             state.turns.push({
-                role: 'assistant', content: '', _rawContent: '', toolCalls: [], artifacts: [],
-                confirmation: null, isThinking: true, thinkingText: 'Thinking...', _copied: false,
+                role: 'assistant', content: '', toolCalls: [], artifacts: [],
+                confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
             });
             const turn = state.turns[state.turns.length - 1];
 
@@ -704,17 +840,13 @@ function chatApp() {
                 await this._processSSE(response, turn, state, sseSessionId);
             } catch (e) {
                 turn.isThinking = false;
-                turn.content += `\n\n**Connection error:** ${e.message}`;
+                turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 if (this.currentSessionId === sseSessionId) {
                     this.connectionError = e.message;
                 }
             } finally {
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    if (turn._rawContent) {
-                        turn.content += turn._rawContent;
-                        turn._rawContent = '';
-                    }
                     // Sync back if still on this session
                     if (this.currentSessionId === sseSessionId) {
                         this.isLoading = false;
@@ -819,6 +951,15 @@ function chatApp() {
             state._interrupted = false;
             let newTurn = null;
             const sseSessionId = this.currentSessionId;
+
+            // Display the user's response as a visible user turn
+            if (turn) turn.confirmation = null;
+            state.turns.push({
+                role: 'user', content: userResponse,
+                roundIndex: this._countUserTurns(state.turns),
+                isConfirmationResponse: true,
+            });
+
             try {
                 const response = await fetch('/api/chat/resume', {
                     method: 'POST',
@@ -833,10 +974,9 @@ function chatApp() {
                     const errData = await response.json().catch(() => ({ error: response.statusText }));
                     throw new Error(errData.error || `HTTP ${response.status}`);
                 }
-                if (turn) turn.confirmation = null;
                 state.turns.push({
-                    role: 'assistant', content: '', _rawContent: '', toolCalls: [], artifacts: [],
-                    confirmation: null, isThinking: true, thinkingText: 'Resuming...', _copied: false,
+                    role: 'assistant', content: '', toolCalls: [], artifacts: [],
+                    confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
                 });
                 newTurn = state.turns[state.turns.length - 1];
                 this.turns = [...state.turns];
@@ -846,7 +986,7 @@ function chatApp() {
                 const last = state.turns[state.turns.length - 1];
                 if (last) {
                     last.isThinking = false;
-                    last.content += `\n\n**Connection error:** ${e.message}`;
+                    last.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 }
                 if (this.currentSessionId === sseSessionId) {
                     this.connectionError = e.message;
@@ -855,10 +995,6 @@ function chatApp() {
                 state._resuming = false;
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    if (newTurn && newTurn._rawContent) {
-                        newTurn.content += newTurn._rawContent;
-                        newTurn._rawContent = '';
-                    }
                     if (this.currentSessionId === sseSessionId) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
@@ -927,14 +1063,13 @@ function chatApp() {
 
         async interruptTurn() {
             if (!this.currentSessionId) return;
-            if (!confirm('Stop the current conversation? This cannot be undone.')) return;
+            if (!confirm('停止当前对话？此操作无法撤销。')) return;
             const state = this._getSessionState(this.currentSessionId);
             state._interrupted = true;
             const turn = state.turns[state.turns.length - 1];
             if (turn && turn.role === 'assistant') {
                 turn.isThinking = false;
-                if (!turn.content) turn.content = '*Stopped.*';
-                turn._rawContent = '';
+                if (!turn.content) turn.content = '*已停止。*';
                 // Clear confirmation dialog if present
                 if (turn.confirmation) turn.confirmation = null;
             }
@@ -981,7 +1116,9 @@ function chatApp() {
             text = this._extractPlotlyJson(text);
             try {
                 if (!this._markedReady) this._setupMarked();
-                return marked.parse(text);
+                const html = marked.parse(text);
+                // Fix file links generated by LLM: /files/ → /api/files/
+                return html.replace(/(href=["'])\/files\//g, '$1/api/files/');
             } catch { return text; }
         },
 
@@ -1087,15 +1224,22 @@ function chatApp() {
         async _renderMermaidInElement(el) {
             if (!el) return;
             // Render mermaid diagrams
-            const mermaidDivs = el.querySelectorAll('.mermaid:not([data-processed])');
-            for (const div of mermaidDivs) {
-                try {
-                    const { svg } = await mermaid.render(div.id || ('m-' + Math.random().toString(36).slice(2)), div.textContent);
-                    div.innerHTML = svg;
-                    div.setAttribute('data-processed', 'true');
-                } catch (e) {
-                    div.innerHTML = `<div class="mermaid-error">Diagram render error: ${e.message || e}</div><pre>${div.textContent}</pre>`;
-                    div.setAttribute('data-processed', 'true');
+            if (typeof mermaid !== 'undefined') {
+                const mermaidDivs = el.querySelectorAll('.mermaid:not([data-processed])');
+                for (const div of mermaidDivs) {
+                    const renderId = div.id || ('m-' + Math.random().toString(36).slice(2));
+                    try {
+                        const { svg } = await mermaid.render(renderId, div.textContent);
+                        div.innerHTML = svg;
+                    } catch (e) {
+                        const msg = (e.message || e || 'Unknown error').substring(0, 120);
+                        div.innerHTML = `<div class="mermaid-error">Diagram render error: ${msg}</div>`;
+                    } finally {
+                        // Mermaid creates a temporary <div id="d{id}"> in body — clean it up
+                        const temp = document.getElementById('d' + renderId);
+                        if (temp) temp.remove();
+                        div.setAttribute('data-processed', 'true');
+                    }
                 }
             }
             // Render plotly charts — use _chartData map (primary) or data-chart attr (legacy)
@@ -1119,6 +1263,24 @@ function chatApp() {
             }
         },
 
+        async exportSingleReply(turn, format = 'markdown') {
+            if (!turn.content) return;
+            if (format === 'html') {
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:2em auto;padding:0 1em;line-height:1.7;color:#333;}pre{background:#f5f5f5;padding:1em;border-radius:6px;overflow-x:auto;}code{font-family:Menlo,Consolas,monospace;font-size:0.85em;}</style></head><body>${this.renderMarkdown(turn.content)}</body></html>`;
+                const blob = new Blob([html], { type: 'text/html' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = 'reply.html'; a.click();
+                URL.revokeObjectURL(url);
+            } else {
+                try { await navigator.clipboard.writeText(turn.content); } catch {
+                    const ta = document.createElement('textarea');
+                    ta.value = turn.content; document.body.appendChild(ta);
+                    ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+                }
+                this.showToast('已复制 Markdown 到剪贴板');
+            }
+        },
+
         async copyToClipboard(text, turn) {
             try { await navigator.clipboard.writeText(text); } catch {
                 const ta = document.createElement('textarea');
@@ -1132,7 +1294,32 @@ function chatApp() {
         },
 
         artifactUrl(path) {
-            return path ? '/files/' + encodeURIComponent(path) : '';
+            if (!path) return '';
+            // Encode each segment but preserve slashes so Flask <path:> routes correctly
+            return '/api/files/' + path.split('/').map(encodeURIComponent).join('/');
+        },
+
+        injectChartPlotly(event) {
+            const iframe = event.target;
+            try {
+                const doc = iframe.contentDocument;
+                if (!doc) return;
+                // Skip if Plotly script already included (new charts with include_plotlyjs)
+                if (doc.querySelector('script[src*="plotly"]')) return;
+                // Only process chart iframes that need Plotly
+                if (!doc.querySelector('.plotly-graph-div')) return;
+                const chartScript = doc.querySelector('body > script:not([src])');
+                if (!chartScript) return;
+                // Inject Plotly.js, then re-run the chart script
+                const script = doc.createElement('script');
+                script.src = '/static/js/plotly-3.5.0.min.js';
+                doc.head.appendChild(script);
+                script.onload = () => {
+                    const ns = doc.createElement('script');
+                    ns.textContent = chartScript.textContent;
+                    chartScript.replaceWith(ns);
+                };
+            } catch(e) { /* cross-origin */ }
         },
 
         // --- SSE ---
@@ -1145,8 +1332,8 @@ function chatApp() {
                 let result;
                 try { result = await reader.read(); } catch {
                     turn.isThinking = false;
-                    if (!turn.content && !turn._rawContent) turn.content = '**Connection lost.**';
-                    this.connectionError = 'Connection lost';
+                    if (!turn.content) turn.content = '**连接已断开。**';
+                    this.connectionError = '连接已断开';
                     return;
                 }
                 const { done, value } = result;
@@ -1166,6 +1353,9 @@ function chatApp() {
                 }
             }
             turn.isThinking = false;
+            state.isLoading = false;
+            if (this.currentSessionId === sessionId) this.isLoading = false;
+            this._stopThinkingCycle();
             this.connectionError = '';
         },
 
@@ -1194,7 +1384,8 @@ function chatApp() {
                     break;
                 case 'llm_call_start':
                     turn.isThinking = true;
-                    turn.thinkingText = `Round ${data.round} — Analyzing...`;
+                    turn.thinkingText = this._thinkingStates[0];
+                    this._startThinkingCycle(turn);
                     if (data.pct !== undefined) {
                         state.tokenPct = data.pct;
                         state.tokenSupported = true;
@@ -1203,15 +1394,14 @@ function chatApp() {
                     break;
                 case 'text_delta':
                     turn.isThinking = false;
-                    // Always buffer text during a turn — only reveal at turn_end
-                    turn._rawContent = (turn._rawContent || '') + data.text;
+                    turn.content = (turn.content || '') + data.text;
                     if (isCurrentSession) {
                         this._scrollToBottom();
                     }
                     break;
                 case 'tool_call':
                     turn.isThinking = true;
-                    turn.thinkingText = `Running ${data.name}...`;
+                    turn.thinkingText = `正在执行 ${data.name}...`;
                     state.activeSteps.push({
                         tool_call_id: data.tool_call_id, name: data.name,
                         arguments: data.arguments, duration_ms: 0,
@@ -1220,7 +1410,7 @@ function chatApp() {
                     break;
                 case 'tool_result':
                     turn.isThinking = true;
-                    turn.thinkingText = 'Processing results...';
+                    turn.thinkingText = '处理结果中...';
                     const step = state.activeSteps.find(s => s.tool_call_id === data.tool_call_id);
                     if (step) {
                         step.status = 'done';
@@ -1239,11 +1429,6 @@ function chatApp() {
                     break;
                 case 'suspended':
                     turn.isThinking = false;
-                    // Reveal buffered content before showing confirmation
-                    if (turn._rawContent) {
-                        turn.content += turn._rawContent;
-                        turn._rawContent = '';
-                    }
                     turn.confirmation = {
                         suspension_id: data.suspension_id,
                         question: data.question,
@@ -1262,17 +1447,10 @@ function chatApp() {
                     break;
                 case 'turn_end':
                     turn.isThinking = false;
-                    // Reveal buffered content from task execution
-                    if (turn._rawContent) {
-                        turn.content += turn._rawContent;
-                        turn._rawContent = '';
-                    }
-                    if (data.pct !== undefined) {
-                        state.tokenPct = data.pct;
-                        state.tokenSupported = true;
-                        if (isCurrentSession) { this.tokenPct = data.pct; this.tokenSupported = true; }
-                    }
+                    state.isLoading = false;
+                    this._debouncedLoadTasks();
                     if (isCurrentSession) {
+                        this.isLoading = false;
                         this.turns = [...state.turns];
                         this._scrollToBottom();
                         requestAnimationFrame(() => {
@@ -1280,10 +1458,15 @@ function chatApp() {
                             if (el) this._renderMermaidInElement(el);
                         });
                     }
+                    if (data.pct !== undefined) {
+                        state.tokenPct = data.pct;
+                        state.tokenSupported = true;
+                        if (isCurrentSession) { this.tokenPct = data.pct; this.tokenSupported = true; }
+                    }
                     break;
                 case 'error':
                     turn.isThinking = false;
-                    turn.content += `\n\n**Error:** ${data.message}`;
+                    turn.content += `\n\n**Error:** ${data.message}`; // i18n: Error
                     if (isCurrentSession) {
                         this.turns = [...state.turns];
                     }
@@ -1307,12 +1490,29 @@ function chatApp() {
                     roundIndex++;
                     turns.push({ role: 'user', content: msg.content || '', roundIndex });
                 } else if (msg.role === 'assistant') {
-                    if (currentAssistant) turns.push(currentAssistant);
-                    currentAssistant = {
-                        role: 'assistant', content: msg.content || '',
-                        toolCalls: [], artifacts: [], confirmation: null,
-                        isThinking: false, _copied: false,
-                    };
+                    const newContent = msg.content || '';
+                    if (currentAssistant) {
+                        // Merge consecutive assistant messages within same round
+                        if (newContent.trim()) {
+                            currentAssistant.content = currentAssistant.content.trim()
+                                ? currentAssistant.content + '\n\n' + newContent
+                                : newContent;
+                        }
+                    } else {
+                        currentAssistant = {
+                            role: 'assistant', content: newContent,
+                            toolCalls: [], artifacts: [], confirmation: null,
+                            isThinking: false, _copied: false,
+                        };
+                    }
+                } else if (msg.role === 'tool' && currentAssistant) {
+                    const c = msg.content || '';
+                    const chartMatch = c.match(/Chart saved:\s*(sessions\/\S+\.html)/);
+                    if (chartMatch) {
+                        const path = chartMatch[1];
+                        const desc = path.split('/').pop().replace(/_[a-f0-9]{6}\.html$/, '');
+                        currentAssistant.artifacts.push({ path, type: 'chart', description: desc });
+                    }
                 }
             }
             if (currentAssistant) turns.push(currentAssistant);
@@ -1324,6 +1524,34 @@ function chatApp() {
                 const el = document.getElementById('messages-container');
                 if (el) el.scrollTop = el.scrollHeight;
             });
+        },
+
+        _setupRenderObserver() {
+            const container = document.getElementById('messages-container');
+            if (!container || this._observerSetup) return;
+            this._observerSetup = true;
+            const self = this;
+            const observer = new MutationObserver((mutations) => {
+                // Skip mermaid/plotly rendering while streaming to avoid errors on incomplete code blocks
+                if (self.isLoading) return;
+                let needsRender = false;
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (node.nodeType === 1 && (
+                            (node.querySelector && (node.querySelector('.mermaid:not([data-processed])') || node.querySelector('.plotly-chart:not([data-processed])'))) ||
+                            node.matches && (node.matches('.mermaid:not([data-processed])') || node.matches('.plotly-chart:not([data-processed])'))
+                        )) {
+                            needsRender = true;
+                            break;
+                        }
+                    }
+                    if (needsRender) break;
+                }
+                if (needsRender) {
+                    requestAnimationFrame(() => self._renderMermaidInElement(container));
+                }
+            });
+            observer.observe(container, { childList: true, subtree: true });
         },
     };
 }

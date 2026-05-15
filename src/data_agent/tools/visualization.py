@@ -25,7 +25,7 @@ def _save_chart(fig: go.Figure, title: str = "chart", metadata: dict | None = No
         output_dir = session_charts_dir(session_id)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
-        fig.write_html(str(path), include_plotlyjs=False)
+        fig.write_html(str(path), include_plotlyjs='/static/js/plotly-3.5.0.min.js')
         if metadata is not None:
             meta = dict(metadata)
             meta["chart_id"] = chart_id
@@ -49,7 +49,7 @@ def _save_chart(fig: go.Figure, title: str = "chart", metadata: dict | None = No
         output_dir.mkdir(parents=True, exist_ok=True)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
-        fig.write_html(str(path), include_plotlyjs=False)
+        fig.write_html(str(path), include_plotlyjs='/static/js/plotly-3.5.0.min.js')
         if metadata is not None:
             meta = dict(metadata)
             meta["chart_id"] = chart_id

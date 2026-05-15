@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from data_agent.config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 def _sessions_dir() -> Path:
@@ -131,8 +134,15 @@ def save_session(
     data_file: str = "",
     extra_meta: Optional[dict] = None,
 ) -> str:
-    """保存会话到 sessions/<session_id>/。写入 conversation.json 并清空 JSONL。"""
+    """保存会话到 sessions/<session_id>/。写入 conversation.json 并清空 JSONL。
+
+    包含合并保护：如果磁盘上的 conversation.json 比内存中的消息更多，
+    说明会话历史可能在内存中丢失（如 AgentLoop 重建），此时合并而非覆盖。
+    """
     sdir = _session_dir(session_id)
+
+    # Merge protection: prevent data loss if in-memory messages are incomplete
+    messages = _merge_protect_messages(sdir, messages)
 
     # 提取会话摘要：第一条非命令用户消息的前 100 字符
     summary = _extract_summary(messages)
@@ -222,7 +232,7 @@ def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
     """列出所有会话摘要。支持按项目名过滤，object_name 为兼容别名。"""
     results = []
     filter_project = project_name or object_name
-    for d in sorted(_sessions_dir().iterdir(), reverse=True):
+    for d in _sessions_dir().iterdir():
         if not d.is_dir():
             continue
         meta_path = d / "meta.json"
@@ -247,6 +257,7 @@ def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
             })
         except (json.JSONDecodeError, KeyError):
             continue
+    results.sort(key=lambda x: x.get("saved_at", ""), reverse=True)
     return results
 
 
@@ -671,6 +682,52 @@ def list_analyses(session_id: str = "") -> list[dict]:
 
     results.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     return results
+
+
+# ── 合并保护 ─────────────────────────────────────────────
+
+def _merge_protect_messages(sdir: Path, messages: list[dict]) -> list[dict]:
+    """Prevent save_session from overwriting a more complete conversation.json.
+
+    If the disk file has significantly more messages than in-memory (e.g. due to
+    AgentLoop being recreated without loading history), merge the disk content
+    with new messages instead of overwriting.
+    """
+    conv_path = sdir / "conversation.json"
+    if not conv_path.exists() or not messages:
+        return messages
+
+    try:
+        existing = json.loads(conv_path.read_text(encoding="utf-8"))
+        if not isinstance(existing, list) or len(existing) <= len(messages):
+            return messages
+
+        # Disk has more messages — likely a restore miss.
+        # Strategy: keep disk history as base, append any genuinely new tail messages.
+        disk_len = len(existing)
+        mem_len = len(messages)
+
+        # If memory messages are a subset (same starting content), use disk + tail
+        if mem_len > 0:
+            # Find overlap: check if the first memory message matches the start of disk
+            # Simple heuristic: if disk is much longer, trust disk and append tail
+            if disk_len > mem_len * 1.5:
+                # Take disk base + any memory messages beyond disk length
+                # (shouldn't exist, but handle gracefully)
+                merged = list(existing)
+                # Append messages that are truly new (beyond disk range)
+                if mem_len > disk_len:
+                    merged.extend(messages[disk_len:])
+                logger.warning(
+                    "Merge protection activated: disk had %d messages, memory had %d. Keeping disk.",
+                    disk_len, mem_len,
+                    extra={"extra_data": {"disk": disk_len, "memory": mem_len}},
+                )
+                return merged
+
+        return messages
+    except (json.JSONDecodeError, OSError):
+        return messages
 
 
 # ── 摘要提取 ─────────────────────────────────────────────

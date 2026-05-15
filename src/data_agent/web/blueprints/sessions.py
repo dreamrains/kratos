@@ -137,7 +137,12 @@ def rewind_info(session_id: str):
 
 @sessions_bp.post("/sessions/<session_id>/rewind")
 def rewind_session(session_id: str):
-    """Rewind session to a specific round."""
+    """Rewind session to the state before a specific round.
+
+    Removes the selected round and all subsequent rounds, returning
+    the user message from that round so the caller can populate an
+    input for re-editing (ChatGPT/Claude style).
+    """
     data = request.get_json(force=True)
     round_num = data.get("round")
 
@@ -160,10 +165,23 @@ def rewind_session(session_id: str):
     if round_num > len(rounds):
         return jsonify({"error": f"Round {round_num} exceeds total rounds ({len(rounds)})"}), 400
 
-    messages_to_keep = sum(len(r) for r in rounds[:round_num])
+    # Extract user message from the target round for re-editing
+    target_round = rounds[round_num - 1]
+    user_message_text = ""
+    for msg in target_round:
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            user_message_text = content if isinstance(content, str) else ""
+            break
+
+    # Keep everything BEFORE the selected round
+    messages_to_keep = sum(len(r) for r in rounds[: round_num - 1])
     removed = len(messages) - messages_to_keep
 
-    if removed == 0:
+    if removed == 0 and round_num == 1:
+        # Special case: rewinding round 1 with no prior messages
+        pass
+    elif removed == 0:
         return jsonify({"message": "Already at the latest state", "removed": 0})
 
     # Save snapshot for undo
@@ -190,9 +208,10 @@ def rewind_session(session_id: str):
     save_session(truncated, session_id)
 
     return jsonify({
-        "message": f"Rewound to round {round_num}, removed {removed} messages",
+        "message": f"Rewound to before round {round_num}, removed {removed} messages",
         "removed": removed,
         "round": round_num,
+        "user_message": user_message_text,
     })
 
 

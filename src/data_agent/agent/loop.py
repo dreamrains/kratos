@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import pandas as pd
+
 from data_agent.config import get_config
 from data_agent.llm.client import LLMClient
 
@@ -19,6 +21,10 @@ from data_agent.agent.compact import (
     compact_history,
     estimate_tokens,
 )
+
+from data_agent.tools._utils import persist_detail
+
+TOOL_SUMMARY_THRESHOLD = 3000  # chars: auto-persist tool output exceeding this
 from data_agent.agent.context import (
     AgentContext,
     set_current_context,
@@ -295,6 +301,78 @@ class AgentLoop:
 
         self._prompt_cache_dirty = True
 
+    def _restore_workspace(self) -> None:
+        """Restore workspace datasets from persisted metadata.
+
+        Strategy A: reload from original file path.
+        Strategy B: fall back to parquet backup in session directory.
+        """
+        from data_agent.session.history import _session_dir
+        from data_agent.session.workspace import workspace
+
+        sdir = _session_dir(self.session_id)
+        meta_path = sdir / "workspace_meta.json"
+        if not meta_path.exists():
+            return
+
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+
+        if not meta:
+            return
+
+        restored = 0
+        for name, info in meta.items():
+            df = None
+
+            # Strategy A: try original file path
+            source_path = info.get("source_path", "")
+            if source_path:
+                from pathlib import Path as _Path
+                sp = _Path(source_path)
+                if sp.exists():
+                    try:
+                        fmt = info.get("source_fmt", "")
+                        if fmt == "csv":
+                            try:
+                                df = pd.read_csv(sp, encoding="utf-8-sig")
+                            except UnicodeDecodeError:
+                                df = pd.read_csv(sp, encoding="gbk")
+                        elif fmt == "excel":
+                            df = pd.read_excel(sp)
+                        elif fmt == "json":
+                            df = pd.read_json(sp)
+                        if df is not None:
+                            from data_agent.tools.data_clean import auto_clean
+                            df, _, _ = auto_clean(df)
+                    except Exception:
+                        df = None
+
+            # Strategy B: fall back to parquet backup
+            if df is None:
+                parquet_path = sdir / "data" / f"{name}.parquet"
+                if parquet_path.exists():
+                    try:
+                        df = pd.read_parquet(parquet_path)
+                    except Exception:
+                        pass
+
+            if df is not None:
+                workspace.add(name, df)
+                if info.get("context"):
+                    workspace.set_metadata(name, "context", info["context"])
+                workspace.set_metadata(name, "_source_path", source_path)
+                workspace.set_metadata(name, "_source_fmt", info.get("source_fmt", ""))
+                restored += 1
+
+        if restored:
+            logger.info("Workspace restored", extra={"extra_data": {
+                "session_id": self.session_id, "datasets_restored": restored
+            }})
+            self._prompt_cache_dirty = True
+
     def _ensure_mcp_initialized(self) -> None:
         """惰性初始化 MCP 连接。延迟到首次 _loop() 调用。"""
         global _mcp_manager, _mcp_bridge
@@ -364,6 +442,35 @@ class AgentLoop:
                     f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
                 )
         session_ctx = "\n".join(context_parts) if context_parts else ""
+
+        # Structured data features: programmatic field classification for prompt
+        if datasets:
+            feature_lines = ["<data_features>"]
+            for ds_name, ds_info in datasets.items():
+                df = workspace.get(ds_name)
+                if df is not None:
+                    try:
+                        from data_agent.tools.data_understand import _classify_columns
+                        classified = _classify_columns(df)
+                        has_time = bool(classified.get("time_columns"))
+                        has_dims = bool(classified.get("dimensions"))
+                        metrics = [m["column"] for m in classified.get("key_metrics", [])]
+                        dims = [d["column"] for d in classified.get("dimensions", [])]
+                        rates = [r["column"] for r in classified.get("rate_metrics", [])]
+
+                        feature_lines.append(f"  {ds_name}:")
+                        feature_lines.append(f"    has_time_columns: {has_time}")
+                        feature_lines.append(f"    has_dimensions: {has_dims}")
+                        feature_lines.append(f"    available_metrics: {metrics + rates}")
+                        if dims:
+                            feature_lines.append(f"    available_dimensions: {dims}")
+                        else:
+                            feature_lines.append(f"    available_dimensions: [] (无分组维度)")
+                    except Exception:
+                        pass
+            feature_lines.append("</data_features>")
+            session_ctx = (session_ctx + "\n" if session_ctx else "") + "\n".join(feature_lines)
+
         try:
             from data_agent.agent.analysis_state import analysis_state_summary
             analysis_ctx = analysis_state_summary(self.context.analysis_state)
@@ -405,6 +512,7 @@ class AgentLoop:
                 skill_descriptions="",
                 user_input=user_input,
                 proficiency=proficiency,
+                user_requirements=self.context.user_quality_requirements,
             )
 
         return build_system_prompt(
@@ -417,6 +525,7 @@ class AgentLoop:
             skill_descriptions=skill_descriptions,
             user_input=user_input,
             proficiency=proficiency,
+            user_requirements=self.context.user_quality_requirements,
         )
 
     def _get_system_prompt(self) -> str:
@@ -455,7 +564,53 @@ class AgentLoop:
             profile=profile,
             token_budget=_token_budget_for_profile(profile, cfg.token_threshold),
         ))
+
+        # Extract user quality requirements on first analysis turn
+        if not self.context.user_quality_requirements and user_input and len(user_input) > 100:
+            self._extract_user_requirements(user_input)
+
         return controller.activate_tool_groups(registry, intent, state, user_input)
+
+    def _extract_user_requirements(self, user_input: str) -> None:
+        """Use LLM to extract quality/format requirements from user input (once per session)."""
+        try:
+            prompt = (
+                "从以下用户消息中提取对分析输出格式、质量、详细程度的具体要求。\n"
+                "只返回明确的要求（如'详细说明计算方式'、'需要包含置信度'等），忽略背景描述和问题描述。\n"
+                "如果没有明确要求，返回空字符串。\n\n"
+                f"用户消息：\n{user_input[:2000]}"
+            )
+            resp = self.client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system="你是要求提取专家。只输出提取的要求，不要解释。如无要求输出空。",
+            )
+            requirements = resp.text.strip()
+            if requirements and len(requirements) > 5:
+                self.context.user_quality_requirements = requirements
+                logger.info("User quality requirements extracted",
+                            extra={"extra_data": {"requirements": requirements[:200]}})
+        except Exception as e:
+            logger.warning("Failed to extract user requirements", extra={"extra_data": {"error": str(e)}})
+
+    def _maybe_inject_quality_reminder(self) -> None:
+        """Inject user quality requirements as a reminder when execution budget is converging."""
+        if getattr(self, '_quality_reminder_injected', False):
+            return
+        if not self.context.user_quality_requirements:
+            return
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return
+        if not turn_state.should_converge:
+            return
+        self._quality_reminder_injected = True
+        self.messages.append({"role": "user", "content": (
+            "<quality_reminder>\n"
+            "输出前请确保满足以下用户要求：\n"
+            f"{self.context.user_quality_requirements}\n"
+            "</quality_reminder>"
+        )})
+        logger.info("Quality reminder injected", extra={"extra_data": {"session_id": self.session_id}})
 
     def _execution_prompt_hint(self) -> str:
         turn_state = getattr(self.context, "turn_state", None)
@@ -486,6 +641,58 @@ class AgentLoop:
                 "tool_call_id": tc.id,
                 "content": json.dumps({"error": reason, "error_type": "early_termination"}, ensure_ascii=False),
             })
+
+    def _compact_tool_output(self, tool_result, tc) -> str:
+        """Compact tool output for LLM context. Persist data/details to disk, return concise summary."""
+        from data_agent.tools.registry import ToolResult
+
+        summary = tool_result.to_cli()
+
+        # If ToolResult has structured data, persist it
+        if tool_result.data is not None:
+            try:
+                persist_detail(self.session_id, tc.id, tool_result.data)
+                detail_ref = f" [detail: tool_outputs/{tc.id}_detail.json]"
+            except Exception:
+                detail_ref = ""
+        else:
+            detail_ref = ""
+
+        # If summary is short enough, keep as-is
+        if len(summary) <= TOOL_SUMMARY_THRESHOLD:
+            return persist_large_output(self.session_id, tc.id, summary + detail_ref)
+
+        # Long summary: persist full version, return truncated + reference
+        try:
+            persist_detail(self.session_id, tc.id, {"full_output": summary})
+            truncated = summary[:TOOL_SUMMARY_THRESHOLD]
+            # Try to break at a natural boundary
+            last_newline = truncated.rfind("\n")
+            if last_newline > TOOL_SUMMARY_THRESHOLD * 0.7:
+                truncated = truncated[:last_newline]
+            compact = (
+                f"{truncated}\n\n"
+                f"[Output truncated. Full result: tool_outputs/{tc.id}_detail.json]"
+            )
+            return persist_large_output(self.session_id, tc.id, compact)
+        except Exception:
+            return persist_large_output(self.session_id, tc.id, summary)
+
+    def _auto_track_task_progress(self, tool_name: str, success: bool) -> None:
+        """Auto-update in_progress tasks when tools execute successfully.
+
+        If there are in_progress tasks for this session, mark the first one
+        as completed when a tool succeeds. This provides basic progress tracking
+        even when the LLM forgets to call task_update.
+        """
+        try:
+            from data_agent.session.task_manager import task_manager
+            tasks = task_manager.list_for_scope(session_id=self.session_id)
+            in_progress = [t for t in tasks if t["status"] == "in_progress"]
+            if in_progress and success:
+                task_manager.update(in_progress[0]["id"], status="completed")
+        except Exception:
+            pass
 
     def _repair_broken_tool_sequence(self) -> None:
         """Scan messages for assistant tool_calls missing corresponding tool responses and fill them in."""
@@ -547,6 +754,7 @@ class AgentLoop:
         """处理一轮用户输入，返回回复文本。CLI 模式使用。"""
         logger.info("Turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
+        self._quality_reminder_injected = False
         # Inject interrupt context if previous turn was interrupted
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
@@ -592,6 +800,7 @@ class AgentLoop:
         """处理一轮用户输入，返回 LoopResult。Web 模式使用。"""
         logger.info("Turn started (structured)", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
+        self._quality_reminder_injected = False
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         with use_agent_context(self.context):
@@ -919,25 +1128,24 @@ class AgentLoop:
                 return  # stop processing further tool calls
 
             duration_ms = int((time.monotonic() - t0) * 1000)
-            output = tool_result.to_cli()
-            output = persist_large_output(self.session_id, tc.id, output)
+            tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-            tool_msg_content = output
-            if output.startswith('{"error":') or output.startswith('{"error": '):
+            if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
                 if turn_state is not None:
-                    turn_state.record_tool_error(tc.name, tc.arguments, output)
+                    turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                 tool_msg_content = registry.format_result(tc.name, tool_result)
-                tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
 
             elif turn_state is not None:
                 turn_state.record_tool_success()
+
+            self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
             if self.context.analysis_state is not None:
                 fc = getattr(self, '_flow_controller', None)
                 if fc is not None:
                     regression_msg = fc.check_tool_regression(
-                        self.context.analysis_state, tc.name, output,
+                        self.context.analysis_state, tc.name, tool_msg_content,
                     )
                 if regression_msg:
                     self.messages.append({
@@ -966,6 +1174,7 @@ class AgentLoop:
 
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
+        self._quality_reminder_injected = False
         # Inject interrupt context if previous turn was interrupted
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
@@ -998,6 +1207,10 @@ class AgentLoop:
                     self.session_id, self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
+
+            # Inject paragraph separator between streaming rounds
+            if round_num > 1:
+                yield {"type": "text_delta", "text": "\n\n"}
 
             response = None
             streamed_text = ""
@@ -1043,6 +1256,9 @@ class AgentLoop:
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
+
+            # Budget-based quality reminder injection
+            self._maybe_inject_quality_reminder()
 
             # Process tool calls
             suspended = False
@@ -1113,6 +1329,10 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            # Inject paragraph separator between streaming rounds
+            if round_num > 1:
+                yield {"type": "text_delta", "text": "\n\n"}
+
             response = None
             for ev in self._stream_llm_round(round_num):
                 if ev["type"] == "_response":
@@ -1154,6 +1374,9 @@ class AgentLoop:
                 self._maybe_archive("", final_text)
                 self._auto_save()
                 return
+
+            # Budget-based quality reminder injection
+            self._maybe_inject_quality_reminder()
 
             suspended = False
             for ev in self._process_tool_calls(response, round_num):
@@ -1260,25 +1483,24 @@ class AgentLoop:
             self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
             return susp
 
-        output = tool_result.to_cli()
-        output = persist_large_output(self.session_id, tc.id, output)
+        tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-        tool_msg_content = output
-        if output.startswith('{"error":') or output.startswith('{"error": '):
+        if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
             if turn_state is not None:
-                turn_state.record_tool_error(tc.name, tc.arguments, output)
+                turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
             tool_msg_content = registry.format_result(tc.name, tool_result)
-            tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
-            logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": output[:200]}})
+            logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": tool_msg_content[:200]}})
         elif turn_state is not None:
             turn_state.record_tool_success()
+
+        self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
         if self.context.analysis_state is not None:
             fc = getattr(self, '_flow_controller', None)
             if fc is not None:
                 regression_msg = fc.check_tool_regression(
-                    self.context.analysis_state, tc.name, output,
+                    self.context.analysis_state, tc.name, tool_msg_content,
                 )
                 if regression_msg:
                     self.messages.append({
@@ -1310,15 +1532,12 @@ class AgentLoop:
                 t0 = time.monotonic()
                 tool_result = registry.execute(tc.name, tc.arguments)
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                output = tool_result.to_cli()
-                output = persist_large_output(self.session_id, tc.id, output)
+                tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-                tool_msg_content = output
-                if output.startswith('{"error":') or output.startswith('{"error": '):
+                if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
                     if turn_state is not None:
-                        turn_state.record_tool_error(tc.name, tc.arguments, output)
+                        turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                     tool_msg_content = registry.format_result(tc.name, tool_result)
-                    tool_msg_content = persist_large_output(self.session_id, tc.id, tool_msg_content)
                 elif turn_state is not None:
                     turn_state.record_tool_success()
 
@@ -1409,6 +1628,9 @@ class AgentLoop:
 
             if not response.has_tool_calls:
                 return FinalResponse(content=final_text)
+
+            # Budget-based quality reminder injection
+            self._maybe_inject_quality_reminder()
 
             # 执行工具，每条结果作为独立的 tool 消息
             tool_calls = response.tool_calls

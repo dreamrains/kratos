@@ -181,13 +181,29 @@ class TaskManager:
         self._save(task)
         return task
 
-    def list_all(self) -> list[dict]:
+    def _is_stale(self, task: dict) -> bool:
+        """Pending tasks older than 24 hours are considered stale."""
+        if task.get("status") != "pending":
+            return False
+        created = task.get("created_at", "")
+        if not created:
+            return False
+        from datetime import datetime, timedelta
+        try:
+            ct = datetime.strptime(created, "%Y-%m-%d %H:%M:%S")
+            return datetime.now() - ct > timedelta(hours=24)
+        except ValueError:
+            return False
+
+    def list_all(self, include_stale: bool = False) -> list[dict]:
         tasks = []
         for f in sorted(self.dir.glob("task_*.json")):
             try:
                 tasks.append(self._normalize(json.loads(f.read_text(encoding="utf-8"))))
             except (json.JSONDecodeError, OSError):
                 continue
+        if not include_stale:
+            tasks = [t for t in tasks if not self._is_stale(t)]
         return tasks
 
     def list_for_scope(self, session_id: str = "", project_name: str = "") -> list[dict]:
@@ -202,6 +218,10 @@ class TaskManager:
 
     def list_by_status(self, status: str) -> list[dict]:
         return [t for t in self.list_all() if t.get("status") == status]
+
+    def list_all_raw(self) -> list[dict]:
+        """Return all tasks including stale ones (for admin/management scenarios)."""
+        return self.list_all(include_stale=True)
 
     def format_list(self, session_id: str = "", project_name: str = "") -> str:
         """纯文本格式化任务列表。"""

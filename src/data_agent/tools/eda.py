@@ -10,7 +10,7 @@ import pandas as pd
 from scipy import stats as sp_stats
 
 from data_agent.session.workspace import workspace
-from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range
+from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range, analyze_period_structure, compare_period_structures
 from data_agent.tools.registry import ToolResult
 from data_agent.tools.registry import registry
 
@@ -426,6 +426,40 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
         "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
     },
 )
+def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: dict) -> dict | None:
+    """Recommend a statistical test based on the comparison context."""
+    if n_a < 2 or n_b < 2 or not metric_cols:
+        return None
+    has_diff = False
+    metrics = result.get("metrics", {})
+    for col_data in (metrics.values() if metrics else []):
+        pct = col_data.get("change_pct")
+        if pct is not None and abs(pct) > 1:
+            has_diff = True
+            break
+    if not has_diff:
+        comparisons = result.get("comparisons", [])
+        for comp in comparisons:
+            for k, v in comp.items():
+                if isinstance(v, dict) and v.get("change_pct") is not None and abs(v["change_pct"]) > 1:
+                    has_diff = True
+                    break
+            if has_diff:
+                break
+    if not has_diff:
+        return None
+    return {
+        "recommended_tool": "ab_test",
+        "reason": f"两组样本量分别为 {n_a} 和 {n_b}，均值差异存在，建议用 ab_test 验证统计显著性",
+        "suggested_args": {
+            "name": "<数据集名>",
+            "group_col": "<分组列（需包含两组标识）>",
+            "metric_col": metric_cols[0],
+            "method": "auto",
+        },
+    }
+
+
 def compare_periods(
     name: str,
     date_col: str = "",
@@ -467,6 +501,11 @@ def compare_periods(
     if df_a.empty or df_b.empty:
         return json.dumps({"error": "某个时间段内没有数据", "period_a_rows": len(df_a), "period_b_rows": len(df_b)}, ensure_ascii=False)
 
+    # 时段结构分析
+    struct_a = analyze_period_structure(pa[0], pa[1])
+    struct_b = analyze_period_structure(pb[0], pb[1])
+    comparability = compare_period_structures(struct_a, struct_b)
+
     # 指标列
     if metrics:
         metric_cols = [c.strip() for c in metrics.split(",")]
@@ -478,9 +517,41 @@ def compare_periods(
 
     dim_cols = [c.strip() for c in dimensions.split(",") if c.strip()] if dimensions else []
 
+    def _daily_avg_fields(va: float, vb: float):
+        """计算日均值相关字段。"""
+        days_a = struct_a["day_count"]
+        days_b = struct_b["day_count"]
+        da = va / days_a if days_a > 0 else None
+        db = vb / days_b if days_b > 0 else None
+        d_diff = db - da if da is not None and db is not None else None
+        d_pct = (d_diff / abs(da) * 100) if d_diff is not None and da and da != 0 else None
+        return {
+            "daily_avg_a": round(da, 4) if da is not None else None,
+            "daily_avg_b": round(db, 4) if db is not None else None,
+            "daily_avg_diff": round(d_diff, 4) if d_diff is not None else None,
+            "daily_avg_change_pct": round(d_pct, 2) if d_pct is not None else None,
+        }
+
     result = {
-        "period_a": {"label": period_a, "range": [str(pa[0].date()), str(pa[1].date())], "rows": len(df_a)},
-        "period_b": {"label": period_b, "range": [str(pb[0].date()), str(pb[1].date())], "rows": len(df_b)},
+        "period_a": {
+            "label": period_a,
+            "range": [str(pa[0].date()), str(pa[1].date())],
+            "rows": len(df_a),
+            "day_count": struct_a["day_count"],
+            "weekday_count": struct_a["weekday_count"],
+            "weekend_count": struct_a["weekend_count"],
+            **({"dates": struct_a["dates"]} if "dates" in struct_a else {}),
+        },
+        "period_b": {
+            "label": period_b,
+            "range": [str(pb[0].date()), str(pb[1].date())],
+            "rows": len(df_b),
+            "day_count": struct_b["day_count"],
+            "weekday_count": struct_b["weekday_count"],
+            "weekend_count": struct_b["weekend_count"],
+            **({"dates": struct_b["dates"]} if "dates" in struct_b else {}),
+        },
+        "comparability": comparability,
     }
 
     if dim_cols:
@@ -498,7 +569,13 @@ def compare_periods(
                 vb = grp_b[col].sum() if len(grp_b) > 0 else 0
                 diff = float(vb) - float(va)
                 pct = (diff / abs(float(va)) * 100) if float(va) != 0 else None
-                row[col] = {"a": round(float(va), 4), "b": round(float(vb), 4), "diff": round(diff, 4), "change_pct": round(pct, 2) if pct is not None else None}
+                row[col] = {
+                    "a": round(float(va), 4),
+                    "b": round(float(vb), 4),
+                    "diff": round(diff, 4),
+                    "change_pct": round(pct, 2) if pct is not None else None,
+                    **_daily_avg_fields(float(va), float(vb)),
+                }
             result["comparisons"].append(row)
     else:
         result["metrics"] = {}
@@ -512,7 +589,13 @@ def compare_periods(
                 "period_b": round(vb, 4),
                 "diff": round(diff, 4),
                 "change_pct": round(pct, 2) if pct is not None else None,
+                **_daily_avg_fields(va, vb),
             }
+
+    # Statistical test recommendation
+    rec = _recommend_statistical_test(len(df_a), len(df_b), metric_cols, result)
+    if rec:
+        result["statistical_test_recommendation"] = rec
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -627,6 +710,11 @@ def contribute_decomposition(
     if df_a.empty or df_b.empty:
         return json.dumps({"error": "某个时间段内没有数据"}, ensure_ascii=False)
 
+    # 时段结构分析
+    struct_a = analyze_period_structure(pa[0], pa[1])
+    struct_b = analyze_period_structure(pb[0], pb[1])
+    comparability = compare_period_structures(struct_a, struct_b)
+
     # 获取所有维度值（取两个时期的并集）
     all_dim_values = sorted(set(df_a[dimension].unique()) | set(df_b[dimension].unique()))
 
@@ -695,14 +783,45 @@ def contribute_decomposition(
         "metric": metric,
         "dimension": dimension,
         "agg_func": agg_func,
-        "period_a": {"label": period_a, "range": [str(pa[0].date()), str(pa[1].date())], "value": round(total_a, 4)},
-        "period_b": {"label": period_b, "range": [str(pb[0].date()), str(pb[1].date())], "value": round(total_b, 4)},
+        "period_a": {
+            "label": period_a,
+            "range": [str(pa[0].date()), str(pa[1].date())],
+            "value": round(total_a, 4),
+            "day_count": struct_a["day_count"],
+            "weekday_count": struct_a["weekday_count"],
+            "weekend_count": struct_a["weekend_count"],
+        },
+        "period_b": {
+            "label": period_b,
+            "range": [str(pb[0].date()), str(pb[1].date())],
+            "value": round(total_b, 4),
+            "day_count": struct_b["day_count"],
+            "weekday_count": struct_b["weekday_count"],
+            "weekend_count": struct_b["weekend_count"],
+        },
+        "comparability": comparability,
         "total_change": round(total_change, 4),
         "total_change_pct": total_pct,
         "decomposition": decomposition,
         "top_negative": top_neg,
         "top_positive": top_pos,
     }
+
+    # 时长不等时增加日均值归一化
+    if comparability["daily_avg_recommended"] and agg_func == "sum":
+        days_a = struct_a["day_count"]
+        days_b = struct_b["day_count"]
+        daily_a = total_a / days_a if days_a > 0 else 0
+        daily_b = total_b / days_b if days_b > 0 else 0
+        daily_change = daily_b - daily_a
+        daily_pct = round(daily_change / abs(daily_a) * 100, 2) if daily_a != 0 else None
+        data["daily_normalized"] = {
+            "daily_avg_a": round(daily_a, 4),
+            "daily_avg_b": round(daily_b, 4),
+            "daily_change": round(daily_change, 4),
+            "daily_change_pct": daily_pct,
+            "note": "Daily averages account for different period lengths",
+        }
 
     # CLI summary
     summary_lines = [
@@ -716,6 +835,12 @@ def contribute_decomposition(
         summary_lines.append(f"主要下降因素: {', '.join(top_neg)}")
     if top_pos:
         summary_lines.append(f"主要增长因素: {', '.join(top_pos)}")
+
+    # 可比性警告
+    if comparability["warnings"]:
+        summary_lines.append("⚠ 可比性提示:")
+        for w in comparability["warnings"]:
+            summary_lines.append(f"  - {w}")
 
     return ToolResult(
         summary="\n".join(summary_lines),

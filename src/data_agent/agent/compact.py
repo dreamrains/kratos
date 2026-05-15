@@ -78,8 +78,65 @@ def _collect_tool_result_blocks(messages: list[dict]) -> list[tuple[int, int, di
     return blocks
 
 
+def _extract_compact_preview(content: str, max_chars: int = 400) -> str:
+    """从工具输出中提取有意义的摘要预览。
+
+    策略：
+    1. 识别结构化标签（如 [data_profile]、[insights]），提取每个标签的首行
+    2. 提取包含结论关键词的行（如 "结论"、"发现"、"显著"、"增加"、"下降"）
+    3. 如果没有明确结论，取首尾若干行
+    """
+    lines = content.strip().split("\n")
+
+    # 策略1：提取结构化标签内的首行
+    tagged_summaries = []
+    in_tag = False
+    tag_name = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and not stripped.startswith("[/") and "]" in stripped:
+            tag_name = stripped[1:stripped.index("]")]
+            in_tag = True
+            continue
+        if stripped.startswith("[/") and "]" in stripped:
+            in_tag = False
+            continue
+        if in_tag and stripped and len(tagged_summaries) < 8:
+            tagged_summaries.append(f"{tag_name}: {stripped}")
+
+    # 策略2：提取结论性行
+    conclusion_keywords = [
+        "结论", "发现", "显著", "增加", "下降", "增长", "减少",
+        "conclusion", "finding", "significant", "insight",
+        "趋势", "变化", "对比", "平均", "中位数", "占比",
+    ]
+    conclusion_lines = [
+        l.strip() for l in lines
+        if any(kw in l.lower() for kw in conclusion_keywords) and l.strip()
+    ]
+
+    # 组合预览
+    parts = []
+    if tagged_summaries:
+        parts.extend(tagged_summaries[:5])
+    elif conclusion_lines:
+        parts.extend(conclusion_lines[:5])
+
+    # 如果提取不到，用首尾行
+    if not parts:
+        if len(lines) <= 4:
+            parts = lines
+        else:
+            parts = lines[:2] + ["..."] + lines[-2:]
+
+    preview = "\n".join(parts)
+    if len(preview) > max_chars:
+        preview = preview[:max_chars] + "..."
+    return preview
+
+
 def micro_compact(session_id: str, messages: list[dict]) -> None:
-    """微压缩：旧工具结果先持久化，再替换为占位符。保留最近 KEEP_RECENT 个。"""
+    """微压缩：旧工具结果先持久化，再替换为结论摘要。保留最近 KEEP_RECENT 个。"""
     tool_blocks = _collect_tool_result_blocks(messages)
     if len(tool_blocks) <= KEEP_RECENT:
         return
@@ -93,16 +150,17 @@ def micro_compact(session_id: str, messages: list[dict]) -> None:
         tool_call_id = msg.get("tool_call_id", f"legacy_{id(msg)}")
         persisted = persist_large_output(session_id, tool_call_id, content)
 
-        # 如果内容确实被持久化（超出阈值），替换为简短占位符
+        safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
+
+        # 如果内容确实被持久化（超出阈值），替换为结论摘要
         if persisted != content:
+            preview = _extract_compact_preview(content)
             msg["content"] = (
-                f"[Earlier tool result for {tool_call_id} compacted. "
-                f"Full output saved to tool_outputs/{tool_call_id.replace('/', '_').replace(chr(92), '_')}.txt]\n"
-                f"Preview: {content[:200]}..."
+                f"[Compacted: {safe_id}.txt]\n{preview}"
             )
         else:
-            # 内容不大但超 120 字符，直接截断
-            msg["content"] = content[:200] + "\n...[truncated]"
+            # 内容不大但超 120 字符，用智能截断
+            msg["content"] = _extract_compact_preview(content, max_chars=200)
 
 
 def write_transcript(session_id: str, messages: list[dict]) -> Path:
@@ -216,6 +274,7 @@ def compact_history(
 
     summary_prompt = (
         "请将以下数据分析对话历史压缩为结构化摘要，必须保留以下关键信息：\n"
+        "0. 用户对输出格式、质量、详细程度的明确要求（必须完整保留原文）\n"
         "1. 已加载的数据集名称、行数列数、关键字段、数据质量状态\n"
         "2. 已完成的分析步骤和每步的核心结论（含具体数值和统计显著性）\n"
         "3. 用户关注的核心指标和维度\n"

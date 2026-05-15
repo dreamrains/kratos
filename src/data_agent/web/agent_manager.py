@@ -27,7 +27,12 @@ class AgentManager:
         session_id: Optional[str] = None,
         model_id: Optional[str] = None,
     ):
-        """Get existing or create new AgentLoop for a session."""
+        """Get existing or create new AgentLoop for a session.
+
+        When creating a new AgentLoop for a session_id that already exists
+        on disk (e.g. after server restart), automatically restores conversation
+        history, object context, and workspace data.
+        """
         from data_agent.agent.loop import AgentLoop, set_interaction_mode
 
         if session_id and session_id in self._loops:
@@ -42,6 +47,18 @@ class AgentManager:
             client = LLMClient(model_id=model_id)
 
         loop = AgentLoop(client=client, session_id=sid)
+
+        # Auto-restore session that exists on disk but was lost from memory
+        if sid and not loop.messages:
+            from data_agent.session.history import load_session
+            sdata = load_session(sid)
+            if sdata and sdata.get("messages"):
+                loop.messages = sdata["messages"]
+                loop.restore_object_context()
+                loop._restore_workspace()
+                logger.info("Session restored from disk",
+                            extra={"extra_data": {"session_id": sid, "messages": len(loop.messages)}})
+
         with self._lock:
             self._loops[sid] = loop
 

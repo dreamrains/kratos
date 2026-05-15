@@ -17,10 +17,17 @@ def get_artifacts(session_id: str):
 
 @artifacts_bp.get("/files/<path:filepath>")
 def serve_file(filepath: str):
-    project_dir = get_config().project_resolved
-    resolved = (project_dir / filepath).resolve()
+    cfg = get_config()
+    parts = Path(filepath).parts
+    if parts and parts[0] == "sessions":
+        base_dir = cfg.sessions_resolved
+        inner = str(Path(*parts[1:])) if len(parts) > 1 else ""
+        resolved = (base_dir / inner).resolve()
+    else:
+        base_dir = cfg.project_resolved
+        resolved = (base_dir / filepath).resolve()
 
-    if not str(resolved).startswith(str(project_dir.resolve())):
+    if not str(resolved).startswith(str(base_dir.resolve())):
         return jsonify({"error": "Access denied"}), 403
 
     if not resolved.exists():

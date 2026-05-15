@@ -532,7 +532,8 @@ class TestDirectedAnalysis:
     ])
     def test_analysis_keywords_with_data(self, text):
         result = plan_turn_intent(text, DATA_LOADED_CTX)
-        assert result.intent_type == "directed_analysis"
+        # "analyze" removed from _ANALYSIS_KEYWORDS; may fall to LLM fallback
+        assert result.intent_type in ("directed_analysis", "intent_negotiation")
         assert result.recommended_action == "run_analysis"
         assert result.data_state == "data_loaded"
 
@@ -551,8 +552,10 @@ class TestDirectedAnalysis:
         assert result.intent_type == "directed_analysis"
 
     def test_analyze_keyword(self):
+        # "analyze" removed from _ANALYSIS_KEYWORDS to avoid blocking guidance.
+        # Without a specific analysis direction keyword, falls to LLM or guidance.
         result = plan_turn_intent("analyze the revenue data", DATA_LOADED_CTX)
-        assert result.intent_type == "directed_analysis"
+        assert result.intent_type in ("directed_analysis", "intent_negotiation")
 
     def test_worth_keyword(self):
         result = plan_turn_intent("is this product worth investing in", DATA_LOADED_CTX)
@@ -735,8 +738,13 @@ class TestPriorityOrdering:
         assert result.intent_type == "directed_analysis"
 
     def test_guidance_suppressed_when_analysis_keyword_present(self):
-        """Guidance is only considered when no analysis keyword co-occurs."""
-        # "分析一下" is in _GUIDANCE_KEYWORDS but "分析" is also in _ANALYSIS_KEYWORDS
-        # The code explicitly checks `and not any(k in text for k in _ANALYSIS_KEYWORDS)`
-        result = plan_turn_intent("分析一下", DATA_LOADED_CTX)
+        """When guidance text also contains a directional analysis keyword,
+        the directional keyword takes precedence."""
+        # "帮我分析收入趋势" has both guidance ("帮我分析") and analysis ("趋势") keywords
+        result = plan_turn_intent("帮我分析收入趋势", DATA_LOADED_CTX)
         assert result.intent_type == "directed_analysis"
+
+        # "分析一下" (no direction) should now go to intent_negotiation
+        # since "分析" was removed from _ANALYSIS_KEYWORDS
+        result2 = plan_turn_intent("分析一下", DATA_LOADED_CTX)
+        assert result2.intent_type == "intent_negotiation"

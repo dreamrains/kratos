@@ -61,8 +61,15 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
-    g1 = df[df[group_col] == groups[0]][metric_col].dropna().values.astype(float)
-    g2 = df[df[group_col] == groups[1]][metric_col].dropna().values.astype(float)
+    try:
+        g1 = df[df[group_col] == groups[0]][metric_col].dropna().values.astype(float)
+        g2 = df[df[group_col] == groups[1]][metric_col].dropna().values.astype(float)
+    except (ValueError, TypeError) as e:
+        return json.dumps({
+            "error": f"指标列 '{metric_col}' 包含非数值数据，无法进行统计检验",
+            "error_type": "non_numeric_metric",
+            "detail": str(e),
+        }, ensure_ascii=False)
 
     if len(g1) < 2 or len(g2) < 2:
         return "Error: 每组至少需要 2 个有效数据点"

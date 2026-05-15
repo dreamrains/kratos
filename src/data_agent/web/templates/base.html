@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
@@ -18,23 +21,41 @@
             startOnLoad: false,
             theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
             securityLevel: 'loose',
-            fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+            fontFamily: "'DM Sans', ui-sans-serif, system-ui, sans-serif",
         });
+        new MutationObserver(() => {
+            const isDark = document.documentElement.classList.contains('dark');
+            mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose' });
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     </script>
     <script>
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
+                    fontFamily: {
+                        sans: ['"DM Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+                    },
                     colors: {
-                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8' }
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            200: '#99f6e4',
+                            300: '#5eead4',
+                            400: '#2dd4bf',
+                            500: '#14b8a6',
+                            600: '#0d9488',
+                            700: '#0f766e',
+                            800: '#115e59',
+                            900: '#134e4a',
+                        }
                     }
                 }
             }
         }
     </script>
 </head>
-<body class="h-full bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+<body class="h-full bg-stone-50 text-stone-800 dark:bg-stone-950 dark:text-stone-200 font-sans antialiased">
     {% block body %}{% endblock %}
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
