@@ -41,22 +41,37 @@ class AnalysisFlowController:
     def has_pending_confirmation(self, state: AnalysisSessionState) -> bool:
         return any(c.get("status", "pending") == "pending" for c in state.pending_confirmations)
 
+    HIGH_RISK_CAPABILITIES = frozenset({
+        "analysis.causal",
+        "analysis.forecast",
+        "analysis.experiment",
+        "analysis.classification",
+    })
+
+    # Capabilities that must never be blocked — they are the escape hatch
+    NEVER_BLOCK_CAPABILITIES = frozenset({
+        "interaction.confirmation",  # ask_user_question
+        "interaction.information",   # informational queries
+    })
+
+    # Tool categories that are always safe regardless of spec content
+    SAFE_TOOL_CATEGORIES = frozenset({
+        "data_view",     # list_data, quick_profile
+        "data_load",     # load_data
+        "confirmation",  # ask_user_question
+    })
+
     def is_high_risk_capability(self, capability_id: str, spec: dict | None = None) -> bool:
-        high_risk = {
-            "analysis.causal",
-            "analysis.forecast",
-            "analysis.experiment",
-            "analysis.classification",
-        }
-        if capability_id in high_risk:
+        if capability_id in self.HIGH_RISK_CAPABILITIES:
             return True
-        text = " ".join(str(v).lower() for v in (spec or {}).values() if isinstance(v, (str, int, float)))
-        return any(term in text for term in ("roi", "what-if", "decision", "决策", "投入产出"))
+        return False
 
     def is_capability_blocked_by_confirmation(self, state: AnalysisSessionState, capability_id: str) -> bool:
+        if capability_id in self.NEVER_BLOCK_CAPABILITIES:
+            return False
         spec = state.analysis_spec or {}
         policy = spec.get("confirmation_policy") or {}
-        if not policy.get("requires_confirmation") and not self.is_high_risk_capability(capability_id, spec):
+        if not policy.get("requires_confirmation"):
             return False
         if not self.is_high_risk_capability(capability_id, spec):
             return False
@@ -67,6 +82,9 @@ class AnalysisFlowController:
         if not cap:
             return False
         capability_id = cap.get("capability_id", "")
+        category = cap.get("category", "")
+        if capability_id in self.NEVER_BLOCK_CAPABILITIES or category in self.SAFE_TOOL_CATEGORIES:
+            return False
         return self.is_capability_blocked_by_confirmation(state, capability_id)
 
     def ensure_confirmation_task(self, state: AnalysisSessionState) -> dict | None:

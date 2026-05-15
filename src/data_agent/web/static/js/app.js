@@ -118,7 +118,11 @@ function chatApp() {
             this.isCompact = s.isCompact;
         },
 
+        _initialized: false,
+
         async init() {
+            if (this._initialized) return;
+            this._initialized = true;
             await Promise.all([
                 this.loadSessions(),
                 this.loadObjects(),
@@ -705,7 +709,9 @@ function chatApp() {
                     setTimeout(() => { this.tasksExpanded = false; }, 3000);
                 }
                 this._updateTaskPollInterval();
-            } catch {}
+            } catch (e) {
+                console.warn('loadTasks failed:', e);
+            }
         },
 
         _updateTaskPollInterval() {
@@ -841,26 +847,24 @@ function chatApp() {
             } catch (e) {
                 turn.isThinking = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
-                if (this.currentSessionId === sseSessionId) {
-                    this.connectionError = e.message;
-                }
+                this.connectionError = e.message;
             } finally {
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    // Sync back if still on this session
-                    if (this.currentSessionId === sseSessionId) {
+                    // this.currentSessionId may have migrated from _pending_ to real ID
+                    const activeSid = this.currentSessionId;
+                    const stillOnSession = activeSid && activeSid !== '_pending_';
+                    if (stillOnSession) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
                     }
                 }
                 await this.loadSessions();
                 await this.loadTasks();
-                if (this.currentSessionId === sseSessionId) {
-                    requestAnimationFrame(() => {
-                        const el = document.getElementById('messages-container');
-                        if (el) this._renderMermaidInElement(el);
-                    });
-                }
+                requestAnimationFrame(() => {
+                    const el = document.getElementById('messages-container');
+                    if (el) this._renderMermaidInElement(el);
+                });
             }
         },
 
@@ -1227,7 +1231,9 @@ function chatApp() {
             if (typeof mermaid !== 'undefined') {
                 const mermaidDivs = el.querySelectorAll('.mermaid:not([data-processed])');
                 for (const div of mermaidDivs) {
-                    const renderId = div.id || ('m-' + Math.random().toString(36).slice(2));
+                    // Use a throwaway render id — mermaid.render() removes the DOM element
+                    // whose id matches the renderId, so we must NOT use div.id here
+                    const renderId = 'mr-' + Math.random().toString(36).slice(2, 10);
                     try {
                         const { svg } = await mermaid.render(renderId, div.textContent);
                         div.innerHTML = svg;
@@ -1235,7 +1241,6 @@ function chatApp() {
                         const msg = (e.message || e || 'Unknown error').substring(0, 120);
                         div.innerHTML = `<div class="mermaid-error">Diagram render error: ${msg}</div>`;
                     } finally {
-                        // Mermaid creates a temporary <div id="d{id}"> in body — clean it up
                         const temp = document.getElementById('d' + renderId);
                         if (temp) temp.remove();
                         div.setAttribute('data-processed', 'true');
@@ -1328,6 +1333,8 @@ function chatApp() {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            // Track the effective sessionId — updated when turn_start migrates _pending_
+            let effectiveSid = sessionId;
             while (true) {
                 let result;
                 try { result = await reader.read(); } catch {
@@ -1346,21 +1353,25 @@ function chatApp() {
                     if (line.startsWith('event: ')) eventType = line.slice(7).trim();
                     else if (line.startsWith('data: ')) eventData = line.slice(6);
                     else if (line === '' && eventType && eventData) {
-                        try { this._handleEvent(eventType, JSON.parse(eventData), turn, state, sessionId); }
-                        catch (e) { console.error('SSE event error:', type, e); }
+                        try {
+                            const updated = this._handleEvent(eventType, JSON.parse(eventData), turn, state, effectiveSid);
+                            if (updated) effectiveSid = updated;
+                        } catch (e) { console.error('SSE event error:', eventType, e); }
                         eventType = ''; eventData = '';
                     }
                 }
             }
             turn.isThinking = false;
             state.isLoading = false;
-            if (this.currentSessionId === sessionId) this.isLoading = false;
+            if (this.currentSessionId === effectiveSid) this.isLoading = false;
             this._stopThinkingCycle();
             this.connectionError = '';
         },
 
         _handleEvent(type, data, turn, state, sessionId) {
             let isCurrentSession = (this.currentSessionId === sessionId);
+            // Return value: new sessionId if migrated from _pending_, else undefined
+            let migratedSid;
 
             switch (type) {
                 case 'turn_start':
@@ -1373,6 +1384,7 @@ function chatApp() {
                             this.currentSessionId = data.session_id;
                         }
                         sessionId = data.session_id;
+                        migratedSid = sessionId;
                         state = this._sessionStates[sessionId];
                         isCurrentSession = (this.currentSessionId === sessionId);
                     }
@@ -1472,6 +1484,7 @@ function chatApp() {
                     }
                     break;
             }
+            return migratedSid;
         },
 
         // --- Helpers ---
