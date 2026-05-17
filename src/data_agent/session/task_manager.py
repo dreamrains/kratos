@@ -264,19 +264,41 @@ class TaskManager:
         value = active.get(self._plan_key(session_id, project_name), "")
         return str(value or "")
 
+    def _get_active_plan_ids_for_scope(self, session_id: str = "", project_name: str = "") -> set[str]:
+        active = self._read_active_plans()
+        if session_id and not project_name:
+            prefix = f"{session_id}::"
+            return {str(plan_id) for key, plan_id in active.items() if key.startswith(prefix) and plan_id}
+        active_plan_id = active.get(self._plan_key(session_id, project_name), "")
+        return {str(active_plan_id)} if active_plan_id else set()
+
     def _set_active_plan_id(self, plan_id: str, session_id: str = "", project_name: str = "") -> None:
         active = self._read_active_plans()
         active[self._plan_key(session_id, project_name)] = plan_id
         self._write_active_plans(active)
 
-    def _session_project_tasks(self, session_id: str = "", project_name: str = "") -> list[dict]:
-        return self.list_for_scope(session_id=session_id, project_name=project_name, include_global=False)
+    def _session_project_tasks(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_stale: bool = False,
+    ) -> list[dict]:
+        return self._list_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+            include_global=False,
+            include_stale=include_stale,
+        )
 
     def _supersede_active_plan(self, session_id: str = "", project_name: str = "", superseded_by: str = "") -> None:
         active_plan_id = self.get_active_plan_id(session_id, project_name)
         if not active_plan_id:
             return
-        for task in self._session_project_tasks(session_id=session_id, project_name=project_name):
+        for task in self._session_project_tasks(
+            session_id=session_id,
+            project_name=project_name,
+            include_stale=True,
+        ):
             if task.get("plan_id") != active_plan_id:
                 continue
             if task.get("status") in ("pending", "blocked", "in_progress"):
@@ -320,13 +342,14 @@ class TaskManager:
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-    def list_for_scope(
+    def _list_for_scope(
         self,
         session_id: str = "",
         project_name: str = "",
         include_global: bool = False,
+        include_stale: bool = False,
     ) -> list[dict]:
-        tasks = self.list_all()
+        tasks = self.list_all(include_stale=include_stale)
         if not session_id and not project_name:
             return tasks
 
@@ -347,6 +370,18 @@ class TaskManager:
             ])
         return scoped
 
+    def list_for_scope(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> list[dict]:
+        return self._list_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+            include_global=include_global,
+        )
+
     def list_active_for_scope(
         self,
         session_id: str = "",
@@ -358,11 +393,11 @@ class TaskManager:
             project_name=project_name,
             include_global=include_global,
         )
-        active_plan_id = self.get_active_plan_id(session_id, project_name)
-        if active_plan_id:
+        active_plan_ids = self._get_active_plan_ids_for_scope(session_id, project_name)
+        if active_plan_ids:
             return [
                 t for t in tasks
-                if t.get("plan_id") == active_plan_id
+                if t.get("plan_id") in active_plan_ids
                 and t.get("task_kind") in ("plan_task", "confirmation", "evidence_gap")
                 and t.get("status") not in ("deleted", "archived", "superseded")
             ]
@@ -378,15 +413,16 @@ class TaskManager:
         project_name: str = "",
         include_global: bool = False,
     ) -> list[dict]:
-        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        active_plan_ids = self._get_active_plan_ids_for_scope(session_id, project_name)
         return [
-            t for t in self.list_for_scope(
+            t for t in self._list_for_scope(
                 session_id=session_id,
                 project_name=project_name,
                 include_global=include_global,
+                include_stale=True,
             )
             if t.get("status") in ("completed", "archived", "superseded")
-            and (not active_plan_id or t.get("plan_id") != active_plan_id)
+            and (not active_plan_ids or t.get("plan_id") not in active_plan_ids)
         ]
 
     def list_ready(

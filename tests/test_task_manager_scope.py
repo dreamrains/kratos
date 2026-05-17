@@ -1,3 +1,5 @@
+import json
+
 from data_agent.session.task_manager import TaskManager
 
 
@@ -94,6 +96,26 @@ def test_list_active_for_scope_returns_only_active_plan_tasks(tmp_path):
     assert mgr.get(old_task["id"])["status"] == "superseded"
 
 
+def test_session_only_active_scope_includes_project_active_plan(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(
+        session_id="s1",
+        project_name="Revenue",
+        goal="Analyze revenue decline",
+        source="analysis_spec",
+    )
+    task = mgr.create(
+        "Project active",
+        session_id="s1",
+        project_name="Revenue",
+        plan_id=plan["id"],
+    )
+
+    tasks = mgr.list_active_for_scope(session_id="s1")
+
+    assert [t["id"] for t in tasks] == [task["id"]]
+
+
 def test_list_history_for_scope_returns_superseded_and_archived_tasks(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     first = mgr.create_plan(session_id="s1", goal="First", source="analysis_spec")
@@ -106,3 +128,19 @@ def test_list_history_for_scope_returns_superseded_and_archived_tasks(tmp_path):
 
     assert [t["id"] for t in history] == [old_task["id"], archived_task["id"]]
     assert [t["status"] for t in history] == ["superseded", "archived"]
+
+
+def test_supersede_active_plan_includes_stale_pending_tasks(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    old_plan = mgr.create_plan(session_id="s1", goal="Old", source="analysis_spec")
+    old_task = mgr.create("Old pending", session_id="s1", plan_id=old_plan["id"])
+    task_path = mgr._path(old_task["id"])
+    task_data = json.loads(task_path.read_text(encoding="utf-8"))
+    task_data["created_at"] = "2000-01-01 00:00:00"
+    task_path.write_text(json.dumps(task_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    mgr.create_plan(session_id="s1", goal="New", source="user_replan")
+
+    assert mgr.get(old_task["id"])["status"] == "superseded"
+    history = mgr.list_history_for_scope(session_id="s1")
+    assert [t["id"] for t in history] == [old_task["id"]]
