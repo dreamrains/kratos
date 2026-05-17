@@ -83,6 +83,26 @@ def test_create_plan_sets_active_plan_for_session(tmp_path):
     assert mgr.get_active_plan_id("s1", "Revenue") == plan["id"]
 
 
+def test_create_plan_version_counts_stale_active_tasks(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    old_plan = mgr.create_plan(session_id="s1", goal="Old", source="analysis_spec")
+    old_task = mgr.create(
+        "Old pending",
+        session_id="s1",
+        plan_id=old_plan["id"],
+        plan_version=old_plan["version"],
+    )
+    task_path = mgr._path(old_task["id"])
+    task_data = json.loads(task_path.read_text(encoding="utf-8"))
+    task_data["created_at"] = "2000-01-01 00:00:00"
+    task_path.write_text(json.dumps(task_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    new_plan = mgr.create_plan(session_id="s1", goal="New", source="user_replan")
+
+    assert new_plan["version"] == old_plan["version"] + 1
+    assert mgr.get(old_task["id"])["status"] == "superseded"
+
+
 def test_list_active_for_scope_returns_only_active_plan_tasks(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     old_plan = mgr.create_plan(session_id="s1", goal="Old", source="analysis_spec")

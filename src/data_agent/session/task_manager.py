@@ -324,7 +324,11 @@ class TaskManager:
         active_plan_id = self.get_active_plan_id(session_id, project_name)
         existing_versions = [
             int(t.get("plan_version") or 1)
-            for t in self._session_project_tasks(session_id=session_id, project_name=project_name)
+            for t in self._session_project_tasks(
+                session_id=session_id,
+                project_name=project_name,
+                include_stale=True,
+            )
             if t.get("plan_id")
         ]
         version = max(existing_versions, default=0) + 1
