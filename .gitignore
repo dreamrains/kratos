@@ -7,6 +7,7 @@ dist/
 build/
 sessions/
 .claude/
+.worktrees/
 project/data/
 project/objects/
 project/reports/
