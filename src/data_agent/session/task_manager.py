@@ -395,12 +395,13 @@ class TaskManager:
         project_name: str = "",
         include_global: bool = False,
     ) -> list[dict]:
-        tasks = self.list_for_scope(
+        active_plan_ids = self._get_active_plan_ids_for_scope(session_id, project_name)
+        tasks = self._list_for_scope(
             session_id=session_id,
             project_name=project_name,
             include_global=include_global,
+            include_stale=bool(active_plan_ids),
         )
-        active_plan_ids = self._get_active_plan_ids_for_scope(session_id, project_name)
         if active_plan_ids:
             return [
                 t for t in tasks

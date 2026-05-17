@@ -116,6 +116,20 @@ def test_list_active_for_scope_returns_only_active_plan_tasks(tmp_path):
     assert mgr.get(old_task["id"])["status"] == "superseded"
 
 
+def test_active_plan_scope_includes_stale_pending_active_tasks(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Active", source="analysis_spec")
+    task = mgr.create("Stale active", session_id="s1", plan_id=plan["id"])
+    task_path = mgr._path(task["id"])
+    task_data = json.loads(task_path.read_text(encoding="utf-8"))
+    task_data["created_at"] = "2000-01-01 00:00:00"
+    task_path.write_text(json.dumps(task_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    tasks = mgr.list_active_for_scope(session_id="s1")
+
+    assert [t["id"] for t in tasks] == [task["id"]]
+
+
 def test_session_only_active_scope_includes_project_active_plan(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     plan = mgr.create_plan(
