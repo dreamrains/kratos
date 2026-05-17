@@ -98,9 +98,11 @@ def test_list_history_for_scope_returns_superseded_and_archived_tasks(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     first = mgr.create_plan(session_id="s1", goal="First", source="analysis_spec")
     old_task = mgr.create("Old task", session_id="s1", plan_id=first["id"])
+    archived_task = mgr.create("Archived task", session_id="s1", plan_id=first["id"])
+    mgr.update(archived_task["id"], status="archived")
     mgr.create_plan(session_id="s1", goal="Second", source="user_replan")
 
     history = mgr.list_history_for_scope(session_id="s1")
 
-    assert [t["id"] for t in history] == [old_task["id"]]
-    assert history[0]["status"] == "superseded"
+    assert [t["id"] for t in history] == [old_task["id"], archived_task["id"]]
+    assert [t["status"] for t in history] == ["superseded", "archived"]
