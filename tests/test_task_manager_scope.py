@@ -116,6 +116,28 @@ def test_session_only_active_scope_includes_project_active_plan(tmp_path):
     assert [t["id"] for t in tasks] == [task["id"]]
 
 
+def test_project_only_active_scope_includes_session_project_active_plan(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(
+        session_id="s1",
+        project_name="Revenue",
+        goal="Analyze revenue decline",
+        source="analysis_spec",
+    )
+    task = mgr.create(
+        "Project active",
+        session_id="s1",
+        project_name="Revenue",
+        plan_id=plan["id"],
+    )
+
+    tasks = mgr.list_active_for_scope(project_name="Revenue")
+    history = mgr.list_history_for_scope(project_name="Revenue")
+
+    assert [t["id"] for t in tasks] == [task["id"]]
+    assert task["id"] not in {t["id"] for t in history}
+
+
 def test_list_history_for_scope_returns_superseded_and_archived_tasks(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     first = mgr.create_plan(session_id="s1", goal="First", source="analysis_spec")

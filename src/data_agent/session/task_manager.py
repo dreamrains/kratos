@@ -269,6 +269,9 @@ class TaskManager:
         if session_id and not project_name:
             prefix = f"{session_id}::"
             return {str(plan_id) for key, plan_id in active.items() if key.startswith(prefix) and plan_id}
+        if project_name and not session_id:
+            suffix = f"::{project_name}"
+            return {str(plan_id) for key, plan_id in active.items() if key.endswith(suffix) and plan_id}
         active_plan_id = active.get(self._plan_key(session_id, project_name), "")
         return {str(active_plan_id)} if active_plan_id else set()
 
