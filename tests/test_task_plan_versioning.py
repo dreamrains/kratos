@@ -58,21 +58,6 @@ def test_completed_execution_plan_hides_superseded_legacy_duplicates(tmp_path):
 
 def test_active_plan_reuse_skips_duplicate_subjects(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
-    plan = mgr.create_plan(
-        session_id="s1",
-        goal="Savings card impact analysis",
-        source="analysis_spec",
-        analysis_spec_id="spec_1",
-        workflow_id="wf_1",
-    )
-    current_plan_task = mgr.create(
-        "Prepare data and calculate baseline metrics",
-        session_id="s1",
-        plan_id=plan["id"],
-        plan_version=plan["version"],
-        workflow_id="wf_1",
-        analysis_spec_id="spec_1",
-    )
     other_plan = mgr.create_plan(
         session_id="s1",
         goal="Different scoped analysis",
@@ -87,6 +72,22 @@ def test_active_plan_reuse_skips_duplicate_subjects(tmp_path):
         plan_version=other_plan["version"],
         workflow_id="wf_2",
         analysis_spec_id="spec_2",
+    )
+
+    plan = mgr.create_plan(
+        session_id="s1",
+        goal="Savings card impact analysis",
+        source="analysis_spec",
+        analysis_spec_id="spec_1",
+        workflow_id="wf_1",
+    )
+    current_plan_task = mgr.create(
+        "Prepare data and calculate baseline metrics",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        workflow_id="wf_1",
+        analysis_spec_id="spec_1",
     )
 
     duplicate = mgr.find_duplicate_task(
