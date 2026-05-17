@@ -27,12 +27,14 @@ IntentType = Literal[
 ]
 Clarity = Literal["clear", "vague", "clarification_needed"]
 DataState = Literal["no_data", "data_loaded", "insufficient_data", "unknown"]
+ExecutionReadiness = Literal["ready", "pending_load", "missing_data", "insufficient_data"]
 AnalysisStage = Literal["discover", "scope", "plan", "execute", "report", "follow_up"]
 RecommendedAction = Literal[
     "answer_directly",
     "ask_question",
     "guide_analysis",
     "request_data",
+    "load_then_analyze",
     "execute_operation",
     "run_analysis",
     "generate_report",
@@ -46,6 +48,7 @@ class TurnIntent:
     data_state: DataState
     analysis_stage: AnalysisStage
     recommended_action: RecommendedAction
+    execution_readiness: ExecutionReadiness = "missing_data"
     reason: str = ""
     ambiguities: list[dict] = field(default_factory=list)
 
@@ -96,7 +99,7 @@ _ANALYSIS_KEYWORDS = (
     "分布", "相关性", "增长", "下降", "上升",
     "trend", "compare", "why", "reason", "decline", "drop", "driver",
     "forecast", "predict", "effect", "causal", "funnel", "conversion",
-    "evaluate", "worth",
+    "evaluate", "worth", "analyze", "correlation",
 )
 _GUIDANCE_KEYWORDS = (
     "不知道如何分析", "帮我看看", "看看这份数据", "分析一下",
@@ -105,6 +108,12 @@ _GUIDANCE_KEYWORDS = (
 
 
 # ── Legacy compatibility ──────────────────────────────────
+
+_DATA_FILE_EXTENSIONS = (".csv", ".tsv", ".xlsx", ".xls", ".json", ".parquet", ".feather")
+_HYPOTHETICAL_DATA_PHRASES = (
+    "what csv", "which csv", "what files", "which files", "what data",
+    "need to prepare", "should i prepare", "should we prepare",
+)
 
 _LEGACY_INTENT_MAP: dict[str, IntentType] = {
     "chat": "simple_response",
@@ -134,13 +143,32 @@ def infer_data_state(session_context: str = "") -> DataState:
     return "no_data"
 
 
+def has_loadable_data_reference(text: str) -> bool:
+    lowered = (text or "").lower()
+    if any(phrase in lowered for phrase in _HYPOTHETICAL_DATA_PHRASES):
+        return False
+    return any(ext in lowered for ext in _DATA_FILE_EXTENSIONS)
+
+
+def infer_execution_readiness(user_input: str, session_context: str = "") -> ExecutionReadiness:
+    data_state = infer_data_state(session_context)
+    if data_state == "data_loaded":
+        return "ready"
+    if data_state == "insufficient_data":
+        return "insufficient_data"
+    if has_loadable_data_reference(user_input):
+        return "pending_load"
+    return "missing_data"
+
+
 def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
     """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
     data_state = infer_data_state(session_context)
+    readiness = infer_execution_readiness(user_input, session_context)
 
     # ── Layer 1: Fast rule path ──
-    fast_result = _try_fast_path(text, data_state)
+    fast_result = _try_fast_path(text, data_state, readiness)
 
     # If fast path is confident, return immediately (no LLM cost)
     if fast_result is not None and fast_result.clarity == "clear":
@@ -155,8 +183,9 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
             intent_type=intent_type,
             clarity="vague" if ambiguities else "clear",
             data_state=data_state,
-            analysis_stage=_stage_for(intent_type, data_state),
-            recommended_action=_action_for(intent_type, data_state),
+            analysis_stage=_stage_for(intent_type, data_state, readiness),
+            recommended_action=_action_for(intent_type, data_state, readiness),
+            execution_readiness=readiness,
             reason="LLM语义分类",
             ambiguities=ambiguities,
         )
@@ -165,8 +194,9 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
     # Use fast path vague result if available, otherwise default
     if fast_result is not None:
         return fast_result
+    fallback_intent = "analysis_consultation" if data_state == "data_loaded" else "intent_negotiation"
     return _make(
-        "analysis_consultation" if data_state == "data_loaded" else "intent_negotiation",
+        fallback_intent,
         "vague", data_state,
         "discover" if data_state == "data_loaded" else "scope",
         "guide_analysis" if data_state == "data_loaded" else "ask_question",
@@ -174,7 +204,7 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
     )
 
 
-def _try_fast_path(text: str, data_state: DataState) -> TurnIntent | None:
+def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadiness) -> TurnIntent | None:
     """Layer 1: rule-based classification for clear, unambiguous patterns.
 
     Returns None when no rule matches confidently. Returns a TurnIntent with
@@ -210,8 +240,8 @@ def _try_fast_path(text: str, data_state: DataState) -> TurnIntent | None:
         return _make(
             "comprehensive_report",
             "clear", data_state,
-            "report" if data_state == "data_loaded" else "scope",
-            "generate_report" if data_state == "data_loaded" else "request_data",
+            _stage_for("comprehensive_report", data_state, readiness),
+            _action_for("comprehensive_report", data_state, readiness),
             "用户请求报告或全面分析",
         )
 
@@ -228,7 +258,7 @@ def _try_fast_path(text: str, data_state: DataState) -> TurnIntent | None:
         return _make("result_followup", "clear", data_state, "follow_up", "answer_directly", "追问或质疑已有分析结果")
 
     # ── Data requirement ──
-    if any(k in text for k in _DATA_REQUIREMENT_KEYWORDS):
+    if any(k in text for k in _DATA_REQUIREMENT_KEYWORDS) or any(k in text for k in _HYPOTHETICAL_DATA_PHRASES):
         return _make("data_requirement", "clear", data_state, "scope", "request_data", "用户询问分析所需数据")
 
     # ── Pure data operation (only when no analysis keywords present) ──
@@ -254,10 +284,10 @@ def _try_fast_path(text: str, data_state: DataState) -> TurnIntent | None:
     # ── Analysis keywords with specific direction ──
     if any(k in text for k in _ANALYSIS_KEYWORDS):
         return _make(
-            "directed_analysis" if data_state == "data_loaded" else "data_requirement",
+            "directed_analysis",
             "clear", data_state,
-            "execute" if data_state == "data_loaded" else "scope",
-            "run_analysis" if data_state == "data_loaded" else "request_data",
+            _stage_for("directed_analysis", data_state, readiness),
+            _action_for("directed_analysis", data_state, readiness),
             "用户提出了具体分析问题",
         )
 
@@ -269,19 +299,29 @@ def _make(
     intent_type: str, clarity: str, data_state: str,
     stage: str, action: str, reason: str,
     ambiguities: list[dict] | None = None,
+    execution_readiness: str | None = None,
 ) -> TurnIntent:
+    if execution_readiness is None:
+        if action in ("run_analysis", "generate_report") or data_state == "data_loaded":
+            execution_readiness = "ready"
+        elif action == "load_then_analyze":
+            execution_readiness = "pending_load"
+        else:
+            execution_readiness = "missing_data"
     return TurnIntent(
         intent_type=intent_type,
         clarity=clarity,
         data_state=data_state,
         analysis_stage=stage,
         recommended_action=action,
+        execution_readiness=execution_readiness,
         reason=reason,
         ambiguities=ambiguities or [],
     )
 
 
-def _stage_for(intent_type: str, data_state: str) -> str:
+def _stage_for(intent_type: str, data_state: str, readiness: str | None = None) -> str:
+    readiness = readiness or ("ready" if data_state == "data_loaded" else "missing_data")
     if intent_type in ("simple_response", "knowledge_qa", "analysis_consultation", "result_followup"):
         return "follow_up"
     if intent_type in ("intent_negotiation", "data_requirement"):
@@ -289,13 +329,14 @@ def _stage_for(intent_type: str, data_state: str) -> str:
     if intent_type == "data_operation":
         return "execute"
     if intent_type == "directed_analysis":
-        return "execute" if data_state == "data_loaded" else "scope"
+        return "execute" if readiness == "ready" else "scope"
     if intent_type == "comprehensive_report":
-        return "report" if data_state == "data_loaded" else "scope"
+        return "report" if readiness == "ready" else "scope"
     return "discover"
 
 
-def _action_for(intent_type: str, data_state: str) -> str:
+def _action_for(intent_type: str, data_state: str, readiness: str | None = None) -> str:
+    readiness = readiness or ("ready" if data_state == "data_loaded" else "missing_data")
     if intent_type in ("simple_response", "knowledge_qa", "analysis_consultation", "result_followup"):
         return "answer_directly"
     if intent_type in ("intent_negotiation",):
@@ -305,9 +346,17 @@ def _action_for(intent_type: str, data_state: str) -> str:
     if intent_type == "data_operation":
         return "execute_operation"
     if intent_type == "directed_analysis":
-        return "run_analysis" if data_state == "data_loaded" else "request_data"
+        if readiness == "ready":
+            return "run_analysis"
+        if readiness == "pending_load":
+            return "load_then_analyze"
+        return "request_data"
     if intent_type == "comprehensive_report":
-        return "generate_report" if data_state == "data_loaded" else "request_data"
+        if readiness == "ready":
+            return "generate_report"
+        if readiness == "pending_load":
+            return "load_then_analyze"
+        return "request_data"
     return "guide_analysis"
 
 

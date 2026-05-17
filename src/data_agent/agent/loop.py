@@ -40,6 +40,40 @@ from data_agent.session.workspace import Workspace, workspace
 
 logger = get_logger("loop")
 
+_PROFILING_TOOLS = {
+    "load_data",
+    "list_data",
+    "preview_data",
+    "describe_dataset",
+    "quick_profile",
+    "detect_data_quality",
+    "interpret_dataset",
+}
+
+_SUBSTANTIVE_TOOLS = {
+    "record_analysis_spec",
+    "record_analysis_plan",
+    "record_evidence_record",
+    "record_insight_record",
+    "compare_periods",
+    "analyze_time_series",
+    "funnel_analysis",
+    "correlation_analysis",
+    "ab_test",
+    "generate_report",
+    "generate_analysis_brief",
+    "generate_formal_report",
+    "run_python",
+}
+
+_ANALYSIS_QUALITY_GUARD_MESSAGE = (
+    "<analysis_quality_guard>\n"
+    "The user requested analysis, but this turn has only loaded or profiled data. "
+    "Continue by creating or applying an AnalysisSpec, running relevant analysis steps, "
+    "and recording evidence before giving the final answer.\n"
+    "</analysis_quality_guard>"
+)
+
 
 # === LoopResult: Agent loop return types ===
 
@@ -553,6 +587,8 @@ class AgentLoop:
             )
         session_ctx = "\n".join(context_parts)
         intent = plan_turn_intent(user_input, session_ctx)
+        self.context.turn_intent = intent
+        self._last_turn_intent = intent
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
         self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
@@ -750,11 +786,90 @@ class AgentLoop:
                 return "[已中断]" in content
         return False
 
+    def _reset_turn_tracking(self) -> None:
+        self._turn_tools_used = []
+        self._turn_loaded_data = False
+        self._turn_final_guard_injected = False
+
+    def _tool_content_is_error(self, content: str) -> bool:
+        stripped = (content or "").lstrip()
+        lowered = stripped.lower()
+        return (
+            stripped.startswith('{"error":')
+            or stripped.startswith('{"error": ')
+            or lowered.startswith("error")
+        )
+
+    def _record_turn_tool_result(self, tool_name: str, tool_msg_content: str) -> None:
+        if not hasattr(self, "_turn_tools_used"):
+            self._reset_turn_tracking()
+        self._turn_tools_used.append(tool_name)
+        if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
+            self._turn_loaded_data = True
+
+    def _maybe_replan_after_data_load(self, user_input: str) -> None:
+        if not getattr(self, "_turn_loaded_data", False):
+            return
+        self._turn_loaded_data = False
+        if not user_input:
+            return
+        self._prompt_cache_dirty = True
+        with use_agent_context(self.context):
+            self._prepare_analysis_turn(user_input)
+
+    def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
+        return self._is_analysis_quality_guard_candidate()
+
+    def _is_analysis_quality_guard_candidate(self) -> bool:
+        if getattr(self, "_turn_final_guard_injected", False):
+            return False
+        intent = getattr(self, "_last_turn_intent", None)
+        if intent is None or intent.intent_type not in ("directed_analysis", "comprehensive_report"):
+            return False
+        if getattr(intent, "execution_readiness", "") not in ("ready", "pending_load"):
+            return False
+        tools_used = set(getattr(self, "_turn_tools_used", []))
+        if tools_used & _SUBSTANTIVE_TOOLS:
+            return False
+        if not tools_used or not tools_used <= _PROFILING_TOOLS:
+            return False
+        return True
+
+    def _inject_analysis_quality_guard(self) -> None:
+        self._turn_final_guard_injected = True
+        if self.messages:
+            last_msg = self.messages[-1]
+            if last_msg.get("role") == "assistant" and not last_msg.get("tool_calls"):
+                self.messages.pop()
+        self.messages.append({"role": "system", "content": _ANALYSIS_QUALITY_GUARD_MESSAGE})
+
+    def _last_external_user_message(self) -> str:
+        for msg in reversed(self.messages):
+            if msg.get("role") != "user":
+                continue
+            content = str(msg.get("content") or "")
+            stripped = content.lstrip()
+            if stripped.startswith("<confirmation_response") or stripped.startswith("<analysis_quality_guard"):
+                continue
+            return content
+        return ""
+
+    def _build_resume_user_input(self, susp: SuspendedForConfirmation, answer: str) -> str:
+        original = self._last_external_user_message()
+        confirmation = (
+            f"Question: {susp.question}\n"
+            f"User answered: {answer}"
+        )
+        if original:
+            return f"{original}\n\n{confirmation}"
+        return confirmation
+
     def run_turn(self, user_input: str) -> str:
         """处理一轮用户输入，返回回复文本。CLI 模式使用。"""
         logger.info("Turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
         self._quality_reminder_injected = False
+        self._reset_turn_tracking()
         # Inject interrupt context if previous turn was interrupted
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
@@ -767,7 +882,7 @@ class AgentLoop:
         if new_groups:
             logger.info("Activated tool groups", extra={"extra_data": {"groups": list(new_groups)}})
         try:
-            result = self._loop()
+            result = self._loop(user_input)
         except Exception as e:
             # 原子性保证：即使失败也写入 assistant 消息，避免连续 user 消息
             import traceback
@@ -801,12 +916,13 @@ class AgentLoop:
         logger.info("Turn started (structured)", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
         self._quality_reminder_injected = False
+        self._reset_turn_tracking()
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         with use_agent_context(self.context):
             self._prepare_analysis_turn(user_input)
         try:
-            result = self._loop()
+            result = self._loop(user_input)
         except Exception as e:
             error_msg = f"⚠ 分析中断：{type(e).__name__}: {e}"
             self.messages.append({"role": "assistant", "content": error_msg})
@@ -874,6 +990,7 @@ class AgentLoop:
         if not susp:
             return FinalResponse(content=f"Error: suspension {suspension_id} not found")
         self._resolve_confirmation(susp, user_response)
+        resumed_input = self._build_resume_user_input(susp, user_response)
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response suspension_id=\"{suspension_id}\">\n"
@@ -882,7 +999,7 @@ class AgentLoop:
             f"</confirmation_response>"
         )})
         mgr.remove(suspension_id)
-        result = self._loop()
+        result = self._loop(resumed_input)
         if isinstance(result, FinalResponse):
             self._maybe_archive("", result.content)
         return result
@@ -929,6 +1046,7 @@ class AgentLoop:
             else:
                 answer = result.get("answer", "cancelled")
             self._resolve_confirmation(susp, answer)
+            resumed_input = self._build_resume_user_input(susp, answer)
 
             self.messages.append({"role": "user", "content": (
                 f"<confirmation_response suspension_id=\"{susp.suspension_id}\">\n"
@@ -937,7 +1055,7 @@ class AgentLoop:
                 f"</confirmation_response>"
             )})
 
-            loop_result = self._loop()
+            loop_result = self._loop(resumed_input)
 
             if isinstance(loop_result, FinalResponse):
                 return loop_result.content
@@ -1138,6 +1256,7 @@ class AgentLoop:
             elif turn_state is not None:
                 turn_state.record_tool_success()
 
+            self._record_turn_tool_result(tc.name, tool_msg_content)
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
@@ -1175,6 +1294,7 @@ class AgentLoop:
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
         self._quality_reminder_injected = False
+        self._reset_turn_tracking()
         # Inject interrupt context if previous turn was interrupted
         if self._was_last_turn_interrupted():
             context = self._build_interrupt_context(user_input)
@@ -1208,9 +1328,16 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            pending_text_events = []
+
             # Inject paragraph separator between streaming rounds
             if round_num > 1:
-                yield {"type": "text_delta", "text": "\n\n"}
+                separator_event = {"type": "text_delta", "text": "\n\n"}
+                if buffer_text_events:
+                    pending_text_events.append(separator_event)
+                else:
+                    yield separator_event
 
             response = None
             streamed_text = ""
@@ -1218,6 +1345,11 @@ class AgentLoop:
                 if ev["type"] == "_response":
                     response = ev["response"]
                     streamed_text = ev["streamed_text"]
+                elif ev["type"] == "text_delta":
+                    if buffer_text_events:
+                        pending_text_events.append(ev)
+                    else:
+                        yield ev
                 else:
                     yield ev
 
@@ -1252,10 +1384,20 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._inject_analysis_quality_guard()
+                    continue
+                if buffer_text_events:
+                    for ev in pending_text_events:
+                        yield ev
                 # Text was already streamed; just archive and save
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
+
+            if buffer_text_events:
+                for ev in pending_text_events:
+                    yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -1268,6 +1410,8 @@ class AgentLoop:
                     suspended = True
             if suspended:
                 return
+
+            self._maybe_replan_after_data_load(user_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -1296,6 +1440,8 @@ class AgentLoop:
         if not susp:
             yield {"type": "error", "message": f"Suspension {suspension_id} not found"}
             return
+        self._resolve_confirmation(susp, user_response)
+        resumed_input = self._build_resume_user_input(susp, user_response)
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response suspension_id=\"{suspension_id}\">\n"
@@ -1329,14 +1475,26 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            pending_text_events = []
+
             # Inject paragraph separator between streaming rounds
             if round_num > 1:
-                yield {"type": "text_delta", "text": "\n\n"}
+                separator_event = {"type": "text_delta", "text": "\n\n"}
+                if buffer_text_events:
+                    pending_text_events.append(separator_event)
+                else:
+                    yield separator_event
 
             response = None
             for ev in self._stream_llm_round(round_num):
                 if ev["type"] == "_response":
                     response = ev["response"]
+                elif ev["type"] == "text_delta":
+                    if buffer_text_events:
+                        pending_text_events.append(ev)
+                    else:
+                        yield ev
                 else:
                     yield ev
 
@@ -1371,9 +1529,19 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
-                self._maybe_archive("", final_text)
+                if self._should_continue_for_analysis_quality(resumed_input, final_text):
+                    self._inject_analysis_quality_guard()
+                    continue
+                if buffer_text_events:
+                    for ev in pending_text_events:
+                        yield ev
+                self._maybe_archive(resumed_input, final_text)
                 self._auto_save()
                 return
+
+            if buffer_text_events:
+                for ev in pending_text_events:
+                    yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -1385,6 +1553,8 @@ class AgentLoop:
                     suspended = True
             if suspended:
                 return
+
+            self._maybe_replan_after_data_load(resumed_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -1402,10 +1572,10 @@ class AgentLoop:
                 self._auto_save()
                 return
 
-    def _loop(self) -> LoopResult:
+    def _loop(self, user_input: str = "") -> LoopResult:
         """Run the agent loop inside this session's AgentContext."""
         with use_agent_context(self.context):
-            return self._loop_impl()
+            return self._loop_impl(user_input)
 
     def _execute_tools_sequential(self, tool_calls, final_text: str) -> LoopResult | None:
         """Execute tool calls sequentially. Returns LoopResult if the loop should exit, None to continue."""
@@ -1493,6 +1663,7 @@ class AgentLoop:
         elif turn_state is not None:
             turn_state.record_tool_success()
 
+        self._record_turn_tool_result(tc.name, tool_msg_content)
         self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
@@ -1567,7 +1738,7 @@ class AgentLoop:
         # Return in original order
         return [results[tc.id] for tc in tool_calls if tc.id in results]
 
-    def _loop_impl(self) -> LoopResult:
+    def _loop_impl(self, user_input: str = "") -> LoopResult:
         """循环调用 LLM 直到获得最终文本回复。"""
         final_text = ""
         round_num = 0
@@ -1627,6 +1798,9 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._inject_analysis_quality_guard()
+                    continue
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
@@ -1661,6 +1835,7 @@ class AgentLoop:
                 if can_parallelize:
                     results = self._execute_tools_parallel(tool_calls)
                     for tc, tool_msg_content in results:
+                        self._record_turn_tool_result(tc.name, tool_msg_content)
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -1674,6 +1849,8 @@ class AgentLoop:
                 seq_result = self._execute_tools_sequential(tool_calls, final_text)
                 if seq_result is not None:
                     return seq_result
+
+            self._maybe_replan_after_data_load(user_input)
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)

@@ -117,6 +117,12 @@ class TestTaskListUpdate:
         assert "setInterval" in js
         assert "5000" in js
 
+    def test_task_polling_can_stop_when_no_active_tasks(self, js):
+        assert "_desiredTaskPollMs" in js
+        assert "return 0;" in js
+        assert "case 'task_update'" in js
+        assert "_debouncedLoadTasks()" in js
+
     def test_visibilitychange_listener(self, js):
         assert "visibilitychange" in js
 

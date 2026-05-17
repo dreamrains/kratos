@@ -394,6 +394,167 @@ class TestMultiTurnConversation:
 # 四、ask_user_question 悬挂/恢复
 # ============================================================
 
+class TestConversationFlow:
+    def _assert_final_guard_history_is_not_user_visible(self, loop):
+        profile_only = "Suggested next analyses"
+        assert not any(
+            msg.get("role") == "assistant" and profile_only in str(msg.get("content") or "")
+            for msg in loop.messages
+        )
+        assert not any(
+            msg.get("role") == "user" and "<analysis_quality_guard>" in str(msg.get("content") or "")
+            for msg in loop.messages
+        )
+
+    def test_tool_content_is_error_detects_plain_error_prefix(self, clean_workspace):
+        from data_agent.agent.loop import AgentLoop
+
+        loop = AgentLoop(session_id="error_detection")
+
+        assert loop._tool_content_is_error("Error loading data: file not found")
+        assert loop._tool_content_is_error("  Error: unsupported format")
+        assert not loop._tool_content_is_error("Loaded dataset 'sales' with 50 rows")
+
+    def test_failed_load_result_does_not_mark_turn_loaded_data(self, clean_workspace):
+        from data_agent.agent.loop import AgentLoop
+
+        loop = AgentLoop(session_id="failed_load_tracking")
+        loop._reset_turn_tracking()
+
+        loop._record_turn_tool_result("load_data", "Error loading data: file not found")
+
+        assert loop._turn_tools_used == ["load_data"]
+        assert loop._turn_loaded_data is False
+
+    def test_same_turn_file_plus_analysis_does_not_end_after_profile(self, tmp_path, clean_workspace):
+        from data_agent.agent.loop import AgentLoop
+        from data_agent.llm.client import Response, ToolCall
+
+        df = _make_df(50)
+        csv_path = tmp_path / "sales.csv"
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def chat(self, messages, tools=None, system=""):
+                self.calls += 1
+                if self.calls == 1:
+                    return Response(tool_calls=[
+                        ToolCall(id="tc_load", name="load_data", arguments={
+                            "source": str(csv_path),
+                            "name": "sales",
+                        })
+                    ])
+                if self.calls == 2:
+                    return Response(tool_calls=[
+                        ToolCall(id="tc_desc", name="describe_dataset", arguments={"name": "sales"})
+                    ])
+                if self.calls == 3:
+                    return Response(
+                        text="The dataset has 50 rows. Suggested next analyses: trend and channel comparison."
+                    )
+                return Response(text="Final analysis with evidence.")
+
+        loop = AgentLoop(client=FakeClient(), session_id="same_turn_load_analyze")
+        loop._get_system_prompt = lambda: ""
+        loop.context.user_quality_requirements = "already extracted"
+
+        reply = loop.run_turn(f"Analyze revenue decline by channel using {csv_path}. Include limitations.")
+
+        assert "Suggested next analyses" not in reply
+        assert "Final analysis" in reply
+        assert loop.context.workspace.list_datasets()
+        self._assert_final_guard_history_is_not_user_visible(loop)
+
+    def test_streaming_guard_does_not_emit_profile_only_text(self, tmp_path, clean_workspace):
+        from data_agent.agent.loop import AgentLoop
+        from data_agent.llm.client import Response, StreamComplete, StreamTextDelta, ToolCall
+
+        df = _make_df(50)
+        csv_path = tmp_path / "sales.csv"
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+        class FakeStreamingClient:
+            def __init__(self):
+                self.calls = 0
+
+            def stream_chat_structured(self, messages, tools=None, system=""):
+                self.calls += 1
+                if self.calls == 1:
+                    yield StreamComplete(Response(tool_calls=[
+                        ToolCall(id="tc_load", name="load_data", arguments={
+                            "source": str(csv_path),
+                            "name": "sales",
+                        })
+                    ]))
+                    return
+                if self.calls == 2:
+                    yield StreamComplete(Response(tool_calls=[
+                        ToolCall(id="tc_desc", name="describe_dataset", arguments={"name": "sales"})
+                    ]))
+                    return
+                if self.calls == 3:
+                    text = "The dataset has 50 rows. Suggested next analyses: trend and channel comparison."
+                    yield StreamTextDelta(text)
+                    yield StreamComplete(Response(text=text))
+                    return
+                text = "Final analysis with evidence."
+                yield StreamTextDelta(text)
+                yield StreamComplete(Response(text=text))
+
+            def chat(self, messages, tools=None, system=""):
+                raise AssertionError("streaming test should not fall back to chat")
+
+        loop = AgentLoop(client=FakeStreamingClient(), session_id="same_turn_stream_load_analyze")
+        loop._get_system_prompt = lambda: ""
+        loop.context.user_quality_requirements = "already extracted"
+
+        events = list(loop.stream_turn(f"Analyze revenue decline by channel using {csv_path}. Include limitations."))
+        streamed_text = "".join(ev["text"] for ev in events if ev.get("type") == "text_delta")
+
+        assert "Suggested next analyses" not in streamed_text
+        assert "Final analysis" in streamed_text
+        self._assert_final_guard_history_is_not_user_visible(loop)
+
+    def test_streaming_without_guard_yields_text_deltas_immediately(self, clean_workspace):
+        from data_agent.agent.loop import AgentLoop
+        from data_agent.llm.client import Response, StreamComplete, StreamTextDelta
+
+        class FakeStreamingClient:
+            def __init__(self):
+                self.completed = False
+
+            def stream_chat_structured(self, messages, tools=None, system=""):
+                yield StreamTextDelta("Hello")
+                yield StreamTextDelta(", world")
+                self.completed = True
+                yield StreamComplete(Response(text="Hello, world"))
+
+            def chat(self, messages, tools=None, system=""):
+                raise AssertionError("streaming test should not fall back to chat")
+
+        fake = FakeStreamingClient()
+        loop = AgentLoop(client=fake, session_id="normal_streaming")
+        loop._get_system_prompt = lambda: ""
+
+        events = loop.stream_turn("hello")
+
+        first = next(events)
+        assert first["type"] == "llm_call_start"
+        second = next(events)
+        assert second == {"type": "text_delta", "text": "Hello", "turn_id": None}
+        assert fake.completed is False
+        third = next(events)
+        assert third == {"type": "text_delta", "text": ", world", "turn_id": None}
+        assert fake.completed is False
+
+        remaining = list(events)
+        assert fake.completed is True
+        assert not [ev for ev in remaining if ev.get("type") == "text_delta"]
+
+
 class TestSuspensionFlow:
     """测试 ask_user_question 的悬挂和恢复机制。"""
 

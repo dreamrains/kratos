@@ -206,15 +206,51 @@ class TaskManager:
             tasks = [t for t in tasks if not self._is_stale(t)]
         return tasks
 
-    def list_for_scope(self, session_id: str = "", project_name: str = "") -> list[dict]:
+    def is_ready(self, task: dict) -> bool:
+        task = self._normalize(dict(task))
+        return task.get("status") == "pending" and not task.get("blockedBy")
+
+    def list_for_scope(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> list[dict]:
         tasks = self.list_all()
-        scoped = [
-            t for t in tasks
-            if (session_id and t.get("session_id") == session_id)
-            or (project_name and t.get("project_name") == project_name)
+        if not session_id and not project_name:
+            return tasks
+
+        if session_id and project_name:
+            scoped = [
+                t for t in tasks
+                if t.get("session_id") == session_id
+                and t.get("project_name") == project_name
+            ]
+        elif session_id:
+            scoped = [t for t in tasks if t.get("session_id") == session_id]
+        else:
+            scoped = [t for t in tasks if t.get("project_name") == project_name]
+        if include_global:
+            scoped.extend([
+                t for t in tasks
+                if not t.get("session_id") and not t.get("project_name")
+            ])
+        return scoped
+
+    def list_ready(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> list[dict]:
+        return [
+            t for t in self.list_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
+            if self.is_ready(t)
         ]
-        others = [t for t in tasks if t not in scoped]
-        return scoped + others
 
     def list_by_status(self, status: str) -> list[dict]:
         return [t for t in self.list_all() if t.get("status") == status]
@@ -223,9 +259,22 @@ class TaskManager:
         """Return all tasks including stale ones (for admin/management scenarios)."""
         return self.list_all(include_stale=True)
 
-    def format_list(self, session_id: str = "", project_name: str = "") -> str:
+    def format_list(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> str:
         """纯文本格式化任务列表。"""
-        tasks = self.list_for_scope(session_id=session_id, project_name=project_name) if (session_id or project_name) else self.list_all()
+        tasks = (
+            self.list_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
+            if (session_id or project_name)
+            else self.list_all()
+        )
         if not tasks:
             return "No tasks."
         lines = []

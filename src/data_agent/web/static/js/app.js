@@ -50,6 +50,8 @@ function chatApp() {
         tasksExpanded: false,
         expandedTasks: {},
         _taskDebounceTimer: null,
+        _taskPollInterval: null,
+        _taskPollMs: null,
 
         // Rewind modal (for toolbar button)
         rewindModal: { show: false, rounds: [], selectedRound: null, loading: false },
@@ -136,13 +138,7 @@ function chatApp() {
                 }
             });
             this._setupRenderObserver();
-            // Dynamic task polling: fast when tasks active, slow otherwise
-            this._taskPollInterval = setInterval(() => {
-                if (this.currentSessionId && this.currentSessionId !== '_pending_') {
-                    this.loadTasks();
-                }
-            }, 30000);
-            this._activeTaskPolling = false;
+            this._updateTaskPollInterval();
             // Refresh on tab focus
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden && this.currentSessionId) {
@@ -714,24 +710,25 @@ function chatApp() {
             }
         },
 
+        _desiredTaskPollMs() {
+            if (!this.currentSessionId || this.currentSessionId === '_pending_') return 0;
+            if (this.activeTasks.some(t => t.status === 'in_progress')) return 5000;
+            if (this.activeTasks.some(t => t.status === 'pending')) return 30000;
+            return 0;
+        },
+
         _updateTaskPollInterval() {
-            const hasActive = this.activeTasks.some(t => t.status === 'in_progress');
-            if (hasActive && !this._activeTaskPolling) {
-                clearInterval(this._taskPollInterval);
+            const desired = this._desiredTaskPollMs();
+            if (this._taskPollMs === desired) return;
+            clearInterval(this._taskPollInterval);
+            this._taskPollInterval = null;
+            this._taskPollMs = desired;
+            if (desired > 0) {
                 this._taskPollInterval = setInterval(() => {
-                    if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                    if (!document.hidden && this.currentSessionId && this.currentSessionId !== '_pending_') {
                         this.loadTasks();
                     }
-                }, 5000);
-                this._activeTaskPolling = true;
-            } else if (!hasActive && this._activeTaskPolling) {
-                clearInterval(this._taskPollInterval);
-                this._taskPollInterval = setInterval(() => {
-                    if (this.currentSessionId && this.currentSessionId !== '_pending_') {
-                        this.loadTasks();
-                    }
-                }, 30000);
-                this._activeTaskPolling = false;
+                }, desired);
             }
         },
 

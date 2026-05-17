@@ -12,14 +12,38 @@ def _get_manager():
     return task_manager
 
 
+def _truthy(value: str | None) -> bool:
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
+
+
 @tasks_bp.get("/tasks")
 def list_tasks():
     mgr = _get_manager()
     session_id = request.args.get("session_id", "")
     project_name = request.args.get("project_name", "")
-    if session_id or project_name:
-        return jsonify(mgr.list_for_scope(session_id=session_id, project_name=project_name))
-    return jsonify(mgr.list_all())
+    include_global = _truthy(request.args.get("include_global"))
+    ready_only = _truthy(request.args.get("ready_only"))
+    active_only = _truthy(request.args.get("active_only"))
+
+    if ready_only:
+        tasks = mgr.list_ready(
+            session_id=session_id,
+            project_name=project_name,
+            include_global=include_global,
+        )
+    elif session_id or project_name:
+        tasks = mgr.list_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+            include_global=include_global,
+        )
+    else:
+        tasks = mgr.list_all()
+
+    if active_only:
+        tasks = [t for t in tasks if t.get("status") in ("pending", "in_progress")]
+
+    return jsonify(tasks)
 
 
 @tasks_bp.get("/tasks/<int:task_id>")

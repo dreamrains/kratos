@@ -48,7 +48,8 @@ class TestTurnIntentDataclass:
         """TurnIntent must expose exactly the expected fields."""
         expected = {
             "intent_type", "clarity", "data_state",
-            "analysis_stage", "recommended_action", "reason", "ambiguities",
+            "analysis_stage", "recommended_action", "execution_readiness",
+            "reason", "ambiguities",
         }
         actual = {f.name for f in fields(TurnIntent)}
         assert actual == expected
@@ -68,6 +69,7 @@ class TestTurnIntentDataclass:
         assert d["data_state"] == "no_data"
         assert d["analysis_stage"] == "follow_up"
         assert d["recommended_action"] == "answer_directly"
+        assert d["execution_readiness"] == "missing_data"
         assert d["reason"] == ""
         assert d["ambiguities"] == []
 
@@ -452,6 +454,14 @@ class TestComprehensiveReport:
         assert result.intent_type == "comprehensive_report"
         assert result.recommended_action == "generate_report"
 
+    def test_report_with_file_reference_is_pending_load(self):
+        result = plan_turn_intent("Create a full report from orders.csv", NO_DATA_CTX)
+
+        assert result.intent_type == "comprehensive_report"
+        assert result.execution_readiness == "pending_load"
+        assert result.recommended_action == "load_then_analyze"
+        assert result.analysis_stage == "scope"
+
 
 # ══════════════════════════════════════════════════════════════
 # 13. data_requirement intent
@@ -472,6 +482,15 @@ class TestDataRequirement:
     def test_requirement_keywords(self, text):
         result = plan_turn_intent(text, NO_DATA_CTX)
         assert result.intent_type == "data_requirement"
+        assert result.recommended_action == "request_data"
+
+    def test_hypothetical_csv_preparation_question_is_data_requirement(self):
+        text = "What csv files should I prepare if I want to analyze revenue decline?"
+
+        result = plan_turn_intent(text, NO_DATA_CTX)
+
+        assert result.intent_type == "data_requirement"
+        assert result.execution_readiness == "missing_data"
         assert result.recommended_action == "request_data"
 
 
@@ -544,7 +563,31 @@ class TestDirectedAnalysis:
     ])
     def test_analysis_keywords_no_data_redirect(self, text):
         result = plan_turn_intent(text, NO_DATA_CTX)
-        assert result.intent_type == "data_requirement"
+        assert result.intent_type == "directed_analysis"
+        assert result.execution_readiness == "missing_data"
+        assert result.recommended_action == "request_data"
+
+    def test_clear_analysis_with_file_paths_is_pending_load_directed_analysis(self):
+        text = (
+            "Please analyze revenue decline and retention change in these files:\n"
+            "D:\\Project\\Daily\\data\\orders.xlsx\n"
+            "D:\\Project\\Daily\\data\\payments.csv\n"
+            "Focus on trend, driver decomposition, and limitations."
+        )
+
+        result = plan_turn_intent(text, NO_DATA_CTX)
+
+        assert result.intent_type == "directed_analysis"
+        assert result.clarity == "clear"
+        assert result.data_state == "no_data"
+        assert result.execution_readiness == "pending_load"
+        assert result.recommended_action == "load_then_analyze"
+
+    def test_clear_analysis_without_data_source_is_missing_data(self):
+        result = plan_turn_intent("Analyze why revenue declined by channel", NO_DATA_CTX)
+
+        assert result.intent_type == "directed_analysis"
+        assert result.execution_readiness == "missing_data"
         assert result.recommended_action == "request_data"
 
     def test_evaluate_keyword(self):

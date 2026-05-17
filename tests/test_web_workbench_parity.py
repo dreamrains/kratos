@@ -139,6 +139,38 @@ def test_web_tasks_preserve_workflow_fields_and_scope_order(tmp_path):
         assert listed.status_code == 200
         tasks = listed.get_json()
         assert tasks[0]["session_id"] == "s_current"
-        assert {t["session_id"] for t in tasks} == {"s_current", "s_other"}
+        assert {t["session_id"] for t in tasks} == {"s_current"}
+
+        global_task = client.post("/api/tasks", json={"subject": "Global"})
+        assert global_task.status_code == 201
+        blocked = client.post("/api/tasks", json={"subject": "Blocked", "session_id": "s_current"})
+        assert blocked.status_code == 201
+        block_resp = client.patch(
+            f"/api/tasks/{blocked.get_json()['id']}",
+            json={"addBlockedBy": [task["id"]]},
+        )
+        assert block_resp.status_code == 200
+        progress = client.patch(f"/api/tasks/{task['id']}", json={"status": "in_progress"})
+        assert progress.status_code == 200
+
+        listed_global = client.get("/api/tasks?session_id=s_current&include_global=true")
+        assert listed_global.status_code == 200
+        assert {t["id"] for t in listed_global.get_json()} == {
+            task["id"],
+            global_task.get_json()["id"],
+            blocked.get_json()["id"],
+        }
+
+        ready_only = client.get("/api/tasks?session_id=s_current&ready_only=true")
+        assert ready_only.status_code == 200
+        assert ready_only.get_json() == []
+
+        active_only = client.get("/api/tasks?session_id=s_current&active_only=true")
+        assert active_only.status_code == 200
+        assert {t["id"] for t in active_only.get_json()} == {task["id"], blocked.get_json()["id"]}
+
+        scoped_both = client.get("/api/tasks?session_id=s_current&project_name=Revenue")
+        assert scoped_both.status_code == 200
+        assert {t["id"] for t in scoped_both.get_json()} == {task["id"]}
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir)
