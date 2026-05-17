@@ -7,6 +7,7 @@ Task 是持久化工作项，LLM 完全控制生命周期，系统只做存取�
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -30,6 +31,19 @@ WORKFLOW_FIELDS = {
     "required_capability": "",
     "evidence_requirements": [],
     "confirmation_policy": {},
+}
+
+
+PLAN_FIELDS = {
+    "plan_id": "",
+    "plan_version": 1,
+    "plan_status": "",
+    "task_kind": "plan_task",
+    "source": "",
+    "superseded_by": "",
+    "archived_at": "",
+    "completed_by": "",
+    "completed_at": "",
 }
 
 
@@ -82,6 +96,9 @@ class TaskManager:
         for key, value in WORKFLOW_FIELDS.items():
             if key not in task:
                 task[key] = list(value) if isinstance(value, list) else value
+        for key, value in PLAN_FIELDS.items():
+            if key not in task:
+                task[key] = list(value) if isinstance(value, list) else value
         task.setdefault("session_id", "")
         task.setdefault("owner", "")
         task.setdefault("blockedBy", [])
@@ -121,6 +138,9 @@ class TaskManager:
         for key in WORKFLOW_FIELDS:
             if key in workflow_fields and workflow_fields[key] is not None:
                 task[key] = workflow_fields[key]
+        for key in PLAN_FIELDS:
+            if key in workflow_fields and workflow_fields[key] is not None:
+                task[key] = workflow_fields[key]
         self._save(task)
         return task
 
@@ -146,12 +166,17 @@ class TaskManager:
             return None
 
         if status is not None:
-            if status not in ("pending", "in_progress", "completed", "deleted"):
+            allowed = ("pending", "blocked", "in_progress", "completed", "superseded", "archived", "deleted")
+            if status not in allowed:
                 return None
             task["status"] = status
 
             if status == "completed":
+                task["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self._clear_dependency(tid)
+
+            if status == "archived":
+                task["archived_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if status == "deleted":
                 self._path(tid).unlink(missing_ok=True)
@@ -175,6 +200,9 @@ class TaskManager:
             task["blockedBy"] = list(set(task.get("blockedBy", []) + addBlockedBy))
 
         for key in WORKFLOW_FIELDS:
+            if key in workflow_fields and workflow_fields[key] is not None:
+                task[key] = workflow_fields[key]
+        for key in PLAN_FIELDS:
             if key in workflow_fields and workflow_fields[key] is not None:
                 task[key] = workflow_fields[key]
 
@@ -210,6 +238,88 @@ class TaskManager:
         task = self._normalize(dict(task))
         return task.get("status") == "pending" and not task.get("blockedBy")
 
+    def _active_plans_path(self) -> Path:
+        return self.dir / "active_plans.json"
+
+    def _plan_key(self, session_id: str = "", project_name: str = "") -> str:
+        return f"{session_id or ''}::{project_name or ''}"
+
+    def _read_active_plans(self) -> dict:
+        path = self._active_plans_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    def _write_active_plans(self, data: dict) -> None:
+        self._active_plans_path().write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def get_active_plan_id(self, session_id: str = "", project_name: str = "") -> str:
+        active = self._read_active_plans()
+        value = active.get(self._plan_key(session_id, project_name), "")
+        return str(value or "")
+
+    def _set_active_plan_id(self, plan_id: str, session_id: str = "", project_name: str = "") -> None:
+        active = self._read_active_plans()
+        active[self._plan_key(session_id, project_name)] = plan_id
+        self._write_active_plans(active)
+
+    def _session_project_tasks(self, session_id: str = "", project_name: str = "") -> list[dict]:
+        return self.list_for_scope(session_id=session_id, project_name=project_name, include_global=False)
+
+    def _supersede_active_plan(self, session_id: str = "", project_name: str = "", superseded_by: str = "") -> None:
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        if not active_plan_id:
+            return
+        for task in self._session_project_tasks(session_id=session_id, project_name=project_name):
+            if task.get("plan_id") != active_plan_id:
+                continue
+            if task.get("status") in ("pending", "blocked", "in_progress"):
+                self.update(
+                    task["id"],
+                    status="superseded",
+                    superseded_by=superseded_by,
+                    plan_status="superseded",
+                )
+
+    def create_plan(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        goal: str = "",
+        source: str = "",
+        analysis_spec_id: str = "",
+        workflow_id: str = "",
+    ) -> dict:
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        existing_versions = [
+            int(t.get("plan_version") or 1)
+            for t in self._session_project_tasks(session_id=session_id, project_name=project_name)
+            if t.get("plan_id")
+        ]
+        version = max(existing_versions, default=0) + 1
+        plan_id = f"plan_{uuid.uuid4().hex[:10]}"
+        self._supersede_active_plan(session_id=session_id, project_name=project_name, superseded_by=plan_id)
+        self._set_active_plan_id(plan_id, session_id, project_name)
+        return {
+            "id": plan_id,
+            "session_id": session_id,
+            "project_name": project_name,
+            "goal": goal,
+            "version": version,
+            "status": "active",
+            "source": source,
+            "previous_plan_id": active_plan_id,
+            "analysis_spec_id": analysis_spec_id,
+            "workflow_id": workflow_id,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
     def list_for_scope(
         self,
         session_id: str = "",
@@ -236,6 +346,48 @@ class TaskManager:
                 if not t.get("session_id") and not t.get("project_name")
             ])
         return scoped
+
+    def list_active_for_scope(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> list[dict]:
+        tasks = self.list_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+            include_global=include_global,
+        )
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        if active_plan_id:
+            return [
+                t for t in tasks
+                if t.get("plan_id") == active_plan_id
+                and t.get("task_kind") in ("plan_task", "confirmation", "evidence_gap")
+                and t.get("status") not in ("deleted", "archived", "superseded")
+            ]
+        return [
+            t for t in tasks
+            if not t.get("plan_id")
+            and t.get("status") not in ("deleted", "archived", "superseded")
+        ]
+
+    def list_history_for_scope(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        include_global: bool = False,
+    ) -> list[dict]:
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        return [
+            t for t in self.list_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
+            if t.get("status") in ("completed", "archived", "superseded")
+            and (not active_plan_id or t.get("plan_id") != active_plan_id)
+        ]
 
     def list_ready(
         self,
@@ -294,6 +446,7 @@ class TaskManager:
     def reset_for_testing(self) -> None:
         for f in self.dir.glob("task_*.json"):
             f.unlink(missing_ok=True)
+        self._active_plans_path().unlink(missing_ok=True)
         self._next_id_val = 0
 
 
