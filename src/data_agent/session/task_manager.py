@@ -434,6 +434,59 @@ class TaskManager:
                 return task
         return None
 
+    def _evidence_text(self, evidence: dict) -> str:
+        parts = [
+            evidence.get("claim", ""),
+            evidence.get("result_summary", ""),
+            evidence.get("method", ""),
+            " ".join(str(x) for x in evidence.get("tool_calls", []) or []),
+        ]
+        metrics = evidence.get("metrics") or {}
+        if isinstance(metrics, dict):
+            parts.extend(str(k) for k in metrics.keys())
+        return " ".join(str(p) for p in parts if p).lower()
+
+    def _task_match_terms(self, task: dict) -> list[str]:
+        terms = []
+        for key in ("subject", "expected_output", "required_capability"):
+            value = task.get(key)
+            if value:
+                terms.append(str(value))
+        for item in task.get("evidence_requirements") or []:
+            terms.append(str(item))
+        return [t.lower() for t in terms if t]
+
+    def complete_matching_tasks_from_evidence(
+        self,
+        session_id: str,
+        evidence: dict,
+        analysis_spec_id: str = "",
+    ) -> list[int]:
+        evidence_text = self._evidence_text(evidence)
+        evidence_id = evidence.get("id", "")
+        completed: list[int] = []
+        for task in self.list_active_for_scope(session_id=session_id):
+            if task.get("status") not in ("pending", "in_progress"):
+                continue
+            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
+                continue
+            terms = self._task_match_terms(task)
+            if not any(term and term in evidence_text for term in terms):
+                continue
+            evidence_ids = list(task.get("evidence_ids") or [])
+            if evidence_id and evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+            self.update(
+                task["id"],
+                status="completed",
+                evidence_ids=evidence_ids,
+                result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
+                confidence=evidence.get("confidence", ""),
+                completed_by="evidence",
+            )
+            completed.append(task["id"])
+        return completed
+
     def list_history_for_scope(
         self,
         session_id: str = "",

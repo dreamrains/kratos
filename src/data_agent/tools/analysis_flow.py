@@ -341,6 +341,18 @@ def record_evidence_record(record_json: str) -> str:
     if state is not None:
         result["state_stage"] = state.stage
         result["evidence_id"] = payload.get("id")
+        try:
+            from data_agent.session.task_manager import task_manager
+            spec = state.analysis_spec if state is not None else {}
+            completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
+                session_id=state.session_id,
+                evidence=payload,
+                analysis_spec_id=(spec or {}).get("id", ""),
+            )
+            if completed_task_ids:
+                result["completed_task_ids"] = completed_task_ids
+        except Exception as e:
+            result["task_completion_error"] = str(e)
     result["statistical_detail_status"] = payload.get("statistical_detail_status")
     result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
     if auto_lim:

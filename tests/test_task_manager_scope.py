@@ -200,3 +200,39 @@ def test_supersede_active_plan_includes_stale_pending_tasks(tmp_path):
     assert mgr.get(old_task["id"])["status"] == "superseded"
     history = mgr.list_history_for_scope(session_id="s1")
     assert [t["id"] for t in history] == [old_task["id"]]
+
+
+def test_complete_matching_task_from_evidence(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(
+        session_id="s1",
+        goal="Revenue",
+        source="analysis_spec",
+        analysis_spec_id="spec_1",
+    )
+    task = mgr.create(
+        "省钱卡收益分析",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_spec_id="spec_1",
+        expected_output="计算省钱卡销售收入、代金券成本、最终净收益",
+        evidence_requirements=["净收益"],
+    )
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={
+            "id": "ev_1",
+            "claim": "省钱卡功能直接净收益为-1,752元",
+            "result_summary": "净收益=销售收入-代金券成本",
+            "confidence": "high",
+        },
+        analysis_spec_id="spec_1",
+    )
+
+    assert completed == [task["id"]]
+    updated = mgr.get(task["id"])
+    assert updated["status"] == "completed"
+    assert updated["evidence_ids"] == ["ev_1"]
+    assert updated["completed_by"] == "evidence"
