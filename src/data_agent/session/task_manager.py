@@ -415,6 +415,25 @@ class TaskManager:
             and t.get("status") not in ("deleted", "archived", "superseded")
         ]
 
+    def find_duplicate_task(
+        self,
+        session_id: str,
+        plan_id: str,
+        subject: str,
+        analysis_spec_id: str = "",
+    ) -> dict | None:
+        normalized_subject = (subject or "").strip()
+        for task in self.list_for_scope(session_id=session_id):
+            if task.get("plan_id") != plan_id:
+                continue
+            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
+                continue
+            if task.get("status") in ("deleted", "archived", "superseded"):
+                continue
+            if (task.get("subject") or "").strip() == normalized_subject:
+                return task
+        return None
+
     def list_history_for_scope(
         self,
         session_id: str = "",

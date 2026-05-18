@@ -81,10 +81,75 @@ def _workflow_fields_from_dict(data: dict) -> dict:
         "required_capability",
         "evidence_requirements",
         "confirmation_policy",
+        "plan_id",
+        "plan_version",
+        "plan_status",
+        "task_kind",
+        "source",
+        "superseded_by",
+        "archived_at",
+        "completed_by",
+        "completed_at",
     ):
         if key in data:
             fields[key] = data[key]
     return fields
+
+
+def _step_subject(step, idx: int) -> str:
+    if isinstance(step, dict):
+        return (
+            step.get("task")
+            or step.get("subject")
+            or step.get("title")
+            or step.get("step")
+            or step.get("name")
+            or f"分析步骤 {idx}"
+        )
+    return str(step)
+
+
+def _step_description(step) -> str:
+    if isinstance(step, dict):
+        return (
+            step.get("description")
+            or step.get("detail")
+            or step.get("method")
+            or json.dumps(step, ensure_ascii=False)
+        )
+    return str(step)
+
+
+def _ensure_active_plan_for_spec(spec: dict) -> dict:
+    workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
+    spec["workflow_id"] = workflow_id
+    spec_id = spec.get("id", "")
+    session_id = _session_id()
+    project_name = _project_name()
+    active_plan_id = task_manager.get_active_plan_id(session_id, project_name)
+    if active_plan_id:
+        active_tasks = task_manager.list_active_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+        )
+        if any(
+            t.get("analysis_spec_id") == spec_id or t.get("workflow_id") == workflow_id
+            for t in active_tasks
+        ):
+            return {
+                "id": active_plan_id,
+                "version": max([int(t.get("plan_version") or 1) for t in active_tasks], default=1),
+                "workflow_id": workflow_id,
+                "analysis_spec_id": spec_id,
+            }
+    return task_manager.create_plan(
+        session_id=session_id,
+        project_name=project_name,
+        goal=spec.get("goal", ""),
+        source="analysis_spec",
+        analysis_spec_id=spec_id,
+        workflow_id=workflow_id,
+    )
 
 
 def create_workflow_tasks_from_spec(spec: dict) -> dict:
@@ -94,13 +159,17 @@ def create_workflow_tasks_from_spec(spec: dict) -> dict:
     if not isinstance(method_plan, list):
         method_plan = []
 
-    workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
-    spec_id = spec.get("id", "")
+    plan = _ensure_active_plan_for_spec(spec)
+    workflow_id = plan.get("workflow_id") or spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
+    spec_id = plan.get("analysis_spec_id") or spec.get("id", "")
+    plan_id = plan["id"]
+    plan_version = plan.get("version", 1)
     created = []
+    reused = []
     for idx, step in enumerate(method_plan, 1):
+        subject = _step_subject(step, idx)
+        description = _step_description(step)
         if isinstance(step, dict):
-            subject = step.get("subject") or step.get("title") or step.get("step") or f"分析步骤 {idx}"
-            description = step.get("description") or step.get("method") or json.dumps(step, ensure_ascii=False)
             node_type = step.get("node_type") or "analysis"
             expected_output = step.get("expected_output", "")
             required_data = step.get("required_data", spec.get("required_data", []))
@@ -117,6 +186,16 @@ def create_workflow_tasks_from_spec(spec: dict) -> dict:
             evidence_requirements = []
             confirmation_policy = {}
 
+        duplicate = task_manager.find_duplicate_task(
+            session_id=_session_id(),
+            plan_id=plan_id,
+            subject=subject,
+            analysis_spec_id=spec_id,
+        )
+        if duplicate:
+            reused.append(duplicate)
+            continue
+
         task = task_manager.create(
             subject=subject[:120],
             description=description,
@@ -131,9 +210,20 @@ def create_workflow_tasks_from_spec(spec: dict) -> dict:
             required_capability=required_capability,
             evidence_requirements=evidence_requirements,
             confirmation_policy=confirmation_policy,
+            plan_id=plan_id,
+            plan_version=plan_version,
+            plan_status="active",
+            task_kind="plan_task",
+            source="analysis_spec",
         )
         created.append(task)
-    return {"workflow_id": workflow_id, "created": len(created), "task_ids": [t["id"] for t in created]}
+    return {
+        "workflow_id": workflow_id,
+        "plan_id": plan_id,
+        "created": len(created),
+        "reused": len(reused),
+        "task_ids": [t["id"] for t in created + reused],
+    }
 
 
 @registry.register(
@@ -173,6 +263,12 @@ def task_create(
         return json.dumps(create_workflow_tasks_from_spec(spec), ensure_ascii=False, indent=2)
 
     current_spec = _current_analysis_spec()
+    active_plan_id = task_manager.get_active_plan_id(_session_id(), _project_name())
+    active_tasks = (
+        task_manager.list_active_for_scope(session_id=_session_id(), project_name=_project_name())
+        if active_plan_id else []
+    )
+    active_plan_version = max([int(t.get("plan_version") or 1) for t in active_tasks], default=1)
     common_fields = {
         "workflow_id": workflow_id or current_spec.get("workflow_id", ""),
         "project_name": project_name or _project_name(),
@@ -186,6 +282,11 @@ def task_create(
         "required_capability": required_capability,
         "evidence_requirements": _json_or_value(evidence_requirements, []),
         "confirmation_policy": _json_or_value(confirmation_policy, current_spec.get("confirmation_policy", {})),
+        "plan_id": active_plan_id,
+        "plan_version": active_plan_version,
+        "plan_status": "active" if active_plan_id else "",
+        "task_kind": "plan_task",
+        "source": "llm_plan" if active_plan_id else "",
     }
 
     if tasks:
