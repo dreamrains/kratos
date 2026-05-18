@@ -568,10 +568,14 @@ class AgentLoop:
             if self._prompt_cache_dirty or not self._prompt_cache:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
+            prompt = self._prompt_cache
+            synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
+            if synthesis_instruction:
+                prompt = prompt + "\n\n" + synthesis_instruction
             hint = self._execution_prompt_hint()
             if hint:
-                return self._prompt_cache + f"\n\n<execution_control>\n{hint}\n</execution_control>"
-            return self._prompt_cache
+                return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
+            return prompt
 
     def _prepare_analysis_turn(self, user_input: str):
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -790,6 +794,8 @@ class AgentLoop:
         self._turn_tools_used = []
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
+        self._turn_synthesis_policy_injected = False
+        self._turn_synthesis_policy_instruction = ""
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -816,6 +822,62 @@ class AgentLoop:
         self._prompt_cache_dirty = True
         with use_agent_context(self.context):
             self._prepare_analysis_turn(user_input)
+
+    def _turn_tool_error_count(self) -> int:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return 0
+        return len(getattr(turn_state, "tool_errors", []) or [])
+
+    def _current_dataset_profile(self) -> str:
+        workspace_obj = getattr(self.context, "workspace", None)
+        if workspace_obj is None:
+            return ""
+        try:
+            datasets = workspace_obj.list_datasets()
+        except Exception:
+            return ""
+        profile_lines = []
+        for name, info in (datasets or {}).items():
+            if isinstance(info, dict):
+                rows = info.get("rows", "?")
+                cols = info.get("columns", "?")
+                columns = info.get("column_names") or []
+                column_text = ", ".join(str(col) for col in columns[:10])
+                profile_lines.append(f"- {name}: {rows} rows x {cols} cols; columns: {column_text}")
+            else:
+                profile_lines.append(f"- {name}: {info}")
+        return "\n".join(profile_lines)
+
+    def _maybe_inject_synthesis_policy(self, user_input: str) -> None:
+        if getattr(self, "_turn_synthesis_policy_injected", False):
+            return
+        intent = getattr(self, "_last_turn_intent", None)
+        if intent is None or intent.intent_type not in ("directed_analysis", "comprehensive_report"):
+            return
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return
+        evidence = getattr(state, "evidence_records", []) or []
+        if not evidence:
+            return
+
+        from data_agent.agent.synthesis_policy import (
+            build_synthesis_instruction,
+            derive_synthesis_policy,
+        )
+
+        policy = derive_synthesis_policy(
+            intent=intent,
+            state=state,
+            user_input=user_input,
+            data_profile=self._current_dataset_profile(),
+            tool_error_count=self._turn_tool_error_count(),
+            user_requirements=self.context.user_quality_requirements,
+            proficiency=self.context.user_proficiency,
+        )
+        self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
+        self._turn_synthesis_policy_injected = True
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._is_analysis_quality_guard_candidate()
@@ -1412,6 +1474,7 @@ class AgentLoop:
                 return
 
             self._maybe_replan_after_data_load(user_input)
+            self._maybe_inject_synthesis_policy(user_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -1555,6 +1618,7 @@ class AgentLoop:
                 return
 
             self._maybe_replan_after_data_load(resumed_input)
+            self._maybe_inject_synthesis_policy(resumed_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -1851,6 +1915,7 @@ class AgentLoop:
                     return seq_result
 
             self._maybe_replan_after_data_load(user_input)
+            self._maybe_inject_synthesis_policy(user_input)
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)
