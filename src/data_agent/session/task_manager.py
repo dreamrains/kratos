@@ -349,6 +349,49 @@ class TaskManager:
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
+    def migrate_legacy_session_active_plan(self, session_id: str, project_name: str = "") -> dict:
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        if active_plan_id:
+            return {"active_plan_id": active_plan_id, "migrated": 0}
+        scoped = self._list_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+            include_stale=True,
+        )
+        legacy = [t for t in scoped if not t.get("plan_id") and t.get("status") != "deleted"]
+        completed = [t for t in legacy if t.get("status") == "completed"]
+        if not completed:
+            return {"active_plan_id": "", "migrated": 0}
+
+        spec_id = completed[0].get("analysis_spec_id", "")
+        plan = self.create_plan(
+            session_id=session_id,
+            project_name=project_name,
+            goal="Migrated completed analysis plan",
+            source="legacy_migration",
+            analysis_spec_id=spec_id,
+            workflow_id=completed[0].get("workflow_id", ""),
+        )
+        migrated = 0
+        for task in legacy:
+            if task.get("status") == "completed" and (not spec_id or task.get("analysis_spec_id") == spec_id):
+                self.update(
+                    task["id"],
+                    plan_id=plan["id"],
+                    plan_version=plan["version"],
+                    plan_status="completed",
+                    source=task.get("source") or "legacy_migration",
+                )
+                migrated += 1
+            elif task.get("status") in ("pending", "blocked", "in_progress"):
+                self.update(
+                    task["id"],
+                    status="superseded",
+                    superseded_by=plan["id"],
+                    source=task.get("source") or "legacy_migration",
+                )
+        return {"active_plan_id": plan["id"], "migrated": migrated}
+
     def _list_for_scope(
         self,
         session_id: str = "",

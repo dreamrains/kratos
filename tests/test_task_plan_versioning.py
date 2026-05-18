@@ -100,3 +100,19 @@ def test_active_plan_reuse_skips_duplicate_subjects(tmp_path):
     assert duplicate is not None
     assert duplicate["id"] == current_plan_task["id"]
     assert duplicate["subject"] == "Prepare data and calculate baseline metrics"
+
+
+def test_migrate_legacy_completed_plan_archives_pending_duplicates(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    mgr.create("build cohorts and calculate retention curve", session_id="s1", analysis_spec_id="candidate")
+    mgr.create("Analysis step 1", session_id="s1", analysis_spec_id="spec_1")
+    completed = mgr.create("Prepare data and calculate baseline metrics", session_id="s1", analysis_spec_id="spec_1")
+    mgr.update(completed["id"], status="completed", result_summary="done")
+
+    result = mgr.migrate_legacy_session_active_plan(session_id="s1")
+
+    active = mgr.list_active_for_scope(session_id="s1")
+    history = mgr.list_history_for_scope(session_id="s1")
+    assert result["active_plan_id"]
+    assert [t["id"] for t in active] == [completed["id"]]
+    assert {t["status"] for t in history} == {"superseded"}
