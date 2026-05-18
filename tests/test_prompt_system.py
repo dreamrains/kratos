@@ -708,6 +708,10 @@ class TestPromptConstants:
         assert "xychart-beta" in _MERMAID_QUICK_REF
         assert "Plotly JSON" in _MERMAID_QUICK_REF
 
+    def test_mermaid_ref_disallows_unverified_data_chart_fallback(self):
+        assert "data-backed analytical charts" in _MERMAID_QUICK_REF
+        assert "If create_chart fails" in _MERMAID_QUICK_REF
+
     def test_conversation_template_markers(self):
         assert "get_analysis_summary" in AGENT_CONVERSATION
         assert "{session_context}" in AGENT_CONVERSATION

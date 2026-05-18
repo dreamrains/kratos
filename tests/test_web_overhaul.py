@@ -304,6 +304,35 @@ class TestLineSpacing:
         assert "margin-bottom: 0.625em" in css
 
 
+class TestComposerAndKratosIcons:
+    """Chat composer alignment and requested Kratos icon replacements."""
+
+    def test_composer_alignment_styles(self, html, css):
+        assert "composer-input" in html
+        assert "composer-actions" in html
+        assert ".composer-input" in css
+        assert "min-height: 3.5rem" in css
+        assert "top: 50%" in css
+
+    def test_kratos_icons_are_used_for_requested_actions(self, html):
+        assert "icons/kratos-export.svg" in html
+        assert "icons/kratos-compress.svg" in html
+        assert "icons/kratos-rewind.svg" in html
+        assert "kratos-icon-export" in html
+        assert "kratos-icon-compact" in html
+        assert "kratos-icon-rewind" in html
+
+    def test_kratos_icon_assets_are_served(self, client):
+        for filename in [
+            "kratos-export.svg",
+            "kratos-compress.svg",
+            "kratos-rewind.svg",
+        ]:
+            resp = client.get(f"/static/icons/{filename}")
+            assert resp.status_code == 200
+            assert resp.mimetype == "image/svg+xml"
+
+
 # =====================================================
 # Phase 4: Workbench Redesign
 # =====================================================

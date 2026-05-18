@@ -217,8 +217,30 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
     background: white;
     border: 1px solid #d6d3d1;
     border-radius: 1rem;
+    min-height: 3.5rem;
     transition: all 0.2s ease;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.composer-input {
+    display: block;
+    min-height: 3.5rem;
+    padding-top: 1.05rem;
+    padding-bottom: 1.05rem;
+    line-height: 1.4;
+}
+.composer-actions {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+}
+.composer-icon-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 .input-box:focus-within {
     border-color: transparent;
@@ -232,6 +254,21 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .dark .input-box:focus-within {
     border-color: transparent;
     box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.25), 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.kratos-icon {
+    width: 1rem;
+    height: 1rem;
+    display: inline-block;
+    flex: 0 0 auto;
+    background: currentColor;
+    -webkit-mask: var(--kratos-icon-url) center / contain no-repeat;
+    mask: var(--kratos-icon-url) center / contain no-repeat;
+}
+.kratos-icon-sm,
+.kratos-icon-menu {
+    width: 0.875rem;
+    height: 0.875rem;
 }
 
 /* ── Sidebar panel ────────────────────────────────────────── */

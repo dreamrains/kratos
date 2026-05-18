@@ -126,6 +126,14 @@ def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:
     return groups
 
 
+def _plotly_axis_values(series: pd.Series) -> list:
+    """Return Plotly-safe axis values while preserving readable bin labels."""
+    return [
+        str(value) if isinstance(value, pd.Interval) else value
+        for value in series.tolist()
+    ]
+
+
 def _chart_error(message: str, warnings: list[str]) -> str:
     return json.dumps({
         "error": message,
@@ -227,7 +235,7 @@ def _validate_chart_spec(
         "1) x_col/y_col 列名不存在（用 preview_data 查看）"
         "2) 数值列包含非数字（用 describe_dataset 检查类型）"
         "3) 数据为空或过滤后无数据"
-        "如无法解决，可用 Mermaid 文本图表作为替代。"
+        "请修正参数或先用 transform_data 生成适合可视化的聚合数据；不要用未经验证的文本图替代数据图表。"
     ),
     schema_overrides={
         "chart_type": {"description": "图表类型", "enum": ["line", "bar", "stacked_bar", "scatter", "box", "histogram", "heatmap", "pie", "funnel"]},
@@ -346,7 +354,16 @@ def create_chart(
                                 )
                             })
                 else:
-                    fig.add_trace(go.Bar(x=df[x_col], y=df[y_col], name=y_col))
+                    if color_col:
+                        for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
+                            fig.add_trace(go.Bar(
+                                x=_plotly_axis_values(group_df[x_col]),
+                                y=group_df[y_col],
+                                name=str(cat),
+                            ))
+                        fig.update_layout(barmode="group")
+                    else:
+                        fig.add_trace(go.Bar(x=_plotly_axis_values(df[x_col]), y=df[y_col], name=y_col))
             else:
                 numeric_cols = df.select_dtypes(include="number").columns[:5]
                 for col in numeric_cols:

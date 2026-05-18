@@ -7,6 +7,7 @@ from data_agent.config import get_config
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
 from data_agent.tools.visualization import create_chart
+from data_agent.tools.registry import registry
 
 
 def _use_tmp_sessions(tmp_path):
@@ -134,3 +135,46 @@ def test_chart_metadata_can_bind_evidence_ids(tmp_path):
         assert metadata["evidence_ids"] == ["ev_1", "ev_2"]
     finally:
         cfg.sessions_dir = old_sessions
+
+
+def test_grouped_bar_chart_handles_interval_axis_and_color_grouping(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ws = Workspace()
+    amounts = [3, 8, 40, 3, 8, 40]
+    ws.add("dist", pd.DataFrame({
+        "bucket": pd.cut(amounts, bins=[0, 6, 18, 50]),
+        "period": ["before", "before", "before", "after", "after", "after"],
+        "orders": [12, 8, 0, 9, 7, 3],
+    }))
+    ctx = AgentContext(session_id="chart_grouped_bar", workspace=ws)
+
+    try:
+        with use_agent_context(ctx):
+            result = create_chart(
+                "bar",
+                data="dist",
+                x_col="bucket",
+                y_col="orders",
+                color_col="period",
+                title="Amount Distribution",
+                purpose="insight",
+            )
+
+        assert "Chart saved:" in result
+        chart_dir = tmp_path / "sessions" / "chart_grouped_bar" / "charts"
+        html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+        assert '"name":"before"' in html
+        assert '"name":"after"' in html
+        assert "(0, 6]" in html
+        metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf-8"))
+        assert metadata["color_col"] == "period"
+        assert metadata["validation_status"] == "valid"
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_create_chart_recovery_hint_does_not_suggest_mermaid_for_data_charts():
+    tool = registry.get("create_chart")
+
+    assert tool is not None
+    assert "Mermaid" not in tool.recovery_hint
