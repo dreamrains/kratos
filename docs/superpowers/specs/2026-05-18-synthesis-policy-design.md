@@ -241,9 +241,9 @@ The answer should explain that retention is available but ARPU or revenue assump
 - Playbook output sections do not become the only mechanism for final answer quality.
 - Tests can verify the selected policy without depending on exact LLM wording.
 
-## Open Questions
+## Resolved Design Decisions
 
-1. Should the policy be persisted in `analysis_state` immediately, or only logged in tests and debug output at first?
-2. Should user proficiency influence insight depth, or only wording complexity?
-3. Should the final response be regenerated when it violates policy, or should the policy be injected before the model writes the first final answer?
-4. How much UI visibility should the policy have, if any?
+1. Do not persist the policy in `analysis_state` during Phase 1. Keep it testable through unit tests and visible through debug output. Add a future-compatible path for `last_synthesis_policy` only after the policy proves stable.
+2. User proficiency should mainly affect wording complexity, not insight depth. The task, evidence, and risk boundary should decide depth; proficiency can change how technical or explanatory the final answer sounds.
+3. Inject the policy before the model writes the final answer. Do not add a regenerate-on-violation loop in Phase 1 because it adds latency, streaming complexity, and another failure path.
+4. Keep policy details hidden from the normal user UI. Show them only in developer/debug surfaces at first; a future analysis-detail panel can expose the policy in a collapsed diagnostic view if it becomes useful.
