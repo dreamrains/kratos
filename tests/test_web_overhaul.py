@@ -130,6 +130,11 @@ class TestTaskListUpdate:
         resp = client.get("/api/tasks?session_id=test")
         assert resp.status_code == 200
 
+    def test_frontend_uses_default_active_task_scope(self, js):
+        assert "fetch('/api/tasks' + query)" in js
+        assert "case 'task_update'" in js
+        assert "_debouncedLoadTasks()" in js
+
 
 class TestPopoverOverflow:
     """1.5 Fix popover overflow for bottom items."""

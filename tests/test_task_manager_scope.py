@@ -236,3 +236,16 @@ def test_complete_matching_task_from_evidence(tmp_path):
     assert updated["status"] == "completed"
     assert updated["evidence_ids"] == ["ev_1"]
     assert updated["completed_by"] == "evidence"
+
+
+def test_format_list_uses_active_plan_scope(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    old_plan = mgr.create_plan(session_id="s1", goal="Old", source="analysis_spec")
+    mgr.create("Old pending", session_id="s1", plan_id=old_plan["id"])
+    new_plan = mgr.create_plan(session_id="s1", goal="New", source="user_replan")
+    mgr.create("New active", session_id="s1", plan_id=new_plan["id"])
+
+    output = mgr.format_list(session_id="s1")
+
+    assert "New active" in output
+    assert "Old pending" not in output

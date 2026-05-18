@@ -535,7 +535,7 @@ class TaskManager:
     ) -> str:
         """纯文本格式化任务列表。"""
         tasks = (
-            self.list_for_scope(
+            self.list_active_for_scope(
                 session_id=session_id,
                 project_name=project_name,
                 include_global=include_global,
