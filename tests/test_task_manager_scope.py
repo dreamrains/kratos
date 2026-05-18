@@ -238,6 +238,65 @@ def test_complete_matching_task_from_evidence(tmp_path):
     assert updated["completed_by"] == "evidence"
 
 
+def test_evidence_completes_analysis_spec_plan_when_terms_do_not_match(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(
+        session_id="s1",
+        goal="Fit retention formula",
+        source="analysis_spec",
+        analysis_spec_id="spec_1",
+    )
+    cohort = mgr.create(
+        "build cohorts and calculate retention curve",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_spec_id="spec_1",
+        expected_output="retention table by cohort and period",
+        required_capability="analysis.cohort",
+        evidence_requirements=["retention_rate"],
+        source="analysis_spec",
+    )
+    forecast = mgr.create(
+        "supporting check: Forecast & Decision Simulation",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_spec_id="spec_1",
+        expected_output="Forecast metrics and support decisions.",
+        required_capability="analysis.forecast",
+        source="analysis_spec",
+    )
+    confirmation = mgr.create(
+        "Confirm analysis method and metric scope",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_spec_id="spec_1",
+        node_type="confirmation",
+        task_kind="confirmation",
+        source="system_confirmation",
+    )
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={
+            "id": "ev_1",
+            "claim": "游戏B的新用户留存率遵循幂律衰减模型。",
+            "result_summary": "幂律模型R²=0.9825，已生成拟合曲线和预测曲线。",
+            "tool_calls": ["run_python", "create_chart"],
+            "metrics": {"sample_size": 56, "r2": 0.9825},
+        },
+        analysis_spec_id="spec_1",
+    )
+
+    assert completed == [cohort["id"], forecast["id"]]
+    assert mgr.get(cohort["id"])["status"] == "completed"
+    assert mgr.get(forecast["id"])["status"] == "completed"
+    assert mgr.get(confirmation["id"])["status"] == "superseded"
+    assert [t["id"] for t in mgr.list_active_for_scope(session_id="s1")] == [cohort["id"], forecast["id"]]
+
+
 def test_format_list_uses_active_plan_scope(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     old_plan = mgr.create_plan(session_id="s1", goal="Old", source="analysis_spec")

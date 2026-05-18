@@ -499,6 +499,58 @@ class TaskManager:
             terms.append(str(item))
         return [t.lower() for t in terms if t]
 
+    def _evidence_has_substantive_work(self, evidence: dict) -> bool:
+        return bool(
+            evidence.get("result_summary")
+            or evidence.get("metrics")
+            or evidence.get("tool_calls")
+        )
+
+    def _complete_analysis_spec_plan_from_evidence(
+        self,
+        session_id: str,
+        evidence: dict,
+        analysis_spec_id: str = "",
+    ) -> list[int]:
+        if not self._evidence_has_substantive_work(evidence):
+            return []
+
+        active_tasks = self.list_active_for_scope(session_id=session_id)
+        if any(t.get("source") == "llm_plan" for t in active_tasks):
+            return []
+
+        evidence_id = evidence.get("id", "")
+        completed: list[int] = []
+        for task in active_tasks:
+            if task.get("status") not in ("pending", "in_progress"):
+                continue
+            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
+                continue
+            if task.get("task_kind") == "confirmation" or task.get("node_type") == "confirmation":
+                self.update(
+                    task["id"],
+                    status="superseded",
+                    completed_by="evidence",
+                    result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
+                )
+                continue
+            if task.get("source") != "analysis_spec":
+                continue
+
+            evidence_ids = list(task.get("evidence_ids") or [])
+            if evidence_id and evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+            self.update(
+                task["id"],
+                status="completed",
+                evidence_ids=evidence_ids,
+                result_summary=evidence.get("result_summary", "") or evidence.get("claim", ""),
+                confidence=evidence.get("confidence", ""),
+                completed_by="evidence",
+            )
+            completed.append(task["id"])
+        return completed
+
     def complete_matching_tasks_from_evidence(
         self,
         session_id: str,
@@ -528,7 +580,13 @@ class TaskManager:
                 completed_by="evidence",
             )
             completed.append(task["id"])
-        return completed
+        if completed:
+            return completed
+        return self._complete_analysis_spec_plan_from_evidence(
+            session_id=session_id,
+            evidence=evidence,
+            analysis_spec_id=analysis_spec_id,
+        )
 
     def list_history_for_scope(
         self,
