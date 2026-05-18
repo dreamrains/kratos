@@ -174,3 +174,31 @@ def test_web_tasks_preserve_workflow_fields_and_scope_order(tmp_path):
         assert {t["id"] for t in scoped_both.get_json()} == {task["id"]}
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir)
+
+
+def test_tasks_api_defaults_to_active_plan_scope(tmp_path):
+    cfg, old_sessions, old_tasks_dir = _use_tmp_state(tmp_path)
+    try:
+        from data_agent.session.task_manager import task_manager
+        from data_agent.web.app import create_app
+
+        old_plan = task_manager.create_plan(session_id="s_current", goal="Old", source="analysis_spec")
+        old_task = task_manager.create("Old pending", session_id="s_current", plan_id=old_plan["id"])
+        new_plan = task_manager.create_plan(session_id="s_current", goal="New", source="user_replan")
+        new_task = task_manager.create("New active", session_id="s_current", plan_id=new_plan["id"])
+
+        client = create_app().test_client()
+
+        active = client.get("/api/tasks?session_id=s_current")
+        assert active.status_code == 200
+        assert [t["id"] for t in active.get_json()] == [new_task["id"]]
+
+        history = client.get("/api/tasks?session_id=s_current&scope=history")
+        assert history.status_code == 200
+        assert [t["id"] for t in history.get_json()] == [old_task["id"]]
+
+        all_tasks = client.get("/api/tasks?session_id=s_current&scope=all")
+        assert all_tasks.status_code == 200
+        assert {t["id"] for t in all_tasks.get_json()} == {old_task["id"], new_task["id"]}
+    finally:
+        _restore_state(cfg, old_sessions, old_tasks_dir)

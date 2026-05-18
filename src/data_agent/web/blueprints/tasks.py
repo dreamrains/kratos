@@ -24,21 +24,37 @@ def list_tasks():
     include_global = _truthy(request.args.get("include_global"))
     ready_only = _truthy(request.args.get("ready_only"))
     active_only = _truthy(request.args.get("active_only"))
+    scope = (request.args.get("scope") or "active").lower()
 
     if ready_only:
-        tasks = mgr.list_ready(
+        base_tasks = mgr.list_ready(
             session_id=session_id,
             project_name=project_name,
             include_global=include_global,
         )
     elif session_id or project_name:
-        tasks = mgr.list_for_scope(
-            session_id=session_id,
-            project_name=project_name,
-            include_global=include_global,
-        )
+        if scope == "all":
+            base_tasks = mgr.list_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
+        elif scope == "history":
+            base_tasks = mgr.list_history_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
+        else:
+            base_tasks = mgr.list_active_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+                include_global=include_global,
+            )
     else:
-        tasks = mgr.list_all()
+        base_tasks = mgr.list_all()
+
+    tasks = base_tasks
 
     if active_only:
         tasks = [t for t in tasks if t.get("status") in ("pending", "in_progress")]
