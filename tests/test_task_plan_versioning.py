@@ -1,4 +1,10 @@
-from data_agent.session.task_manager import TaskManager
+import json
+
+from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.session.task_manager import TaskManager, task_manager
+from data_agent.session.workspace import Workspace
+from data_agent.tools.task_tools import task_create
 
 
 def test_completed_execution_plan_hides_superseded_legacy_duplicates(tmp_path):
@@ -116,3 +122,78 @@ def test_migrate_legacy_completed_plan_archives_pending_duplicates(tmp_path):
     assert result["active_plan_id"]
     assert [t["id"] for t in active] == [completed["id"]]
     assert {t["status"] for t in history} == {"superseded"}
+
+
+def test_llm_batch_plan_supersedes_analysis_spec_candidate_tasks(tmp_path):
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+
+    candidate_plan = task_manager.create_plan(
+        session_id="s1",
+        goal="Candidate retention plan",
+        source="analysis_spec",
+        analysis_spec_id="spec_1",
+        workflow_id="wf_1",
+    )
+    candidate = task_manager.create(
+        "build cohorts and calculate retention curve",
+        session_id="s1",
+        workflow_id="wf_1",
+        analysis_spec_id="spec_1",
+        plan_id=candidate_plan["id"],
+        plan_version=candidate_plan["version"],
+        plan_status="active",
+        source="analysis_spec",
+    )
+    confirmation = task_manager.create(
+        "Confirm analysis method and metric scope",
+        session_id="s1",
+        workflow_id="wf_1",
+        analysis_spec_id="spec_1",
+        plan_id=candidate_plan["id"],
+        plan_version=candidate_plan["version"],
+        plan_status="active",
+        task_kind="confirmation",
+        source="system_confirmation",
+    )
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    ctx.analysis_state = AnalysisSessionState(
+        session_id="s1",
+        analysis_spec={
+            "id": "spec_1",
+            "workflow_id": "wf_1",
+            "goal": "Fit retention formula",
+            "confirmation_policy": {"requires_confirmation": True},
+        },
+    )
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(task_create(tasks=json.dumps([
+                {
+                    "subject": "Explore retention columns",
+                    "description": "Profile day retention columns and value ranges",
+                    "source": "llm_plan",
+                },
+                {
+                    "subject": "Fit retention curve",
+                    "description": "Compare power, exponential, and logarithmic models",
+                },
+            ])))
+
+        active = task_manager.list_active_for_scope(session_id="s1")
+
+        assert result["created"] == 2
+        assert result["plan_id"] != candidate_plan["id"]
+        assert [t["subject"] for t in active] == [
+            "Explore retention columns",
+            "Fit retention curve",
+        ]
+        assert {t["source"] for t in active} == {"llm_plan"}
+        assert task_manager.get(candidate["id"])["status"] == "superseded"
+        assert task_manager.get(confirmation["id"])["status"] == "superseded"
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id

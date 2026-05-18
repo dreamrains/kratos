@@ -152,6 +152,44 @@ def _ensure_active_plan_for_spec(spec: dict) -> dict:
     )
 
 
+def _incoming_has_explicit_plan(task_list_data: list) -> bool:
+    return any(
+        isinstance(t, dict)
+        and any(key in t for key in ("plan_id", "plan_version", "plan_status"))
+        for t in task_list_data
+    )
+
+
+def _ensure_llm_plan_for_batch(task_list_data: list, current_spec: dict, active_plan_id: str, active_tasks: list[dict]) -> dict:
+    """Keep LLM-authored execution plans separate from system candidate plans."""
+    if _incoming_has_explicit_plan(task_list_data):
+        return {
+            "id": active_plan_id,
+            "version": max([int(t.get("plan_version") or 1) for t in active_tasks], default=1),
+        }
+
+    has_llm_plan = any(t.get("source") == "llm_plan" for t in active_tasks)
+    if active_plan_id and has_llm_plan:
+        return {
+            "id": active_plan_id,
+            "version": max([int(t.get("plan_version") or 1) for t in active_tasks], default=1),
+        }
+
+    first_subject = ""
+    for task_data in task_list_data:
+        if isinstance(task_data, dict) and task_data.get("subject"):
+            first_subject = task_data["subject"]
+            break
+    return task_manager.create_plan(
+        session_id=_session_id(),
+        project_name=_project_name(),
+        goal=current_spec.get("goal") or first_subject or "LLM analysis plan",
+        source="llm_plan",
+        analysis_spec_id=current_spec.get("id", ""),
+        workflow_id=current_spec.get("workflow_id", ""),
+    )
+
+
 def create_workflow_tasks_from_spec(spec: dict) -> dict:
     method_plan = spec.get("method_plan") or []
     if isinstance(method_plan, str):
@@ -297,6 +335,13 @@ def task_create(
         if not isinstance(task_list_data, list):
             return json.dumps({"error": "tasks 必须是 JSON 数组"}, ensure_ascii=False)
 
+        llm_plan = _ensure_llm_plan_for_batch(task_list_data, current_spec, active_plan_id, active_tasks)
+        if llm_plan.get("id"):
+            common_fields["plan_id"] = llm_plan["id"]
+            common_fields["plan_version"] = llm_plan.get("version", 1)
+            common_fields["plan_status"] = "active"
+            common_fields["source"] = "llm_plan"
+
         created = []
         for t in task_list_data:
             if not isinstance(t, dict):
@@ -309,7 +354,11 @@ def task_create(
                 **fields,
             )
             created.append(task)
-        return json.dumps({"created": len(created), "tasks": created}, ensure_ascii=False, indent=2)
+        return json.dumps({
+            "created": len(created),
+            "plan_id": common_fields.get("plan_id", ""),
+            "tasks": created,
+        }, ensure_ascii=False, indent=2)
 
     if not subject:
         return json.dumps({"error": "subject 不能为空"}, ensure_ascii=False)
