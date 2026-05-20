@@ -50,6 +50,7 @@ _MERMAID_QUICK_REF = """\
 ★ 禁止在回复中直接输出 Plotly JSON，必须通过 create_chart 工具生成交互式图表。
 For data-backed analytical charts, use create_chart or a numeric table rather than Mermaid.
 If create_chart fails, do not invent a Mermaid fallback chart; explain the failure, fix the chart inputs, or present the verified data table.
+After create_chart succeeds, place the chart next to the relevant conclusion with `[[chart:<exact Chart saved path or exact chart_id>]]`; copy the exact path from the tool result and never guess or rewrite the hash. Charts not referenced inline will appear as supplemental charts.
 """
 
 # ── CONVERSATION 模式：对话层意图（无工具）────────────────

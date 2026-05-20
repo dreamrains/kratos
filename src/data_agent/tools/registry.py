@@ -57,6 +57,16 @@ class ToolResult:
         return self.to_cli()
 
 
+def _artifact_from_chart_saved(summary: str) -> ArtifactRef | None:
+    match = re.search(r"Chart saved:\s*(sessions\/\S+?\.html|charts\/\S+?\.html)", summary or "")
+    if not match:
+        return None
+    path = match.group(1)
+    name = path.rsplit("/", 1)[-1].replace(".html", "")
+    name = re.sub(r"_[a-f0-9]{6}$", "", name)
+    return ArtifactRef(path=path, type="chart", description=name)
+
+
 @dataclass
 class ToolCapability:
     """Metadata that lets analysis workflows reason about tool abilities."""
@@ -108,7 +118,11 @@ def _to_tool_result(result: Any) -> ToolResult:
     """Normalize any tool return to ToolResult."""
     if isinstance(result, ToolResult):
         return result
-    return ToolResult.from_str(str(result))
+    summary = str(result)
+    artifact = _artifact_from_chart_saved(summary)
+    if artifact:
+        return ToolResult(summary=summary, artifacts=[artifact])
+    return ToolResult.from_str(summary)
 
 
 class ToolTimeoutError(Exception):

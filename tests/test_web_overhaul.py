@@ -90,6 +90,41 @@ class TestMermaidChartRendering:
         method_text = js[idx : idx + 3000]
         assert "typeof mermaid" in method_text
 
+    def test_interactive_chart_references_render_inline(self, js, html):
+        assert r"\[\[chart:" in js
+        assert "_replaceChartReferences" in js
+        assert "inline-chart-artifact" in js
+        assert "renderMarkdown(turn.content, turn)" in html
+
+    def test_unreferenced_charts_render_after_markdown_as_supplemental(self, html, js):
+        assert "Supplemental charts" in html
+        assert "supplementalArtifacts(turn)" in html
+        assert "supplementalArtifacts(turn)" in js
+
+    def test_tool_result_chart_saved_updates_live_artifacts(self, js):
+        assert "_chartArtifactFromText" in js
+        assert "_addTurnArtifact" in js
+        assert "this._chartArtifactFromText(web.summary || web.content || '')" in js
+
+    def test_chart_reference_matching_tolerates_hash_drift(self, js):
+        assert "_stripChartHash" in js
+        assert "startsWith(normalizedBase)" in js
+
+    def test_chart_reference_matching_reports_ambiguous_fuzzy_matches(self, js):
+        assert "_chartArtifactMatches" in js
+        assert "status: 'ambiguous'" in js
+        assert "Chart reference is ambiguous" in js
+
+    def test_chart_references_can_resolve_session_level_artifacts(self, js):
+        assert "_chartSearchArtifacts(turn)" in js
+        assert "this.sessionArtifacts" in js
+        assert "_replaceChartReferences(text, turn)" in js
+
+    def test_live_artifact_updates_are_scoped_to_current_session(self, js):
+        assert "_artifactBelongsToSession" in js
+        assert "sessionId === this.currentSessionId" in js
+        assert "this._addTurnArtifact(turn, art, sessionId)" in js
+
 
 class TestSessionSorting:
     """1.3 Fix session sorting by time."""

@@ -103,7 +103,52 @@ def _markdown_to_html(markdown: str) -> str:
     return _md_renderer(_sanitize_export_markdown(markdown))
 
 
-def _html_from_markdown(title: str, markdown: str, charts_html: str = "") -> str:
+def _chart_marker(kind: str, key: str) -> str:
+    return f"[[chart-{kind}:{key}]]"
+
+
+def _inject_chart_markers(body: str, chart_entries: list[dict[str, Any]] | None = None) -> tuple[str, set[str]]:
+    if not chart_entries:
+        return body, set()
+
+    by_id: dict[str, list[dict[str, Any]]] = {}
+    by_evidence: dict[str, list[dict[str, Any]]] = {}
+    for entry in chart_entries:
+        chart_id = str(entry.get("chart_id") or "")
+        if chart_id:
+            by_id.setdefault(chart_id, []).append(entry)
+        for evidence_id in entry.get("metadata", {}).get("evidence_ids") or []:
+            by_evidence.setdefault(str(evidence_id), []).append(entry)
+
+    used: set[str] = set()
+    markers = sorted(set(re.findall(r"\[\[chart-(id|evidence):([^\]\n]+)\]\]", body)))
+    for kind, key in markers:
+        entries = by_id.get(key, []) if kind == "id" else by_evidence.get(key, [])
+        html = "\n".join(entry["html"] for entry in entries)
+        for entry in entries:
+            if entry.get("chart_id"):
+                used.add(str(entry["chart_id"]))
+        marker = _chart_marker(kind, key)
+        body = body.replace(f"<p>{marker}</p>", html)
+        body = body.replace(marker, html)
+    return body, used
+
+
+def _html_from_markdown(
+    title: str,
+    markdown: str,
+    charts_html: str = "",
+    chart_entries: list[dict[str, Any]] | None = None,
+) -> str:
+    body = _markdown_to_html(markdown)
+    if chart_entries:
+        body, used_chart_ids = _inject_chart_markers(body, chart_entries)
+        supplemental = [
+            entry["html"]
+            for entry in chart_entries
+            if str(entry.get("chart_id") or "") not in used_chart_ids
+        ]
+        charts_html = "\n".join(supplemental)
     return Template("""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -132,7 +177,7 @@ code{background:#eef2f7;padding:2px 5px;border-radius:4px}
 </body>
 </html>""").render(
         title=escape(title),
-        body=_markdown_to_html(markdown),
+        body=body,
         charts_html=charts_html,
     )
 
@@ -242,7 +287,14 @@ def _statistical_quality_lines(records: list[dict[str, Any]]) -> list[str]:
     lines.append("")
     return lines
 
-def _formal_markdown(title: str, goal: str, records: list[dict[str, Any]], insights: list[dict[str, Any]]) -> str:
+def _formal_markdown(
+    title: str,
+    goal: str,
+    records: list[dict[str, Any]],
+    insights: list[dict[str, Any]],
+    *,
+    include_chart_markers: bool = False,
+) -> str:
     lines = [f"# {title}", "", f"_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_", ""]
     if goal:
         lines.extend([f"Goal: {goal}", ""])
@@ -268,9 +320,16 @@ def _formal_markdown(title: str, goal: str, records: list[dict[str, Any]], insig
             f"- Next analysis: {', '.join(str(item) for item in next_analysis) if next_analysis else '-'}",
             "",
         ])
+        if include_chart_markers:
+            for chart_id in insight.get("chart_ids") or []:
+                lines.extend([_chart_marker("id", str(chart_id)), ""])
+            for evidence_id in insight.get("evidence_ids") or []:
+                lines.extend([_chart_marker("evidence", str(evidence_id)), ""])
     if not insights:
         for record in records:
             lines.extend([f"### {record.get('claim', 'Conclusion')}", record.get("result_summary", ""), ""])
+            if include_chart_markers and record.get("id"):
+                lines.extend([_chart_marker("evidence", str(record.get("id"))), ""])
     lines.extend(["## Core Metrics And Statistical Explanation", ""])
     for record in records:
         lines.append(f"### Evidence `{record.get('id', '-')}`")
@@ -425,15 +484,20 @@ def generate_formal_report(title: str = "Formal Analysis Report", format: str = 
             "tasks_created": tasks_created,
         })
     insights = (list(getattr(state, "expert_insights", []) or []) or list(getattr(state, "insight_records", []) or []) or _evidence_to_insights(records))
-    markdown = _formal_markdown(title, goal, records, insights)
     evidence_ids = {record.get("id") for record in records if record.get("id")}
     chart_entries = _validated_chart_entries(session_id, evidence_ids, include_exploratory=True)
-    charts_html = "\n".join(entry["html"] for entry in chart_entries)
     fmt = "markdown" if format in {"md", "markdown"} else format
+    markdown = _formal_markdown(
+        title,
+        goal,
+        records,
+        insights,
+        include_chart_markers=(fmt != "markdown"),
+    )
     if fmt == "markdown":
         artifact_path = _write_report_artifact(session_id, title, markdown, "md", "report_md", "formal")
         return _json_result({"status": "exported", "type": "formal", "format": "markdown", "artifact_path": artifact_path})
-    html = _html_from_markdown(title, markdown, charts_html=charts_html)
+    html = _html_from_markdown(title, markdown, chart_entries=chart_entries)
     html_path = _write_report_artifact(session_id, title, html, "html", "report", "formal")
     if fmt == "pdf":
         result = _export_pdf_from_html(session_id, html_path, title)

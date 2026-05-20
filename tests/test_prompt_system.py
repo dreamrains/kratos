@@ -715,6 +715,11 @@ class TestPromptConstants:
         assert "data-backed analytical charts" in _MERMAID_QUICK_REF
         assert "If create_chart fails" in _MERMAID_QUICK_REF
 
+    def test_mermaid_ref_guides_inline_interactive_chart_references(self):
+        assert "[[chart:<exact Chart saved path or exact chart_id>]]" in _MERMAID_QUICK_REF
+        assert "never guess or rewrite the hash" in _MERMAID_QUICK_REF
+        assert "supplemental charts" in _MERMAID_QUICK_REF
+
     def test_conversation_template_markers(self):
         assert "get_analysis_summary" in AGENT_CONVERSATION
         assert "{session_context}" in AGENT_CONVERSATION

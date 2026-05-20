@@ -126,12 +126,50 @@ def _detect_axis_groups(df: pd.DataFrame, y_cols: list[str]) -> list[list[str]]:
     return groups
 
 
+def _bar_chart_needs_normalization(df: pd.DataFrame, y_cols: list[str]) -> bool:
+    if len(y_cols) <= 1:
+        return False
+    return len(_detect_axis_groups(df, y_cols)) > 1
+
+
 def _plotly_axis_values(series: pd.Series) -> list:
     """Return Plotly-safe axis values while preserving readable bin labels."""
     return [
         str(value) if isinstance(value, pd.Interval) else value
         for value in series.tolist()
     ]
+
+
+def _parsed_evidence_ids(evidence_ids: str) -> list[str]:
+    return [item.strip() for item in (evidence_ids or "").split(",") if item.strip()]
+
+
+def _first_present(row: dict, keys: tuple[str, ...]):
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _normalize_funnel_rows(rows: list[dict]) -> tuple[list[dict], str | None]:
+    normalized: list[dict] = []
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return [], "funnel data_json must be a list of objects"
+        step = _first_present(row, ("step", "stage", "label", "name", "步骤", "阶段", "环节", "名称"))
+        count = _first_present(row, ("count", "value", "数值", "数量", "次数", "count_value"))
+        if step in (None, "") or count in (None, ""):
+            return [], f"funnel row {idx + 1} must include a step/stage label and count/value"
+        numeric_count = pd.to_numeric(pd.Series([count]), errors="coerce").iloc[0]
+        if pd.isna(numeric_count):
+            return [], f"funnel row {idx + 1} count/value must be numeric"
+        normalized.append({"step": str(step), "count": float(numeric_count)})
+    if not normalized:
+        return [], "funnel data_json must contain at least one step"
+    if all(item["count"] == 0 for item in normalized):
+        return [], "funnel count/value cannot all be zero"
+    return normalized, None
 
 
 def _chart_error(message: str, warnings: list[str]) -> str:
@@ -159,6 +197,22 @@ def _is_date_like(series: pd.Series) -> bool:
     return len(parsed) > 0 and parsed.notna().mean() >= 0.8
 
 
+def _is_numeric_column(df: pd.DataFrame, col: str) -> bool:
+    if col not in df.columns:
+        return False
+    numeric = pd.to_numeric(df[col], errors="coerce")
+    return numeric.notna().sum() > 0
+
+
+def _title_claims_rate(title: str) -> bool:
+    title_l = (title or "").lower()
+    return any(term in title_l for term in ("ctr", "rate", "ratio", "percent", "%", "率", "转化", "点击率"))
+
+
+def _metric_names_claim_rate(y_cols: list[str]) -> bool:
+    return any(_title_claims_rate(col) for col in y_cols)
+
+
 def _validate_chart_spec(
     df: pd.DataFrame,
     chart_type: str,
@@ -183,6 +237,22 @@ def _validate_chart_spec(
     if color_col and color_col not in df.columns:
         return None, _chart_error(f"color_col '{color_col}' not found", [f"missing color_col: {color_col}"])
 
+    if chart_type == "scatter" and x_col and y_cols:
+        bad_axes = [col for col in [x_col, y_cols[0]] if not _is_numeric_column(df, col)]
+        if bad_axes:
+            return None, _chart_error(
+                "scatter chart requires numeric x_col and y_col",
+                [f"non-numeric scatter axis: {', '.join(bad_axes)}"],
+            )
+
+    if chart_type == "histogram":
+        hist_col = y_cols[0] if y_cols else x_col
+        if hist_col and not _is_numeric_column(df, hist_col):
+            return None, _chart_error(
+                "histogram chart requires a numeric metric column",
+                [f"non-numeric histogram column: {hist_col}"],
+            )
+
     title_l = title.lower()
     time_terms = ("trend", "time", "daily", "weekly", "monthly", "趋势", "月度", "每日", "按月", "时间")
     if chart_type == "line" and x_col and any(term in title_l for term in time_terms):
@@ -202,6 +272,16 @@ def _validate_chart_spec(
         missing_cols = sorted({col for _, row in grouped.iterrows() for col in y_cols if not bool(row[col])})
         if missing_cols:
             warnings.append(f"missing metric values by x group: {', '.join(missing_cols)}")
+        if chart_type == "bar" and _bar_chart_needs_normalization(df, y_cols):
+            warnings.append("multi-metric bar chart normalized divergent scales to avoid misleading overlaid axes")
+
+    if y_cols and _title_claims_rate(title) and not _metric_names_claim_rate(y_cols):
+        warnings.append("title mentions rate/CTR but y_col appears to be a count metric; verify numerator and denominator")
+
+    if chart_type == "pie":
+        pie_col = y_cols[0] if y_cols else x_col
+        if pie_col and pie_col in df.columns and df[pie_col].nunique(dropna=True) > 10:
+            warnings.append(f"pie chart has more than 10 categories in '{pie_col}'; only Top 10 slices are shown")
 
     metadata = {
         "title": title,
@@ -300,9 +380,12 @@ def create_chart(
                     [f"purpose must be one of {sorted(allowed_purposes)}"],
                 )
             metadata["purpose"] = normalized_purpose
-            metadata["evidence_ids"] = [
-                item.strip() for item in (evidence_ids or "").split(",") if item.strip()
-            ]
+            metadata["evidence_ids"] = _parsed_evidence_ids(evidence_ids)
+            if normalized_purpose in {"evidence", "insight"} and not metadata["evidence_ids"]:
+                return _chart_error(
+                    "purpose 'evidence' or 'insight' requires evidence_ids",
+                    ["missing evidence_ids for evidence-backed chart"],
+                )
 
         if chart_type == "line":
             if x_col and y_col:
@@ -313,10 +396,21 @@ def create_chart(
                 for axis_idx, group in enumerate(axis_groups):
                     yaxis_name = "y" if axis_idx == 0 else f"y{axis_idx + 1}"
                     for col in group:
-                        fig.add_trace(go.Scatter(
-                            x=df[x_col], y=df[col], mode="lines+markers",
-                            name=col, yaxis=yaxis_name,
-                        ))
+                        if color_col:
+                            for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
+                                trace_name = str(cat) if len(y_cols) == 1 else f"{cat} - {col}"
+                                fig.add_trace(go.Scatter(
+                                    x=_plotly_axis_values(group_df[x_col]),
+                                    y=group_df[col],
+                                    mode="lines+markers",
+                                    name=trace_name,
+                                    yaxis=yaxis_name,
+                                ))
+                        else:
+                            fig.add_trace(go.Scatter(
+                                x=_plotly_axis_values(df[x_col]), y=df[col], mode="lines+markers",
+                                name=col, yaxis=yaxis_name,
+                            ))
 
                 if use_multi_axis:
                     for axis_idx in range(1, len(axis_groups)):
@@ -335,24 +429,33 @@ def create_chart(
             if x_col and y_col:
                 y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
                 if len(y_cols) > 1:
-                    axis_groups = _detect_axis_groups(df, y_cols)
-                    use_multi_axis = len(axis_groups) > 1
-
-                    for axis_idx, group in enumerate(axis_groups):
-                        yaxis_name = "y" if axis_idx == 0 else f"y{axis_idx + 1}"
-                        for col in group:
+                    normalize = _bar_chart_needs_normalization(df, y_cols)
+                    for col in y_cols:
+                        values = pd.to_numeric(df[col], errors="coerce")
+                        if normalize:
+                            max_abs = values.abs().max()
+                            plotted = values / max_abs * 100 if max_abs else values
                             fig.add_trace(go.Bar(
-                                x=df[x_col], y=df[col], name=col, yaxis=yaxis_name,
+                                x=_plotly_axis_values(df[x_col]),
+                                y=plotted,
+                                name=col,
+                                customdata=values,
+                                hovertemplate=(
+                                    f"{col}<br>%{{x}}<br>"
+                                    "Normalized value=%{y:.2f}<br>"
+                                    "Original value=%{customdata}<extra></extra>"
+                                ),
                             ))
-
-                    if use_multi_axis:
-                        for axis_idx in range(1, len(axis_groups)):
-                            fig.update_layout(**{
-                                f"yaxis{axis_idx + 1}": dict(
-                                    overlaying="y", side="right",
-                                    title=dict(text=", ".join(axis_groups[axis_idx])),
-                                )
-                            })
+                        else:
+                            fig.add_trace(go.Bar(
+                                x=_plotly_axis_values(df[x_col]),
+                                y=values,
+                                name=col,
+                            ))
+                    fig.update_layout(
+                        barmode="group",
+                        yaxis_title="Normalized value (max=100)" if normalize else "Value",
+                    )
                 else:
                     if color_col:
                         for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
@@ -380,10 +483,18 @@ def create_chart(
 
         elif chart_type == "scatter":
             if x_col and y_col:
-                fig.add_trace(go.Scatter(
-                    x=df[x_col], y=df[y_col], mode="markers",
-                    marker_color=df[color_col] if color_col and color_col in df.columns else None,
-                ))
+                if color_col:
+                    for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
+                        fig.add_trace(go.Scatter(
+                            x=group_df[x_col],
+                            y=group_df[y_col],
+                            mode="markers",
+                            name=str(cat),
+                        ))
+                else:
+                    fig.add_trace(go.Scatter(
+                        x=df[x_col], y=df[y_col], mode="markers",
+                    ))
             else:
                 numeric_cols = df.select_dtypes(include="number").columns
                 if len(numeric_cols) >= 2:
@@ -421,14 +532,18 @@ def create_chart(
                     funnel_data = json.loads(data_json) if isinstance(data_json, str) else data_json
                 except (json.JSONDecodeError, TypeError):
                     return "Error: funnel 图需要通过 data_json 提供 JSON 格式的步骤数据"
-            elif df is not None and "step" in df.columns and "count" in df.columns:
-                funnel_data = [{"step": str(row.get("step", "")), "count": float(row.get("count", 0))} for row in df.to_dict("records")]
+            elif df is not None:
+                funnel_data = df.to_dict("records")
             else:
                 return "Error: funnel 图需要通过 data_json 提供步骤数据，格式: [{\"step\": \"步骤名\", \"count\": 数量}]"
 
+            funnel_data, funnel_error = _normalize_funnel_rows(funnel_data)
+            if funnel_error:
+                return _chart_error(f"invalid funnel data: {funnel_error}", [funnel_error])
+
             fig = go.Figure(go.Funnel(
-                y=[s.get("step", s.get("label", "")) for s in funnel_data],
-                x=[s.get("count", s.get("value", 0)) for s in funnel_data],
+                y=[s["step"] for s in funnel_data],
+                x=[s["count"] for s in funnel_data],
                 textinfo="value+percent initial+percent previous",
                 marker={"color": px.colors.qualitative.Plotly[:len(funnel_data)]},
             ))

@@ -628,6 +628,7 @@ function chatApp() {
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/artifacts-list`);
                 this.sessionArtifacts = res.ok ? await res.json() : [];
+                if (sessionId === this.currentSessionId) this.turns = [...this.turns];
             } catch {
                 this.sessionArtifacts = [];
             }
@@ -1102,16 +1103,213 @@ function chatApp() {
             event.target.value = '';
         },
 
-        renderMarkdown(text) {
+        _escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        },
+
+        _chartRefsFromContent(content) {
+            const refs = [];
+            const pattern = /\[\[chart:([^\]\n]+)\]\]/g;
+            let match;
+            while ((match = pattern.exec(content || '')) !== null) {
+                refs.push(match[1].trim());
+            }
+            return refs;
+        },
+
+        _artifactKeys(art) {
+            const path = art && art.path ? String(art.path) : '';
+            const file = path.split('/').pop() || '';
+            const stem = file.replace(/\.html$/i, '');
+            const desc = art && art.description ? String(art.description) : '';
+            return [path, file, stem, desc].filter(Boolean);
+        },
+
+        _stripChartHash(value) {
+            return String(value || '').replace(/\.html$/i, '').replace(/_[a-f0-9]{6}$/i, '');
+        },
+
+        _chartArtifactMatches(art, ref) {
+            const normalized = String(ref || '').trim();
+            if (!normalized) return { exact: false, fuzzy: false };
+            const normalizedBase = this._stripChartHash(normalized);
+            let exact = false;
+            let fuzzy = false;
+            for (const key of this._artifactKeys(art)) {
+                const keyBase = this._stripChartHash(key);
+                if (key === normalized || key.endsWith(normalized)) exact = true;
+                if (normalizedBase.length >= 4 && keyBase.startsWith(normalizedBase)) fuzzy = true;
+            }
+            return { exact, fuzzy };
+        },
+
+        _artifactMatchesChartRef(art, ref) {
+            const match = this._chartArtifactMatches(art, ref);
+            return match.exact || match.fuzzy;
+        },
+
+        _chartArtifactFromText(text) {
+            const match = String(text || '').match(/Chart saved:\s*(sessions\/\S+?\.html)/);
+            if (!match) return null;
+            const path = match[1];
+            const desc = this._stripChartHash((path.split('/').pop() || '').replace(/\.html$/i, ''));
+            return { path, type: 'chart', description: desc };
+        },
+
+        _artifactBelongsToSession(art, sessionId) {
+            if (!art || !art.path || !sessionId || sessionId === '_pending_') return false;
+            return String(art.path).startsWith(`sessions/${sessionId}/`);
+        },
+
+        _addTurnArtifact(turn, art, sessionId = this.currentSessionId) {
+            if (!turn || !art || !art.path) return false;
+            if (!turn.artifacts) turn.artifacts = [];
+            if (turn.artifacts.some(existing => existing.path === art.path)) return false;
+            turn.artifacts.push(art);
+            if (sessionId === this.currentSessionId && this._artifactBelongsToSession(art, sessionId)) {
+                if (!this.sessionArtifacts.some(existing => existing.path === art.path)) {
+                    this.sessionArtifacts.push(art);
+                }
+            }
+            return true;
+        },
+
+        _chartSearchArtifacts(turn) {
+            const seen = new Set();
+            const result = [];
+            for (const art of [...((turn && turn.artifacts) || []), ...(this.sessionArtifacts || [])]) {
+                if (!art || !art.path || seen.has(art.path)) continue;
+                seen.add(art.path);
+                result.push(art);
+            }
+            return result;
+        },
+
+        _findChartArtifact(turn, ref) {
+            const artifacts = this._chartSearchArtifacts(turn);
+            const exact = artifacts.filter(art => art && art.path && this._chartArtifactMatches(art, ref).exact);
+            if (exact.length === 1) return { status: 'found', artifact: exact[0] };
+            if (exact.length > 1) return { status: 'ambiguous', matches: exact };
+            const fuzzy = artifacts.filter(art => art && art.path && this._chartArtifactMatches(art, ref).fuzzy);
+            if (fuzzy.length === 1) return { status: 'found', artifact: fuzzy[0] };
+            if (fuzzy.length > 1) return { status: 'ambiguous', matches: fuzzy };
+            return { status: 'missing', matches: [] };
+        },
+
+        _chartArtifactHtml(art) {
+            const src = this._escapeHtml(this.artifactUrl(art.path));
+            const title = this._escapeHtml(art.description || art.type || 'chart');
+            return `
+<div class="inline-chart-artifact rounded-lg border border-stone-200 dark:border-stone-700 overflow-hidden bg-white dark:bg-stone-900 shadow-sm not-prose my-3" data-inline-chart="${title}">
+  <div class="px-3 py-2 border-b border-stone-200 dark:border-stone-700 text-xs text-stone-500">${title}</div>
+  <iframe src="${src}" class="w-full border-0" style="height:450px"></iframe>
+</div>`;
+        },
+
+        _replaceChartReferences(text, turn) {
+            if (!turn || !text) return text;
+            return text.replace(/\[\[chart:([^\]\n]+)\]\]/g, (match, rawRef) => {
+                const result = this._findChartArtifact(turn, rawRef.trim());
+                if (result.status === 'ambiguous') {
+                    return `<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Chart reference is ambiguous: ${this._escapeHtml(rawRef.trim())}</div>`;
+                }
+                if (result.status !== 'found') {
+                    return `<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Chart reference not found: ${this._escapeHtml(rawRef.trim())}</div>`;
+                }
+                return this._chartArtifactHtml(result.artifact);
+            });
+        },
+
+        supplementalArtifacts(turn) {
+            const artifacts = (turn && turn.artifacts) || [];
+            if (!artifacts.length) return [];
+            const refs = this._chartRefsFromContent(turn.content || '');
+            return artifacts.filter(art => !refs.some(ref => this._artifactMatchesChartRef(art, ref)));
+        },
+
+        renderMarkdown(text, turn = null) {
             if (!text) return '';
             // Pre-process: extract Plotly JSON outside code blocks
+            text = this._replaceChartReferences(text, turn);
             text = this._extractPlotlyJson(text);
+            // Extract math before markdown parsing
+            const mathResult = this._extractMath(text);
             try {
                 if (!this._markedReady) this._setupMarked();
-                const html = marked.parse(text);
+                let html = marked.parse(mathResult.text);
+                // Restore math placeholders with KaTeX output
+                html = this._restoreMath(html, mathResult.mathBlocks);
                 // Fix file links generated by LLM: /files/ → /api/files/
                 return html.replace(/(href=["'])\/files\//g, '$1/api/files/');
             } catch { return text; }
+        },
+
+        _extractMath(text) {
+            const mathBlocks = [];
+            let result = text;
+            let idx = 0;
+
+            // Step 1: protect code blocks and inline code
+            const codeBlocks = [];
+            result = result.replace(/```[\s\S]*?```/g, (m) => {
+                const ph = `%%CODE_BLOCK_${idx}%%`;
+                codeBlocks.push({ ph, content: m });
+                idx++;
+                return ph;
+            });
+            result = result.replace(/`[^`\n]+`/g, (m) => {
+                const ph = `%%CODE_INLINE_${idx}%%`;
+                codeBlocks.push({ ph, content: m });
+                idx++;
+                return ph;
+            });
+
+            // Step 2: extract display math $$...$$
+            result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_, formula) => {
+                const ph = `%%MATH_BLOCK_${idx}%%`;
+                mathBlocks.push({ ph, formula: formula.trim(), display: true });
+                idx++;
+                return ph;
+            });
+
+            // Step 3: extract inline math $...$
+            result = result.replace(/\$([^\$\n]+?)\$/g, (_, formula) => {
+                const ph = `%%MATH_INLINE_${idx}%%`;
+                mathBlocks.push({ ph, formula: formula.trim(), display: false });
+                idx++;
+                return ph;
+            });
+
+            // Step 4: restore code blocks
+            for (const cb of codeBlocks) {
+                result = result.replace(cb.ph, cb.content);
+            }
+
+            return { text: result, mathBlocks };
+        },
+
+        _restoreMath(html, mathBlocks) {
+            if (!mathBlocks.length || typeof katex === 'undefined') return html;
+            for (const m of mathBlocks) {
+                try {
+                    const rendered = katex.renderToString(m.formula, {
+                        displayMode: m.display,
+                        throwOnError: false,
+                    });
+                    const replacement = m.display
+                        ? `<div class="math-block">${rendered}</div>`
+                        : rendered;
+                    html = html.replace(m.ph, replacement);
+                } catch {
+                    html = html.replace(m.ph, m.display ? `$$${m.formula}$$` : `$${m.formula}$`);
+                }
+            }
+            return html;
         },
 
         // Chart data store — avoids embedding large JSON in HTML attributes
@@ -1259,7 +1457,7 @@ function chatApp() {
         async exportSingleReply(turn, format = 'markdown') {
             if (!turn.content) return;
             if (format === 'html') {
-                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:2em auto;padding:0 1em;line-height:1.7;color:#333;}pre{background:#f5f5f5;padding:1em;border-radius:6px;overflow-x:auto;}code{font-family:Menlo,Consolas,monospace;font-size:0.85em;}</style></head><body>${this.renderMarkdown(turn.content)}</body></html>`;
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:2em auto;padding:0 1em;line-height:1.7;color:#333;}pre{background:#f5f5f5;padding:1em;border-radius:6px;overflow-x:auto;}code{font-family:Menlo,Consolas,monospace;font-size:0.85em;}</style></head><body>${this.renderMarkdown(turn.content, turn)}</body></html>`;
                 const blob = new Blob([html], { type: 'text/html' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a'); a.href = url; a.download = 'reply.html'; a.click();
@@ -1417,8 +1615,13 @@ function chatApp() {
                         step.result_summary = web.summary || web.content || '';
                         if (web.artifacts) {
                             for (const art of web.artifacts) {
-                                if (art.path) turn.artifacts.push(art);
+                                if (art.path) this._addTurnArtifact(turn, art, sessionId);
                             }
+                        }
+                        const chartArtifact = this._chartArtifactFromText(web.summary || web.content || '');
+                        if (chartArtifact) this._addTurnArtifact(turn, chartArtifact, sessionId);
+                        if ((web.artifacts && web.artifacts.length) || chartArtifact) {
+                            this.loadSessionArtifacts(sessionId);
                         }
                     }
                     break;
@@ -1508,9 +1711,8 @@ function chatApp() {
                     const c = msg.content || '';
                     const chartMatch = c.match(/Chart saved:\s*(sessions\/\S+\.html)/);
                     if (chartMatch) {
-                        const path = chartMatch[1];
-                        const desc = path.split('/').pop().replace(/_[a-f0-9]{6}\.html$/, '');
-                        currentAssistant.artifacts.push({ path, type: 'chart', description: desc });
+                        const art = this._chartArtifactFromText(c);
+                        if (art) this._addTurnArtifact(currentAssistant, art, this.currentSessionId);
                     }
                 }
             }

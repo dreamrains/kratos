@@ -178,6 +178,61 @@ def test_formal_report_embeds_valid_exploratory_charts_as_supplemental_evidence(
         cfg.sessions_dir = old_sessions
 
 
+def test_formal_report_places_evidence_chart_near_matching_insight(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    session_id = "formal_inline_evidence_chart"
+    ctx = AgentContext(session_id=session_id, workspace=Workspace())
+    ctx.analysis_state = AnalysisSessionState(session_id=session_id, goal="chart placement")
+    ctx.analysis_state.evidence_records.append({
+        "id": "EV-1",
+        "claim": "Revenue changed after card purchase",
+        "dataset": "orders",
+        "method": "period comparison",
+        "tool_calls": ["create_chart"],
+        "result_summary": "After period revenue is lower.",
+        "limitations": "No randomized control group.",
+        "confidence": "medium",
+    })
+    ctx.analysis_state.insight_records.append({
+        "title": "Revenue changed after card purchase",
+        "summary": "The matching chart should appear with this insight.",
+        "evidence_ids": ["EV-1"],
+        "chart_ids": [],
+        "recommendation": "Validate with a control group.",
+        "limitations": "Observational comparison.",
+        "confidence": "medium",
+        "output_type": "finding",
+    })
+    chart_dir = session_charts_dir(session_id)
+    (chart_dir / "revenue_compare_abc123.html").write_text(
+        '<div id="inline-chart">matched chart body</div>',
+        encoding="utf-8",
+    )
+    (chart_dir / "revenue_compare_abc123.json").write_text(json.dumps({
+        "chart_id": "revenue_compare_abc123",
+        "filename": "revenue_compare_abc123.html",
+        "title": "Revenue Compare Chart",
+        "purpose": "evidence",
+        "validation_status": "valid",
+        "validation_warnings": [],
+        "evidence_ids": ["EV-1"],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(report.generate_formal_report(format="html"))
+
+        assert result["chart_count"] == 1
+        html = (tmp_path / result["artifact_path"]).read_text(encoding="utf-8")
+        insight_pos = html.index("The matching chart should appear with this insight.")
+        chart_pos = html.index("Revenue Compare Chart")
+        core_metrics_pos = html.index("Core Metrics")
+        assert insight_pos < chart_pos < core_metrics_pos
+        assert html.count("Revenue Compare Chart") == 1
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_formal_report_prioritizes_expert_synthesis_over_raw_evidence(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ctx = AgentContext(session_id="expert_report", workspace=Workspace())
