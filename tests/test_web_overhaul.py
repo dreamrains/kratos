@@ -285,12 +285,15 @@ class TestExportReply:
         assert "text/html" in js
         assert "URL.createObjectURL" in js
 
-    def test_markdown_export_via_clipboard(self, js):
-        assert "已复制 Markdown 到剪贴板" in js
+    def test_markdown_export_downloads_md_file(self, js):
+        assert "text/markdown" in js
+        assert "reply.md" in js
+        assert "已复制 Markdown 到剪贴板" not in js
 
     def test_export_popover_html(self, html):
-        assert "Export as HTML" in html
-        assert "Copy as Markdown" in html
+        assert "exportSingleReply(turns[parseInt(activePopover.slice(7))], 'html')" in html
+        assert "exportSingleReply(turns[parseInt(activePopover.slice(7))], 'markdown')" in html
+        assert "Copy as Markdown" not in html
 
 
 class TestLineSpacing:
@@ -357,7 +360,9 @@ class TestWorkbenchRedesign:
         assert "Generate Report" in html
 
     def test_conversation_export_section(self, html):
-        assert "Export Conversation" in html
+        assert "exportConversation('html')" in html
+        assert "exportConversation('markdown')" in html
+        assert "exportConversation('pdf')" not in html
 
     def test_artifacts_section_unlimited(self, html):
         assert "Artifacts" in html

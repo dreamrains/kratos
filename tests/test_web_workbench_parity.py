@@ -41,6 +41,11 @@ def test_web_capabilities_describe_cli_parity_and_local_mode():
     assert "formal" in report["variants"]
     assert {"markdown", "html", "pdf"} <= set(report["formats"])
 
+    export = next(item for item in body["commands"] if item["name"] == "export")
+    assert set(export["formats"]) == {"markdown", "html"}
+    assert all("pdf" not in entry for entry in export["cli"])
+    assert all("pdf" not in entry for entry in export["api"])
+
     capability_ids = {item["id"] for item in body["capabilities"]}
     assert "fallback.python" in capability_ids
     assert "artifact.formal_report" in capability_ids

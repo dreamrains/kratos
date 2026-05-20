@@ -60,11 +60,11 @@ def get_capabilities():
             },
             {
                 "name": "export",
-                "cli": ["/export [markdown|html|pdf]"],
-                "api": ["/api/sessions/<session_id>/export?format=markdown|html|pdf"],
+                "cli": ["/export [markdown|html]"],
+                "api": ["/api/sessions/<session_id>/export?format=markdown|html"],
                 "ui": ["conversation export action"],
                 "variants": ["conversation"],
-                "formats": ["markdown", "html", "pdf"],
+                "formats": ["markdown", "html"],
             },
         ],
         "capabilities": [

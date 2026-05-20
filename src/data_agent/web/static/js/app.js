@@ -1274,12 +1274,10 @@ function chatApp() {
                 const a = document.createElement('a'); a.href = url; a.download = 'reply.html'; a.click();
                 URL.revokeObjectURL(url);
             } else {
-                try { await navigator.clipboard.writeText(turn.content); } catch {
-                    const ta = document.createElement('textarea');
-                    ta.value = turn.content; document.body.appendChild(ta);
-                    ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-                }
-                this.showToast('已复制 Markdown 到剪贴板');
+                const blob = new Blob([turn.content], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = 'reply.md'; a.click();
+                URL.revokeObjectURL(url);
             }
         },
 

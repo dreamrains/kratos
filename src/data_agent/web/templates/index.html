@@ -530,10 +530,9 @@
             <!-- Conversation Export -->
             <div>
                 <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">导出对话</h3>
-                <div class="grid grid-cols-3 gap-1.5">
+                <div class="grid grid-cols-2 gap-1.5">
                     <button @click="exportConversation('html')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">HTML</button>
                     <button @click="exportConversation('markdown')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">MD</button>
-                    <button @click="exportConversation('pdf')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">PDF</button>
                 </div>
             </div>
 
@@ -651,7 +650,7 @@
                     <button @click="exportSingleReply(turns[parseInt(activePopover.slice(7))], 'markdown'); activePopover = null"
                             class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                        复制为 Markdown
+                        导出为 MD 文档
                     </button>
                 </div>
             </template>

@@ -222,7 +222,13 @@ def rewind_session(session_id: str):
 def export_session(session_id: str):
     """Export session analysis results as HTML or Markdown file."""
     fmt = request.args.get("format", "html").lower()
-    if fmt in ("html", "markdown", "md", "pdf"):
+    if fmt == "pdf":
+        return jsonify({
+            "error": "PDF conversation export is not supported",
+            "error_type": "unsupported_export_format",
+            "supported_formats": ["html", "markdown"],
+        }), 400
+    if fmt in ("html", "markdown", "md"):
         from data_agent.agent.context import AgentContext, use_agent_context
         from data_agent.session.workspace import Workspace
         from data_agent.tools.report import export_conversation

@@ -538,11 +538,11 @@ def run_repl() -> None:
 
     def cmd_export(args: str):
         fmt = args.strip().lower() if args else "html"
-        if fmt not in ("html", "markdown", "md", "pdf"):
+        if fmt == "pdf":
+            return "PDF conversation export is currently disabled. Please use /export html or /export markdown."
+        if fmt not in ("html", "markdown", "md"):
             fmt = "html"
         format_str = "markdown" if fmt in ("markdown", "md") else "html"
-        if fmt == "pdf":
-            format_str = "pdf"
         return f"请将当前对话中的分析结果导出为{format_str}格式文件，使用 export_conversation 工具。"
 
     def cmd_compact(args: str):
