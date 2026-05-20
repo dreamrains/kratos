@@ -367,21 +367,16 @@ def export_data(name: str, path: str, fmt: str = "csv") -> str:
 
 @registry.register(
     name="export_output",
-    description=(
-        "统一导出接口。支持三种输出类型：\n"
-        "- data: 导出数据集为 csv/excel/json 文件（需要 name, path, fmt 参数）\n"
-        "- report_md: 将洞察导出为 Markdown 报告（需要 title, insights, summary 参数）\n"
-        "- report_pdf: 将 HTML 报告转换为 PDF（需要 html_path 参数）"
-    ),
+    description="统一导出接口。当前仅支持 data：导出数据集为 csv/excel/json 文件。",
     schema_overrides={
-        "output_type": {"description": "导出类型", "enum": ["data", "report_md", "report_pdf"]},
+        "output_type": {"description": "导出类型", "enum": ["data"]},
         "name": {"description": "数据集名称（output_type=data 时使用）"},
         "path": {"description": "输出文件路径（output_type=data 时使用）"},
         "fmt": {"description": "数据格式（output_type=data 时使用）", "enum": ["csv", "excel", "json"]},
-        "title": {"description": "报告标题（report_md 时使用）"},
-        "insights": {"description": "洞察 JSON 数组（report_md 时使用）"},
-        "summary": {"description": "摘要内容（report_md 时使用）"},
-        "html_path": {"description": "HTML 报告路径（report_pdf 时使用）"},
+        "title": {"description": "Deprecated; report artifact export is disabled"},
+        "insights": {"description": "Deprecated; report artifact export is disabled"},
+        "summary": {"description": "Deprecated; report artifact export is disabled"},
+        "html_path": {"description": "Deprecated; report artifact export is disabled"},
     },
 )
 def export_output(
@@ -397,13 +392,11 @@ def export_output(
     if output_type == "data":
         return export_data(name=name, path=path, fmt=fmt)
     elif output_type == "report_md":
-        from data_agent.tools.report import generate_analysis_brief
-        return generate_analysis_brief(title=title, format="markdown")
+        return "Error: report_md export is disabled. Ask for chat synthesis or use export_conversation."
     elif output_type == "report_pdf":
-        from data_agent.tools.report import generate_formal_report
-        return generate_formal_report(title=title, format="pdf")
+        return "Error: report_pdf export is disabled. Ask for chat synthesis or use export_conversation."
     else:
-        return f"Error: 不支持的 output_type '{output_type}'。可用: data, report_md, report_pdf"
+        return f"Error: 不支持的 output_type '{output_type}'。可用: data"
 
 
 @registry.register(

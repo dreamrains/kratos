@@ -315,25 +315,34 @@ code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}}
 
 @sessions_bp.get("/sessions/<session_id>/report")
 def generate_session_report(session_id: str):
-    """Generate a conversation, brief, or formal report for a session."""
+    """Deprecated brief/formal report endpoint.
+
+    Current-session report needs are handled through chat synthesis and
+    conversation export. Keep the route for a clear transition response.
+    """
     report_type = request.args.get("type", "brief").lower()
     fmt = request.args.get("format", "html").lower()
 
-    from data_agent.agent.analysis_state import load_analysis_state
-    from data_agent.agent.context import AgentContext, use_agent_context
-    from data_agent.session.workspace import Workspace
-    from data_agent.tools.report import export_conversation, generate_analysis_brief, generate_formal_report
+    if report_type in {"conversation", "export"}:
+        from data_agent.agent.context import AgentContext, use_agent_context
+        from data_agent.session.workspace import Workspace
+        from data_agent.tools.report import export_conversation
 
-    ctx = AgentContext(session_id=session_id, workspace=Workspace())
-    ctx.analysis_state = load_analysis_state(session_id)
-    with use_agent_context(ctx):
-        if report_type == "conversation":
+        ctx = AgentContext(session_id=session_id, workspace=Workspace())
+        with use_agent_context(ctx):
             payload = export_conversation(format=fmt)
-        elif report_type == "formal":
-            payload = generate_formal_report(format=fmt)
-        else:
-            payload = generate_analysis_brief(format=fmt)
-    return jsonify(json.loads(payload))
+        return jsonify(json.loads(payload))
+
+    return jsonify({
+        "error": "Brief and formal report artifacts are deprecated",
+        "error_type": "report_artifact_deprecated",
+        "report_type": report_type,
+        "supported_actions": ["chat_synthesis", "export_conversation"],
+        "message": (
+            "Ask the agent to synthesize the current session in chat, or use "
+            "/api/sessions/<session_id>/export?format=markdown|html for a file."
+        ),
+    }), 410
 
 
 def _analysis_state_payload(state) -> dict:

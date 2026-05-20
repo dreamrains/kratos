@@ -386,13 +386,15 @@ class TestAnalysisMode:
         assert "数据分析专家" in prompt
 
     def test_analysis_report_keyword_triggers_analysis(self):
-        """Report keywords like '报告' should trigger analysis level."""
+        """Report keywords still trigger analysis, not a report artifact tool."""
         prompt = build_system_prompt(
             tool_list="generate_formal_report",
             user_input="给我一份完整分析报告",
         )
         assert "数据分析专家" in prompt
         assert "分析策略表" in prompt
+        assert "generate_formal_report" not in prompt
+        assert "generate_analysis_brief" not in prompt
 
     def test_analysis_comprehensive_report_keyword(self):
         prompt = build_system_prompt(
@@ -544,6 +546,7 @@ class TestFormatTurnIntentPrompt:
         assert "simple_response" in result
         assert "intent_negotiation" in result
         assert "comprehensive_report" in result
+        assert "generate_formal_report" not in result
 
     def test_intent_data_in_output(self):
         intent = _make_turn_intent(
@@ -750,6 +753,15 @@ class TestPromptConstants:
         assert "核心结论" in AGENT_ANALYSIS
         assert "数据支撑" in AGENT_ANALYSIS
         assert "置信度" in AGENT_ANALYSIS
+        assert "generate_formal_report" not in AGENT_ANALYSIS
+
+    def test_turn_intent_prompt_does_not_require_report_artifact(self):
+        intent = _make_turn_intent(intent_type="comprehensive_report")
+        result = _format_turn_intent_prompt(intent)
+
+        assert "comprehensive_report" in result
+        assert "generate_formal_report" not in result
+        assert "generate_analysis_brief" not in result
 
 
 # ── 10. build_system_prompt edge cases ────────────────────────

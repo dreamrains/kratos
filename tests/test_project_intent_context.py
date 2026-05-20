@@ -86,7 +86,7 @@ def test_build_system_prompt_escapes_literal_json_examples():
         assert "Plotly JSON" in prompt
 
 
-def test_report_prompt_uses_evidence_backed_report_tools_and_statistical_details():
+def test_report_prompt_uses_conversation_synthesis_instead_of_report_tools():
     from data_agent.agent.prompts import build_system_prompt
 
     loaded = "- main: 10 rows x 3 cols, columns: date, revenue, channel"
@@ -96,11 +96,12 @@ def test_report_prompt_uses_evidence_backed_report_tools_and_statistical_details
         user_input="generate a complete analysis report",
     )
 
-    assert "generate_formal_report" in prompt
-    assert "generate_analysis_brief" in prompt
+    assert "record_evidence_record" in prompt
+    assert "generate_formal_report" not in prompt
+    assert "generate_analysis_brief" not in prompt
 
 
-def test_complete_analysis_prompt_positions_brief_as_auxiliary():
+def test_complete_analysis_prompt_filters_deprecated_report_tools():
     from data_agent.agent.prompts import build_system_prompt
 
     prompt = build_system_prompt(
@@ -110,7 +111,8 @@ def test_complete_analysis_prompt_positions_brief_as_auxiliary():
     )
 
     assert "record_evidence_record" in prompt
-    assert "generate_formal_report" in prompt
+    assert "generate_formal_report" not in prompt
+    assert "generate_analysis_brief" not in prompt
 
 
 def test_data_command_parses_multiple_quoted_paths_and_context():

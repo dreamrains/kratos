@@ -677,15 +677,6 @@ function chatApp() {
             this._openArtifactResult(result);
         },
 
-        async generateSessionReport(type = 'brief', format = 'html') {
-            if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
-            const res = await fetch(`/api/sessions/${this.currentSessionId}/report?type=${type}&format=${format}`);
-            const result = await res.json();
-            this.lastWorkbenchResult = result;
-            await Promise.all([this.loadSessionArtifacts(this.currentSessionId), this.loadTasks(), this.loadAnalysisState(this.currentSessionId)]);
-            this._openArtifactResult(result);
-        },
-
         _openArtifactResult(result) {
             const path = result && (result.artifact_path || result.fallback_artifact_path);
             if (path) window.open(this.artifactUrl(path), '_blank');

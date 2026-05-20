@@ -51,14 +51,6 @@ def get_capabilities():
                 "variants": ["list", "create", "update", "delete"],
             },
             {
-                "name": "report",
-                "cli": ["/report brief [format]", "/report formal [format]"],
-                "api": ["/api/sessions/<session_id>/report?type=brief|formal&format=markdown|html|pdf"],
-                "ui": ["brief report action", "formal report action"],
-                "variants": ["brief", "formal"],
-                "formats": ["markdown", "html", "pdf"],
-            },
-            {
                 "name": "export",
                 "cli": ["/export [markdown|html]"],
                 "api": ["/api/sessions/<session_id>/export?format=markdown|html"],
@@ -80,8 +72,6 @@ def get_capabilities():
             {"id": "workflow.task_create", "category": "workflow", "web_visible": True},
             {"id": "artifact.evidence_record", "category": "artifact", "web_visible": True},
             {"id": "artifact.conversation_export", "category": "artifact", "web_visible": True},
-            {"id": "artifact.analysis_brief", "category": "artifact", "web_visible": True},
-            {"id": "artifact.formal_report", "category": "artifact", "web_visible": True},
             {"id": "interaction.confirmation", "category": "interaction", "web_visible": True},
         ],
         "endpoints": [
@@ -91,7 +81,6 @@ def get_capabilities():
             "/api/sessions/<session_id>",
             "/api/sessions/<session_id>/analysis",
             "/api/sessions/<session_id>/export",
-            "/api/sessions/<session_id>/report",
             "/api/tasks",
             "/api/projects",
             "/api/uploads",

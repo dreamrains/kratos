@@ -70,3 +70,31 @@ def test_web_export_pdf_is_not_supported(tmp_path):
         assert "pdf" not in body["supported_formats"]
     finally:
         cfg.sessions_dir = old_sessions
+
+
+def test_web_report_brief_and_formal_are_deprecated(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    session_id = "web_report_deprecated"
+    save_session(
+        [
+            {"role": "user", "content": "Summarize the analysis"},
+            {"role": "assistant", "content": "Use the conversation synthesis instead."},
+        ],
+        session_id,
+    )
+
+    try:
+        from data_agent.web.app import create_app
+
+        client = create_app().test_client()
+
+        for report_type in ("brief", "formal"):
+            resp = client.get(f"/api/sessions/{session_id}/report?type={report_type}&format=html")
+
+            assert resp.status_code == 410
+            body = resp.get_json()
+            assert body["error_type"] == "report_artifact_deprecated"
+            assert body["report_type"] == report_type
+            assert body["supported_actions"] == ["chat_synthesis", "export_conversation"]
+    finally:
+        cfg.sessions_dir = old_sessions

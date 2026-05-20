@@ -198,7 +198,6 @@ def _print_help() -> None:
     help_text = """**可用命令：**
 
 - `/help` - 显示帮助
-- `/report` - 对当前数据生成完整分析报告
 - `/export [markdown]` - 导出当前对话分析结果（默认 HTML）
 - `/compact` - 手动压缩上下文
 - `/clear` - 清空对话历史
@@ -523,18 +522,11 @@ def run_repl() -> None:
         return None
 
     def cmd_report(args: str):
-        parts = args.strip().split() if args else []
-        report_type = parts[0].lower() if parts else "brief"
-        fmt = parts[1].lower() if len(parts) > 1 else "html"
-        if report_type not in ("brief", "formal"):
-            fmt = report_type if report_type in ("html", "md", "markdown", "pdf") else fmt
-            report_type = "brief"
-        if fmt == "md":
-            fmt = "markdown"
-        if fmt not in ("html", "markdown", "pdf"):
-            fmt = "html"
-        tool_name = "generate_formal_report" if report_type == "formal" else "generate_analysis_brief"
-        return f"请使用 {tool_name} 工具生成{report_type}报告，format={fmt}。报告只能消费已有 EvidenceRecord 和已验证图表；证据不足时返回缺口清单。"
+        return ToolResult(summary=(
+            "Brief/formal report artifacts are disabled. Ask directly in chat for a "
+            "current-session synthesis, or use /export html or /export markdown "
+            "to save the conversation analysis."
+        ))
 
     def cmd_export(args: str):
         fmt = args.strip().lower() if args else "html"
@@ -1125,7 +1117,7 @@ def run_repl() -> None:
     # Register all commands
     CMD.register("exit", cmd_exit, "退出并自动保存", aliases=["q"])
     CMD.register("help", cmd_help, "显示帮助信息", aliases=["h", "?"])
-    CMD.register("report", cmd_report, "对当前数据生成完整分析报告")
+    CMD.register("report", cmd_report, "已弃用：请直接在对话中要求综合分析，或使用 /export")
     CMD.register("export", cmd_export, "导出当前对话分析结果 (html/markdown)")
     CMD.register("compact", cmd_compact, "手动压缩上下文")
     CMD.register("clear", cmd_clear, "清空对话历史")

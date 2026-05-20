@@ -34,12 +34,8 @@ def test_web_capabilities_describe_cli_parity_and_local_mode():
     assert body["privacy"]["default_host"] == "127.0.0.1"
 
     command_names = {item["name"] for item in body["commands"]}
-    assert {"project", "analysis", "tasks", "report", "export"} <= command_names
-
-    report = next(item for item in body["commands"] if item["name"] == "report")
-    assert "brief" in report["variants"]
-    assert "formal" in report["variants"]
-    assert {"markdown", "html", "pdf"} <= set(report["formats"])
+    assert {"project", "analysis", "tasks", "export"} <= command_names
+    assert "report" not in command_names
 
     export = next(item for item in body["commands"] if item["name"] == "export")
     assert set(export["formats"]) == {"markdown", "html"}
@@ -48,8 +44,10 @@ def test_web_capabilities_describe_cli_parity_and_local_mode():
 
     capability_ids = {item["id"] for item in body["capabilities"]}
     assert "fallback.python" in capability_ids
-    assert "artifact.formal_report" in capability_ids
     assert "artifact.conversation_export" in capability_ids
+    assert "artifact.analysis_brief" not in capability_ids
+    assert "artifact.formal_report" not in capability_ids
+    assert "/api/sessions/<session_id>/report" not in body["endpoints"]
 
 
 def test_web_analysis_state_endpoint_and_reset(tmp_path):

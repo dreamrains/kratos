@@ -216,7 +216,7 @@ AGENT_ANALYSIS = """\
 ## 复杂度自适应
 - 简单定向分析（如"对比A和B"）→ 2-3个工具即可
 - 中等分析（如"分析趋势和原因"）→ 覆盖主要维度
-- 全面报告（如"完整分析报告"）→ 多维度深度分析，最后用 generate_formal_report 输出
+- 全面分析/报告诉求（如"完整分析报告"）→ 多维度深度分析，并在对话中输出综合结论、证据、方法、局限与下一步；不要生成单独的 brief/formal report artifact
 
 ## 模糊意图引导
 当用户说"看看这数据"/"分析一下"等模糊请求时：
@@ -283,7 +283,7 @@ def _format_turn_intent_prompt(turn_intent) -> str:
 - data_requirement：列出所需数据，区分必须数据和可选数据。
 - data_operation：直接执行数据操作，不做额外探索。
 - directed_analysis：基于数据特征分析。可选 record_analysis_plan 制定计划。关键发现用 record_evidence_record 记录。
-- comprehensive_report：进行全面分析。调用 record_analysis_plan 制定计划。用 record_evidence_record 记录证据。最后用 generate_formal_report 输出。
+- comprehensive_report：进行全面分析。调用 record_analysis_plan 制定计划。用 record_evidence_record 记录证据。最后在对话中综合输出结论、证据、方法、局限与下一步，不要生成单独的 brief/formal report artifact。
 """
 
 
@@ -378,6 +378,23 @@ def _get_proficiency_instruction(proficiency: str) -> str:
 
 _FULL_KEYWORDS = ("报告", "完整分析", "全面分析", "综合分析", "分析报告", "出个报告", "给我一份")
 _QUICK_KEYWORDS = ("汇总", "导出", "筛选", "过滤", "排序", "分组", "计算", "求和", "求平均", "export")
+_DEPRECATED_REPORT_TOOL_NAMES = {
+    "generate_report",
+    "generate_analysis_brief",
+    "generate_formal_report",
+}
+
+
+def _filter_deprecated_report_tools(tool_list: str) -> str:
+    if not tool_list:
+        return tool_list
+    separators = [",", "\n"]
+    normalized = tool_list
+    for sep in separators[1:]:
+        normalized = normalized.replace(sep, separators[0])
+    names = [name.strip() for name in normalized.split(separators[0]) if name.strip()]
+    kept = [name for name in names if name not in _DEPRECATED_REPORT_TOOL_NAMES]
+    return ", ".join(kept)
 
 _PROMPT_LEVEL_MAP = {
     "simple_response": "conversation",
@@ -436,6 +453,7 @@ def build_system_prompt(
 ) -> str:
     from data_agent.agent.intent import plan_turn_intent, _PROMPT_LEVEL_MAP
 
+    tool_list = _filter_deprecated_report_tools(tool_list)
     turn_intent = plan_turn_intent(user_input, session_context) if user_input else None
     level = _PROMPT_LEVEL_MAP.get(turn_intent.intent_type, "analysis") if turn_intent else "analysis"
 

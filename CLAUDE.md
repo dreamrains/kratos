@@ -48,10 +48,11 @@ uv run pytest tests/test_interaction.py::test_function_name -v
 ### Tool System: `data_agent/tools/`
 
 - **Auto-discovery**: `discover_tools()` scans all modules in `data_agent/tools/`, each uses `@registry.register()` decorator to register into the global `ToolRegistry` singleton
-- **Group-based activation**: Tools belong to groups (core, eda, ml, stats, report, clean, task, knowledge). Only "core" is active by default; other groups activate based on user intent keywords
+- **Group-based activation**: Tools belong to groups (core, eda, ml, stats, report, clean, task, knowledge). Only "core" is active by default; other groups activate based on user intent keywords. Deprecated tools are in `deprecated_report_artifacts` group and filtered from search
 - **ToolResult**: All tools return `ToolResult` (summary + optional data/artifacts). Plain strings auto-wrap via `from_str()`
 - **Capability metadata**: Each tool can declare `ToolCapability` with problem_types, risk_level, evidence_fields, fallback_tools
-- **Key tool modules**: `data_io.py` (load/export), `eda.py` (explore), `statistics.py`, `ml.py`, `visualization.py`, `report.py`, `analysis_flow.py`, `interaction.py`
+- **Report strategy**: Report artifact tools (`generate_report`, `generate_analysis_brief`, `generate_formal_report`) are **deprecated**. Analysis conclusions are synthesized directly in conversation. `/export` remains for saving conversation to HTML/Markdown
+- **Key tool modules**: `data_io.py` (load/export), `eda.py` (explore), `statistics.py`, `ml.py`, `visualization.py`, `report.py` (conversation export only), `analysis_flow.py`, `interaction.py`
 
 ### Knowledge System: `data_agent/knowledge/`
 

@@ -279,7 +279,10 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "contribute_decomposition",
     },
     "report": {
-        "generate_report", "generate_analysis_brief", "generate_formal_report", "export_conversation",
+        "export_conversation",
+    },
+    "deprecated_report_artifacts": {
+        "generate_report", "generate_analysis_brief", "generate_formal_report",
     },
     "clean": {
         "suggest_column_types", "apply_type_conversion", "clean_data",
@@ -830,7 +833,10 @@ def tool_search(keyword: str) -> str:
 
     kw = keyword.lower().strip()
     matches = []
+    deprecated_tools = TOOL_GROUPS.get("deprecated_report_artifacts", set())
     for tool in registry._tools.values():
+        if tool.name in deprecated_tools:
+            continue
         score = 0
         if kw in tool.name.lower():
             score += 2
