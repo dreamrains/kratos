@@ -20,6 +20,10 @@ def _slug(text: str) -> str:
     return value or "knowledge"
 
 
+def _safe_domain(domain: str) -> str:
+    return _slug(domain.replace("..", " "))
+
+
 class KnowledgeLibrary:
     def __init__(self, root: Path | None = None):
         self.root = root or get_config().knowledge_dir
@@ -36,11 +40,12 @@ class KnowledgeLibrary:
         source: KnowledgeSource = KnowledgeSource.USER,
     ) -> KnowledgeItem:
         item_id = f"kn_{uuid.uuid4().hex[:10]}"
-        domain_value = domain.strip() or "general"
-        path = self.library_dir / domain_value / f"{_slug(title)}-{item_id}.md"
+        domain_value = _safe_domain(domain) if domain.strip() else "general"
+        path = self._resolve_library_path(Path("library") / domain_value / f"{_slug(title)}-{item_id}.md")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         now = _now()
+        relative_path = path.relative_to(self.root.resolve())
 
         with self.db.connect() as conn:
             conn.execute(
@@ -54,7 +59,7 @@ class KnowledgeLibrary:
                     item_id,
                     title,
                     domain_value,
-                    str(path.relative_to(self.root)),
+                    str(relative_path),
                     summary,
                     KnowledgeStatus.ACTIVE.value,
                     json.dumps(tags or [], ensure_ascii=False),
@@ -87,7 +92,7 @@ class KnowledgeLibrary:
         params = []
         if domain:
             clauses.append("domain = ?")
-            params.append(domain)
+            params.append(_safe_domain(domain))
         if status:
             clauses.append("status = ?")
             params.append(status)
@@ -111,7 +116,7 @@ class KnowledgeLibrary:
         if item is None:
             return None
         if content is not None:
-            (self.root / item.path).write_text(content, encoding="utf-8")
+            self._resolve_library_path(item.path).write_text(content, encoding="utf-8")
         next_title = title if title is not None else item.title
         next_summary = summary if summary is not None else item.summary
         next_tags = tags if tags is not None else item.tags
@@ -149,7 +154,7 @@ class KnowledgeLibrary:
             conn.execute(
                 """
                 UPDATE knowledge_items
-                SET status = ?, deprecated_at = '', updated_at = ?
+                SET status = ?, deprecated_at = '', superseded_by = '', updated_at = ?
                 WHERE id = ?
                 """,
                 (KnowledgeStatus.ACTIVE.value, _now(), item_id),
@@ -160,7 +165,7 @@ class KnowledgeLibrary:
         item = self.get(item_id)
         if item is None:
             return False
-        (self.root / item.path).unlink(missing_ok=True)
+        self._resolve_library_path(item.path).unlink(missing_ok=True)
         with self.db.connect() as conn:
             conn.execute("DELETE FROM knowledge_items WHERE id = ?", (item_id,))
         return True
@@ -186,7 +191,7 @@ class KnowledgeLibrary:
         return [item for _, item in scored[:limit]]
 
     def _item_from_row(self, row: dict) -> KnowledgeItem:
-        path = self.root / row["path"]
+        path = self._resolve_library_path(row["path"])
         content = path.read_text(encoding="utf-8") if path.exists() else ""
         return KnowledgeItem(
             id=row["id"],
@@ -205,3 +210,11 @@ class KnowledgeLibrary:
             superseded_by=row["superseded_by"],
             content=content,
         )
+
+    def _resolve_library_path(self, path: str | Path) -> Path:
+        candidate = (self.root / path).resolve()
+        root = self.root.resolve()
+        library_dir = self.library_dir.resolve()
+        if not candidate.is_relative_to(root) or not candidate.is_relative_to(library_dir):
+            raise ValueError(f"Knowledge path escapes library directory: {path}")
+        return candidate
