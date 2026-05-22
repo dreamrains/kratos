@@ -154,13 +154,13 @@ def test_load_data_does_not_classify_user_desktop_as_system_path():
         raise AssertionError("user Desktop files should not be treated as system paths") from exc
 
 
-def test_session_project_name_is_canonical_and_object_compatible(tmp_path):
+def test_session_project_name_is_canonical(tmp_path):
     from data_agent import config
     from data_agent.config import AgentConfig
     from data_agent.session.history import load_session, list_sessions, save_session
 
     old_cfg = config._config
-    config._config = AgentConfig(PROJECT_DIR=tmp_path / "project", SESSIONS_DIR=tmp_path / "sessions")
+    config._config = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
     try:
         sid = save_session(
             [{"role": "user", "content": "hello"}],
@@ -169,11 +169,28 @@ def test_session_project_name_is_canonical_and_object_compatible(tmp_path):
         )
         loaded = load_session(sid)
         assert loaded["project_name"] == "savings_card"
-        assert loaded["object_name"] == "savings_card"
+        assert "object_name" not in loaded
 
         sessions = list_sessions(project_name="savings_card")
         assert len(sessions) == 1
         assert sessions[0]["project_name"] == "savings_card"
+        assert "object_name" not in sessions[0]
+    finally:
+        config._config = old_cfg
+
+
+def test_session_meta_uses_project_name_only(tmp_path):
+    from data_agent import config
+    from data_agent.config import AgentConfig
+    from data_agent.session.history import load_session, save_session
+
+    old_cfg = config._config
+    config._config = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+    try:
+        save_session([{"role": "user", "content": "hello"}], "s1", extra_meta={"project_name": "revenue"})
+        loaded = load_session("s1")
+        assert loaded["project_name"] == "revenue"
+        assert "object_name" not in loaded
     finally:
         config._config = old_cfg
 
@@ -185,13 +202,13 @@ def test_unbound_session_state_and_artifacts_use_global_sessions_dir(tmp_path):
     from data_agent.tools.analysis_flow import record_data_requirement
 
     old_cfg = config._config
-    config._config = AgentConfig(PROJECT_DIR=tmp_path / "project", SESSIONS_DIR=tmp_path / "sessions")
+    config._config = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
     ctx = AgentContext(session_id="unbound_session", project_name=None, workspace=Workspace())
     try:
         sid = save_session([{"role": "user", "content": "hello"}], "unbound_session")
         loaded = load_session(sid)
         assert loaded["project_name"] is None
-        assert loaded["object_name"] is None
+        assert "object_name" not in loaded
 
         with use_agent_context(ctx):
             requirement = {
@@ -206,7 +223,7 @@ def test_unbound_session_state_and_artifacts_use_global_sessions_dir(tmp_path):
 
         assert result["saved"].startswith("sessions/unbound_session/analysis_flow/")
         assert (tmp_path / "sessions" / "unbound_session" / "analysis_flow").is_dir()
-        assert not (tmp_path / "project" / "sessions" / "unbound_session").exists()
+        assert not (tmp_path / "workspace" / "sessions" / "unbound_session").exists()
     finally:
         config._config = old_cfg
 
@@ -214,14 +231,14 @@ def test_unbound_session_state_and_artifacts_use_global_sessions_dir(tmp_path):
 def test_project_binding_does_not_auto_promote_session_knowledge(tmp_path):
     from data_agent import config
     from data_agent.config import AgentConfig
-    from data_agent.object_manager import ObjectManager
+    from data_agent.project_manager import ProjectManager
     from data_agent.session.history import bind_session_to_project, load_session, save_session, session_knowledge_dir
 
     old_cfg = config._config
-    config._config = AgentConfig(PROJECT_DIR=tmp_path / "project", SESSIONS_DIR=tmp_path / "sessions")
+    config._config = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
     try:
-        manager = ObjectManager(objects_dir=config.get_config().objects_dir)
-        manager.create_project("analysis_project")
+        manager = ProjectManager()
+        manager.create("analysis_project")
         save_session([{"role": "user", "content": "hello"}], "bind_session")
         knowledge_dir = session_knowledge_dir("bind_session")
         (knowledge_dir / "project_rules.md").write_text("session only rule", encoding="utf-8")
@@ -231,11 +248,54 @@ def test_project_binding_does_not_auto_promote_session_knowledge(tmp_path):
         assert result["success"] is True
         loaded = load_session("bind_session")
         assert loaded["project_name"] == "analysis_project"
-        project_rules = config.get_config().objects_dir / "analysis_project" / "knowledge" / "project_rules.md"
-        assert project_rules.read_text(encoding="utf-8") == ""
-        assert "bind_session" in manager.get_project("analysis_project")["sessions"]
+        project_rules = config.get_config().projects_dir / "analysis_project" / "knowledge" / "project_rules.md"
+        assert not project_rules.exists()
+        assert "bind_session" in manager.get("analysis_project")["sessions"]
     finally:
         config._config = old_cfg
+
+
+def test_system_prompt_does_not_load_project_knowledge(tmp_path, monkeypatch):
+    import data_agent.agent.loop as loop_module
+    from data_agent import config
+    from data_agent.config import AgentConfig
+
+    old_cfg = config._config
+    config._config = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+    monkeypatch.setattr(loop_module, "_skill_loader", None)
+
+    calls = []
+
+    class FakeRules:
+        def get_rules_for_prompt(self, object_name=None, session_id=None):
+            calls.append(("rules", object_name, session_id))
+            return "rules"
+
+    class FakeDomain:
+        def get_for_prompt(self, object_name=None, session_id=None):
+            calls.append(("domain", object_name, session_id))
+            return "domain"
+
+    class FakeExperience:
+        def get_for_prompt(self, object_name=None, session_id=None):
+            calls.append(("experience", object_name, session_id))
+            return "experience"
+
+    monkeypatch.setattr(
+        "data_agent.tools.knowledge_tools.get_knowledge_instances",
+        lambda: (FakeRules(), FakeDomain(), FakeExperience()),
+    )
+
+    try:
+        agent = loop_module.AgentLoop(client=object(), session_id="s1", project_name="project_a")
+        agent.messages.append({"role": "user", "content": "hello"})
+        agent._build_system_prompt()
+    finally:
+        config._config = old_cfg
+
+    assert calls
+    assert all(object_name is None for _, object_name, _ in calls)
+    assert all(session_id == "s1" for _, _, session_id in calls)
 
 
 def test_registry_exposes_tool_capability_metadata():

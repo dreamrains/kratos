@@ -788,14 +788,16 @@ def run_repl() -> None:
             console.print(f"[green]{loader.load(parts[1])}[/green]")
         elif action == "unload" and len(parts) >= 2:
             console.print(f"[green]{loader.unload(parts[1])}[/green]")
+        elif action == "enable" and len(parts) >= 2:
+            console.print(f"[green]{loader.set_enabled(parts[1], True)}[/green]")
+        elif action == "disable" and len(parts) >= 2:
+            console.print(f"[green]{loader.set_enabled(parts[1], False)}[/green]")
         elif action == "install" and len(parts) >= 3:
-            scope = "global" if "--global" in args else "project"
-            console.print(f"[green]{loader.install(parts[1], parts[2], scope)}[/green]")
-        elif action == "uninstall" and len(parts) >= 2:
-            scope = "global" if "--global" in args else "project"
-            console.print(f"[green]{loader.uninstall(parts[1], scope)}[/green]")
+            console.print(f"[green]{loader.install(parts[1], parts[2])}[/green]")
+        elif action in ("uninstall", "delete") and len(parts) >= 2:
+            console.print(f"[green]{loader.uninstall(parts[1])}[/green]")
         else:
-            console.print("[yellow]Usage: /skill [load|unload|install|uninstall] <name>[/yellow]")
+            console.print("[yellow]Usage: /skill [load|unload|enable|disable|install|delete] <name>[/yellow]")
             console.print(loader.format_list())
         return None
 
@@ -804,24 +806,47 @@ def run_repl() -> None:
         action = parts[0] if parts else "status"
 
         if action == "status":
-            from data_agent.agent.loop import get_mcp_manager
-            mcp_mgr = get_mcp_manager()
-            if mcp_mgr is None:
-                console.print("[dim]MCP not configured or not enabled[/dim]")
+            import json
+            from data_agent.tools.mcp_tools import list_mcp_servers
+
+            data = json.loads(list_mcp_servers())
+            configured = data.get("servers", [])
+            if configured:
+                table = Table(title="MCP Servers")
+                table.add_column("Server", style="cyan")
+                table.add_column("Transport")
+                table.add_column("Enabled")
+                table.add_column("Command/URL", width=40)
+                for server in configured:
+                    table.add_row(
+                        server.get("name", ""),
+                        server.get("transport", ""),
+                        str(server.get("enabled", True)),
+                        server.get("command") or server.get("url") or "",
+                    )
+                console.print(table)
             else:
-                status = mcp_mgr.health_check()
-                if status:
-                    table = Table(title="MCP Servers")
-                    table.add_column("Server", style="cyan")
-                    table.add_column("Status")
-                    table.add_column("Tools", width=40)
-                    for name, info in status.items():
-                        table.add_row(name, info.get("status", "unknown"), info.get("tools", ""))
-                    console.print(table)
-                else:
-                    console.print("[dim]No MCP servers connected[/dim]")
+                console.print("[dim]No MCP servers configured[/dim]")
+        elif action == "add" and len(parts) >= 4:
+            from data_agent.tools.mcp_tools import add_mcp_server
+
+            name, transport, target = parts[1], parts[2], parts[3]
+            if transport == "stdio":
+                console.print(add_mcp_server(name, transport, command=target, args=parts[4:] or None))
+            else:
+                console.print(add_mcp_server(name, transport, url=target))
+        elif action in ("enable", "disable", "remove", "delete") and len(parts) >= 2:
+            from data_agent.tools.mcp_tools import delete_mcp_server, disable_mcp_server, enable_mcp_server
+
+            name = parts[1]
+            if action == "enable":
+                console.print(enable_mcp_server(name))
+            elif action == "disable":
+                console.print(disable_mcp_server(name))
+            else:
+                console.print(delete_mcp_server(name))
         else:
-            console.print("[yellow]Usage: /mcp [status|add|remove|enable|disable] [options][/yellow]")
+            console.print("[yellow]Usage: /mcp status | add <name> <stdio|sse|streamable-http> <command-or-url> [args...] | enable|disable|remove <name>[/yellow]")
         return None
 
     def cmd_object(args: str):

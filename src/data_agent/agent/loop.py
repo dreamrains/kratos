@@ -415,15 +415,15 @@ class AgentLoop:
         self._mcp_initialized = True
 
         cfg = get_config()
-        if not cfg.mcp_enabled or not cfg.mcp_config_path.exists():
+        if not cfg.mcp_enabled:
             return
 
         try:
-            from data_agent.mcp.config import load_mcp_config
+            from data_agent.config_resolver import resolve_mcp_config
             from data_agent.mcp.client import MCPClientManager
             from data_agent.mcp.bridge import MCPToolBridge
 
-            mcp_config = load_mcp_config(cfg.mcp_config_path)
+            mcp_config = resolve_mcp_config()
             if mcp_config.servers:
                 _mcp_manager = MCPClientManager(mcp_config)
                 _mcp_bridge = MCPToolBridge(_mcp_manager, registry)
@@ -449,7 +449,6 @@ class AgentLoop:
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
         tool_list = ", ".join(registry.tool_names)
-        active_obj = workspace.active_project
         sid = self.session_id
 
         # 提取最近用户输入用于任务级别推断
@@ -520,9 +519,9 @@ class AgentLoop:
             tool_list = ""
 
         project_rules, domain_knowledge, experience_log = get_knowledge_instances()
-        rules_prompt = project_rules.get_rules_for_prompt(object_name=active_obj, session_id=sid)
-        domain_prompt = domain_knowledge.get_for_prompt(object_name=active_obj, session_id=sid)
-        experience_prompt = experience_log.get_for_prompt(object_name=active_obj, session_id=sid)
+        rules_prompt = project_rules.get_rules_for_prompt(session_id=sid)
+        domain_prompt = domain_knowledge.get_for_prompt(session_id=sid)
+        experience_prompt = experience_log.get_for_prompt(session_id=sid)
 
         # Chat 模式：跳过技能信息
         skill_descriptions = ""
@@ -1034,7 +1033,6 @@ class AgentLoop:
 
         return {
             "project_name": workspace.active_project,
-            "object_name": workspace.active_project,
             "datasets": {
                 name: {"rows": info["rows"], "columns": info["columns"]}
                 for name, info in datasets.items()

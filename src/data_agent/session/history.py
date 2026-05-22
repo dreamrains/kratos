@@ -156,16 +156,13 @@ def save_session(
         "message_count": len(messages),
         "summary": summary,
         "project_name": None,
-        "object_name": None,
     }
     if extra_meta:
         extra = dict(extra_meta)
-        # project_name is canonical; object_name remains a backward-compatible alias.
         project_name = extra.pop("project_name", None)
         object_name = extra.pop("object_name", None)
         active_project = project_name if project_name is not None else object_name
         meta["project_name"] = active_project
-        meta["object_name"] = active_project
         meta.update(extra)
     (sdir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -224,7 +221,6 @@ def load_session(session_id: str) -> Optional[dict]:
         "messages": messages,
         "summary": meta.get("summary", ""),
         "project_name": meta.get("project_name") or meta.get("object_name"),
-        "object_name": meta.get("object_name") or meta.get("project_name"),
     }
 
 
@@ -253,7 +249,6 @@ def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
                 "message_count": meta.get("message_count", 0),
                 "summary": meta.get("summary", ""),
                 "project_name": proj_name,
-                "object_name": proj_name,
             })
         except (json.JSONDecodeError, KeyError):
             continue
@@ -273,7 +268,7 @@ def update_session_meta(session_id: str, updates: dict) -> bool:
         if "project_name" in updates or "object_name" in updates:
             project_name = updates.get("project_name", updates.get("object_name"))
             updates["project_name"] = project_name
-            updates["object_name"] = project_name
+            updates.pop("object_name", None)
         meta.update(updates)
         meta_path.write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -285,181 +280,91 @@ def update_session_meta(session_id: str, updates: dict) -> bool:
 
 # ── 动态绑定/解绑 ────────────────────────────────────────
 
-def _legacy_bind_session_to_object_with_auto_promotion(session_id: str, object_name: str) -> dict:
-    """绑定会话到对象。处理换绑（先解绑旧对象）和知识迁移。
+def bind_session_to_project(session_id: str, project_name: str) -> dict:
+    """Bind a session to a project without promoting or moving knowledge."""
+    from data_agent.project_manager import get_project_manager
 
-    Returns:
-        dict with keys: success, message, from_object (may be None)
-    """
-    from data_agent.object_manager import get_object_manager
+    mgr = get_project_manager()
+    if mgr.get(project_name) is None:
+        return {
+            "success": False,
+            "message": f"Project '{project_name}' not found",
+            "from_project": None,
+        }
 
-    mgr = get_object_manager()
-
-    # 验证目标对象存在
-    if mgr.get(object_name) is None:
-        return {"success": False, "message": f"对象 '{object_name}' 不存在", "from_object": None}
-
-    # 读取当前绑定
     sdir = _session_dir(session_id)
     meta_path = sdir / "meta.json"
-    current_object = None
+    current_project = None
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        current_object = meta.get("project_name") or meta.get("object_name")
+        current_project = meta.get("project_name") or meta.get("object_name")
 
-    # 已绑定同一对象，无需操作
-    if current_object == object_name:
-        return {"success": True, "message": f"会话已绑定到对象 '{object_name}'", "from_object": current_object}
+    if current_project == project_name:
+        return {
+            "success": True,
+            "message": f"Session already bound to project '{project_name}'",
+            "from_project": current_project,
+            "project_name": project_name,
+        }
 
-    # 换绑：先从旧对象迁移知识
-    if current_object:
-        from data_agent.knowledge.experience import get_experience_log
-        from data_agent.knowledge.domain import get_domain_knowledge
-        from data_agent.knowledge.rules import get_project_rules
+    if current_project:
+        mgr.unbind_session(current_project, session_id)
 
-        exp_log = get_experience_log()
-        dom_know = get_domain_knowledge()
-        proj_rules = get_project_rules()
-
-        # 从旧对象提取该会话的知识，迁移到新对象
-        exp_log.migrate_between_objects(session_id, current_object, object_name)
-        dom_know.migrate_between_objects(session_id, current_object, object_name)
-        proj_rules.migrate_between_objects(session_id, current_object, object_name)
-
-        # 旧对象解除会话关联
-        mgr.unbind_session(current_object, session_id)
-
-    else:
-        # 首次绑定：将会话层知识提升到对象层
-        from data_agent.knowledge.experience import get_experience_log
-        from data_agent.knowledge.domain import get_domain_knowledge
-        from data_agent.knowledge.rules import get_project_rules
-
-        exp_log = get_experience_log()
-        dom_know = get_domain_knowledge()
-        proj_rules = get_project_rules()
-
-        exp_log.promote_to_object(session_id, object_name)
-        dom_know.promote_to_object(session_id, object_name)
-        proj_rules.promote_to_object(session_id, object_name)
-
-    # 新对象绑定会话
-    mgr.bind_session(object_name, session_id)
-
-    # 更新会话 meta
-    update_session_meta(session_id, {"project_name": object_name, "object_name": object_name})
-
+    mgr.bind_session(project_name, session_id)
+    update_session_meta(session_id, {"project_name": project_name})
     return {
         "success": True,
-        "message": f"会话已绑定到对象 '{object_name}'"
-                   + (f"（从 '{current_object}' 迁移）" if current_object else ""),
-        "from_object": current_object,
+        "message": f"Session bound to project '{project_name}'" + (f" from '{current_project}'" if current_project else ""),
+        "from_project": current_project,
+        "project_name": project_name,
     }
 
 
-def unbind_session_from_object(session_id: str) -> dict:
-    """解除会话的对象绑定。知识保留在对象中。"""
-    from data_agent.object_manager import get_object_manager
+def unbind_session_from_project(session_id: str) -> dict:
+    """Remove a session's project binding."""
+    from data_agent.project_manager import get_project_manager
 
     sdir = _sessions_dir() / session_id
     meta_path = sdir / "meta.json"
     if not meta_path.exists():
-        return {"success": True, "message": "会话不存在或无绑定", "from_object": None}
+        return {
+            "success": True,
+            "message": "Session does not exist or has no project binding",
+            "from_project": None,
+        }
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    current_object = meta.get("project_name") or meta.get("object_name")
-    if not current_object:
-        return {"success": True, "message": "会话未绑定任何对象", "from_object": None}
+    current_project = meta.get("project_name") or meta.get("object_name")
+    if not current_project:
+        return {
+            "success": True,
+            "message": "Session is not bound to a project",
+            "from_project": None,
+        }
 
-    # 对象解除会话关联
-    mgr = get_object_manager()
-    mgr.unbind_session(current_object, session_id)
-
-    # 更新会话 meta
-    update_session_meta(session_id, {"project_name": None, "object_name": None})
+    mgr = get_project_manager()
+    mgr.unbind_session(current_project, session_id)
+    update_session_meta(session_id, {"project_name": None})
 
     return {
         "success": True,
-        "message": f"会话已从对象 '{current_object}' 解绑",
-        "from_object": current_object,
+        "message": f"Session unbound from project '{current_project}'",
+        "from_project": current_project,
     }
 
 
 def bind_session_to_object(session_id: str, object_name: str) -> dict:
-    """Bind a session to a project/object without promoting knowledge.
-
-    Binding is only an ownership reference; project knowledge promotion must be
-    requested explicitly.
-    """
-    from data_agent.object_manager import get_object_manager
-
-    mgr = get_object_manager()
-    if mgr.get(object_name) is None:
-        return {"success": False, "message": f"Object '{object_name}' not found", "from_object": None}
-
-    sdir = _session_dir(session_id)
-    meta_path = sdir / "meta.json"
-    current_object = None
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        current_object = meta.get("project_name") or meta.get("object_name")
-
-    if current_object == object_name:
-        return {"success": True, "message": f"Session already bound to object '{object_name}'", "from_object": current_object}
-
-    if current_object:
-        mgr.unbind_session(current_object, session_id)
-
-    mgr.bind_session(object_name, session_id)
-    update_session_meta(session_id, {"project_name": object_name, "object_name": object_name})
-    return {
-        "success": True,
-        "message": f"Session bound to object '{object_name}'" + (f" from '{current_object}'" if current_object else ""),
-        "from_object": current_object,
-    }
-
-
-def promote_session_knowledge_to_project(session_id: str, project_name: str) -> dict:
-    """Explicitly promote session-level knowledge into a project/object."""
-    from data_agent.knowledge.experience import get_experience_log
-    from data_agent.knowledge.domain import get_domain_knowledge
-    from data_agent.knowledge.rules import get_project_rules
-    from data_agent.object_manager import get_object_manager
-
-    mgr = get_object_manager()
-    if mgr.get(project_name) is None:
-        return {"success": False, "message": f"Project '{project_name}' not found"}
-
-    return {
-        "success": True,
-        "session_id": session_id,
-        "project_name": project_name,
-        "experience": get_experience_log().promote_to_object(session_id, project_name),
-        "domain": get_domain_knowledge().promote_to_object(session_id, project_name),
-        "rules": get_project_rules().promote_to_object(session_id, project_name),
-    }
-
-
-def bind_session_to_project(session_id: str, project_name: str) -> dict:
-    """绑定会话到项目。兼容实现复用旧 object 存储。"""
-    result = bind_session_to_object(session_id, project_name)
-    if result.get("success"):
-        result["project_name"] = project_name
-        result["from_project"] = result.get("from_object")
-        result["message"] = result["message"].replace("对象", "项目")
+    """Compatibility alias for pre-release callers."""
+    result = bind_session_to_project(session_id, object_name)
+    result["from_object"] = result.get("from_project")
     return result
 
 
-def unbind_session_from_project(session_id: str) -> dict:
-    """解除会话的项目绑定。"""
-    result = unbind_session_from_object(session_id)
-    if result.get("success"):
-        result["from_project"] = result.get("from_object")
-        result["message"] = result["message"].replace("对象", "项目")
+def unbind_session_from_object(session_id: str) -> dict:
+    """Compatibility alias for pre-release callers."""
+    result = unbind_session_from_project(session_id)
+    result["from_object"] = result.get("from_project")
     return result
-
-
-# ── 会话分支 ─────────────────────────────────────────────
 
 def branch_session(parent_id: str, branch_name: str = "") -> dict:
     """从父会话分叉出一个新会话，继承消息和上下文。不修改父会话。"""
@@ -484,8 +389,7 @@ def branch_session(parent_id: str, branch_name: str = "") -> dict:
         "data_file": parent_data.get("data_file", ""),
         "message_count": len(parent_data["messages"]),
         "summary": parent_data.get("summary", ""),
-        "project_name": parent_data.get("project_name") or parent_data.get("object_name"),
-        "object_name": parent_data.get("object_name") or parent_data.get("project_name"),
+        "project_name": parent_data.get("project_name"),
         "forked_from": parent_id,
         "branch_name": branch_name,
     }
@@ -494,11 +398,11 @@ def branch_session(parent_id: str, branch_name: str = "") -> dict:
     )
 
     # 复制对象绑定
-    if parent_data.get("object_name"):
+    if parent_data.get("project_name"):
         try:
-            from data_agent.object_manager import get_object_manager
-            mgr = get_object_manager()
-            mgr.bind_session(parent_data["object_name"], new_id)
+            from data_agent.project_manager import get_project_manager
+            mgr = get_project_manager()
+            mgr.bind_session(parent_data["project_name"], new_id)
         except Exception:
             pass
 
@@ -790,3 +694,4 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
             merged.append(msg)
 
     return merged
+

@@ -36,6 +36,7 @@ def create_app() -> Flask:
     from data_agent.web.blueprints.commands import commands_bp
     from data_agent.web.blueprints.tasks import tasks_bp
     from data_agent.web.blueprints.capabilities import capabilities_bp
+    from data_agent.web.blueprints.capability_admin import capability_admin_bp
 
     app.register_blueprint(pages_bp)
     app.register_blueprint(chat_bp, url_prefix="/api")
@@ -46,6 +47,7 @@ def create_app() -> Flask:
     app.register_blueprint(commands_bp, url_prefix="/api")
     app.register_blueprint(tasks_bp, url_prefix="/api")
     app.register_blueprint(capabilities_bp, url_prefix="/api")
+    app.register_blueprint(capability_admin_bp, url_prefix="/api")
 
     @app.errorhandler(413)
     def request_entity_too_large(e):

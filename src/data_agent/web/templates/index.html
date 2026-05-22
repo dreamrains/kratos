@@ -15,6 +15,10 @@
                     <button @click="loadConfig()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="LLM 配置">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     </button>
+
+                    <button @click="loadCapabilityAdmin()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="Capabilities">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.121-5.121-2.121 2.121M8.999 15l-2.121 2.121m10.243 0L15 15M8.999 9 6.878 6.879"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
                     <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="新建会话">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                     </button>
@@ -35,35 +39,35 @@
                 <div class="px-4 py-3">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">项目</span>
-                        <button @click="showNewObjectForm = !showNewObjectForm" class="p-0.5 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
+                        <button @click="showNewProjectForm = !showNewProjectForm" class="p-0.5 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                         </button>
                     </div>
-                    <div x-show="showNewObjectForm" x-transition @click.outside="showNewObjectForm = false" class="mb-2">
+                    <div x-show="showNewProjectForm" x-transition @click.outside="showNewProjectForm = false" class="mb-2">
                         <div class="flex gap-1">
-                            <input x-model="newObjectName" type="text" placeholder="项目名称" @keydown.enter="createObject()"
+                            <input x-model="newProjectName" type="text" placeholder="项目名称" @keydown.enter="createProject()"
                                    class="flex-1 px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-brand-500/40">
-                            <button @click="createObject()" class="px-2 py-1 text-xs rounded bg-brand-600 text-white hover:bg-brand-700">添加</button>
+                            <button @click="createProject()" class="px-2 py-1 text-xs rounded bg-brand-600 text-white hover:bg-brand-700">添加</button>
                         </div>
                     </div>
-                    <template x-for="obj in objects" :key="obj.name">
+                    <template x-for="project in projects" :key="project.name">
                         <div class="mt-0.5">
                             <div class="flex items-center group rounded-md hover:bg-brand-50/60 dark:hover:bg-brand-900/15 sidebar-item">
-                                <button @click="toggleObject(obj.name)" class="flex items-center gap-1.5 flex-1 px-1.5 py-1.5 text-left">
-                                    <svg class="w-3 h-3 text-stone-400 transition-transform shrink-0" :class="{ 'rotate-90': isObjectExpanded(obj.name) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+                                <button @click="toggleProject(project.name)" class="flex items-center gap-1.5 flex-1 px-1.5 py-1.5 text-left">
+                                    <svg class="w-3 h-3 text-stone-400 transition-transform shrink-0" :class="{ 'rotate-90': isProjectExpanded(project.name) }" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
                                     <svg class="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                                    <span class="text-sm text-stone-700 dark:text-stone-300 truncate" x-text="obj.name"></span>
-                                    <span class="text-[10px] text-stone-400 ml-auto" x-text="(objectGroups[obj.name] || []).length"></span>
+                                    <span class="text-sm text-stone-700 dark:text-stone-300 truncate" x-text="project.name"></span>
+                                    <span class="text-[10px] text-stone-400 ml-auto" x-text="(projectGroups[project.name] || []).length"></span>
                                 </button>
                                 <div class="relative" data-popover>
-                                    <button @click.stop="togglePopover('obj-' + obj.name, $event)" class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-400 transition-opacity">
+                                    <button @click.stop="togglePopover('proj-' + project.name, $event)" class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-400 transition-opacity">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="18" r="1"/></svg>
                                     </button>
                                 </div>
                             </div>
                             <!-- Sessions under project -->
-                            <div x-show="isObjectExpanded(obj.name)" x-transition class="ml-5 border-l border-stone-200 dark:border-stone-700 pl-2 mt-0.5">
-                                <template x-for="s in (objectGroups[obj.name] || [])" :key="s.session_id">
+                            <div x-show="isProjectExpanded(project.name)" x-transition class="ml-5 border-l border-stone-200 dark:border-stone-700 pl-2 mt-0.5">
+                                <template x-for="s in (projectGroups[project.name] || [])" :key="s.session_id">
                                     <div @click="switchSession(s.session_id)"
                                          class="px-2 py-1.5 rounded-md cursor-pointer group/sidebar sidebar-item text-sm"
                                          :class="currentSessionId === s.session_id ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'text-stone-600 dark:text-stone-400 hover:bg-brand-50/60 dark:hover:bg-brand-900/15'">
@@ -85,11 +89,11 @@
                                         <p class="text-[10px] text-stone-400 mt-0.5" x-text="s.saved_at"></p>
                                     </div>
                                 </template>
-                                <div x-show="(objectGroups[obj.name] || []).length === 0" class="text-[11px] text-stone-400 px-2 py-1">暂无会话</div>
+                                <div x-show="(projectGroups[project.name] || []).length === 0" class="text-[11px] text-stone-400 px-2 py-1">暂无会话</div>
                             </div>
                         </div>
                     </template>
-                    <div x-show="objects.length === 0" class="text-[11px] text-stone-400 py-1">暂无项目</div>
+                    <div x-show="projects.length === 0" class="text-[11px] text-stone-400 py-1">暂无项目</div>
                 </div>
             </div>
 
@@ -220,15 +224,15 @@
 
                 <!-- Empty State -->
                 <div x-show="turns.length === 0" class="text-center py-16 max-w-md mx-auto animate-fade-up">
-                    <div class="w-16 h-16 mx-auto mb-5 rounded-2xl empty-icon flex items-center justify-center">
+                    <div class="w-16 h-16 mx-auto mb-5 rounded-2xl empty-icon flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
                         <svg class="w-8 h-8 text-brand-600 dark:text-brand-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
                     </div>
                     <h2 class="text-lg font-semibold tracking-tight text-stone-800 dark:text-stone-200">观澜</h2>
                     <p class="text-stone-400 mt-1.5 text-sm leading-relaxed">上传数据集或描述分析任务开始使用</p>
                     <div class="mt-6 flex flex-col gap-2 text-left">
-                        <button @click="inputText = '分析数据中的趋势'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"分析数据中的趋势"</button>
-                        <button @click="inputText = '能发现什么洞察？'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"能发现什么洞察？"</button>
-                        <button @click="inputText = '创建关键指标的可视化'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">"创建关键指标的可视化"</button>
+                        <button @click="inputText = 'Analyze the trends'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">Analyze the trends</button>
+                        <button @click="inputText = 'What insights can you find?'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">What insights can you find?</button>
+                        <button @click="inputText = 'Create a visualization'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">Create a visualization</button>
                     </div>
                 </div>
 
@@ -410,7 +414,7 @@
                                                                 class="px-3 py-1.5 text-xs text-stone-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">取消</button>
                                                         <button @click="_submitConfirmation(turn)"
                                                                 :disabled="turn.confirmation._resuming"
-                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">提交</button>
+                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">Submit</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -496,8 +500,8 @@
     <aside class="hidden xl:flex w-80 shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col">
         <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-4 flex items-center justify-between">
             <div>
-                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">输出</p>
-                <p class="text-[10px] text-stone-400" x-text="activeObjectName ? ('项目：' + activeObjectName) : '未绑定会话'"></p>
+                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">Outputs</p>
+                <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
                 <!-- Compact analysis stage indicator -->
@@ -555,14 +559,14 @@
              :style="popoverPos.align === 'right' ? { top: popoverPos.top + 'px', right: popoverPos.right + 'px', width: '176px' } : { top: popoverPos.top + 'px', left: popoverPos.left + 'px', width: '176px' }"
              style="pointer-events: auto;">
             <!-- Project popover: Rename / Delete -->
-            <template x-if="activePopover && activePopover.startsWith('obj-')">
+            <template x-if="activePopover && activePopover.startsWith('proj-')">
                 <div>
-                    <button @click="renameObject(activePopover.slice(4))" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
+                    <button @click="renameProject(activePopover.slice(5))" class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                         重命名
                     </button>
                     <div class="border-t border-stone-100 dark:border-stone-700 my-1"></div>
-                    <button @click="deleteObject(activePopover.slice(4)); activePopover = null"
+                    <button @click="deleteProject(activePopover.slice(5)); activePopover = null"
                             class="w-full text-left px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                         删除
@@ -577,9 +581,9 @@
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                         移出项目
                     </button>
-                    <button @click="bindSessionToObject(popoverTargetId)"
+                    <button @click="bindSessionToProject(popoverTargetId)"
                             class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2"
-                            x-show="objects.length > 0">
+                            x-show="projects.length > 0">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                         移到其他项目...
                     </button>
@@ -605,9 +609,9 @@
             <!-- Uncat session popover: Move to / Artifacts / Export / Delete -->
             <template x-if="activePopover && activePopover.startsWith('u-')">
                 <div>
-                    <button @click="bindSessionToObject(popoverTargetId)"
+                    <button @click="bindSessionToProject(popoverTargetId)"
                             class="w-full text-left px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700 flex items-center gap-2"
-                            x-show="objects.length > 0">
+                            x-show="projects.length > 0">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                         移到项目...
                     </button>
@@ -655,16 +659,89 @@
                 <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">移到项目</h3>
             </div>
             <div class="max-h-60 overflow-y-auto py-1">
-                <template x-for="obj in objects" :key="obj.name">
-                    <button @click="bindSessionToObject(_bindModal.sessionId, obj.name); _bindModal.show = false"
+                <template x-for="project in projects" :key="project.name">
+                    <button @click="bindSessionToProject(_bindModal.sessionId, project.name); _bindModal.show = false"
                             class="w-full text-left px-5 py-2.5 hover:bg-stone-50 dark:hover:bg-stone-800 flex items-center gap-2 transition-colors">
                         <svg class="w-4 h-4 text-brand-600 dark:text-brand-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                        <span class="text-sm text-stone-700 dark:text-stone-300" x-text="obj.name"></span>
+                        <span class="text-sm text-stone-700 dark:text-stone-300" x-text="project.name"></span>
                     </button>
                 </template>
             </div>
             <div class="px-5 py-2 border-t border-stone-200 dark:border-stone-800 flex justify-end">
                 <button @click="_bindModal.show = false" class="px-3 py-1.5 text-xs text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Capabilities Modal -->
+    <div x-show="capabilityModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="capabilityModal.show = false">
+        <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-3xl mx-4 max-h-[82vh] overflow-hidden flex flex-col" @click.stop>
+            <div class="px-5 py-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between">
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Capabilities</h3>
+                <button @click="capabilityModal.show = false" class="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="p-5 overflow-y-auto grid gap-5 md:grid-cols-2">
+                <section>
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-xs font-semibold uppercase tracking-wider text-stone-500">Skills</h4>
+                        <button @click="loadCapabilityAdmin()" class="text-xs text-brand-600 hover:text-brand-700">Refresh</button>
+                    </div>
+                    <div class="space-y-2">
+                        <template x-for="skill in capabilityModal.skills" :key="skill.name">
+                            <div class="border border-stone-200 dark:border-stone-700 rounded-lg p-3">
+                                <div class="flex items-center gap-2">
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm font-medium truncate" x-text="skill.name"></p>
+                                        <p class="text-xs text-stone-500 truncate" x-text="skill.description || '-'"></p>
+                                    </div>
+                                    <button @click="setSkillEnabled(skill, !skill.enabled)" class="px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700" x-text="skill.enabled ? 'Disable' : 'Enable'"></button>
+                                    <button @click="deleteSkill(skill)" class="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12m-9 0V5h6v2m-8 0 1 12h8l1-12"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="capabilityModal.skills.length === 0" class="text-xs text-stone-400 py-3">No skills installed.</div>
+                    </div>
+                    <div class="mt-3 grid gap-2">
+                        <input x-model="capabilityModal.newSkillName" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="skill name">
+                        <input x-model="capabilityModal.newSkillSource" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="local path or URL">
+                        <button @click="addSkill()" class="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add Skill</button>
+                    </div>
+                </section>
+                <section>
+                    <h4 class="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">MCP Servers</h4>
+                    <div class="space-y-2">
+                        <template x-for="server in capabilityModal.mcpServers" :key="server.name">
+                            <div class="border border-stone-200 dark:border-stone-700 rounded-lg p-3">
+                                <div class="flex items-center gap-2">
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm font-medium truncate" x-text="server.name"></p>
+                                        <p class="text-xs text-stone-500 truncate" x-text="server.transport + (server.command ? ' - ' + server.command : '')"></p>
+                                    </div>
+                                    <button @click="setMcpEnabled(server, !server.enabled)" class="px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700" x-text="server.enabled ? 'Disable' : 'Enable'"></button>
+                                    <button @click="deleteMcpServer(server)" class="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12m-9 0V5h6v2m-8 0 1 12h8l1-12"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="capabilityModal.mcpServers.length === 0" class="text-xs text-stone-400 py-3">No MCP servers configured.</div>
+                    </div>
+                    <div class="mt-3 grid gap-2">
+                        <input x-model="capabilityModal.newMcpName" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="server name">
+                        <select x-model="capabilityModal.newMcpTransport" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800">
+                            <option value="stdio">stdio</option>
+                            <option value="sse">sse</option>
+                            <option value="streamable-http">streamable-http</option>
+                        </select>
+                        <input x-model="capabilityModal.newMcpCommand" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="command for stdio">
+                        <input x-model="capabilityModal.newMcpUrl" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="URL for SSE/HTTP">
+                        <button @click="addMcpServer()" class="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add MCP Server</button>
+                    </div>
+                </section>
             </div>
         </div>
     </div>
@@ -759,7 +836,7 @@
     <div x-show="rewindModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="rewindModal.show = false">
         <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" @click.stop>
             <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between shrink-0">
-                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">回退对话</h3>
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Rewind Conversation</h3>
                 <button @click="rewindModal.show = false" class="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
@@ -794,7 +871,7 @@
     <div x-show="compactDialog.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="compactDialog.show = false">
         <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-sm mx-4" @click.stop>
             <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800">
-                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">压缩上下文</h3>
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Compress Context</h3>
             </div>
             <div class="px-5 py-4">
                 <p class="text-xs text-stone-500 dark:text-stone-400 mb-3">可选：指定压缩时需要保留的重点内容：</p>

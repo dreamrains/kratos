@@ -16,12 +16,12 @@ function chatApp() {
         uploadedFiles: [],
         connectionError: '',
 
-        // Objects
-        objects: [],
-        activeObjectName: '',
-        showNewObjectForm: false,
-        newObjectName: '',
-        expandedObjects: {},
+        // Projects
+        projects: [],
+        activeProjectName: '',
+        showNewProjectForm: false,
+        newProjectName: '',
+        expandedProjects: {},
 
         // Model
         modelName: '',
@@ -32,6 +32,18 @@ function chatApp() {
 
         // Config modal
         configModal: { show: false, model_id: '', api_base: '', api_key: '', has_key: false, saving: false },
+        capabilityModal: {
+            show: false,
+            skills: [],
+            mcpServers: [],
+            newSkillName: '',
+            newSkillSource: '',
+            newMcpName: '',
+            newMcpTransport: 'stdio',
+            newMcpCommand: '',
+            newMcpUrl: '',
+            loading: false,
+        },
 
         // Artifacts modal
         artifactsModal: { show: false, sessionId: '', items: [] },
@@ -42,7 +54,7 @@ function chatApp() {
         capabilities: null,
         analysisState: null,
 
-        // Bind-to-object modal
+        // Bind-to-project modal
         _bindModal: { show: false, sessionId: '' },
 
         // Tasks
@@ -127,7 +139,7 @@ function chatApp() {
             this._initialized = true;
             await Promise.all([
                 this.loadSessions(),
-                this.loadObjects(),
+                this.loadProjects(),
                 this.loadCapabilities(),
                 this.loadModelInfo(),
                 this.loadTasks(),
@@ -157,10 +169,10 @@ function chatApp() {
             );
         },
 
-        get objectGroups() {
+        get projectGroups() {
             const groups = {};
             for (const s of this.filteredSessions) {
-                const key = s.object_name || '';
+                const key = s.project_name || '';
                 if (!groups[key]) groups[key] = [];
                 groups[key].push(s);
             }
@@ -168,7 +180,7 @@ function chatApp() {
         },
 
         get unboundSessions() {
-            return this.filteredSessions.filter(s => !s.object_name);
+            return this.filteredSessions.filter(s => !s.project_name);
         },
 
         get hasActiveConfirmation() {
@@ -209,7 +221,7 @@ function chatApp() {
             if (!this.activePopover) return '';
             if (this.activePopover.startsWith('s-')) return this.activePopover.slice(2);
             if (this.activePopover.startsWith('u-')) return this.activePopover.slice(2);
-            if (this.activePopover.startsWith('obj-')) return this.activePopover.slice(4);
+            if (this.activePopover.startsWith('proj-')) return this.activePopover.slice(5);
             return '';
         },
 
@@ -273,6 +285,78 @@ function chatApp() {
                 alert('保存失败：' + e.message);
             }
             this.configModal.saving = false;
+        },
+
+        async loadCapabilityAdmin() {
+            this.capabilityModal.show = true;
+            this.capabilityModal.loading = true;
+            try {
+                const [skillsRes, mcpRes] = await Promise.all([
+                    fetch('/api/skills'),
+                    fetch('/api/mcp/servers'),
+                ]);
+                this.capabilityModal.skills = await skillsRes.json();
+                this.capabilityModal.mcpServers = await mcpRes.json();
+            } catch (e) {
+                this.showToast('Capabilities load failed');
+            }
+            this.capabilityModal.loading = false;
+        },
+
+        async addSkill() {
+            if (!this.capabilityModal.newSkillName || !this.capabilityModal.newSkillSource) return;
+            await fetch('/api/skills', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: this.capabilityModal.newSkillName,
+                    source: this.capabilityModal.newSkillSource,
+                }),
+            });
+            this.capabilityModal.newSkillName = '';
+            this.capabilityModal.newSkillSource = '';
+            await this.loadCapabilityAdmin();
+        },
+
+        async setSkillEnabled(skill, enabled) {
+            await fetch(`/api/skills/${encodeURIComponent(skill.name)}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' });
+            await this.loadCapabilityAdmin();
+        },
+
+        async deleteSkill(skill) {
+            if (!confirm(`Delete skill ${skill.name}?`)) return;
+            await fetch(`/api/skills/${encodeURIComponent(skill.name)}`, { method: 'DELETE' });
+            await this.loadCapabilityAdmin();
+        },
+
+        async addMcpServer() {
+            if (!this.capabilityModal.newMcpName) return;
+            await fetch('/api/mcp/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: this.capabilityModal.newMcpName,
+                    transport: this.capabilityModal.newMcpTransport,
+                    command: this.capabilityModal.newMcpCommand,
+                    url: this.capabilityModal.newMcpUrl,
+                    enabled: true,
+                }),
+            });
+            this.capabilityModal.newMcpName = '';
+            this.capabilityModal.newMcpCommand = '';
+            this.capabilityModal.newMcpUrl = '';
+            await this.loadCapabilityAdmin();
+        },
+
+        async setMcpEnabled(server, enabled) {
+            await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}/${enabled ? 'enable' : 'disable'}`, { method: 'POST' });
+            await this.loadCapabilityAdmin();
+        },
+
+        async deleteMcpServer(server) {
+            if (!confirm(`Delete MCP server ${server.name}?`)) return;
+            await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}`, { method: 'DELETE' });
+            await this.loadCapabilityAdmin();
         },
 
         // --- Sessions ---
@@ -375,7 +459,7 @@ function chatApp() {
                     if (data.user_message) {
                         this.inputText = data.user_message;
                     }
-                    this.showToast('已回退，可编辑后重新发送');
+                    this.showToast(`已回滚到 Round ${roundIndex}`);
                 } else {
                     alert(data.error || '回退失败');
                 }
@@ -410,7 +494,7 @@ function chatApp() {
             if (this.isLoading && !confirm('任务正在运行，确认新建会话？')) return;
             this._saveCurrentState();
             this.currentSessionId = null;
-            this.activeObjectName = '';
+            this.activeProjectName = '';
             this.analysisState = null;
             this.sessionArtifacts = [];
             this.lastWorkbenchResult = null;
@@ -426,7 +510,7 @@ function chatApp() {
             this._saveCurrentState();
             this.currentSessionId = sessionId;
             this._restoreState(sessionId);
-            this.activeObjectName = '';
+            this.activeProjectName = '';
             this.lastWorkbenchResult = null;
 
             // Load fresh data from backend if not already loaded
@@ -439,7 +523,7 @@ function chatApp() {
                         state.turns = this._reconstructTurns(data.messages);
                         this.turns = state.turns;
                     }
-                    this.activeObjectName = data.object_name || '';
+                    this.activeProjectName = data.project_name || '';
                     if (data.token_usage) {
                         state.tokenPct = data.token_usage.pct || 0;
                         state.tokenSupported = true;
@@ -454,9 +538,9 @@ function chatApp() {
                     this.connectionError = '加载会话失败';
                 }
             } else {
-                // Find activeObjectName from sessions list
+                // Find activeProjectName from sessions list
                 const sess = this.sessions.find(s => s.session_id === sessionId);
-                if (sess) this.activeObjectName = sess.object_name || '';
+                if (sess) this.activeProjectName = sess.project_name || '';
             }
             await Promise.all([
                 this.loadAnalysisState(sessionId),
@@ -484,15 +568,15 @@ function chatApp() {
 
         // --- Objects ---
 
-        async loadObjects() {
+        async loadProjects() {
             try {
                 const res = await fetch('/api/projects');
-                this.objects = await res.json();
+                this.projects = await res.json();
             } catch {}
         },
 
-        async createObject() {
-            const name = this.newObjectName.trim();
+        async createProject() {
+            const name = this.newProjectName.trim();
             if (!name) return;
             try {
                 const res = await fetch('/api/projects', {
@@ -501,9 +585,9 @@ function chatApp() {
                     body: JSON.stringify({ name }),
                 });
                 if (res.ok) {
-                    this.newObjectName = '';
-                    this.showNewObjectForm = false;
-                    await this.loadObjects();
+                    this.newProjectName = '';
+                    this.showNewProjectForm = false;
+                    await this.loadProjects();
                 } else {
                     const data = await res.json();
                     alert(data.error || 'Failed to create project');
@@ -511,12 +595,12 @@ function chatApp() {
             } catch {}
         },
 
-        async deleteObject(objectName) {
-            if (!confirm(`确认删除项目 "${objectName}" 并解除所有会话绑定？`)) return;
+        async deleteProject(projectName) {
+            if (!confirm(`确认删除项目 "${projectName}" 并解除所有会话绑定？`)) return;
             try {
-                const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}`, { method: 'DELETE' });
+                const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}`, { method: 'DELETE' });
                 if (res.ok) {
-                    await this.loadObjects();
+                    await this.loadProjects();
                     await this.loadSessions();
                 } else {
                     const data = await res.json();
@@ -525,17 +609,17 @@ function chatApp() {
             } catch {}
         },
 
-        async renameObject(objectName) {
-            const newName = prompt(`将 "${objectName}" 重命名为：`, objectName);
-            if (!newName || newName === objectName) return;
+        async renameProject(projectName) {
+            const newName = prompt(`将 "${projectName}" 重命名为：`, projectName);
+            if (!newName || newName === projectName) return;
             try {
-                const res = await fetch(`/api/projects/${encodeURIComponent(objectName)}/rename`, {
+                const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}/rename`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ new_name: newName }),
                 });
                 if (res.ok) {
-                    await this.loadObjects();
+                    await this.loadProjects();
                     await this.loadSessions();
                 } else {
                     const data = await res.json();
@@ -547,9 +631,9 @@ function chatApp() {
             this.activePopover = null;
         },
 
-        async bindSessionToObject(sessionId, objectName) {
-            if (!objectName) {
-                // Show object selection modal
+        async bindSessionToProject(sessionId, projectName) {
+            if (!projectName) {
+                // Show project selection modal
                 this._bindModal = { show: true, sessionId };
                 this.activePopover = null;
                 return;
@@ -558,14 +642,14 @@ function chatApp() {
                 const res = await fetch('/api/projects/bind', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: sessionId, name: objectName }),
+                    body: JSON.stringify({ session_id: sessionId, name: projectName }),
                 });
                 const data = await res.json();
                 if (res.ok) {
                     await this.loadSessions();
-                    await this.loadObjects();
+                    await this.loadProjects();
                     if (this.currentSessionId === sessionId) {
-                        this.activeObjectName = objectName;
+                        this.activeProjectName = projectName;
                     }
                 } else {
                     alert(data.error || 'Bind failed');
@@ -586,9 +670,9 @@ function chatApp() {
                 const data = await res.json();
                 if (res.ok) {
                     await this.loadSessions();
-                    await this.loadObjects();
+                    await this.loadProjects();
                     if (this.currentSessionId === sessionId) {
-                        this.activeObjectName = '';
+                        this.activeProjectName = '';
                     }
                 } else {
                     alert(data.error || 'Unbind failed');
@@ -599,12 +683,12 @@ function chatApp() {
             this.activePopover = null;
         },
 
-        toggleObject(objectName) {
-            this.expandedObjects[objectName] = !this.expandedObjects[objectName];
+        toggleProject(projectName) {
+            this.expandedProjects[projectName] = !this.expandedProjects[projectName];
         },
 
-        isObjectExpanded(objectName) {
-            return !!this.expandedObjects[objectName];
+        isProjectExpanded(projectName) {
+            return !!this.expandedProjects[projectName];
         },
 
         // --- Artifacts ---

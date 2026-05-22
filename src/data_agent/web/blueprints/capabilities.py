@@ -25,7 +25,7 @@ def get_capabilities():
         },
         "terminology": {
             "primary_entity": "project",
-            "legacy_aliases": ["object"],
+            "legacy_aliases": [],
             "session_project_relationship": "session may be unbound or optionally bound to a project",
         },
         "commands": [
@@ -35,6 +35,13 @@ def get_capabilities():
                 "api": ["/api/projects", "/api/projects/bind", "/api/projects/unbind"],
                 "ui": ["project sidebar", "session project binding"],
                 "variants": ["create", "bind", "unbind", "rename", "delete"],
+            },
+            {
+                "name": "capabilities",
+                "cli": ["skill tools", "mcp tools"],
+                "api": ["/api/skills", "/api/mcp/servers"],
+                "ui": ["capabilities modal"],
+                "variants": ["add", "enable", "disable", "delete"],
             },
             {
                 "name": "analysis",
@@ -83,6 +90,8 @@ def get_capabilities():
             "/api/sessions/<session_id>/export",
             "/api/tasks",
             "/api/projects",
+            "/api/skills",
+            "/api/mcp/servers",
             "/api/uploads",
         ],
     })

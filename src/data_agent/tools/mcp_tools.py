@@ -1,27 +1,40 @@
-"""MCP 相关工具：call_mcp_tool, list_mcp_servers。"""
+"""MCP runtime and configuration management tools."""
 
 from __future__ import annotations
 
 import json
 
+from data_agent.config import get_config
+from data_agent.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
 from data_agent.tools.registry import registry
+
+
+def _config_path():
+    return get_config().global_mcp_config_path
+
+
+def _load_config():
+    return load_mcp_config(_config_path())
+
+
+def _save_config(config) -> None:
+    save_mcp_config(config, _config_path())
 
 
 @registry.register(
     name="call_mcp_tool",
-    description="直接调用 MCP 服务器上的工具。用于调用已连接 MCP 服务器提供的工具能力。",
+    description="Call a tool exposed by a connected MCP server.",
     parameters={
         "type": "object",
         "properties": {
-            "server": {"type": "string", "description": "MCP 服务器名称"},
-            "tool": {"type": "string", "description": "服务器上的工具名称"},
-            "arguments": {"type": "string", "description": "JSON 格式的工具参数，如 '{\"path\": \"/tmp/file.txt\"}'"},
+            "server": {"type": "string", "description": "MCP server name"},
+            "tool": {"type": "string", "description": "Tool name on the server"},
+            "arguments": {"type": "string", "description": "JSON-formatted tool arguments"},
         },
         "required": ["server", "tool"],
     },
 )
 def call_mcp_tool(server: str, tool: str, arguments: str = "{}") -> str:
-    """直接调用 MCP 工具（匹配 PRD 中 call_mcp_tool(server, tool, args) 要求）。"""
     from data_agent.agent.loop import get_mcp_manager
 
     mcp_mgr = get_mcp_manager()
@@ -38,16 +51,95 @@ def call_mcp_tool(server: str, tool: str, arguments: str = "{}") -> str:
 
 @registry.register(
     name="list_mcp_servers",
-    description="列出所有已连接的 MCP 服务器及其提供的工具。",
+    description="List configured global MCP servers and current connection health.",
     parameters={"type": "object", "properties": {}},
 )
 def list_mcp_servers() -> str:
-    """列出所有已连接的 MCP 服务器。"""
     from data_agent.agent.loop import get_mcp_manager
 
+    config = _load_config()
+    configured = [server.model_dump(exclude_none=True) for server in config.servers]
     mcp_mgr = get_mcp_manager()
-    if mcp_mgr is None:
-        return json.dumps({"servers": [], "message": "MCP not configured"}, ensure_ascii=False)
+    health = [] if mcp_mgr is None else mcp_mgr.health_check()
+    return json.dumps({"servers": configured, "health": health}, ensure_ascii=False, indent=2)
 
-    status = mcp_mgr.health_check()
-    return json.dumps({"servers": status}, ensure_ascii=False, indent=2)
+
+@registry.register(
+    name="add_mcp_server",
+    description="Add or replace a global MCP server configuration.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "transport": {"type": "string", "enum": ["stdio", "sse", "streamable-http"]},
+            "command": {"type": "string"},
+            "args": {"type": "array", "items": {"type": "string"}},
+            "url": {"type": "string"},
+            "enabled": {"type": "boolean"},
+        },
+        "required": ["name", "transport"],
+    },
+)
+def add_mcp_server(
+    name: str,
+    transport: str,
+    command: str = "",
+    args: list[str] | None = None,
+    url: str = "",
+    enabled: bool = True,
+) -> str:
+    config = _load_config()
+    server = MCPServerConfig(
+        name=name,
+        transport=transport,
+        command=command or None,
+        args=args or None,
+        url=url or None,
+        enabled=enabled,
+    )
+    config.servers = [s for s in config.servers if s.name != name] + [server]
+    _save_config(config)
+    return f"MCP server '{name}' saved globally."
+
+
+@registry.register(
+    name="enable_mcp_server",
+    description="Enable a global MCP server configuration.",
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+)
+def enable_mcp_server(name: str) -> str:
+    return _set_mcp_server_enabled(name, True)
+
+
+@registry.register(
+    name="disable_mcp_server",
+    description="Disable a global MCP server configuration.",
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+)
+def disable_mcp_server(name: str) -> str:
+    return _set_mcp_server_enabled(name, False)
+
+
+def _set_mcp_server_enabled(name: str, enabled: bool) -> str:
+    config = _load_config()
+    for server in config.servers:
+        if server.name == name:
+            server.enabled = enabled
+            _save_config(config)
+            return f"MCP server '{name}' {'enabled' if enabled else 'disabled'}."
+    return f"MCP server '{name}' not found."
+
+
+@registry.register(
+    name="delete_mcp_server",
+    description="Delete a global MCP server configuration.",
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+)
+def delete_mcp_server(name: str) -> str:
+    config = _load_config()
+    original_count = len(config.servers)
+    config.servers = [server for server in config.servers if server.name != name]
+    if len(config.servers) == original_count:
+        return f"MCP server '{name}' not found."
+    _save_config(config)
+    return f"MCP server '{name}' deleted."

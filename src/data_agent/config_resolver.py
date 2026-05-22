@@ -1,4 +1,9 @@
-"""配置合并逻辑：全局 ~/.data-agent/ + 项目 project/ 的两级配置。"""
+"""Resolve configuration locations.
+
+Skills and MCP servers are user-level capabilities. Workspace-level paths are
+kept on AgentConfig for migration and review only, but they are not part of the
+active runtime resolution.
+"""
 
 from __future__ import annotations
 
@@ -11,42 +16,35 @@ from data_agent.config import get_config
 
 
 def resolve_skills_dirs() -> list[Path]:
-    """返回 skill 目录列表 [全局, 项目]，项目级覆盖全局。"""
+    """Return the global skill directory used by the runtime."""
     cfg = get_config()
-    return [cfg.global_skills_dir, cfg.skills_dir]
+    return [cfg.global_skills_dir]
 
 
 def resolve_mcp_config() -> Any:
-    """合并全局和项目级 MCP 配置，项目级按 server name 覆盖全局。"""
-    from data_agent.mcp.config import MCPConfig, load_mcp_config
+    """Load the global MCP configuration used by the runtime."""
+    from data_agent.mcp.config import load_mcp_config
 
     cfg = get_config()
-
-    global_config = load_mcp_config(cfg.global_mcp_config_path)
-    project_config = load_mcp_config(cfg.mcp_config_path)
-
-    if not global_config.servers:
-        return project_config
-    if not project_config.servers:
-        return global_config
-
-    return merge_mcp_configs(global_config, project_config)
+    return load_mcp_config(cfg.global_mcp_config_path)
 
 
 def merge_mcp_configs(global_config: Any, project_config: Any) -> Any:
-    """合并两个 MCPConfig，project 按 server name 覆盖 global。"""
+    """Compatibility helper for legacy callers.
+
+    The active runtime no longer merges workspace/project MCP configs. Keeping
+    this helper avoids breaking old imports during the pre-release rename.
+    """
     from data_agent.mcp.config import MCPConfig
 
     global_servers = {s.name: s for s in global_config.servers}
     project_servers = {s.name: s for s in project_config.servers}
-
-    # 项目级覆盖全局同名项，保留全局独有项
     merged = {**global_servers, **project_servers}
     return MCPConfig(servers=list(merged.values()))
 
 
 def resolve_settings() -> dict[str, Any]:
-    """合并全局和项目级用户设置。"""
+    """Merge user settings with optional workspace settings."""
     cfg = get_config()
     settings: dict[str, Any] = {}
 

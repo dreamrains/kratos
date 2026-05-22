@@ -19,7 +19,8 @@ class AgentConfig(BaseSettings):
     max_tokens: int = Field(alias="MAX_TOKENS", default=8000)
 
     # Paths
-    project_dir: Path = Field(alias="PROJECT_DIR", default=Path("./project"))
+    workspace_dir: Path = Field(alias="WORKSPACE_DIR", default=Path("./workspace"))
+    project_dir: Optional[Path] = Field(alias="PROJECT_DIR", default=None)
     sessions_dir: Path = Field(alias="SESSIONS_DIR", default=Path("./sessions"))
 
     # Agent
@@ -34,11 +35,8 @@ class AgentConfig(BaseSettings):
     mcp_enabled: bool = Field(alias="MCP_ENABLED", default=True)
     skill_auto_discover: bool = Field(alias="SKILL_AUTO_DISCOVER", default=True)
 
-    # ── 全局配置目录 ──────────────────────────────────────
-
     @property
     def global_dir(self) -> Path:
-        """全局配置目录 ~/.data-agent/，跨项目共享 skill、MCP 配置等。"""
         p = Path.home() / ".data-agent"
         p.mkdir(parents=True, exist_ok=True)
         return p
@@ -79,42 +77,48 @@ class AgentConfig(BaseSettings):
         return v
 
     @property
-    def project_resolved(self) -> Path:
-        p = self.project_dir
+    def workspace_resolved(self) -> Path:
+        p = self.workspace_dir
+        if self.project_dir is not None and self.workspace_dir == Path("./workspace"):
+            p = self.project_dir
         if not p.is_absolute():
             p = Path.cwd() / p
+        p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
+    def project_resolved(self) -> Path:
+        """Compatibility alias for the pre-release PROJECT_DIR name."""
+        return self.workspace_resolved
+
+    @property
     def data_dir(self) -> Path:
-        p = self.project_resolved / "data"
+        p = self.workspace_resolved / "data"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def inbox_dir(self) -> Path:
-        p = self.project_resolved / "inbox"
+        p = self.workspace_resolved / "inbox"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def objects_dir(self) -> Path:
-        p = self.project_resolved / "objects"
+        """Legacy object storage path kept only for migration and old imports."""
+        p = self.workspace_resolved / "objects"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def projects_dir(self) -> Path:
-        """User-facing project directory alias.
-
-        Phase 1 keeps the existing objects/ storage for compatibility while all
-        new APIs expose the friendlier "project" terminology.
-        """
-        return self.objects_dir
+        p = self.workspace_resolved / "projects"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 
     @property
     def knowledge_dir(self) -> Path:
-        p = self.project_resolved / "knowledge"
+        p = self.workspace_resolved / "knowledge"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -127,23 +131,62 @@ class AgentConfig(BaseSettings):
         return p
 
     @property
-    def workspace_resolved(self) -> Path:
-        """向后兼容别名。"""
-        return self.project_resolved
-
-    @property
     def mcp_config_path(self) -> Path:
-        return self.project_resolved / "mcp_servers.yaml"
+        """Legacy workspace-level MCP config path kept for migration only."""
+        return self.workspace_resolved / "mcp_servers.yaml"
 
     @property
     def skills_dir(self) -> Path:
-        return self.project_resolved / "skills"
+        """Legacy workspace-level skills path kept for migration only."""
+        return self.workspace_resolved / "skills"
 
     @property
     def log_file_resolved(self) -> Optional[Path]:
         if self.log_file:
             return Path(self.log_file)
         return None
+
+
+ENV_KEY_MAP = {
+    "model_id": "MODEL_ID",
+    "api_base": "API_BASE",
+    "api_key": "API_KEY",
+}
+
+
+def persist_config_to_env(updates: dict) -> None:
+    env_path = Path.cwd() / ".env"
+
+    env_updates = {}
+    for py_key, value in updates.items():
+        env_name = ENV_KEY_MAP.get(py_key)
+        if env_name:
+            env_updates[env_name] = value
+
+    if not env_updates:
+        return
+
+    lines: list[str] = []
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    updated_keys: set[str] = set()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in env_updates:
+                val = env_updates[key]
+                lines[i] = f"{key}={val if val is not None else ''}"
+                updated_keys.add(key)
+
+    for key, value in env_updates.items():
+        if key not in updated_keys:
+            lines.append(f"{key}={value if value is not None else ''}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 _config: Optional[AgentConfig] = None
@@ -157,7 +200,6 @@ def get_config() -> AgentConfig:
 
 
 def update_runtime_config(updates: dict) -> dict:
-    """运行时更新配置（不写入 .env）。返回更新后的字段。"""
     cfg = get_config()
     changed = {}
     for key, value in updates.items():
