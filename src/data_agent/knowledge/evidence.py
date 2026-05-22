@@ -32,6 +32,7 @@ class EvidenceStore:
         created_at = str(meta.get("saved_at") or _now())
         inserted = 0
         with self.db.connect() as conn:
+            conn.execute("DELETE FROM evidence_records WHERE session_id = ?", (session_id,))
             for idx, message in enumerate(messages):
                 content = self._message_content(message)
                 if not content:
@@ -82,9 +83,12 @@ class EvidenceStore:
             haystack = f"{record.summary}\n{record.content}".lower()
             score = sum(haystack.count(term) for term in terms)
             if score > 0:
-                scored.append((score, record.created_at, record))
-        scored.sort(key=lambda item: (item[0], item[1], item[2].id), reverse=True)
-        return [record for _, _, record in scored[:limit]]
+                scored.append((score, record.created_at, record.id, record))
+        # Stable multi-pass ordering: score DESC, created_at DESC, id ASC.
+        scored.sort(key=lambda item: item[2])
+        scored.sort(key=lambda item: item[1], reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [record for _, _, _, record in scored[:limit]]
 
     def get(self, evidence_id: str) -> EvidenceRecord | None:
         with self.db.connect() as conn:
@@ -107,14 +111,16 @@ class EvidenceStore:
             embedding_ref=row["embedding_ref"],
             created_at=row["created_at"],
             tags=self._json_list(row["tags"]),
-            content=self._content_for_ref(row["content_ref"]),
+            content=self._content_for_ref(row["content_ref"], expected_session_id=row["session_id"]),
         )
 
-    def _content_for_ref(self, content_ref: str) -> str:
+    def _content_for_ref(self, content_ref: str, expected_session_id: str = "") -> str:
         prefix = ":message:"
         if prefix not in content_ref:
             return ""
         session_id, index_text = content_ref.split(prefix, 1)
+        if expected_session_id and session_id != expected_session_id:
+            return ""
         if not index_text.isdigit():
             return ""
         session_dir = self._session_dir_for(session_id)

@@ -120,3 +120,68 @@ def test_search_limit_and_missing_or_invalid_refs(tmp_path: Path):
     assert [item.content for item in store.search("alpha", limit=1)] == ["alpha alpha beta"]
     assert store._content_for_ref("s1:message:not-int") == ""
     assert store._content_for_ref("s1:message:99") == ""
+
+
+def test_reindex_session_removes_stale_evidence(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    session_dir = sessions_dir / "s1"
+    session_dir.mkdir(parents=True)
+    _write_json(session_dir / "meta.json", {"project_name": "sales"})
+    _write_json(
+        session_dir / "conversation.json",
+        [
+            {"role": "user", "content": "fresh metric"},
+            {"role": "assistant", "content": "stale metric"},
+        ],
+    )
+    store = EvidenceStore(tmp_path / "knowledge", sessions_dir=sessions_dir)
+
+    assert store.index_session("s1") == 2
+    _write_json(
+        session_dir / "conversation.json",
+        [
+            {"role": "user", "content": "fresh metric"},
+            {"role": "assistant", "content": ""},
+        ],
+    )
+
+    assert store.index_session("s1") == 1
+    assert [item.content for item in store.search("fresh", project_id="sales")] == ["fresh metric"]
+    assert store.search("stale", project_id="sales") == []
+    assert store.get("ev_s1_1") is None
+
+
+def test_content_ref_must_match_row_session_id(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    s1_dir = sessions_dir / "s1"
+    s2_dir = sessions_dir / "s2"
+    s1_dir.mkdir(parents=True)
+    s2_dir.mkdir(parents=True)
+    _write_json(s1_dir / "conversation.json", [{"role": "user", "content": "session one content"}])
+    _write_json(s2_dir / "conversation.json", [{"role": "user", "content": "session two secret"}])
+
+    store = EvidenceStore(tmp_path / "knowledge", sessions_dir=sessions_dir)
+    with store.db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO evidence_records
+            (id, session_id, project_id, kind, content_ref, summary, embedding_ref, created_at, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "ev_mismatch",
+                "s1",
+                "",
+                EvidenceKind.MESSAGE.value,
+                "s2:message:0",
+                "mismatch",
+                "",
+                "2026-05-23T10:00:00",
+                "[]",
+            ),
+        )
+
+    record = store.get("ev_mismatch")
+
+    assert record is not None
+    assert record.content == ""
