@@ -551,7 +551,7 @@ def build_system_prompt(
         if prof_instruction:
             injections.append(prof_instruction)
         if guidance_knowledge:
-            injections.append(f"<project_knowledge>\n{guidance_knowledge}\n</project_knowledge>")
+            injections.append(f"<retrieved_context>\n{guidance_knowledge}\n</retrieved_context>")
         if untrusted_session_context:
             injections.append(untrusted_session_context)
         if skill_instructions:
@@ -578,7 +578,7 @@ def build_system_prompt(
         if prof_instruction:
             injections.append(prof_instruction)
         if analysis_knowledge:
-            injections.append(f"<project_knowledge>\n{analysis_knowledge}\n</project_knowledge>")
+            injections.append(f"<retrieved_context>\n{analysis_knowledge}\n</retrieved_context>")
         if untrusted_session_context:
             injections.append(untrusted_session_context)
         if skill_instructions:

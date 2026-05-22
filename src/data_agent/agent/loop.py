@@ -443,8 +443,17 @@ class AgentLoop:
         """清除中断信号（新 turn 开始时调用）。"""
         self._interrupt_event.clear()
 
+    def _build_retrieval_query(self, messages: list[dict]) -> str:
+        for message in reversed(messages[-6:]):
+            if message.get("role") == "user":
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    return content[:500]
+        return ""
+
     def _build_system_prompt(self) -> str:
         from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
+        from data_agent.knowledge.retrieval import KnowledgeRetrievalService
         from data_agent.session.workspace import workspace
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
@@ -518,10 +527,25 @@ class AgentLoop:
         if level == "chat":
             tool_list = ""
 
-        project_rules, domain_knowledge, experience_log = get_knowledge_instances()
+        project_rules, _domain_knowledge, _experience_log = get_knowledge_instances()
         rules_prompt = project_rules.get_rules_for_prompt(session_id=sid)
-        domain_prompt = domain_knowledge.get_for_prompt(session_id=sid)
-        experience_prompt = experience_log.get_for_prompt(session_id=sid)
+        retrieved_context = ""
+        retrieval_query = self._build_retrieval_query(self.messages)
+        if retrieval_query:
+            try:
+                service = KnowledgeRetrievalService()
+                context = service.retrieve(
+                    retrieval_query,
+                    domain="",
+                    project_id=self.context.project_name or "",
+                    include_evidence=False,
+                )
+                retrieved_context = service.compose_prompt_context(context)
+            except Exception as exc:
+                logger.warning(
+                    "Knowledge retrieval failed",
+                    extra={"extra_data": {"session_id": sid, "error": str(exc)}},
+                )
 
         # Chat 模式：跳过技能信息
         skill_descriptions = ""
@@ -551,8 +575,8 @@ class AgentLoop:
         return build_system_prompt(
             tool_list=tool_list,
             project_rules=rules_prompt,
-            domain_knowledge=domain_prompt,
-            experience_log=experience_prompt,
+            domain_knowledge=retrieved_context,
+            experience_log="",
             session_context=session_ctx,
             skill_instructions=skill_instructions,
             skill_descriptions=skill_descriptions,
