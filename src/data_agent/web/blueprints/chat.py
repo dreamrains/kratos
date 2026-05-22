@@ -239,10 +239,11 @@ def get_config_info():
 
 @chat_bp.post("/config")
 def update_config_info():
-    """Update LLM config at runtime (not persisted to .env)."""
+    """Update LLM config at runtime and persist to .env."""
     data = request.get_json(force=True)
-    from data_agent.config import update_runtime_config
-    changed = update_runtime_config({
-        k: v for k, v in data.items() if k in ("model_id", "api_base", "api_key")
-    })
+    from data_agent.config import update_runtime_config, persist_config_to_env
+    filtered = {k: v for k, v in data.items() if k in ("model_id", "api_base", "api_key")}
+    changed = update_runtime_config(filtered)
+    if changed:
+        persist_config_to_env(changed)
     return jsonify({"updated": list(changed.keys())})

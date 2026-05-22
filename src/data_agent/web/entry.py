@@ -2,6 +2,20 @@
 
 import os
 import sys
+import threading
+import webbrowser
+
+
+def _open_browser(host: str, port: int):
+    """Auto-open browser after a short delay."""
+    def _open():
+        import time
+        time.sleep(1.0)
+        try:
+            webbrowser.open(f"http://{host}:{port}")
+        except Exception:
+            print(f"[web] 请在浏览器中打开 http://{host}:{port}")
+    threading.Thread(target=_open, daemon=True).start()
 
 
 def main():
@@ -25,6 +39,11 @@ def main():
     app.config["lifecycle"] = lifecycle
     host = os.environ.get("DATA_AGENT_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("DATA_AGENT_WEB_PORT", "5001"))
+
+    if not os.environ.get("DATA_AGENT_NO_BROWSER"):
+        _open_browser(host, port)
+
+    print(f"[web] 观澜 Data Agent 已启动：http://{host}:{port}")
 
     try:
         app.run(host=host, port=port, threaded=True, debug=False)
