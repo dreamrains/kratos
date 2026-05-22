@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
 
 from data_agent.config import get_config
 from data_agent.knowledge.models import MemoryItem, MemoryStatus, MemoryType
@@ -29,8 +29,14 @@ def _memory_status(value: MemoryStatus | str) -> MemoryStatus:
         raise ValueError(f"Invalid status: {value}") from exc
 
 
-def _json_list(values: Sequence[str] | None) -> str:
-    return json.dumps(list(values or []), ensure_ascii=False)
+def _json_list(values: list[str] | tuple[str, ...] | None, field_name: str) -> str:
+    if values is None:
+        return "[]"
+    if not isinstance(values, (list, tuple)) or isinstance(values, str):
+        raise ValueError(f"Invalid {field_name}: expected list[str]")
+    if not all(isinstance(value, str) for value in values):
+        raise ValueError(f"Invalid {field_name}: expected list[str]")
+    return json.dumps(list(values), ensure_ascii=False)
 
 
 class MemoryStore:
@@ -54,7 +60,7 @@ class MemoryStore:
     ) -> MemoryItem:
         type_value = _memory_type(memory_type)
         confidence_value = float(confidence)
-        if confidence_value < 0 or confidence_value > 1:
+        if not math.isfinite(confidence_value) or confidence_value < 0 or confidence_value > 1:
             raise ValueError(f"Invalid confidence: {confidence}")
 
         item_id = f"mem_{uuid.uuid4().hex[:10]}"
@@ -76,11 +82,11 @@ class MemoryStore:
                     MemoryStatus.CANDIDATE.value,
                     confidence_value,
                     source_session_id,
-                    _json_list(source_message_ids),
-                    _json_list(source_tool_call_ids),
+                    _json_list(source_message_ids, "source_message_ids"),
+                    _json_list(source_tool_call_ids, "source_tool_call_ids"),
                     project_id,
                     domain.strip() or "general",
-                    _json_list(tags),
+                    _json_list(tags, "tags"),
                     "",
                     0,
                     now,
@@ -124,6 +130,8 @@ class MemoryStore:
         item = self.get(item_id)
         if item is None:
             return None
+        if item.status != MemoryStatus.CANDIDATE:
+            return item
         with self.db.connect() as conn:
             conn.execute(
                 """
@@ -136,27 +144,29 @@ class MemoryStore:
         return self.get(item_id)
 
     def reject(self, item_id: str) -> MemoryItem | None:
-        return self._set_status(item_id, MemoryStatus.REJECTED)
+        return self._set_status(item_id, MemoryStatus.REJECTED, allowed={MemoryStatus.CANDIDATE})
 
     def deprecate(self, item_id: str) -> MemoryItem | None:
-        return self._set_status(item_id, MemoryStatus.DEPRECATED)
+        return self._set_status(item_id, MemoryStatus.DEPRECATED, allowed={MemoryStatus.CONFIRMED})
 
     def mark_promoted(self, item_id: str) -> MemoryItem | None:
-        return self._set_status(item_id, MemoryStatus.PROMOTED)
+        return self._set_status(item_id, MemoryStatus.PROMOTED, allowed={MemoryStatus.CONFIRMED})
 
     def search(self, query: str, domain: str = "", limit: int = 5) -> list[MemoryItem]:
+        if limit <= 0:
+            return []
         terms = [term.lower() for term in query.split() if term.strip()]
         if not terms:
             return []
         candidates = self.list(status=MemoryStatus.CONFIRMED, domain=domain)
-        scored: list[tuple[int, float, MemoryItem]] = []
+        scored: list[tuple[int, float, str, str, MemoryItem]] = []
         for item in candidates:
             haystack = " ".join([item.text, item.summary, " ".join(item.tags)]).lower()
             score = sum(haystack.count(term) for term in terms)
             if score > 0:
-                scored.append((score, item.confidence, item))
-        scored.sort(key=lambda pair: (pair[0], pair[1]), reverse=True)
-        return [item for _, _, item in scored[:limit]]
+                scored.append((score, item.confidence, item.updated_at, item.id, item))
+        scored.sort(key=lambda pair: (pair[0], pair[1], pair[2], pair[3]), reverse=True)
+        return [item for _, _, _, _, item in scored[:limit]]
 
     def touch_used(self, item_id: str) -> MemoryItem | None:
         now = _now()
@@ -171,7 +181,17 @@ class MemoryStore:
             )
         return self.get(item_id)
 
-    def _set_status(self, item_id: str, status: MemoryStatus) -> MemoryItem | None:
+    def _set_status(
+        self,
+        item_id: str,
+        status: MemoryStatus,
+        allowed: set[MemoryStatus] | None = None,
+    ) -> MemoryItem | None:
+        item = self.get(item_id)
+        if item is None:
+            return None
+        if allowed is not None and item.status not in allowed:
+            return item
         with self.db.connect() as conn:
             conn.execute(
                 "UPDATE memory_items SET status = ?, updated_at = ? WHERE id = ?",
