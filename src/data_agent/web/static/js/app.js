@@ -376,12 +376,22 @@ function chatApp() {
 
         managementTitle() {
             return {
-                skills: 'Skills',
-                mcp: 'MCP',
-                knowledge: 'Knowledge',
-                memory: 'Memory',
-                evidence: 'Session Search',
-            }[this.managementCenter.section] || 'Management';
+                skills: '技能',
+                mcp: 'MCP 服务器',
+                knowledge: '知识',
+                memory: '记忆',
+                evidence: '会话搜索',
+            }[this.managementCenter.section] || '管理';
+        },
+
+        managementSubtitle() {
+            return {
+                skills: '管理全局可复用能力。',
+                mcp: '连接外部工具和数据源。',
+                knowledge: '维护用户确认的正式知识。',
+                memory: '审查从会话中提取的候选记忆。',
+                evidence: '跨会话检索历史内容和证据。',
+            }[this.managementCenter.section] || '';
         },
 
         async openManagementCenter(section = 'skills') {
@@ -415,11 +425,67 @@ function chatApp() {
             this.managementDrawer = { show: false, kind: '', title: '', form: {} };
         },
 
+        openSkillDrawer() {
+            this.managementDrawer = {
+                show: true,
+                kind: 'skill',
+                title: '添加技能',
+                form: { name: '', source: '' },
+            };
+        },
+
+        async saveSkillItem() {
+            const form = this.managementDrawer.form || {};
+            if (!form.name || !form.source) return;
+            const res = await fetch('/api/skills', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: form.name, source: form.source }),
+            });
+            if (!res.ok) {
+                this.showToast('技能添加失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('skills');
+        },
+
+        openMcpDrawer() {
+            this.managementDrawer = {
+                show: true,
+                kind: 'mcp',
+                title: '添加服务器',
+                form: { name: '', transport: 'stdio', command: '', url: '' },
+            };
+        },
+
+        async saveMcpServer() {
+            const form = this.managementDrawer.form || {};
+            if (!form.name) return;
+            const res = await fetch('/api/mcp/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: form.name,
+                    transport: form.transport || 'stdio',
+                    command: form.command || '',
+                    url: form.url || '',
+                    enabled: true,
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('服务器添加失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('mcp');
+        },
+
         openKnowledgeDrawer(item = null) {
             this.managementDrawer = {
                 show: true,
                 kind: 'knowledge',
-                title: item ? 'Edit Knowledge' : 'New Knowledge',
+                title: item ? '编辑知识' : '新建知识',
                 form: item ? { ...item } : { title: '', domain: 'general', summary: '', content: '' },
             };
         },
@@ -441,7 +507,7 @@ function chatApp() {
                 body: JSON.stringify(payload),
             });
             if (!res.ok) {
-                this.showToast('Knowledge save failed');
+                this.showToast('知识保存失败');
                 return;
             }
             this.closeManagementDrawer();
@@ -452,7 +518,7 @@ function chatApp() {
             this.managementDrawer = {
                 show: true,
                 kind: 'memory',
-                title: 'New Memory Candidate',
+                title: '新建记忆候选',
                 form: { summary: '', memory_type: 'workflow_pattern', text: '' },
             };
         },
@@ -469,7 +535,7 @@ function chatApp() {
                 }),
             });
             if (!res.ok) {
-                this.showToast('Memory save failed');
+                this.showToast('记忆保存失败');
                 return;
             }
             this.closeManagementDrawer();

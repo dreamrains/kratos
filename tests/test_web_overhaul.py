@@ -49,6 +49,19 @@ def test_management_center_shell_exists(html, js, css):
     assert ".management-drawer" in css
 
 
+def test_management_center_uses_chinese_settings_interaction(html, js):
+    assert "返回应用" in html
+    assert "技能" in html
+    assert "MCP 服务器" in html
+    assert "知识" in html
+    assert "记忆" in html
+    assert "会话搜索" in html
+    assert "添加技能" in html
+    assert "添加服务器" in html
+    assert "openSkillDrawer" in js
+    assert "openMcpDrawer" in js
+
+
 # =====================================================
 # Phase 1: Critical Bug Fixes
 # =====================================================

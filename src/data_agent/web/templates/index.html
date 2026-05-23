@@ -749,29 +749,34 @@
     <!-- Management Center -->
     <section id="managementCenter" x-show="managementCenter.show" x-transition.opacity class="management-center" aria-label="Management center">
         <aside id="managementMenu" class="management-sidebar">
-            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'skills' }" @click="loadManagementSection('skills')">Skills</button>
-            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'mcp' }" @click="loadManagementSection('mcp')">MCP</button>
-            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'knowledge' }" @click="loadManagementSection('knowledge')">Knowledge</button>
-            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'memory' }" @click="loadManagementSection('memory')">Memory</button>
-            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'evidence' }" @click="loadManagementSection('evidence')">Session Search</button>
+            <button type="button" class="management-back" @click="managementCenter.show = false">← 返回应用</button>
+            <div class="management-menu-group">
+                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'skills' }" @click="loadManagementSection('skills')">技能</button>
+                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'mcp' }" @click="loadManagementSection('mcp')">MCP 服务器</button>
+                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'knowledge' }" @click="loadManagementSection('knowledge')">知识</button>
+                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'memory' }" @click="loadManagementSection('memory')">记忆</button>
+                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'evidence' }" @click="loadManagementSection('evidence')">会话搜索</button>
+            </div>
         </aside>
         <main class="management-content">
             <header class="management-header">
-                <h2 id="managementTitle" x-text="managementTitle()"></h2>
-                <button type="button" class="icon-button" @click="managementCenter.show = false" aria-label="Close management center">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
-                </button>
+                <div>
+                    <h2 id="managementTitle" x-text="managementTitle()"></h2>
+                    <p class="management-subtitle" x-text="managementSubtitle()"></p>
+                </div>
             </header>
             <div id="managementToolbar" class="management-toolbar">
-                <button x-show="managementCenter.section === 'knowledge'" type="button" @click="openKnowledgeDrawer()" class="px-3 py-1.5 text-sm rounded bg-brand-600 text-white">New Knowledge</button>
-                <button x-show="managementCenter.section === 'memory'" type="button" @click="openMemoryDrawer()" class="px-3 py-1.5 text-sm rounded bg-brand-600 text-white">New Memory</button>
+                <button x-show="managementCenter.section === 'skills'" type="button" @click="openSkillDrawer()" class="management-primary-action">+ 添加技能</button>
+                <button x-show="managementCenter.section === 'mcp'" type="button" @click="openMcpDrawer()" class="management-primary-action">+ 添加服务器</button>
+                <button x-show="managementCenter.section === 'knowledge'" type="button" @click="openKnowledgeDrawer()" class="management-primary-action">+ 新建知识</button>
+                <button x-show="managementCenter.section === 'memory'" type="button" @click="openMemoryDrawer()" class="management-primary-action">+ 新建记忆</button>
                 <div x-show="managementCenter.section === 'evidence'" class="management-search">
-                    <input x-model="managementCenter.evidenceQuery" type="search" placeholder="Search sessions">
-                    <button type="button" @click="searchEvidence()">Search</button>
+                    <input x-model="managementCenter.evidenceQuery" type="search" placeholder="搜索会话">
+                    <button type="button" @click="searchEvidence()">搜索</button>
                 </div>
             </div>
             <div id="managementBody" class="management-body">
-                <div x-show="managementCenter.loading" class="text-sm text-stone-400">Loading...</div>
+                <div x-show="managementCenter.loading" class="text-sm text-stone-400">加载中...</div>
 
                 <div x-show="!managementCenter.loading && managementCenter.section === 'skills'" class="management-list">
                     <template x-for="skill in capabilityModal.skills" :key="skill.name">
@@ -781,12 +786,12 @@
                                 <div class="muted truncate" x-text="skill.description || '-'"></div>
                             </div>
                             <div class="flex gap-2">
-                                <button type="button" @click="setSkillEnabled(skill, !skill.enabled)" x-text="skill.enabled ? 'Disable' : 'Enable'"></button>
-                                <button type="button" @click="deleteSkill(skill)">Delete</button>
+                                <button type="button" @click="setSkillEnabled(skill, !skill.enabled)" x-text="skill.enabled ? '停用' : '启用'"></button>
+                                <button type="button" @click="deleteSkill(skill)">删除</button>
                             </div>
                         </article>
                     </template>
-                    <div x-show="capabilityModal.skills.length === 0" class="muted">No skills installed.</div>
+                    <div x-show="capabilityModal.skills.length === 0" class="muted">暂无技能。</div>
                 </div>
 
                 <div x-show="!managementCenter.loading && managementCenter.section === 'mcp'" class="management-list">
@@ -797,12 +802,12 @@
                                 <div class="muted truncate" x-text="server.transport + (server.command ? ' - ' + server.command : '')"></div>
                             </div>
                             <div class="flex gap-2">
-                                <button type="button" @click="setMcpEnabled(server, !server.enabled)" x-text="server.enabled ? 'Disable' : 'Enable'"></button>
-                                <button type="button" @click="deleteMcpServer(server)">Delete</button>
+                                <button type="button" @click="setMcpEnabled(server, !server.enabled)" x-text="server.enabled ? '停用' : '启用'"></button>
+                                <button type="button" @click="deleteMcpServer(server)">删除</button>
                             </div>
                         </article>
                     </template>
-                    <div x-show="capabilityModal.mcpServers.length === 0" class="muted">No MCP servers configured.</div>
+                    <div x-show="capabilityModal.mcpServers.length === 0" class="muted">暂无 MCP 服务器。</div>
                 </div>
 
                 <div x-show="!managementCenter.loading && managementCenter.section === 'knowledge'" class="management-list">
@@ -812,10 +817,10 @@
                                 <strong x-text="item.title"></strong>
                                 <div class="muted truncate" x-text="item.domain + ' - ' + item.status"></div>
                             </div>
-                            <button type="button" @click="openKnowledgeDrawer(item)">Edit</button>
+                            <button type="button" @click="openKnowledgeDrawer(item)">编辑</button>
                         </article>
                     </template>
-                    <div x-show="managementCenter.knowledge.length === 0" class="muted">No knowledge items.</div>
+                    <div x-show="managementCenter.knowledge.length === 0" class="muted">暂无知识。</div>
                 </div>
 
                 <div x-show="!managementCenter.loading && managementCenter.section === 'memory'" class="management-list">
@@ -825,10 +830,10 @@
                                 <strong x-text="item.summary || item.text"></strong>
                                 <div class="muted truncate" x-text="item.type + ' - ' + item.status + ' - ' + item.confidence"></div>
                             </div>
-                            <button type="button" @click="confirmMemoryCandidate(item)" :disabled="item.status !== 'candidate'">Confirm</button>
+                            <button type="button" @click="confirmMemoryCandidate(item)" :disabled="item.status !== 'candidate'">确认</button>
                         </article>
                     </template>
-                    <div x-show="managementCenter.memory.length === 0" class="muted">No memory candidates.</div>
+                    <div x-show="managementCenter.memory.length === 0" class="muted">暂无记忆候选。</div>
                 </div>
 
                 <div x-show="!managementCenter.loading && managementCenter.section === 'evidence'" class="management-list">
@@ -840,7 +845,7 @@
                             </div>
                         </article>
                     </template>
-                    <div x-show="managementCenter.evidence.length === 0" class="muted">No evidence found.</div>
+                    <div x-show="managementCenter.evidence.length === 0" class="muted">暂无搜索结果。</div>
                 </div>
             </div>
         </main>
@@ -854,21 +859,37 @@
             </button>
         </header>
         <div id="managementDrawerBody" class="management-drawer-body">
+            <template x-if="managementDrawer.kind === 'skill'">
+                <div class="grid gap-3">
+                    <label>技能名称<input x-model="managementDrawer.form.name" type="text"></label>
+                    <label>来源路径或 URL<input x-model="managementDrawer.form.source" type="text"></label>
+                    <button type="button" @click="saveSkillItem()">添加技能</button>
+                </div>
+            </template>
+            <template x-if="managementDrawer.kind === 'mcp'">
+                <div class="grid gap-3">
+                    <label>服务器名称<input x-model="managementDrawer.form.name" type="text"></label>
+                    <label>传输方式<input x-model="managementDrawer.form.transport" type="text"></label>
+                    <label>命令<input x-model="managementDrawer.form.command" type="text"></label>
+                    <label>URL<input x-model="managementDrawer.form.url" type="text"></label>
+                    <button type="button" @click="saveMcpServer()">添加服务器</button>
+                </div>
+            </template>
             <template x-if="managementDrawer.kind === 'knowledge'">
                 <div class="grid gap-3">
-                    <label>Title<input x-model="managementDrawer.form.title" type="text"></label>
-                    <label>Domain<input x-model="managementDrawer.form.domain" type="text"></label>
-                    <label>Summary<input x-model="managementDrawer.form.summary" type="text"></label>
-                    <label>Content<textarea x-model="managementDrawer.form.content"></textarea></label>
-                    <button type="button" @click="saveKnowledgeItem()">Save</button>
+                    <label>标题<input x-model="managementDrawer.form.title" type="text"></label>
+                    <label>领域<input x-model="managementDrawer.form.domain" type="text"></label>
+                    <label>摘要<input x-model="managementDrawer.form.summary" type="text"></label>
+                    <label>内容<textarea x-model="managementDrawer.form.content"></textarea></label>
+                    <button type="button" @click="saveKnowledgeItem()">保存</button>
                 </div>
             </template>
             <template x-if="managementDrawer.kind === 'memory'">
                 <div class="grid gap-3">
-                    <label>Summary<input x-model="managementDrawer.form.summary" type="text"></label>
-                    <label>Type<input x-model="managementDrawer.form.memory_type" type="text"></label>
-                    <label>Text<textarea x-model="managementDrawer.form.text"></textarea></label>
-                    <button type="button" @click="saveMemoryCandidate()">Save</button>
+                    <label>摘要<input x-model="managementDrawer.form.summary" type="text"></label>
+                    <label>类型<input x-model="managementDrawer.form.memory_type" type="text"></label>
+                    <label>内容<textarea x-model="managementDrawer.form.text"></textarea></label>
+                    <button type="button" @click="saveMemoryCandidate()">保存</button>
                 </div>
             </template>
         </div>
