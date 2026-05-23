@@ -42,15 +42,14 @@ def sessions(client):
 
 def test_management_center_shell_exists(html, js, css):
     assert "managementCenter" in html
-    assert "managementMenu" in html
-    assert "openManagementCenter" in js
+    assert "mgmt-nav" in html
     assert "loadManagementSection" in js
-    assert ".management-center" in css
-    assert ".management-drawer" in css
+    assert "mgmt-overlay" in css
+    assert "mgmt-drawer" in css
 
 
 def test_management_center_uses_chinese_settings_interaction(html, js):
-    assert "返回应用" in html
+    assert "返回对话" in html
     assert "技能" in html
     assert "MCP 服务器" in html
     assert "知识" in html

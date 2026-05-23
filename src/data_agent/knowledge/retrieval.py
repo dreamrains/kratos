@@ -30,6 +30,13 @@ def _positive_limit(limit: int) -> int:
     return max(0, int(limit))
 
 
+def _cjk_bigrams(text: str) -> set[str]:
+    chars = re.findall(r"[一-鿿]", text)
+    if len(chars) < 2:
+        return set()
+    return {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
+
+
 class KnowledgeRetrievalService:
     def __init__(self, root: Path | None = None, sessions_dir: Path | None = None):
         self.root = root or get_config().knowledge_dir
@@ -172,7 +179,6 @@ class KnowledgeRetrievalService:
         return "\n".join(lines)
 
     def _looks_conflicting(self, left: str, right: str) -> bool:
-        overlap = set(_normalize_query(left).split()) & set(_normalize_query(right).split())
         negative_markers = (
             " exclude",
             " excludes",
@@ -206,8 +212,12 @@ class KnowledgeRetrievalService:
             marker in left or marker in right
             for marker in ("排除", "不包含", "不含", "不包括", "包含", "包括", "全部", "所有")
         )
-        required_overlap = 1 if has_cjk_marker else 2
-        return len(overlap) >= required_overlap
+        if has_cjk_marker:
+            left_bigrams = _cjk_bigrams(left)
+            right_bigrams = _cjk_bigrams(right)
+            return bool(left_bigrams & right_bigrams)
+        overlap = set(_normalize_query(left).split()) & set(_normalize_query(right).split())
+        return len(overlap) >= 2
 
     def _has_any_marker(self, text: str, markers: tuple[str, ...]) -> bool:
         normalized = f" {text.lower()} "
