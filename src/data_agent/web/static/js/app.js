@@ -44,6 +44,21 @@ function chatApp() {
             newMcpUrl: '',
             loading: false,
         },
+        managementCenter: {
+            show: false,
+            section: 'skills',
+            loading: false,
+            knowledge: [],
+            memory: [],
+            evidence: [],
+            evidenceQuery: '',
+        },
+        managementDrawer: {
+            show: false,
+            kind: '',
+            title: '',
+            form: {},
+        },
 
         // Artifacts modal
         artifactsModal: { show: false, sessionId: '', items: [] },
@@ -357,6 +372,119 @@ function chatApp() {
             if (!confirm(`Delete MCP server ${server.name}?`)) return;
             await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
+        },
+
+        managementTitle() {
+            return {
+                skills: 'Skills',
+                mcp: 'MCP',
+                knowledge: 'Knowledge',
+                memory: 'Memory',
+                evidence: 'Session Search',
+            }[this.managementCenter.section] || 'Management';
+        },
+
+        async openManagementCenter(section = 'skills') {
+            this.managementCenter.show = true;
+            await this.loadManagementSection(section);
+        },
+
+        async loadManagementSection(section) {
+            this.managementCenter.section = section;
+            this.managementCenter.loading = true;
+            try {
+                if (section === 'skills' || section === 'mcp') {
+                    await this.loadCapabilityAdmin();
+                    this.capabilityModal.show = false;
+                } else if (section === 'knowledge') {
+                    const res = await fetch('/api/management/knowledge');
+                    this.managementCenter.knowledge = res.ok ? await res.json() : [];
+                } else if (section === 'memory') {
+                    const res = await fetch('/api/management/memory');
+                    this.managementCenter.memory = res.ok ? await res.json() : [];
+                } else if (section === 'evidence') {
+                    await this.searchEvidence();
+                }
+            } catch (e) {
+                this.showToast('Management load failed');
+            }
+            this.managementCenter.loading = false;
+        },
+
+        closeManagementDrawer() {
+            this.managementDrawer = { show: false, kind: '', title: '', form: {} };
+        },
+
+        openKnowledgeDrawer(item = null) {
+            this.managementDrawer = {
+                show: true,
+                kind: 'knowledge',
+                title: item ? 'Edit Knowledge' : 'New Knowledge',
+                form: item ? { ...item } : { title: '', domain: 'general', summary: '', content: '' },
+            };
+        },
+
+        async saveKnowledgeItem() {
+            const form = this.managementDrawer.form || {};
+            const payload = {
+                title: form.title || '',
+                domain: form.domain || 'general',
+                summary: form.summary || '',
+                content: form.content || '',
+                tags: form.tags || [],
+            };
+            const url = form.id ? `/api/management/knowledge/${encodeURIComponent(form.id)}` : '/api/management/knowledge';
+            const method = form.id ? 'PATCH' : 'POST';
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                this.showToast('Knowledge save failed');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('knowledge');
+        },
+
+        openMemoryDrawer() {
+            this.managementDrawer = {
+                show: true,
+                kind: 'memory',
+                title: 'New Memory Candidate',
+                form: { summary: '', memory_type: 'workflow_pattern', text: '' },
+            };
+        },
+
+        async saveMemoryCandidate() {
+            const form = this.managementDrawer.form || {};
+            const res = await fetch('/api/management/memory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    summary: form.summary || '',
+                    memory_type: form.memory_type || 'workflow_pattern',
+                    text: form.text || '',
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('Memory save failed');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('memory');
+        },
+
+        async confirmMemoryCandidate(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/confirm`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async searchEvidence() {
+            const q = encodeURIComponent(this.managementCenter.evidenceQuery || '');
+            const res = await fetch(`/api/management/evidence/search?q=${q}`);
+            this.managementCenter.evidence = res.ok ? await res.json() : [];
         },
 
         // --- Sessions ---

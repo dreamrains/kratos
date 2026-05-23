@@ -16,7 +16,7 @@
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     </button>
 
-                    <button @click="loadCapabilityAdmin()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="Capabilities">
+                    <button id="openManagementCenterButton" @click="openManagementCenter()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="Management">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.121-5.121-2.121 2.121M8.999 15l-2.121 2.121m10.243 0L15 15M8.999 9 6.878 6.879"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
                     <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="新建会话">
@@ -745,6 +745,134 @@
             </div>
         </div>
     </div>
+
+    <!-- Management Center -->
+    <section id="managementCenter" x-show="managementCenter.show" x-transition.opacity class="management-center" aria-label="Management center">
+        <aside id="managementMenu" class="management-sidebar">
+            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'skills' }" @click="loadManagementSection('skills')">Skills</button>
+            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'mcp' }" @click="loadManagementSection('mcp')">MCP</button>
+            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'knowledge' }" @click="loadManagementSection('knowledge')">Knowledge</button>
+            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'memory' }" @click="loadManagementSection('memory')">Memory</button>
+            <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'evidence' }" @click="loadManagementSection('evidence')">Session Search</button>
+        </aside>
+        <main class="management-content">
+            <header class="management-header">
+                <h2 id="managementTitle" x-text="managementTitle()"></h2>
+                <button type="button" class="icon-button" @click="managementCenter.show = false" aria-label="Close management center">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+                </button>
+            </header>
+            <div id="managementToolbar" class="management-toolbar">
+                <button x-show="managementCenter.section === 'knowledge'" type="button" @click="openKnowledgeDrawer()" class="px-3 py-1.5 text-sm rounded bg-brand-600 text-white">New Knowledge</button>
+                <button x-show="managementCenter.section === 'memory'" type="button" @click="openMemoryDrawer()" class="px-3 py-1.5 text-sm rounded bg-brand-600 text-white">New Memory</button>
+                <div x-show="managementCenter.section === 'evidence'" class="management-search">
+                    <input x-model="managementCenter.evidenceQuery" type="search" placeholder="Search sessions">
+                    <button type="button" @click="searchEvidence()">Search</button>
+                </div>
+            </div>
+            <div id="managementBody" class="management-body">
+                <div x-show="managementCenter.loading" class="text-sm text-stone-400">Loading...</div>
+
+                <div x-show="!managementCenter.loading && managementCenter.section === 'skills'" class="management-list">
+                    <template x-for="skill in capabilityModal.skills" :key="skill.name">
+                        <article class="management-row">
+                            <div class="min-w-0">
+                                <strong x-text="skill.name"></strong>
+                                <div class="muted truncate" x-text="skill.description || '-'"></div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" @click="setSkillEnabled(skill, !skill.enabled)" x-text="skill.enabled ? 'Disable' : 'Enable'"></button>
+                                <button type="button" @click="deleteSkill(skill)">Delete</button>
+                            </div>
+                        </article>
+                    </template>
+                    <div x-show="capabilityModal.skills.length === 0" class="muted">No skills installed.</div>
+                </div>
+
+                <div x-show="!managementCenter.loading && managementCenter.section === 'mcp'" class="management-list">
+                    <template x-for="server in capabilityModal.mcpServers" :key="server.name">
+                        <article class="management-row">
+                            <div class="min-w-0">
+                                <strong x-text="server.name"></strong>
+                                <div class="muted truncate" x-text="server.transport + (server.command ? ' - ' + server.command : '')"></div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" @click="setMcpEnabled(server, !server.enabled)" x-text="server.enabled ? 'Disable' : 'Enable'"></button>
+                                <button type="button" @click="deleteMcpServer(server)">Delete</button>
+                            </div>
+                        </article>
+                    </template>
+                    <div x-show="capabilityModal.mcpServers.length === 0" class="muted">No MCP servers configured.</div>
+                </div>
+
+                <div x-show="!managementCenter.loading && managementCenter.section === 'knowledge'" class="management-list">
+                    <template x-for="item in managementCenter.knowledge" :key="item.id">
+                        <article class="management-row">
+                            <div class="min-w-0">
+                                <strong x-text="item.title"></strong>
+                                <div class="muted truncate" x-text="item.domain + ' - ' + item.status"></div>
+                            </div>
+                            <button type="button" @click="openKnowledgeDrawer(item)">Edit</button>
+                        </article>
+                    </template>
+                    <div x-show="managementCenter.knowledge.length === 0" class="muted">No knowledge items.</div>
+                </div>
+
+                <div x-show="!managementCenter.loading && managementCenter.section === 'memory'" class="management-list">
+                    <template x-for="item in managementCenter.memory" :key="item.id">
+                        <article class="management-row">
+                            <div class="min-w-0">
+                                <strong x-text="item.summary || item.text"></strong>
+                                <div class="muted truncate" x-text="item.type + ' - ' + item.status + ' - ' + item.confidence"></div>
+                            </div>
+                            <button type="button" @click="confirmMemoryCandidate(item)" :disabled="item.status !== 'candidate'">Confirm</button>
+                        </article>
+                    </template>
+                    <div x-show="managementCenter.memory.length === 0" class="muted">No memory candidates.</div>
+                </div>
+
+                <div x-show="!managementCenter.loading && managementCenter.section === 'evidence'" class="management-list">
+                    <template x-for="item in managementCenter.evidence" :key="item.id">
+                        <article class="management-row">
+                            <div class="min-w-0">
+                                <strong x-text="item.session_id"></strong>
+                                <div class="muted truncate" x-text="item.summary"></div>
+                            </div>
+                        </article>
+                    </template>
+                    <div x-show="managementCenter.evidence.length === 0" class="muted">No evidence found.</div>
+                </div>
+            </div>
+        </main>
+    </section>
+
+    <aside id="managementDrawer" x-show="managementDrawer.show" x-transition class="management-drawer" aria-label="Management details">
+        <header class="management-drawer-header">
+            <h3 id="managementDrawerTitle" x-text="managementDrawer.title"></h3>
+            <button type="button" class="icon-button" @click="closeManagementDrawer()" aria-label="Close details">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+            </button>
+        </header>
+        <div id="managementDrawerBody" class="management-drawer-body">
+            <template x-if="managementDrawer.kind === 'knowledge'">
+                <div class="grid gap-3">
+                    <label>Title<input x-model="managementDrawer.form.title" type="text"></label>
+                    <label>Domain<input x-model="managementDrawer.form.domain" type="text"></label>
+                    <label>Summary<input x-model="managementDrawer.form.summary" type="text"></label>
+                    <label>Content<textarea x-model="managementDrawer.form.content"></textarea></label>
+                    <button type="button" @click="saveKnowledgeItem()">Save</button>
+                </div>
+            </template>
+            <template x-if="managementDrawer.kind === 'memory'">
+                <div class="grid gap-3">
+                    <label>Summary<input x-model="managementDrawer.form.summary" type="text"></label>
+                    <label>Type<input x-model="managementDrawer.form.memory_type" type="text"></label>
+                    <label>Text<textarea x-model="managementDrawer.form.text"></textarea></label>
+                    <button type="button" @click="saveMemoryCandidate()">Save</button>
+                </div>
+            </template>
+        </div>
+    </aside>
 
     <!-- Config Modal -->
     <div x-show="configModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="configModal.show = false">

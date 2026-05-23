@@ -40,6 +40,15 @@ def sessions(client):
     return resp.get_json()
 
 
+def test_management_center_shell_exists(html, js, css):
+    assert "managementCenter" in html
+    assert "managementMenu" in html
+    assert "openManagementCenter" in js
+    assert "loadManagementSection" in js
+    assert ".management-center" in css
+    assert ".management-drawer" in css
+
+
 # =====================================================
 # Phase 1: Critical Bug Fixes
 # =====================================================
