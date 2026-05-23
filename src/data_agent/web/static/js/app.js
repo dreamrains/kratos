@@ -1390,6 +1390,16 @@ function chatApp() {
                 .replace(/'/g, '&#39;');
         },
 
+        _isDataBackedMermaid(text) {
+            const source = String(text || '').trim();
+            const lower = source.toLowerCase();
+            if (lower.startsWith('xychart-beta')) return true;
+            if (lower.startsWith('pie ') || lower.startsWith('pie\n')) {
+                return /:\s*-?\d/.test(source);
+            }
+            return false;
+        },
+
         _chartRefsFromContent(content) {
             const refs = [];
             const pattern = /\[\[chart:([^\]\n]+)\]\]/g;
@@ -1652,6 +1662,9 @@ function chatApp() {
 
                         // Mermaid diagrams
                         if (language === 'mermaid') {
+                            if (self._isDataBackedMermaid(text)) {
+                                return '<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Data-backed Mermaid charts are blocked. Use an interactive chart reference or a verified numeric table for analytical data.</div>';
+                            }
                             const id = 'mermaid-' + Math.random().toString(36).slice(2, 10);
                             const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                             return `<div class="mermaid-container"><div class="mermaid" id="${id}">${escaped}</div></div>`;

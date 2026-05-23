@@ -285,6 +285,25 @@ def test_funnel_chart_rejects_unreadable_step_or_value_keys(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
+def test_funnel_chart_rejects_mixed_revenue_stage(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ctx = AgentContext(session_id="chart_funnel_mixed_units", workspace=Workspace())
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(create_chart(
+                "funnel",
+                title="Exposure to revenue",
+                data_json='[{"stage":"曝光次数","value":430785712},{"stage":"有效点击","value":5217534},{"stage":"卖量收入","value":451286.73}]',
+            ))
+
+        assert result["error_type"] == "chart_validation"
+        assert "revenue" in result["error"].lower() or "amount" in result["error"].lower()
+        assert not (tmp_path / "sessions" / "chart_funnel_mixed_units" / "charts").exists()
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_multi_metric_bar_with_different_scales_uses_normalized_single_axis(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ws = Workspace()

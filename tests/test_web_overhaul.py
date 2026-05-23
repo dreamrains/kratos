@@ -119,7 +119,7 @@ class TestMermaidChartRendering:
         assert "renderMarkdown(turn.content, turn)" in html
 
     def test_unreferenced_charts_render_after_markdown_as_supplemental(self, html, js):
-        assert "Supplemental charts" in html
+        assert "Supplemental charts" in html or "补充图表" in html
         assert "supplementalArtifacts(turn)" in html
         assert "supplementalArtifacts(turn)" in js
 
@@ -146,6 +146,11 @@ class TestMermaidChartRendering:
         assert "_artifactBelongsToSession" in js
         assert "sessionId === this.currentSessionId" in js
         assert "this._addTurnArtifact(turn, art, sessionId)" in js
+
+    def test_data_backed_mermaid_charts_are_blocked(self, js):
+        assert "_isDataBackedMermaid" in js
+        assert "xychart-beta" in js
+        assert "Data-backed Mermaid charts are blocked" in js
 
 
 class TestSessionSorting:
