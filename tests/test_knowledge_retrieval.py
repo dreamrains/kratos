@@ -58,7 +58,12 @@ def test_retrieval_loads_evidence_only_when_requested(tmp_path: Path):
     service = KnowledgeRetrievalService(root=tmp_path / "knowledge", sessions_dir=sessions_dir)
 
     without_evidence = service.retrieve("retained revenue", project_id="sales")
-    with_evidence = service.retrieve("retained revenue", project_id="sales", include_evidence=True)
+    with_evidence = service.retrieve(
+        "retained revenue",
+        project_id="sales",
+        include_evidence=True,
+        max_evidence_chars=1000,
+    )
 
     assert without_evidence.evidence_items == []
     assert with_evidence.evidence_items[0].session_id == "s1"

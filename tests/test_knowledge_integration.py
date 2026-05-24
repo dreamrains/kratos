@@ -32,7 +32,12 @@ class TestRetrievalComposition:
         store.index_session("s1")
 
         service = KnowledgeRetrievalService(root=root, sessions_dir=sessions_dir)
-        context = service.retrieve("Revenue", project_id="test", include_evidence=True)
+        context = service.retrieve(
+            "Revenue",
+            project_id="test",
+            include_evidence=True,
+            max_evidence_chars=1000,
+        )
         prompt = service.compose_prompt_context(context)
 
         assert "<session_evidence" in prompt
@@ -317,6 +322,7 @@ class TestEndToEndWorkflow:
             domain="ecommerce",
             project_id="ecommerce_analysis",
             include_evidence=True,
+            max_evidence_chars=1000,
         )
 
         assert len(context.knowledge_items) >= 1
@@ -578,6 +584,7 @@ class TestRealDataIntegration:
             domain="游戏分析",
             project_id="游戏分析",
             include_evidence=True,
+            max_evidence_chars=1000,
         )
 
         assert len(context.knowledge_items) >= 1
