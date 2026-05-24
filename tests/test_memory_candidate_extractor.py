@@ -5,7 +5,7 @@ from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.memory import MemoryStore
 
 
-def _write_session(sessions_dir, session_id, content, project_name="ecommerce"):
+def _write_session(sessions_dir, session_id, content, project_name="ecommerce", role="user"):
     session_dir = sessions_dir / session_id
     session_dir.mkdir(parents=True)
     (session_dir / "meta.json").write_text(
@@ -13,7 +13,7 @@ def _write_session(sessions_dir, session_id, content, project_name="ecommerce"):
         encoding="utf-8",
     )
     (session_dir / "conversation.json").write_text(
-        json.dumps([{"role": "user", "content": content}], ensure_ascii=False),
+        json.dumps([{"role": role, "content": content}], ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -60,3 +60,57 @@ def test_extractor_deduplicates_repeated_runs(tmp_path):
     assert first.created == 1
     assert second.created == 0
     assert len(MemoryStore(root).list()) == 1
+
+
+def test_extractor_ignores_non_user_metric_like_content(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    session_dir = sessions_dir / "s4"
+    session_dir.mkdir(parents=True)
+    (session_dir / "meta.json").write_text(
+        json.dumps({"project_name": "ecommerce", "saved_at": "2026-05-24T10:00:00"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (session_dir / "conversation.json").write_text(
+        json.dumps(
+            [
+                {"role": "assistant", "content": '{"metric": "GMV", "value": "paid_amount = total"}'},
+                {"role": "tool", "content": '{"formula": "metric = value"}'},
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    root = tmp_path / "knowledge"
+    EvidenceStore(root, sessions_dir=sessions_dir).index_session("s4")
+
+    result = MemoryCandidateExtractor(root=root, sessions_dir=sessions_dir).extract_for_session("s4")
+
+    assert result.created == 0
+    assert MemoryStore(root).list() == []
+
+
+def test_extractor_keeps_project_id_but_uses_general_domain_for_client_project(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    _write_session(sessions_dir, "s5", "请记住：GMV 口径 = 支付金额。", project_name="client-a-q2")
+    root = tmp_path / "knowledge"
+    EvidenceStore(root, sessions_dir=sessions_dir).index_session("s5")
+
+    MemoryCandidateExtractor(root=root, sessions_dir=sessions_dir).extract_for_session("s5")
+
+    item = MemoryStore(root).list()[0]
+    assert item.project_id == "client-a-q2"
+    assert item.domain == "general"
+
+
+def test_extractor_classifies_corrections_as_reviewable_correction_memory(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    _write_session(sessions_dir, "s6", "纠正一下：GMV 应该排除退款订单。")
+    root = tmp_path / "knowledge"
+    EvidenceStore(root, sessions_dir=sessions_dir).index_session("s6")
+
+    result = MemoryCandidateExtractor(root=root, sessions_dir=sessions_dir).extract_for_session("s6")
+
+    assert result.created == 1
+    item = MemoryStore(root).list()[0]
+    assert item.type.value == "correction"
+    assert item.needs_review is True

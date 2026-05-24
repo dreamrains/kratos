@@ -15,6 +15,8 @@ from data_agent.knowledge.sqlite_store import rows_to_dicts
 MEMORY_MARKERS = ("请记住", "记住", "以后默认", "下次", "默认", "remember", "default", "next time")
 CORRECTION_MARKERS = ("纠正", "更正", "不是", "应该是", "修正", "correction", "correct")
 METRIC_MARKERS = ("口径", "定义", "公式", "指标", "=", "等于")
+STRONG_METRIC_MARKERS = ("口径", "定义", "公式", "指标")
+KNOWN_DOMAINS = {"ecommerce", "game", "finance"}
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,9 @@ class MemoryCandidateExtractor:
         return [self.evidence._record_from_row(row) for row in rows_to_dicts(rows)]
 
     def _drafts_from_record(self, record: EvidenceRecord) -> list[CandidateDraft]:
+        if not self._is_user_record(record):
+            return []
+
         text = (record.content or record.summary).strip()
         if not text:
             return []
@@ -96,12 +101,14 @@ class MemoryCandidateExtractor:
         lowered = text.lower()
         has_memory = self._contains_marker(lowered, MEMORY_MARKERS)
         has_correction = self._contains_marker(lowered, CORRECTION_MARKERS)
-        has_metric = self._contains_marker(lowered, METRIC_MARKERS)
+        has_strong_metric = self._contains_marker(lowered, STRONG_METRIC_MARKERS)
+        has_metric_operator = self._contains_marker(lowered, ("=", "等于"))
+        has_metric = has_strong_metric or (has_metric_operator and (has_memory or has_correction))
         has_workflow = self._has_workflow_sequence(text)
         if not any((has_memory, has_correction, has_metric, has_workflow)):
             return []
 
-        domain = record.project_id.strip() or "general"
+        domain = self._domain_from_project_id(record.project_id)
         memory_type = MemoryType.PREFERENCE
         reason = "User expressed a memory or default preference."
         needs_review = False
@@ -109,7 +116,7 @@ class MemoryCandidateExtractor:
         confidence = 0.7
 
         if has_correction:
-            memory_type = MemoryType.DOMAIN_FACT
+            memory_type = MemoryType.CORRECTION
             reason = "User correction indicates a fact that should be reviewed."
             needs_review = True
             review_note = "Candidate came from correction-like language; review before confirmation."
@@ -149,6 +156,15 @@ class MemoryCandidateExtractor:
 
     def _contains_marker(self, text: str, markers: tuple[str, ...]) -> bool:
         return any(marker.lower() in text for marker in markers)
+
+    def _is_user_record(self, record: EvidenceRecord) -> bool:
+        return "user" in {tag.lower() for tag in record.tags}
+
+    def _domain_from_project_id(self, project_id: str) -> str:
+        candidate = project_id.strip().lower()
+        if candidate in KNOWN_DOMAINS:
+            return candidate
+        return "general"
 
     def _has_workflow_sequence(self, text: str) -> bool:
         return re.search(r"先.+再", text) is not None or re.search(r"\bfirst\b.+\bthen\b", text.lower()) is not None
