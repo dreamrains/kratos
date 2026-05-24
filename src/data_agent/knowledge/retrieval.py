@@ -22,6 +22,40 @@ def _normalize_query(query: str) -> str:
     return " ".join(re.findall(r"[\w\u4e00-\u9fff]+", query.lower()))
 
 
+def _query_terms(query: str) -> list[str]:
+    lowered = query.lower()
+    ascii_terms = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9_]*", lowered)
+    cjk_sequences = re.findall(r"[\u4e00-\u9fff]{2,}", query)
+    stopwords = {
+        "帮我",
+        "分析",
+        "一下",
+        "这个",
+        "数据",
+        "需要",
+        "知道",
+        "关系",
+        "如何",
+        "什么",
+    }
+    terms: list[str] = [term for term in ascii_terms if term not in stopwords]
+    for sequence in cjk_sequences:
+        if sequence not in stopwords:
+            terms.append(sequence)
+        for size in (2, 3, 4):
+            for index in range(0, max(0, len(sequence) - size + 1)):
+                term = sequence[index : index + size]
+                if term not in stopwords:
+                    terms.append(term)
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in terms:
+        if term and term not in seen:
+            seen.add(term)
+            result.append(term)
+    return result
+
+
 def _escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -54,7 +88,8 @@ class KnowledgeRetrievalService:
         memory_limit: int = 5,
         evidence_limit: int = 5,
     ) -> RetrievedContext:
-        search_query = _normalize_query(query)
+        normalized_query = _normalize_query(query)
+        search_query = " ".join(_query_terms(query)) or normalized_query
         knowledge_limit = _positive_limit(knowledge_limit)
         memory_limit = _positive_limit(memory_limit)
         evidence_limit = _positive_limit(evidence_limit)
@@ -80,7 +115,8 @@ class KnowledgeRetrievalService:
             evidence_items=evidence_items,
             metadata={
                 "query": query,
-                "normalized_query": search_query,
+                "normalized_query": normalized_query,
+                "search_query": search_query,
                 "domain": domain,
                 "project_id": project_id,
                 "include_evidence": include_evidence,

@@ -265,6 +265,7 @@ class AgentLoop:
         self._last_data_file = ""
         self._prompt_cache: str = ""
         self._prompt_cache_dirty: bool = True
+        self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
         self._compact_state = CompactState()
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
@@ -451,9 +452,27 @@ class AgentLoop:
                     return content[:500]
         return ""
 
+    def _get_knowledge_retrieval_service(self):
+        if self._knowledge_retrieval_service is None:
+            from data_agent.knowledge.retrieval import KnowledgeRetrievalService
+
+            self._knowledge_retrieval_service = KnowledgeRetrievalService()
+        return self._knowledge_retrieval_service
+
+    def _infer_retrieval_domain(self, user_input: str) -> str:
+        text = f"{self.context.project_name or ''} {user_input}".lower()
+        mappings = {
+            "ecommerce": ("电商", "gmv", "订单", "退款", "转化"),
+            "game": ("游戏", "留存", "付费率", "arpu", "dau"),
+            "finance": ("金融", "授信", "逾期", "资产", "风控"),
+        }
+        for domain, markers in mappings.items():
+            if any(marker in text for marker in markers):
+                return domain
+        return ""
+
     def _build_system_prompt(self) -> str:
         from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
-        from data_agent.knowledge.retrieval import KnowledgeRetrievalService
         from data_agent.session.workspace import workspace
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
@@ -533,10 +552,10 @@ class AgentLoop:
         retrieval_query = self._build_retrieval_query(self.messages)
         if retrieval_query:
             try:
-                service = KnowledgeRetrievalService()
+                service = self._get_knowledge_retrieval_service()
                 context = service.retrieve(
                     retrieval_query,
-                    domain="",
+                    domain=self._infer_retrieval_domain(user_input),
                     project_id=self.context.project_name or "",
                     include_evidence=False,
                 )
