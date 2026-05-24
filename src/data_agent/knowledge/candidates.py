@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from data_agent.config import get_config
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.memory import MemoryStore
-from data_agent.knowledge.models import EvidenceRecord, MemoryType
+from data_agent.knowledge.models import EvidenceRecord, MemoryStatus, MemoryType
 from data_agent.knowledge.sqlite_store import rows_to_dicts
 
 
@@ -56,7 +58,9 @@ class MemoryCandidateExtractor:
                 if result.created >= max_candidates:
                     result.skipped += 1
                     continue
-                if self.memory.get_by_dedup_key(draft.dedup_key):
+                existing = self.memory.get_by_dedup_key(draft.dedup_key)
+                if existing:
+                    self._refresh_existing_candidate(existing.id, record, draft)
                     result.skipped += 1
                     continue
                 item = self.memory.create_candidate(
@@ -89,6 +93,33 @@ class MemoryCandidateExtractor:
                 (session_id,),
             ).fetchall()
         return [self.evidence._record_from_row(row) for row in rows_to_dicts(rows)]
+
+    def _refresh_existing_candidate(self, item_id: str, record: EvidenceRecord, draft: CandidateDraft) -> None:
+        item = self.memory.get(item_id)
+        if item is None or item.status not in {MemoryStatus.CANDIDATE, MemoryStatus.REJECTED}:
+            return
+        with self.memory.db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET source_session_id = ?, project_id = ?, domain = ?, tags = ?,
+                    reason = ?, source_evidence_ids = ?, needs_review = ?,
+                    review_note = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    record.session_id,
+                    record.project_id,
+                    draft.domain,
+                    json.dumps(draft.tags, ensure_ascii=False),
+                    draft.reason,
+                    json.dumps(draft.source_evidence_ids, ensure_ascii=False),
+                    1 if draft.needs_review else 0,
+                    draft.review_note,
+                    datetime.now().isoformat(timespec="seconds"),
+                    item_id,
+                ),
+            )
 
     def _drafts_from_record(self, record: EvidenceRecord) -> list[CandidateDraft]:
         if not self._is_user_record(record):

@@ -61,6 +61,38 @@ def test_index_session_auto_extracts_manual_session_without_session_id_meta(tmp_
     assert candidates[0].source_evidence_ids == ["ev_manual_0"]
 
 
+def test_reindex_refreshes_existing_candidate_source_evidence_ids(tmp_path, monkeypatch):
+    cfg = _test_config(tmp_path)
+    monkeypatch.setattr(config_module, "_config", cfg)
+    memory_text = "请记住：GMV 需要排除取消订单。"
+
+    save_session(
+        [{"role": "user", "content": memory_text}],
+        "shifted_candidate",
+        extra_meta={"project_name": "ecommerce"},
+    )
+    store = MemoryStore(cfg.knowledge_dir)
+    first = store.list(status="candidate")[0]
+    assert first.source_evidence_ids == ["ev_shifted_candidate_0"]
+
+    save_session(
+        [
+            {"role": "assistant", "content": "已准备好分析。"},
+            {"role": "user", "content": memory_text},
+        ],
+        "shifted_candidate",
+        extra_meta={"project_name": "ecommerce"},
+    )
+
+    candidates = store.list(status="candidate")
+    refreshed = store.get(first.id)
+    current_evidence = EvidenceStore(cfg.knowledge_dir, sessions_dir=cfg.sessions_resolved).get("ev_shifted_candidate_1")
+    assert len(candidates) == 1
+    assert refreshed.source_evidence_ids == ["ev_shifted_candidate_1"]
+    assert current_evidence is not None
+    assert current_evidence.content == memory_text
+
+
 def test_candidate_extraction_failure_does_not_break_index_session(tmp_path, monkeypatch):
     from data_agent.knowledge.candidates import MemoryCandidateExtractor
 
@@ -87,8 +119,10 @@ def test_candidate_extraction_failure_does_not_break_save_session(tmp_path, monk
 
     cfg = _test_config(tmp_path)
     monkeypatch.setattr(config_module, "_config", cfg)
+    calls = []
 
     def raise_extraction_error(self, session_id):
+        calls.append(session_id)
         raise RuntimeError("boom")
 
     monkeypatch.setattr(MemoryCandidateExtractor, "extract_for_session", raise_extraction_error)
@@ -104,4 +138,5 @@ def test_candidate_extraction_failure_does_not_break_save_session(tmp_path, monk
         project_id="ecommerce",
     )
     assert session_id == "extract_failure_save"
+    assert calls == ["extract_failure_save"]
     assert [record.session_id for record in records] == ["extract_failure_save"]
