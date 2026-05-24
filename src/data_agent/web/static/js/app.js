@@ -52,6 +52,9 @@ function chatApp() {
             memory: [],
             evidence: [],
             evidenceQuery: '',
+            globalQuery: '',
+            globalResults: { knowledge: [], memory: [], evidence: [] },
+            domains: [],
         },
         managementDrawer: {
             show: false,
@@ -339,9 +342,10 @@ function chatApp() {
         },
 
         async deleteSkill(skill) {
-            if (!confirm(`Delete skill ${skill.name}?`)) return;
+            if (!confirm(`确定删除技能「${skill.name}」？`)) return;
             await fetch(`/api/skills/${encodeURIComponent(skill.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
+            if (this.managementCenter.show) await this.loadManagementSection('skills');
         },
 
         async addMcpServer() {
@@ -369,9 +373,10 @@ function chatApp() {
         },
 
         async deleteMcpServer(server) {
-            if (!confirm(`Delete MCP server ${server.name}?`)) return;
+            if (!confirm(`确定删除 MCP 服务器「${server.name}」？`)) return;
             await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
+            if (this.managementCenter.show) await this.loadManagementSection('mcp');
         },
 
         managementTitle() {
@@ -386,11 +391,11 @@ function chatApp() {
 
         managementSubtitle() {
             return {
-                skills: '管理全局可复用能力。',
-                mcp: '连接外部工具和数据源。',
-                knowledge: '维护用户确认的正式知识。',
-                memory: '审查从会话中提取的候选记忆。',
-                evidence: '跨会话检索历史内容和证据。',
+                skills: '管理全局可复用能力',
+                mcp: '连接外部工具和数据源',
+                knowledge: '维护用户确认的正式知识',
+                memory: '审查从会话中提取的候选记忆',
+                evidence: '跨会话检索历史内容和证据',
             }[this.managementCenter.section] || '';
         },
 
@@ -400,6 +405,7 @@ function chatApp() {
         },
 
         async loadManagementSection(section) {
+            this.closeManagementDrawer();
             this.managementCenter.section = section;
             this.managementCenter.loading = true;
             try {
@@ -416,7 +422,7 @@ function chatApp() {
                     await this.searchEvidence();
                 }
             } catch (e) {
-                this.showToast('Management load failed');
+                this.showToast('加载失败');
             }
             this.managementCenter.loading = false;
         },
@@ -454,7 +460,7 @@ function chatApp() {
             this.managementDrawer = {
                 show: true,
                 kind: 'mcp',
-                title: '添加服务器',
+                title: '添加 MCP 服务器',
                 form: { name: '', transport: 'stdio', command: '', url: '' },
             };
         },
@@ -514,12 +520,33 @@ function chatApp() {
             await this.loadManagementSection('knowledge');
         },
 
-        openMemoryDrawer() {
+        async deprecateKnowledge(item) {
+            if (!confirm(`确定废弃知识「${item.title}」？`)) return;
+            await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}/deprecate`, { method: 'POST' });
+            await this.loadManagementSection('knowledge');
+        },
+
+        async restoreKnowledge(item) {
+            await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
+            await this.loadManagementSection('knowledge');
+        },
+
+        async deleteKnowledge(item) {
+            if (!confirm(`确定删除知识「${item.title}」？此操作不可撤销。`)) return;
+            const res = await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                this.showToast('删除失败');
+                return;
+            }
+            await this.loadManagementSection('knowledge');
+        },
+
+        openMemoryDrawer(item = null) {
             this.managementDrawer = {
                 show: true,
                 kind: 'memory',
-                title: '新建记忆候选',
-                form: { summary: '', memory_type: 'workflow_pattern', text: '' },
+                title: item ? '编辑记忆' : '新建记忆',
+                form: item ? { ...item, memory_type: item.type || item.memory_type || 'workflow_pattern' } : { summary: '', memory_type: 'workflow_pattern', text: '' },
             };
         },
 
@@ -542,8 +569,63 @@ function chatApp() {
             await this.loadManagementSection('memory');
         },
 
+        async updateMemory() {
+            const form = this.managementDrawer.form || {};
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(form.id)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    summary: form.summary || '',
+                    memory_type: form.memory_type || form.type || 'workflow_pattern',
+                    text: form.text || '',
+                    domain: form.domain || 'general',
+                    tags: form.tags || [],
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('记忆更新失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('memory');
+        },
+
         async confirmMemoryCandidate(item) {
             await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/confirm`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async rejectMemoryCandidate(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/reject`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async deprecateMemory(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/deprecate`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async promoteMemory(item) {
+            const title = item.summary || (item.text || '').slice(0, 40) || '晋升知识';
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/promote`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, summary: item.summary || '' }),
+            });
+            if (!res.ok) {
+                this.showToast('提升为知识失败');
+                return;
+            }
+            await this.loadManagementSection('memory');
+        },
+
+        async deleteMemory(item) {
+            if (!confirm(`确定删除记忆「${item.summary || item.text || item.id}」？`)) return;
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                this.showToast('只能删除候选或已拒绝的记忆');
+                return;
+            }
             await this.loadManagementSection('memory');
         },
 
@@ -551,6 +633,29 @@ function chatApp() {
             const q = encodeURIComponent(this.managementCenter.evidenceQuery || '');
             const res = await fetch(`/api/management/evidence/search?q=${q}`);
             this.managementCenter.evidence = res.ok ? await res.json() : [];
+        },
+
+        async indexEvidence() {
+            if (!this.currentSessionId) {
+                this.showToast('请先打开一个会话');
+                return;
+            }
+            const res = await fetch('/api/management/evidence/index', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.currentSessionId }),
+            });
+            if (!res.ok) {
+                this.showToast('证据索引失败');
+                return;
+            }
+            await this.searchEvidence();
+        },
+
+        async globalManagementSearch() {
+            const q = encodeURIComponent(this.managementCenter.globalQuery || '');
+            const res = await fetch(`/api/management/search?q=${q}`);
+            this.managementCenter.globalResults = res.ok ? await res.json() : { knowledge: [], memory: [], evidence: [] };
         },
 
         // --- Sessions ---

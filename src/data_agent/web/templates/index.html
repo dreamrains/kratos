@@ -16,7 +16,7 @@
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                     </button>
 
-                    <button id="openManagementCenterButton" @click="openManagementCenter()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="Management">
+                    <button id="openManagementCenterButton" @click="openManagementCenter()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="管理中心">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3m0 12v3m9-9h-3M6 12H3m14.121-5.121-2.121 2.121M8.999 15l-2.121 2.121m10.243 0L15 15M8.999 9 6.878 6.879"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
                     <button @click="newSession()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-500 transition-colors" title="新建会话">
@@ -230,9 +230,9 @@
                     <h2 class="text-lg font-semibold tracking-tight text-stone-800 dark:text-stone-200">观澜</h2>
                     <p class="text-stone-400 mt-1.5 text-sm leading-relaxed">上传数据集或描述分析任务开始使用</p>
                     <div class="mt-6 flex flex-col gap-2 text-left">
-                        <button @click="inputText = 'Analyze the trends'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">Analyze the trends</button>
-                        <button @click="inputText = 'What insights can you find?'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">What insights can you find?</button>
-                        <button @click="inputText = 'Create a visualization'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">Create a visualization</button>
+                        <button @click="inputText = '分析数据趋势'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">分析数据趋势</button>
+                        <button @click="inputText = '你能发现什么洞察？'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">你能发现什么洞察？</button>
+                        <button @click="inputText = '创建数据可视化'; $refs.inputBox.focus()" class="text-left px-3 py-2.5 text-sm rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-500 dark:text-stone-400 transition-all hover:border-stone-300 dark:hover:border-stone-600">创建数据可视化</button>
                     </div>
                 </div>
 
@@ -267,7 +267,7 @@
                                 <div x-show="turn.content" class="prose prose-sm dark:prose-invert max-w-none leading-7" x-html="renderMarkdown(turn.content, turn)"></div>
                                 <template x-if="supplementalArtifacts(turn).length > 0">
                                     <div class="space-y-2">
-                                        <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Supplemental charts</div>
+                                        <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">补充图表</div>
                                         <template x-for="(art, ai) in supplementalArtifacts(turn)" :key="ai">
                                             <div class="rounded-lg border border-stone-200 dark:border-stone-700 overflow-hidden bg-white dark:bg-stone-900 shadow-sm">
                                                 <div class="px-3 py-2 border-b border-stone-200 dark:border-stone-700 flex items-center gap-2">
@@ -414,7 +414,7 @@
                                                                 class="px-3 py-1.5 text-xs text-stone-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">取消</button>
                                                         <button @click="_submitConfirmation(turn)"
                                                                 :disabled="turn.confirmation._resuming"
-                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">Submit</button>
+                                                                class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">提交</button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -500,7 +500,7 @@
     <aside class="hidden xl:flex w-80 shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col">
         <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-4 flex items-center justify-between">
             <div>
-                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">Outputs</p>
+                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">产出</p>
                 <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
@@ -673,225 +673,389 @@
         </div>
     </div>
 
-    <!-- Capabilities Modal -->
+    <!-- Capabilities Modal (kept for data compatibility; UI replaced by management center) -->
     <div x-show="capabilityModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="capabilityModal.show = false">
         <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-3xl mx-4 max-h-[82vh] overflow-hidden flex flex-col" @click.stop>
             <div class="px-5 py-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between">
-                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Capabilities</h3>
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">能力管理</h3>
                 <button @click="capabilityModal.show = false" class="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
                 </button>
             </div>
-            <div class="p-5 overflow-y-auto grid gap-5 md:grid-cols-2">
-                <section>
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-xs font-semibold uppercase tracking-wider text-stone-500">Skills</h4>
-                        <button @click="loadCapabilityAdmin()" class="text-xs text-brand-600 hover:text-brand-700">Refresh</button>
-                    </div>
-                    <div class="space-y-2">
-                        <template x-for="skill in capabilityModal.skills" :key="skill.name">
-                            <div class="border border-stone-200 dark:border-stone-700 rounded-lg p-3">
-                                <div class="flex items-center gap-2">
-                                    <div class="min-w-0 flex-1">
-                                        <p class="text-sm font-medium truncate" x-text="skill.name"></p>
-                                        <p class="text-xs text-stone-500 truncate" x-text="skill.description || '-'"></p>
-                                    </div>
-                                    <button @click="setSkillEnabled(skill, !skill.enabled)" class="px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700" x-text="skill.enabled ? 'Disable' : 'Enable'"></button>
-                                    <button @click="deleteSkill(skill)" class="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12m-9 0V5h6v2m-8 0 1 12h8l1-12"/></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </template>
-                        <div x-show="capabilityModal.skills.length === 0" class="text-xs text-stone-400 py-3">No skills installed.</div>
-                    </div>
-                    <div class="mt-3 grid gap-2">
-                        <input x-model="capabilityModal.newSkillName" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="skill name">
-                        <input x-model="capabilityModal.newSkillSource" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="local path or URL">
-                        <button @click="addSkill()" class="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add Skill</button>
-                    </div>
-                </section>
-                <section>
-                    <h4 class="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">MCP Servers</h4>
-                    <div class="space-y-2">
-                        <template x-for="server in capabilityModal.mcpServers" :key="server.name">
-                            <div class="border border-stone-200 dark:border-stone-700 rounded-lg p-3">
-                                <div class="flex items-center gap-2">
-                                    <div class="min-w-0 flex-1">
-                                        <p class="text-sm font-medium truncate" x-text="server.name"></p>
-                                        <p class="text-xs text-stone-500 truncate" x-text="server.transport + (server.command ? ' - ' + server.command : '')"></p>
-                                    </div>
-                                    <button @click="setMcpEnabled(server, !server.enabled)" class="px-2 py-1 text-xs rounded border border-stone-200 dark:border-stone-700" x-text="server.enabled ? 'Disable' : 'Enable'"></button>
-                                    <button @click="deleteMcpServer(server)" class="p-1 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12m-9 0V5h6v2m-8 0 1 12h8l1-12"/></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </template>
-                        <div x-show="capabilityModal.mcpServers.length === 0" class="text-xs text-stone-400 py-3">No MCP servers configured.</div>
-                    </div>
-                    <div class="mt-3 grid gap-2">
-                        <input x-model="capabilityModal.newMcpName" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="server name">
-                        <select x-model="capabilityModal.newMcpTransport" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800">
-                            <option value="stdio">stdio</option>
-                            <option value="sse">sse</option>
-                            <option value="streamable-http">streamable-http</option>
-                        </select>
-                        <input x-model="capabilityModal.newMcpCommand" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="command for stdio">
-                        <input x-model="capabilityModal.newMcpUrl" class="px-3 py-2 text-sm rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="URL for SSE/HTTP">
-                        <button @click="addMcpServer()" class="px-3 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add MCP Server</button>
-                    </div>
-                </section>
+            <div class="p-5 overflow-y-auto text-sm text-stone-500">
+                <p>技能和 MCP 服务器管理已移至管理中心，请点击侧边栏齿轮图标进入。</p>
+                <button @click="capabilityModal.show = false; openManagementCenter('skills')" class="mt-3 px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700">打开管理中心</button>
             </div>
         </div>
     </div>
 
     <!-- Management Center -->
-    <section id="managementCenter" x-show="managementCenter.show" x-transition.opacity class="management-center" aria-label="Management center">
-        <aside id="managementMenu" class="management-sidebar">
-            <button type="button" class="management-back" @click="managementCenter.show = false">← 返回应用</button>
-            <div class="management-menu-group">
-                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'skills' }" @click="loadManagementSection('skills')">技能</button>
-                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'mcp' }" @click="loadManagementSection('mcp')">MCP 服务器</button>
-                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'knowledge' }" @click="loadManagementSection('knowledge')">知识</button>
-                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'memory' }" @click="loadManagementSection('memory')">记忆</button>
-                <button class="management-menu-item" :class="{ 'active': managementCenter.section === 'evidence' }" @click="loadManagementSection('evidence')">会话搜索</button>
+    <section id="managementCenter" x-show="managementCenter.show" x-transition.opacity class="mgmt-overlay" aria-label="管理中心">
+        <aside class="mgmt-sidebar">
+            <div class="mgmt-sidebar-head">
+                <button type="button" class="mgmt-back-btn" @click="managementCenter.show = false">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                    返回应用
+                </button>
+                <h2 class="mgmt-sidebar-title">管理中心</h2>
             </div>
+            <nav class="mgmt-nav">
+                <button class="mgmt-nav-item" :class="{ 'active': managementCenter.section === 'skills' }" @click="loadManagementSection('skills')">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    技能
+                </button>
+                <button class="mgmt-nav-item" :class="{ 'active': managementCenter.section === 'mcp' }" @click="loadManagementSection('mcp')">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>
+                    MCP 服务器
+                </button>
+                <button class="mgmt-nav-item" :class="{ 'active': managementCenter.section === 'knowledge' }" @click="loadManagementSection('knowledge')">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg>
+                    知识库
+                </button>
+                <button class="mgmt-nav-item" :class="{ 'active': managementCenter.section === 'memory' }" @click="loadManagementSection('memory')">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"/></svg>
+                    记忆
+                </button>
+                <button class="mgmt-nav-item" :class="{ 'active': managementCenter.section === 'evidence' }" @click="loadManagementSection('evidence')">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+                    会话搜索
+                </button>
+            </nav>
         </aside>
-        <main class="management-content">
-            <header class="management-header">
-                <div>
-                    <h2 id="managementTitle" x-text="managementTitle()"></h2>
-                    <p class="management-subtitle" x-text="managementSubtitle()"></p>
+        <main class="mgmt-main">
+            <!-- Header -->
+            <header class="mgmt-page-head">
+                <div class="mgmt-page-head-inner">
+                    <div class="mgmt-page-info">
+                        <h2 class="mgmt-page-title" x-text="managementTitle()"></h2>
+                        <p class="mgmt-page-desc" x-text="managementSubtitle()"></p>
+                    </div>
+                    <div class="mgmt-page-actions">
+                        <div class="mgmt-search-box">
+                            <svg class="w-4 h-4 text-stone-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            <input x-model="managementCenter.globalQuery" type="search" placeholder="全局搜索" @keydown.enter="globalManagementSearch()">
+                            <button type="button" @click="globalManagementSearch()" class="mgmt-search-btn">搜索</button>
+                        </div>
+                        <button x-show="managementCenter.section === 'skills'" type="button" @click="openSkillDrawer()" class="mgmt-btn-primary">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                            添加技能
+                        </button>
+                        <button x-show="managementCenter.section === 'mcp'" type="button" @click="openMcpDrawer()" class="mgmt-btn-primary">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                            添加服务器
+                        </button>
+                        <button x-show="managementCenter.section === 'knowledge'" type="button" @click="openKnowledgeDrawer()" class="mgmt-btn-primary">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                            新建知识
+                        </button>
+                        <button x-show="managementCenter.section === 'memory'" type="button" @click="openMemoryDrawer()" class="mgmt-btn-primary">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                            新建记忆
+                        </button>
+                        <div x-show="managementCenter.section === 'evidence'" class="mgmt-search-box">
+                            <svg class="w-4 h-4 text-stone-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            <input x-model="managementCenter.evidenceQuery" type="search" placeholder="搜索会话内容..." @keydown.enter="searchEvidence()">
+                            <button type="button" @click="searchEvidence()" class="mgmt-search-btn">搜索</button>
+                            <button type="button" @click="indexEvidence()" class="mgmt-search-btn">重新索引</button>
+                        </div>
+                    </div>
                 </div>
             </header>
-            <div id="managementToolbar" class="management-toolbar">
-                <button x-show="managementCenter.section === 'skills'" type="button" @click="openSkillDrawer()" class="management-primary-action">+ 添加技能</button>
-                <button x-show="managementCenter.section === 'mcp'" type="button" @click="openMcpDrawer()" class="management-primary-action">+ 添加服务器</button>
-                <button x-show="managementCenter.section === 'knowledge'" type="button" @click="openKnowledgeDrawer()" class="management-primary-action">+ 新建知识</button>
-                <button x-show="managementCenter.section === 'memory'" type="button" @click="openMemoryDrawer()" class="management-primary-action">+ 新建记忆</button>
-                <div x-show="managementCenter.section === 'evidence'" class="management-search">
-                    <input x-model="managementCenter.evidenceQuery" type="search" placeholder="搜索会话">
-                    <button type="button" @click="searchEvidence()">搜索</button>
-                </div>
-            </div>
-            <div id="managementBody" class="management-body">
-                <div x-show="managementCenter.loading" class="text-sm text-stone-400">加载中...</div>
 
-                <div x-show="!managementCenter.loading && managementCenter.section === 'skills'" class="management-list">
+            <!-- Content -->
+            <div class="mgmt-page-body">
+                <!-- Loading -->
+                <div x-show="managementCenter.loading" class="mgmt-loading">
+                    <svg class="w-5 h-5 animate-spin text-brand-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <span>加载中...</span>
+                </div>
+
+                <!-- Skills Section -->
+                <div x-show="!managementCenter.loading && managementCenter.section === 'skills'" class="mgmt-card-list">
                     <template x-for="skill in capabilityModal.skills" :key="skill.name">
-                        <article class="management-row">
-                            <div class="min-w-0">
-                                <strong x-text="skill.name"></strong>
-                                <div class="muted truncate" x-text="skill.description || '-'"></div>
+                        <article class="mgmt-card">
+                            <div class="mgmt-card-main">
+                                <div class="mgmt-card-head">
+                                    <h3 class="mgmt-card-title" x-text="skill.name"></h3>
+                                    <span class="mgmt-badge" :class="skill.enabled ? 'mgmt-badge-success' : 'mgmt-badge-inactive'" x-text="skill.enabled ? '已启用' : '已停用'"></span>
+                                </div>
+                                <p class="mgmt-card-desc" x-text="skill.description || '暂无描述'"></p>
                             </div>
-                            <div class="flex gap-2">
-                                <button type="button" @click="setSkillEnabled(skill, !skill.enabled)" x-text="skill.enabled ? '停用' : '启用'"></button>
-                                <button type="button" @click="deleteSkill(skill)">删除</button>
+                            <div class="mgmt-card-actions">
+                                <button type="button" @click="setSkillEnabled(skill, !skill.enabled)"
+                                        class="mgmt-action-btn"
+                                        x-text="skill.enabled ? '停用' : '启用'"></button>
+                                <button type="button" @click="deleteSkill(skill)" class="mgmt-action-btn mgmt-action-danger">删除</button>
                             </div>
                         </article>
                     </template>
-                    <div x-show="capabilityModal.skills.length === 0" class="muted">暂无技能。</div>
+                    <div x-show="capabilityModal.skills.length === 0" class="mgmt-empty">
+                        <svg class="w-10 h-10 text-stone-300 dark:text-stone-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <p>暂无技能</p>
+                        <span>点击上方按钮添加第一个技能</span>
+                    </div>
                 </div>
 
-                <div x-show="!managementCenter.loading && managementCenter.section === 'mcp'" class="management-list">
+                <!-- MCP Servers Section -->
+                <div x-show="!managementCenter.loading && managementCenter.section === 'mcp'" class="mgmt-card-list">
                     <template x-for="server in capabilityModal.mcpServers" :key="server.name">
-                        <article class="management-row">
-                            <div class="min-w-0">
-                                <strong x-text="server.name"></strong>
-                                <div class="muted truncate" x-text="server.transport + (server.command ? ' - ' + server.command : '')"></div>
+                        <article class="mgmt-card">
+                            <div class="mgmt-card-main">
+                                <div class="mgmt-card-head">
+                                    <h3 class="mgmt-card-title" x-text="server.name"></h3>
+                                    <span class="mgmt-badge" :class="server.enabled ? 'mgmt-badge-success' : 'mgmt-badge-inactive'" x-text="server.enabled ? '已启用' : '已停用'"></span>
+                                </div>
+                                <p class="mgmt-card-desc">
+                                    <span class="inline-flex items-center gap-1">
+                                        <span class="mgmt-badge mgmt-badge-neutral" x-text="server.transport"></span>
+                                        <span x-show="server.command" class="text-stone-400 dark:text-stone-500 truncate" x-text="server.command"></span>
+                                        <span x-show="server.url && !server.command" class="text-stone-400 dark:text-stone-500 truncate" x-text="server.url"></span>
+                                    </span>
+                                </p>
                             </div>
-                            <div class="flex gap-2">
-                                <button type="button" @click="setMcpEnabled(server, !server.enabled)" x-text="server.enabled ? '停用' : '启用'"></button>
-                                <button type="button" @click="deleteMcpServer(server)">删除</button>
+                            <div class="mgmt-card-actions">
+                                <button type="button" @click="setMcpEnabled(server, !server.enabled)"
+                                        class="mgmt-action-btn"
+                                        x-text="server.enabled ? '停用' : '启用'"></button>
+                                <button type="button" @click="deleteMcpServer(server)" class="mgmt-action-btn mgmt-action-danger">删除</button>
                             </div>
                         </article>
                     </template>
-                    <div x-show="capabilityModal.mcpServers.length === 0" class="muted">暂无 MCP 服务器。</div>
+                    <div x-show="capabilityModal.mcpServers.length === 0" class="mgmt-empty">
+                        <svg class="w-10 h-10 text-stone-300 dark:text-stone-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>
+                        <p>暂无 MCP 服务器</p>
+                        <span>点击上方按钮添加第一个服务器</span>
+                    </div>
                 </div>
 
-                <div x-show="!managementCenter.loading && managementCenter.section === 'knowledge'" class="management-list">
+                <!-- Knowledge Section -->
+                <div x-show="!managementCenter.loading && managementCenter.section === 'knowledge'" class="mgmt-card-list">
                     <template x-for="item in managementCenter.knowledge" :key="item.id">
-                        <article class="management-row">
-                            <div class="min-w-0">
-                                <strong x-text="item.title"></strong>
-                                <div class="muted truncate" x-text="item.domain + ' - ' + item.status"></div>
+                        <article class="mgmt-card">
+                            <div class="mgmt-card-main">
+                                <div class="mgmt-card-head">
+                                    <h3 class="mgmt-card-title" x-text="item.title"></h3>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="mgmt-badge mgmt-badge-neutral" x-text="item.domain"></span>
+                                        <span class="mgmt-badge" :class="{
+                                            'mgmt-badge-success': item.status === 'active',
+                                            'mgmt-badge-warning': item.status === 'draft',
+                                            'mgmt-badge-inactive': item.status === 'deprecated'
+                                        }" x-text="item.status === 'active' ? '生效' : item.status === 'draft' ? '草稿' : '已废弃'"></span>
+                                    </div>
+                                </div>
+                                <p class="mgmt-card-desc" x-text="item.summary || item.content?.substring(0, 120) + '...' || '暂无内容'"></p>
                             </div>
-                            <button type="button" @click="openKnowledgeDrawer(item)">编辑</button>
+                            <div class="mgmt-card-actions">
+                                <button type="button" @click="openKnowledgeDrawer(item)" class="mgmt-action-btn">编辑</button>
+                                <template x-if="item.status === 'active'">
+                                    <button type="button" @click="deprecateKnowledge(item)" class="mgmt-action-btn">废弃</button>
+                                </template>
+                                <template x-if="item.status === 'deprecated'">
+                                    <button type="button" @click="restoreKnowledge(item)" class="mgmt-action-btn">恢复</button>
+                                </template>
+                                <button type="button" @click="deleteKnowledge(item)" class="mgmt-action-btn mgmt-action-danger">删除</button>
+                            </div>
                         </article>
                     </template>
-                    <div x-show="managementCenter.knowledge.length === 0" class="muted">暂无知识。</div>
+                    <div x-show="managementCenter.knowledge.length === 0" class="mgmt-empty">
+                        <svg class="w-10 h-10 text-stone-300 dark:text-stone-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg>
+                        <p>暂无知识</p>
+                        <span>点击上方按钮创建第一条知识</span>
+                    </div>
                 </div>
 
-                <div x-show="!managementCenter.loading && managementCenter.section === 'memory'" class="management-list">
+                <!-- Memory Section -->
+                <div x-show="!managementCenter.loading && managementCenter.section === 'memory'" class="mgmt-card-list">
                     <template x-for="item in managementCenter.memory" :key="item.id">
-                        <article class="management-row">
-                            <div class="min-w-0">
-                                <strong x-text="item.summary || item.text"></strong>
-                                <div class="muted truncate" x-text="item.type + ' - ' + item.status + ' - ' + item.confidence"></div>
+                        <article class="mgmt-card">
+                            <div class="mgmt-card-main">
+                                <div class="mgmt-card-head">
+                                    <h3 class="mgmt-card-title" x-text="item.summary || item.text?.substring(0, 60) || '无标题'"></h3>
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="mgmt-badge mgmt-badge-neutral" x-text="item.type"></span>
+                                        <span class="mgmt-badge" :class="{
+                                            'mgmt-badge-warning': item.status === 'candidate',
+                                            'mgmt-badge-success': item.status === 'confirmed',
+                                            'mgmt-badge-inactive': item.status === 'deprecated',
+                                            'mgmt-badge-error': item.status === 'rejected'
+                                        }" x-text="item.status === 'candidate' ? '候选' : item.status === 'confirmed' ? '已确认' : item.status === 'deprecated' ? '已废弃' : '已拒绝'"></span>
+                                    </div>
+                                </div>
+                                <p class="mgmt-card-desc" x-text="item.text?.substring(0, 150) || '暂无内容'"></p>
+                                <div x-show="item.confidence" class="mt-1.5 flex items-center gap-2">
+                                    <span class="text-[10px] text-stone-400">置信度</span>
+                                    <div class="flex-1 h-1 rounded-full bg-stone-200 dark:bg-stone-700 max-w-[120px]">
+                                        <div class="h-full rounded-full transition-all" :class="item.confidence > 0.8 ? 'bg-green-500' : item.confidence > 0.5 ? 'bg-amber-500' : 'bg-red-400'" :style="'width:' + (item.confidence * 100) + '%'"></div>
+                                    </div>
+                                    <span class="text-[10px] text-stone-400" x-text="(item.confidence * 100).toFixed(0) + '%'"></span>
+                                </div>
                             </div>
-                            <button type="button" @click="confirmMemoryCandidate(item)" :disabled="item.status !== 'candidate'">确认</button>
+                            <div class="mgmt-card-actions">
+                                <button type="button" @click="openMemoryDrawer(item)" class="mgmt-action-btn">编辑记忆</button>
+                                <template x-if="item.status === 'candidate'">
+                                    <div class="flex gap-1.5">
+                                        <button type="button" @click="confirmMemoryCandidate(item)" class="mgmt-action-btn mgmt-action-success">确认</button>
+                                        <button type="button" @click="rejectMemoryCandidate(item)" class="mgmt-action-btn mgmt-action-danger">拒绝</button>
+                                        <button type="button" @click="deleteMemory(item)" class="mgmt-action-btn mgmt-action-danger">删除</button>
+                                    </div>
+                                </template>
+                                <template x-if="item.status === 'confirmed'">
+                                    <div class="flex gap-1.5">
+                                        <button type="button" @click="promoteMemory(item)" class="mgmt-action-btn mgmt-action-success">提升为知识</button>
+                                        <button type="button" @click="deprecateMemory(item)" class="mgmt-action-btn">废弃</button>
+                                    </div>
+                                </template>
+                                <template x-if="item.status === 'deprecated'">
+                                    <span class="text-[11px] text-stone-400">已归档</span>
+                                </template>
+                                <template x-if="item.status === 'rejected'">
+                                    <span class="text-[11px] text-stone-400">已拒绝</span>
+                                </template>
+                            </div>
                         </article>
                     </template>
-                    <div x-show="managementCenter.memory.length === 0" class="muted">暂无记忆候选。</div>
+                    <div x-show="managementCenter.memory.length === 0" class="mgmt-empty">
+                        <svg class="w-10 h-10 text-stone-300 dark:text-stone-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z"/></svg>
+                        <p>暂无记忆</p>
+                        <span>记忆会在分析会话中自动提取</span>
+                    </div>
                 </div>
 
-                <div x-show="!managementCenter.loading && managementCenter.section === 'evidence'" class="management-list">
+                <!-- Evidence Section -->
+                <div x-show="!managementCenter.loading && managementCenter.section === 'evidence'" class="mgmt-card-list">
                     <template x-for="item in managementCenter.evidence" :key="item.id">
-                        <article class="management-row">
-                            <div class="min-w-0">
-                                <strong x-text="item.session_id"></strong>
-                                <div class="muted truncate" x-text="item.summary"></div>
+                        <article class="mgmt-card">
+                            <div class="mgmt-card-main">
+                                <div class="mgmt-card-head">
+                                    <h3 class="mgmt-card-title" x-text="item.summary || '未命名会话'"></h3>
+                                    <span class="mgmt-badge mgmt-badge-neutral" x-text="item.kind"></span>
+                                </div>
+                                <p class="mgmt-card-desc">
+                                    <span class="text-stone-400 dark:text-stone-500 text-xs" x-text="'会话 ' + item.session_id?.substring(0, 8) + (item.project_id ? ' · 项目 ' + item.project_id : '')"></span>
+                                </p>
+                                <p x-show="item.content" class="mgmt-card-desc mt-1" x-text="item.content?.substring(0, 200) + (item.content?.length > 200 ? '...' : '')"></p>
                             </div>
                         </article>
                     </template>
-                    <div x-show="managementCenter.evidence.length === 0" class="muted">暂无搜索结果。</div>
+                    <div x-show="managementCenter.evidence.length === 0" class="mgmt-empty">
+                        <svg class="w-10 h-10 text-stone-300 dark:text-stone-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+                        <p>暂无搜索结果</p>
+                        <span>输入关键词搜索跨会话内容</span>
+                    </div>
                 </div>
             </div>
         </main>
     </section>
 
-    <aside id="managementDrawer" x-show="managementDrawer.show" x-transition class="management-drawer" aria-label="Management details">
-        <header class="management-drawer-header">
-            <h3 id="managementDrawerTitle" x-text="managementDrawer.title"></h3>
-            <button type="button" class="icon-button" @click="closeManagementDrawer()" aria-label="Close details">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
-            </button>
-        </header>
-        <div id="managementDrawerBody" class="management-drawer-body">
-            <template x-if="managementDrawer.kind === 'skill'">
-                <div class="grid gap-3">
-                    <label>技能名称<input x-model="managementDrawer.form.name" type="text"></label>
-                    <label>来源路径或 URL<input x-model="managementDrawer.form.source" type="text"></label>
-                    <button type="button" @click="saveSkillItem()">添加技能</button>
-                </div>
-            </template>
-            <template x-if="managementDrawer.kind === 'mcp'">
-                <div class="grid gap-3">
-                    <label>服务器名称<input x-model="managementDrawer.form.name" type="text"></label>
-                    <label>传输方式<input x-model="managementDrawer.form.transport" type="text"></label>
-                    <label>命令<input x-model="managementDrawer.form.command" type="text"></label>
-                    <label>URL<input x-model="managementDrawer.form.url" type="text"></label>
-                    <button type="button" @click="saveMcpServer()">添加服务器</button>
-                </div>
-            </template>
-            <template x-if="managementDrawer.kind === 'knowledge'">
-                <div class="grid gap-3">
-                    <label>标题<input x-model="managementDrawer.form.title" type="text"></label>
-                    <label>领域<input x-model="managementDrawer.form.domain" type="text"></label>
-                    <label>摘要<input x-model="managementDrawer.form.summary" type="text"></label>
-                    <label>内容<textarea x-model="managementDrawer.form.content"></textarea></label>
-                    <button type="button" @click="saveKnowledgeItem()">保存</button>
-                </div>
-            </template>
-            <template x-if="managementDrawer.kind === 'memory'">
-                <div class="grid gap-3">
-                    <label>摘要<input x-model="managementDrawer.form.summary" type="text"></label>
-                    <label>类型<input x-model="managementDrawer.form.memory_type" type="text"></label>
-                    <label>内容<textarea x-model="managementDrawer.form.text"></textarea></label>
-                    <button type="button" @click="saveMemoryCandidate()">保存</button>
-                </div>
-            </template>
+    <!-- Management Drawer (slide-over for create/edit) -->
+    <aside id="managementDrawer" x-show="managementDrawer.show" class="mgmt-drawer" x-transition:enter="transition-transform duration-300 ease-out" x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0" x-transition:leave="transition-transform duration-200 ease-in" x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full" aria-label="详情面板">
+        <div class="mgmt-drawer-inner">
+            <header class="mgmt-drawer-head">
+                <h3 x-text="managementDrawer.title"></h3>
+                <button type="button" @click="closeManagementDrawer()" class="mgmt-close-btn" aria-label="关闭">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+                </button>
+            </header>
+            <div class="mgmt-drawer-body">
+                <!-- Skill Form -->
+                <template x-if="managementDrawer.kind === 'skill'">
+                    <div class="mgmt-form">
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">技能名称</label>
+                            <input x-model="managementDrawer.form.name" type="text" class="mgmt-input" placeholder="输入技能名称">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">来源路径或 URL</label>
+                            <input x-model="managementDrawer.form.source" type="text" class="mgmt-input" placeholder="本地路径或远程地址">
+                        </div>
+                        <div class="mgmt-form-actions">
+                            <button type="button" @click="closeManagementDrawer()" class="mgmt-btn-ghost">取消</button>
+                            <button type="button" @click="saveSkillItem()" class="mgmt-btn-primary">添加技能</button>
+                        </div>
+                    </div>
+                </template>
+                <!-- MCP Server Form -->
+                <template x-if="managementDrawer.kind === 'mcp'">
+                    <div class="mgmt-form">
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">服务器名称</label>
+                            <input x-model="managementDrawer.form.name" type="text" class="mgmt-input" placeholder="输入服务器名称">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">传输方式</label>
+                            <select x-model="managementDrawer.form.transport" class="mgmt-input">
+                                <option value="stdio">stdio</option>
+                                <option value="sse">SSE</option>
+                                <option value="streamable-http">Streamable HTTP</option>
+                            </select>
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">命令（stdio 模式）</label>
+                            <input x-model="managementDrawer.form.command" type="text" class="mgmt-input" placeholder="如：npx -y @modelcontextprotocol/server-sqlite">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">URL（SSE / HTTP 模式）</label>
+                            <input x-model="managementDrawer.form.url" type="text" class="mgmt-input" placeholder="如：http://localhost:3000/sse">
+                        </div>
+                        <div class="mgmt-form-actions">
+                            <button type="button" @click="closeManagementDrawer()" class="mgmt-btn-ghost">取消</button>
+                            <button type="button" @click="saveMcpServer()" class="mgmt-btn-primary">添加服务器</button>
+                        </div>
+                    </div>
+                </template>
+                <!-- Knowledge Form -->
+                <template x-if="managementDrawer.kind === 'knowledge'">
+                    <div class="mgmt-form">
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">标题</label>
+                            <input x-model="managementDrawer.form.title" type="text" class="mgmt-input" placeholder="知识标题">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">领域</label>
+                            <input x-model="managementDrawer.form.domain" type="text" class="mgmt-input" placeholder="如：电商、游戏、通用">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">摘要</label>
+                            <input x-model="managementDrawer.form.summary" type="text" class="mgmt-input" placeholder="简要描述">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">内容</label>
+                            <textarea x-model="managementDrawer.form.content" class="mgmt-input mgmt-textarea" placeholder="详细内容"></textarea>
+                        </div>
+                        <div class="mgmt-form-actions">
+                            <button type="button" @click="closeManagementDrawer()" class="mgmt-btn-ghost">取消</button>
+                            <button type="button" @click="saveKnowledgeItem()" class="mgmt-btn-primary">保存</button>
+                        </div>
+                    </div>
+                </template>
+                <!-- Memory Form -->
+                <template x-if="managementDrawer.kind === 'memory'">
+                    <div class="mgmt-form">
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">摘要</label>
+                            <input x-model="managementDrawer.form.summary" type="text" class="mgmt-input" placeholder="简要描述">
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">类型</label>
+                            <select x-model="managementDrawer.form.memory_type" class="mgmt-input">
+                                <option value="workflow_pattern">工作流模式</option>
+                                <option value="data_insight">数据洞察</option>
+                                <option value="tool_usage">工具用法</option>
+                                <option value="domain_fact">领域事实</option>
+                            </select>
+                        </div>
+                        <div class="mgmt-field">
+                            <label class="mgmt-label">内容</label>
+                            <textarea x-model="managementDrawer.form.text" class="mgmt-input mgmt-textarea" placeholder="记忆内容"></textarea>
+                        </div>
+                        <div class="mgmt-form-actions">
+                            <button type="button" @click="closeManagementDrawer()" class="mgmt-btn-ghost">取消</button>
+                            <button type="button" @click="managementDrawer.form.id ? updateMemory() : saveMemoryCandidate()" class="mgmt-btn-primary">保存</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
     </aside>
 
@@ -985,7 +1149,7 @@
     <div x-show="rewindModal.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="rewindModal.show = false">
         <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" @click.stop>
             <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between shrink-0">
-                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Rewind Conversation</h3>
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">回退对话</h3>
                 <button @click="rewindModal.show = false" class="p-1 rounded hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
@@ -1020,7 +1184,7 @@
     <div x-show="compactDialog.show" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="compactDialog.show = false">
         <div class="bg-white dark:bg-stone-900 rounded-xl shadow-xl border border-stone-200 dark:border-stone-700 w-full max-w-sm mx-4" @click.stop>
             <div class="px-5 py-3 border-b border-stone-200 dark:border-stone-800">
-                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">Compress Context</h3>
+                <h3 class="text-sm font-semibold text-stone-800 dark:text-stone-200">压缩上下文</h3>
             </div>
             <div class="px-5 py-4">
                 <p class="text-xs text-stone-500 dark:text-stone-400 mb-3">可选：指定压缩时需要保留的重点内容：</p>

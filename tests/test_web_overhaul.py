@@ -49,10 +49,10 @@ def test_management_center_shell_exists(html, js, css):
 
 
 def test_management_center_uses_chinese_settings_interaction(html, js):
-    assert "返回对话" in html
+    assert "返回应用" in html
     assert "技能" in html
     assert "MCP 服务器" in html
-    assert "知识" in html
+    assert "知识库" in html
     assert "记忆" in html
     assert "会话搜索" in html
     assert "添加技能" in html
@@ -230,7 +230,7 @@ class TestRewindUI:
         assert "/rewind-info" in js
 
     def test_rewind_modal_html(self, html):
-        assert "Rewind Conversation" in html
+        assert "Rewind Conversation" in html or "回退对话" in html
         assert "rewindModal.show" in html
         assert "selectedRound" in html
 
@@ -263,7 +263,7 @@ class TestCompactFocus:
         assert "doCompact" in js
 
     def test_compact_dialog_html(self, html):
-        assert "Compress Context" in html
+        assert "Compress Context" in html or "压缩上下文" in html
         assert "compactDialog.focus" in html
 
     def test_focus_input_placeholder(self, html):
@@ -406,7 +406,7 @@ class TestWorkbenchRedesign:
     """4.1-4.3 Workbench simplified to single Outputs panel."""
 
     def test_outputs_panel_header(self, html):
-        assert ">Outputs<" in html or "Outputs" in html
+        assert ">Outputs<" in html or "Outputs" in html or "输出" in html or "产出物" in html
 
     def test_no_workbench_tab_in_js(self, js):
         assert "workbenchTab" not in js
@@ -456,9 +456,9 @@ class TestVisualPolish:
         assert "to-indigo-100" in html
 
     def test_prompt_suggestions(self, html):
-        assert "Analyze the trends" in html
-        assert "What insights" in html
-        assert "Create a visualization" in html
+        assert "Analyze the trends" in html or "分析趋势" in html or "分析数据趋势" in html
+        assert "What insights" in html or "有什么洞察" in html or "你能发现什么洞察" in html
+        assert "Create a visualization" in html or "创建可视化" in html or "创建数据可视化" in html
 
     def test_suggestions_set_input_text(self, html):
         assert "inputText = " in html
@@ -533,7 +533,7 @@ class TestCoreRegression:
 
     def test_confirmation_dialog_exists(self, html):
         assert "confirmation" in html
-        assert "Submit" in html
+        assert "Submit" in html or "提交" in html
 
     def test_config_modal_exists(self, html):
         assert "configModal" in html
