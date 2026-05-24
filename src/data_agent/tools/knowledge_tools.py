@@ -136,11 +136,8 @@ def update_project_rules(content: str) -> str:
     return _project_rules.update(content)
 
 
-@registry.register(
-    name="show_domain_knowledge",
-    description="Show global and current-session domain knowledge.",
-)
 def show_domain_knowledge() -> str:
+    """Legacy helper kept for migration; no longer exposed as an agent tool."""
     import yaml
 
     _ensure_instances()
@@ -148,20 +145,14 @@ def show_domain_knowledge() -> str:
     return yaml.dump(data, allow_unicode=True, default_flow_style=False)
 
 
-@registry.register(
-    name="set_domain",
-    description="Switch the global active domain knowledge package.",
-)
 def set_domain(domain_name: str) -> str:
+    """Legacy helper kept for migration; no longer exposed as an agent tool."""
     _ensure_instances()
     return _domain_knowledge.set_domain(domain_name)
 
 
-@registry.register(
-    name="show_experience_log",
-    description="Show global and current-session experience log entries.",
-)
 def show_experience_log() -> str:
+    """Legacy helper kept for migration; no longer exposed as an agent tool."""
     import json
 
     _ensure_instances()
@@ -171,11 +162,8 @@ def show_experience_log() -> str:
     return json.dumps(entries, ensure_ascii=False, indent=2)
 
 
-@registry.register(
-    name="confirm_experience",
-    description="Confirm a draft experience entry.",
-)
 def confirm_experience(entry_id: str) -> str:
+    """Legacy helper kept for migration; no longer exposed as an agent tool."""
     _ensure_instances()
     result = _experience_log.confirm(entry_id)
     if result:

@@ -527,7 +527,7 @@ class AgentLoop:
         if level == "chat":
             tool_list = ""
 
-        project_rules, _domain_knowledge, _experience_log = get_knowledge_instances()
+        project_rules, _, _ = get_knowledge_instances()
         rules_prompt = project_rules.get_rules_for_prompt(session_id=sid)
         retrieved_context = ""
         retrieval_query = self._build_retrieval_query(self.messages)
