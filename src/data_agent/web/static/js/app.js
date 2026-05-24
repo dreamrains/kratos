@@ -672,7 +672,8 @@ function chatApp() {
         },
 
         async extractMemoryCandidates() {
-            if (!this.currentSessionId) {
+            const hasSavedSession = this.currentSessionId && this.currentSessionId !== '_pending_';
+            if (!hasSavedSession) {
                 this.showToast('请先打开一个会话');
                 return;
             }
@@ -691,10 +692,20 @@ function chatApp() {
         },
 
         async loadMemorySources(item) {
-            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/sources`);
-            this.managementCenter.memorySources = res.ok ? await res.json() : { memory_id: item.id, sources: [] };
-            const count = (this.managementCenter.memorySources.sources || []).length;
-            this.showToast(`来源证据 ${count} 条`);
+            this.managementCenter.memorySources = { memory_id: item.id, sources: [] };
+            try {
+                const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/sources`);
+                if (!res.ok) {
+                    this.showToast('来源证据加载失败');
+                    return;
+                }
+                this.managementCenter.memorySources = await res.json();
+                const count = (this.managementCenter.memorySources.sources || []).length;
+                this.showToast(`来源证据 ${count} 条`);
+            } catch (e) {
+                this.managementCenter.memorySources = { memory_id: item.id, sources: [] };
+                this.showToast('来源证据加载失败');
+            }
         },
 
         async searchEvidence() {
