@@ -90,3 +90,31 @@ def test_evidence_stays_out_by_default_and_until_budgeted(tmp_path):
     assert requested_with_zero_budget.evidence_items == []
     assert requested_with_budget.evidence_items
     assert requested_with_budget.metadata["evidence_chars"] > 0
+
+
+def test_include_evidence_without_budget_keeps_evidence_out(tmp_path):
+    root = tmp_path / "knowledge"
+    sessions_dir = tmp_path / "sessions"
+    session_dir = sessions_dir / "s2"
+    session_dir.mkdir(parents=True)
+    (session_dir / "meta.json").write_text(
+        json.dumps({"project_name": "support"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (session_dir / "conversation.json").write_text(
+        json.dumps(
+            [{"role": "user", "content": "Churn evidence from a support cohort."}],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    EvidenceStore(root, sessions_dir=sessions_dir).index_session("s2")
+
+    context = KnowledgeRetrievalService(root=root, sessions_dir=sessions_dir).retrieve(
+        "Churn evidence",
+        project_id="support",
+        include_evidence=True,
+    )
+
+    assert context.evidence_items == []
+    assert context.metadata["evidence_chars"] == 0

@@ -122,7 +122,7 @@ class KnowledgeRetrievalService:
         *,
         max_knowledge_chars: int = DEFAULT_MAX_KNOWLEDGE_CHARS,
         max_memory_chars: int = DEFAULT_MAX_MEMORY_CHARS,
-        max_evidence_chars: int | None = None,
+        max_evidence_chars: int = DEFAULT_MAX_EVIDENCE_CHARS,
         max_total_retrieval_chars: int = DEFAULT_MAX_TOTAL_RETRIEVAL_CHARS,
     ) -> RetrievedContext:
         normalized_query = _normalize_query(query)
@@ -156,14 +156,9 @@ class KnowledgeRetrievalService:
             memory_items,
             max_memory_chars,
         )
-        effective_evidence_budget = (
-            max_evidence_chars
-            if max_evidence_chars is not None
-            else DEFAULT_MAX_TOTAL_RETRIEVAL_CHARS
-        )
         evidence_items, evidence_chars, evidence_trimmed = _trim_items_to_budget(
             evidence_items,
-            effective_evidence_budget,
+            max_evidence_chars,
         )
         trimmed = knowledge_trimmed or memory_trimmed or evidence_trimmed
 
