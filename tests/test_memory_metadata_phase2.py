@@ -1,4 +1,84 @@
+import sqlite3
+
 from data_agent.knowledge.memory import MemoryStore
+
+
+def _create_old_schema_database(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE knowledge_items (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                path TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                status TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                source TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deprecated_at TEXT NOT NULL,
+                supersedes TEXT NOT NULL,
+                superseded_by TEXT NOT NULL
+            );
+
+            CREATE TABLE memory_items (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                text TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                status TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                source_session_id TEXT NOT NULL,
+                source_message_ids TEXT NOT NULL,
+                source_tool_call_ids TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                domain TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                hit_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                promotion_target TEXT NOT NULL
+            );
+
+            CREATE TABLE evidence_records (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content_ref TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                embedding_ref TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                tags TEXT NOT NULL
+            );
+            """
+        )
+
+
+def test_existing_old_schema_database_migrates_before_metadata_indexes(tmp_path):
+    root = tmp_path / "knowledge"
+    db_path = root / "knowledge.sqlite3"
+    _create_old_schema_database(db_path)
+
+    store = MemoryStore(root)
+    item = store.create_candidate(
+        text="Review migrated memory.",
+        needs_review=True,
+        dedup_key="migration:test",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_items)").fetchall()}
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(memory_items)").fetchall()}
+
+    assert {"reason", "source_evidence_ids", "needs_review", "review_note", "dedup_key"} <= columns
+    assert {"idx_memory_dedup_key", "idx_memory_needs_review"} <= indexes
+    assert store.list(needs_review=True)[0].id == item.id
 
 
 def test_memory_candidate_persists_review_metadata(tmp_path):

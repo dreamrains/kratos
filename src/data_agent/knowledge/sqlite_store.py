@@ -36,8 +36,11 @@ class KnowledgeDatabase:
         for name, ddl in columns.items():
             if name not in existing:
                 conn.execute(f"ALTER TABLE memory_items ADD COLUMN {name} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_domain_status ON knowledge_items(domain, status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_status_domain ON memory_items(status, domain)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_dedup_key ON memory_items(dedup_key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_needs_review ON memory_items(needs_review)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_session ON evidence_records(session_id)")
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
@@ -103,14 +106,4 @@ CREATE TABLE IF NOT EXISTS evidence_records (
     tags TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_knowledge_domain_status
-    ON knowledge_items(domain, status);
-CREATE INDEX IF NOT EXISTS idx_memory_status_domain
-    ON memory_items(status, domain);
-CREATE INDEX IF NOT EXISTS idx_memory_dedup_key
-    ON memory_items(dedup_key);
-CREATE INDEX IF NOT EXISTS idx_memory_needs_review
-    ON memory_items(needs_review);
-CREATE INDEX IF NOT EXISTS idx_evidence_session
-    ON evidence_records(session_id);
 """
