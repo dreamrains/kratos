@@ -37,6 +37,7 @@ class EvidenceStore:
                 content = self._message_content(message)
                 if not content:
                     continue
+                kind = self._evidence_kind_for_message(message)
                 evidence_id = f"ev_{session_id}_{idx}"
                 conn.execute(
                     """
@@ -49,7 +50,7 @@ class EvidenceStore:
                         evidence_id,
                         session_id,
                         project_id,
-                        EvidenceKind.MESSAGE.value,
+                        kind.value,
                         f"{session_id}:message:{idx}",
                         content[:300],
                         "",
@@ -178,8 +179,41 @@ class EvidenceStore:
     def _message_content(self, message: dict[str, Any]) -> str:
         content = message.get("content", "")
         if isinstance(content, str):
+            if content:
+                return content
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                return json.dumps(tool_calls, ensure_ascii=False)
             return content
         return json.dumps(content, ensure_ascii=False)
+
+    def _evidence_kind_for_message(self, message: dict[str, Any]) -> EvidenceKind:
+        role = str(message.get("role", "") or "")
+        name = str(message.get("name", "") or "")
+        content = self._message_content(message)
+        content_lower = content.lower()
+        correction_markers = (
+            "纠正",
+            "更正",
+            "修正",
+            "不是",
+            "应为",
+            "应该是",
+            "correction",
+            "correct",
+        )
+
+        if role == "tool" or name:
+            if name == "generate_report":
+                return EvidenceKind.REPORT
+            if name in {"record_evidence_record", "record_insight_record"}:
+                return EvidenceKind.ANALYSIS_RESULT
+            return EvidenceKind.TOOL_CALL
+        if message.get("tool_calls"):
+            return EvidenceKind.TOOL_CALL
+        if any(marker in content_lower for marker in correction_markers):
+            return EvidenceKind.USER_CORRECTION
+        return EvidenceKind.MESSAGE
 
     def _json_list(self, value: str) -> list[str]:
         try:
