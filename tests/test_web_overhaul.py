@@ -6,6 +6,7 @@ import json
 import pytest
 import sys
 import os
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -251,6 +252,68 @@ class TestRewindUI:
     def test_show_toast_after_rewind(self, js):
         assert "showToast" in js
         assert "已回滚到 Round" in js
+
+
+    def test_live_user_turn_round_index_is_one_based(self, js):
+        assert "roundIndex: this._countUserTurns(state.turns) + 1" in js
+
+    def test_rewind_persists_truncated_history(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import load_session, save_session
+        from data_agent.web.app import create_app
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+
+        session_id = "rewind_persist"
+        save_session(
+            [
+                {"role": "user", "content": "round 1"},
+                {"role": "assistant", "content": "answer 1"},
+                {"role": "user", "content": "round 2"},
+                {"role": "assistant", "content": "answer 2"},
+                {"role": "user", "content": "round 3"},
+                {"role": "assistant", "content": "answer 3"},
+            ],
+            session_id,
+        )
+
+        app = create_app()
+        app.config["TESTING"] = True
+        response = app.test_client().post(f"/api/sessions/{session_id}/rewind", json={"round": 2})
+
+        assert response.status_code == 200
+        persisted = load_session(session_id)
+        assert [m["content"] for m in persisted["messages"]] == ["round 1", "answer 1"]
+
+    def test_save_session_can_intentionally_truncate_for_rewind(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import load_session, save_session
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+
+        session_id = "rewind_save"
+        save_session(
+            [
+                {"role": "user", "content": "round 1"},
+                {"role": "assistant", "content": "answer 1"},
+                {"role": "user", "content": "round 2"},
+                {"role": "assistant", "content": "answer 2"},
+            ],
+            session_id,
+        )
+
+        save_session(
+            [{"role": "user", "content": "round 1"}, {"role": "assistant", "content": "answer 1"}],
+            session_id,
+            merge_protect=False,
+        )
+
+        persisted = load_session(session_id)
+        assert [m["content"] for m in persisted["messages"]] == ["round 1", "answer 1"]
 
 
 class TestCompactFocus:

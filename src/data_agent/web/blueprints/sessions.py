@@ -205,7 +205,7 @@ def rewind_session(session_id: str):
 
     # Persist the truncated history
     from data_agent.session.history import save_session
-    save_session(truncated, session_id)
+    save_session(truncated, session_id, merge_protect=False)
 
     return jsonify({
         "message": f"Rewound to before round {round_num}, removed {removed} messages",

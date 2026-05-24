@@ -1120,6 +1120,7 @@ def run_repl() -> None:
         )
 
         loop.messages = loop.messages[:messages_to_keep]
+        save_session(loop.messages, loop.session_id, data_file=loop._last_data_file, merge_protect=False)
 
         console.print(
             f"[green]已回退到 Round {round_num} 之前，"

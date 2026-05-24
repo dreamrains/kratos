@@ -1187,7 +1187,7 @@ function chatApp() {
             const state = this._getSessionState(this.currentSessionId);
             state._interrupted = false;
 
-            state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) });
+            state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) + 1 });
             state.turns.push({
                 role: 'assistant', content: '', toolCalls: [], artifacts: [],
                 confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
@@ -1332,7 +1332,7 @@ function chatApp() {
             if (turn) turn.confirmation = null;
             state.turns.push({
                 role: 'user', content: userResponse,
-                roundIndex: this._countUserTurns(state.turns),
+                roundIndex: this._countUserTurns(state.turns) + 1,
                 isConfirmationResponse: true,
             });
 
