@@ -42,7 +42,7 @@ def _query_terms(query: str) -> list[str]:
     for sequence in cjk_sequences:
         if sequence not in stopwords:
             terms.append(sequence)
-        for size in (2, 3, 4):
+        for size in (2, 3, 4, 5):
             for index in range(0, max(0, len(sequence) - size + 1)):
                 term = sequence[index : index + size]
                 if term not in stopwords:
@@ -65,7 +65,7 @@ def _positive_limit(limit: int) -> int:
 
 
 def _cjk_bigrams(text: str) -> set[str]:
-    chars = re.findall(r"[一-鿿]", text)
+    chars = re.findall(r"[\u4e00-\u9fff]", text)
     if len(chars) < 2:
         return set()
     return {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
@@ -102,7 +102,9 @@ class KnowledgeRetrievalService:
         # finally injected or used; hit_count should be updated by the later
         # final-injection or task-completion stage.
         memory_items = (
-            self.memory.search(search_query, domain=domain, limit=memory_limit) if memory_limit else []
+            self.memory.search(search_query, domain=domain, limit=memory_limit)
+            if memory_limit
+            else []
         )
         evidence_items = (
             self.evidence.search(search_query, project_id=project_id, limit=evidence_limit)
