@@ -18,6 +18,12 @@ from data_agent.knowledge.models import (
 )
 
 
+DEFAULT_MAX_KNOWLEDGE_CHARS = 1800
+DEFAULT_MAX_MEMORY_CHARS = 720
+DEFAULT_MAX_EVIDENCE_CHARS = 0
+DEFAULT_MAX_TOTAL_RETRIEVAL_CHARS = 2600
+
+
 def _normalize_query(query: str) -> str:
     return " ".join(re.findall(r"[\w\u4e00-\u9fff]+", query.lower()))
 
@@ -64,6 +70,32 @@ def _positive_limit(limit: int) -> int:
     return max(0, int(limit))
 
 
+def _item_text_length(item: object) -> int:
+    if isinstance(item, KnowledgeItem):
+        return len(item.title) + len(item.summary) + len(item.content)
+    if isinstance(item, MemoryItem):
+        return len(item.summary) + len(item.text)
+    if isinstance(item, EvidenceRecord):
+        return len(item.summary) + len(item.content)
+    return 0
+
+
+def _trim_items_to_budget(items: list, max_chars: int) -> tuple[list, int, bool]:
+    if max_chars <= 0:
+        return [], 0, bool(items)
+    kept = []
+    used = 0
+    trimmed = False
+    for item in items:
+        size = _item_text_length(item)
+        if used + size > max_chars:
+            trimmed = True
+            continue
+        kept.append(item)
+        used += size
+    return kept, used, trimmed
+
+
 def _cjk_bigrams(text: str) -> set[str]:
     chars = re.findall(r"[\u4e00-\u9fff]", text)
     if len(chars) < 2:
@@ -87,6 +119,11 @@ class KnowledgeRetrievalService:
         knowledge_limit: int = 5,
         memory_limit: int = 5,
         evidence_limit: int = 5,
+        *,
+        max_knowledge_chars: int = DEFAULT_MAX_KNOWLEDGE_CHARS,
+        max_memory_chars: int = DEFAULT_MAX_MEMORY_CHARS,
+        max_evidence_chars: int | None = None,
+        max_total_retrieval_chars: int = DEFAULT_MAX_TOTAL_RETRIEVAL_CHARS,
     ) -> RetrievedContext:
         normalized_query = _normalize_query(query)
         search_query = " ".join(_query_terms(query)) or normalized_query
@@ -111,6 +148,52 @@ class KnowledgeRetrievalService:
             if include_evidence and evidence_limit
             else []
         )
+        knowledge_items, knowledge_chars, knowledge_trimmed = _trim_items_to_budget(
+            knowledge_items,
+            max_knowledge_chars,
+        )
+        memory_items, memory_chars, memory_trimmed = _trim_items_to_budget(
+            memory_items,
+            max_memory_chars,
+        )
+        effective_evidence_budget = (
+            max_evidence_chars
+            if max_evidence_chars is not None
+            else DEFAULT_MAX_TOTAL_RETRIEVAL_CHARS
+        )
+        evidence_items, evidence_chars, evidence_trimmed = _trim_items_to_budget(
+            evidence_items,
+            effective_evidence_budget,
+        )
+        trimmed = knowledge_trimmed or memory_trimmed or evidence_trimmed
+
+        total = knowledge_chars + memory_chars + evidence_chars
+        if max_total_retrieval_chars <= 0:
+            trimmed = trimmed or bool(knowledge_items or memory_items or evidence_items)
+            knowledge_items = []
+            memory_items = []
+            evidence_items = []
+            knowledge_chars = 0
+            memory_chars = 0
+            evidence_chars = 0
+            total = 0
+        else:
+            for kind in ("evidence", "memory", "knowledge"):
+                while total > max_total_retrieval_chars:
+                    if kind == "evidence" and evidence_items:
+                        item = evidence_items.pop()
+                        evidence_chars -= _item_text_length(item)
+                    elif kind == "memory" and memory_items:
+                        item = memory_items.pop()
+                        memory_chars -= _item_text_length(item)
+                    elif kind == "knowledge" and knowledge_items:
+                        item = knowledge_items.pop()
+                        knowledge_chars -= _item_text_length(item)
+                    else:
+                        break
+                    trimmed = True
+                    total = knowledge_chars + memory_chars + evidence_chars
+        total = knowledge_chars + memory_chars + evidence_chars
         context = RetrievedContext(
             knowledge_items=knowledge_items,
             memory_items=memory_items,
@@ -122,6 +205,12 @@ class KnowledgeRetrievalService:
                 "domain": domain,
                 "project_id": project_id,
                 "include_evidence": include_evidence,
+                "knowledge_chars": knowledge_chars,
+                "memory_chars": memory_chars,
+                "evidence_chars": evidence_chars,
+                "total_retrieval_chars": total,
+                "trimmed": trimmed,
+                "trim_reason": "retrieval_context_budget" if trimmed else "",
             },
         )
         context.conflicts = self.detect_conflicts(knowledge_items, memory_items)
