@@ -50,6 +50,11 @@ def _memory_to_dict(item: MemoryItem) -> dict:
         "created_at": item.created_at,
         "updated_at": item.updated_at,
         "promotion_target": item.promotion_target,
+        "reason": item.reason,
+        "source_evidence_ids": item.source_evidence_ids,
+        "needs_review": item.needs_review,
+        "review_note": item.review_note,
+        "dedup_key": item.dedup_key,
     }
 
 
@@ -65,6 +70,17 @@ def _evidence_to_dict(record: EvidenceRecord) -> dict:
         "created_at": record.created_at,
         "tags": record.tags,
     }
+
+
+def _parse_optional_bool(value: str | None, field_name: str) -> bool | None:
+    if value is None or value == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"Invalid {field_name}: expected true or false")
 
 
 @management_bp.get("/management/knowledge")
@@ -149,7 +165,8 @@ def list_memory():
     status = request.args.get("status", "")
     domain = request.args.get("domain", "")
     try:
-        items = MemoryStore().list(status=status, domain=domain)
+        needs_review = _parse_optional_bool(request.args.get("needs_review"), "needs_review")
+        items = MemoryStore().list(status=status, domain=domain, needs_review=needs_review)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify([_memory_to_dict(item) for item in items])
@@ -174,10 +191,54 @@ def create_memory():
             domain=data.get("domain") or "general",
             tags=data.get("tags") or [],
             promotion_target=data.get("promotion_target") or "none",
+            reason=data.get("reason") or "",
+            source_evidence_ids=data.get("source_evidence_ids") or [],
+            needs_review=bool(data.get("needs_review", False)),
+            review_note=data.get("review_note") or "",
+            dedup_key=data.get("dedup_key") or "",
         )
     except (TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/extract")
+def extract_memory_candidates():
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    from data_agent.knowledge.candidates import MemoryCandidateExtractor
+
+    result = MemoryCandidateExtractor().extract_for_session(session_id)
+    candidates = [
+        _memory_to_dict(item)
+        for item in MemoryStore().list(status="candidate")
+        if item.source_session_id == session_id
+    ]
+    return jsonify(
+        {
+            "scanned": result.scanned,
+            "created": result.created,
+            "skipped": result.skipped,
+            "candidates": candidates,
+        }
+    )
+
+
+@management_bp.get("/management/memory/<memory_id>/sources")
+def memory_sources(memory_id: str):
+    memory = MemoryStore().get(memory_id)
+    if memory is None:
+        return jsonify({"error": "memory not found"}), 404
+    evidence = EvidenceStore()
+    sources = []
+    for evidence_id in memory.source_evidence_ids:
+        record = evidence.get(evidence_id)
+        if record is not None:
+            sources.append(_evidence_to_dict(record))
+    return jsonify({"memory_id": memory_id, "sources": sources})
 
 
 @management_bp.patch("/management/memory/<memory_id>")
@@ -192,6 +253,11 @@ def update_memory(memory_id: str):
             confidence=data.get("confidence"),
             domain=data.get("domain"),
             tags=data.get("tags"),
+            reason=data.get("reason"),
+            source_evidence_ids=data.get("source_evidence_ids"),
+            needs_review=data.get("needs_review"),
+            review_note=data.get("review_note"),
+            dedup_key=data.get("dedup_key"),
         )
     except (TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
