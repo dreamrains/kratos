@@ -107,21 +107,56 @@ def _evidence_prompt_line(item: EvidenceRecord) -> str:
     return f"- id={_escape(item.id)} session={_escape(item.session_id)}: {_escape(item.summary)}"
 
 
-def _joined_size(lines: list[str]) -> int:
-    return len("\n".join(lines))
+def _compose_knowledge_section_text(items: list[KnowledgeItem]) -> str:
+    lines = [*KNOWLEDGE_SECTION_HEADER]
+    for item in items:
+        lines.append(_knowledge_prompt_line(item))
+    lines.append(KNOWLEDGE_SECTION_FOOTER)
+    return "\n".join(lines)
 
 
-def _item_prompt_size(item: object) -> int:
-    if isinstance(item, KnowledgeItem):
-        return _joined_size(
-            KNOWLEDGE_SECTION_HEADER + [_knowledge_prompt_line(item), KNOWLEDGE_SECTION_FOOTER]
+def _compose_memory_section_text(items: list[MemoryItem]) -> str:
+    lines = [*MEMORY_SECTION_HEADER]
+    for item in items:
+        lines.append(_memory_prompt_line(item))
+    lines.append(MEMORY_SECTION_FOOTER)
+    return "\n".join(lines)
+
+
+def _compose_evidence_section_text(items: list[EvidenceRecord]) -> str:
+    lines = [*EVIDENCE_SECTION_HEADER]
+    for item in items:
+        lines.append(_evidence_prompt_line(item))
+    lines.append(EVIDENCE_SECTION_FOOTER)
+    return "\n".join(lines)
+
+
+def _compose_conflict_section_text(items: list[ConflictRecord]) -> str:
+    lines = [
+        '<knowledge_conflicts priority="review">',
+        "Resolve these conflicts before relying on affected claims for analysis or reporting.",
+    ]
+    for item in items:
+        sources = ", ".join(_escape(source) for source in item.sources)
+        lines.append(
+            f"- severity={_escape(item.severity.value)} sources={sources}: "
+            f"{_escape(item.claim)} conflicts with {_escape(item.conflicting_claim)}. "
+            f"{_escape(item.impact)}"
         )
-    if isinstance(item, MemoryItem):
-        return _joined_size(MEMORY_SECTION_HEADER + [_memory_prompt_line(item), MEMORY_SECTION_FOOTER])
-    if isinstance(item, EvidenceRecord):
-        return _joined_size(
-            EVIDENCE_SECTION_HEADER + [_evidence_prompt_line(item), EVIDENCE_SECTION_FOOTER]
-        )
+    lines.append("</knowledge_conflicts>")
+    return "\n".join(lines)
+
+
+def _section_prompt_size(items: list) -> int:
+    if not items:
+        return 0
+    first = items[0]
+    if isinstance(first, KnowledgeItem):
+        return len(_compose_knowledge_section_text(items))
+    if isinstance(first, MemoryItem):
+        return len(_compose_memory_section_text(items))
+    if isinstance(first, EvidenceRecord):
+        return len(_compose_evidence_section_text(items))
     return 0
 
 
@@ -132,26 +167,32 @@ def _trim_items_to_budget(items: list, max_chars: int) -> tuple[list, int, bool]
     used = 0
     trimmed = False
     for item in items:
-        size = _item_prompt_size(item)
-        if used + size > max_chars:
+        candidate = [*kept, item]
+        size = _section_prompt_size(candidate)
+        if size > max_chars:
             trimmed = True
             break
         kept.append(item)
-        used += size
+        used = size
     return kept, used, trimmed
 
 
-def _retrieval_total_size(
+def _rendered_context_size(
     knowledge_items: list[KnowledgeItem],
-    knowledge_chars: int,
     memory_items: list[MemoryItem],
-    memory_chars: int,
     evidence_items: list[EvidenceRecord],
-    evidence_chars: int,
+    conflicts: list[ConflictRecord] | None = None,
 ) -> int:
-    section_count = sum(1 for section in (knowledge_items, memory_items, evidence_items) if section)
-    section_separators = max(0, section_count - 1) * len("\n\n")
-    return knowledge_chars + memory_chars + evidence_chars + section_separators
+    sections: list[str] = []
+    if knowledge_items:
+        sections.append(_compose_knowledge_section_text(knowledge_items))
+    if memory_items:
+        sections.append(_compose_memory_section_text(memory_items))
+    if evidence_items:
+        sections.append(_compose_evidence_section_text(evidence_items))
+    if conflicts:
+        sections.append(_compose_conflict_section_text(conflicts))
+    return len("\n\n".join(sections))
 
 
 def _cjk_bigrams(text: str) -> set[str]:
@@ -220,58 +261,62 @@ class KnowledgeRetrievalService:
         )
         trimmed = knowledge_trimmed or memory_trimmed or evidence_trimmed
 
-        total = _retrieval_total_size(
-            knowledge_items,
-            knowledge_chars,
-            memory_items,
-            memory_chars,
-            evidence_items,
-            evidence_chars,
-        )
         if max_total_retrieval_chars <= 0:
             trimmed = trimmed or bool(knowledge_items or memory_items or evidence_items)
             knowledge_items = []
             memory_items = []
             evidence_items = []
+            conflicts = []
             knowledge_chars = 0
             memory_chars = 0
             evidence_chars = 0
             total = 0
         else:
-            for kind in ("evidence", "memory", "knowledge"):
+            conflicts = self.detect_conflicts(knowledge_items, memory_items)
+            total = _rendered_context_size(
+                knowledge_items,
+                memory_items,
+                evidence_items,
+                conflicts,
+            )
+            trim_order = (
+                ("memory", "knowledge", "evidence")
+                if conflicts
+                else ("evidence", "memory", "knowledge")
+            )
+            for kind in trim_order:
                 while total > max_total_retrieval_chars:
                     if kind == "evidence" and evidence_items:
-                        item = evidence_items.pop()
-                        evidence_chars -= _item_prompt_size(item)
+                        evidence_items.pop()
+                        evidence_chars = _section_prompt_size(evidence_items)
                     elif kind == "memory" and memory_items:
-                        item = memory_items.pop()
-                        memory_chars -= _item_prompt_size(item)
+                        memory_items.pop()
+                        memory_chars = _section_prompt_size(memory_items)
                     elif kind == "knowledge" and knowledge_items:
-                        item = knowledge_items.pop()
-                        knowledge_chars -= _item_prompt_size(item)
+                        knowledge_items.pop()
+                        knowledge_chars = _section_prompt_size(knowledge_items)
                     else:
                         break
                     trimmed = True
-                    total = _retrieval_total_size(
+                    conflicts = self.detect_conflicts(knowledge_items, memory_items)
+                    total = _rendered_context_size(
                         knowledge_items,
-                        knowledge_chars,
                         memory_items,
-                        memory_chars,
                         evidence_items,
-                        evidence_chars,
+                        conflicts,
                     )
-        total = _retrieval_total_size(
+        conflicts = self.detect_conflicts(knowledge_items, memory_items)
+        total = _rendered_context_size(
             knowledge_items,
-            knowledge_chars,
             memory_items,
-            memory_chars,
             evidence_items,
-            evidence_chars,
+            conflicts,
         )
         context = RetrievedContext(
             knowledge_items=knowledge_items,
             memory_items=memory_items,
             evidence_items=evidence_items,
+            conflicts=conflicts,
             metadata={
                 "query": query,
                 "normalized_query": normalized_query,
@@ -287,7 +332,6 @@ class KnowledgeRetrievalService:
                 "trim_reason": "retrieval_context_budget" if trimmed else "",
             },
         )
-        context.conflicts = self.detect_conflicts(knowledge_items, memory_items)
         return context
 
     def detect_conflicts(
@@ -325,40 +369,16 @@ class KnowledgeRetrievalService:
         return "\n\n".join(sections)
 
     def _compose_knowledge_section(self, items: list[KnowledgeItem]) -> str:
-        lines = [*KNOWLEDGE_SECTION_HEADER]
-        for item in items:
-            lines.append(_knowledge_prompt_line(item))
-        lines.append(KNOWLEDGE_SECTION_FOOTER)
-        return "\n".join(lines)
+        return _compose_knowledge_section_text(items)
 
     def _compose_memory_section(self, items: list[MemoryItem]) -> str:
-        lines = [*MEMORY_SECTION_HEADER]
-        for item in items:
-            lines.append(_memory_prompt_line(item))
-        lines.append(MEMORY_SECTION_FOOTER)
-        return "\n".join(lines)
+        return _compose_memory_section_text(items)
 
     def _compose_evidence_section(self, items: list[EvidenceRecord]) -> str:
-        lines = [*EVIDENCE_SECTION_HEADER]
-        for item in items:
-            lines.append(_evidence_prompt_line(item))
-        lines.append(EVIDENCE_SECTION_FOOTER)
-        return "\n".join(lines)
+        return _compose_evidence_section_text(items)
 
     def _compose_conflict_section(self, items: list[ConflictRecord]) -> str:
-        lines = [
-            '<knowledge_conflicts priority="review">',
-            "Resolve these conflicts before relying on affected claims for analysis or reporting.",
-        ]
-        for item in items:
-            sources = ", ".join(_escape(source) for source in item.sources)
-            lines.append(
-                f"- severity={_escape(item.severity.value)} sources={sources}: "
-                f"{_escape(item.claim)} conflicts with {_escape(item.conflicting_claim)}. "
-                f"{_escape(item.impact)}"
-            )
-        lines.append("</knowledge_conflicts>")
-        return "\n".join(lines)
+        return _compose_conflict_section_text(items)
 
     def _looks_conflicting(self, left: str, right: str) -> bool:
         negative_markers = (
