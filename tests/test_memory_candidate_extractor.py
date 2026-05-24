@@ -18,10 +18,11 @@ def _write_session(sessions_dir, session_id, content, project_name="ecommerce", 
     )
 
 
-def test_extractor_creates_metric_definition_candidate(tmp_path):
+def test_extractor_creates_metric_definition_candidate(tmp_path, monkeypatch):
     sessions_dir = tmp_path / "sessions"
     _write_session(sessions_dir, "s1", "请记住：GMV 口径 = 支付金额 - 取消订单 - 退款订单。")
     root = tmp_path / "knowledge"
+    monkeypatch.setattr(EvidenceStore, "_try_extract_memory_candidates", lambda self, session_id: None)
     EvidenceStore(root, sessions_dir=sessions_dir).index_session("s1")
 
     result = MemoryCandidateExtractor(root=root, sessions_dir=sessions_dir).extract_for_session("s1")
@@ -47,7 +48,7 @@ def test_extractor_ignores_ordinary_conversation(tmp_path):
     assert MemoryStore(root).list() == []
 
 
-def test_extractor_deduplicates_repeated_runs(tmp_path):
+def test_extractor_is_idempotent_after_auto_extraction(tmp_path):
     sessions_dir = tmp_path / "sessions"
     _write_session(sessions_dir, "s3", "以后默认先做缺失值检查，再做趋势分析。")
     root = tmp_path / "knowledge"
@@ -57,8 +58,10 @@ def test_extractor_deduplicates_repeated_runs(tmp_path):
     first = extractor.extract_for_session("s3")
     second = extractor.extract_for_session("s3")
 
-    assert first.created == 1
+    assert first.created == 0
+    assert first.skipped == 1
     assert second.created == 0
+    assert second.skipped == 1
     assert len(MemoryStore(root).list()) == 1
 
 
@@ -110,7 +113,8 @@ def test_extractor_classifies_corrections_as_reviewable_correction_memory(tmp_pa
 
     result = MemoryCandidateExtractor(root=root, sessions_dir=sessions_dir).extract_for_session("s6")
 
-    assert result.created == 1
+    assert result.created == 0
+    assert result.skipped == 1
     item = MemoryStore(root).list()[0]
     assert item.type.value == "correction"
     assert item.needs_review is True
