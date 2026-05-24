@@ -1,4 +1,6 @@
 from pathlib import Path
+import ast
+import json
 
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
@@ -68,6 +70,79 @@ def test_list_memory_candidates_can_filter_review_needed(tmp_path, monkeypatch):
 
     assert [item["id"] for item in result] == [review.id]
     assert result[0]["needs_review"] is True
+
+
+def test_list_memory_candidates_registry_treats_false_string_as_unfiltered(tmp_path, monkeypatch):
+    cfg = _configure(tmp_path, monkeypatch)
+    store = MemoryStore(cfg.knowledge_dir)
+    review = store.create_candidate(
+        text="review memory",
+        needs_review=True,
+        dedup_key="workflow:general:review-string-false",
+    )
+    no_review = store.create_candidate(
+        text="no review memory",
+        needs_review=False,
+        dedup_key="workflow:general:no-review-string-false",
+    )
+
+    result = registry.execute("list_memory_candidates", {"needs_review": "false"})
+    payload = ast.literal_eval(result.summary)
+
+    assert [item["id"] for item in payload] == [review.id, no_review.id]
+
+
+def test_list_memory_candidates_registry_treats_zero_string_as_unfiltered(tmp_path, monkeypatch):
+    cfg = _configure(tmp_path, monkeypatch)
+    store = MemoryStore(cfg.knowledge_dir)
+    review = store.create_candidate(
+        text="review memory",
+        needs_review=True,
+        dedup_key="workflow:general:review-string-zero",
+    )
+    no_review = store.create_candidate(
+        text="no review memory",
+        needs_review=False,
+        dedup_key="workflow:general:no-review-string-zero",
+    )
+
+    result = registry.execute("list_memory_candidates", {"needs_review": "0"})
+    payload = ast.literal_eval(result.summary)
+
+    assert [item["id"] for item in payload] == [review.id, no_review.id]
+
+
+def test_list_memory_candidates_registry_treats_true_string_as_review_filter(tmp_path, monkeypatch):
+    cfg = _configure(tmp_path, monkeypatch)
+    store = MemoryStore(cfg.knowledge_dir)
+    review = store.create_candidate(
+        text="review memory",
+        needs_review=True,
+        dedup_key="workflow:general:review-string-true",
+    )
+    store.create_candidate(
+        text="no review memory",
+        needs_review=False,
+        dedup_key="workflow:general:no-review-string-true",
+    )
+
+    result = registry.execute("list_memory_candidates", {"needs_review": "true"})
+    payload = ast.literal_eval(result.summary)
+
+    assert [item["id"] for item in payload] == [review.id]
+    assert payload[0]["needs_review"] is True
+
+
+def test_list_memory_candidates_registry_rejects_invalid_review_string(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+
+    result = registry.execute("list_memory_candidates", {"needs_review": "sometimes"})
+    payload = json.loads(result.summary)
+
+    assert "error" in payload
+    assert "needs_review" in payload["error"]
+    assert "true" in payload["error"]
+    assert "false" in payload["error"]
 
 
 def test_extract_memory_candidates_returns_summary_payload(tmp_path, monkeypatch):

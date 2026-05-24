@@ -123,6 +123,18 @@ def _memory_to_dict(item: MemoryItem) -> dict:
     }
 
 
+def _parse_needs_review(value: bool | str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    raise ValueError("needs_review must be a boolean or one of: true, false, 1, 0")
+
+
 @registry.register(
     name="show_project_rules",
     description="Show global and current-session rules.",
@@ -258,11 +270,21 @@ def extract_memory_candidates(session_id: str = "") -> dict:
 @registry.register(
     name="list_memory_candidates",
     description="List reviewable memory candidates. Candidates are not trusted until confirmed.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "needs_review": {
+                "type": "boolean",
+                "description": "When true, only return candidates marked as needing review.",
+            }
+        },
+    },
 )
-def list_memory_candidates(needs_review: bool = False) -> list[dict]:
+def list_memory_candidates(needs_review: bool | str = False) -> list[dict]:
+    review_filter = _parse_needs_review(needs_review)
     return [
         _memory_to_dict(item)
-        for item in _memory().list(status="candidate", needs_review=True if needs_review else None)
+        for item in _memory().list(status="candidate", needs_review=True if review_filter else None)
     ]
 
 
