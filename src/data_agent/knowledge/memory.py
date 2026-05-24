@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -74,41 +75,47 @@ class MemoryStore:
 
         item_id = f"mem_{uuid.uuid4().hex[:10]}"
         now = _now()
-        with self.db.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO memory_items
-                (id, type, text, summary, status, confidence, source_session_id,
-                 source_message_ids, source_tool_call_ids, project_id, domain,
-                 tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
-                 reason, source_evidence_ids, needs_review, review_note, dedup_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    item_id,
-                    type_value.value,
-                    text,
-                    summary,
-                    MemoryStatus.CANDIDATE.value,
-                    confidence_value,
-                    source_session_id,
-                    _json_list(source_message_ids, "source_message_ids"),
-                    _json_list(source_tool_call_ids, "source_tool_call_ids"),
-                    project_id,
-                    domain.strip() or "general",
-                    _json_list(tags, "tags"),
-                    "",
-                    0,
-                    now,
-                    now,
-                    promotion_target,
-                    reason,
-                    _json_list(source_evidence_ids, "source_evidence_ids"),
-                    1 if needs_review else 0,
-                    review_note,
-                    dedup_key,
-                ),
-            )
+        try:
+            with self.db.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO memory_items
+                    (id, type, text, summary, status, confidence, source_session_id,
+                     source_message_ids, source_tool_call_ids, project_id, domain,
+                     tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
+                     reason, source_evidence_ids, needs_review, review_note, dedup_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item_id,
+                        type_value.value,
+                        text,
+                        summary,
+                        MemoryStatus.CANDIDATE.value,
+                        confidence_value,
+                        source_session_id,
+                        _json_list(source_message_ids, "source_message_ids"),
+                        _json_list(source_tool_call_ids, "source_tool_call_ids"),
+                        project_id,
+                        domain.strip() or "general",
+                        _json_list(tags, "tags"),
+                        "",
+                        0,
+                        now,
+                        now,
+                        promotion_target,
+                        reason,
+                        _json_list(source_evidence_ids, "source_evidence_ids"),
+                        1 if needs_review else 0,
+                        review_note,
+                        dedup_key,
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            existing = self.get_by_dedup_key(dedup_key)
+            if existing is not None:
+                return existing
+            raise
         item = self.get(item_id)
         if item is None:
             raise RuntimeError(f"Created memory item {item_id} could not be loaded")
@@ -212,6 +219,10 @@ class MemoryStore:
         next_confidence = item.confidence if confidence is None else float(confidence)
         if not math.isfinite(next_confidence) or next_confidence < 0 or next_confidence > 1:
             raise ValueError(f"Invalid confidence: {confidence}")
+        next_dedup_key = dedup_key.strip() if dedup_key is not None else item.dedup_key
+        existing = self.get_by_dedup_key(next_dedup_key)
+        if existing is not None and existing.id != item_id:
+            raise ValueError(f"Invalid dedup_key: duplicate value {next_dedup_key}")
         with self.db.connect() as conn:
             conn.execute(
                 """
@@ -235,7 +246,7 @@ class MemoryStore:
                     ),
                     1 if (needs_review if needs_review is not None else item.needs_review) else 0,
                     review_note if review_note is not None else item.review_note,
-                    dedup_key.strip() if dedup_key is not None else item.dedup_key,
+                    next_dedup_key,
                     _now(),
                     item_id,
                 ),

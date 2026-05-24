@@ -39,6 +39,10 @@ class KnowledgeDatabase:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_domain_status ON knowledge_items(domain, status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_status_domain ON memory_items(status, domain)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_dedup_key ON memory_items(dedup_key)")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_dedup_key_unique "
+            "ON memory_items(dedup_key) WHERE dedup_key <> ''"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_needs_review ON memory_items(needs_review)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_session ON evidence_records(session_id)")
 

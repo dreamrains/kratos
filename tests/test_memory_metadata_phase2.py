@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from data_agent.knowledge.memory import MemoryStore
 
 
@@ -122,3 +124,80 @@ def test_create_candidate_reuses_duplicate_dedup_key(tmp_path):
 
     assert second.id == first.id
     assert len(store.list()) == 1
+
+
+def test_database_rejects_duplicate_non_empty_dedup_key(tmp_path):
+    root = tmp_path / "knowledge"
+    store = MemoryStore(root)
+    first = store.create_candidate("Use net revenue.", dedup_key="preference:revenue")
+
+    with sqlite3.connect(root / "knowledge.sqlite3") as conn:
+        indexes = {
+            row[1]: row
+            for row in conn.execute("PRAGMA index_list(memory_items)").fetchall()
+        }
+        unique_index = indexes["idx_memory_dedup_key_unique"]
+
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                INSERT INTO memory_items
+                (id, type, text, summary, status, confidence, source_session_id,
+                 source_message_ids, source_tool_call_ids, project_id, domain,
+                 tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
+                 reason, source_evidence_ids, needs_review, review_note, dedup_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "mem_duplicate",
+                    first.type.value,
+                    "Use net revenue again.",
+                    "",
+                    first.status.value,
+                    first.confidence,
+                    "",
+                    "[]",
+                    "[]",
+                    "",
+                    "general",
+                    "[]",
+                    "",
+                    0,
+                    first.created_at,
+                    first.updated_at,
+                    "none",
+                    "",
+                    "[]",
+                    0,
+                    "",
+                    first.dedup_key,
+                ),
+            )
+
+        duplicate_count = conn.execute(
+            "SELECT COUNT(*) FROM memory_items WHERE dedup_key = ?",
+            (first.dedup_key,),
+        ).fetchone()[0]
+
+    assert unique_index[2] == 1
+    assert duplicate_count == 1
+
+
+def test_empty_dedup_keys_allow_multiple_records(tmp_path):
+    store = MemoryStore(tmp_path / "knowledge")
+    first = store.create_candidate("Use net revenue.")
+    second = store.create_candidate("Use gross revenue.")
+
+    assert first.id != second.id
+    assert [item.dedup_key for item in store.list()] == ["", ""]
+
+
+def test_update_rejects_duplicate_non_empty_dedup_key(tmp_path):
+    store = MemoryStore(tmp_path / "knowledge")
+    first = store.create_candidate("Use net revenue.", dedup_key="preference:revenue")
+    second = store.create_candidate("Use gross revenue.", dedup_key="preference:gross-revenue")
+
+    with pytest.raises(ValueError, match="dedup_key"):
+        store.update(second.id, dedup_key=first.dedup_key)
+
+    assert store.get(second.id).dedup_key == "preference:gross-revenue"
