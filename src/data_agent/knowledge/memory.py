@@ -57,11 +57,20 @@ class MemoryStore:
         domain: str = "general",
         tags: list[str] | None = None,
         promotion_target: str = "none",
+        reason: str = "",
+        source_evidence_ids: list[str] | None = None,
+        needs_review: bool = False,
+        review_note: str = "",
+        dedup_key: str = "",
     ) -> MemoryItem:
         type_value = _memory_type(memory_type)
         confidence_value = float(confidence)
         if not math.isfinite(confidence_value) or confidence_value < 0 or confidence_value > 1:
             raise ValueError(f"Invalid confidence: {confidence}")
+        dedup_key = dedup_key.strip()
+        existing = self.get_by_dedup_key(dedup_key)
+        if existing is not None:
+            return existing
 
         item_id = f"mem_{uuid.uuid4().hex[:10]}"
         now = _now()
@@ -71,8 +80,9 @@ class MemoryStore:
                 INSERT INTO memory_items
                 (id, type, text, summary, status, confidence, source_session_id,
                  source_message_ids, source_tool_call_ids, project_id, domain,
-                 tags, last_used_at, hit_count, created_at, updated_at, promotion_target)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 tags, last_used_at, hit_count, created_at, updated_at, promotion_target,
+                 reason, source_evidence_ids, needs_review, review_note, dedup_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item_id,
@@ -92,12 +102,30 @@ class MemoryStore:
                     now,
                     now,
                     promotion_target,
+                    reason,
+                    _json_list(source_evidence_ids, "source_evidence_ids"),
+                    1 if needs_review else 0,
+                    review_note,
+                    dedup_key,
                 ),
             )
         item = self.get(item_id)
         if item is None:
             raise RuntimeError(f"Created memory item {item_id} could not be loaded")
         return item
+
+    def get_by_dedup_key(self, dedup_key: str) -> MemoryItem | None:
+        dedup_key = dedup_key.strip()
+        if not dedup_key:
+            return None
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_items WHERE dedup_key = ? ORDER BY updated_at DESC LIMIT 1",
+                (dedup_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._item_from_row(row_to_dict(row))
 
     def get(self, item_id: str) -> MemoryItem | None:
         with self.db.connect() as conn:
@@ -109,7 +137,12 @@ class MemoryStore:
             return None
         return self._item_from_row(row_to_dict(row))
 
-    def list(self, status: MemoryStatus | str = "", domain: str = "") -> list[MemoryItem]:
+    def list(
+        self,
+        status: MemoryStatus | str = "",
+        domain: str = "",
+        needs_review: bool | None = None,
+    ) -> list[MemoryItem]:
         clauses = []
         params = []
         if status:
@@ -118,6 +151,9 @@ class MemoryStore:
         if domain:
             clauses.append("domain = ?")
             params.append(domain)
+        if needs_review is not None:
+            clauses.append("needs_review = ?")
+            params.append(1 if needs_review else 0)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self.db.connect() as conn:
             rows = conn.execute(
@@ -161,6 +197,11 @@ class MemoryStore:
         confidence: float | None = None,
         domain: str | None = None,
         tags: list[str] | None = None,
+        reason: str | None = None,
+        source_evidence_ids: list[str] | None = None,
+        needs_review: bool | None = None,
+        review_note: str | None = None,
+        dedup_key: str | None = None,
     ) -> MemoryItem | None:
         item = self.get(item_id)
         if item is None:
@@ -175,7 +216,9 @@ class MemoryStore:
             conn.execute(
                 """
                 UPDATE memory_items
-                SET text = ?, summary = ?, type = ?, confidence = ?, domain = ?, tags = ?, updated_at = ?
+                SET text = ?, summary = ?, type = ?, confidence = ?, domain = ?, tags = ?,
+                    reason = ?, source_evidence_ids = ?, needs_review = ?, review_note = ?,
+                    dedup_key = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -185,6 +228,14 @@ class MemoryStore:
                     next_confidence,
                     domain.strip() if domain is not None and domain.strip() else item.domain,
                     _json_list(tags if tags is not None else item.tags, "tags"),
+                    reason if reason is not None else item.reason,
+                    _json_list(
+                        source_evidence_ids if source_evidence_ids is not None else item.source_evidence_ids,
+                        "source_evidence_ids",
+                    ),
+                    1 if (needs_review if needs_review is not None else item.needs_review) else 0,
+                    review_note if review_note is not None else item.review_note,
+                    dedup_key.strip() if dedup_key is not None else item.dedup_key,
                     _now(),
                     item_id,
                 ),
@@ -300,4 +351,9 @@ class MemoryStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             promotion_target=row["promotion_target"],
+            reason=row["reason"],
+            source_evidence_ids=json.loads(row["source_evidence_ids"] or "[]"),
+            needs_review=bool(row["needs_review"]),
+            review_note=row["review_note"],
+            dedup_key=row["dedup_key"],
         )

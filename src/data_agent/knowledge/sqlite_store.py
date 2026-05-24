@@ -22,6 +22,22 @@ class KnowledgeDatabase:
     def initialize(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(memory_items)").fetchall()}
+        columns = {
+            "reason": "TEXT NOT NULL DEFAULT ''",
+            "source_evidence_ids": "TEXT NOT NULL DEFAULT '[]'",
+            "needs_review": "INTEGER NOT NULL DEFAULT 0",
+            "review_note": "TEXT NOT NULL DEFAULT ''",
+            "dedup_key": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE memory_items ADD COLUMN {name} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_dedup_key ON memory_items(dedup_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_needs_review ON memory_items(needs_review)")
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
@@ -67,7 +83,12 @@ CREATE TABLE IF NOT EXISTS memory_items (
     hit_count INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    promotion_target TEXT NOT NULL
+    promotion_target TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    source_evidence_ids TEXT NOT NULL DEFAULT '[]',
+    needs_review INTEGER NOT NULL DEFAULT 0,
+    review_note TEXT NOT NULL DEFAULT '',
+    dedup_key TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS evidence_records (
@@ -86,6 +107,10 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_domain_status
     ON knowledge_items(domain, status);
 CREATE INDEX IF NOT EXISTS idx_memory_status_domain
     ON memory_items(status, domain);
+CREATE INDEX IF NOT EXISTS idx_memory_dedup_key
+    ON memory_items(dedup_key);
+CREATE INDEX IF NOT EXISTS idx_memory_needs_review
+    ON memory_items(needs_review);
 CREATE INDEX IF NOT EXISTS idx_evidence_session
     ON evidence_records(session_id);
 """

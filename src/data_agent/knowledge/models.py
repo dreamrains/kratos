@@ -88,6 +88,11 @@ class MemoryItem:
     created_at: str = ""
     updated_at: str = ""
     promotion_target: str = "none"
+    reason: str = ""
+    source_evidence_ids: list[str] = field(default_factory=list)
+    needs_review: bool = False
+    review_note: str = ""
+    dedup_key: str = ""
 
 
 @dataclass(frozen=True)
