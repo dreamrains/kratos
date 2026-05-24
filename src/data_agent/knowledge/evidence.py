@@ -157,7 +157,7 @@ class EvidenceStore:
         jsonl_path = session_dir / "conversation.jsonl"
         if jsonl_path.exists():
             try:
-                lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+                lines = jsonl_path.read_text(encoding="utf-8-sig").splitlines()
             except OSError:
                 lines = []
             for line in lines:
@@ -171,7 +171,7 @@ class EvidenceStore:
 
     def _read_json(self, path: Path, default):
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8-sig"))
         except (json.JSONDecodeError, OSError):
             return default
 

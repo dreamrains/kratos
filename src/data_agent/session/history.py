@@ -30,6 +30,15 @@ def _session_dir(session_id: str) -> Path:
     return d
 
 
+def _try_index_session_evidence(session_id: str) -> None:
+    try:
+        from data_agent.knowledge.evidence import EvidenceStore
+
+        EvidenceStore().index_session(session_id)
+    except Exception:
+        logger.debug("Session evidence indexing skipped", exc_info=True)
+
+
 def session_knowledge_dir(session_id: str) -> Path:
     """返回会话级知识目录路径，自动创建。"""
     d = _session_dir(session_id) / "knowledge"
@@ -175,6 +184,8 @@ def save_session(
     # JSONL 已合并到 JSON，删除
     jsonl_path = sdir / "conversation.jsonl"
     jsonl_path.unlink(missing_ok=True)
+
+    _try_index_session_evidence(session_id)
 
     return session_id
 
