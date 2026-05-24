@@ -130,3 +130,61 @@ def test_management_memory_serializes_review_metadata_on_create_update_and_list(
     assert updated.get_json()["dedup_key"] == "domain_fact:ecommerce:gmv-reviewed"
     assert listed.status_code == 200
     assert listed.get_json()[0]["dedup_key"] == "domain_fact:ecommerce:gmv-reviewed"
+
+
+def test_management_memory_create_parses_string_false_review_values(tmp_path: Path, monkeypatch):
+    client, _cfg = _client(tmp_path, monkeypatch)
+
+    false_text = client.post(
+        "/api/management/memory",
+        json={"text": "Use net revenue.", "needs_review": "false"},
+    )
+    zero_text = client.post(
+        "/api/management/memory",
+        json={"text": "Use gross revenue.", "needs_review": "0"},
+    )
+
+    assert false_text.status_code == 200
+    assert false_text.get_json()["needs_review"] is False
+    assert zero_text.status_code == 200
+    assert zero_text.get_json()["needs_review"] is False
+
+
+def test_management_memory_update_parses_string_false_review_value(tmp_path: Path, monkeypatch):
+    client, _cfg = _client(tmp_path, monkeypatch)
+    created = client.post(
+        "/api/management/memory",
+        json={"text": "Review this rule.", "needs_review": True},
+    )
+    memory_id = created.get_json()["id"]
+
+    updated = client.patch(
+        f"/api/management/memory/{memory_id}",
+        json={"needs_review": "false"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.get_json()["needs_review"] is False
+
+
+def test_management_memory_rejects_invalid_review_boolean_values(tmp_path: Path, monkeypatch):
+    client, _cfg = _client(tmp_path, monkeypatch)
+    created = client.post("/api/management/memory", json={"text": "Review this rule."})
+    memory_id = created.get_json()["id"]
+
+    create = client.post(
+        "/api/management/memory",
+        json={"text": "Invalid create value.", "needs_review": "sometimes"},
+    )
+    update = client.patch(
+        f"/api/management/memory/{memory_id}",
+        json={"needs_review": "sometimes"},
+    )
+    query = client.get("/api/management/memory?needs_review=sometimes")
+
+    assert create.status_code == 400
+    assert "needs_review" in create.get_json()["error"]
+    assert update.status_code == 400
+    assert "needs_review" in update.get_json()["error"]
+    assert query.status_code == 400
+    assert "needs_review" in query.get_json()["error"]

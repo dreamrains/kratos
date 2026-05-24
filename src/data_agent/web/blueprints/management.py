@@ -72,9 +72,13 @@ def _evidence_to_dict(record: EvidenceRecord) -> dict:
     }
 
 
-def _parse_optional_bool(value: str | None, field_name: str) -> bool | None:
+def _parse_optional_bool(value: object, field_name: str) -> bool | None:
     if value is None or value == "":
         return None
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid {field_name}: expected true or false")
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes"}:
         return True
@@ -179,6 +183,7 @@ def create_memory():
     if not text:
         return jsonify({"error": "text is required"}), 400
     try:
+        needs_review = _parse_optional_bool(data.get("needs_review"), "needs_review")
         item = MemoryStore().create_candidate(
             text=text,
             summary=data.get("summary") or "",
@@ -193,7 +198,7 @@ def create_memory():
             promotion_target=data.get("promotion_target") or "none",
             reason=data.get("reason") or "",
             source_evidence_ids=data.get("source_evidence_ids") or [],
-            needs_review=bool(data.get("needs_review", False)),
+            needs_review=needs_review if needs_review is not None else False,
             review_note=data.get("review_note") or "",
             dedup_key=data.get("dedup_key") or "",
         )
@@ -245,6 +250,7 @@ def memory_sources(memory_id: str):
 def update_memory(memory_id: str):
     data = request.get_json(silent=True) or {}
     try:
+        needs_review = _parse_optional_bool(data.get("needs_review"), "needs_review")
         item = MemoryStore().update(
             memory_id,
             text=data.get("text"),
@@ -255,7 +261,7 @@ def update_memory(memory_id: str):
             tags=data.get("tags"),
             reason=data.get("reason"),
             source_evidence_ids=data.get("source_evidence_ids"),
-            needs_review=data.get("needs_review"),
+            needs_review=needs_review,
             review_note=data.get("review_note"),
             dedup_key=data.get("dedup_key"),
         )
