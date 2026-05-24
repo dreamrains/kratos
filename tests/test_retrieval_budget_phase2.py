@@ -3,6 +3,7 @@ import json
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.library import KnowledgeLibrary
 from data_agent.knowledge.memory import MemoryStore
+from data_agent.knowledge.models import MemoryType
 from data_agent.knowledge.retrieval import KnowledgeRetrievalService
 
 
@@ -118,3 +119,116 @@ def test_include_evidence_without_budget_keeps_evidence_out(tmp_path):
 
     assert context.evidence_items == []
     assert context.metadata["evidence_chars"] == 0
+
+
+def test_budget_metadata_covers_rendered_prompt_context(tmp_path):
+    root = tmp_path / "knowledge"
+    sessions_dir = tmp_path / "sessions"
+    KnowledgeLibrary(root).create(
+        title='GMV <rule> & "policy"',
+        domain="ecommerce",
+        content='Use GMV & NMV <carefully>. "Quote" this snippet.',
+        summary="GMV rendered escaping",
+        tags=["gmv"],
+    )
+    memory = MemoryStore(root)
+    memory_item = memory.create_candidate(
+        'Remember GMV <returns> & "adjustments".',
+        summary="GMV memory",
+        memory_type=MemoryType.DOMAIN_FACT,
+        domain="ecommerce",
+        dedup_key="gmv-rendered-budget",
+    )
+    memory.confirm(memory_item.id)
+    session_dir = sessions_dir / "s1"
+    session_dir.mkdir(parents=True)
+    (session_dir / "meta.json").write_text(
+        json.dumps({"project_name": "sales"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (session_dir / "conversation.json").write_text(
+        json.dumps(
+            [{"role": "user", "content": 'GMV evidence <includes> & "returns".'}],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    EvidenceStore(root, sessions_dir=sessions_dir).index_session("s1")
+    service = KnowledgeRetrievalService(root=root, sessions_dir=sessions_dir)
+
+    context = service.retrieve(
+        "GMV",
+        domain="ecommerce",
+        project_id="sales",
+        include_evidence=True,
+        max_evidence_chars=500,
+    )
+    prompt_context = service.compose_prompt_context(context)
+
+    assert context.knowledge_items
+    assert context.memory_items
+    assert context.evidence_items
+    assert context.metadata["total_retrieval_chars"] >= len(prompt_context)
+
+
+def test_knowledge_budget_uses_rendered_snippet_not_full_content(tmp_path):
+    root = tmp_path / "knowledge"
+    long_tail = "x" * 4000
+    KnowledgeLibrary(root).create(
+        title="GMV snippet rule",
+        domain="ecommerce",
+        content=("GMV " * 300) + long_tail,
+        summary="GMV long content",
+        tags=["gmv"],
+    )
+
+    context = KnowledgeRetrievalService(root=root).retrieve(
+        "GMV",
+        domain="ecommerce",
+        max_knowledge_chars=1800,
+        max_total_retrieval_chars=1800,
+    )
+
+    assert len(context.knowledge_items) == 1
+
+
+def test_budget_trimming_preserves_rank_prefix(tmp_path):
+    root = tmp_path / "knowledge"
+    library = KnowledgeLibrary(root)
+    first = library.create(
+        title="GMV first high rank",
+        domain="ecommerce",
+        content="GMV " * 12,
+        summary="GMV GMV GMV GMV",
+        tags=["gmv"],
+    )
+    second = library.create(
+        title="GMV second over budget",
+        domain="ecommerce",
+        content=("GMV " * 8) + ("x" * 4000),
+        summary="GMV GMV",
+        tags=["gmv"],
+    )
+    third = library.create(
+        title="GMV third small",
+        domain="ecommerce",
+        content="GMV",
+        summary="GMV",
+        tags=["gmv"],
+    )
+    service = KnowledgeRetrievalService(root=root)
+    one_item_budget = len(
+        service._compose_knowledge_section([first])
+    ) + 20
+
+    context = service.retrieve(
+        "GMV",
+        domain="ecommerce",
+        knowledge_limit=3,
+        max_knowledge_chars=one_item_budget,
+        max_total_retrieval_chars=one_item_budget,
+    )
+
+    assert [item.id for item in context.knowledge_items] == [first.id]
+    assert second.id not in [item.id for item in context.knowledge_items]
+    assert third.id not in [item.id for item in context.knowledge_items]
