@@ -152,6 +152,88 @@ class MemoryStore:
     def mark_promoted(self, item_id: str) -> MemoryItem | None:
         return self._set_status(item_id, MemoryStatus.PROMOTED, allowed={MemoryStatus.CONFIRMED})
 
+    def update(
+        self,
+        item_id: str,
+        text: str | None = None,
+        summary: str | None = None,
+        memory_type: MemoryType | str | None = None,
+        confidence: float | None = None,
+        domain: str | None = None,
+        tags: list[str] | None = None,
+    ) -> MemoryItem | None:
+        item = self.get(item_id)
+        if item is None:
+            return None
+        if item.status in {MemoryStatus.PROMOTED, MemoryStatus.DEPRECATED}:
+            raise ValueError("Promoted or deprecated memories cannot be edited")
+        next_type = _memory_type(memory_type) if memory_type is not None else item.type
+        next_confidence = item.confidence if confidence is None else float(confidence)
+        if not math.isfinite(next_confidence) or next_confidence < 0 or next_confidence > 1:
+            raise ValueError(f"Invalid confidence: {confidence}")
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET text = ?, summary = ?, type = ?, confidence = ?, domain = ?, tags = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    text if text is not None else item.text,
+                    summary if summary is not None else item.summary,
+                    next_type.value,
+                    next_confidence,
+                    domain.strip() if domain is not None and domain.strip() else item.domain,
+                    _json_list(tags if tags is not None else item.tags, "tags"),
+                    _now(),
+                    item_id,
+                ),
+            )
+        return self.get(item_id)
+
+    def delete_candidate(self, item_id: str) -> bool:
+        item = self.get(item_id)
+        if item is None:
+            return False
+        if item.status not in {MemoryStatus.CANDIDATE, MemoryStatus.REJECTED}:
+            raise ValueError("Only candidate or rejected memories can be deleted")
+        with self.db.connect() as conn:
+            conn.execute("DELETE FROM memory_items WHERE id = ?", (item_id,))
+        return True
+
+    def promote_to_knowledge(
+        self,
+        item_id: str,
+        library,
+        title: str = "",
+        summary: str = "",
+    ):
+        from data_agent.knowledge.models import KnowledgeSource
+
+        item = self.get(item_id)
+        if item is None:
+            return None
+        if item.status != MemoryStatus.CONFIRMED:
+            raise ValueError("Only confirmed memories can be promoted")
+        knowledge = library.create(
+            title=title or item.summary or item.text[:60],
+            domain=item.domain or "general",
+            content=item.text,
+            summary=summary or item.summary,
+            tags=item.tags,
+            source=KnowledgeSource.MEMORY_PROMOTION,
+        )
+        with self.db.connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET status = ?, promotion_target = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (MemoryStatus.PROMOTED.value, knowledge.id, _now(), item_id),
+            )
+        return knowledge
+
     def search(self, query: str, domain: str = "", limit: int = 5) -> list[MemoryItem]:
         if limit <= 0:
             return []

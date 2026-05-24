@@ -180,6 +180,26 @@ def create_memory():
     return jsonify(_memory_to_dict(item))
 
 
+@management_bp.patch("/management/memory/<memory_id>")
+def update_memory(memory_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        item = MemoryStore().update(
+            memory_id,
+            text=data.get("text"),
+            summary=data.get("summary"),
+            memory_type=data.get("memory_type"),
+            confidence=data.get("confidence"),
+            domain=data.get("domain"),
+            tags=data.get("tags"),
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if item is None:
+        return jsonify({"error": "memory not found"}), 404
+    return jsonify(_memory_to_dict(item))
+
+
 @management_bp.post("/management/memory/<memory_id>/confirm")
 def confirm_memory(memory_id: str):
     item = MemoryStore().confirm(memory_id)
@@ -202,6 +222,36 @@ def deprecate_memory(memory_id: str):
     if item is None:
         return jsonify({"error": "memory not found or cannot be deprecated"}), 404
     return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/<memory_id>/promote")
+def promote_memory(memory_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        memory_store = MemoryStore()
+        knowledge = memory_store.promote_to_knowledge(
+            memory_id,
+            library=KnowledgeLibrary(),
+            title=(data.get("title") or "").strip(),
+            summary=data.get("summary") or "",
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if knowledge is None:
+        return jsonify({"error": "memory not found"}), 404
+    memory = memory_store.get(memory_id)
+    return jsonify({"memory": _memory_to_dict(memory), "knowledge": _knowledge_to_dict(knowledge)}), 201
+
+
+@management_bp.delete("/management/memory/<memory_id>")
+def delete_memory(memory_id: str):
+    try:
+        deleted = MemoryStore().delete_candidate(memory_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if not deleted:
+        return jsonify({"error": "memory not found"}), 404
+    return jsonify({"deleted": True})
 
 
 @management_bp.get("/management/evidence/search")
