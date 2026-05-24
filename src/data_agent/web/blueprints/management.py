@@ -254,6 +254,51 @@ def delete_memory(memory_id: str):
     return jsonify({"deleted": True})
 
 
+@management_bp.post("/management/evidence/index")
+def index_evidence():
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+    indexed = EvidenceStore().index_session(session_id)
+    return jsonify({"indexed": indexed})
+
+
+@management_bp.get("/management/search")
+def global_search():
+    query = request.args.get("q", "")
+    domain = request.args.get("domain", "")
+    project_id = request.args.get("project_id", "")
+    return jsonify(
+        {
+            "knowledge": [
+                _knowledge_to_dict(item)
+                for item in KnowledgeLibrary().search(query, domain=domain, limit=8)
+            ],
+            "memory": [
+                _memory_to_dict(item)
+                for item in MemoryStore().search(query, domain=domain, limit=8)
+            ],
+            "evidence": [
+                _evidence_to_dict(item)
+                for item in EvidenceStore().search(query, project_id=project_id, limit=8)
+            ],
+        }
+    )
+
+
+@management_bp.get("/management/domains")
+def list_domains():
+    domains: set[str] = set()
+    for item in KnowledgeLibrary().list():
+        if item.domain:
+            domains.add(item.domain)
+    for item in MemoryStore().list():
+        if item.domain:
+            domains.add(item.domain)
+    return jsonify({"domains": sorted(domains)})
+
+
 @management_bp.get("/management/evidence/search")
 def search_evidence():
     query = request.args.get("q", "")
