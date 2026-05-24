@@ -54,6 +54,7 @@ function chatApp() {
             evidenceQuery: '',
             globalQuery: '',
             globalResults: { knowledge: [], memory: [], evidence: [] },
+            memorySources: null,
             domains: [],
         },
         managementDrawer: {
@@ -418,6 +419,7 @@ function chatApp() {
                 } else if (section === 'memory') {
                     const res = await fetch('/api/management/memory');
                     this.managementCenter.memory = res.ok ? await res.json() : [];
+                    this.managementCenter.memorySources = null;
                 } else if (section === 'evidence') {
                     await this.searchEvidence();
                 }
@@ -542,11 +544,49 @@ function chatApp() {
         },
 
         openMemoryDrawer(item = null) {
+            const sourceIds = item?.source_evidence_ids || [];
             this.managementDrawer = {
                 show: true,
                 kind: 'memory',
                 title: item ? '编辑记忆' : '新建记忆',
-                form: item ? { ...item, memory_type: item.type || item.memory_type || 'workflow_pattern' } : { summary: '', memory_type: 'workflow_pattern', text: '' },
+                form: item ? {
+                    ...item,
+                    memory_type: item.type || item.memory_type || 'workflow_pattern',
+                    reason: item.reason || '',
+                    review_note: item.review_note || '',
+                    needs_review: !!item.needs_review,
+                    dedup_key: item.dedup_key || '',
+                    source_evidence_ids_text: Array.isArray(sourceIds) ? sourceIds.join('\n') : String(sourceIds || ''),
+                } : {
+                    summary: '',
+                    memory_type: 'workflow_pattern',
+                    text: '',
+                    reason: '',
+                    review_note: '',
+                    needs_review: false,
+                    dedup_key: '',
+                    source_evidence_ids_text: '',
+                },
+            };
+        },
+
+        _memorySourceEvidenceIds(form) {
+            if (form.source_evidence_ids_text === undefined && Array.isArray(form.source_evidence_ids)) {
+                return form.source_evidence_ids;
+            }
+            return String(form.source_evidence_ids_text || '')
+                .split(/[\n,]/)
+                .map(v => v.trim())
+                .filter(Boolean);
+        },
+
+        _memoryReviewPayload(form) {
+            return {
+                reason: form.reason || '',
+                source_evidence_ids: this._memorySourceEvidenceIds(form),
+                needs_review: !!form.needs_review,
+                review_note: form.review_note || '',
+                dedup_key: form.dedup_key || '',
             };
         },
 
@@ -559,6 +599,7 @@ function chatApp() {
                     summary: form.summary || '',
                     memory_type: form.memory_type || 'workflow_pattern',
                     text: form.text || '',
+                    ...this._memoryReviewPayload(form),
                 }),
             });
             if (!res.ok) {
@@ -580,6 +621,7 @@ function chatApp() {
                     text: form.text || '',
                     domain: form.domain || 'general',
                     tags: form.tags || [],
+                    ...this._memoryReviewPayload(form),
                 }),
             });
             if (!res.ok) {
@@ -627,6 +669,32 @@ function chatApp() {
                 return;
             }
             await this.loadManagementSection('memory');
+        },
+
+        async extractMemoryCandidates() {
+            if (!this.currentSessionId) {
+                this.showToast('请先打开一个会话');
+                return;
+            }
+            const res = await fetch('/api/management/memory/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.currentSessionId }),
+            });
+            if (!res.ok) {
+                this.showToast('记忆提取失败');
+                return;
+            }
+            const data = await res.json();
+            this.showToast(`已创建 ${data.created || 0} 条候选记忆`);
+            await this.loadManagementSection('memory');
+        },
+
+        async loadMemorySources(item) {
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/sources`);
+            this.managementCenter.memorySources = res.ok ? await res.json() : { memory_id: item.id, sources: [] };
+            const count = (this.managementCenter.memorySources.sources || []).length;
+            this.showToast(`来源证据 ${count} 条`);
         },
 
         async searchEvidence() {
