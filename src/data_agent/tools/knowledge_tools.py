@@ -115,6 +115,11 @@ def _memory_to_dict(item: MemoryItem) -> dict:
         "source_session_id": item.source_session_id,
         "project_id": item.project_id,
         "updated_at": item.updated_at,
+        "reason": item.reason,
+        "source_evidence_ids": item.source_evidence_ids,
+        "needs_review": item.needs_review,
+        "review_note": item.review_note,
+        "dedup_key": item.dedup_key,
     }
 
 
@@ -228,6 +233,37 @@ def create_memory_candidate(
 def confirm_memory(memory_id: str) -> dict:
     item = _memory().confirm(memory_id)
     return _memory_to_dict(item) if item else {"error": "memory not found"}
+
+
+@registry.register(
+    name="extract_memory_candidates",
+    description="Extract reviewable memory candidates from a saved session. Candidates are not used until confirmed.",
+)
+def extract_memory_candidates(session_id: str = "") -> dict:
+    sid = session_id or get_active_session_id() or ""
+    if not sid:
+        return {"error": "session_id is required"}
+
+    from data_agent.knowledge.candidates import MemoryCandidateExtractor
+
+    result = MemoryCandidateExtractor().extract_for_session(sid)
+    return {
+        "scanned": result.scanned,
+        "created": result.created,
+        "skipped": result.skipped,
+        "candidates": result.candidates,
+    }
+
+
+@registry.register(
+    name="list_memory_candidates",
+    description="List reviewable memory candidates. Candidates are not trusted until confirmed.",
+)
+def list_memory_candidates(needs_review: bool = False) -> list[dict]:
+    return [
+        _memory_to_dict(item)
+        for item in _memory().list(status="candidate", needs_review=True if needs_review else None)
+    ]
 
 
 @registry.register(
