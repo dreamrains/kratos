@@ -59,7 +59,7 @@ class EvidenceStore:
                     ),
                 )
                 inserted += 1
-        self._try_extract_memory_candidates(session_id, meta)
+        self._try_extract_memory_candidates(session_id)
         return inserted
 
     def search(self, query: str, project_id: str = "", limit: int = 10) -> list[EvidenceRecord]:
@@ -177,9 +177,7 @@ class EvidenceStore:
         except (json.JSONDecodeError, OSError):
             return default
 
-    def _try_extract_memory_candidates(self, session_id: str, meta: dict[str, Any]) -> None:
-        if meta.get("session_id") != session_id:
-            return
+    def _try_extract_memory_candidates(self, session_id: str) -> None:
         try:
             from data_agent.knowledge.candidates import MemoryCandidateExtractor
 

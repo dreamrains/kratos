@@ -1,3 +1,5 @@
+import json
+
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.knowledge.evidence import EvidenceStore
@@ -34,6 +36,29 @@ def test_save_session_does_not_extract_ordinary_user_content(tmp_path, monkeypat
     save_session([{"role": "user", "content": "帮我分析这个 CSV 文件。"}], "ordinary")
 
     assert MemoryStore(cfg.knowledge_dir).list(status="candidate") == []
+
+
+def test_index_session_auto_extracts_manual_session_without_session_id_meta(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    session_dir = sessions_dir / "manual"
+    session_dir.mkdir(parents=True)
+    (session_dir / "meta.json").write_text(
+        json.dumps({"project_name": "ecommerce", "saved_at": "2026-05-24T10:00:00"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (session_dir / "conversation.json").write_text(
+        json.dumps([{"role": "user", "content": "请记住：GMV 需要排除取消订单。"}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    root = tmp_path / "knowledge"
+
+    indexed = EvidenceStore(root, sessions_dir=sessions_dir).index_session("manual")
+
+    candidates = MemoryStore(root).list(status="candidate")
+    assert indexed == 1
+    assert len(candidates) == 1
+    assert candidates[0].source_session_id == "manual"
+    assert candidates[0].source_evidence_ids == ["ev_manual_0"]
 
 
 def test_candidate_extraction_failure_does_not_break_index_session(tmp_path, monkeypatch):
