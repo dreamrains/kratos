@@ -35,5 +35,17 @@ This document records validation results for the knowledge and memory MVP.
 - Issues found: None.
 - Fixes applied: None.
 - Notes:
-  - Browser validation seeded temporary local memory candidates through the management API; these are runtime data only and are not committed.
+  - Browser validation seeded temporary local memory candidates through the management API and removed them after validation.
   - Screenshot captured for local QA at `workspace/mvp-management-memory-drawer.png`.
+
+## Final Quality Gate
+
+- MVP fixture suite: `9 passed, 1 warning` from `pytest tests/test_mvp_real_data_fixtures.py tests/test_mvp_memory_quality_real_data.py tests/test_mvp_retrieval_budget_real_data.py tests/test_mvp_management_center_quality.py -q`.
+- Phase 2 regression suite: `54 passed, 1 warning`.
+- Related regression suite: `198 passed, 1 warning`.
+- Python compile: `python -m compileall -q src\data_agent` exited with status 0.
+- JS syntax: `node --check src\data_agent\web\static\js\app.js` exited with status 0.
+- Known warnings: pytest cannot write `.pytest_cache` because the workspace cache directory is permission-denied on this machine.
+- Accepted residual risks:
+  - Browser smoke validation was manual/DOM-driven and not a permanent browser automation test.
+  - Browser validation screenshot remains local under `workspace/`, which is already outside the committed test fixture set.
