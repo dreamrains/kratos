@@ -159,10 +159,12 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     assert total_paid > 0
 
     readiness = _load_json_tool_result(assess_readiness("card_orders", intent="分析省钱卡订单收入和复购"))
+    assert readiness["dataset"] == "card_orders"
     assert readiness["rows"] == len(orders)
     assert readiness["cols"] == len(orders.columns)
     assert readiness["overall"] in {"ready", "ready_with_warnings", "blocked"}
-    assert "findings" in readiness
+    assert readiness["findings"] is not None
+    assert readiness["recommendations"]
 
 
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")

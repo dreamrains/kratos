@@ -385,7 +385,7 @@ class AgentLoop:
                     except Exception:
                         df = None
 
-            # Strategy B: fall back to parquet backup
+            # Strategy B: fall back to local dataset backup
             if df is None:
                 parquet_path = sdir / "data" / f"{name}.parquet"
                 if parquet_path.exists():
@@ -393,6 +393,13 @@ class AgentLoop:
                         df = pd.read_parquet(parquet_path)
                     except Exception:
                         pass
+                if df is None:
+                    pickle_path = sdir / "data" / f"{name}.pkl"
+                    if pickle_path.exists():
+                        try:
+                            df = pd.read_pickle(pickle_path)
+                        except Exception:
+                            pass
 
             if df is not None:
                 workspace.add(name, df)

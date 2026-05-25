@@ -74,7 +74,7 @@ def _detect_injection_patterns(df: pd.DataFrame) -> list[str]:
         "### instruction", "### system",
     ]
     warnings_list = []
-    for col in df.select_dtypes(include=["object"]).columns:
+    for col in df.select_dtypes(include=["object", "string"]).columns:
         sample = df[col].dropna().head(100).astype(str).str.lower()
         for pat in patterns:
             if sample.str.contains(pat.lower(), regex=False).any():

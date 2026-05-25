@@ -117,7 +117,11 @@ class Workspace:
         logger.info("Workspace meta saved", extra={"extra_data": {"session_id": session_id, "datasets": list(datasets_meta)}})
 
     def persist_dataset(self, session_id: str, name: str) -> str | None:
-        """Save DataFrame as parquet backup (Strategy B fallback for restore)."""
+        """Save DataFrame backup for restore.
+
+        Parquet is preferred when an engine is installed. Pickle is a local
+        fallback so session restore still works in lightweight environments.
+        """
         df = self._datasets.get(name)
         if df is None:
             return None
@@ -125,7 +129,11 @@ class Workspace:
         data_dir = _session_dir(session_id) / "data"
         data_dir.mkdir(exist_ok=True)
         path = data_dir / f"{name}.parquet"
-        df.to_parquet(path, index=False)
+        try:
+            df.to_parquet(path, index=False)
+        except ImportError:
+            path = data_dir / f"{name}.pkl"
+            df.to_pickle(path)
         logger.info("Dataset persisted", extra={"extra_data": {"session_id": session_id, "dataset": name, "path": str(path)}})
         return str(path)
 

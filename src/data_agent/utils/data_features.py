@@ -340,12 +340,13 @@ def _extract_time_info(df: pd.DataFrame, quality: dict) -> str | None:
 def _infer_time_grain(date_series: pd.Series) -> str:
     """Infer the grain of a date series from unique date spacing."""
     try:
-        unique_sorted = date_series.sort_values().unique()
+        unique_sorted = pd.Series(pd.to_datetime(date_series, errors="coerce")).dropna().sort_values().drop_duplicates()
         if len(unique_sorted) < 2:
             return "point"
-        diffs = np.diff(unique_sorted.astype("int64"))
-        median_diff = np.median(diffs.astype(float))
-        median_days = median_diff / 86400000000000
+        diffs = unique_sorted.diff().dropna()
+        if diffs.empty:
+            return "point"
+        median_days = diffs.median() / pd.Timedelta(days=1)
 
         if median_days < 1.5:
             return "daily"

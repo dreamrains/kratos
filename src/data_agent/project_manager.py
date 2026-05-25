@@ -206,6 +206,7 @@ _project_manager: Optional[ProjectManager] = None
 
 def get_project_manager() -> ProjectManager:
     global _project_manager
-    if _project_manager is None:
-        _project_manager = ProjectManager()
+    cfg = get_config()
+    if _project_manager is None or _project_manager._projects_dir != cfg.projects_dir:
+        _project_manager = ProjectManager(projects_dir=cfg.projects_dir)
     return _project_manager

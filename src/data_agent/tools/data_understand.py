@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings as py_warnings
 from typing import Optional
 
 import numpy as np
@@ -399,7 +400,9 @@ def quick_profile(name: str, compact: bool = False) -> str:
         if likely_type == "text" and not pd.api.types.is_datetime64_any_dtype(df[col]):
             sample = df[col].dropna().head(5)
             try:
-                pd.to_datetime(sample)
+                with py_warnings.catch_warnings():
+                    py_warnings.simplefilter("ignore", UserWarning)
+                    pd.to_datetime(sample)
                 warnings.append(f"列 '{col}' 可能是日期列（当前 dtype={dtype}），建议转换")
                 suggested_next.append("apply_type_conversion 转换日期列")
             except (ValueError, TypeError):
@@ -617,6 +620,18 @@ def assess_readiness(name: str, intent: str = "") -> str:
     else:
         overall = "ready"
 
+    recommendations = []
+    if has_block:
+        recommendations.append("先处理阻断级数据质量问题，再进入正式分析。")
+    if has_warning:
+        recommendations.append("分析结论需要显式说明数据质量警告和可能影响。")
+    if any(f["check"] == "time_granularity" for f in findings):
+        recommendations.append("时间序列或前后对比前，先确认时间粒度和缺失时间段。")
+    if any(f["check"] == "sample_size" for f in findings):
+        recommendations.append("样本量不足时降低置信度，优先做描述性分析。")
+    if not recommendations:
+        recommendations.append("数据已通过基础就绪检查，可进入目标分析。")
+
     # Build summary
     icon_map = {"block": "BLOCK", "warning": "WARN", "info": "INFO"}
     summary_lines = [f"Data Readiness: {overall} ({rows} rows x {cols} cols)"]
@@ -626,9 +641,11 @@ def assess_readiness(name: str, intent: str = "") -> str:
         summary_lines.append("  [OK] 所有检查通过，数据已就绪")
 
     return json.dumps({
+        "dataset": name,
         "summary": "\n".join(summary_lines),
         "overall": overall,
         "findings": findings,
+        "recommendations": recommendations,
         "rows": rows,
         "cols": cols,
     }, ensure_ascii=False, indent=2)
@@ -714,13 +731,15 @@ def _classify_columns(df: pd.DataFrame) -> dict:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             time_cols.append(col)
             continue
-        if df[col].dtype == object:
-            try:
-                pd.to_datetime(df[col].dropna().head(20))
-                time_cols.append(col)
-                continue
-            except (ValueError, TypeError):
-                pass
+        if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
+            sample = df[col].dropna().head(20)
+            if not sample.empty:
+                with py_warnings.catch_warnings():
+                    py_warnings.simplefilter("ignore", UserWarning)
+                    parsed = pd.to_datetime(sample, errors="coerce")
+                if float(parsed.notna().mean()) >= 0.8:
+                    time_cols.append(col)
+                    continue
 
         # 率类指标
         col_orig_lower = col.lower()
@@ -769,13 +788,19 @@ def _classify_columns(df: pd.DataFrame) -> dict:
 
 
 def _detect_time_range(df: pd.DataFrame, time_cols: list[str]) -> dict | None:
-    """检测时间列的数据范围。要求 time_cols 中的列已经是 datetime 类型。"""
+    """检测时间列的数据范围，兼容已识别但尚未转换的字符串日期列。"""
     if not time_cols:
         return None
     col = time_cols[0]
     vals = df[col].dropna()
     if len(vals) == 0:
         return None
+    if not pd.api.types.is_datetime64_any_dtype(vals):
+        with py_warnings.catch_warnings():
+            py_warnings.simplefilter("ignore", UserWarning)
+            vals = pd.to_datetime(vals, errors="coerce").dropna()
+        if len(vals) == 0:
+            return None
     mn, mx = vals.min(), vals.max()
     span = (mx - mn).days if hasattr(mx - mn, "days") else 0
     return {

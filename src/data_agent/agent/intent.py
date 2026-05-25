@@ -97,9 +97,10 @@ _ANALYSIS_KEYWORDS = (
     "趋势", "对比", "比较", "归因", "为什么", "原因", "预测", "异常",
     "漏斗", "转化", "贡献", "效果", "是否值得", "长期运营", "有没有",
     "分布", "相关性", "增长", "下降", "上升",
+    "频次", "频率", "最高", "最低", "排名", "排行", "前几", "最多", "最少",
     "trend", "compare", "why", "reason", "decline", "drop", "driver",
     "forecast", "predict", "effect", "causal", "funnel", "conversion",
-    "evaluate", "worth", "analyze", "correlation",
+    "evaluate", "worth", "analyze", "correlation", "top", "rank", "ranking",
 )
 _GUIDANCE_KEYWORDS = (
     "不知道如何分析", "帮我看看", "看看这份数据", "分析一下",

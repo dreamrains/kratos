@@ -990,8 +990,8 @@ class TestAutoCleanNumericCoercion:
             "mixed": ["100", "hello", "200"],  # 2/3 numeric = 66% < 90%
         })
         cleaned, _, _ = auto_clean(df)
-        # mixed should stay object since conversion rate < 90%
-        assert cleaned["mixed"].dtype == object
+        # mixed should stay non-numeric since conversion rate < 90%
+        assert not pd.api.types.is_numeric_dtype(cleaned["mixed"])
 
     def test_mostly_numeric_object_column_converted(self):
         """Object column with >90% numeric values should be converted."""

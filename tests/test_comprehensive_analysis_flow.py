@@ -812,8 +812,8 @@ class TestSessionPersistence:
         assert meta["test_ds"]["shape"] == [30, 7]
         assert meta["test_ds"]["source_path"] == "/some/path.csv"
 
-    def test_workspace_persist_parquet(self, tmp_path, clean_workspace):
-        """workspace.persist_dataset 保存 parquet。"""
+    def test_workspace_persist_dataset_backup(self, tmp_path, clean_workspace):
+        """workspace.persist_dataset 保存可恢复的数据备份。"""
         from data_agent.session.workspace import workspace
         df = _make_df(20)
         workspace.add("parquet_test", df)
@@ -827,8 +827,11 @@ class TestSessionPersistence:
         assert path is not None
         assert Path(path).exists()
 
-        # 读回验证
-        df_back = pd.read_parquet(path)
+        # 读回验证：有 parquet 引擎时为 parquet，否则为本地 pickle fallback。
+        if Path(path).suffix == ".parquet":
+            df_back = pd.read_parquet(path)
+        else:
+            df_back = pd.read_pickle(path)
         assert df_back.shape[0] == 20
 
     def test_workspace_restore_strategy_a(self, tmp_path, clean_workspace):
@@ -864,8 +867,8 @@ class TestSessionPersistence:
         assert restored is not None
         assert restored.shape[0] == 40
 
-    def test_workspace_restore_strategy_b_parquet(self, tmp_path, clean_workspace):
-        """恢复策略B：从 parquet 备份恢复（原始文件不存在时）。"""
+    def test_workspace_restore_strategy_b_dataset_backup(self, tmp_path, clean_workspace):
+        """恢复策略B：从数据备份恢复（原始文件不存在时）。"""
         from data_agent.session.workspace import workspace
         from data_agent.session.history import _session_dir
 

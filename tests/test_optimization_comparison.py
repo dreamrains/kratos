@@ -733,19 +733,26 @@ class TestOldSessionIssues:
             "无效 purpose 应被拒绝并提示有效值"
         )
 
-        # 使用有效 purpose
+        # evidence/insight purpose 还必须绑定证据 id，避免把未溯源图表当作证据。
         result2 = create_chart(
             chart_type="bar",
             data="chart_test",
             x_col="period",
             y_col="amount",
-            purpose="evidence",  # 有效 purpose
+            purpose="evidence",
             title="购卡前后付费金额对比",
         )
+        assert "requires evidence_ids" in result2
 
-        # 不应报 purpose 错误（可能有其他错误如配置缺失，但不应是 purpose 错误）
-        if "error" in result2.lower():
-            assert "purpose" not in result2.lower(), "有效 purpose 不应报错"
+        result3 = create_chart(
+            chart_type="bar",
+            data="chart_test",
+            x_col="period",
+            y_col="amount",
+            purpose="exploratory",
+            title="购卡前后付费金额对比",
+        )
+        assert "requires evidence_ids" not in result3
 
     def test_old_session_transform_security_error(self, full_env):
         """旧会话 msg 52-53: 条件不安全错误。
