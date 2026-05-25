@@ -62,6 +62,9 @@ chmod +x start.sh
 
 首次使用需要在 Web UI 中配置 LLM 接口：
 
+<img width="2880" height="1580" alt="image" src="https://github.com/user-attachments/assets/7b04f053-ad72-4977-b5cf-7dbbe6c990fa" />
+
+
 1. 点击左侧边栏顶部的齿轮图标
 2. 填写模型名称（如 `gpt-4o`、`claude-sonnet-4-6`、`openai/deepseek-chat`）
 3. 填写 API 地址（留空使用默认值）
@@ -79,7 +82,7 @@ chmod +x start.sh
 
 配置保存后自动持久化，重启无需重新配置。
 
-## 使用方式
+## 🛣️ 使用方式
 
 1. **上传数据**：点击输入框旁的附件按钮，支持 CSV、Excel、JSON、Parquet 等格式
 2. **描述任务**：用自然语言输入分析需求，如 "分析销售数据的趋势"
@@ -88,20 +91,55 @@ chmod +x start.sh
 
 详细操作说明请参阅 [用户手册](user_guide.md)。
 
-## 🤖 开发
+## 🤖 安装与启动
+
+### Windows
+
+1. 将项目文件夹解压或克隆到本地
+2. **双击 `start.bat`**
+3. 首次运行会自动创建虚拟环境并安装依赖，等待几分钟
+4. 安装完成后浏览器自动打开 `http://127.0.0.1:5001`
+5. 如浏览器未自动打开，手动访问上述地址
+
+启动后保持命令行窗口打开，关闭窗口即停止服务。
+
+### macOS / Linux
+
+1. 将项目文件夹解压或克隆到本地
+2. 打开终端，进入项目目录
+3. 执行以下命令：
 
 ```bash
-# 安装（使用 uv）
-uv sync
-
-# 运行测试
-uv run pytest tests/ -v
-
-# CLI REPL 模式
-python main.py
+chmod +x start.sh
+./start.sh
 ```
 
-## 项目结构
+4. 首次运行会自动创建虚拟环境并安装依赖
+5. 浏览器自动打开
+
+按 `Ctrl+C` 停止服务。
+
+### 手动启动（开发者）
+
+如果已安装 `uv`：
+
+```bash
+uv sync
+uv run python -m data_agent.web.entry
+```
+
+或使用 pip：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Mac/Linux
+.venv\Scripts\activate      # Windows
+pip install -e .
+python -m data_agent.web.entry
+```
+
+
+## 📁 项目结构
 
 ```
 project/          用户数据工作区
