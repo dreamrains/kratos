@@ -54,13 +54,21 @@ uv run pytest tests/test_interaction.py::test_function_name -v
 - **Report strategy**: Report artifact tools (`generate_report`, `generate_analysis_brief`, `generate_formal_report`) are **deprecated**. Analysis conclusions are synthesized directly in conversation. `/export` remains for saving conversation to HTML/Markdown
 - **Key tool modules**: `data_io.py` (load/export), `eda.py` (explore), `statistics.py`, `ml.py`, `visualization.py`, `report.py` (conversation export only), `analysis_flow.py`, `interaction.py`
 
-### Knowledge System: `data_agent/knowledge/`
+### Knowledge & Memory System: `data_agent/knowledge/`
 
-Three-layer merge: **Global → Object → Session** (session overrides object overrides global)
-
-- `DomainKnowledge` (`domain.py`): Domain-specific indicators, rules, pitfalls. YAML-based. Templates for ecommerce/gaming
+**Legacy three-layer merge** (YAML-based): **Global → Object → Session** (session overrides object overrides global)
+- `DomainKnowledge` (`domain.py`): Domain-specific indicators, rules, pitfalls. Templates for ecommerce/gaming
 - `ExperienceLog` (`experience.py`): Learned patterns with draft/confirmed/deprecated lifecycle and confidence scores
 - `ProjectRules` (`rules.py`): Markdown project rules injected into system prompt
+
+**New knowledge & memory subsystem** (SQLite-backed):
+- `KnowledgeLibrary` (`library.py`): Versioned knowledge items with create/deprecate/supersede lifecycle
+- `MemoryStore` (`memory.py`): Candidate → draft → confirmed memories with auto-extraction from tool results
+- `EvidenceStore` (`evidence.py`): Evidence records linked to analysis sessions and knowledge items
+- `MemoryCandidateExtractor` (`candidates.py`): Auto-extracts memory candidates from tool outputs
+- `RetrievalEngine` (`retrieval.py`): Context retrieval with token budget and relevance scoring
+- `KnowledgeDatabase` (`sqlite_store.py`): SQLite storage layer for knowledge/memory/evidence
+- `models.py`: Pydantic models (KnowledgeItem, MemoryItem, EvidenceRecord, RetrievedContext, etc.)
 
 Knowledge promotion: session → object (explicit action). Migration between objects on re-binding.
 
@@ -88,7 +96,7 @@ Knowledge promotion: session → object (explicit action). Migration between obj
 
 ### Web GUI: `data_agent/web/`
 
-Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop to SSE responses. Blueprints: `chat.py`, `sessions.py`, `objects.py`, `tasks.py`, `artifacts.py`, `commands.py`, `uploads.py`.
+Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop to SSE responses. Blueprints: `chat.py`, `sessions.py`, `objects.py`, `tasks.py`, `artifacts.py`, `commands.py`, `uploads.py`, `management.py` (knowledge/memory/evidence admin panel).
 
 ### Lifecycle: `data_agent/lifecycle.py`
 
