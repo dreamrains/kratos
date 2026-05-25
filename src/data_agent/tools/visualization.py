@@ -152,6 +152,31 @@ def _first_present(row: dict, keys: tuple[str, ...]):
     return None
 
 
+def _funnel_step_is_amount(step: str) -> bool:
+    label = str(step or "").lower()
+    amount_terms = (
+        "revenue",
+        "income",
+        "amount",
+        "gmv",
+        "sales",
+        "cost",
+        "spend",
+        "roi",
+        "ecpm",
+        "\u6536\u5165",
+        "\u91d1\u989d",
+        "\u9500\u552e\u989d",
+        "\u5356\u91cf\u6536\u5165",
+        "\u82b1\u8d39",
+        "\u6210\u672c",
+        "\u5143",
+        "\uffe5",
+        "\u00a5",
+    )
+    return any(term in label for term in amount_terms)
+
+
 def _normalize_funnel_rows(rows: list[dict]) -> tuple[list[dict], str | None]:
     normalized: list[dict] = []
     for idx, row in enumerate(rows):
@@ -164,6 +189,11 @@ def _normalize_funnel_rows(rows: list[dict]) -> tuple[list[dict], str | None]:
         numeric_count = pd.to_numeric(pd.Series([count]), errors="coerce").iloc[0]
         if pd.isna(numeric_count):
             return [], f"funnel row {idx + 1} count/value must be numeric"
+        if _funnel_step_is_amount(str(step)):
+            return [], (
+                "funnel stages must use comparable count metrics; "
+                f"row {idx + 1} looks like a revenue or amount metric"
+            )
         normalized.append({"step": str(step), "count": float(numeric_count)})
     if not normalized:
         return [], "funnel data_json must contain at least one step"

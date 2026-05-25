@@ -244,7 +244,7 @@ def _is_read_only(tool_def) -> bool:
         "generate_report", "generate_analysis_brief", "generate_formal_report",
         "export_conversation",
         "clean_data", "apply_type_conversion",
-        "load_skill", "update_project_rules", "set_domain", "confirm_experience",
+        "load_skill", "update_project_rules",
         "task_create", "task_update",
     }
     return tool_def.name not in known_write
@@ -306,8 +306,6 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
     "knowledge": {
         "show_project_rules", "update_project_rules",
-        "show_domain_knowledge", "set_domain",
-        "show_experience_log", "confirm_experience",
         "load_skill", "list_skills",
     },
     "conversation_query": {

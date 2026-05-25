@@ -30,6 +30,15 @@ def _session_dir(session_id: str) -> Path:
     return d
 
 
+def _try_index_session_evidence(session_id: str) -> None:
+    try:
+        from data_agent.knowledge.evidence import EvidenceStore
+
+        EvidenceStore().index_session(session_id)
+    except Exception:
+        logger.debug("Session evidence indexing skipped", exc_info=True)
+
+
 def session_knowledge_dir(session_id: str) -> Path:
     """返回会话级知识目录路径，自动创建。"""
     d = _session_dir(session_id) / "knowledge"
@@ -133,6 +142,7 @@ def save_session(
     tag: str = "",
     data_file: str = "",
     extra_meta: Optional[dict] = None,
+    merge_protect: bool = True,
 ) -> str:
     """保存会话到 sessions/<session_id>/。写入 conversation.json 并清空 JSONL。
 
@@ -141,8 +151,10 @@ def save_session(
     """
     sdir = _session_dir(session_id)
 
-    # Merge protection: prevent data loss if in-memory messages are incomplete
-    messages = _merge_protect_messages(sdir, messages)
+    # Merge protection: prevent data loss if in-memory messages are incomplete.
+    # Rewind is an intentional truncation and must bypass this guard.
+    if merge_protect:
+        messages = _merge_protect_messages(sdir, messages)
 
     # 提取会话摘要：第一条非命令用户消息的前 100 字符
     summary = _extract_summary(messages)
@@ -175,6 +187,8 @@ def save_session(
     # JSONL 已合并到 JSON，删除
     jsonl_path = sdir / "conversation.jsonl"
     jsonl_path.unlink(missing_ok=True)
+
+    _try_index_session_evidence(session_id)
 
     return session_id
 

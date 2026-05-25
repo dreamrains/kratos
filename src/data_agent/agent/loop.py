@@ -265,6 +265,7 @@ class AgentLoop:
         self._last_data_file = ""
         self._prompt_cache: str = ""
         self._prompt_cache_dirty: bool = True
+        self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
         self._compact_state = CompactState()
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
@@ -443,6 +444,33 @@ class AgentLoop:
         """清除中断信号（新 turn 开始时调用）。"""
         self._interrupt_event.clear()
 
+    def _build_retrieval_query(self, messages: list[dict]) -> str:
+        for message in reversed(messages[-6:]):
+            if message.get("role") == "user":
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    return content[:500]
+        return ""
+
+    def _get_knowledge_retrieval_service(self):
+        if self._knowledge_retrieval_service is None:
+            from data_agent.knowledge.retrieval import KnowledgeRetrievalService
+
+            self._knowledge_retrieval_service = KnowledgeRetrievalService()
+        return self._knowledge_retrieval_service
+
+    def _infer_retrieval_domain(self, user_input: str) -> str:
+        text = f"{self.context.project_name or ''} {user_input}".lower()
+        mappings = {
+            "ecommerce": ("电商", "gmv", "订单", "退款", "转化"),
+            "game": ("游戏", "留存", "付费率", "arpu", "dau"),
+            "finance": ("金融", "授信", "逾期", "资产", "风控"),
+        }
+        for domain, markers in mappings.items():
+            if any(marker in text for marker in markers):
+                return domain
+        return ""
+
     def _build_system_prompt(self) -> str:
         from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
         from data_agent.session.workspace import workspace
@@ -518,10 +546,25 @@ class AgentLoop:
         if level == "chat":
             tool_list = ""
 
-        project_rules, domain_knowledge, experience_log = get_knowledge_instances()
+        project_rules, _, _ = get_knowledge_instances()
         rules_prompt = project_rules.get_rules_for_prompt(session_id=sid)
-        domain_prompt = domain_knowledge.get_for_prompt(session_id=sid)
-        experience_prompt = experience_log.get_for_prompt(session_id=sid)
+        retrieved_context = ""
+        retrieval_query = self._build_retrieval_query(self.messages)
+        if retrieval_query:
+            try:
+                service = self._get_knowledge_retrieval_service()
+                context = service.retrieve(
+                    retrieval_query,
+                    domain=self._infer_retrieval_domain(user_input),
+                    project_id=self.context.project_name or "",
+                    include_evidence=False,
+                )
+                retrieved_context = service.compose_prompt_context(context)
+            except Exception as exc:
+                logger.warning(
+                    "Knowledge retrieval failed",
+                    extra={"extra_data": {"session_id": sid, "error": str(exc)}},
+                )
 
         # Chat 模式：跳过技能信息
         skill_descriptions = ""
@@ -551,8 +594,8 @@ class AgentLoop:
         return build_system_prompt(
             tool_list=tool_list,
             project_rules=rules_prompt,
-            domain_knowledge=domain_prompt,
-            experience_log=experience_prompt,
+            domain_knowledge=retrieved_context,
+            experience_log="",
             session_context=session_ctx,
             skill_instructions=skill_instructions,
             skill_descriptions=skill_descriptions,

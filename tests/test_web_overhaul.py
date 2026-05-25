@@ -6,6 +6,7 @@ import json
 import pytest
 import sys
 import os
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -38,6 +39,27 @@ def css(client):
 def sessions(client):
     resp = client.get("/api/sessions")
     return resp.get_json()
+
+
+def test_management_center_shell_exists(html, js, css):
+    assert "managementCenter" in html
+    assert "mgmt-nav" in html
+    assert "loadManagementSection" in js
+    assert "mgmt-overlay" in css
+    assert "mgmt-drawer" in css
+
+
+def test_management_center_uses_chinese_settings_interaction(html, js):
+    assert "返回应用" in html
+    assert "技能" in html
+    assert "MCP 服务器" in html
+    assert "知识库" in html
+    assert "记忆" in html
+    assert "会话搜索" in html
+    assert "添加技能" in html
+    assert "添加服务器" in html
+    assert "openSkillDrawer" in js
+    assert "openMcpDrawer" in js
 
 
 # =====================================================
@@ -97,7 +119,7 @@ class TestMermaidChartRendering:
         assert "renderMarkdown(turn.content, turn)" in html
 
     def test_unreferenced_charts_render_after_markdown_as_supplemental(self, html, js):
-        assert "Supplemental charts" in html
+        assert "Supplemental charts" in html or "补充图表" in html
         assert "supplementalArtifacts(turn)" in html
         assert "supplementalArtifacts(turn)" in js
 
@@ -124,6 +146,11 @@ class TestMermaidChartRendering:
         assert "_artifactBelongsToSession" in js
         assert "sessionId === this.currentSessionId" in js
         assert "this._addTurnArtifact(turn, art, sessionId)" in js
+
+    def test_data_backed_mermaid_charts_are_blocked(self, js):
+        assert "_isDataBackedMermaid" in js
+        assert "xychart-beta" in js
+        assert "Data-backed Mermaid charts are blocked" in js
 
 
 class TestSessionSorting:
@@ -204,7 +231,7 @@ class TestRewindUI:
         assert "/rewind-info" in js
 
     def test_rewind_modal_html(self, html):
-        assert "Rewind Conversation" in html
+        assert "Rewind Conversation" in html or "回退对话" in html
         assert "rewindModal.show" in html
         assert "selectedRound" in html
 
@@ -227,6 +254,68 @@ class TestRewindUI:
         assert "已回滚到 Round" in js
 
 
+    def test_live_user_turn_round_index_is_one_based(self, js):
+        assert "roundIndex: this._countUserTurns(state.turns) + 1" in js
+
+    def test_rewind_persists_truncated_history(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import load_session, save_session
+        from data_agent.web.app import create_app
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+
+        session_id = "rewind_persist"
+        save_session(
+            [
+                {"role": "user", "content": "round 1"},
+                {"role": "assistant", "content": "answer 1"},
+                {"role": "user", "content": "round 2"},
+                {"role": "assistant", "content": "answer 2"},
+                {"role": "user", "content": "round 3"},
+                {"role": "assistant", "content": "answer 3"},
+            ],
+            session_id,
+        )
+
+        app = create_app()
+        app.config["TESTING"] = True
+        response = app.test_client().post(f"/api/sessions/{session_id}/rewind", json={"round": 2})
+
+        assert response.status_code == 200
+        persisted = load_session(session_id)
+        assert [m["content"] for m in persisted["messages"]] == ["round 1", "answer 1"]
+
+    def test_save_session_can_intentionally_truncate_for_rewind(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import load_session, save_session
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+
+        session_id = "rewind_save"
+        save_session(
+            [
+                {"role": "user", "content": "round 1"},
+                {"role": "assistant", "content": "answer 1"},
+                {"role": "user", "content": "round 2"},
+                {"role": "assistant", "content": "answer 2"},
+            ],
+            session_id,
+        )
+
+        save_session(
+            [{"role": "user", "content": "round 1"}, {"role": "assistant", "content": "answer 1"}],
+            session_id,
+            merge_protect=False,
+        )
+
+        persisted = load_session(session_id)
+        assert [m["content"] for m in persisted["messages"]] == ["round 1", "answer 1"]
+
+
 class TestCompactFocus:
     """2.2 Enhanced compact with focus parameter."""
 
@@ -237,7 +326,7 @@ class TestCompactFocus:
         assert "doCompact" in js
 
     def test_compact_dialog_html(self, html):
-        assert "Compress Context" in html
+        assert "Compress Context" in html or "压缩上下文" in html
         assert "compactDialog.focus" in html
 
     def test_focus_input_placeholder(self, html):
@@ -380,7 +469,7 @@ class TestWorkbenchRedesign:
     """4.1-4.3 Workbench simplified to single Outputs panel."""
 
     def test_outputs_panel_header(self, html):
-        assert ">Outputs<" in html or "Outputs" in html
+        assert ">Outputs<" in html or "Outputs" in html or "输出" in html or "产出物" in html
 
     def test_no_workbench_tab_in_js(self, js):
         assert "workbenchTab" not in js
@@ -430,9 +519,9 @@ class TestVisualPolish:
         assert "to-indigo-100" in html
 
     def test_prompt_suggestions(self, html):
-        assert "Analyze the trends" in html
-        assert "What insights" in html
-        assert "Create a visualization" in html
+        assert "Analyze the trends" in html or "分析趋势" in html or "分析数据趋势" in html
+        assert "What insights" in html or "有什么洞察" in html or "你能发现什么洞察" in html
+        assert "Create a visualization" in html or "创建可视化" in html or "创建数据可视化" in html
 
     def test_suggestions_set_input_text(self, html):
         assert "inputText = " in html
@@ -507,7 +596,7 @@ class TestCoreRegression:
 
     def test_confirmation_dialog_exists(self, html):
         assert "confirmation" in html
-        assert "Submit" in html
+        assert "Submit" in html or "提交" in html
 
     def test_config_modal_exists(self, html):
         assert "configModal" in html

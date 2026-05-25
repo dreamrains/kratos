@@ -44,6 +44,25 @@ function chatApp() {
             newMcpUrl: '',
             loading: false,
         },
+        managementCenter: {
+            show: false,
+            section: 'skills',
+            loading: false,
+            knowledge: [],
+            memory: [],
+            evidence: [],
+            evidenceQuery: '',
+            globalQuery: '',
+            globalResults: { knowledge: [], memory: [], evidence: [] },
+            memorySources: null,
+            domains: [],
+        },
+        managementDrawer: {
+            show: false,
+            kind: '',
+            title: '',
+            form: {},
+        },
 
         // Artifacts modal
         artifactsModal: { show: false, sessionId: '', items: [] },
@@ -324,9 +343,10 @@ function chatApp() {
         },
 
         async deleteSkill(skill) {
-            if (!confirm(`Delete skill ${skill.name}?`)) return;
+            if (!confirm(`确定删除技能「${skill.name}」？`)) return;
             await fetch(`/api/skills/${encodeURIComponent(skill.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
+            if (this.managementCenter.show) await this.loadManagementSection('skills');
         },
 
         async addMcpServer() {
@@ -354,9 +374,367 @@ function chatApp() {
         },
 
         async deleteMcpServer(server) {
-            if (!confirm(`Delete MCP server ${server.name}?`)) return;
+            if (!confirm(`确定删除 MCP 服务器「${server.name}」？`)) return;
             await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
+            if (this.managementCenter.show) await this.loadManagementSection('mcp');
+        },
+
+        managementTitle() {
+            return {
+                skills: '技能',
+                mcp: 'MCP 服务器',
+                knowledge: '知识',
+                memory: '记忆',
+                evidence: '会话搜索',
+            }[this.managementCenter.section] || '管理';
+        },
+
+        managementSubtitle() {
+            return {
+                skills: '管理全局可复用能力',
+                mcp: '连接外部工具和数据源',
+                knowledge: '维护用户确认的正式知识',
+                memory: '审查从会话中提取的候选记忆',
+                evidence: '跨会话检索历史内容和证据',
+            }[this.managementCenter.section] || '';
+        },
+
+        async openManagementCenter(section = 'skills') {
+            this.managementCenter.show = true;
+            await this.loadManagementSection(section);
+        },
+
+        async loadManagementSection(section) {
+            this.closeManagementDrawer();
+            this.managementCenter.section = section;
+            this.managementCenter.loading = true;
+            try {
+                if (section === 'skills' || section === 'mcp') {
+                    await this.loadCapabilityAdmin();
+                    this.capabilityModal.show = false;
+                } else if (section === 'knowledge') {
+                    const res = await fetch('/api/management/knowledge');
+                    this.managementCenter.knowledge = res.ok ? await res.json() : [];
+                } else if (section === 'memory') {
+                    const res = await fetch('/api/management/memory');
+                    this.managementCenter.memory = res.ok ? await res.json() : [];
+                    this.managementCenter.memorySources = null;
+                } else if (section === 'evidence') {
+                    await this.searchEvidence();
+                }
+            } catch (e) {
+                this.showToast('加载失败');
+            }
+            this.managementCenter.loading = false;
+        },
+
+        closeManagementDrawer() {
+            this.managementDrawer = { show: false, kind: '', title: '', form: {} };
+        },
+
+        openSkillDrawer() {
+            this.managementDrawer = {
+                show: true,
+                kind: 'skill',
+                title: '添加技能',
+                form: { name: '', source: '' },
+            };
+        },
+
+        async saveSkillItem() {
+            const form = this.managementDrawer.form || {};
+            if (!form.name || !form.source) return;
+            const res = await fetch('/api/skills', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: form.name, source: form.source }),
+            });
+            if (!res.ok) {
+                this.showToast('技能添加失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('skills');
+        },
+
+        openMcpDrawer() {
+            this.managementDrawer = {
+                show: true,
+                kind: 'mcp',
+                title: '添加 MCP 服务器',
+                form: { name: '', transport: 'stdio', command: '', url: '' },
+            };
+        },
+
+        async saveMcpServer() {
+            const form = this.managementDrawer.form || {};
+            if (!form.name) return;
+            const res = await fetch('/api/mcp/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: form.name,
+                    transport: form.transport || 'stdio',
+                    command: form.command || '',
+                    url: form.url || '',
+                    enabled: true,
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('服务器添加失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('mcp');
+        },
+
+        openKnowledgeDrawer(item = null) {
+            this.managementDrawer = {
+                show: true,
+                kind: 'knowledge',
+                title: item ? '编辑知识' : '新建知识',
+                form: item ? { ...item } : { title: '', domain: 'general', summary: '', content: '' },
+            };
+        },
+
+        async saveKnowledgeItem() {
+            const form = this.managementDrawer.form || {};
+            const payload = {
+                title: form.title || '',
+                domain: form.domain || 'general',
+                summary: form.summary || '',
+                content: form.content || '',
+                tags: form.tags || [],
+            };
+            const url = form.id ? `/api/management/knowledge/${encodeURIComponent(form.id)}` : '/api/management/knowledge';
+            const method = form.id ? 'PATCH' : 'POST';
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                this.showToast('知识保存失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('knowledge');
+        },
+
+        async deprecateKnowledge(item) {
+            if (!confirm(`确定废弃知识「${item.title}」？`)) return;
+            await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}/deprecate`, { method: 'POST' });
+            await this.loadManagementSection('knowledge');
+        },
+
+        async restoreKnowledge(item) {
+            await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
+            await this.loadManagementSection('knowledge');
+        },
+
+        async deleteKnowledge(item) {
+            if (!confirm(`确定删除知识「${item.title}」？此操作不可撤销。`)) return;
+            const res = await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                this.showToast('删除失败');
+                return;
+            }
+            await this.loadManagementSection('knowledge');
+        },
+
+        openMemoryDrawer(item = null) {
+            const sourceIds = item?.source_evidence_ids || [];
+            this.managementDrawer = {
+                show: true,
+                kind: 'memory',
+                title: item ? '编辑记忆' : '新建记忆',
+                form: item ? {
+                    ...item,
+                    memory_type: item.type || item.memory_type || 'workflow_pattern',
+                    reason: item.reason || '',
+                    review_note: item.review_note || '',
+                    needs_review: !!item.needs_review,
+                    dedup_key: item.dedup_key || '',
+                    source_evidence_ids_text: Array.isArray(sourceIds) ? sourceIds.join('\n') : String(sourceIds || ''),
+                } : {
+                    summary: '',
+                    memory_type: 'workflow_pattern',
+                    text: '',
+                    reason: '',
+                    review_note: '',
+                    needs_review: false,
+                    dedup_key: '',
+                    source_evidence_ids_text: '',
+                },
+            };
+        },
+
+        _memorySourceEvidenceIds(form) {
+            if (form.source_evidence_ids_text === undefined && Array.isArray(form.source_evidence_ids)) {
+                return form.source_evidence_ids;
+            }
+            return String(form.source_evidence_ids_text || '')
+                .split(/[\n,]/)
+                .map(v => v.trim())
+                .filter(Boolean);
+        },
+
+        _memoryReviewPayload(form) {
+            return {
+                reason: form.reason || '',
+                source_evidence_ids: this._memorySourceEvidenceIds(form),
+                needs_review: !!form.needs_review,
+                review_note: form.review_note || '',
+                dedup_key: form.dedup_key || '',
+            };
+        },
+
+        async saveMemoryCandidate() {
+            const form = this.managementDrawer.form || {};
+            const res = await fetch('/api/management/memory', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    summary: form.summary || '',
+                    memory_type: form.memory_type || 'workflow_pattern',
+                    text: form.text || '',
+                    ...this._memoryReviewPayload(form),
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('记忆保存失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('memory');
+        },
+
+        async updateMemory() {
+            const form = this.managementDrawer.form || {};
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(form.id)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    summary: form.summary || '',
+                    memory_type: form.memory_type || form.type || 'workflow_pattern',
+                    text: form.text || '',
+                    domain: form.domain || 'general',
+                    tags: form.tags || [],
+                    ...this._memoryReviewPayload(form),
+                }),
+            });
+            if (!res.ok) {
+                this.showToast('记忆更新失败');
+                return;
+            }
+            this.closeManagementDrawer();
+            await this.loadManagementSection('memory');
+        },
+
+        async confirmMemoryCandidate(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/confirm`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async rejectMemoryCandidate(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/reject`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async deprecateMemory(item) {
+            await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/deprecate`, { method: 'POST' });
+            await this.loadManagementSection('memory');
+        },
+
+        async promoteMemory(item) {
+            const title = item.summary || (item.text || '').slice(0, 40) || '晋升知识';
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/promote`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, summary: item.summary || '' }),
+            });
+            if (!res.ok) {
+                this.showToast('提升为知识失败');
+                return;
+            }
+            await this.loadManagementSection('memory');
+        },
+
+        async deleteMemory(item) {
+            if (!confirm(`确定删除记忆「${item.summary || item.text || item.id}」？`)) return;
+            const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+            if (!res.ok) {
+                this.showToast('只能删除候选或已拒绝的记忆');
+                return;
+            }
+            await this.loadManagementSection('memory');
+        },
+
+        async extractMemoryCandidates() {
+            const hasSavedSession = this.currentSessionId && this.currentSessionId !== '_pending_';
+            if (!hasSavedSession) {
+                this.showToast('请先打开一个会话');
+                return;
+            }
+            const res = await fetch('/api/management/memory/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.currentSessionId }),
+            });
+            if (!res.ok) {
+                this.showToast('记忆提取失败');
+                return;
+            }
+            const data = await res.json();
+            this.showToast(`已创建 ${data.created || 0} 条候选记忆`);
+            await this.loadManagementSection('memory');
+        },
+
+        async loadMemorySources(item) {
+            this.managementCenter.memorySources = { memory_id: item.id, sources: [] };
+            try {
+                const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}/sources`);
+                if (!res.ok) {
+                    this.showToast('来源证据加载失败');
+                    return;
+                }
+                this.managementCenter.memorySources = await res.json();
+                const count = (this.managementCenter.memorySources.sources || []).length;
+                this.showToast(`来源证据 ${count} 条`);
+            } catch (e) {
+                this.managementCenter.memorySources = { memory_id: item.id, sources: [] };
+                this.showToast('来源证据加载失败');
+            }
+        },
+
+        async searchEvidence() {
+            const q = encodeURIComponent(this.managementCenter.evidenceQuery || '');
+            const res = await fetch(`/api/management/evidence/search?q=${q}`);
+            this.managementCenter.evidence = res.ok ? await res.json() : [];
+        },
+
+        async indexEvidence() {
+            if (!this.currentSessionId) {
+                this.showToast('请先打开一个会话');
+                return;
+            }
+            const res = await fetch('/api/management/evidence/index', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: this.currentSessionId }),
+            });
+            if (!res.ok) {
+                this.showToast('证据索引失败');
+                return;
+            }
+            await this.searchEvidence();
+        },
+
+        async globalManagementSearch() {
+            const q = encodeURIComponent(this.managementCenter.globalQuery || '');
+            const res = await fetch(`/api/management/search?q=${q}`);
+            this.managementCenter.globalResults = res.ok ? await res.json() : { knowledge: [], memory: [], evidence: [] };
         },
 
         // --- Sessions ---
@@ -888,7 +1266,7 @@ function chatApp() {
             const state = this._getSessionState(this.currentSessionId);
             state._interrupted = false;
 
-            state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) });
+            state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) + 1 });
             state.turns.push({
                 role: 'assistant', content: '', toolCalls: [], artifacts: [],
                 confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
@@ -1033,7 +1411,7 @@ function chatApp() {
             if (turn) turn.confirmation = null;
             state.turns.push({
                 role: 'user', content: userResponse,
-                roundIndex: this._countUserTurns(state.turns),
+                roundIndex: this._countUserTurns(state.turns) + 1,
                 isConfirmationResponse: true,
             });
 
@@ -1194,6 +1572,16 @@ function chatApp() {
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
+        },
+
+        _isDataBackedMermaid(text) {
+            const source = String(text || '').trim();
+            const lower = source.toLowerCase();
+            if (lower.startsWith('xychart-beta')) return true;
+            if (lower.startsWith('pie ') || lower.startsWith('pie\n')) {
+                return /:\s*-?\d/.test(source);
+            }
+            return false;
         },
 
         _chartRefsFromContent(content) {
@@ -1458,6 +1846,9 @@ function chatApp() {
 
                         // Mermaid diagrams
                         if (language === 'mermaid') {
+                            if (self._isDataBackedMermaid(text)) {
+                                return '<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Data-backed Mermaid charts are blocked. Use an interactive chart reference or a verified numeric table for analytical data.</div>';
+                            }
                             const id = 'mermaid-' + Math.random().toString(36).slice(2, 10);
                             const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                             return `<div class="mermaid-container"><div class="mermaid" id="${id}">${escaped}</div></div>`;

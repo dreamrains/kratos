@@ -1,0 +1,379 @@
+"""Web API for knowledge, memory, and session evidence management."""
+
+from __future__ import annotations
+
+from flask import Blueprint, jsonify, request
+
+from data_agent.knowledge.evidence import EvidenceStore
+from data_agent.knowledge.library import KnowledgeLibrary
+from data_agent.knowledge.memory import MemoryStore
+from data_agent.knowledge.models import EvidenceRecord, KnowledgeItem, MemoryItem, MemoryType
+
+management_bp = Blueprint("management", __name__)
+
+
+def _knowledge_to_dict(item: KnowledgeItem) -> dict:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "domain": item.domain,
+        "summary": item.summary,
+        "status": item.status.value,
+        "tags": item.tags,
+        "source": item.source.value,
+        "version": item.version,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+        "deprecated_at": item.deprecated_at,
+        "supersedes": item.supersedes,
+        "superseded_by": item.superseded_by,
+        "content": item.content,
+    }
+
+
+def _memory_to_dict(item: MemoryItem) -> dict:
+    return {
+        "id": item.id,
+        "type": item.type.value,
+        "text": item.text,
+        "summary": item.summary,
+        "status": item.status.value,
+        "confidence": item.confidence,
+        "source_session_id": item.source_session_id,
+        "source_message_ids": item.source_message_ids,
+        "source_tool_call_ids": item.source_tool_call_ids,
+        "project_id": item.project_id,
+        "domain": item.domain,
+        "tags": item.tags,
+        "last_used_at": item.last_used_at,
+        "hit_count": item.hit_count,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+        "promotion_target": item.promotion_target,
+        "reason": item.reason,
+        "source_evidence_ids": item.source_evidence_ids,
+        "needs_review": item.needs_review,
+        "review_note": item.review_note,
+        "dedup_key": item.dedup_key,
+    }
+
+
+def _evidence_to_dict(record: EvidenceRecord) -> dict:
+    return {
+        "id": record.id,
+        "session_id": record.session_id,
+        "project_id": record.project_id,
+        "kind": record.kind.value,
+        "content_ref": record.content_ref,
+        "summary": record.summary,
+        "content": record.content,
+        "created_at": record.created_at,
+        "tags": record.tags,
+    }
+
+
+def _parse_optional_bool(value: object, field_name: str) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid {field_name}: expected true or false")
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    raise ValueError(f"Invalid {field_name}: expected true or false")
+
+
+@management_bp.get("/management/knowledge")
+def list_knowledge():
+    status = request.args.get("status", "")
+    domain = request.args.get("domain", "")
+    items = KnowledgeLibrary().list(domain=domain, status=status)
+    return jsonify([_knowledge_to_dict(item) for item in items])
+
+
+@management_bp.post("/management/knowledge")
+def create_knowledge():
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    content = data.get("content") or ""
+    if not title or not content:
+        return jsonify({"error": "title and content are required"}), 400
+    try:
+        item = KnowledgeLibrary().create(
+            title=title,
+            domain=(data.get("domain") or "general").strip(),
+            content=content,
+            summary=data.get("summary") or "",
+            tags=data.get("tags") or [],
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_knowledge_to_dict(item))
+
+
+@management_bp.get("/management/knowledge/search")
+def search_knowledge():
+    query = request.args.get("q", "")
+    domain = request.args.get("domain", "")
+    items = KnowledgeLibrary().search(query, domain=domain)
+    return jsonify([_knowledge_to_dict(item) for item in items])
+
+
+@management_bp.patch("/management/knowledge/<item_id>")
+def update_knowledge(item_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        item = KnowledgeLibrary().update(
+            item_id,
+            content=data.get("content"),
+            title=data.get("title"),
+            summary=data.get("summary"),
+            tags=data.get("tags"),
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if item is None:
+        return jsonify({"error": "knowledge not found"}), 404
+    return jsonify(_knowledge_to_dict(item))
+
+
+@management_bp.post("/management/knowledge/<item_id>/deprecate")
+def deprecate_knowledge(item_id: str):
+    item = KnowledgeLibrary().deprecate(item_id)
+    if item is None:
+        return jsonify({"error": "knowledge not found"}), 404
+    return jsonify(_knowledge_to_dict(item))
+
+
+@management_bp.post("/management/knowledge/<item_id>/restore")
+def restore_knowledge(item_id: str):
+    item = KnowledgeLibrary().restore(item_id)
+    if item is None:
+        return jsonify({"error": "knowledge not found"}), 404
+    return jsonify(_knowledge_to_dict(item))
+
+
+@management_bp.delete("/management/knowledge/<item_id>")
+def delete_knowledge(item_id: str):
+    if not KnowledgeLibrary().delete(item_id):
+        return jsonify({"error": "knowledge not found"}), 404
+    return jsonify({"deleted": True})
+
+
+@management_bp.get("/management/memory")
+def list_memory():
+    status = request.args.get("status", "")
+    domain = request.args.get("domain", "")
+    try:
+        needs_review = _parse_optional_bool(request.args.get("needs_review"), "needs_review")
+        items = MemoryStore().list(status=status, domain=domain, needs_review=needs_review)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify([_memory_to_dict(item) for item in items])
+
+
+@management_bp.post("/management/memory")
+def create_memory():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    try:
+        needs_review = _parse_optional_bool(data.get("needs_review"), "needs_review")
+        item = MemoryStore().create_candidate(
+            text=text,
+            summary=data.get("summary") or "",
+            memory_type=MemoryType(data.get("memory_type") or "workflow_pattern"),
+            confidence=float(data.get("confidence") if data.get("confidence") is not None else 0.6),
+            source_session_id=data.get("source_session_id") or "",
+            source_message_ids=data.get("source_message_ids") or [],
+            source_tool_call_ids=data.get("source_tool_call_ids") or [],
+            project_id=data.get("project_id") or "",
+            domain=data.get("domain") or "general",
+            tags=data.get("tags") or [],
+            promotion_target=data.get("promotion_target") or "none",
+            reason=data.get("reason") or "",
+            source_evidence_ids=data.get("source_evidence_ids") or [],
+            needs_review=needs_review if needs_review is not None else False,
+            review_note=data.get("review_note") or "",
+            dedup_key=data.get("dedup_key") or "",
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/extract")
+def extract_memory_candidates():
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+
+    from data_agent.knowledge.candidates import MemoryCandidateExtractor
+
+    result = MemoryCandidateExtractor().extract_for_session(session_id)
+    candidates = [
+        _memory_to_dict(item)
+        for item in MemoryStore().list(status="candidate")
+        if item.source_session_id == session_id
+    ]
+    return jsonify(
+        {
+            "scanned": result.scanned,
+            "created": result.created,
+            "skipped": result.skipped,
+            "candidates": candidates,
+        }
+    )
+
+
+@management_bp.get("/management/memory/<memory_id>/sources")
+def memory_sources(memory_id: str):
+    memory = MemoryStore().get(memory_id)
+    if memory is None:
+        return jsonify({"error": "memory not found"}), 404
+    evidence = EvidenceStore()
+    sources = []
+    for evidence_id in memory.source_evidence_ids:
+        record = evidence.get(evidence_id)
+        if record is not None:
+            sources.append(_evidence_to_dict(record))
+    return jsonify({"memory_id": memory_id, "sources": sources})
+
+
+@management_bp.patch("/management/memory/<memory_id>")
+def update_memory(memory_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        needs_review = _parse_optional_bool(data.get("needs_review"), "needs_review")
+        item = MemoryStore().update(
+            memory_id,
+            text=data.get("text"),
+            summary=data.get("summary"),
+            memory_type=data.get("memory_type"),
+            confidence=data.get("confidence"),
+            domain=data.get("domain"),
+            tags=data.get("tags"),
+            reason=data.get("reason"),
+            source_evidence_ids=data.get("source_evidence_ids"),
+            needs_review=needs_review,
+            review_note=data.get("review_note"),
+            dedup_key=data.get("dedup_key"),
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if item is None:
+        return jsonify({"error": "memory not found"}), 404
+    return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/<memory_id>/confirm")
+def confirm_memory(memory_id: str):
+    item = MemoryStore().confirm(memory_id)
+    if item is None:
+        return jsonify({"error": "memory not found or cannot be confirmed"}), 404
+    return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/<memory_id>/reject")
+def reject_memory(memory_id: str):
+    item = MemoryStore().reject(memory_id)
+    if item is None:
+        return jsonify({"error": "memory not found or cannot be rejected"}), 404
+    return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/<memory_id>/deprecate")
+def deprecate_memory(memory_id: str):
+    item = MemoryStore().deprecate(memory_id)
+    if item is None:
+        return jsonify({"error": "memory not found or cannot be deprecated"}), 404
+    return jsonify(_memory_to_dict(item))
+
+
+@management_bp.post("/management/memory/<memory_id>/promote")
+def promote_memory(memory_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        memory_store = MemoryStore()
+        knowledge = memory_store.promote_to_knowledge(
+            memory_id,
+            library=KnowledgeLibrary(),
+            title=(data.get("title") or "").strip(),
+            summary=data.get("summary") or "",
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if knowledge is None:
+        return jsonify({"error": "memory not found"}), 404
+    memory = memory_store.get(memory_id)
+    return jsonify({"memory": _memory_to_dict(memory), "knowledge": _knowledge_to_dict(knowledge)}), 201
+
+
+@management_bp.delete("/management/memory/<memory_id>")
+def delete_memory(memory_id: str):
+    try:
+        deleted = MemoryStore().delete_candidate(memory_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if not deleted:
+        return jsonify({"error": "memory not found"}), 404
+    return jsonify({"deleted": True})
+
+
+@management_bp.post("/management/evidence/index")
+def index_evidence():
+    data = request.get_json(silent=True) or {}
+    session_id = (data.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+    indexed = EvidenceStore().index_session(session_id)
+    return jsonify({"indexed": indexed})
+
+
+@management_bp.get("/management/search")
+def global_search():
+    query = request.args.get("q", "")
+    domain = request.args.get("domain", "")
+    project_id = request.args.get("project_id", "")
+    return jsonify(
+        {
+            "knowledge": [
+                _knowledge_to_dict(item)
+                for item in KnowledgeLibrary().search(query, domain=domain, limit=8)
+            ],
+            "memory": [
+                _memory_to_dict(item)
+                for item in MemoryStore().search(query, domain=domain, limit=8)
+            ],
+            "evidence": [
+                _evidence_to_dict(item)
+                for item in EvidenceStore().search(query, project_id=project_id, limit=8)
+            ],
+        }
+    )
+
+
+@management_bp.get("/management/domains")
+def list_domains():
+    domains: set[str] = set()
+    for item in KnowledgeLibrary().list():
+        if item.domain:
+            domains.add(item.domain)
+    for item in MemoryStore().list():
+        if item.domain:
+            domains.add(item.domain)
+    return jsonify({"domains": sorted(domains)})
+
+
+@management_bp.get("/management/evidence/search")
+def search_evidence():
+    query = request.args.get("q", "")
+    project_id = request.args.get("project_id", "")
+    records = EvidenceStore().search(query, project_id=project_id)
+    return jsonify([_evidence_to_dict(record) for record in records])
