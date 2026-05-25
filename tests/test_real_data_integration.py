@@ -200,6 +200,7 @@ class TestRealDataFiles:
             domain="省钱卡",
             project_id="省钱卡",
             include_evidence=True,
+            max_evidence_chars=1000,
         )
 
         # Knowledge should be found
