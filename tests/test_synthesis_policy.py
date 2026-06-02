@@ -40,6 +40,23 @@ def _state_with_evidence(confidence="high"):
     return state
 
 
+def _state_with_verification(status):
+    state = _state_with_evidence()
+    state.verification_reports = [
+        {
+            "id": "verify_old",
+            "overall_status": "pass",
+            "created_at": "2026-06-01T00:00:00Z",
+        },
+        {
+            "id": "verify_latest",
+            "overall_status": status,
+            "created_at": "2026-06-02T00:00:00Z",
+        },
+    ]
+    return state
+
+
 def _policy(**kwargs):
     return derive_synthesis_policy(**kwargs)
 
@@ -233,3 +250,41 @@ def test_ltv_regression_requires_assumptions_and_caution():
     assert "assumptions" in policy.required_moves
     assert "business_meaning" in policy.required_moves
     assert "next_step" in policy.required_moves
+
+
+def test_pass_with_downgrades_verification_suppresses_decision_recommendations():
+    policy = _policy(
+        intent=_intent(),
+        state=_state_with_verification("pass_with_downgrades"),
+        user_input="forecast LTV and give me decision recommendations",
+    )
+
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert policy.business_translation == "cautious"
+    assert "pass_with_downgrades" in policy.reason
+
+
+def test_failed_verification_suppresses_decision_recommendations():
+    policy = _policy(
+        intent=_intent(),
+        state=_state_with_verification("fail"),
+        user_input="fit a retention curve formula from the data",
+    )
+
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert policy.business_translation == "cautious"
+    assert "fail" in policy.reason
+
+
+def test_pass_verification_does_not_add_extra_suppression_to_advisory_policy():
+    policy = _policy(
+        intent=_intent(),
+        state=_state_with_verification("pass"),
+        user_input="forecast LTV and give me decision recommendations",
+    )
+
+    assert policy.answer_mode == "advisory"
+    assert policy.suppressed_moves == []
+    assert "verification status" not in policy.reason.lower()
