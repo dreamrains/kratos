@@ -88,9 +88,24 @@ def _detect_injection_patterns(df: pd.DataFrame) -> list[str]:
 def _persist_trust_record(session_id: str, dataset: str, kind: str, record: dict[str, Any]) -> Path:
     from data_agent.tools._utils import persist_detail
 
+    safe_session_id = sanitize_filename(session_id)
     safe_dataset = sanitize_filename(dataset)
     safe_kind = sanitize_filename(kind)
-    return persist_detail(session_id, f"trust_{safe_dataset}_{safe_kind}", record)
+    return persist_detail(safe_session_id, f"trust_{safe_dataset}_{safe_kind}", record)
+
+
+def _save_trust_state(state: Any, session_id: str) -> None:
+    safe_session_id = sanitize_filename(session_id)
+    original_session_id = getattr(state, "session_id", None)
+    if original_session_id == safe_session_id:
+        state.save()
+        return
+
+    state.session_id = safe_session_id
+    try:
+        state.save()
+    finally:
+        state.session_id = original_session_id
 
 
 def _record_trust_workflow(
@@ -169,7 +184,7 @@ def _record_trust_workflow(
             "budget_level": route.get("budget_level"),
         })
 
-    state.save()
+    _save_trust_state(state, session_id)
     return contract["id"], len(routes)
 
 
@@ -346,7 +361,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 ctx = get_current_context()
                 if ctx:
                     from data_agent.tools._utils import persist_detail
-                    detail_path = str(persist_detail(ctx.session_id, f"load_{name}", detail_sections))
+                    detail_path = str(persist_detail(sanitize_filename(ctx.session_id), f"load_{name}", detail_sections))
                     summary_parts.append(
                         f"[detail_file] tool_outputs/load_{name}_detail.json [/detail_file]"
                     )
@@ -358,8 +373,9 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             from data_agent.agent.context import get_current_context
             ctx = get_current_context()
             if ctx:
-                workspace.save_meta(ctx.session_id)
-                workspace.persist_dataset(ctx.session_id, name)
+                safe_session_id = sanitize_filename(ctx.session_id)
+                workspace.save_meta(safe_session_id)
+                workspace.persist_dataset(safe_session_id, name)
         except Exception:
             pass
 
