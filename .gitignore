@@ -16,7 +16,6 @@ project/sessions/
 project/*.txt
 project/inbox/*.xlsx
 reference/
-docs/
 *.log
 
 # Large vendor files (downloaded on first run)
