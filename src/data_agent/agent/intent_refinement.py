@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from typing import Any
 
@@ -20,9 +21,11 @@ def refine_intent_with_data(
 ) -> TurnIntent:
     """Adjust a turn intent using deterministic data contracts and route options."""
 
+    contracts = _dict_items(dataset_contracts)
+    routes = _dict_items(route_proposals)
     blocked_contracts = [
         contract
-        for contract in dataset_contracts or []
+        for contract in contracts
         if (contract.get("quality") or {}).get("status") == "blocked"
     ]
     if intent.intent_type in _ANALYSIS_INTENTS and blocked_contracts:
@@ -33,16 +36,16 @@ def refine_intent_with_data(
             recommended_action="ask_question",
             execution_readiness="insufficient_data",
             ambiguities=[
-                *list(intent.ambiguities),
+                *_copied_ambiguities(intent),
                 {
-                    "kind": "data_quality",
+                    "field": "data_quality",
                     "issue": "One or more loaded datasets have blocking quality issues.",
                     "contracts": _contract_ids(blocked_contracts),
                 },
             ],
         )
 
-    unsupported_retention = _contracts_with_unsupported_retention(dataset_contracts or [])
+    unsupported_retention = _contracts_with_unsupported_retention(contracts)
     if intent.intent_type in _ANALYSIS_INTENTS and _mentions_retention(user_input) and unsupported_retention:
         return replace(
             intent,
@@ -51,9 +54,9 @@ def refine_intent_with_data(
             recommended_action="request_data",
             execution_readiness="insufficient_data",
             ambiguities=[
-                *list(intent.ambiguities),
+                *_copied_ambiguities(intent),
                 {
-                    "kind": "unsupported_analysis",
+                    "field": "unsupported_analysis",
                     "analysis_type": "user_level_retention",
                     "issue": "The loaded data cannot support user-level retention analysis.",
                     "contracts": _contract_ids(unsupported_retention),
@@ -62,16 +65,16 @@ def refine_intent_with_data(
             ],
         )
 
-    if intent.intent_type == "intent_negotiation" and route_proposals:
+    if intent.intent_type == "intent_negotiation" and routes:
         return replace(
             intent,
             recommended_action="guide_analysis",
             ambiguities=[
-                *list(intent.ambiguities),
+                *_copied_ambiguities(intent),
                 {
-                    "kind": "analysis_route",
+                    "field": "analysis_route",
                     "issue": "Data-supported analysis routes are available.",
-                    "routes": [_route_summary(route) for route in route_proposals[:3]],
+                    "routes": [_route_summary(route) for route in routes[:3]],
                 },
             ],
         )
@@ -94,6 +97,18 @@ def _contracts_with_unsupported_retention(contracts: list[dict[str, Any]]) -> li
     return matches
 
 
+def _dict_items(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _copied_ambiguities(intent: TurnIntent) -> list[dict[str, Any]]:
+    if not isinstance(intent.ambiguities, list):
+        return []
+    return copy.deepcopy(intent.ambiguities)
+
+
 def _contract_ids(contracts: list[dict[str, Any]]) -> list[str]:
     return [str(contract.get("id") or contract.get("dataset") or "") for contract in contracts]
 
@@ -111,5 +126,5 @@ def _unsupported_reasons(contracts: list[dict[str, Any]]) -> list[str]:
 
 def _route_summary(route: dict[str, Any]) -> dict[str, str]:
     direction = str(route.get("direction") or "")
-    label = str(route.get("label") or direction)
+    label = str(route.get("user_facing_label") or route.get("label") or direction)
     return {"label": label, "direction": direction}
