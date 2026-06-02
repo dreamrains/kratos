@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -85,6 +85,94 @@ def _detect_injection_patterns(df: pd.DataFrame) -> list[str]:
     return warnings_list
 
 
+def _persist_trust_record(session_id: str, dataset: str, kind: str, record: dict[str, Any]) -> Path:
+    from data_agent.tools._utils import persist_detail
+
+    safe_dataset = sanitize_filename(dataset)
+    safe_kind = sanitize_filename(kind)
+    return persist_detail(session_id, f"trust_{safe_dataset}_{safe_kind}", record)
+
+
+def _record_trust_workflow(
+    *,
+    session_id: str,
+    state: Any,
+    dataset: str,
+    df: pd.DataFrame,
+    applied: list[dict[str, Any]],
+    needs_confirm: list[dict[str, Any]],
+    quality: dict[str, Any],
+    interpretation_data: dict[str, Any],
+    detail_path: str,
+) -> tuple[str, int]:
+    from data_agent.agent.trust_contracts import (
+        build_cleaning_decision_log,
+        build_dataset_understanding_contract,
+        build_preview_digest,
+        build_route_proposals,
+    )
+
+    cleaning_log = build_cleaning_decision_log(dataset, applied, needs_confirm)
+    cleaning_path = _persist_trust_record(session_id, dataset, "cleaning_log", cleaning_log)
+
+    preview_digest = build_preview_digest(dataset, df)
+    preview_path = _persist_trust_record(session_id, dataset, "preview_digest", preview_digest)
+
+    contract = build_dataset_understanding_contract(
+        dataset=dataset,
+        df=df,
+        quality=quality,
+        interpretation_data=interpretation_data,
+        cleaning_log_ids=[cleaning_log["id"]],
+        preview_digest_id=preview_digest["id"],
+        detail_path=detail_path,
+    )
+    contract_path = _persist_trust_record(session_id, dataset, "dataset_contract", contract)
+
+    routes = build_route_proposals(contract)
+    route_paths = [
+        _persist_trust_record(session_id, dataset, f"route_{route['direction']}", route)
+        for route in routes
+    ]
+
+    state.add_cleaning_log_ref({
+        "id": cleaning_log["id"],
+        "dataset": dataset,
+        "artifact_path": str(cleaning_path),
+        "artifact_type": "cleaning_log",
+        "summary": cleaning_log.get("summary", {}),
+    })
+    state.add_preview_digest_ref({
+        "id": preview_digest["id"],
+        "dataset": dataset,
+        "artifact_path": str(preview_path),
+        "artifact_type": "preview_digest",
+        "row_count": preview_digest.get("row_count"),
+        "column_count": preview_digest.get("column_count"),
+    })
+    state.add_dataset_contract_ref({
+        "id": contract["id"],
+        "dataset": dataset,
+        "artifact_path": str(contract_path),
+        "artifact_type": "dataset_contract",
+        "quality_status": contract.get("quality", {}).get("status"),
+        "supported_analyses": list(contract.get("supported_analyses") or []),
+    })
+    for route, route_path in zip(routes, route_paths):
+        state.add_route_proposal_ref({
+            "id": route["id"],
+            "dataset": dataset,
+            "dataset_contract_id": contract["id"],
+            "artifact_path": str(route_path),
+            "artifact_type": "route_proposal",
+            "direction": route.get("direction"),
+            "budget_level": route.get("budget_level"),
+        })
+
+    state.save()
+    return contract["id"], len(routes)
+
+
 @registry.register(
     name="load_data",
     description=(
@@ -141,6 +229,9 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         # === 阶段化输出：紧凑摘要入上下文，完整分析持久化到磁盘 ===
         summary_parts = [load_msg]
         detail_sections = {}
+        interpretation_data: dict[str, Any] = {}
+        quality_data: dict[str, Any] = {}
+        detail_path = ""
 
         # 静默探查：quick_profile（紧凑模式）
         try:
@@ -165,6 +256,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             interp_result = interpret_dataset(name)
             if isinstance(interp_result, ToolResult):
                 detail_sections["data_interpretation"] = interp_result.summary
+                interpretation_data = dict(interp_result.data or {})
                 if interp_result.data:
                     detail_sections["interpretation_data"] = json.dumps(
                         interp_result.data, ensure_ascii=False, default=str
@@ -185,8 +277,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 build_data_characteristics_card,
                 set_cached_features,
             )
-            quality = scan_data_quality(df)
-            card = build_data_characteristics_card(name, df, quality)
+            quality_data = scan_data_quality(df)
+            card = build_data_characteristics_card(name, df, quality_data)
             set_cached_features(name, card)
             detail_sections["quality_card"] = card
             summary_parts.append(card)
@@ -254,7 +346,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 ctx = get_current_context()
                 if ctx:
                     from data_agent.tools._utils import persist_detail
-                    persist_detail(ctx.session_id, f"load_{name}", detail_sections)
+                    detail_path = str(persist_detail(ctx.session_id, f"load_{name}", detail_sections))
                     summary_parts.append(
                         f"[detail_file] tool_outputs/load_{name}_detail.json [/detail_file]"
                     )
@@ -270,6 +362,30 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 workspace.persist_dataset(ctx.session_id, name)
         except Exception:
             pass
+
+        try:
+            from data_agent.agent.context import get_current_context
+            ctx = get_current_context()
+            state = getattr(ctx, "analysis_state", None) if ctx is not None else None
+            if ctx is not None and state is not None:
+                contract_id, route_count = _record_trust_workflow(
+                    session_id=ctx.session_id,
+                    state=state,
+                    dataset=name,
+                    df=df,
+                    applied=applied,
+                    needs_confirm=needs_confirm,
+                    quality=quality_data,
+                    interpretation_data=interpretation_data,
+                    detail_path=detail_path,
+                )
+                summary_parts.append(
+                    f"[trust_workflow] contract={contract_id} routes={route_count} [/trust_workflow]"
+                )
+        except Exception as trust_error:
+            summary_parts.append(
+                f"[trust_workflow_warning] skipped: {type(trust_error).__name__} [/trust_workflow_warning]"
+            )
 
         if applied:
             summary_parts.append("\n自动类型清洗:")
