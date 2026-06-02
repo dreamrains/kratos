@@ -143,6 +143,44 @@ class TestAddInsightRecord:
         assert state.stage == "execute"
 
 
+class TestTrustworthyWorkflowRefs:
+    def test_default_trust_refs_are_empty(self):
+        state = AnalysisSessionState(session_id="s1")
+        assert state.dataset_contracts == []
+        assert state.cleaning_logs == []
+        assert state.preview_digests == []
+        assert state.route_proposals == []
+        assert state.verification_reports == []
+
+    def test_to_dict_roundtrip_trust_refs(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
+        state.add_cleaning_log_ref({"id": "clean_main_001", "dataset": "main"})
+        state.add_preview_digest_ref({"id": "preview_main_001", "dataset": "main"})
+        state.add_route_proposal_ref({"id": "route_main_001", "direction": "trend"})
+        state.add_verification_report_ref({"id": "verify_001", "overall_status": "pass"})
+
+        restored = AnalysisSessionState.from_dict(state.to_dict(), "s1")
+
+        assert restored.dataset_contracts == [{"id": "duc_main_001", "dataset": "main"}]
+        assert restored.cleaning_logs == [{"id": "clean_main_001", "dataset": "main"}]
+        assert restored.preview_digests == [{"id": "preview_main_001", "dataset": "main"}]
+        assert restored.route_proposals == [{"id": "route_main_001", "direction": "trend"}]
+        assert restored.verification_reports == [{"id": "verify_001", "overall_status": "pass"}]
+
+    def test_summary_includes_trust_refs_counts(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
+        state.add_route_proposal_ref({"id": "route_main_001", "direction": "trend"})
+        state.add_verification_report_ref({"id": "verify_001", "overall_status": "pass"})
+
+        summary = analysis_state_summary(state)
+
+        assert "dataset_contracts: 1" in summary
+        assert "route_proposals: 1" in summary
+        assert "verification_reports: 1" in summary
+
+
 class TestConfirmations:
     def test_add_and_resolve_confirmation(self):
         state = AnalysisSessionState(session_id="s1")

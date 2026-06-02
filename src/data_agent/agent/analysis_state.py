@@ -43,6 +43,11 @@ class AnalysisSessionState:
     analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
+    dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
+    cleaning_logs: list[dict[str, Any]] = field(default_factory=list)
+    preview_digests: list[dict[str, Any]] = field(default_factory=list)
+    route_proposals: list[dict[str, Any]] = field(default_factory=list)
+    verification_reports: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     regression_history: list[dict[str, Any]] = field(default_factory=list)
@@ -63,6 +68,11 @@ class AnalysisSessionState:
             analysis_spec=data.get("analysis_spec"),
             evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
+            dataset_contracts=list(data.get("dataset_contracts") or []),
+            cleaning_logs=list(data.get("cleaning_logs") or []),
+            preview_digests=list(data.get("preview_digests") or []),
+            route_proposals=list(data.get("route_proposals") or []),
+            verification_reports=list(data.get("verification_reports") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             regression_history=list(data.get("regression_history") or []),
@@ -81,6 +91,11 @@ class AnalysisSessionState:
             "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
             "insight_records": self.insight_records,
+            "dataset_contracts": self.dataset_contracts,
+            "cleaning_logs": self.cleaning_logs,
+            "preview_digests": self.preview_digests,
+            "route_proposals": self.route_proposals,
+            "verification_reports": self.verification_reports,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
             "regression_history": self.regression_history,
@@ -189,6 +204,33 @@ class AnalysisSessionState:
         self.stage = "execute"
         return item
 
+    def _upsert_ref(self, collection: list[dict[str, Any]], ref: dict[str, Any]) -> dict[str, Any]:
+        item = dict(ref)
+        item_id = item.get("id")
+        if item_id is not None:
+            for index, existing in enumerate(collection):
+                if existing.get("id") == item_id:
+                    collection[index] = item
+                    return item
+        collection.append(item)
+        return item
+
+    def add_dataset_contract_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        self.data_state = "data_loaded"
+        return self._upsert_ref(self.dataset_contracts, ref)
+
+    def add_cleaning_log_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref(self.cleaning_logs, ref)
+
+    def add_preview_digest_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref(self.preview_digests, ref)
+
+    def add_route_proposal_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref(self.route_proposals, ref)
+
+    def add_verification_report_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref(self.verification_reports, ref)
+
     def add_confirmation(self, confirmation: dict[str, Any]) -> dict[str, Any]:
         item = dict(confirmation)
         item.setdefault("id", uuid.uuid4().hex[:10])
@@ -277,6 +319,11 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- has_analysis_spec: {bool(state.analysis_spec)}",
         f"- evidence_records: {len(state.evidence_records)}",
         f"- insight_records: {len(state.insight_records)}",
+        f"- dataset_contracts: {len(state.dataset_contracts)}",
+        f"- cleaning_logs: {len(state.cleaning_logs)}",
+        f"- preview_digests: {len(state.preview_digests)}",
+        f"- route_proposals: {len(state.route_proposals)}",
+        f"- verification_reports: {len(state.verification_reports)}",
         f"- pending_confirmations: {len(pending)}",
     ]
     if state.last_recommended_paths:
