@@ -21,15 +21,27 @@ def _json_safe(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, set):
+        safe_values = [_json_safe(v) for v in value]
+        return sorted(safe_values, key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True))
+    if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
+    if isinstance(value, (pd.Series, pd.Index)):
+        return [_json_safe(v) for v in value.tolist()]
+    if hasattr(value, "tolist"):
+        listed = value.tolist()
+        if listed is not value:
+            return _json_safe(listed)
     if hasattr(value, "item"):
         try:
             return _json_safe(value.item())
         except (TypeError, ValueError):
             pass
-    if pd.isna(value):
-        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
@@ -42,10 +54,10 @@ def _stable_id(prefix: str, dataset: str, payload: Any) -> str:
 
 
 def _column_names(items: Any) -> list[str]:
-    if not items:
+    if items is None:
         return []
     names: list[str] = []
-    for item in items:
+    for item in _json_safe(items):
         if isinstance(item, dict):
             value = item.get("column") or item.get("name")
         else:
@@ -122,7 +134,7 @@ def build_cleaning_decision_log(
             "from_dtype": _json_safe(item.get("current_dtype")),
             "suggested_type": action or "needs_confirmation",
             "reason": str(item.get("reason") or ""),
-            "sample": _json_safe(item.get("sample") or []),
+            "sample": _json_safe(item["sample"] if "sample" in item else []),
             "impact": _cleaning_impact(action, decision_type),
         })
 
@@ -231,10 +243,17 @@ def _unsupported_analyses(roles: dict[str, list[str]], signals: dict[str, Any], 
         unsupported.append({"type": "dimension_decomposition", "reason": "No dimension column was identified"})
     if not metric_count:
         unsupported.append({"type": "metric_analysis", "reason": "No metric column was identified"})
-    if not has_ids or "aggregate" in grain:
+    is_aggregate = "aggregate" in grain
+    if not has_ids or is_aggregate:
+        if not has_ids and is_aggregate:
+            reason = "Data is aggregate grain and missing user or entity id columns"
+        elif not has_ids:
+            reason = "Data is missing user or entity id columns"
+        else:
+            reason = "Data is aggregate grain, so row-level user retention cannot be reconstructed"
         unsupported.append({
             "type": "user_level_retention",
-            "reason": "Daily aggregate data without IDs cannot support user-level retention",
+            "reason": reason,
         })
     return unsupported
 
