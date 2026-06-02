@@ -3,6 +3,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import numpy as np
+import pandas as pd
+
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.synthesis_policy import SynthesisPolicy, derive_synthesis_policy
@@ -288,3 +291,94 @@ def test_pass_verification_does_not_add_extra_suppression_to_advisory_policy():
     assert policy.answer_mode == "advisory"
     assert policy.suppressed_moves == []
     assert "verification status" not in policy.reason.lower()
+
+
+def test_direct_policy_with_failed_verification_applies_verification_limits():
+    policy = _policy(
+        intent=_intent(intent_type="simple_response", action="answer_directly"),
+        state=_state_with_verification("fail"),
+        user_input="hello",
+    )
+
+    assert policy.answer_mode == "direct"
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert policy.business_translation == "cautious"
+    assert "fail" in policy.reason
+
+
+def test_terse_policy_with_downgraded_verification_applies_verification_limits():
+    policy = _policy(
+        intent=_intent(),
+        state=_state_with_verification("pass_with_downgrades"),
+        user_input="formula only, no explanation",
+    )
+
+    assert policy.answer_mode == "direct"
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert policy.business_translation == "cautious"
+    assert "pass_with_downgrades" in policy.reason
+
+
+def test_no_evidence_with_failed_verification_stays_cautious_and_limited():
+    state = AnalysisSessionState(session_id="no_evidence_failed_verification")
+    state.verification_reports = [{"overall_status": "fail"}]
+
+    policy = _policy(intent=_intent(), state=state, user_input="analyze retention")
+
+    assert policy.answer_mode == "exploratory"
+    assert policy.business_translation == "cautious"
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert "fail" in policy.reason
+
+
+def test_state_none_does_not_crash_or_change_base_policy():
+    policy = _policy(intent=_intent(), state=None, user_input="analyze retention")
+
+    assert policy.answer_mode == "exploratory"
+    assert policy.business_translation == "not_applicable"
+    assert "verification status" not in policy.reason.lower()
+
+
+def test_dict_state_reads_verification_reports():
+    state = {
+        "evidence_records": _state_with_evidence().evidence_records,
+        "verification_reports": [{"overall_status": "fail"}],
+    }
+
+    policy = _policy(intent=_intent(), state=state, user_input="fit retention curve")
+
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert policy.business_translation == "cautious"
+    assert "fail" in policy.reason
+
+
+def test_malformed_verification_reports_do_not_change_policy():
+    base_kwargs = {
+        "intent": _intent(),
+        "state": _state_with_evidence(),
+        "user_input": "forecast LTV and give me decision recommendations",
+    }
+    base = _policy(**base_kwargs)
+
+    for reports in ("fail", [], [{"overall_status": "fail"}, "latest is malformed"]):
+        state = _state_with_evidence()
+        state.verification_reports = reports
+        policy = _policy(intent=_intent(), state=state, user_input=base_kwargs["user_input"])
+
+        assert policy.suppressed_moves == base.suppressed_moves
+        assert policy.business_translation == base.business_translation
+        assert "verification status" not in policy.reason.lower()
+
+
+def test_pandas_or_numpy_verification_reports_do_not_raise_truth_value_ambiguity():
+    for reports in (pd.Series([{"overall_status": "fail"}]), np.array([{"overall_status": "fail"}])):
+        state = _state_with_evidence()
+        state.verification_reports = reports
+
+        policy = _policy(intent=_intent(), state=state, user_input="fit retention curve")
+
+        assert policy.answer_mode == "analytical"
+        assert "verification status" not in policy.reason.lower()

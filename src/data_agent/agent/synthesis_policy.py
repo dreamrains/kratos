@@ -56,15 +56,18 @@ def derive_synthesis_policy(
     wording_style = _wording_style(proficiency)
 
     if _is_terse(text) or _is_direct_intent(intent_type, action):
-        return SynthesisPolicy(
-            answer_mode="direct",
-            insight_depth="none",
-            business_translation="not_applicable",
-            risk_boundary="descriptive",
-            required_moves=["core_answer"],
-            suppressed_moves=["business_meaning", "assumptions"],
-            wording_style=wording_style,
-            reason="Direct or terse request; suppressing business translation.",
+        return _apply_verification_status(
+            SynthesisPolicy(
+                answer_mode="direct",
+                insight_depth="none",
+                business_translation="not_applicable",
+                risk_boundary="descriptive",
+                required_moves=["core_answer"],
+                suppressed_moves=["business_meaning", "assumptions"],
+                wording_style=wording_style,
+                reason="Direct or terse request; suppressing business translation.",
+            ),
+            verification_status,
         )
 
     if not evidence:
@@ -174,7 +177,7 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def _latest_verification_status(state: Any) -> str:
-    reports = _get(state, "verification_reports", None) or []
+    reports = _get(state, "verification_reports", None)
     if not isinstance(reports, list) or not reports:
         return ""
     latest = reports[-1]
