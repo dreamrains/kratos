@@ -306,6 +306,26 @@ def current_analysis_state() -> AnalysisSessionState | None:
         return None
 
 
+def _compact_trust_refs(items: Any, fields: tuple[str, ...], limit: int = 3) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    lines: list[str] = []
+    for index, item in enumerate([i for i in items if isinstance(i, dict)][-limit:], 1):
+        parts = []
+        for field_name in fields:
+            value = item.get(field_name)
+            if value is None:
+                continue
+            if isinstance(value, (str, bytes)) and not value:
+                continue
+            if isinstance(value, (list, tuple, dict, set)) and not value:
+                continue
+            parts.append(f"{field_name}={value}")
+        if parts:
+            lines.append(f"{index}. " + ", ".join(parts))
+    return lines
+
+
 def analysis_state_summary(state: AnalysisSessionState | None) -> str:
     if state is None:
         return ""
@@ -328,6 +348,24 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- verification_reports: {len(state.verification_reports)}",
         f"- pending_confirmations: {len(pending)}",
     ]
+    contract_refs = _compact_trust_refs(
+        state.dataset_contracts,
+        ("id", "dataset", "quality_status"),
+    )
+    if contract_refs:
+        lines.append("- recent_dataset_contracts:\n  " + "\n  ".join(contract_refs))
+    route_refs = _compact_trust_refs(
+        state.route_proposals,
+        ("id", "direction", "budget_level"),
+    )
+    if route_refs:
+        lines.append("- recent_route_proposals:\n  " + "\n  ".join(route_refs))
+    verification_refs = _compact_trust_refs(
+        state.verification_reports,
+        ("id", "overall_status"),
+    )
+    if verification_refs:
+        lines.append("- recent_verification_reports:\n  " + "\n  ".join(verification_refs))
     if state.last_recommended_paths:
         paths = []
         for i, path in enumerate(state.last_recommended_paths[:3], 1):

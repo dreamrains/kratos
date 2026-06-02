@@ -14,6 +14,7 @@ from data_agent.agent.prompts import (
     _legacy_classify_task,
     build_system_prompt,
 )
+from data_agent.agent.analysis_state import AnalysisSessionState, analysis_state_summary
 from data_agent.agent.intent import TurnIntent, plan_turn_intent
 
 
@@ -648,6 +649,58 @@ class TestUntrustedSessionContext:
 
 
 # ── 8. _legacy_classify_task ─────────────────────────────────
+
+
+def test_analysis_state_summary_includes_compact_trust_context():
+    state = AnalysisSessionState(session_id="s1")
+    for i in range(4):
+        state.add_dataset_contract_ref({
+            "id": f"duc_old_{i}",
+            "dataset": f"old_{i}",
+            "quality_status": "ready",
+            "artifact_path": f"/tmp/contract_{i}.json",
+            "long_detail": "x" * 500,
+        })
+        state.add_route_proposal_ref({
+            "id": f"route_old_{i}",
+            "direction": "trend",
+            "budget_level": "low",
+            "tool_chain": ["quick_profile", "analyze_time_series"],
+        })
+        state.add_verification_report_ref({
+            "id": f"verify_old_{i}",
+            "overall_status": "pass",
+            "checks": [{"detail": "not for prompt expansion"}],
+        })
+    state.add_dataset_contract_ref({
+        "id": "duc_main_001",
+        "dataset": "main",
+        "quality_status": "ready_with_warnings",
+        "artifact_path": "/tmp/main_contract.json",
+        "sample_rows": [{"should_not": "expand"}],
+    })
+    state.add_route_proposal_ref({
+        "id": "route_main_001",
+        "direction": "period_compare",
+        "budget_level": "medium",
+        "expected_evidence": ["do not expand this long list"],
+    })
+    state.add_verification_report_ref({
+        "id": "verify_main_001",
+        "overall_status": "pass_with_downgrades",
+        "unsupported_claims": ["do not expand"],
+    })
+
+    summary = analysis_state_summary(state)
+
+    assert "duc_main_001" in summary
+    assert "ready_with_warnings" in summary
+    assert "route_main_001" in summary
+    assert "pass_with_downgrades" in summary
+    assert "duc_old_0" not in summary
+    assert "sample_rows" not in summary
+    assert "expected_evidence" not in summary
+    assert "unsupported_claims" not in summary
 
 
 class TestLegacyClassifyTask:
