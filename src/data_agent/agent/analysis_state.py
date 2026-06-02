@@ -206,6 +206,8 @@ class AnalysisSessionState:
 
     def _upsert_ref(self, collection: list[dict[str, Any]], ref: dict[str, Any]) -> dict[str, Any]:
         item = dict(ref)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
         item_id = item.get("id")
         if item_id is not None:
             for index, existing in enumerate(collection):

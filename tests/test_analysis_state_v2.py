@@ -162,21 +162,35 @@ class TestTrustworthyWorkflowRefs:
 
         restored = AnalysisSessionState.from_dict(state.to_dict(), "s1")
 
-        assert restored.dataset_contracts == [{"id": "duc_main_001", "dataset": "main"}]
-        assert restored.cleaning_logs == [{"id": "clean_main_001", "dataset": "main"}]
-        assert restored.preview_digests == [{"id": "preview_main_001", "dataset": "main"}]
-        assert restored.route_proposals == [{"id": "route_main_001", "direction": "trend"}]
-        assert restored.verification_reports == [{"id": "verify_001", "overall_status": "pass"}]
+        assert restored.dataset_contracts[0]["id"] == "duc_main_001"
+        assert restored.dataset_contracts[0]["dataset"] == "main"
+        assert restored.dataset_contracts[0]["created_at"]
+        assert restored.cleaning_logs[0]["id"] == "clean_main_001"
+        assert restored.cleaning_logs[0]["dataset"] == "main"
+        assert restored.cleaning_logs[0]["created_at"]
+        assert restored.preview_digests[0]["id"] == "preview_main_001"
+        assert restored.preview_digests[0]["dataset"] == "main"
+        assert restored.preview_digests[0]["created_at"]
+        assert restored.route_proposals[0]["id"] == "route_main_001"
+        assert restored.route_proposals[0]["direction"] == "trend"
+        assert restored.route_proposals[0]["created_at"]
+        assert restored.verification_reports[0]["id"] == "verify_001"
+        assert restored.verification_reports[0]["overall_status"] == "pass"
+        assert restored.verification_reports[0]["created_at"]
 
     def test_summary_includes_trust_refs_counts(self):
         state = AnalysisSessionState(session_id="s1")
         state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
+        state.add_cleaning_log_ref({"id": "clean_main_001", "dataset": "main"})
+        state.add_preview_digest_ref({"id": "preview_main_001", "dataset": "main"})
         state.add_route_proposal_ref({"id": "route_main_001", "direction": "trend"})
         state.add_verification_report_ref({"id": "verify_001", "overall_status": "pass"})
 
         summary = analysis_state_summary(state)
 
         assert "dataset_contracts: 1" in summary
+        assert "cleaning_logs: 1" in summary
+        assert "preview_digests: 1" in summary
         assert "route_proposals: 1" in summary
         assert "verification_reports: 1" in summary
 
