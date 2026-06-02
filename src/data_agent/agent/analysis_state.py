@@ -314,11 +314,9 @@ def _compact_trust_refs(items: Any, fields: tuple[str, ...], limit: int = 3) -> 
         parts = []
         for field_name in fields:
             value = item.get(field_name)
-            if value is None:
+            if not isinstance(value, (str, int, float, bool)):
                 continue
-            if isinstance(value, (str, bytes)) and not value:
-                continue
-            if isinstance(value, (list, tuple, dict, set)) and not value:
+            if isinstance(value, str) and not value:
                 continue
             parts.append(f"{field_name}={value}")
         if parts:

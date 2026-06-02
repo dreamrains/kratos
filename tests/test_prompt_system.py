@@ -703,6 +703,35 @@ def test_analysis_state_summary_includes_compact_trust_context():
     assert "unsupported_claims" not in summary
 
 
+def test_analysis_state_summary_omits_complex_trust_ref_values():
+    state = AnalysisSessionState(session_id="s1")
+    state.add_dataset_contract_ref({
+        "id": b"abc",
+        "dataset": ["main"],
+        "quality_status": "ready_with_warnings",
+    })
+    state.add_route_proposal_ref({
+        "id": "route_main_001",
+        "direction": {"name": "trend"},
+        "budget_level": "medium",
+    })
+    state.add_verification_report_ref({
+        "id": "verify_main_001",
+        "overall_status": {"status": "pass"},
+    })
+
+    summary = analysis_state_summary(state)
+
+    assert "ready_with_warnings" in summary
+    assert "route_main_001" in summary
+    assert "medium" in summary
+    assert "verify_main_001" in summary
+    assert "b'abc'" not in summary
+    assert "['main']" not in summary
+    assert "{'name': 'trend'}" not in summary
+    assert "{'status': 'pass'}" not in summary
+
+
 class TestLegacyClassifyTask:
     """Test the legacy keyword-based classifier."""
 
