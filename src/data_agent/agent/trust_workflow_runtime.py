@@ -6,6 +6,7 @@ from typing import Any
 
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.intent_refinement import refine_intent_with_data
+from data_agent.agent.verification import verify_analysis_claims
 from data_agent.utils.logging import get_logger
 
 
@@ -30,8 +31,90 @@ def refine_turn_intent_with_state(user_input: str, intent: TurnIntent, state: An
         return intent
 
 
+def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False) -> dict[str, Any] | None:
+    """Create one compact verification report for recorded evidence claims."""
+
+    try:
+        evidence_records = _list_attr(state, "evidence_records")
+        claims = _extract_claims(evidence_records)
+        if not claims:
+            return None
+
+        signature = _evidence_signature(state, evidence_records)
+        if not force and _latest_verification_signature(state) == signature:
+            return None
+
+        report = verify_analysis_claims(
+            claims=claims,
+            evidence_records=evidence_records,
+            route_proposals=_list_attr(state, "route_proposals"),
+            cleaning_logs=_list_attr(state, "cleaning_logs"),
+        )
+        ref = _compact_verification_ref(report, signature)
+        add_ref = getattr(state, "add_verification_report_ref", None)
+        if callable(add_ref):
+            stored = add_ref(ref)
+        else:
+            reports = getattr(state, "verification_reports", None)
+            if isinstance(reports, list):
+                reports.append(ref)
+            stored = ref
+        save = getattr(state, "save", None)
+        if callable(save):
+            save()
+        return stored
+    except Exception as exc:
+        logger.warning(
+            "Trust workflow verification skipped",
+            extra={"extra_data": {"error": str(exc), "user_input": (user_input or "")[:200]}},
+        )
+        return None
+
+
 def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     value = getattr(state, name, None)
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _extract_claims(evidence_records: list[dict[str, Any]]) -> list[str]:
+    claims: list[str] = []
+    for record in evidence_records:
+        claim = record.get("claim")
+        if isinstance(claim, str) and claim.strip():
+            claims.append(claim.strip())
+    return claims
+
+
+def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> str:
+    evidence_ids = [str(record.get("id") or index) for index, record in enumerate(evidence_records)]
+    route_ids = [str(route.get("id")) for route in _list_attr(state, "route_proposals") if route.get("id")]
+    cleaning_ids = [str(log.get("id")) for log in _list_attr(state, "cleaning_logs") if log.get("id")]
+    return "|".join(evidence_ids) + "|routes:" + ",".join(route_ids) + "|cleaning:" + ",".join(cleaning_ids)
+
+
+def _latest_verification_signature(state: Any) -> str | None:
+    reports = _list_attr(state, "verification_reports")
+    if not reports:
+        return None
+    signature = reports[-1].get("evidence_signature")
+    return str(signature) if signature else None
+
+
+def _compact_verification_ref(report: dict[str, Any], signature: str) -> dict[str, Any]:
+    checks = report.get("claim_checks") if isinstance(report, dict) else []
+    if not isinstance(checks, list):
+        checks = []
+    failed_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "fail")
+    downgraded_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "downgraded")
+    return {
+        "id": "verify_" + str(report.get("id") or "")[:16],
+        "source_report_id": report.get("id"),
+        "overall_status": report.get("overall_status", "unknown"),
+        "claim_count": len(checks),
+        "failed_count": failed_count,
+        "downgraded_count": downgraded_count,
+        "evidence_signature": signature,
+        "route_proposal_ids": list(report.get("route_proposal_ids") or []),
+    }
