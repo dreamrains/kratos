@@ -640,12 +640,21 @@ class AgentLoop:
             )
         session_ctx = "\n".join(context_parts)
         intent = plan_turn_intent(user_input, session_ctx)
-        self.context.turn_intent = intent
-        self._last_turn_intent = intent
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
         self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
+        try:
+            from data_agent.agent.trust_workflow_runtime import refine_turn_intent_with_state
+
+            intent = refine_turn_intent_with_state(user_input, intent, state)
+        except Exception as exc:
+            logger.warning(
+                "Trust workflow loop intent refinement skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+        self.context.turn_intent = intent
+        self._last_turn_intent = intent
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
         profile = _intent_to_budget_profile(intent.intent_type)
         cfg = get_config()

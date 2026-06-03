@@ -281,3 +281,35 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     assert ("answer_mode=\"analytical\"" in final_prompt) or ("answer_mode: analytical" in final_prompt)
     assert ("insight_depth=\"light\"" in final_prompt) or ("insight_depth: light" in final_prompt)
     assert ("business_translation=\"cautious\"" in final_prompt) or ("business_translation: cautious" in final_prompt)
+
+
+def test_prepare_analysis_turn_stores_refined_intent_from_route_proposals(monkeypatch):
+    intent = TurnIntent(
+        intent_type="intent_negotiation",
+        clarity="vague",
+        data_state="data_loaded",
+        analysis_stage="discover",
+        recommended_action="guide_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+    monkeypatch.setattr(AnalysisFlowController, "activate_tool_groups", lambda self, registry, intent, state, user_input: [])
+
+    workspace_obj = Workspace()
+    ctx = AgentContext(session_id="loop_refined_intent", workspace=workspace_obj)
+    state = AnalysisSessionState(session_id="loop_refined_intent")
+    state.route_proposals = [{"id": "route_trend", "label": "Revenue trend", "direction": "trend"}]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=object(), session_id="loop_refined_intent")
+    loop.context = ctx
+
+    with use_agent_context(ctx):
+        loop._prepare_analysis_turn("help me explore this dataset")
+
+    assert loop.context.turn_intent.ambiguities[-1]["field"] == "analysis_route"
+    assert loop._last_turn_intent.ambiguities[-1]["routes"] == [
+        {"label": "Revenue trend", "direction": "trend"},
+    ]
