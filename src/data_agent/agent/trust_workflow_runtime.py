@@ -44,8 +44,7 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
 
         signature = _evidence_signature(state, evidence_records)
         fingerprint = _evidence_fingerprint(state, evidence_records)
-        latest_signature, latest_fingerprint = _latest_verification_identity(state)
-        if not force and latest_signature == signature and latest_fingerprint == fingerprint:
+        if not force and _has_verification_identity(state, signature, fingerprint):
             return None
 
         report = verify_analysis_claims(
@@ -110,13 +109,14 @@ def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) ->
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
-def _latest_verification_identity(state: Any) -> tuple[str | None, str | None]:
-    reports = _list_attr(state, "verification_reports")
-    if not reports:
-        return None, None
-    signature = reports[-1].get("evidence_signature")
-    fingerprint = reports[-1].get("evidence_fingerprint")
-    return str(signature) if signature else None, str(fingerprint) if fingerprint else None
+def _has_verification_identity(state: Any, signature: str, fingerprint: str) -> bool:
+    for report in _list_attr(state, "verification_reports"):
+        if (
+            report.get("evidence_signature") == signature
+            and report.get("evidence_fingerprint") == fingerprint
+        ):
+            return True
+    return False
 
 
 def _compact_verification_ref(report: dict[str, Any], signature: str, fingerprint: str) -> dict[str, Any]:

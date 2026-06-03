@@ -139,6 +139,40 @@ def test_runtime_verification_reruns_when_evidence_content_changes_with_same_id(
     assert state.verification_reports[-1]["evidence_fingerprint"] == second["evidence_fingerprint"]
 
 
+def test_runtime_verification_deduplicates_existing_identity_after_other_report():
+    state = AnalysisSessionState(session_id="runtime_verify_existing_identity")
+    state.evidence_records = [{
+        "id": "ev_a",
+        "claim": "Revenue increased 12%",
+        "result_summary": "Revenue increased 12%",
+        "confidence": "high",
+    }]
+
+    first_a = maybe_verify_turn_claims("summarize revenue", state)
+    state.evidence_records = [{
+        "id": "ev_b",
+        "claim": "Costs decreased 3%",
+        "result_summary": "Costs decreased 3%",
+        "confidence": "high",
+    }]
+    report_b = maybe_verify_turn_claims("summarize costs", state)
+    state.evidence_records = [{
+        "id": "ev_a",
+        "claim": "Revenue increased 12%",
+        "result_summary": "Revenue increased 12%",
+        "confidence": "high",
+    }]
+    third_a = maybe_verify_turn_claims("summarize revenue again", state)
+    fourth_a = maybe_verify_turn_claims("summarize revenue one more time", state)
+
+    assert first_a is not None
+    assert report_b is not None
+    assert third_a is None
+    assert fourth_a is None
+    assert len(state.verification_reports) == 2
+    assert state.verification_reports[-1]["evidence_signature"] == report_b["evidence_signature"]
+
+
 def test_runtime_verification_skips_when_no_claims_are_available():
     state = AnalysisSessionState(session_id="runtime_verify_empty")
     state.evidence_records = [{"id": "ev_no_claim", "result_summary": "summary only"}]
