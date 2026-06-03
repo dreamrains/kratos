@@ -313,3 +313,101 @@ def test_prepare_analysis_turn_stores_refined_intent_from_route_proposals(monkey
     assert loop._last_turn_intent.ambiguities[-1]["routes"] == [
         {"label": "Revenue trend", "direction": "trend"},
     ]
+
+
+def test_synthesis_policy_injection_creates_verification_report_first(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    workspace_obj = Workspace()
+    ctx = AgentContext(session_id="loop_verify_before_synthesis", workspace=workspace_obj)
+    state = AnalysisSessionState(session_id="loop_verify_before_synthesis")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Retention follows a power-law curve",
+        "result_summary": "R(t)=0.1917*t^(-0.7335), R2=0.9743",
+        "confidence": "high",
+        "dataset": "retention",
+        "sample_size": 1200,
+        "time_scope": "2026-01-01 to 2026-05-31",
+        "calculation_method": "retention curve fit",
+        "method_detail": "fit log retention against log elapsed time",
+        "limitations": "Aggregated data only",
+        "method": "log-linear least squares",
+    }]
+    ctx.analysis_state = state
+    ctx.user_quality_requirements = ""
+    loop = AgentLoop(client=object(), session_id="loop_verify_before_synthesis")
+    loop.context = ctx
+    loop._last_turn_intent = intent
+    loop._reset_turn_tracking()
+
+    with use_agent_context(ctx):
+        loop._maybe_inject_synthesis_policy("summarize the retention formula")
+
+    assert state.verification_reports
+    assert state.verification_reports[-1]["overall_status"] == "pass"
+    assert loop._turn_verification_injected is True
+    assert loop._turn_synthesis_policy_injected is True
+    assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
+
+
+def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    workspace_obj = Workspace()
+    ctx = AgentContext(session_id="loop_failed_verification_policy", workspace=workspace_obj)
+    state = AnalysisSessionState(session_id="loop_failed_verification_policy")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Retention rose 500%",
+        "result_summary": "Retention fell from 30% to 20%",
+        "confidence": "high",
+    }]
+    from data_agent.agent import trust_workflow_runtime as runtime
+
+    def fake_verify_analysis_claims(**_kwargs):
+        return {
+            "id": "failed_report",
+            "claim_checks": [{
+                "claim_id": "claim_1",
+                "claim": "Retention rose 500%",
+                "evidence_id": None,
+                "status": "failed",
+                "strength": "unsupported",
+                "issues": ["No evidence record supports this claim"],
+            }],
+            "route_proposal_ids": [],
+            "overall_status": "fail",
+        }
+
+    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
+    ctx.analysis_state = state
+    ctx.user_quality_requirements = ""
+    loop = AgentLoop(client=object(), session_id="loop_failed_verification_policy")
+    loop.context = ctx
+    loop._last_turn_intent = intent
+    loop._reset_turn_tracking()
+
+    with use_agent_context(ctx):
+        loop._maybe_inject_synthesis_policy("summarize retention")
+
+    assert state.verification_reports[-1]["overall_status"] == "fail"
+    assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
+    assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
+    assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()

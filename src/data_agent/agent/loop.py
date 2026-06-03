@@ -852,6 +852,7 @@ class AgentLoop:
         self._turn_tools_used = []
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
+        self._turn_verification_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
 
@@ -919,6 +920,18 @@ class AgentLoop:
         evidence = getattr(state, "evidence_records", []) or []
         if not evidence:
             return
+
+        if not getattr(self, "_turn_verification_injected", False):
+            try:
+                from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
+
+                maybe_verify_turn_claims(user_input, state)
+                self._turn_verification_injected = True
+            except Exception as exc:
+                logger.warning(
+                    "Trust workflow loop verification skipped",
+                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+                )
 
         from data_agent.agent.synthesis_policy import (
             build_synthesis_instruction,
