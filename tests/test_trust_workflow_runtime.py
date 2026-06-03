@@ -170,7 +170,45 @@ def test_runtime_verification_deduplicates_existing_identity_after_other_report(
     assert third_a is None
     assert fourth_a is None
     assert len(state.verification_reports) == 2
-    assert state.verification_reports[-1]["evidence_signature"] == report_b["evidence_signature"]
+    assert state.verification_reports[-1]["evidence_signature"] == first_a["evidence_signature"]
+
+
+def test_runtime_verification_reruns_when_cleaning_content_changes_with_same_id():
+    state = AnalysisSessionState(session_id="runtime_verify_cleaning_change")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Revenue increased 12% in May",
+        "result_summary": "Revenue increased 12% from 100 to 112",
+        "confidence": "high",
+        "dataset": "sales",
+        "method": "period_compare",
+        "sample_size": 1200,
+        "time_scope": "2026-05-01 to 2026-05-31",
+        "calculation_method": "monthly revenue delta",
+        "method_detail": "compared May revenue against April revenue",
+        "limitations": ["descriptive comparison only"],
+    }]
+    state.cleaning_logs = [{
+        "id": "clean_1",
+        "dataset": "sales",
+        "decisions": [],
+    }]
+
+    first = maybe_verify_turn_claims("summarize revenue", state)
+    state.cleaning_logs[0]["decisions"].append({
+        "column": "revenue",
+        "decision_type": "needs_confirmation",
+        "impact": "May change aggregate values",
+    })
+    second = maybe_verify_turn_claims("summarize revenue again", state)
+
+    assert first is not None
+    assert second is not None
+    assert first["overall_status"] == "pass"
+    assert second["evidence_signature"] == first["evidence_signature"]
+    assert second["evidence_fingerprint"] != first["evidence_fingerprint"]
+    assert second["overall_status"] == "pass_with_downgrades"
+    assert second["downgraded_count"] == 1
 
 
 def test_runtime_verification_skips_when_no_claims_are_available():

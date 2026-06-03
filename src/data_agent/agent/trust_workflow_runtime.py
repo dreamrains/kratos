@@ -44,7 +44,7 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
 
         signature = _evidence_signature(state, evidence_records)
         fingerprint = _evidence_fingerprint(state, evidence_records)
-        if not force and _has_verification_identity(state, signature, fingerprint):
+        if not force and _promote_verification_identity(state, signature, fingerprint):
             return None
 
         report = verify_analysis_claims(
@@ -98,23 +98,32 @@ def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> s
 
 
 def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) -> str:
-    route_ids = [str(route.get("id")) for route in _list_attr(state, "route_proposals") if route.get("id")]
-    cleaning_ids = [str(log.get("id")) for log in _list_attr(state, "cleaning_logs") if log.get("id")]
     payload = {
         "evidence_records": evidence_records,
-        "route_ids": route_ids,
-        "cleaning_ids": cleaning_ids,
+        "route_proposals": _list_attr(state, "route_proposals"),
+        "cleaning_logs": _list_attr(state, "cleaning_logs"),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
-def _has_verification_identity(state: Any, signature: str, fingerprint: str) -> bool:
-    for report in _list_attr(state, "verification_reports"):
+def _promote_verification_identity(state: Any, signature: str, fingerprint: str) -> bool:
+    reports = getattr(state, "verification_reports", None)
+    if not isinstance(reports, list):
+        return False
+
+    for index, report in enumerate(reports):
+        if not isinstance(report, dict):
+            continue
         if (
             report.get("evidence_signature") == signature
             and report.get("evidence_fingerprint") == fingerprint
         ):
+            if index != len(reports) - 1:
+                reports.append(reports.pop(index))
+                save = getattr(state, "save", None)
+                if callable(save):
+                    save()
             return True
     return False
 
