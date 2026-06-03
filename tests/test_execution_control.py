@@ -359,6 +359,48 @@ def test_synthesis_policy_injection_creates_verification_report_first(monkeypatc
     assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
 
 
+def test_synthesis_policy_injection_marks_failed_verification_attempt(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    workspace_obj = Workspace()
+    ctx = AgentContext(session_id="loop_verify_exception_policy", workspace=workspace_obj)
+    state = AnalysisSessionState(session_id="loop_verify_exception_policy")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Retention follows a power-law curve",
+        "result_summary": "R(t)=0.1917*t^(-0.7335), R2=0.9743",
+        "confidence": "high",
+    }]
+    ctx.analysis_state = state
+    ctx.user_quality_requirements = ""
+    loop = AgentLoop(client=object(), session_id="loop_verify_exception_policy")
+    loop.context = ctx
+    loop._last_turn_intent = intent
+    loop._reset_turn_tracking()
+
+    from data_agent.agent import trust_workflow_runtime as runtime
+
+    def raise_verification_error(*_args, **_kwargs):
+        raise RuntimeError("verification unavailable")
+
+    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", raise_verification_error)
+
+    with use_agent_context(ctx):
+        loop._maybe_inject_synthesis_policy("summarize retention")
+
+    assert loop._turn_verification_injected is True
+    assert loop._turn_synthesis_policy_injected is True
+    assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
+
+
 def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",

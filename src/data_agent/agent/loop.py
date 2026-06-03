@@ -925,8 +925,8 @@ class AgentLoop:
             try:
                 from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
 
-                maybe_verify_turn_claims(user_input, state)
                 self._turn_verification_injected = True
+                maybe_verify_turn_claims(user_input, state)
             except Exception as exc:
                 logger.warning(
                     "Trust workflow loop verification skipped",
