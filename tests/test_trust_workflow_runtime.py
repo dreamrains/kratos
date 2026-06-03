@@ -117,6 +117,28 @@ def test_runtime_verification_deduplicates_latest_evidence_signature():
     assert len(state.verification_reports) == 1
 
 
+def test_runtime_verification_reruns_when_evidence_content_changes_with_same_id():
+    state = AnalysisSessionState(session_id="runtime_verify_content_change")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Revenue increased 12%",
+        "result_summary": "Revenue increased 12%",
+        "confidence": "high",
+    }]
+
+    first = maybe_verify_turn_claims("summarize revenue", state)
+    state.evidence_records[0]["claim"] = "Revenue increased 15%"
+    state.evidence_records[0]["result_summary"] = "Revenue increased 15%"
+    second = maybe_verify_turn_claims("summarize revenue again", state)
+
+    assert first is not None
+    assert second is not None
+    assert first["evidence_signature"] == "ev_1|routes:|cleaning:"
+    assert second["evidence_signature"] == first["evidence_signature"]
+    assert second["evidence_fingerprint"] != first["evidence_fingerprint"]
+    assert state.verification_reports[-1]["evidence_fingerprint"] == second["evidence_fingerprint"]
+
+
 def test_runtime_verification_skips_when_no_claims_are_available():
     state = AnalysisSessionState(session_id="runtime_verify_empty")
     state.evidence_records = [{"id": "ev_no_claim", "result_summary": "summary only"}]

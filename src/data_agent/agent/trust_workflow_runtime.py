@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from data_agent.agent.intent import TurnIntent
@@ -41,7 +43,9 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             return None
 
         signature = _evidence_signature(state, evidence_records)
-        if not force and _latest_verification_signature(state) == signature:
+        fingerprint = _evidence_fingerprint(state, evidence_records)
+        latest_signature, latest_fingerprint = _latest_verification_identity(state)
+        if not force and latest_signature == signature and latest_fingerprint == fingerprint:
             return None
 
         report = verify_analysis_claims(
@@ -50,7 +54,7 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             route_proposals=_list_attr(state, "route_proposals"),
             cleaning_logs=_list_attr(state, "cleaning_logs"),
         )
-        ref = _compact_verification_ref(report, signature)
+        ref = _compact_verification_ref(report, signature, fingerprint)
         add_ref = getattr(state, "add_verification_report_ref", None)
         if callable(add_ref):
             stored = add_ref(ref)
@@ -94,15 +98,28 @@ def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> s
     return "|".join(evidence_ids) + "|routes:" + ",".join(route_ids) + "|cleaning:" + ",".join(cleaning_ids)
 
 
-def _latest_verification_signature(state: Any) -> str | None:
+def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) -> str:
+    route_ids = [str(route.get("id")) for route in _list_attr(state, "route_proposals") if route.get("id")]
+    cleaning_ids = [str(log.get("id")) for log in _list_attr(state, "cleaning_logs") if log.get("id")]
+    payload = {
+        "evidence_records": evidence_records,
+        "route_ids": route_ids,
+        "cleaning_ids": cleaning_ids,
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _latest_verification_identity(state: Any) -> tuple[str | None, str | None]:
     reports = _list_attr(state, "verification_reports")
     if not reports:
-        return None
+        return None, None
     signature = reports[-1].get("evidence_signature")
-    return str(signature) if signature else None
+    fingerprint = reports[-1].get("evidence_fingerprint")
+    return str(signature) if signature else None, str(fingerprint) if fingerprint else None
 
 
-def _compact_verification_ref(report: dict[str, Any], signature: str) -> dict[str, Any]:
+def _compact_verification_ref(report: dict[str, Any], signature: str, fingerprint: str) -> dict[str, Any]:
     checks = report.get("claim_checks") if isinstance(report, dict) else []
     if not isinstance(checks, list):
         checks = []
@@ -116,5 +133,6 @@ def _compact_verification_ref(report: dict[str, Any], signature: str) -> dict[st
         "failed_count": failed_count,
         "downgraded_count": downgraded_count,
         "evidence_signature": signature,
+        "evidence_fingerprint": fingerprint,
         "route_proposal_ids": list(report.get("route_proposal_ids") or []),
     }
