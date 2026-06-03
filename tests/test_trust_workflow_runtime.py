@@ -1,4 +1,5 @@
 from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent import trust_workflow_runtime as runtime
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims, refine_turn_intent_with_state
 
@@ -142,3 +143,37 @@ def test_runtime_verification_force_overrides_signature_dedupe():
     assert second is not None
     assert len(state.verification_reports) == 1
     assert state.verification_reports[-1]["id"] == second["id"]
+
+
+def test_runtime_verification_counts_failed_claim_checks(monkeypatch):
+    state = AnalysisSessionState(session_id="runtime_verify_failed")
+    state.evidence_records = [{
+        "id": "ev_1",
+        "claim": "Revenue increased 12%",
+        "result_summary": "Revenue increased 12%",
+        "confidence": "high",
+    }]
+
+    def fake_verify_analysis_claims(**_kwargs):
+        return {
+            "id": "failed_report",
+            "claim_checks": [{
+                "claim_id": "claim_1",
+                "claim": "Revenue increased 12%",
+                "evidence_id": None,
+                "status": "failed",
+                "strength": "unsupported",
+                "issues": ["No evidence record supports this claim"],
+            }],
+            "route_proposal_ids": [],
+            "overall_status": "fail",
+        }
+
+    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
+
+    ref = maybe_verify_turn_claims("summarize revenue", state)
+
+    assert ref is not None
+    assert ref["overall_status"] == "fail"
+    assert ref["claim_count"] == 1
+    assert ref["failed_count"] == 1

@@ -106,7 +106,7 @@ def _compact_verification_ref(report: dict[str, Any], signature: str) -> dict[st
     checks = report.get("claim_checks") if isinstance(report, dict) else []
     if not isinstance(checks, list):
         checks = []
-    failed_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "fail")
+    failed_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "failed")
     downgraded_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "downgraded")
     return {
         "id": "verify_" + str(report.get("id") or "")[:16],
