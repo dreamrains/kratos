@@ -1139,7 +1139,8 @@ function chatApp() {
                 this.trustError = '';
                 return;
             }
-            if (sessionId === this.currentSessionId) this.trustView = null;
+            if (sessionId !== this.currentSessionId) return;
+            this.trustView = null;
             this.trustLoading = true;
             this.trustError = '';
             try {

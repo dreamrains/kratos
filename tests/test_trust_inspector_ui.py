@@ -49,9 +49,13 @@ def test_load_trust_view_guards_stale_session_updates():
     js = _app_js()
     body = _method_body(js, "loadTrustView", async_method=True)
 
-    current_session_clear = "if (sessionId === this.currentSessionId) this.trustView = null;"
-    assert current_session_clear in body
-    assert body.index(current_session_clear) < body.index("fetch(`/api/sessions/${sessionId}/trust`)")
+    stale_session_guard = "if (sessionId !== this.currentSessionId) return;"
+    assert stale_session_guard in body
+    guard_index = body.index(stale_session_guard)
+    assert guard_index < body.index("this.trustView = null;", guard_index)
+    assert guard_index < body.index("this.trustLoading = true;", guard_index)
+    assert guard_index < body.index("this.trustError = '';", guard_index)
+    assert guard_index < body.index("fetch(`/api/sessions/${sessionId}/trust`)")
     _assert_current_session_assignment(body, "this.trustView = data;")
     _assert_current_session_assignment(body, "this.trustLoading = false;")
     assert "this.trustView = null" in body
