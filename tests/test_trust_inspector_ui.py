@@ -9,6 +9,14 @@ def _app_js() -> str:
     return (ROOT / "src/data_agent/web/static/js/app.js").read_text(encoding="utf-8")
 
 
+def _index_html() -> str:
+    return (ROOT / "src/data_agent/web/templates/index.html").read_text(encoding="utf-8")
+
+
+def _app_css() -> str:
+    return (ROOT / "src/data_agent/web/static/css/app.css").read_text(encoding="utf-8")
+
+
 def _method_body(js: str, name: str, async_method: bool = False) -> str:
     prefix = "async " if async_method else ""
     match = re.search(rf"{prefix}{name}\([^)]*\) {{(?P<body>.*?)\n        }},", js, re.S)
@@ -112,3 +120,31 @@ def test_trust_inspector_refresh_hooks_are_present():
     assert "this.loadTrustView(sessionId)" in js
     assert "this.loadTrustView()" in js
     assert "case 'turn_end':" in js
+
+
+def test_trust_inspector_panel_markup_contract():
+    html = _index_html()
+
+    assert "trust-inspector-panel" in html
+    assert "trustView.datasets" in html
+    assert "trustView.routes" in html
+    assert "trustView.risks" in html
+    assert "trustView.verification" in html
+    assert '@click="selectTrustRoute(route)"' in html
+    assert "trustInspectorCollapsed" in html
+
+
+def test_trust_inspector_panel_css_contract():
+    css = _app_css()
+
+    expected_selectors = [
+        ".trust-inspector-panel",
+        ".trust-section",
+        ".trust-route-item",
+        ".trust-risk-item",
+        ".trust-pill-ok",
+        ".trust-pill-warn",
+        ".trust-pill-blocked",
+    ]
+    for selector in expected_selectors:
+        assert selector in css

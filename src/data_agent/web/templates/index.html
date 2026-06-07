@@ -497,15 +497,16 @@
     </main>
 
     <!-- Workbench Panel -->
-    <aside class="hidden xl:flex w-80 shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col">
-        <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-4 flex items-center justify-between">
-            <div>
+    <aside class="hidden xl:flex shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel trust-inspector-panel flex-col transition-all duration-200"
+           :class="trustInspectorCollapsed ? 'w-14' : 'w-[22rem]'">
+        <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
+            <div x-show="!trustInspectorCollapsed" x-transition.opacity>
                 <p class="text-sm font-medium text-stone-800 dark:text-stone-200">产出</p>
                 <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
                 <!-- Compact analysis stage indicator -->
-                <div x-show="analysisSummary.stage" class="flex items-center gap-1.5">
+                <div x-show="!trustInspectorCollapsed && analysisSummary.stage" class="flex items-center gap-1.5">
                     <span class="w-1.5 h-1.5 rounded-full"
                           :class="{
                               'bg-green-500': analysisSummary.stage === 'conclude',
@@ -515,13 +516,105 @@
                           }"></span>
                     <span class="text-[10px] text-stone-400 capitalize" x-text="analysisSummary.stage"></span>
                 </div>
-                <button @click="loadAnalysisState(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" title="刷新">
+                <button x-show="!trustInspectorCollapsed" @click="loadAnalysisState(); loadTrustView(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" title="Refresh">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5A9 9 0 005 8"/></svg>
+                </button>
+                <button @click="trustInspectorCollapsed = !trustInspectorCollapsed" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" :title="trustInspectorCollapsed ? 'Expand Trust Inspector' : 'Collapse Trust Inspector'">
+                    <svg x-show="!trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                    <svg x-show="trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
                 </button>
             </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-4 space-y-5">
+        <div class="flex-1 overflow-y-auto p-4 space-y-5" x-show="!trustInspectorCollapsed" x-transition.opacity>
+            <!-- Trust Inspector -->
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Trust Inspector</h3>
+                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? 'Loading' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
+                </div>
+                <p x-show="trustLoading" class="text-xs text-stone-400">Checking session trust state...</p>
+                <p x-show="trustError" class="text-xs text-red-500" x-text="trustError"></p>
+                <p x-show="!trustLoading && !trustError && (!trustView || trustView.status === 'empty')" class="text-xs text-stone-400">No trust context yet.</p>
+                <p x-show="trustView && trustView.updated_at" class="text-[10px] text-stone-400 truncate" x-text="'Updated ' + trustView.updated_at"></p>
+            </section>
+
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Data</h3>
+                    <span x-show="trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
+                </div>
+                <div class="space-y-1.5">
+                    <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
+                        <div class="trust-data-item">
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="dataset.dataset"></p>
+                                <span class="trust-pill" :class="trustStatusClass(dataset.quality_status || 'unknown')" x-text="trustStatusLabel(dataset.quality_status || 'unknown')"></span>
+                            </div>
+                            <p class="text-[10px] text-stone-400 mt-1">
+                                <span x-text="dataset.rows"></span> rows - <span x-text="dataset.columns"></span> cols
+                            </p>
+                            <p x-show="dataset.key_fields && dataset.key_fields.length" class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="dataset.key_fields.join(', ')"></p>
+                        </div>
+                    </template>
+                    <p x-show="!trustView || !trustView.datasets || trustView.datasets.length === 0" class="text-xs text-stone-400 py-1">No datasets profiled.</p>
+                </div>
+            </section>
+
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Recommended Routes</h3>
+                    <span x-show="trustView && trustView.routes && trustView.routes.length" class="text-[10px] text-stone-400" x-text="trustView.routes.length"></span>
+                </div>
+                <div class="space-y-1.5">
+                    <template x-for="(route, ri) in ((trustView && trustView.routes) || [])" :key="route.id || ri">
+                        <button type="button" class="trust-route-item" @click="selectTrustRoute(route)">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
+                                <span class="text-[10px] text-stone-400 shrink-0" x-text="route.budget_level"></span>
+                            </div>
+                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || 'Prefill prompt'"></p>
+                        </button>
+                    </template>
+                    <p x-show="!trustView || !trustView.routes || trustView.routes.length === 0" class="text-xs text-stone-400 py-1">No recommended route yet.</p>
+                </div>
+            </section>
+
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Risk Boundaries</h3>
+                    <span x-show="trustView && trustView.risks && trustView.risks.length" class="text-[10px] text-stone-400" x-text="trustView.risks.length"></span>
+                </div>
+                <div class="space-y-1.5">
+                    <template x-for="(risk, rki) in ((trustView && trustView.risks) || [])" :key="rki">
+                        <div class="trust-risk-item">
+                            <div class="flex items-center gap-2">
+                                <span class="trust-pill" :class="trustStatusClass(risk.severity || 'warning')" x-text="trustStatusLabel(risk.severity || 'warning')"></span>
+                                <span class="text-[10px] text-stone-400 truncate" x-text="[risk.dataset, risk.field].filter(Boolean).join(' - ')"></span>
+                            </div>
+                            <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="risk.message"></p>
+                        </div>
+                    </template>
+                    <p x-show="!trustView || !trustView.risks || trustView.risks.length === 0" class="text-xs text-stone-400 py-1">No active risk boundary.</p>
+                </div>
+            </section>
+
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Verification</h3>
+                    <span class="trust-pill" :class="trustStatusClass((trustView && trustView.verification && trustView.verification.status) || 'unknown')" x-text="trustStatusLabel((trustView && trustView.verification && trustView.verification.status) || 'unknown')"></span>
+                </div>
+                <div x-show="trustView && trustView.verification">
+                    <p class="text-xs text-stone-600 dark:text-stone-300">
+                        <span x-text="(trustView && trustView.verification && trustView.verification.claim_count) || 0"></span> claims -
+                        <span x-text="(trustView && trustView.verification && trustView.verification.failed_count) || 0"></span> failed -
+                        <span x-text="(trustView && trustView.verification && trustView.verification.downgraded_count) || 0"></span> downgraded
+                    </p>
+                    <p x-show="trustView && trustView.verification && trustView.verification.created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="trustView && trustView.verification ? trustView.verification.created_at : ''"></p>
+                </div>
+                <p x-show="!trustView || !trustView.verification" class="text-xs text-stone-400">No verification report yet.</p>
+            </section>
+
             <!-- Conversation Export -->
             <div>
                 <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">导出对话</h3>
