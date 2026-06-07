@@ -947,6 +947,9 @@ function chatApp() {
                 this.turns = [];
                 this.isLoading = false;
                 this.tokenPct = 0;
+                this.trustView = null;
+                this.trustLoading = false;
+                this.trustError = '';
             }
             // Also refresh from server to ensure consistency
             await this.loadSessions();
@@ -1172,6 +1175,7 @@ function chatApp() {
             const labels = {
                 empty: 'Empty',
                 ready: 'Ready',
+                ready_with_warnings: 'Ready with warnings',
                 pass: 'Pass',
                 pass_with_downgrades: 'Pass with downgrades',
                 fail: 'Fail',
@@ -1185,6 +1189,7 @@ function chatApp() {
         trustStatusClass(status) {
             const classes = {
                 ready: 'trust-pill-ok',
+                ready_with_warnings: 'trust-pill-warn',
                 pass: 'trust-pill-ok',
                 pass_with_downgrades: 'trust-pill-warn',
                 warning: 'trust-pill-warn',

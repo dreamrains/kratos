@@ -53,6 +53,19 @@ def test_new_session_clears_trust_inspector_state():
     assert "this.trustError = ''" in body
 
 
+def test_delete_active_session_clears_trust_inspector_state():
+    js = _app_js()
+    body = _method_body(js, "deleteSession", async_method=True)
+
+    pattern = r"if \(this\.currentSessionId === sessionId\) {(?P<guard_body>.*?)\n            }"
+    match = re.search(pattern, body, re.S)
+    assert match, "active session delete branch not found"
+    guard_body = match.group("guard_body")
+    assert "this.trustView = null;" in guard_body
+    assert "this.trustLoading = false;" in guard_body
+    assert "this.trustError = '';" in guard_body
+
+
 def test_load_trust_view_guards_stale_session_updates():
     js = _app_js()
     body = _method_body(js, "loadTrustView", async_method=True)
@@ -77,6 +90,7 @@ def test_trust_status_label_contract():
     expected_labels = {
         "empty": "Empty",
         "ready": "Ready",
+        "ready_with_warnings": "Ready with warnings",
         "pass_with_downgrades": "Pass with downgrades",
         "fail": "Fail",
         "blocked": "Blocked",
@@ -93,6 +107,7 @@ def test_trust_status_class_contract():
 
     expected_classes = {
         "ready": "trust-pill-ok",
+        "ready_with_warnings": "trust-pill-warn",
         "pass": "trust-pill-ok",
         "pass_with_downgrades": "trust-pill-warn",
         "warning": "trust-pill-warn",
