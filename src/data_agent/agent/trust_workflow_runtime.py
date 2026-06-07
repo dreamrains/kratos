@@ -74,6 +74,52 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
         return None
 
 
+def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any) -> dict[str, Any] | None:
+    """Create one compact hypothesis set for a runnable analysis route."""
+
+    try:
+        from data_agent.agent.analysis_entry import decide_analysis_entry
+        from data_agent.agent.hypotheses import build_hypothesis_set, persist_hypothesis_set
+
+        decision = decide_analysis_entry(user_input, intent, state)
+        if decision.get("decision") not in {"direct_analysis", "exploratory_only", "request_data"}:
+            return None
+
+        dataset = str(decision.get("dataset") or "")
+        route = str(decision.get("route") or "")
+        if _has_hypothesis_set(state, dataset, route):
+            return None
+
+        hypothesis_set = build_hypothesis_set(user_input, decision, state)
+        ref = persist_hypothesis_set(str(getattr(state, "session_id", "")), hypothesis_set)
+        add_ref = getattr(state, "add_hypothesis_set_ref", None)
+        if callable(add_ref):
+            stored = add_ref(ref)
+        else:
+            refs = getattr(state, "hypothesis_sets", None)
+            if isinstance(refs, list):
+                refs.append(ref)
+            stored = ref
+
+        save = getattr(state, "save", None)
+        if callable(save):
+            save()
+        return stored
+    except Exception as exc:
+        logger.warning(
+            "Hypothesis set creation skipped",
+            extra={"extra_data": {"error": str(exc), "user_input": (user_input or "")[:200]}},
+        )
+        return None
+
+
+def _has_hypothesis_set(state: Any, dataset: str, route: str) -> bool:
+    for ref in _list_attr(state, "hypothesis_sets"):
+        if str(ref.get("dataset") or "") == dataset and str(ref.get("route") or "") == route:
+            return True
+    return False
+
+
 def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     value = getattr(state, name, None)
     if not isinstance(value, list):

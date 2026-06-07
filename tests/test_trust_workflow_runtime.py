@@ -1,7 +1,12 @@
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent import trust_workflow_runtime as runtime
+from data_agent.agent.hypotheses import hydrate_hypothesis_refs
 from data_agent.agent.intent import TurnIntent
-from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims, refine_turn_intent_with_state
+from data_agent.agent.trust_workflow_runtime import (
+    maybe_create_hypothesis_set,
+    maybe_verify_turn_claims,
+    refine_turn_intent_with_state,
+)
 
 
 def _intent(intent_type="intent_negotiation", **overrides):
@@ -271,3 +276,59 @@ def test_runtime_verification_counts_failed_claim_checks(monkeypatch):
     assert ref["overall_status"] == "fail"
     assert ref["claim_count"] == 1
     assert ref["failed_count"] == 1
+
+
+def test_runtime_creates_hypothesis_set_from_direct_entry_decision(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_create", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{
+            "id": "route_trend",
+            "dataset": "sales",
+            "direction": "trend",
+            "evidence_requirements": ["date", "metric"],
+        }]
+
+        ref = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+
+        assert ref is not None
+        assert state.hypothesis_sets == [ref]
+        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+        assert hydrated[0]["route"] == "trend"
+        assert len(hydrated[0]["hypotheses"]) >= 2
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_runtime_skips_duplicate_hypothesis_set_for_same_route(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_dup", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{"dataset": "sales", "direction": "trend"}]
+
+        first = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+        second = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+
+        assert first is not None
+        assert second is None
+        assert len(state.hypothesis_sets) == 1
+    finally:
+        cfg.sessions_dir = old_sessions
