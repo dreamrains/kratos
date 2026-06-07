@@ -134,6 +134,23 @@ def test_trust_inspector_panel_markup_contract():
     assert "trustInspectorCollapsed" in html
 
 
+def test_trust_inspector_empty_states_hide_during_loading_or_error():
+    html = _index_html()
+
+    empty_state_labels = [
+        "No datasets profiled.",
+        "No recommended route yet.",
+        "No active risk boundary.",
+        "No verification report yet.",
+    ]
+    for label in empty_state_labels:
+        match = re.search(rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>', html)
+        assert match, f"{label} empty state not found"
+        condition = match.group("condition")
+        assert "!trustLoading" in condition
+        assert "!trustError" in condition
+
+
 def test_trust_inspector_panel_css_contract():
     css = _app_css()
 
@@ -148,3 +165,4 @@ def test_trust_inspector_panel_css_contract():
     ]
     for selector in expected_selectors:
         assert selector in css
+    assert "overflow-wrap: anywhere" in css

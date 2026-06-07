@@ -557,7 +557,7 @@
                             <p x-show="dataset.key_fields && dataset.key_fields.length" class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="dataset.key_fields.join(', ')"></p>
                         </div>
                     </template>
-                    <p x-show="!trustView || !trustView.datasets || trustView.datasets.length === 0" class="text-xs text-stone-400 py-1">No datasets profiled.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.datasets || trustView.datasets.length === 0)" class="text-xs text-stone-400 py-1">No datasets profiled.</p>
                 </div>
             </section>
 
@@ -576,7 +576,7 @@
                             <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || 'Prefill prompt'"></p>
                         </button>
                     </template>
-                    <p x-show="!trustView || !trustView.routes || trustView.routes.length === 0" class="text-xs text-stone-400 py-1">No recommended route yet.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.routes || trustView.routes.length === 0)" class="text-xs text-stone-400 py-1">No recommended route yet.</p>
                 </div>
             </section>
 
@@ -595,7 +595,7 @@
                             <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="risk.message"></p>
                         </div>
                     </template>
-                    <p x-show="!trustView || !trustView.risks || trustView.risks.length === 0" class="text-xs text-stone-400 py-1">No active risk boundary.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.risks || trustView.risks.length === 0)" class="text-xs text-stone-400 py-1">No active risk boundary.</p>
                 </div>
             </section>
 
@@ -612,7 +612,7 @@
                     </p>
                     <p x-show="trustView && trustView.verification && trustView.verification.created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="trustView && trustView.verification ? trustView.verification.created_at : ''"></p>
                 </div>
-                <p x-show="!trustView || !trustView.verification" class="text-xs text-stone-400">No verification report yet.</p>
+                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.verification)" class="text-xs text-stone-400">No verification report yet.</p>
             </section>
 
             <!-- Conversation Export -->
