@@ -38,6 +38,7 @@ def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_pa
             "routes": [],
             "risks": [],
             "verification": None,
+            "hypotheses": [],
         }
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
@@ -148,6 +149,7 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                 "evidence_signature": "sig-123",
                 "created_at": "2026-06-07 12:35:00",
             },
+            "hypotheses": [],
         }
         assert state_path.read_text(encoding="utf-8") == before
     finally:

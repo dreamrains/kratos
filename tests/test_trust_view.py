@@ -11,6 +11,7 @@ def test_none_state_returns_empty_view_for_requested_session():
         "routes": [],
         "risks": [],
         "verification": None,
+        "hypotheses": [],
     }
 
 
@@ -328,6 +329,55 @@ def test_latest_verification_report_becomes_summary_and_counts_claim_checks():
     }
 
 
+def test_trust_view_includes_compact_hypothesis_summary(tmp_path):
+    hypothesis_path = tmp_path / "hypotheses.json"
+    hypothesis_path.write_text(
+        """
+{
+  "id": "hyps_sales_trend",
+  "dataset": "sales",
+  "route": "trend",
+  "status_summary": {"supported": 1, "inconclusive": 1},
+  "hypotheses": [
+    {"id": "h1", "claim": "Revenue changed because orders changed.", "status": "supported"},
+    {"id": "h2", "claim": "Revenue changed because channel mix changed.", "status": "inconclusive"},
+    {"id": "h3", "claim": "Revenue movement is random fluctuation.", "status": "inconclusive"}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.hypothesis_sets = [
+        {
+            "id": "hyps_sales_trend",
+            "dataset": "sales",
+            "route": "trend",
+            "count": 3,
+            "artifact_path": str(hypothesis_path),
+        }
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["hypotheses"] == [
+        {
+            "id": "hyps_sales_trend",
+            "dataset": "sales",
+            "route": "trend",
+            "count": 3,
+            "status_summary": {"supported": 1, "inconclusive": 1},
+            "top_claims": [
+                {"claim": "Revenue changed because orders changed.", "status": "supported"},
+                {
+                    "claim": "Revenue changed because channel mix changed.",
+                    "status": "inconclusive",
+                },
+            ],
+        }
+    ]
+
+
 def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded", updated_at="now")
     state.dataset_contracts = {"dataset": "bad"}
@@ -346,6 +396,7 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
         "routes": [],
         "risks": [],
         "verification": None,
+        "hypotheses": [],
     }
 
 

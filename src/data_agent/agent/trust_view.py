@@ -17,12 +17,14 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
     route_refs = _hydrate_refs(_list_attr(state, "route_proposals"))
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
     verification_reports = _hydrate_refs(_list_attr(state, "verification_reports"))
+    hypothesis_sets = _hydrate_refs(_list_attr(state, "hypothesis_sets"))
     routes = _route_cards(route_refs)
     risks = _risk_items(contracts, cleaning_logs)
     verification = _verification_summary(verification_reports)
     datasets = _dataset_summaries(contracts, previews)
+    hypotheses = _hypothesis_summaries(hypothesis_sets)
 
-    has_content = bool(datasets or routes or risks or verification)
+    has_content = bool(datasets or routes or risks or verification or hypotheses)
     data_state = _text(getattr(state, "data_state", ""))
     status = "ready" if data_state == "data_loaded" or has_content else "empty"
 
@@ -34,6 +36,7 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
         "routes": routes,
         "risks": risks,
         "verification": verification,
+        "hypotheses": hypotheses,
     }
 
 
@@ -46,6 +49,7 @@ def _empty_view(session_id: str) -> dict[str, Any]:
         "routes": [],
         "risks": [],
         "verification": None,
+        "hypotheses": [],
     }
 
 
@@ -197,6 +201,37 @@ def _verification_summary(reports: list[dict[str, Any]]) -> dict[str, Any] | Non
         "evidence_signature": _text(report.get("evidence_signature")),
         "created_at": _text(report.get("created_at")),
     }
+
+
+def _hypothesis_summaries(
+    hypothesis_sets: list[dict[str, Any]],
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for item in hypothesis_sets:
+        item_id = _text(item.get("id"))
+        if not item_id:
+            continue
+        hypotheses = _list_items(item.get("hypotheses"))
+        status_summary = item.get("status_summary")
+        summaries.append({
+            "id": item_id,
+            "dataset": _text(item.get("dataset")),
+            "route": _text(item.get("route")),
+            "count": _count_value(item.get("count"), hypotheses),
+            "status_summary": status_summary if isinstance(status_summary, dict) else {},
+            "top_claims": [
+                {
+                    "claim": _text(hypothesis.get("claim")),
+                    "status": _text(hypothesis.get("status")),
+                }
+                for hypothesis in hypotheses[:2]
+                if _text(hypothesis.get("claim"))
+            ],
+        })
+        if len(summaries) >= limit:
+            break
+    return summaries
 
 
 def _append_risk(
