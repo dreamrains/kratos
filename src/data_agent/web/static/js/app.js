@@ -1171,6 +1171,16 @@ function chatApp() {
             this.inputText = route.prompt;
         },
 
+        formatHypothesisSummary(set) {
+            const summary = set?.status_summary || {};
+            const parts = Object.entries(summary)
+                .filter(([, value]) => Number(value) > 0)
+                .map(([key, value]) => `${key}: ${value}`);
+            if (parts.length) return parts.join(' | ');
+            const count = Number(set?.count || 0);
+            return count ? `${count} proposed` : 'No evaluated hypotheses';
+        },
+
         trustStatusLabel(status) {
             const labels = {
                 empty: 'Empty',

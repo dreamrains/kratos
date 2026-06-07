@@ -582,6 +582,30 @@
 
             <section class="trust-section">
                 <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Hypotheses</h3>
+                    <span x-show="trustView && trustView.hypotheses && trustView.hypotheses.length" class="text-[10px] text-stone-400" x-text="trustView.hypotheses.length"></span>
+                </div>
+                <div class="space-y-1.5" data-testid="trust-hypotheses">
+                    <template x-for="(set, hi) in ((trustView && trustView.hypotheses) || [])" :key="set.id || hi">
+                        <div class="trust-risk-item">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="[set.route, set.dataset].filter(Boolean).join(' - ') || 'Hypothesis set'"></span>
+                                <span class="text-[10px] text-stone-400 shrink-0" x-text="formatHypothesisSummary(set)"></span>
+                            </div>
+                            <template x-for="(claim, ci) in (set.top_claims || [])" :key="claim.claim || ci">
+                                <div class="flex items-start gap-2 mt-1">
+                                    <span class="trust-pill shrink-0" :class="trustStatusClass(claim.status || 'unknown')" x-text="trustStatusLabel(claim.status || 'unknown')"></span>
+                                    <span class="text-[10px] text-stone-500 dark:text-stone-400 leading-snug" x-text="claim.claim"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.hypotheses || trustView.hypotheses.length === 0)" class="text-xs text-stone-400 py-1">No hypothesis set yet.</p>
+                </div>
+            </section>
+
+            <section class="trust-section">
+                <div class="flex items-center justify-between mb-2">
                     <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Risk Boundaries</h3>
                     <span x-show="trustView && trustView.risks && trustView.risks.length" class="text-[10px] text-stone-400" x-text="trustView.risks.length"></span>
                 </div>

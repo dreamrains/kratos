@@ -149,12 +149,24 @@ def test_trust_inspector_panel_markup_contract():
     assert "trustInspectorCollapsed" in html
 
 
+def test_trust_inspector_contains_hypothesis_section():
+    html = _index_html()
+    js = _app_js()
+
+    assert 'data-testid="trust-hypotheses"' in html
+    assert "trustView.hypotheses" in html
+    assert "top_claims" in html
+    assert "formatHypothesisSummary(set)" in html
+    assert "formatHypothesisSummary(set)" in js
+
+
 def test_trust_inspector_empty_states_hide_during_loading_or_error():
     html = _index_html()
 
     empty_state_labels = [
         "No datasets profiled.",
         "No recommended route yet.",
+        "No hypothesis set yet.",
         "No active risk boundary.",
         "No verification report yet.",
     ]
