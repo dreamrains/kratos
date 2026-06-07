@@ -102,6 +102,7 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
                 ],
                 "warnings": [
                     {"field": "region", "message": "Region has missing values"},
+                    {"columns": ["revenue", "cost"], "codes": ["missing_values"]},
                 ],
             },
             "unsupported_analyses": [
@@ -152,6 +153,13 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
             "dataset": "sales",
             "field": "region",
             "message": "Region has missing values",
+        },
+        {
+            "severity": "warning",
+            "source": "data_quality",
+            "dataset": "sales",
+            "field": "revenue, cost",
+            "message": "missing_values",
         },
         {
             "severity": "warning",

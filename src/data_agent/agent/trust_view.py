@@ -178,7 +178,7 @@ def _append_risk(
         "severity": severity,
         "source": source,
         "dataset": dataset,
-        "field": _text(item.get("field")) if isinstance(item, dict) else "",
+        "field": _risk_field(item),
         "message": _message_from(item),
     })
 
@@ -204,10 +204,26 @@ def _message_from(item: Any) -> str:
             item.get("message")
             or item.get("reason")
             or item.get("description")
+            or _join_texts(item.get("codes"))
+            or item.get("type")
             or item.get("analysis")
+            or item.get("column")
             or item.get("field")
+            or _compact_dict(item)
         )
     return _text(item)
+
+
+def _risk_field(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return (
+        _join_texts(item.get("columns"))
+        or _text(item.get("column"))
+        or _text(item.get("field"))
+        or _join_texts(item.get("codes"))
+        or _text(item.get("type"))
+    )
 
 
 def _cleaning_message(decision: dict[str, Any]) -> str:
@@ -248,6 +264,21 @@ def _text_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_text(item) for item in value if _text(item)]
+
+
+def _join_texts(value: Any) -> str:
+    if not isinstance(value, list):
+        return _text(value)
+    return ", ".join(_text_list(value))
+
+
+def _compact_dict(value: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in sorted(value):
+        text = _join_texts(value[key])
+        if text:
+            parts.append(f"{key}: {text}")
+    return "; ".join(parts)
 
 
 def _list_items(value: Any) -> list[dict[str, Any]]:
