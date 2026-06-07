@@ -8,20 +8,21 @@ def _use_tmp_state(tmp_path):
     cfg = get_config()
     old_sessions = cfg.sessions_dir
     old_tasks_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
     cfg.sessions_dir = tmp_path / "sessions"
     task_manager._dir = tmp_path / "tasks"
     task_manager.reset_for_testing()
-    return cfg, old_sessions, old_tasks_dir
+    return cfg, old_sessions, old_tasks_dir, old_next_id
 
 
-def _restore_state(cfg, old_sessions, old_tasks_dir):
+def _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id):
     cfg.sessions_dir = old_sessions
     task_manager._dir = old_tasks_dir
-    task_manager._next_id_val = 0
+    task_manager._next_id_val = old_next_id
 
 
 def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_path):
-    cfg, old_sessions, old_tasks_dir = _use_tmp_state(tmp_path)
+    cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
     try:
         from data_agent.web.app import create_app
 
@@ -39,11 +40,11 @@ def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_pa
             "verification": None,
         }
     finally:
-        _restore_state(cfg, old_sessions, old_tasks_dir)
+        _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
 
 
 def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tmp_path):
-    cfg, old_sessions, old_tasks_dir = _use_tmp_state(tmp_path)
+    cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
     session_id = "trust_session"
     state_dir = tmp_path / "sessions" / session_id
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -150,4 +151,4 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
         }
         assert state_path.read_text(encoding="utf-8") == before
     finally:
-        _restore_state(cfg, old_sessions, old_tasks_dir)
+        _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
