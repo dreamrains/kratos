@@ -72,6 +72,10 @@ function chatApp() {
         // Workbench capabilities and analysis state
         capabilities: null,
         analysisState: null,
+        trustInspectorCollapsed: false,
+        trustView: null,
+        trustLoading: false,
+        trustError: '',
 
         // Bind-to-project modal
         _bindModal: { show: false, sessionId: '' },
@@ -874,6 +878,9 @@ function chatApp() {
             this.currentSessionId = null;
             this.activeProjectName = '';
             this.analysisState = null;
+            this.trustView = null;
+            this.trustLoading = false;
+            this.trustError = '';
             this.sessionArtifacts = [];
             this.lastWorkbenchResult = null;
             this.turns = [];
@@ -922,6 +929,7 @@ function chatApp() {
             }
             await Promise.all([
                 this.loadAnalysisState(sessionId),
+                this.loadTrustView(sessionId),
                 this.loadSessionArtifacts(sessionId),
                 this.loadTasks(),
             ]);
@@ -1122,6 +1130,68 @@ function chatApp() {
             } catch {
                 this.analysisState = null;
             }
+        },
+
+        async loadTrustView(sessionId = this.currentSessionId) {
+            if (!sessionId || sessionId === '_pending_') {
+                this.trustView = null;
+                this.trustLoading = false;
+                this.trustError = '';
+                return;
+            }
+            this.trustLoading = true;
+            this.trustError = '';
+            try {
+                const res = await fetch(`/api/sessions/${sessionId}/trust`);
+                if (!res.ok) throw new Error('Trust inspector load failed');
+                const data = await res.json();
+                if (sessionId === this.currentSessionId) {
+                    this.trustView = data;
+                    this.trustError = '';
+                }
+            } catch {
+                if (sessionId === this.currentSessionId) {
+                    this.trustView = null;
+                    this.trustError = 'Trust inspector load failed';
+                }
+            } finally {
+                if (sessionId === this.currentSessionId) {
+                    this.trustLoading = false;
+                }
+            }
+        },
+
+        selectTrustRoute(route) {
+            if (!route || !route.prompt) return;
+            this.inputText = route.prompt;
+        },
+
+        trustStatusLabel(status) {
+            const labels = {
+                empty: 'Empty',
+                ready: 'Ready',
+                pass: 'Pass',
+                pass_with_downgrades: 'Pass with downgrades',
+                fail: 'Fail',
+                blocked: 'Blocked',
+                warning: 'Warning',
+                unknown: 'Unknown',
+            };
+            return labels[status || 'unknown'] || labels.unknown;
+        },
+
+        trustStatusClass(status) {
+            const classes = {
+                ready: 'trust-pill-ok',
+                pass: 'trust-pill-ok',
+                pass_with_downgrades: 'trust-pill-warn',
+                warning: 'trust-pill-warn',
+                fail: 'trust-pill-blocked',
+                blocked: 'trust-pill-blocked',
+                empty: 'trust-pill-muted',
+                unknown: 'trust-pill-muted',
+            };
+            return classes[status || 'unknown'] || classes.unknown;
         },
 
         async resetAnalysisState() {
@@ -2128,6 +2198,7 @@ function chatApp() {
                     if (isCurrentSession) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
+                        this.loadTrustView();
                         this._scrollToBottom();
                         requestAnimationFrame(() => {
                             const el = document.getElementById('messages-container');
