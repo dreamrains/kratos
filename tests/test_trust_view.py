@@ -60,6 +60,116 @@ def test_dataset_summaries_combine_contracts_and_preview_digests():
     ]
 
 
+def test_thin_artifact_refs_are_hydrated_for_inspector_details(tmp_path):
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(
+        """
+{
+  "dataset": "game_b_retention",
+  "row_count": 62,
+  "column_count": 13,
+  "quality": {"status": "ready", "score": 100},
+  "field_roles": {
+    "date": ["date"],
+    "metrics": ["daily_active", "day_1_retention"],
+    "dimensions": [],
+    "ids": []
+  },
+  "supported_analyses": ["trend", "period_compare"],
+  "unsupported_analyses": [
+    {"type": "user_level_retention", "reason": "aggregate grain and missing user IDs"}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    preview_path = tmp_path / "preview.json"
+    preview_path.write_text(
+        """
+{
+  "dataset": "game_b_retention",
+  "notable_patterns": ["date is daily", "retention columns detected"]
+}
+""",
+        encoding="utf-8",
+    )
+    route_path = tmp_path / "route.json"
+    route_path.write_text(
+        """
+{
+  "id": "route_trend",
+  "dataset": "game_b_retention",
+  "direction": "trend",
+  "budget_level": "low",
+  "limitations": ["Descriptive trend only unless supported by experimental evidence"]
+}
+""",
+        encoding="utf-8",
+    )
+    cleaning_path = tmp_path / "cleaning.json"
+    cleaning_path.write_text(
+        """
+{
+  "dataset": "game_b_retention",
+  "decisions": [
+    {
+      "column": "date",
+      "decision_type": "needs_confirmation",
+      "impact": "Date parsing changed the original column type"
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.dataset_contracts = [
+        {
+            "dataset": "game_b_retention",
+            "artifact_path": str(contract_path),
+            "quality_status": "ready",
+            "supported_analyses": ["trend", "period_compare"],
+        }
+    ]
+    state.preview_digests = [{"dataset": "game_b_retention", "artifact_path": str(preview_path)}]
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "game_b_retention", "artifact_path": str(route_path)}
+    ]
+    state.cleaning_logs = [{"dataset": "game_b_retention", "artifact_path": str(cleaning_path)}]
+
+    view = build_trust_view(state)
+
+    assert view["datasets"] == [
+        {
+            "dataset": "game_b_retention",
+            "rows": 62,
+            "columns": 13,
+            "quality_status": "ready",
+            "quality_score": 100,
+            "key_fields": ["date", "daily_active", "day_1_retention"],
+            "supported_analyses": ["trend", "period_compare"],
+            "preview_notes": ["date is daily", "retention columns detected"],
+        }
+    ]
+    assert view["routes"][0]["limitations"] == [
+        "Descriptive trend only unless supported by experimental evidence"
+    ]
+    assert {
+        "severity": "warning",
+        "source": "unsupported_analysis",
+        "dataset": "game_b_retention",
+        "field": "user_level_retention",
+        "message": "aggregate grain and missing user IDs",
+    } in view["risks"]
+    assert {
+        "severity": "warning",
+        "source": "cleaning",
+        "dataset": "game_b_retention",
+        "field": "date",
+        "message": "Date parsing changed the original column type",
+    } in view["risks"]
+
+
 def test_route_cards_are_limited_skip_malformed_and_include_editable_prompt():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.route_proposals = [

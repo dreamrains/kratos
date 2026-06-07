@@ -152,3 +152,97 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
         assert state_path.read_text(encoding="utf-8") == before
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
+
+
+def test_trust_view_endpoint_hydrates_artifact_refs_without_mutating_state(tmp_path):
+    cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
+    session_id = "trust_hydration_session"
+    state_dir = tmp_path / "sessions" / session_id
+    artifact_dir = state_dir / "tool_outputs"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    contract_path = artifact_dir / "contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "dataset": "retention",
+                "row_count": 62,
+                "column_count": 13,
+                "quality": {"status": "ready", "score": 100},
+                "field_roles": {
+                    "date": ["date"],
+                    "metrics": ["daily_active", "day_1_retention"],
+                },
+                "unsupported_analyses": [
+                    {"type": "user_level_retention", "reason": "aggregate grain"}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    route_path = artifact_dir / "route.json"
+    route_path.write_text(
+        json.dumps(
+            {
+                "id": "route_retention_trend",
+                "dataset": "retention",
+                "direction": "trend",
+                "limitations": ["Descriptive trend only"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    state_path = state_dir / "analysis_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "data_state": "data_loaded",
+                "dataset_contracts": [
+                    {
+                        "dataset": "retention",
+                        "artifact_path": str(contract_path),
+                        "quality_status": "ready",
+                    }
+                ],
+                "route_proposals": [
+                    {
+                        "id": "route_retention_trend",
+                        "dataset": "retention",
+                        "artifact_path": str(route_path),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    before = state_path.read_text(encoding="utf-8")
+
+    try:
+        from data_agent.web.app import create_app
+
+        client = create_app().test_client()
+        resp = client.get(f"/api/sessions/{session_id}/trust")
+
+        assert resp.status_code == 200
+        payload = resp.get_json()
+        assert payload["datasets"][0]["rows"] == 62
+        assert payload["datasets"][0]["columns"] == 13
+        assert payload["datasets"][0]["key_fields"] == ["date", "daily_active", "day_1_retention"]
+        assert payload["routes"][0]["direction"] == "trend"
+        assert payload["routes"][0]["limitations"] == ["Descriptive trend only"]
+        assert payload["risks"] == [
+            {
+                "severity": "warning",
+                "source": "unsupported_analysis",
+                "dataset": "retention",
+                "field": "user_level_retention",
+                "message": "aggregate grain",
+            }
+        ]
+        assert state_path.read_text(encoding="utf-8") == before
+    finally:
+        _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)

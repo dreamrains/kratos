@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 
@@ -10,11 +12,14 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
     if state is None:
         return _empty_view(session_id or "")
 
-    contracts = _list_attr(state, "dataset_contracts")
-    previews = _list_attr(state, "preview_digests")
-    routes = _route_cards(_list_attr(state, "route_proposals"))
-    risks = _risk_items(contracts, _list_attr(state, "cleaning_logs"))
-    verification = _verification_summary(_list_attr(state, "verification_reports"))
+    contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
+    previews = _hydrate_refs(_list_attr(state, "preview_digests"))
+    route_refs = _hydrate_refs(_list_attr(state, "route_proposals"))
+    cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
+    verification_reports = _hydrate_refs(_list_attr(state, "verification_reports"))
+    routes = _route_cards(route_refs)
+    risks = _risk_items(contracts, cleaning_logs)
+    verification = _verification_summary(verification_reports)
     datasets = _dataset_summaries(contracts, previews)
 
     has_content = bool(datasets or routes or risks or verification)
@@ -49,6 +54,33 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _hydrate_refs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_hydrate_ref(item) for item in items]
+
+
+def _hydrate_ref(item: dict[str, Any]) -> dict[str, Any]:
+    artifact_path = _text(item.get("artifact_path"))
+    if not artifact_path:
+        return item
+    artifact = _read_json_artifact(artifact_path)
+    if not isinstance(artifact, dict):
+        return item
+    merged = dict(item)
+    merged.update(artifact)
+    return merged
+
+
+def _read_json_artifact(artifact_path: str) -> dict[str, Any] | None:
+    try:
+        path = Path(artifact_path)
+        if path.suffix.lower() != ".json" or not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _dataset_summaries(
