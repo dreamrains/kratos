@@ -70,13 +70,13 @@ def _dataset_summaries(
         preview = previews_by_dataset.get(dataset, {})
         summaries.append({
             "dataset": dataset,
-            "rows": _number_or_zero(contract.get("rows")),
-            "columns": _column_count(contract.get("columns")),
+            "rows": _number_or_zero(contract.get("row_count", contract.get("rows"))),
+            "columns": _column_count(contract.get("column_count", contract.get("columns"))),
             "quality_status": _text(quality.get("status") or contract.get("quality_status")),
             "quality_score": _number_or_zero(quality.get("score") or contract.get("quality_score")),
             "key_fields": _key_fields(contract.get("field_roles"))[:6],
             "supported_analyses": _text_list(contract.get("supported_analyses")),
-            "preview_notes": _text_list(preview.get("preview_notes"))[:3],
+            "preview_notes": _preview_notes(preview)[:3],
         })
     return summaries
 
@@ -124,27 +124,29 @@ def _risk_items(
         dataset = _text(contract.get("dataset"))
         quality = contract.get("quality") if isinstance(contract.get("quality"), dict) else {}
         for issue in _raw_list(quality.get("block_issues")):
-            _append_risk(risks, "block", "quality", dataset, issue)
+            _append_risk(risks, "blocked", "data_quality", dataset, issue)
         for warning in _raw_list(quality.get("warnings")):
-            _append_risk(risks, "warning", "quality", dataset, warning)
+            _append_risk(risks, "warning", "data_quality", dataset, warning)
         for unsupported in _raw_list(contract.get("unsupported_analyses")):
             _append_unsupported_risk(risks, dataset, unsupported)
         if len(risks) >= limit:
             return risks[:limit]
 
     for log in cleaning_logs:
-        decision_type = _text(log.get("decision_type"))
-        if decision_type not in {"needs_confirmation", "blocked"}:
-            continue
-        risks.append({
-            "severity": decision_type,
-            "source": "cleaning",
-            "dataset": _text(log.get("dataset")),
-            "field": _text(log.get("field")),
-            "message": _message_from(log),
-        })
-        if len(risks) >= limit:
-            break
+        dataset = _text(log.get("dataset"))
+        for decision in _cleaning_decisions(log):
+            decision_type = _text(decision.get("decision_type"))
+            if decision_type not in {"needs_confirmation", "blocked"}:
+                continue
+            risks.append({
+                "severity": "blocked" if decision_type == "blocked" else "warning",
+                "source": "cleaning",
+                "dataset": _text(decision.get("dataset")) or dataset,
+                "field": _text(decision.get("field")),
+                "message": _message_from(decision),
+            })
+            if len(risks) >= limit:
+                return risks[:limit]
     return risks[:limit]
 
 
@@ -206,6 +208,22 @@ def _message_from(item: Any) -> str:
     return _text(item)
 
 
+def _preview_notes(preview: dict[str, Any]) -> list[str]:
+    notes = []
+    notes.extend(_text_list(preview.get("notable_patterns")))
+    notes.extend(_text_list(preview.get("risks")))
+    notes.extend(_text_list(preview.get("preview_notes")))
+    return _dedupe(notes)
+
+
+def _cleaning_decisions(log: dict[str, Any]) -> list[dict[str, Any]]:
+    decisions = _list_items(log.get("decisions"))
+    if decisions:
+        return decisions
+    decision_type = _text(log.get("decision_type"))
+    return [log] if decision_type else []
+
+
 def _key_fields(field_roles: Any) -> list[str]:
     if not isinstance(field_roles, dict):
         return []
@@ -219,6 +237,12 @@ def _text_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_text(item) for item in value if _text(item)]
+
+
+def _list_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _raw_list(value: Any) -> list[Any]:

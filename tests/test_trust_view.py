@@ -19,8 +19,8 @@ def test_dataset_summaries_combine_contracts_and_preview_digests():
     state.dataset_contracts = [
         {
             "dataset": "sales",
-            "rows": 120,
-            "columns": ["date", "revenue", "region"],
+            "row_count": 120,
+            "column_count": 3,
             "quality": {
                 "status": "warning",
                 "score": 0.82,
@@ -38,7 +38,8 @@ def test_dataset_summaries_combine_contracts_and_preview_digests():
     state.preview_digests = [
         {
             "dataset": "sales",
-            "preview_notes": ["3 null regions", "date is daily", "10 rows sampled", "extra note"],
+            "notable_patterns": ["3 null regions", "date is daily"],
+            "risks": ["10 rows sampled", "extra note"],
         }
     ]
 
@@ -103,39 +104,42 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
     state.cleaning_logs = [
         {
             "dataset": "sales",
-            "field": "date",
-            "decision_type": "needs_confirmation",
-            "message": "Confirm date parsing",
+            "decisions": [
+                {
+                    "field": "date",
+                    "decision_type": "needs_confirmation",
+                    "message": "Confirm date parsing",
+                },
+                {
+                    "field": "cost",
+                    "decision_type": "blocked",
+                    "reason": "Cannot infer currency",
+                },
+                {"decision_type": "auto_cleaned", "message": "not a risk"},
+            ],
         },
-        {
-            "dataset": "sales",
-            "field": "cost",
-            "decision_type": "blocked",
-            "reason": "Cannot infer currency",
-        },
-        {"decision_type": "auto_cleaned", "message": "not a risk"},
     ]
 
     risks = build_trust_view(state)["risks"]
 
     assert risks == [
         {
-            "severity": "block",
-            "source": "quality",
+            "severity": "blocked",
+            "source": "data_quality",
             "dataset": "sales",
             "field": "revenue",
             "message": "Revenue has negative values",
         },
         {
-            "severity": "block",
-            "source": "quality",
+            "severity": "blocked",
+            "source": "data_quality",
             "dataset": "sales",
             "field": "",
             "message": "Dataset has duplicate rows",
         },
         {
             "severity": "warning",
-            "source": "quality",
+            "source": "data_quality",
             "dataset": "sales",
             "field": "region",
             "message": "Region has missing values",
@@ -155,7 +159,7 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
             "message": "forecasting",
         },
         {
-            "severity": "needs_confirmation",
+            "severity": "warning",
             "source": "cleaning",
             "dataset": "sales",
             "field": "date",
