@@ -48,6 +48,7 @@ class AnalysisSessionState:
     preview_digests: list[dict[str, Any]] = field(default_factory=list)
     route_proposals: list[dict[str, Any]] = field(default_factory=list)
     verification_reports: list[dict[str, Any]] = field(default_factory=list)
+    hypothesis_sets: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     regression_history: list[dict[str, Any]] = field(default_factory=list)
@@ -73,6 +74,7 @@ class AnalysisSessionState:
             preview_digests=list(data.get("preview_digests") or []),
             route_proposals=list(data.get("route_proposals") or []),
             verification_reports=list(data.get("verification_reports") or []),
+            hypothesis_sets=list(data.get("hypothesis_sets") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             regression_history=list(data.get("regression_history") or []),
@@ -96,6 +98,7 @@ class AnalysisSessionState:
             "preview_digests": self.preview_digests,
             "route_proposals": self.route_proposals,
             "verification_reports": self.verification_reports,
+            "hypothesis_sets": self.hypothesis_sets,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
             "regression_history": self.regression_history,
@@ -232,6 +235,9 @@ class AnalysisSessionState:
 
     def add_verification_report_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         return self._upsert_ref(self.verification_reports, ref)
+
+    def add_hypothesis_set_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref(self.hypothesis_sets, ref)
 
     def add_confirmation(self, confirmation: dict[str, Any]) -> dict[str, Any]:
         item = dict(confirmation)

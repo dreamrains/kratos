@@ -178,6 +178,31 @@ class TestTrustworthyWorkflowRefs:
         assert restored.verification_reports[0]["overall_status"] == "pass"
         assert restored.verification_reports[0]["created_at"]
 
+    def test_hypothesis_set_refs_round_trip_in_analysis_state(self):
+        state = AnalysisSessionState(session_id="hyp_state")
+        stored = state.add_hypothesis_set_ref({
+            "id": "hyps_sales_trend",
+            "dataset": "sales",
+            "route": "trend",
+            "count": 3,
+            "status_summary": {"proposed": 3},
+            "artifact_path": "sessions/hyp_state/tool_outputs/hypotheses_sales_trend.json",
+        })
+
+        assert stored["id"] == "hyps_sales_trend"
+
+        restored = AnalysisSessionState.from_dict(state.to_dict(), "hyp_state")
+
+        assert restored.hypothesis_sets == [{
+            "id": "hyps_sales_trend",
+            "dataset": "sales",
+            "route": "trend",
+            "count": 3,
+            "status_summary": {"proposed": 3},
+            "artifact_path": "sessions/hyp_state/tool_outputs/hypotheses_sales_trend.json",
+            "created_at": stored["created_at"],
+        }]
+
     def test_summary_includes_trust_refs_counts(self):
         state = AnalysisSessionState(session_id="s1")
         state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
