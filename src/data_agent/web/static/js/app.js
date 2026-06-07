@@ -1152,7 +1152,7 @@ function chatApp() {
             } catch {
                 if (sessionId === this.currentSessionId) {
                     this.trustView = null;
-                    this.trustError = 'Trust inspector load failed';
+                    this.trustError = 'Trust status unavailable';
                 }
             } finally {
                 if (sessionId === this.currentSessionId) {
