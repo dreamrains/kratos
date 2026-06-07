@@ -359,6 +359,68 @@ def test_synthesis_policy_injection_creates_verification_report_first(monkeypatc
     assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
 
 
+def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        intent = TurnIntent(
+            intent_type="directed_analysis",
+            clarity="clear",
+            data_state="data_loaded",
+            analysis_stage="execute",
+            recommended_action="run_analysis",
+            execution_readiness="ready",
+            reason="test",
+            ambiguities=[],
+        )
+        workspace_obj = Workspace()
+        ctx = AgentContext(session_id="loop_hyp_before_synthesis", workspace=workspace_obj)
+        state = AnalysisSessionState(session_id="loop_hyp_before_synthesis")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{
+            "id": "route_trend",
+            "dataset": "sales",
+            "direction": "trend",
+            "evidence_requirements": ["date", "metric"],
+        }]
+        state.evidence_records = [{
+            "id": "ev_1",
+            "claim": "Revenue changed across the selected period",
+            "result_summary": "Revenue moved from 100 to 120.",
+            "confidence": "high",
+            "dataset": "sales",
+            "sample_size": 20,
+            "time_scope": "2026-01-01 to 2026-01-20",
+            "calculation_method": "trend comparison",
+            "method_detail": "compare daily revenue values",
+            "limitations": "Descriptive trend only",
+            "method": "descriptive",
+        }]
+        ctx.analysis_state = state
+        ctx.user_quality_requirements = ""
+        loop = AgentLoop(client=object(), session_id="loop_hyp_before_synthesis")
+        loop.context = ctx
+        loop._last_turn_intent = intent
+        loop._reset_turn_tracking()
+
+        with use_agent_context(ctx):
+            loop._maybe_inject_synthesis_policy("show revenue trend")
+
+        assert state.hypothesis_sets
+        assert state.hypothesis_sets[-1]["dataset"] == "sales"
+        assert state.hypothesis_sets[-1]["route"] == "trend"
+        assert loop._turn_synthesis_policy_injected is True
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_synthesis_policy_injection_marks_failed_verification_attempt(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",

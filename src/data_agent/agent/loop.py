@@ -933,6 +933,16 @@ class AgentLoop:
                     extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
                 )
 
+        try:
+            from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+
+            maybe_create_hypothesis_set(user_input, intent, state)
+        except Exception as exc:
+            logger.warning(
+                "Trust workflow loop hypothesis creation skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+
         from data_agent.agent.synthesis_policy import (
             build_synthesis_instruction,
             derive_synthesis_policy,
