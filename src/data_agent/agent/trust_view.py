@@ -88,6 +88,8 @@ def _route_cards(routes: list[dict[str, Any]], limit: int = 4) -> list[dict[str,
         if not direction:
             continue
         card = {
+            "id": _text(route.get("id")) or f"route_{len(cards) + 1}",
+            "dataset": _text(route.get("dataset")),
             "direction": direction,
             "label": _text(route.get("label")) or direction,
             "reason": _text(route.get("reason")),
@@ -142,8 +144,8 @@ def _risk_items(
                 "severity": "blocked" if decision_type == "blocked" else "warning",
                 "source": "cleaning",
                 "dataset": _text(decision.get("dataset")) or dataset,
-                "field": _text(decision.get("field")),
-                "message": _message_from(decision),
+                "field": _text(decision.get("column")) or _text(decision.get("field")),
+                "message": _cleaning_message(decision),
             })
             if len(risks) >= limit:
                 return risks[:limit]
@@ -186,7 +188,7 @@ def _append_unsupported_risk(
     dataset: str,
     item: Any,
 ) -> None:
-    field = _text(item.get("analysis")) if isinstance(item, dict) else ""
+    field = _text(item.get("type") or item.get("analysis")) if isinstance(item, dict) else ""
     risks.append({
         "severity": "warning",
         "source": "unsupported_analysis",
@@ -206,6 +208,15 @@ def _message_from(item: Any) -> str:
             or item.get("field")
         )
     return _text(item)
+
+
+def _cleaning_message(decision: dict[str, Any]) -> str:
+    return _text(
+        decision.get("impact")
+        or decision.get("message")
+        or decision.get("reason")
+        or decision.get("description")
+    )
 
 
 def _preview_notes(preview: dict[str, Any]) -> list[str]:

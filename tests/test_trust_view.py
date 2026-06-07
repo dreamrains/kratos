@@ -63,10 +63,17 @@ def test_dataset_summaries_combine_contracts_and_preview_digests():
 def test_route_cards_are_limited_skip_malformed_and_include_editable_prompt():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.route_proposals = [
-        {"direction": "trend", "label": "Trend", "reason": "Time column exists", "budget_level": "low"},
+        {
+            "id": "route-trend",
+            "dataset": "sales",
+            "direction": "trend",
+            "label": "Trend",
+            "reason": "Time column exists",
+            "budget_level": "low",
+        },
         {"label": "Missing direction"},
         "not a dict",
-        {"direction": "segment", "label": "Segment", "limitations": ["few dimensions"]},
+        {"dataset": "orders", "direction": "segment", "label": "Segment", "limitations": ["few dimensions"]},
         {"direction": "compare", "label": "Compare"},
         {"direction": "forecast", "label": "Forecast"},
         {"direction": "extra", "label": "Extra"},
@@ -76,6 +83,8 @@ def test_route_cards_are_limited_skip_malformed_and_include_editable_prompt():
 
     assert len(routes) == 4
     assert [route["direction"] for route in routes] == ["trend", "segment", "compare", "forecast"]
+    assert [route["id"] for route in routes] == ["route-trend", "route_2", "route_3", "route_4"]
+    assert [route["dataset"] for route in routes] == ["sales", "orders", "", ""]
     assert routes[0]["prompt"].startswith("Please analyze the current dataset")
     assert "trend" in routes[0]["prompt"]
     assert routes[0]["auto_submit"] is False
@@ -96,24 +105,24 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
                 ],
             },
             "unsupported_analyses": [
-                {"analysis": "causal", "reason": "No treatment assignment"},
+                {"type": "user_level_retention", "reason": "missing user id"},
                 "forecasting",
             ],
         }
     ]
     state.cleaning_logs = [
         {
-            "dataset": "sales",
+            "dataset": "orders",
             "decisions": [
                 {
-                    "field": "date",
+                    "column": "revenue",
                     "decision_type": "needs_confirmation",
-                    "message": "Confirm date parsing",
+                    "impact": "May change aggregate values",
                 },
                 {
-                    "field": "cost",
+                    "column": "date",
                     "decision_type": "blocked",
-                    "reason": "Cannot infer currency",
+                    "impact": "Blocks dependent analysis",
                 },
                 {"decision_type": "auto_cleaned", "message": "not a risk"},
             ],
@@ -148,8 +157,8 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
             "severity": "warning",
             "source": "unsupported_analysis",
             "dataset": "sales",
-            "field": "causal",
-            "message": "No treatment assignment",
+            "field": "user_level_retention",
+            "message": "missing user id",
         },
         {
             "severity": "warning",
@@ -161,16 +170,16 @@ def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
         {
             "severity": "warning",
             "source": "cleaning",
-            "dataset": "sales",
-            "field": "date",
-            "message": "Confirm date parsing",
+            "dataset": "orders",
+            "field": "revenue",
+            "message": "May change aggregate values",
         },
         {
             "severity": "blocked",
             "source": "cleaning",
-            "dataset": "sales",
-            "field": "cost",
-            "message": "Cannot infer currency",
+            "dataset": "orders",
+            "field": "date",
+            "message": "Blocks dependent analysis",
         },
     ]
 
