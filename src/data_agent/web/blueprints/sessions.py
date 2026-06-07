@@ -372,6 +372,18 @@ def get_analysis_state(session_id: str):
     return jsonify(_analysis_state_payload(state))
 
 
+@sessions_bp.get("/sessions/<session_id>/trust")
+def get_session_trust_view(session_id: str):
+    """Return the read-only Trust Inspector view for a session."""
+    from data_agent.agent.analysis_state import load_analysis_state
+    from data_agent.agent.trust_view import build_trust_view
+    from data_agent.config import get_config
+
+    state_path = get_config().sessions_resolved / session_id / "analysis_state.json"
+    state = load_analysis_state(session_id) if state_path.exists() else None
+    return jsonify(build_trust_view(state, session_id=session_id))
+
+
 @sessions_bp.post("/sessions/<session_id>/analysis/reset")
 def reset_session_analysis_state(session_id: str):
     """Reset analysis state without deleting conversation, datasets, or artifacts."""
