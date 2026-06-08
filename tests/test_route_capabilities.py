@@ -56,6 +56,7 @@ def test_builds_ready_executable_routes_for_active_dataset():
 def test_cleaning_confirmation_downgrades_executable_route():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = ""
     state.dataset_contracts = [{"dataset": "orders", "supported_analyses": ["cohort"]}]
     state.route_proposals = [
         {
@@ -95,5 +96,23 @@ def test_consulting_mode_hides_executable_routes_but_keeps_exploratory_context()
 
     model = build_route_capabilities(state)
 
+    assert model["executable"] == []
+    assert model["exploratory"][0]["category"] == "method_discussion"
+
+
+def test_explicit_consulting_mode_wins_even_with_loaded_active_dataset():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "consulting"
+    state.route_proposals = [
+        {"id": "route_cohort", "dataset": "orders", "direction": "cohort", "label": "Cohort"}
+    ]
+    state.last_recommended_paths = [
+        {"id": "retention_lifecycle", "title": "Retention lifecycle", "data_requirements": ["user_id"]}
+    ]
+
+    model = build_route_capabilities(state)
+
+    assert model["active_mode"] == "consulting"
     assert model["executable"] == []
     assert model["exploratory"][0]["category"] == "method_discussion"

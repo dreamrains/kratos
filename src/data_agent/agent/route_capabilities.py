@@ -7,6 +7,9 @@ from typing import Any
 from data_agent.agent.trust_view import _hydrate_refs
 
 
+_ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
+
+
 def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     """Build executable and exploratory route recommendations from session state."""
     scope = getattr(state, "active_scope", {}) if state is not None else {}
@@ -75,11 +78,13 @@ def _executable_routes(
 
 
 def _active_mode(state: Any, scope: dict[str, Any], active_dataset: str) -> str:
-    mode = _text(scope.get("active_mode")) or "consulting"
+    raw_mode = _text(scope.get("active_mode"))
+    if raw_mode in _ACTIVE_MODES:
+        return raw_mode
     data_state = _text(getattr(state, "data_state", ""))
-    if mode == "consulting" and active_dataset and data_state == "data_loaded":
+    if active_dataset and data_state == "data_loaded":
         return "data_loaded"
-    return mode
+    return "consulting"
 
 
 def _unsupported_exploratory(
