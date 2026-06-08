@@ -88,14 +88,20 @@ def test_trust_status_label_contract():
     body = _method_body(js, "trustStatusLabel")
 
     expected_labels = {
-        "empty": "Empty",
-        "ready": "Ready",
-        "ready_with_warnings": "Ready with warnings",
-        "pass_with_downgrades": "Pass with downgrades",
-        "fail": "Fail",
-        "blocked": "Blocked",
-        "warning": "Warning",
-        "unknown": "Unknown",
+        "empty": "空",
+        "ready": "就绪",
+        "ready_with_warnings": "有提醒",
+        "pass": "通过",
+        "pass_with_downgrades": "有降级",
+        "fail": "失败",
+        "blocked": "阻塞",
+        "warning": "提醒",
+        "proposed": "待验证",
+        "supported": "支持",
+        "inconclusive": "不确定",
+        "weakened": "减弱",
+        "unsupported_by_data": "数据不支持",
+        "unknown": "未知",
     }
     for key, value in expected_labels.items():
         _assert_object_mapping(body, key, value)
@@ -141,6 +147,8 @@ def test_trust_inspector_panel_markup_contract():
     html = _index_html()
 
     assert "trust-inspector-panel" in html
+    assert "session-side-tabs" in html
+    assert "sessionSidePanelTab" in html
     assert "trustView.datasets" in html
     assert "trustView.routes" in html
     assert "trustView.risks" in html
@@ -163,23 +171,50 @@ def test_trust_inspector_contains_hypothesis_section():
 def test_trust_inspector_labels_hypothesis_statuses():
     js = _app_js()
 
-    assert "proposed: 'Proposed'" in js
-    assert "supported: 'Supported'" in js
-    assert "inconclusive: 'Inconclusive'" in js
-    assert "unsupported_by_data: 'Unsupported by data'" in js
+    assert "proposed: '待验证'" in js
+    assert "supported: '支持'" in js
+    assert "inconclusive: '不确定'" in js
+    assert "unsupported_by_data: '数据不支持'" in js
     assert "supported: 'trust-pill-ok'" in js
     assert "unsupported_by_data: 'trust-pill-blocked'" in js
+
+
+def test_session_side_panel_tabs_preserve_export_controls():
+    html = _index_html()
+    js = _app_js()
+
+    assert "sessionSidePanelTab: 'current'" in js
+    assert "当前分析" in html
+    assert "数据与历史" in html
+    assert "产出与导出" in html
+    assert "x-show=\"sessionSidePanelTab === 'outputs'\"" in html
+    assert "exportConversation('html')" in html
+    assert "exportConversation('markdown')" in html
+    assert "sessionArtifacts" in html
+
+
+def test_session_side_panel_uses_chinese_trust_labels_and_help():
+    html = _index_html()
+    js = _app_js()
+
+    assert "Session Side Panel" not in html
+    assert "trustHelpText" in js
+    assert "可直接分析" in html
+    assert "风险边界" in html
+    assert "假设检验" in html
+    assert "产出与导出" in html
+    assert "这是什么" in js
 
 
 def test_trust_inspector_empty_states_hide_during_loading_or_error():
     html = _index_html()
 
     empty_state_labels = [
-        "No datasets profiled.",
-        "No recommended route yet.",
-        "No hypothesis set yet.",
-        "No active risk boundary.",
-        "No verification report yet.",
+        "暂无数据画像。",
+        "暂无可直接分析路线。",
+        "暂无假设集合。",
+        "暂无风险边界。",
+        "暂无验证报告。",
     ]
     for label in empty_state_labels:
         match = re.search(rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>', html)
@@ -200,6 +235,10 @@ def test_trust_inspector_panel_css_contract():
         ".trust-pill-ok",
         ".trust-pill-warn",
         ".trust-pill-blocked",
+        ".session-side-tabs",
+        ".session-side-tab",
+        ".trust-help-btn",
+        ".trust-help-popover",
     ]
     for selector in expected_selectors:
         assert selector in css

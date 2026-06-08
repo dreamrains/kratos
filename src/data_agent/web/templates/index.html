@@ -501,7 +501,7 @@
            :class="trustInspectorCollapsed ? 'w-14' : 'w-[22rem]'">
         <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
             <div x-show="!trustInspectorCollapsed" x-transition.opacity>
-                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">产出</p>
+                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">会话侧栏</p>
                 <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
@@ -527,23 +527,30 @@
         </div>
 
         <div class="flex-1 overflow-y-auto p-4 space-y-5" x-show="!trustInspectorCollapsed" x-transition.opacity>
+            <div class="session-side-tabs" role="tablist" aria-label="会话侧栏">
+                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'current' }" @click="sessionSidePanelTab = 'current'">当前分析</button>
+                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'history' }" @click="sessionSidePanelTab = 'history'">数据与历史</button>
+                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'outputs' }" @click="sessionSidePanelTab = 'outputs'">产出与导出</button>
+            </div>
+
             <!-- Trust Inspector -->
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Trust Inspector</h3>
-                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? 'Loading' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">会话侧栏</h3>
+                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? '加载中' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
                 </div>
-                <p x-show="trustLoading" class="text-xs text-stone-400">Checking session trust state...</p>
+                <p x-show="trustLoading" class="text-xs text-stone-400">正在检查会话状态...</p>
                 <p x-show="trustError" class="text-xs text-red-500" x-text="trustError"></p>
-                <p x-show="!trustLoading && !trustError && (!trustView || trustView.status === 'empty')" class="text-xs text-stone-400">No trust context yet.</p>
-                <p x-show="trustView && trustView.updated_at" class="text-[10px] text-stone-400 truncate" x-text="'Updated ' + trustView.updated_at"></p>
+                <p x-show="!trustLoading && !trustError && (!trustView || trustView.status === 'empty')" class="text-xs text-stone-400">暂无会话信任上下文。</p>
+                <p x-show="trustView && trustView.updated_at" class="text-[10px] text-stone-400 truncate" x-text="'更新于 ' + trustView.updated_at"></p>
             </section>
 
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Data</h3>
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
                     <span x-show="trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
+                <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="'范围：' + trustView.active_scope"></p>
                 <div class="space-y-1.5">
                     <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
                         <div class="trust-data-item">
@@ -552,20 +559,24 @@
                                 <span class="trust-pill" :class="trustStatusClass(dataset.quality_status || 'unknown')" x-text="trustStatusLabel(dataset.quality_status || 'unknown')"></span>
                             </div>
                             <p class="text-[10px] text-stone-400 mt-1">
-                                <span x-text="dataset.rows"></span> rows - <span x-text="dataset.columns"></span> cols
+                                <span x-text="dataset.rows"></span> 行 - <span x-text="dataset.columns"></span> 列
                             </p>
                             <p x-show="dataset.key_fields && dataset.key_fields.length" class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="dataset.key_fields.join(', ')"></p>
                         </div>
                     </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.datasets || trustView.datasets.length === 0)" class="text-xs text-stone-400 py-1">No datasets profiled.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.datasets || trustView.datasets.length === 0)" class="text-xs text-stone-400 py-1">暂无数据画像。</p>
                 </div>
             </section>
 
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Recommended Routes</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">可直接分析</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'routes' ? '' : 'routes'">?</button>
+                    </div>
                     <span x-show="trustView && trustView.routes && trustView.routes.length" class="text-[10px] text-stone-400" x-text="trustView.routes.length"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'routes'" class="trust-help-popover" x-text="trustHelpText('routes')"></p>
                 <div class="space-y-1.5">
                     <template x-for="(route, ri) in ((trustView && trustView.routes) || [])" :key="route.id || ri">
                         <button type="button" class="trust-route-item" @click="selectTrustRoute(route)">
@@ -573,23 +584,27 @@
                                 <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
                                 <span class="text-[10px] text-stone-400 shrink-0" x-text="route.budget_level"></span>
                             </div>
-                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || 'Prefill prompt'"></p>
+                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
                         </button>
                     </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.routes || trustView.routes.length === 0)" class="text-xs text-stone-400 py-1">No recommended route yet.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.routes || trustView.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无可直接分析路线。</p>
                 </div>
             </section>
 
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Hypotheses</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">假设检验</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'hypotheses' ? '' : 'hypotheses'">?</button>
+                    </div>
                     <span x-show="trustView && trustView.hypotheses && trustView.hypotheses.length" class="text-[10px] text-stone-400" x-text="trustView.hypotheses.length"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'hypotheses'" class="trust-help-popover" x-text="trustHelpText('hypotheses')"></p>
                 <div class="space-y-1.5" data-testid="trust-hypotheses">
                     <template x-for="(set, hi) in ((trustView && trustView.hypotheses) || [])" :key="set.id || hi">
                         <div class="trust-risk-item">
                             <div class="flex items-center justify-between gap-2">
-                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="[set.route, set.dataset].filter(Boolean).join(' - ') || 'Hypothesis set'"></span>
+                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="[set.route, set.dataset].filter(Boolean).join(' - ') || '假设集合'"></span>
                                 <span class="text-[10px] text-stone-400 shrink-0" x-text="formatHypothesisSummary(set)"></span>
                             </div>
                             <template x-for="(claim, ci) in (set.top_claims || [])" :key="claim.claim || ci">
@@ -600,15 +615,19 @@
                             </template>
                         </div>
                     </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.hypotheses || trustView.hypotheses.length === 0)" class="text-xs text-stone-400 py-1">No hypothesis set yet.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.hypotheses || trustView.hypotheses.length === 0)" class="text-xs text-stone-400 py-1">暂无假设集合。</p>
                 </div>
             </section>
 
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Risk Boundaries</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">风险边界</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'risks' ? '' : 'risks'">?</button>
+                    </div>
                     <span x-show="trustView && trustView.risks && trustView.risks.length" class="text-[10px] text-stone-400" x-text="trustView.risks.length"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'risks'" class="trust-help-popover" x-text="trustHelpText('risks')"></p>
                 <div class="space-y-1.5">
                     <template x-for="(risk, rki) in ((trustView && trustView.risks) || [])" :key="rki">
                         <div class="trust-risk-item">
@@ -619,29 +638,73 @@
                             <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="risk.message"></p>
                         </div>
                     </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.risks || trustView.risks.length === 0)" class="text-xs text-stone-400 py-1">No active risk boundary.</p>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.risks || trustView.risks.length === 0)" class="text-xs text-stone-400 py-1">暂无风险边界。</p>
                 </div>
             </section>
 
-            <section class="trust-section">
+            <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Verification</h3>
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">验证</h3>
                     <span class="trust-pill" :class="trustStatusClass((trustView && trustView.verification && trustView.verification.status) || 'unknown')" x-text="trustStatusLabel((trustView && trustView.verification && trustView.verification.status) || 'unknown')"></span>
                 </div>
                 <div x-show="trustView && trustView.verification">
                     <p class="text-xs text-stone-600 dark:text-stone-300">
-                        <span x-text="(trustView && trustView.verification && trustView.verification.claim_count) || 0"></span> claims -
-                        <span x-text="(trustView && trustView.verification && trustView.verification.failed_count) || 0"></span> failed -
-                        <span x-text="(trustView && trustView.verification && trustView.verification.downgraded_count) || 0"></span> downgraded
+                        <span x-text="(trustView && trustView.verification && trustView.verification.claim_count) || 0"></span> 条声明 -
+                        <span x-text="(trustView && trustView.verification && trustView.verification.failed_count) || 0"></span> 失败 -
+                        <span x-text="(trustView && trustView.verification && trustView.verification.downgraded_count) || 0"></span> 降级
                     </p>
                     <p x-show="trustView && trustView.verification && trustView.verification.created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="trustView && trustView.verification ? trustView.verification.created_at : ''"></p>
                 </div>
-                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.verification)" class="text-xs text-stone-400">No verification report yet.</p>
+                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.verification)" class="text-xs text-stone-400">暂无验证报告。</p>
+            </section>
+
+            <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史数据</h3>
+                    <span x-show="trustView && trustView.history && trustView.history.datasets && trustView.history.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.history.datasets.length"></span>
+                </div>
+                <div class="space-y-1.5">
+                    <template x-for="(dataset, hdi) in ((trustView && trustView.history && trustView.history.datasets) || [])" :key="dataset.dataset || hdi">
+                        <div class="trust-data-item">
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="dataset.dataset"></p>
+                                <span class="trust-pill" :class="trustStatusClass(dataset.quality_status || 'unknown')" x-text="trustStatusLabel(dataset.quality_status || 'unknown')"></span>
+                            </div>
+                            <p class="text-[10px] text-stone-400 mt-1">
+                                <span x-text="dataset.rows"></span> 行 - <span x-text="dataset.columns"></span> 列
+                            </p>
+                        </div>
+                    </template>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.history || !trustView.history.datasets || trustView.history.datasets.length === 0)" class="text-xs text-stone-400 py-1">暂无历史数据。</p>
+                </div>
+            </section>
+
+            <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史路线</h3>
+                    <span x-show="trustView && trustView.history && trustView.history.routes && trustView.history.routes.length" class="text-[10px] text-stone-400" x-text="trustView.history.routes.length"></span>
+                </div>
+                <div class="space-y-1.5">
+                    <template x-for="(route, hri) in ((trustView && trustView.history && trustView.history.routes) || [])" :key="route.id || hri">
+                        <button type="button" class="trust-route-item" @click="selectTrustRoute(route)">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
+                                <span class="text-[10px] text-stone-400 shrink-0" x-text="route.budget_level"></span>
+                            </div>
+                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
+                        </button>
+                    </template>
+                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.history || !trustView.history.routes || trustView.history.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无历史路线。</p>
+                </div>
             </section>
 
             <!-- Conversation Export -->
-            <div>
-                <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">导出对话</h3>
+            <div x-show="sessionSidePanelTab === 'outputs'">
+                <div class="flex items-center gap-1.5 mb-2">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">产出与导出</h3>
+                    <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'outputs' ? '' : 'outputs'">?</button>
+                </div>
+                <p x-show="trustHelpOpen === 'outputs'" class="trust-help-popover" x-text="trustHelpText('outputs')"></p>
                 <div class="grid grid-cols-2 gap-1.5">
                     <button @click="exportConversation('html')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">HTML</button>
                     <button @click="exportConversation('markdown')" class="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-40 transition-all" :disabled="!currentSessionId">MD</button>
@@ -649,7 +712,7 @@
             </div>
 
             <!-- Artifacts -->
-            <div>
+            <div x-show="sessionSidePanelTab === 'outputs'">
                 <div class="flex items-center justify-between mb-2">
                     <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">产出物</h3>
                     <span x-show="sessionArtifacts.length" class="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-100 dark:bg-stone-800 text-stone-400" x-text="sessionArtifacts.length"></span>

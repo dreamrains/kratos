@@ -73,6 +73,8 @@ function chatApp() {
         capabilities: null,
         analysisState: null,
         trustInspectorCollapsed: false,
+        sessionSidePanelTab: 'current',
+        trustHelpOpen: '',
         trustView: null,
         trustLoading: false,
         trustError: '',
@@ -1183,22 +1185,32 @@ function chatApp() {
 
         trustStatusLabel(status) {
             const labels = {
-                empty: 'Empty',
-                ready: 'Ready',
-                ready_with_warnings: 'Ready with warnings',
-                pass: 'Pass',
-                pass_with_downgrades: 'Pass with downgrades',
-                fail: 'Fail',
-                blocked: 'Blocked',
-                warning: 'Warning',
-                proposed: 'Proposed',
-                supported: 'Supported',
-                inconclusive: 'Inconclusive',
-                weakened: 'Weakened',
-                unsupported_by_data: 'Unsupported by data',
-                unknown: 'Unknown',
+                empty: '空',
+                ready: '就绪',
+                ready_with_warnings: '有提醒',
+                pass: '通过',
+                pass_with_downgrades: '有降级',
+                fail: '失败',
+                blocked: '阻塞',
+                warning: '提醒',
+                proposed: '待验证',
+                supported: '支持',
+                inconclusive: '不确定',
+                weakened: '减弱',
+                unsupported_by_data: '数据不支持',
+                unknown: '未知',
             };
             return labels[status || 'unknown'] || labels.unknown;
+        },
+
+        trustHelpText(topic) {
+            const help = {
+                routes: '这是什么：系统基于当前可用数据给出的可直接分析入口。为什么重要：它能让你从已有证据出发，避免空泛提问。你可以怎么做：点击路线填入输入框，按需修改后再发送。',
+                risks: '这是什么：当前分析可能遇到的数据质量、口径或覆盖范围边界。为什么重要：它提醒你哪些结论需要保留条件。你可以怎么做：先补充数据、缩小问题，或在结论中注明风险。',
+                hypotheses: '这是什么：围绕当前问题生成并被数据支持度标记的假设。为什么重要：它把探索方向和证据状态放在一起。你可以怎么做：优先推进支持或不确定的假设，并复核数据不支持的说法。',
+                outputs: '这是什么：本会话可导出的对话和已生成产出物。为什么重要：它让分析结果可以复用、归档和分享。你可以怎么做：导出 HTML/Markdown，或打开产出物继续检查。',
+            };
+            return help[topic] || '这是什么：当前侧栏信息。为什么重要：帮助你判断下一步。你可以怎么做：查看状态后继续分析。';
         },
 
         trustStatusClass(status) {
