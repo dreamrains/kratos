@@ -18,7 +18,8 @@ _ROUTE_KEYWORDS = {
 def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str, Any]:
     """Choose whether a requested analysis can proceed from current trust state."""
     contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
-    routes = _hydrate_refs(_list_attr(state, "route_proposals"))
+    raw_routes = _hydrate_refs(_list_attr(state, "route_proposals"))
+    routes = _executable_routes_from_capabilities(state) or raw_routes
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
 
     blocked = _blocked_contract(contracts)
@@ -52,12 +53,12 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
         route = routes[0]
 
     if route:
-        risk_fields = _required_field_risks(route, cleaning_logs)
-        if risk_fields:
+        risk_fields = _text_list(route.get("risk_fields")) or _required_field_risks(route, cleaning_logs)
+        if risk_fields or _text(route.get("category")) == "needs_confirmation":
             return _decision(
                 "clarify_intent",
                 dataset=_text(route.get("dataset")),
-                route=_text(route.get("direction")),
+                route=_route_direction(route),
                 reason="A required field has a cleaning decision that needs confirmation.",
                 required_user_action="confirm_cleaning_decision",
                 risk_fields=risk_fields,
@@ -67,7 +68,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
         return _decision(
             "direct_analysis",
             dataset=_text(route.get("dataset")),
-            route=_text(route.get("direction")),
+            route=_route_direction(route),
             reason="The request matches a supported data route.",
             confidence="medium",
             limitations=_text_list(route.get("limitations")),
@@ -79,6 +80,19 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
         reason="No supported analysis route can be selected deterministically.",
         required_user_action="clarify_analysis_goal",
     )
+
+
+def _executable_routes_from_capabilities(state: Any) -> list[dict[str, Any]]:
+    try:
+        from data_agent.agent.route_capabilities import build_route_capabilities
+
+        model = build_route_capabilities(state)
+    except Exception:
+        return []
+    routes = model.get("executable") if isinstance(model, dict) else None
+    if not isinstance(routes, list):
+        return []
+    return [item for item in routes if isinstance(item, dict)]
 
 
 def _decision(decision: str, **overrides: Any) -> dict[str, Any]:
@@ -142,7 +156,7 @@ def _mentions_retention(user_input: str) -> bool:
 def _infer_requested_route(user_input: str, routes: list[dict[str, Any]]) -> dict[str, Any] | None:
     text = (user_input or "").lower()
     for route in routes:
-        direction = _text(route.get("direction"))
+        direction = _route_direction(route)
         keywords = _ROUTE_KEYWORDS.get(direction, (direction,))
         if any(keyword and keyword in text for keyword in keywords):
             return route
@@ -152,7 +166,7 @@ def _infer_requested_route(user_input: str, routes: list[dict[str, Any]]) -> dic
 def _route_options(routes: list[dict[str, Any]]) -> list[dict[str, str]]:
     options = []
     for route in routes[:4]:
-        direction = _text(route.get("direction"))
+        direction = _route_direction(route)
         options.append({
             "direction": direction,
             "label": _text(route.get("label") or route.get("user_facing_label") or direction),
@@ -183,10 +197,14 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 def _route_requires_field_kind(route: dict[str, Any], column: str) -> bool:
     requirements = set(_text_list(route.get("evidence_requirements")))
-    direction = _text(route.get("direction"))
+    direction = _route_direction(route)
     if column.lower() == "date" and ("date" in requirements or direction in {"trend", "period_compare"}):
         return True
     return False
+
+
+def _route_direction(route: dict[str, Any]) -> str:
+    return _text(route.get("route") or route.get("direction"))
 
 
 def _text_list(value: Any) -> list[str]:

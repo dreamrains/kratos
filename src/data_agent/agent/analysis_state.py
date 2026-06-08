@@ -429,12 +429,28 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
     if state is None:
         return ""
     pending = [c for c in state.pending_confirmations if c.get("status") == "pending"]
+    active_scope = _normalize_active_scope(state.active_scope)
+    try:
+        from data_agent.agent.route_capabilities import build_route_capabilities
+
+        recommendation_counts = build_route_capabilities(state).get("counts") or {}
+    except Exception:
+        recommendation_counts = {}
     lines = [
         f"- session_id: {state.session_id}",
         f"- project_name: {state.project_name or '-'}",
         f"- goal: {state.goal or '-'}",
         f"- stage: {state.stage}",
         f"- data_state: {state.data_state}",
+        (
+            f"- active_scope: mode={active_scope.get('active_mode') or '-'}, "
+            f"dataset={active_scope.get('active_dataset') or '-'}, "
+            f"route={active_scope.get('active_route') or '-'}"
+        ),
+        (
+            f"- recommendation_tracks: executable={recommendation_counts.get('executable', 0)}, "
+            f"exploratory={recommendation_counts.get('exploratory', 0)}"
+        ),
         f"- data_requirements: {len(state.data_requirements)}",
         f"- has_analysis_plan: {bool(state.analysis_plan)}",
         f"- has_analysis_spec: {bool(state.analysis_spec)}",

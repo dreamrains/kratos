@@ -703,6 +703,25 @@ def test_analysis_state_summary_includes_compact_trust_context():
     assert "unsupported_claims" not in summary
 
 
+def test_analysis_state_summary_includes_dual_track_recommendation_counts():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [
+        {
+            "dataset": "orders",
+            "supported_analyses": ["cohort"],
+            "unsupported_analyses": [{"type": "user_level_retention", "reason": "missing events"}],
+        }
+    ]
+    state.route_proposals = [{"id": "route_cohort", "dataset": "orders", "direction": "cohort"}]
+
+    summary = analysis_state_summary(state)
+
+    assert "- active_scope: mode=data_loaded, dataset=orders, route=-" in summary
+    assert "- recommendation_tracks: executable=1, exploratory=1" in summary
+
+
 def test_analysis_state_summary_omits_complex_trust_ref_values():
     state = AnalysisSessionState(session_id="s1")
     state.add_dataset_contract_ref({

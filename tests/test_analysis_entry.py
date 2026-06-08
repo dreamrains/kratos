@@ -85,6 +85,22 @@ def test_vague_request_with_multiple_routes_returns_clarify_intent():
     ]
 
 
+def test_entry_decision_uses_active_dataset_for_vague_multi_dataset_routes():
+    state = AnalysisSessionState(session_id="entry_tests", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "old", "dataset": "sales", "direction": "trend"},
+        {"id": "new", "dataset": "orders", "direction": "cohort"},
+    ]
+
+    decision = decide_analysis_entry("please analyze this dataset", _intent("guide_analysis"), state)
+
+    assert decision["decision"] == "direct_analysis"
+    assert decision["dataset"] == "orders"
+    assert decision["route"] == "cohort"
+
+
 def test_unsupported_retention_request_returns_request_data():
     state = _state()
     state.dataset_contracts[0]["unsupported_analyses"] = [
