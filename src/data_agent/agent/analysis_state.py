@@ -37,7 +37,15 @@ def _now() -> str:
 
 def _normalize_active_scope(value: Any) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {}
-    scope = dict(DEFAULT_ACTIVE_SCOPE)
+    scope = {
+        "active_dataset": "",
+        "active_route": "",
+        "active_goal": "",
+        "active_mode": "consulting",
+        "active_turn_id": "",
+        "related_ref_ids": {},
+        "updated_at": "",
+    }
     for key in ("active_dataset", "active_route", "active_goal", "active_turn_id", "updated_at"):
         item = source.get(key)
         if isinstance(item, str):
@@ -47,7 +55,11 @@ def _normalize_active_scope(value: Any) -> dict[str, Any]:
         scope["active_mode"] = mode
     related_ref_ids = source.get("related_ref_ids")
     if isinstance(related_ref_ids, dict):
-        scope["related_ref_ids"] = related_ref_ids
+        scope["related_ref_ids"] = {
+            key: [item for item in value if isinstance(item, str) and item]
+            for key, value in related_ref_ids.items()
+            if isinstance(key, str) and isinstance(value, list)
+        }
     return scope
 
 
@@ -256,12 +268,12 @@ class AnalysisSessionState:
         normalized: dict[str, list[str]] = {}
         for key, value in related.items():
             if isinstance(key, str) and isinstance(value, list):
-                normalized[key] = [item for item in value if isinstance(item, str)]
+                normalized[key] = [item for item in value if isinstance(item, str) and item]
         self.active_scope["related_ref_ids"] = normalized
         return normalized
 
     def _add_active_ref(self, key: str, ref_id: str | None) -> None:
-        if not ref_id:
+        if not isinstance(ref_id, str) or not ref_id:
             return
         related = self._active_related_refs()
         refs = related.setdefault(key, [])

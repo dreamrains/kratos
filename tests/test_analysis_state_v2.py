@@ -194,6 +194,38 @@ class TestTrustworthyWorkflowRefs:
         assert state.active_scope["active_goal"] == "讨论留存指标设计"
         assert state.active_scope["active_mode"] == "consulting"
 
+    def test_active_scope_related_refs_are_not_shared_between_instances(self):
+        first = AnalysisSessionState(session_id="s1")
+        second = AnalysisSessionState(session_id="s2")
+
+        first.active_scope["related_ref_ids"]["dataset_contracts"] = ["contract_orders"]
+
+        assert second.active_scope["related_ref_ids"] == {}
+
+    def test_from_dict_normalizes_malformed_active_scope_related_refs(self):
+        state = AnalysisSessionState.from_dict(
+            {
+                "session_id": "s1",
+                "active_scope": {
+                    "related_ref_ids": {
+                        "bad": "not-list",
+                        "ok": ["x", 1, ""],
+                    },
+                },
+            },
+            "s1",
+        )
+
+        assert state.active_scope["related_ref_ids"] == {"ok": ["x"]}
+
+    def test_dataset_contract_with_non_string_id_does_not_add_active_ref(self):
+        state = AnalysisSessionState(session_id="s1")
+
+        state.add_dataset_contract_ref({"id": 123, "dataset": "orders"})
+
+        assert state.active_scope["active_dataset"] == "orders"
+        assert state.active_scope["related_ref_ids"] == {}
+
     def test_to_dict_roundtrip_trust_refs(self):
         state = AnalysisSessionState(session_id="s1")
         state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
