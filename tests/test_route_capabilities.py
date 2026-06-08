@@ -1,5 +1,6 @@
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.route_capabilities import build_route_capabilities
+from data_agent.agent.trust_contracts import build_route_proposals
 
 
 def test_builds_ready_executable_routes_for_active_dataset():
@@ -116,3 +117,56 @@ def test_explicit_consulting_mode_wins_even_with_loaded_active_dataset():
     assert model["active_mode"] == "consulting"
     assert model["executable"] == []
     assert model["exploratory"][0]["category"] == "method_discussion"
+
+
+def test_generated_trend_route_field_roles_trigger_cleaning_confirmation():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = build_route_proposals({
+        "id": "duc_orders_001",
+        "dataset": "orders",
+        "field_roles": {
+            "date": ["date"],
+            "metrics": ["gmv"],
+            "rate_metrics": [],
+            "dimensions": ["channel"],
+            "ids": [],
+        },
+        "supported_analyses": ["trend"],
+    })
+    state.cleaning_logs = [
+        {
+            "dataset": "orders",
+            "decisions": [
+                {"column": "date", "decision_type": "needs_confirmation"}
+            ],
+        }
+    ]
+
+    model = build_route_capabilities(state)
+
+    assert model["executable"][0]["route"] == "trend"
+    assert model["executable"][0]["category"] == "needs_confirmation"
+    assert model["executable"][0]["risk_fields"] == ["date"]
+
+
+def test_limit_zero_returns_no_capability_items():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [
+        {
+            "dataset": "orders",
+            "unsupported_analyses": [{"type": "user_level_retention"}],
+        }
+    ]
+    state.route_proposals = [
+        {"id": "route_cohort", "dataset": "orders", "direction": "cohort"}
+    ]
+
+    model = build_route_capabilities(state, limit=0)
+
+    assert model["executable"] == []
+    assert model["exploratory"] == []
+    assert model["counts"] == {"executable": 0, "exploratory": 0}

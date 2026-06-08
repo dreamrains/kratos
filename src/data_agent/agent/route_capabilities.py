@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
-
-from data_agent.agent.trust_view import _hydrate_refs
 
 
 _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
@@ -12,6 +12,7 @@ _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
 
 def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     """Build executable and exploratory route recommendations from session state."""
+    limit = _normalize_limit(limit)
     scope = getattr(state, "active_scope", {}) if state is not None else {}
     if not isinstance(scope, dict):
         scope = {}
@@ -24,7 +25,10 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     routes = _hydrate_refs(_list_attr(state, "route_proposals"))
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
 
-    if active_mode == "consulting":
+    if limit <= 0:
+        executable: list[dict[str, Any]] = []
+        exploratory: list[dict[str, Any]] = []
+    elif active_mode == "consulting":
         executable: list[dict[str, Any]] = []
         exploratory = _consulting_exploratory(_list_attr(state, "last_recommended_paths"), limit)
     else:
@@ -158,7 +162,7 @@ def _consulting_exploratory(paths: list[dict[str, Any]], limit: int) -> list[dic
 
 
 def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
-    required = set(_text_list(route.get("evidence_requirements")))
+    required = set(_required_fields(route))
     if not required:
         return []
     route_dataset = _text(route.get("dataset"))
@@ -174,6 +178,26 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
             if field in required:
                 risks.append(field)
     return _dedupe(risks)
+
+
+def _required_fields(route: dict[str, Any]) -> list[str]:
+    required = _text_list(route.get("evidence_requirements"))
+    roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
+    direction = _text(route.get("direction"))
+    if direction in {"trend", "period_compare"}:
+        required.extend(_text_list(roles.get("date")))
+    elif direction == "dimension_decomposition":
+        required.extend(_text_list(roles.get("dimensions")))
+        required.extend(_text_list(roles.get("metrics")))
+        required.extend(_text_list(roles.get("rate_metrics")))
+    elif direction == "cohort":
+        required.extend(_text_list(roles.get("ids")))
+        required.extend(_text_list(roles.get("date")))
+    elif direction == "funnel":
+        required.extend(_text_list(roles.get("dimensions")))
+        required.extend(_text_list(roles.get("metrics")))
+        required.extend(_text_list(roles.get("rate_metrics")))
+    return _dedupe(required)
 
 
 def _route_prompt(route: dict[str, Any], risk_fields: list[str]) -> str:
@@ -198,6 +222,33 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _hydrate_refs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_hydrate_ref(item) for item in items]
+
+
+def _hydrate_ref(item: dict[str, Any]) -> dict[str, Any]:
+    artifact_path = _text(item.get("artifact_path"))
+    if not artifact_path:
+        return item
+    artifact = _read_json_artifact(artifact_path)
+    if not isinstance(artifact, dict):
+        return item
+    merged = dict(item)
+    merged.update(artifact)
+    return merged
+
+
+def _read_json_artifact(artifact_path: str) -> dict[str, Any] | None:
+    try:
+        path = Path(artifact_path)
+        if path.suffix.lower() != ".json" or not path.is_file():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _cleaning_decisions(log: dict[str, Any]) -> list[dict[str, Any]]:
     decisions = log.get("decisions")
     if isinstance(decisions, list):
@@ -207,6 +258,13 @@ def _cleaning_decisions(log: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _raw_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _normalize_limit(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 4
 
 
 def _text_list(value: Any) -> list[str]:
