@@ -1180,7 +1180,15 @@ function chatApp() {
                 .map(([key, value]) => `${key}: ${value}`);
             if (parts.length) return parts.join(' | ');
             const count = Number(set?.count || 0);
-            return count ? `${count} proposed` : 'No evaluated hypotheses';
+            return count ? `${count} 个假设` : '暂无评估假设';
+        },
+
+        formatActiveScope(scope) {
+            if (!scope) return '范围：咨询模式';
+            const dataset = scope.active_dataset || '未选择数据';
+            const route = scope.active_route || '未选择路线';
+            const mode = scope.active_mode || 'consulting';
+            return `范围：${dataset} / ${route} / ${mode}`;
         },
 
         trustStatusLabel(status) {

@@ -527,7 +527,7 @@
         </div>
 
         <div class="flex-1 overflow-y-auto p-4 space-y-5" x-show="!trustInspectorCollapsed" x-transition.opacity>
-            <div class="session-side-tabs" role="tablist" aria-label="会话侧栏">
+            <div class="session-side-tabs">
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'current' }" @click="sessionSidePanelTab = 'current'">当前分析</button>
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'history' }" @click="sessionSidePanelTab = 'history'">数据与历史</button>
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'outputs' }" @click="sessionSidePanelTab = 'outputs'">产出与导出</button>
@@ -550,7 +550,7 @@
                     <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
                     <span x-show="trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
-                <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="'范围：' + trustView.active_scope"></p>
+                <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
                 <div class="space-y-1.5">
                     <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
                         <div class="trust-data-item">

@@ -188,9 +188,19 @@ def test_session_side_panel_tabs_preserve_export_controls():
     assert "数据与历史" in html
     assert "产出与导出" in html
     assert "x-show=\"sessionSidePanelTab === 'outputs'\"" in html
-    assert "exportConversation('html')" in html
-    assert "exportConversation('markdown')" in html
-    assert "sessionArtifacts" in html
+    assert 'role="tablist"' not in html
+
+    outputs_match = re.search(
+        r'<div x-show="sessionSidePanelTab === \'outputs\'">(?P<body>.*?)<!-- Artifacts -->'
+        r'\s*<div x-show="sessionSidePanelTab === \'outputs\'">(?P<artifacts>.*?)</div>\s*</div>\s*</aside>',
+        html,
+        re.S,
+    )
+    assert outputs_match, "outputs tab content not found"
+    outputs_body = outputs_match.group("body") + outputs_match.group("artifacts")
+    assert "exportConversation('html')" in outputs_body
+    assert "exportConversation('markdown')" in outputs_body
+    assert "sessionArtifacts" in outputs_body
 
 
 def test_session_side_panel_uses_chinese_trust_labels_and_help():
