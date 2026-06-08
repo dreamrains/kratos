@@ -19,10 +19,36 @@ from data_agent.config import get_config
 
 STAGES = {"discover", "scope", "plan", "execute", "report", "follow_up"}
 DATA_STATES = {"no_data", "data_loaded", "insufficient_data", "unknown"}
+ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
+DEFAULT_ACTIVE_SCOPE = {
+    "active_dataset": "",
+    "active_route": "",
+    "active_goal": "",
+    "active_mode": "consulting",
+    "active_turn_id": "",
+    "related_ref_ids": {},
+    "updated_at": "",
+}
 
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _normalize_active_scope(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    scope = dict(DEFAULT_ACTIVE_SCOPE)
+    for key in ("active_dataset", "active_route", "active_goal", "active_turn_id", "updated_at"):
+        item = source.get(key)
+        if isinstance(item, str):
+            scope[key] = item
+    mode = source.get("active_mode")
+    if mode in ACTIVE_MODES:
+        scope["active_mode"] = mode
+    related_ref_ids = source.get("related_ref_ids")
+    if isinstance(related_ref_ids, dict):
+        scope["related_ref_ids"] = related_ref_ids
+    return scope
 
 
 def _state_path(session_id: str) -> Path:
@@ -52,6 +78,7 @@ class AnalysisSessionState:
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     regression_history: list[dict[str, Any]] = field(default_factory=list)
+    active_scope: dict[str, Any] = field(default_factory=lambda: _normalize_active_scope(None))
     updated_at: str = field(default_factory=_now)
 
     @classmethod
@@ -78,6 +105,7 @@ class AnalysisSessionState:
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             regression_history=list(data.get("regression_history") or []),
+            active_scope=_normalize_active_scope(data.get("active_scope")),
             updated_at=data.get("updated_at") or _now(),
         )
 
@@ -102,6 +130,7 @@ class AnalysisSessionState:
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,
             "regression_history": self.regression_history,
+            "active_scope": _normalize_active_scope(self.active_scope),
             "updated_at": self.updated_at,
         }
 
@@ -220,9 +249,63 @@ class AnalysisSessionState:
         collection.append(item)
         return item
 
+    def _active_related_refs(self) -> dict[str, list[str]]:
+        related = self.active_scope.get("related_ref_ids")
+        if not isinstance(related, dict):
+            related = {}
+        normalized: dict[str, list[str]] = {}
+        for key, value in related.items():
+            if isinstance(key, str) and isinstance(value, list):
+                normalized[key] = [item for item in value if isinstance(item, str)]
+        self.active_scope["related_ref_ids"] = normalized
+        return normalized
+
+    def _add_active_ref(self, key: str, ref_id: str | None) -> None:
+        if not ref_id:
+            return
+        related = self._active_related_refs()
+        refs = related.setdefault(key, [])
+        if ref_id not in refs:
+            refs.append(ref_id)
+
+    def set_active_dataset(self, dataset: str, related_ref_id: str | None = None) -> None:
+        self.active_scope = _normalize_active_scope(self.active_scope)
+        self.active_scope["active_dataset"] = dataset
+        self.active_scope["active_route"] = ""
+        self.active_scope["active_mode"] = "data_loaded"
+        self.active_scope["updated_at"] = _now()
+        self._add_active_ref("dataset_contracts", related_ref_id)
+
+    def set_active_route(
+        self,
+        route: str,
+        goal: str = "",
+        dataset: str = "",
+        related_ref_id: str | None = None,
+    ) -> None:
+        self.active_scope = _normalize_active_scope(self.active_scope)
+        if dataset:
+            self.active_scope["active_dataset"] = dataset
+        self.active_scope["active_route"] = route
+        self.active_scope["active_goal"] = goal
+        self.active_scope["active_mode"] = "analysis"
+        self.active_scope["updated_at"] = _now()
+        self._add_active_ref("route_proposals", related_ref_id)
+
+    def set_consulting_mode(self, goal: str = "") -> None:
+        self.active_scope = _normalize_active_scope(self.active_scope)
+        self.active_scope["active_route"] = ""
+        self.active_scope["active_goal"] = goal
+        self.active_scope["active_mode"] = "consulting"
+        self.active_scope["updated_at"] = _now()
+
     def add_dataset_contract_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         self.data_state = "data_loaded"
-        return self._upsert_ref(self.dataset_contracts, ref)
+        item = self._upsert_ref(self.dataset_contracts, ref)
+        dataset = item.get("dataset")
+        if isinstance(dataset, str) and dataset:
+            self.set_active_dataset(dataset, related_ref_id=item.get("id"))
+        return item
 
     def add_cleaning_log_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         return self._upsert_ref(self.cleaning_logs, ref)

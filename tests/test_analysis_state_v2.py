@@ -152,6 +152,48 @@ class TestTrustworthyWorkflowRefs:
         assert state.route_proposals == []
         assert state.verification_reports == []
 
+    def test_active_scope_defaults_and_roundtrip(self):
+        state = AnalysisSessionState(session_id="s1")
+
+        assert state.active_scope == {
+            "active_dataset": "",
+            "active_route": "",
+            "active_goal": "",
+            "active_mode": "consulting",
+            "active_turn_id": "",
+            "related_ref_ids": {},
+            "updated_at": "",
+        }
+
+        state.set_active_dataset("orders", related_ref_id="contract_orders")
+        restored = AnalysisSessionState.from_dict(state.to_dict(), "s1")
+
+        assert restored.active_scope["active_dataset"] == "orders"
+        assert restored.active_scope["active_route"] == ""
+        assert restored.active_scope["active_mode"] == "data_loaded"
+        assert restored.active_scope["related_ref_ids"] == {
+            "dataset_contracts": ["contract_orders"]
+        }
+
+    def test_active_scope_route_and_consulting_modes(self):
+        state = AnalysisSessionState(session_id="s1")
+
+        state.set_active_dataset("orders")
+        state.set_active_route("cohort", goal="分析订单留存", related_ref_id="route_cohort")
+
+        assert state.active_scope["active_dataset"] == "orders"
+        assert state.active_scope["active_route"] == "cohort"
+        assert state.active_scope["active_goal"] == "分析订单留存"
+        assert state.active_scope["active_mode"] == "analysis"
+        assert state.active_scope["related_ref_ids"]["route_proposals"] == ["route_cohort"]
+
+        state.set_consulting_mode("讨论留存指标设计")
+
+        assert state.active_scope["active_dataset"] == "orders"
+        assert state.active_scope["active_route"] == ""
+        assert state.active_scope["active_goal"] == "讨论留存指标设计"
+        assert state.active_scope["active_mode"] == "consulting"
+
     def test_to_dict_roundtrip_trust_refs(self):
         state = AnalysisSessionState(session_id="s1")
         state.add_dataset_contract_ref({"id": "duc_main_001", "dataset": "main"})
