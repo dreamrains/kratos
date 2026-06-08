@@ -19,10 +19,16 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     """Choose whether a requested analysis can proceed from current trust state."""
     contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
     raw_routes = _hydrate_refs(_list_attr(state, "route_proposals"))
-    routes = _executable_routes_from_capabilities(state) or raw_routes
+    active_dataset = _active_dataset(state)
+    scoped_contracts = _filter_by_dataset(contracts, active_dataset)
+    capability_routes = _executable_routes_from_capabilities(state)
+    if capability_routes is None or (not capability_routes and not _explicit_active_mode(state)):
+        routes = raw_routes
+    else:
+        routes = capability_routes
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
 
-    blocked = _blocked_contract(contracts)
+    blocked = _blocked_contract(scoped_contracts)
     if blocked:
         return _decision(
             "blocked",
@@ -32,10 +38,11 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             limitations=_quality_blocks(blocked),
         )
 
-    unsupported_retention = _unsupported_retention(contracts)
+    unsupported_retention = _unsupported_retention(scoped_contracts)
     if _mentions_retention(user_input) and unsupported_retention:
         return _decision(
             "request_data",
+            dataset=active_dataset,
             reason="The loaded data cannot support user-level retention analysis.",
             required_user_action="provide_user_level_retention_data",
             limitations=_unsupported_reasons(unsupported_retention),
@@ -82,16 +89,16 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     )
 
 
-def _executable_routes_from_capabilities(state: Any) -> list[dict[str, Any]]:
+def _executable_routes_from_capabilities(state: Any) -> list[dict[str, Any]] | None:
     try:
         from data_agent.agent.route_capabilities import build_route_capabilities
+    except ImportError:
+        return None
 
-        model = build_route_capabilities(state)
-    except Exception:
-        return []
+    model = build_route_capabilities(state)
     routes = model.get("executable") if isinstance(model, dict) else None
     if not isinstance(routes, list):
-        return []
+        return None
     return [item for item in routes if isinstance(item, dict)]
 
 
@@ -117,6 +124,32 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _active_dataset(state: Any) -> str:
+    scope = getattr(state, "active_scope", None)
+    if not isinstance(scope, dict):
+        return ""
+    return _text(scope.get("active_dataset"))
+
+
+def _explicit_active_mode(state: Any) -> str:
+    scope = getattr(state, "active_scope", None)
+    if not isinstance(scope, dict):
+        return ""
+    mode = _text(scope.get("active_mode"))
+    if mode == "consulting" and not any(
+        _text(scope.get(key))
+        for key in ("active_dataset", "active_route", "active_goal", "updated_at")
+    ):
+        return ""
+    return mode
+
+
+def _filter_by_dataset(items: list[dict[str, Any]], dataset: str) -> list[dict[str, Any]]:
+    if not dataset:
+        return items
+    return [item for item in items if _text(item.get("dataset")) == dataset]
 
 
 def _blocked_contract(contracts: list[dict[str, Any]]) -> dict[str, Any] | None:

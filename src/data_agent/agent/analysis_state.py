@@ -432,10 +432,10 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
     active_scope = _normalize_active_scope(state.active_scope)
     try:
         from data_agent.agent.route_capabilities import build_route_capabilities
-
-        recommendation_counts = build_route_capabilities(state).get("counts") or {}
-    except Exception:
+    except ImportError:
         recommendation_counts = {}
+    else:
+        recommendation_counts = build_route_capabilities(state).get("counts") or {}
     lines = [
         f"- session_id: {state.session_id}",
         f"- project_name: {state.project_name or '-'}",

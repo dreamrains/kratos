@@ -101,6 +101,48 @@ def test_entry_decision_uses_active_dataset_for_vague_multi_dataset_routes():
     assert decision["route"] == "cohort"
 
 
+def test_retention_unsupported_uses_active_dataset_only():
+    state = AnalysisSessionState(session_id="entry_tests", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [
+        {
+            "dataset": "old_sales",
+            "unsupported_analyses": [
+                {"type": "user_level_retention", "reason": "old aggregate data"}
+            ],
+        },
+        {
+            "dataset": "orders",
+            "supported_analyses": ["cohort"],
+            "unsupported_analyses": [],
+        },
+    ]
+    state.route_proposals = [
+        {"id": "route_cohort", "dataset": "orders", "direction": "cohort"}
+    ]
+
+    decision = decide_analysis_entry("analyze cohort retention", _intent(), state)
+
+    assert decision["decision"] == "direct_analysis"
+    assert decision["dataset"] == "orders"
+    assert decision["route"] == "cohort"
+
+
+def test_consulting_mode_does_not_fall_back_to_raw_routes():
+    state = AnalysisSessionState(session_id="entry_tests", data_state="data_loaded")
+    state.set_consulting_mode("discuss method")
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "sales", "direction": "trend"}
+    ]
+
+    decision = decide_analysis_entry("show revenue trend", _intent(), state)
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["route"] == ""
+    assert decision["required_user_action"] == "clarify_analysis_goal"
+
+
 def test_unsupported_retention_request_returns_request_data():
     state = _state()
     state.dataset_contracts[0]["unsupported_analyses"] = [
