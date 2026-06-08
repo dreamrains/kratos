@@ -332,3 +332,36 @@ def test_runtime_skips_duplicate_hypothesis_set_for_same_route(tmp_path):
         assert len(state.hypothesis_sets) == 1
     finally:
         cfg.sessions_dir = old_sessions
+
+
+def test_runtime_refreshes_existing_hypothesis_set_from_evidence(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_refresh", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{"dataset": "sales", "direction": "trend"}]
+
+        first = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+        claim = hydrated[0]["hypotheses"][0]["claim"]
+        state.evidence_records = [{"id": "ev_support", "claim": claim, "dataset": "sales"}]
+
+        refreshed = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+        refreshed_hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+
+        assert first is not None
+        assert refreshed is not None
+        assert len(state.hypothesis_sets) == 1
+        assert refreshed_hydrated[0]["hypotheses"][0]["status"] == "supported"
+        assert refreshed_hydrated[0]["hypotheses"][0]["supporting_evidence_ids"] == ["ev_support"]
+        assert refreshed_hydrated[0]["status_summary"]["supported"] == 1
+    finally:
+        cfg.sessions_dir = old_sessions

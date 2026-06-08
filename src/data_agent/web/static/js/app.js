@@ -1191,6 +1191,11 @@ function chatApp() {
                 fail: 'Fail',
                 blocked: 'Blocked',
                 warning: 'Warning',
+                proposed: 'Proposed',
+                supported: 'Supported',
+                inconclusive: 'Inconclusive',
+                weakened: 'Weakened',
+                unsupported_by_data: 'Unsupported by data',
                 unknown: 'Unknown',
             };
             return labels[status || 'unknown'] || labels.unknown;
@@ -1203,6 +1208,11 @@ function chatApp() {
                 pass: 'trust-pill-ok',
                 pass_with_downgrades: 'trust-pill-warn',
                 warning: 'trust-pill-warn',
+                proposed: 'trust-pill-muted',
+                supported: 'trust-pill-ok',
+                inconclusive: 'trust-pill-warn',
+                weakened: 'trust-pill-warn',
+                unsupported_by_data: 'trust-pill-blocked',
                 fail: 'trust-pill-blocked',
                 blocked: 'trust-pill-blocked',
                 empty: 'trust-pill-muted',

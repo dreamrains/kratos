@@ -350,6 +350,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- preview_digests: {len(state.preview_digests)}",
         f"- route_proposals: {len(state.route_proposals)}",
         f"- verification_reports: {len(state.verification_reports)}",
+        f"- hypothesis_sets: {len(state.hypothesis_sets)}",
         f"- pending_confirmations: {len(pending)}",
     ]
     contract_refs = _compact_trust_refs(
@@ -370,6 +371,12 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
     )
     if verification_refs:
         lines.append("- recent_verification_reports:\n  " + "\n  ".join(verification_refs))
+    hypothesis_refs = _compact_trust_refs(
+        state.hypothesis_sets,
+        ("id", "dataset", "route", "count"),
+    )
+    if hypothesis_refs:
+        lines.append("- recent_hypothesis_sets:\n  " + "\n  ".join(hypothesis_refs))
     if state.last_recommended_paths:
         paths = []
         for i, path in enumerate(state.last_recommended_paths[:3], 1):

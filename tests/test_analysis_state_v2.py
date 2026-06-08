@@ -210,6 +210,12 @@ class TestTrustworthyWorkflowRefs:
         state.add_preview_digest_ref({"id": "preview_main_001", "dataset": "main"})
         state.add_route_proposal_ref({"id": "route_main_001", "direction": "trend"})
         state.add_verification_report_ref({"id": "verify_001", "overall_status": "pass"})
+        state.add_hypothesis_set_ref({
+            "id": "hyps_main_001",
+            "dataset": "main",
+            "route": "trend",
+            "count": 3,
+        })
 
         summary = analysis_state_summary(state)
 
@@ -218,6 +224,9 @@ class TestTrustworthyWorkflowRefs:
         assert "preview_digests: 1" in summary
         assert "route_proposals: 1" in summary
         assert "verification_reports: 1" in summary
+        assert "hypothesis_sets: 1" in summary
+        assert "recent_hypothesis_sets:" in summary
+        assert "id=hyps_main_001" in summary
 
 
 class TestConfirmations:

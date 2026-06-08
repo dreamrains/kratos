@@ -79,19 +79,35 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
 
     try:
         from data_agent.agent.analysis_entry import decide_analysis_entry
-        from data_agent.agent.hypotheses import build_hypothesis_set, persist_hypothesis_set
+        from data_agent.agent.hypotheses import (
+            build_hypothesis_set,
+            hydrate_hypothesis_refs,
+            persist_hypothesis_set,
+            update_hypotheses_from_evidence,
+        )
 
         decision = decide_analysis_entry(user_input, intent, state)
         if decision.get("decision") not in {"direct_analysis", "exploratory_only", "request_data"}:
             return None
 
-        dataset = str(decision.get("dataset") or "")
-        route = str(decision.get("route") or "")
-        if _has_hypothesis_set(state, dataset, route):
-            return None
-
+        evidence_records = _list_attr(state, "evidence_records")
         hypothesis_set = build_hypothesis_set(user_input, decision, state)
+        dataset = str(hypothesis_set.get("dataset") or "")
+        route = str(hypothesis_set.get("route") or "")
+        existing_ref = _find_hypothesis_set_ref(state, dataset, route)
+        if existing_ref and not evidence_records:
+            return None
+        if existing_ref:
+            hydrated = hydrate_hypothesis_refs([existing_ref])
+            if not hydrated:
+                return None
+            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], evidence_records)
+        elif evidence_records:
+            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, evidence_records)
+
         ref = persist_hypothesis_set(str(getattr(state, "session_id", "")), hypothesis_set)
+        if existing_ref and existing_ref.get("created_at"):
+            ref["created_at"] = existing_ref["created_at"]
         add_ref = getattr(state, "add_hypothesis_set_ref", None)
         if callable(add_ref):
             stored = add_ref(ref)
@@ -113,11 +129,11 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
         return None
 
 
-def _has_hypothesis_set(state: Any, dataset: str, route: str) -> bool:
+def _find_hypothesis_set_ref(state: Any, dataset: str, route: str) -> dict[str, Any] | None:
     for ref in _list_attr(state, "hypothesis_sets"):
         if str(ref.get("dataset") or "") == dataset and str(ref.get("route") or "") == route:
-            return True
-    return False
+            return ref
+    return None
 
 
 def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:

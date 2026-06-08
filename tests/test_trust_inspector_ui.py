@@ -160,6 +160,17 @@ def test_trust_inspector_contains_hypothesis_section():
     assert "formatHypothesisSummary(set)" in js
 
 
+def test_trust_inspector_labels_hypothesis_statuses():
+    js = _app_js()
+
+    assert "proposed: 'Proposed'" in js
+    assert "supported: 'Supported'" in js
+    assert "inconclusive: 'Inconclusive'" in js
+    assert "unsupported_by_data: 'Unsupported by data'" in js
+    assert "supported: 'trust-pill-ok'" in js
+    assert "unsupported_by_data: 'trust-pill-blocked'" in js
+
+
 def test_trust_inspector_empty_states_hide_during_loading_or_error():
     html = _index_html()
 
