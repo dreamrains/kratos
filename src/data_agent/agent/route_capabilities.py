@@ -56,7 +56,7 @@ def _executable_routes(
         dataset = _text(route.get("dataset"))
         if active_dataset and dataset != active_dataset:
             continue
-        direction = _text(route.get("direction"))
+        direction = _text(route.get("direction") or route.get("route"))
         if not direction:
             continue
         risk_fields = _required_field_risks(route, cleaning_logs)
@@ -183,7 +183,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 def _required_fields(route: dict[str, Any]) -> list[str]:
     required = _text_list(route.get("evidence_requirements"))
     roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
-    direction = _text(route.get("direction"))
+    direction = _text(route.get("direction") or route.get("route"))
     if direction in {"trend", "period_compare"}:
         required.extend(_text_list(roles.get("date")))
     elif direction == "dimension_decomposition":
@@ -201,7 +201,7 @@ def _required_fields(route: dict[str, Any]) -> list[str]:
 
 
 def _route_prompt(route: dict[str, Any], risk_fields: list[str]) -> str:
-    direction = _text(route.get("direction"))
+    direction = _text(route.get("direction") or route.get("route"))
     if risk_fields:
         fields = ", ".join(risk_fields)
         return f"Before running {direction}, please confirm the cleaning decisions for: {fields}."

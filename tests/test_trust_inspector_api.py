@@ -39,6 +39,28 @@ def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_pa
             "risks": [],
             "verification": None,
             "hypotheses": [],
+            "active_scope": {
+                "active_dataset": "",
+                "active_route": "",
+                "active_goal": "",
+                "active_mode": "consulting",
+            },
+            "scope_counts": {
+                "datasets": 0,
+                "routes": 0,
+                "risks": 0,
+                "hypothesis_sets": 0,
+                "artifacts": 0,
+            },
+            "recommendations": {
+                "active_dataset": "",
+                "active_route": "",
+                "active_mode": "consulting",
+                "executable": [],
+                "exploratory": [],
+                "counts": {"executable": 0, "exploratory": 0},
+            },
+            "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
         }
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
@@ -122,23 +144,7 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                     "preview_notes": [],
                 }
             ],
-            "routes": [
-                {
-                    "id": "route_trend",
-                    "dataset": "sales",
-                    "direction": "trend",
-                    "label": "Revenue trend",
-                    "reason": "order_date and revenue are available",
-                    "limitations": [],
-                    "budget_level": "low",
-                    "prompt": (
-                        "Please analyze the current dataset using the trend direction. "
-                        "Focus: Revenue trend. "
-                        "Rationale: order_date and revenue are available."
-                    ),
-                    "auto_submit": False,
-                }
-            ],
+            "routes": [],
             "risks": [],
             "verification": {
                 "id": "verify_1",
@@ -150,6 +156,60 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                 "created_at": "2026-06-07 12:35:00",
             },
             "hypotheses": [],
+            "active_scope": {
+                "active_dataset": "",
+                "active_route": "",
+                "active_goal": "",
+                "active_mode": "consulting",
+            },
+            "scope_counts": {
+                "datasets": 1,
+                "routes": 1,
+                "risks": 0,
+                "hypothesis_sets": 0,
+                "artifacts": 0,
+            },
+            "recommendations": {
+                "active_dataset": "",
+                "active_route": "",
+                "active_mode": "consulting",
+                "executable": [],
+                "exploratory": [],
+                "counts": {"executable": 0, "exploratory": 0},
+            },
+            "history": {
+                "datasets": [
+                    {
+                        "dataset": "sales",
+                        "rows": 120,
+                        "columns": 4,
+                        "quality_status": "warning",
+                        "quality_score": 0.91,
+                        "key_fields": ["order_date", "revenue", "orders", "region"],
+                        "supported_analyses": ["trend", "segment"],
+                        "preview_notes": [],
+                    }
+                ],
+                "routes": [
+                    {
+                        "id": "route_trend",
+                        "dataset": "sales",
+                        "direction": "trend",
+                        "label": "Revenue trend",
+                        "reason": "order_date and revenue are available",
+                        "limitations": [],
+                        "budget_level": "low",
+                        "prompt": (
+                            "Please analyze the current dataset using the trend direction. "
+                            "Focus: Revenue trend. "
+                            "Rationale: order_date and revenue are available."
+                        ),
+                        "auto_submit": False,
+                    }
+                ],
+                "risks": [],
+                "hypotheses": [],
+            },
         }
         assert state_path.read_text(encoding="utf-8") == before
     finally:
@@ -201,6 +261,10 @@ def test_trust_view_endpoint_hydrates_artifact_refs_without_mutating_state(tmp_p
             {
                 "session_id": session_id,
                 "data_state": "data_loaded",
+                "active_scope": {
+                    "active_dataset": "retention",
+                    "active_mode": "data_loaded",
+                },
                 "dataset_contracts": [
                     {
                         "dataset": "retention",
@@ -236,6 +300,13 @@ def test_trust_view_endpoint_hydrates_artifact_refs_without_mutating_state(tmp_p
         assert payload["datasets"][0]["key_fields"] == ["date", "daily_active", "day_1_retention"]
         assert payload["routes"][0]["direction"] == "trend"
         assert payload["routes"][0]["limitations"] == ["Descriptive trend only"]
+        assert payload["scope_counts"] == {
+            "datasets": 1,
+            "routes": 1,
+            "risks": 1,
+            "hypothesis_sets": 0,
+            "artifacts": 2,
+        }
         assert payload["risks"] == [
             {
                 "severity": "warning",

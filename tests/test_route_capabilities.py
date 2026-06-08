@@ -54,6 +54,47 @@ def test_builds_ready_executable_routes_for_active_dataset():
     ]
 
 
+def test_route_key_is_accepted_as_executable_direction():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "orders", "route": "trend", "label": "Trend"}
+    ]
+
+    model = build_route_capabilities(state)
+
+    assert [item["direction"] for item in model["executable"]] == ["trend"]
+    assert [item["route"] for item in model["executable"]] == ["trend"]
+
+
+def test_route_key_uses_field_roles_for_cleaning_confirmation():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {
+            "id": "route_trend",
+            "dataset": "orders",
+            "route": "trend",
+            "field_roles": {"date": ["order_date"]},
+        }
+    ]
+    state.cleaning_logs = [
+        {
+            "dataset": "orders",
+            "decisions": [
+                {"column": "order_date", "decision_type": "needs_confirmation"}
+            ],
+        }
+    ]
+
+    model = build_route_capabilities(state)
+
+    assert model["executable"][0]["category"] == "needs_confirmation"
+    assert model["executable"][0]["risk_fields"] == ["order_date"]
+
+
 def test_cleaning_confirmation_downgrades_executable_route():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"

@@ -12,6 +12,28 @@ def test_none_state_returns_empty_view_for_requested_session():
         "risks": [],
         "verification": None,
         "hypotheses": [],
+        "active_scope": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_goal": "",
+            "active_mode": "consulting",
+        },
+        "scope_counts": {
+            "datasets": 0,
+            "routes": 0,
+            "risks": 0,
+            "hypothesis_sets": 0,
+            "artifacts": 0,
+        },
+        "recommendations": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_mode": "consulting",
+            "executable": [],
+            "exploratory": [],
+            "counts": {"executable": 0, "exploratory": 0},
+        },
+        "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
 
 
@@ -124,6 +146,8 @@ def test_thin_artifact_refs_are_hydrated_for_inspector_details(tmp_path):
         encoding="utf-8",
     )
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "game_b_retention"
+    state.active_scope["active_mode"] = "data_loaded"
     state.dataset_contracts = [
         {
             "dataset": "game_b_retention",
@@ -173,6 +197,7 @@ def test_thin_artifact_refs_are_hydrated_for_inspector_details(tmp_path):
 
 def test_route_cards_are_limited_skip_malformed_and_include_editable_prompt():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_mode"] = "data_loaded"
     state.route_proposals = [
         {
             "id": "route-trend",
@@ -203,6 +228,7 @@ def test_route_cards_are_limited_skip_malformed_and_include_editable_prompt():
 
 def test_risk_items_include_quality_unsupported_and_cleaning_decisions():
     state = AnalysisSessionState(session_id="s1")
+    state.active_scope["active_mode"] = "data_loaded"
     state.dataset_contracts = [
         {
             "dataset": "sales",
@@ -348,6 +374,8 @@ def test_trust_view_includes_compact_hypothesis_summary(tmp_path):
         encoding="utf-8",
     )
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "sales"
+    state.active_scope["active_mode"] = "data_loaded"
     state.hypothesis_sets = [
         {
             "id": "hyps_sales_trend",
@@ -378,6 +406,162 @@ def test_trust_view_includes_compact_hypothesis_summary(tmp_path):
     ]
 
 
+def test_trust_view_exposes_active_scope_counts_and_recommendations():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [
+        {"dataset": "old_sales", "row_count": 10, "supported_analyses": ["trend"]},
+        {
+            "dataset": "orders",
+            "row_count": 20,
+            "supported_analyses": ["cohort"],
+            "unsupported_analyses": [{"type": "user_level_retention", "reason": "missing events"}],
+        },
+    ]
+    state.route_proposals = [
+        {"id": "old", "dataset": "old_sales", "direction": "trend"},
+        {"id": "new", "dataset": "orders", "direction": "cohort", "label": "Cohort"},
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["active_scope"]["active_dataset"] == "orders"
+    assert view["scope_counts"]["datasets"] == 2
+    assert view["scope_counts"]["routes"] == 2
+    assert [dataset["dataset"] for dataset in view["datasets"]] == ["orders"]
+    assert [route["direction"] for route in view["routes"]] == ["cohort"]
+    assert [route["route"] for route in view["recommendations"]["executable"]] == ["cohort"]
+    assert view["recommendations"]["exploratory"][0]["analysis"] == "user_level_retention"
+
+
+def test_trust_view_consulting_mode_hides_current_routes_but_keeps_history():
+    state = AnalysisSessionState(session_id="s1")
+    state.active_scope["active_mode"] = "consulting"
+    state.route_proposals = [{"id": "route_old", "dataset": "sales", "direction": "trend"}]
+    state.last_recommended_paths = [{"id": "metric_overview", "title": "Metric overview"}]
+
+    view = build_trust_view(state)
+
+    assert view["active_scope"]["active_mode"] == "consulting"
+    assert view["routes"] == []
+    assert view["history"]["routes"][0]["direction"] == "trend"
+    assert view["recommendations"]["exploratory"][0]["category"] == "method_discussion"
+
+
+def test_trust_view_history_routes_and_counts_are_not_display_limited():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": f"route_{index}", "dataset": "sales", "direction": f"route_{index}"}
+        for index in range(6)
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["scope_counts"]["routes"] == 6
+    assert [route["direction"] for route in view["history"]["routes"]] == [
+        "route_0",
+        "route_1",
+        "route_2",
+        "route_3",
+        "route_4",
+        "route_5",
+    ]
+    assert len(view["routes"]) == 4
+
+
+def test_trust_view_filters_hypotheses_by_active_route_when_set():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "sales"
+    state.active_scope["active_route"] = "trend"
+    state.active_scope["active_mode"] = "analysis"
+    state.hypothesis_sets = [
+        {
+            "id": "match",
+            "dataset": "sales",
+            "route": "trend",
+            "hypotheses": [{"claim": "matching route", "status": "supported"}],
+        },
+        {
+            "id": "other-route",
+            "dataset": "sales",
+            "route": "funnel",
+            "hypotheses": [{"claim": "wrong route", "status": "supported"}],
+        },
+        {
+            "id": "blank-route",
+            "dataset": "sales",
+            "hypotheses": [{"claim": "blank route", "status": "supported"}],
+        },
+    ]
+
+    view = build_trust_view(state)
+
+    assert [item["id"] for item in view["hypotheses"]] == ["match"]
+
+
+def test_trust_view_filters_hypotheses_before_current_display_limit():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "active"
+    state.active_scope["active_route"] = "trend"
+    state.active_scope["active_mode"] = "analysis"
+    state.hypothesis_sets = [
+        {
+            "id": f"old_{index}",
+            "dataset": "old",
+            "route": "trend",
+            "hypotheses": [{"claim": f"old {index}", "status": "supported"}],
+        }
+        for index in range(4)
+    ] + [
+        {
+            "id": "active_match",
+            "dataset": "active",
+            "route": "trend",
+            "hypotheses": [{"claim": "active match", "status": "supported"}],
+        }
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["scope_counts"]["hypothesis_sets"] == 5
+    assert [item["id"] for item in view["hypotheses"]] == ["active_match"]
+    assert [item["id"] for item in view["history"]["hypotheses"]] == [
+        "old_0",
+        "old_1",
+        "old_2",
+        "old_3",
+        "active_match",
+    ]
+
+
+def test_trust_view_limits_current_hypotheses_after_active_filtering():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "sales"
+    state.active_scope["active_route"] = "trend"
+    state.active_scope["active_mode"] = "analysis"
+    state.hypothesis_sets = [
+        {
+            "id": f"active_{index}",
+            "dataset": "sales",
+            "route": "trend",
+            "hypotheses": [{"claim": f"active {index}", "status": "supported"}],
+        }
+        for index in range(5)
+    ]
+
+    view = build_trust_view(state)
+
+    assert [item["id"] for item in view["hypotheses"]] == [
+        "active_0",
+        "active_1",
+        "active_2",
+    ]
+    assert view["scope_counts"]["hypothesis_sets"] == 5
+    assert len(view["history"]["hypotheses"]) == 5
+
+
 def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded", updated_at="now")
     state.dataset_contracts = {"dataset": "bad"}
@@ -397,6 +581,28 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
         "risks": [],
         "verification": None,
         "hypotheses": [],
+        "active_scope": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_goal": "",
+            "active_mode": "consulting",
+        },
+        "scope_counts": {
+            "datasets": 0,
+            "routes": 0,
+            "risks": 0,
+            "hypothesis_sets": 0,
+            "artifacts": 0,
+        },
+        "recommendations": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_mode": "consulting",
+            "executable": [],
+            "exploratory": [],
+            "counts": {"executable": 0, "exploratory": 0},
+        },
+        "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
 
 

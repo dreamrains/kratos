@@ -6,25 +6,49 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data_agent.agent.route_capabilities import build_route_capabilities
+
 
 def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any]:
     """Build a compact Trust Inspector view model from analysis state."""
     if state is None:
         return _empty_view(session_id or "")
 
-    contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
-    previews = _hydrate_refs(_list_attr(state, "preview_digests"))
-    route_refs = _hydrate_refs(_list_attr(state, "route_proposals"))
-    cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
-    verification_reports = _hydrate_refs(_list_attr(state, "verification_reports"))
-    hypothesis_sets = _hydrate_refs(_list_attr(state, "hypothesis_sets"))
-    routes = _route_cards(route_refs)
-    risks = _risk_items(contracts, cleaning_logs)
-    verification = _verification_summary(verification_reports)
-    datasets = _dataset_summaries(contracts, previews)
-    hypotheses = _hypothesis_summaries(hypothesis_sets)
+    contract_refs = _list_attr(state, "dataset_contracts")
+    preview_refs = _list_attr(state, "preview_digests")
+    route_refs = _list_attr(state, "route_proposals")
+    cleaning_refs = _list_attr(state, "cleaning_logs")
+    verification_refs = _list_attr(state, "verification_reports")
+    hypothesis_refs = _list_attr(state, "hypothesis_sets")
 
-    has_content = bool(datasets or routes or risks or verification or hypotheses)
+    contracts = _hydrate_refs(contract_refs)
+    previews = _hydrate_refs(preview_refs)
+    routes = _hydrate_refs(route_refs)
+    cleaning_logs = _hydrate_refs(cleaning_refs)
+    verification_reports = _hydrate_refs(verification_refs)
+    hypothesis_sets = _hydrate_refs(hypothesis_refs)
+
+    active_scope = _active_scope(getattr(state, "active_scope", {}))
+    recommendations = build_route_capabilities(state)
+    all_routes = _route_cards(routes, limit=len(routes))
+    all_risks = _risk_items(contracts, cleaning_logs)
+    verification = _verification_summary(verification_reports)
+    all_datasets = _dataset_summaries(contracts, previews)
+    all_hypotheses = _hypothesis_summaries(hypothesis_sets, limit=len(hypothesis_sets))
+
+    if active_scope["active_mode"] == "consulting":
+        datasets = all_datasets
+        current_routes: list[dict[str, Any]] = []
+        risks: list[dict[str, Any]] = []
+        hypotheses: list[dict[str, Any]] = []
+    else:
+        active_dataset = active_scope["active_dataset"]
+        datasets = _filter_by_dataset(all_datasets, active_dataset)
+        current_routes = _route_cards(_list_items(recommendations.get("executable")))
+        risks = _filter_by_dataset(all_risks, active_dataset)
+        hypotheses = _filter_hypotheses(all_hypotheses, active_scope)[:3]
+
+    has_content = bool(all_datasets or all_routes or all_risks or verification or all_hypotheses)
     data_state = _text(getattr(state, "data_state", ""))
     status = "ready" if data_state == "data_loaded" or has_content else "empty"
 
@@ -33,10 +57,32 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
         "session_id": session_id or _text(getattr(state, "session_id", "")),
         "updated_at": _text(getattr(state, "updated_at", "")),
         "datasets": datasets,
-        "routes": routes,
+        "routes": current_routes,
         "risks": risks,
         "verification": verification,
         "hypotheses": hypotheses,
+        "active_scope": active_scope,
+        "scope_counts": {
+            "datasets": len(all_datasets),
+            "routes": len(all_routes),
+            "risks": len(all_risks),
+            "hypothesis_sets": len(all_hypotheses),
+            "artifacts": _artifact_count(
+                contract_refs,
+                preview_refs,
+                route_refs,
+                cleaning_refs,
+                verification_refs,
+                hypothesis_refs,
+            ),
+        },
+        "recommendations": recommendations,
+        "history": {
+            "datasets": all_datasets,
+            "routes": all_routes,
+            "risks": all_risks,
+            "hypotheses": all_hypotheses,
+        },
     }
 
 
@@ -50,6 +96,28 @@ def _empty_view(session_id: str) -> dict[str, Any]:
         "risks": [],
         "verification": None,
         "hypotheses": [],
+        "active_scope": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_goal": "",
+            "active_mode": "consulting",
+        },
+        "scope_counts": {
+            "datasets": 0,
+            "routes": 0,
+            "risks": 0,
+            "hypothesis_sets": 0,
+            "artifacts": 0,
+        },
+        "recommendations": {
+            "active_dataset": "",
+            "active_route": "",
+            "active_mode": "consulting",
+            "executable": [],
+            "exploratory": [],
+            "counts": {"executable": 0, "exploratory": 0},
+        },
+        "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
 
 
@@ -120,7 +188,7 @@ def _dataset_summaries(
 def _route_cards(routes: list[dict[str, Any]], limit: int = 4) -> list[dict[str, Any]]:
     cards: list[dict[str, Any]] = []
     for route in routes:
-        direction = _text(route.get("direction"))
+        direction = _text(route.get("direction") or route.get("route"))
         if not direction:
             continue
         card = {
@@ -141,7 +209,7 @@ def _route_cards(routes: list[dict[str, Any]], limit: int = 4) -> list[dict[str,
 
 
 def _route_prompt(route: dict[str, Any]) -> str:
-    direction = _text(route.get("direction"))
+    direction = _text(route.get("direction") or route.get("route"))
     label = _text(route.get("label"))
     reason = _text(route.get("reason"))
     pieces = [f"Please analyze the current dataset using the {direction} direction."]
@@ -232,6 +300,40 @@ def _hypothesis_summaries(
         if len(summaries) >= limit:
             break
     return summaries
+
+
+def _active_scope(value: Any) -> dict[str, Any]:
+    scope = value if isinstance(value, dict) else {}
+    return {
+        "active_dataset": _text(scope.get("active_dataset")),
+        "active_route": _text(scope.get("active_route")),
+        "active_goal": _text(scope.get("active_goal")),
+        "active_mode": _text(scope.get("active_mode")) or "consulting",
+    }
+
+
+def _filter_by_dataset(items: list[dict[str, Any]], dataset: str) -> list[dict[str, Any]]:
+    if not dataset:
+        return items
+    return [item for item in items if _text(item.get("dataset")) == dataset]
+
+
+def _filter_hypotheses(
+    items: list[dict[str, Any]],
+    active_scope: dict[str, Any],
+) -> list[dict[str, Any]]:
+    filtered = _filter_by_dataset(items, _text(active_scope.get("active_dataset")))
+    active_route = _text(active_scope.get("active_route"))
+    if not active_route:
+        return filtered
+    return [
+        item for item in filtered
+        if _text(item.get("route")) == active_route
+    ]
+
+
+def _artifact_count(*groups: list[dict[str, Any]]) -> int:
+    return sum(1 for group in groups for item in group if _text(item.get("artifact_path")))
 
 
 def _append_risk(
