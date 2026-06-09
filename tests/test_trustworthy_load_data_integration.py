@@ -120,3 +120,16 @@ def test_load_data_trust_artifacts_do_not_escape_sessions_dir(tmp_path):
         assert not (tmp_path / "escape" / "tool_outputs").exists()
     finally:
         config._config = old_cfg
+
+
+def test_second_dataset_becomes_active_without_deleting_first_dataset(tmp_path):
+    state = AnalysisSessionState(session_id="multi_upload")
+
+    first = state.add_dataset_contract_ref({"id": "contract_sales", "dataset": "sales"})
+    second = state.add_dataset_contract_ref({"id": "contract_orders", "dataset": "orders"})
+
+    assert first["dataset"] == "sales"
+    assert second["dataset"] == "orders"
+    assert [item["dataset"] for item in state.dataset_contracts] == ["sales", "orders"]
+    assert state.active_scope["active_dataset"] == "orders"
+    assert state.active_scope["active_mode"] == "data_loaded"

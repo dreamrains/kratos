@@ -449,6 +449,32 @@ def test_trust_view_consulting_mode_hides_current_routes_but_keeps_history():
     assert view["recommendations"]["exploratory"][0]["category"] == "method_discussion"
 
 
+def test_chat_three_panel_two_pattern_is_classified_not_conflicting():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "card_orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [
+        {
+            "dataset": "card_orders",
+            "supported_analyses": ["cohort", "funnel"],
+            "unsupported_analyses": [
+                {"type": "user_level_retention", "reason": "缺少用户级事件历史"}
+            ],
+        }
+    ]
+    state.route_proposals = [
+        {"id": "route_cohort", "dataset": "card_orders", "direction": "cohort"},
+        {"id": "route_funnel", "dataset": "card_orders", "direction": "funnel"},
+    ]
+
+    view = build_trust_view(state)
+
+    assert len(view["recommendations"]["executable"]) == 2
+    assert len(view["routes"]) == 2
+    assert view["recommendations"]["exploratory"][0]["analysis"] == "user_level_retention"
+    assert view["recommendations"]["exploratory"][0]["category"] == "needs_more_data"
+
+
 def test_trust_view_history_routes_and_counts_are_not_display_limited():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"
