@@ -116,6 +116,15 @@ def _empty_view(session_id: str) -> dict[str, Any]:
             "executable": [],
             "exploratory": [],
             "counts": {"executable": 0, "exploratory": 0},
+            "confirmation_gate": {
+                "status": "clear",
+                "confirmation_type": "",
+                "question": "",
+                "blocking_reason": "",
+                "risk_fields": [],
+                "affected_routes": [],
+                "blocked_surfaces": [],
+            },
         },
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }

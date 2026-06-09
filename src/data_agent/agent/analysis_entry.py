@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from data_agent.agent.confirmation_policy import pending_confirmation_gate
 from data_agent.agent.trust_view import _hydrate_refs
 
 
@@ -17,6 +18,15 @@ _ROUTE_KEYWORDS = {
 
 def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str, Any]:
     """Choose whether a requested analysis can proceed from current trust state."""
+    gate = pending_confirmation_gate(state)
+    if gate:
+        return _decision(
+            "clarify_intent",
+            reason="A pending confirmation must be resolved before analysis recommendations or execution.",
+            required_user_action="ask_user_question",
+            confirmation_gate=gate,
+        )
+
     contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
     raw_routes = _hydrate_refs(_list_attr(state, "route_proposals"))
     active_dataset = _active_dataset(state)

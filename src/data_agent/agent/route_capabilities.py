@@ -6,6 +6,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data_agent.agent.confirmation_policy import (
+    empty_confirmation_gate,
+    pending_confirmation_gate,
+    route_confirmation_gate,
+)
+
 
 _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
 
@@ -24,6 +30,7 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
     routes = _hydrate_refs(_list_attr(state, "route_proposals"))
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
+    confirmation_gate = pending_confirmation_gate(state) or empty_confirmation_gate()
 
     if limit <= 0:
         executable: list[dict[str, Any]] = []
@@ -31,8 +38,14 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     elif active_mode == "consulting":
         executable: list[dict[str, Any]] = []
         exploratory = _consulting_exploratory(_list_attr(state, "last_recommended_paths"), limit)
+    elif confirmation_gate["status"] == "needs_confirmation":
+        executable = []
+        exploratory = _unsupported_exploratory(contracts, active_dataset, limit)
     else:
-        executable = _executable_routes(routes, cleaning_logs, active_dataset, limit)
+        executable, route_gate = _executable_routes(routes, cleaning_logs, active_dataset, limit)
+        if route_gate:
+            confirmation_gate = route_gate
+            executable = []
         exploratory = _unsupported_exploratory(contracts, active_dataset, limit)
 
     return {
@@ -42,6 +55,7 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
         "executable": executable,
         "exploratory": exploratory,
         "counts": {"executable": len(executable), "exploratory": len(exploratory)},
+        "confirmation_gate": confirmation_gate,
     }
 
 
@@ -50,8 +64,10 @@ def _executable_routes(
     cleaning_logs: list[dict[str, Any]],
     active_dataset: str,
     limit: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     items: list[dict[str, Any]] = []
+    gate_risk_fields: list[str] = []
+    gate_routes: list[str] = []
     for route in routes:
         dataset = _text(route.get("dataset"))
         if active_dataset and dataset != active_dataset:
@@ -60,14 +76,17 @@ def _executable_routes(
         if not direction:
             continue
         risk_fields = _required_field_risks(route, cleaning_logs)
-        category = "needs_confirmation" if risk_fields else "ready"
+        if risk_fields:
+            gate_risk_fields.extend(risk_fields)
+            gate_routes.append(direction)
+            continue
         items.append({
             "id": _text(route.get("id")) or f"route_{len(items) + 1}",
             "dataset": dataset,
             "route": direction,
             "direction": direction,
             "label": _text(route.get("label")) or direction,
-            "category": category,
+            "category": "ready",
             "reason": _text(route.get("reason")),
             "limitations": _text_list(route.get("limitations")),
             "evidence_requirements": _text_list(route.get("evidence_requirements")),
@@ -78,7 +97,10 @@ def _executable_routes(
         })
         if len(items) >= limit:
             break
-    return items
+    return items, route_confirmation_gate(
+        risk_fields=gate_risk_fields,
+        affected_routes=gate_routes,
+    )
 
 
 def _active_mode(state: Any, scope: dict[str, Any], active_dataset: str) -> str:

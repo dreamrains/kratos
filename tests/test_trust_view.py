@@ -2,6 +2,18 @@ from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.trust_view import build_trust_view
 
 
+def _clear_confirmation_gate():
+    return {
+        "status": "clear",
+        "confirmation_type": "",
+        "question": "",
+        "blocking_reason": "",
+        "risk_fields": [],
+        "affected_routes": [],
+        "blocked_surfaces": [],
+    }
+
+
 def test_none_state_returns_empty_view_for_requested_session():
     assert build_trust_view(None, session_id="missing") == {
         "status": "empty",
@@ -32,6 +44,7 @@ def test_none_state_returns_empty_view_for_requested_session():
             "executable": [],
             "exploratory": [],
             "counts": {"executable": 0, "exploratory": 0},
+            "confirmation_gate": _clear_confirmation_gate(),
         },
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
@@ -475,6 +488,31 @@ def test_chat_three_panel_two_pattern_is_classified_not_conflicting():
     assert view["recommendations"]["exploratory"][0]["category"] == "needs_more_data"
 
 
+def test_trust_view_hides_current_routes_when_confirmation_is_pending():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "orders", "direction": "trend"},
+        {"id": "route_compare", "dataset": "orders", "direction": "period_compare"},
+    ]
+    state.pending_confirmations = [
+        {
+            "id": "scope_gate",
+            "status": "pending",
+            "confirmation_type": "scope_confirmation",
+            "question": "请先确认你更关注趋势还是对比？",
+        }
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["routes"] == []
+    assert view["recommendations"]["executable"] == []
+    assert view["recommendations"]["confirmation_gate"]["status"] == "needs_confirmation"
+    assert len(view["history"]["routes"]) == 2
+
+
 def test_trust_view_history_routes_and_counts_are_not_display_limited():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"
@@ -627,6 +665,7 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
             "executable": [],
             "exploratory": [],
             "counts": {"executable": 0, "exploratory": 0},
+            "confirmation_gate": _clear_confirmation_gate(),
         },
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }

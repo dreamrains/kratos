@@ -91,8 +91,10 @@ def test_route_key_uses_field_roles_for_cleaning_confirmation():
 
     model = build_route_capabilities(state)
 
-    assert model["executable"][0]["category"] == "needs_confirmation"
-    assert model["executable"][0]["risk_fields"] == ["order_date"]
+    assert model["executable"] == []
+    assert model["confirmation_gate"]["status"] == "needs_confirmation"
+    assert model["confirmation_gate"]["confirmation_type"] == "data_quality_confirmation"
+    assert model["confirmation_gate"]["risk_fields"] == ["order_date"]
 
 
 def test_cleaning_confirmation_downgrades_executable_route():
@@ -124,9 +126,10 @@ def test_cleaning_confirmation_downgrades_executable_route():
 
     model = build_route_capabilities(state)
 
-    assert model["executable"][0]["category"] == "needs_confirmation"
-    assert model["executable"][0]["risk_fields"] == ["order_date"]
-    assert "Before running" in model["executable"][0]["prompt"]
+    assert model["executable"] == []
+    assert model["confirmation_gate"]["status"] == "needs_confirmation"
+    assert model["confirmation_gate"]["affected_routes"] == ["cohort"]
+    assert "order_date" in model["confirmation_gate"]["question"]
 
 
 def test_consulting_mode_hides_executable_routes_but_keeps_exploratory_context():
@@ -187,9 +190,43 @@ def test_generated_trend_route_field_roles_trigger_cleaning_confirmation():
 
     model = build_route_capabilities(state)
 
-    assert model["executable"][0]["route"] == "trend"
-    assert model["executable"][0]["category"] == "needs_confirmation"
-    assert model["executable"][0]["risk_fields"] == ["date"]
+    assert model["executable"] == []
+    assert model["confirmation_gate"]["status"] == "needs_confirmation"
+    assert model["confirmation_gate"]["affected_routes"] == ["trend"]
+    assert model["confirmation_gate"]["risk_fields"] == ["date"]
+
+
+def test_pending_confirmation_hides_current_recommendations_without_exposing_candidates():
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "orders", "direction": "trend"},
+        {"id": "route_compare", "dataset": "orders", "direction": "period_compare"},
+    ]
+    state.pending_confirmations = [
+        {
+            "id": "method_gate",
+            "status": "pending",
+            "confirmation_type": "route_selection",
+            "question": "请先确认分析目标",
+            "blocking_reason": "目标会影响推荐方向",
+        }
+    ]
+
+    model = build_route_capabilities(state)
+
+    assert model["executable"] == []
+    assert model["counts"]["executable"] == 0
+    assert model["confirmation_gate"] == {
+        "status": "needs_confirmation",
+        "confirmation_type": "route_selection",
+        "question": "请先确认分析目标",
+        "blocking_reason": "目标会影响推荐方向",
+        "risk_fields": [],
+        "affected_routes": [],
+        "blocked_surfaces": ["direct_recommendation", "analysis_execution", "report_generation"],
+    }
 
 
 def test_limit_zero_returns_no_capability_items():

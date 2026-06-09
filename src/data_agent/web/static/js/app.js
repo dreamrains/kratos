@@ -75,6 +75,7 @@ function chatApp() {
         trustInspectorCollapsed: false,
         sessionSidePanelTab: 'current',
         trustHelpOpen: '',
+        expandedListCounts: {},
         trustView: null,
         trustLoading: false,
         trustError: '',
@@ -1191,6 +1192,112 @@ function chatApp() {
             return `范围：${dataset} / ${route} / ${mode}`;
         },
 
+        formatRouteBudgetLabel(level) {
+            const labels = {
+                light: '轻量',
+                standard: '标准',
+                deep: '深入',
+            };
+            return labels[level || ''] || level || '未分级';
+        },
+
+        trustConfirmationGate() {
+            return this.trustView?.recommendations?.confirmation_gate || {};
+        },
+
+        trustConfirmationPending() {
+            return this.trustConfirmationGate().status === 'needs_confirmation';
+        },
+
+        formatRouteReason(route) {
+            if (!route) return '可填入输入框后继续确认。';
+            if (route.reason) return route.reason;
+            const dataset = route.dataset ? `基于当前数据集：${route.dataset}` : '';
+            return dataset || '基于当前数据可直接开始，发送前仍可修改问题。';
+        },
+
+        formatRouteLimitations(route) {
+            const limitations = Array.isArray(route?.limitations) ? route.limitations : [];
+            if (!limitations.length) return '';
+            return limitations.map((item) => this.formatRiskMessage(item)).join('；');
+        },
+
+        trustRouteHelpText(route) {
+            const direction = route?.route || route?.direction || route?.label || 'analysis';
+            const routeLabels = {
+                trend: '趋势分析',
+                period_compare: '周期/前后对比',
+                correlation: '相关性分析',
+                cohort: '群组分析',
+                funnel: '漏斗分析',
+                dimension_decomposition: '维度拆解',
+                metric_analysis: '指标分析',
+            };
+            const purpose = {
+                trend: '观察指标随时间的变化，适合先判断是否存在波动、拐点或持续趋势。',
+                period_compare: '比较两个时间段或结构周期，适合回答上线前后、购卡前后、周末/工作日差异等问题。',
+                correlation: '检查两个变量是否同步变化，适合发现候选关系，但不能直接证明因果。',
+                cohort: '按用户或事件起点分组观察后续表现，适合分析留存、复购或生命周期变化。',
+                funnel: '按步骤查看转化损耗，适合定位流程中掉队最多的位置。',
+                dimension_decomposition: '按维度拆解指标变化来源，适合判断哪些人群、商品或渠道贡献最大。',
+                metric_analysis: '围绕单个核心指标做现状、波动和口径检查。',
+            };
+            const label = routeLabels[direction] || direction;
+            const budget = this.formatRouteBudgetLabel(route?.budget_level);
+            const limits = this.formatRouteLimitations(route) || '当前未发现额外限制，但结论仍需要和证据一起解读。';
+            return `为什么推荐：当前数据结构支持「${label}」。适合回答：${purpose[direction] || '围绕当前数据提出一个可执行的分析问题。'} 分析成本：${budget}。限制条件：${limits}`;
+        },
+
+        visibleListItems(key, items, defaultLimit = 6) {
+            const list = Array.isArray(items) ? items : [];
+            const visible = Number(this.expandedListCounts[key] || defaultLimit);
+            return list.slice(0, Math.max(0, visible));
+        },
+
+        hiddenListCount(key, items, defaultLimit = 6) {
+            const list = Array.isArray(items) ? items : [];
+            return Math.max(0, list.length - this.visibleListItems(key, list, defaultLimit).length);
+        },
+
+        showMoreListItems(key, items, step = 6, defaultLimit = 6) {
+            const list = Array.isArray(items) ? items : [];
+            const current = Number(this.expandedListCounts[key] || defaultLimit);
+            this.expandedListCounts = {
+                ...this.expandedListCounts,
+                [key]: Math.min(list.length, current + step),
+            };
+        },
+
+        collapseListItems(key) {
+            const next = { ...this.expandedListCounts };
+            delete next[key];
+            this.expandedListCounts = next;
+        },
+
+        formatRiskMessage(message) {
+            const text = String(message || '');
+            const exact = {
+                'Correlation does not imply causation': '相关性不代表因果关系',
+                'No dimension column was identified': '未识别到可用于分组拆解的维度字段',
+                'No metric column was identified': '未识别到可用于指标分析的数值指标字段',
+                'Descriptive trend only unless supported by experimental evidence': '仅能做描述性趋势分析，除非有实验或准实验设计支持',
+                'Comparison quality depends on period comparability and seasonality': '对比质量取决于两个周期是否可比，以及是否受季节性影响',
+                'Requires stable user IDs and event history': '需要稳定的用户 ID 和完整事件历史',
+                'Requires valid event steps or aggregate funnel columns': '需要有效的步骤事件，或已经汇总好的漏斗字段',
+            };
+            if (exact[text]) return exact[text];
+            if (text.includes('Data is aggregate grain and missing user or entity id columns')) {
+                return '当前数据粒度偏汇总，缺少稳定的用户或实体 ID，不能直接做用户级留存判断';
+            }
+            if (text.includes('100% missing values')) {
+                return text.replace('Column', '字段').replace('has 100% missing values', '完全为空');
+            }
+            if (text.includes('Requires confirmation before treating as a dimension')) {
+                return '该字段是否能作为维度需要先确认业务含义';
+            }
+            return text;
+        },
+
         trustStatusLabel(status) {
             const labels = {
                 empty: '空',
@@ -1216,6 +1323,9 @@ function chatApp() {
                 routes: '这是什么：系统基于当前可用数据给出的可直接分析入口。为什么重要：它能让你从已有证据出发，避免空泛提问。你可以怎么做：点击路线填入输入框，按需修改后再发送。',
                 risks: '这是什么：当前分析可能遇到的数据质量、口径或覆盖范围边界。为什么重要：它提醒你哪些结论需要保留条件。你可以怎么做：先补充数据、缩小问题，或在结论中注明风险。',
                 hypotheses: '这是什么：围绕当前问题生成并被数据支持度标记的假设。为什么重要：它把探索方向和证据状态放在一起。你可以怎么做：优先推进支持或不确定的假设，并复核数据不支持的说法。',
+                currentData: '这是什么：当前用于推荐和分析的数据。为什么重要：当会话里有多个文件时，它说明系统此刻依据哪份数据判断路线、风险和验证状态。你可以怎么做：确认数据集、质量状态和关键字段是否符合你的分析目标。',
+                verification: '这是什么：系统对已记录声明和证据做的一致性检查。为什么重要：它会提示结论是否通过、是否被降级或是否失败。你可以怎么做：看到降级或失败时，回到证据、口径或数据质量重新确认。',
+                historyRoutes: '这是什么：本会话中过去生成过的分析路线。为什么重要：历史路线不代表当前推荐，只用于回看或复用旧数据集的分析入口。你可以怎么做：优先查看当前分析；只有需要回到旧数据或旧问题时再使用历史路线。',
                 outputs: '这是什么：本会话可导出的对话和已生成产出物。为什么重要：它让分析结果可以复用、归档和分享。你可以怎么做：导出 HTML/Markdown，或打开产出物继续检查。',
             };
             return help[topic] || '这是什么：当前侧栏信息。为什么重要：帮助你判断下一步。你可以怎么做：查看状态后继续分析。';

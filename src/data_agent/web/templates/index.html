@@ -547,9 +547,13 @@
 
             <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'currentData' ? '' : 'currentData'">?</button>
+                    </div>
                     <span x-show="trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'currentData'" class="trust-help-popover" x-text="trustHelpText('currentData')"></p>
                 <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
                 <div class="space-y-1.5">
                     <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
@@ -577,15 +581,30 @@
                     <span x-show="trustView && trustView.routes && trustView.routes.length" class="text-[10px] text-stone-400" x-text="trustView.routes.length"></span>
                 </div>
                 <p x-show="trustHelpOpen === 'routes'" class="trust-help-popover" x-text="trustHelpText('routes')"></p>
-                <div class="space-y-1.5">
+                <div x-show="trustConfirmationPending()" class="trust-risk-item mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="trust-pill trust-pill-warn">待确认</span>
+                        <span class="text-xs font-medium text-stone-700 dark:text-stone-300">需要先确认信息</span>
+                    </div>
+                    <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="trustConfirmationGate().question || '请先回答确认问题，系统会在收集到必要信息后给出最终推荐方向。'"></p>
+                    <p class="text-[10px] text-stone-400 mt-1">当前不会展示存疑的候选方向，确认后会重新计算可直接分析路线。</p>
+                </div>
+                <div class="space-y-1.5" x-show="!trustConfirmationPending()">
                     <template x-for="(route, ri) in ((trustView && trustView.routes) || [])" :key="route.id || ri">
-                        <button type="button" class="trust-route-item" @click="selectTrustRoute(route)">
-                            <div class="flex items-center justify-between gap-2">
-                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
-                                <span class="text-[10px] text-stone-400 shrink-0" x-text="route.budget_level"></span>
+                        <div class="trust-route-item">
+                            <div class="flex items-start gap-2">
+                                <button type="button" class="min-w-0 flex-1 text-left" @click="selectTrustRoute(route)">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
+                                        <span class="text-[10px] text-stone-400 shrink-0" x-text="formatRouteBudgetLabel(route.budget_level)"></span>
+                                    </div>
+                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="formatRouteReason(route)"></p>
+                                    <p x-show="formatRouteLimitations(route)" class="text-[10px] text-stone-400 truncate mt-1" x-text="formatRouteLimitations(route)"></p>
+                                </button>
+                                <button type="button" class="trust-help-btn shrink-0" @click.stop="trustHelpOpen = trustHelpOpen === ('route-help-' + (route.id || ri)) ? '' : ('route-help-' + (route.id || ri))">?</button>
                             </div>
-                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
-                        </button>
+                            <p x-show="trustHelpOpen === ('route-help-' + (route.id || ri))" class="trust-help-popover trust-route-detail mt-2" x-text="trustRouteHelpText(route)"></p>
+                        </div>
                     </template>
                     <p x-show="!trustLoading && !trustError && (!trustView || !trustView.routes || trustView.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无可直接分析路线。</p>
                 </div>
@@ -635,7 +654,7 @@
                                 <span class="trust-pill" :class="trustStatusClass(risk.severity || 'warning')" x-text="trustStatusLabel(risk.severity || 'warning')"></span>
                                 <span class="text-[10px] text-stone-400 truncate" x-text="[risk.dataset, risk.field].filter(Boolean).join(' - ')"></span>
                             </div>
-                            <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="risk.message"></p>
+                            <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="formatRiskMessage(risk.message)"></p>
                         </div>
                     </template>
                     <p x-show="!trustLoading && !trustError && (!trustView || !trustView.risks || trustView.risks.length === 0)" class="text-xs text-stone-400 py-1">暂无风险边界。</p>
@@ -644,9 +663,13 @@
 
             <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">验证</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">验证</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'verification' ? '' : 'verification'">?</button>
+                    </div>
                     <span class="trust-pill" :class="trustStatusClass((trustView && trustView.verification && trustView.verification.status) || 'unknown')" x-text="trustStatusLabel((trustView && trustView.verification && trustView.verification.status) || 'unknown')"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'verification'" class="trust-help-popover" x-text="trustHelpText('verification')"></p>
                 <div x-show="trustView && trustView.verification">
                     <p class="text-xs text-stone-600 dark:text-stone-300">
                         <span x-text="(trustView && trustView.verification && trustView.verification.claim_count) || 0"></span> 条声明 -
@@ -681,19 +704,41 @@
 
             <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史路线</h3>
+                    <div class="flex items-center gap-1.5">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史路线</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'historyRoutes' ? '' : 'historyRoutes'">?</button>
+                    </div>
                     <span x-show="trustView && trustView.history && trustView.history.routes && trustView.history.routes.length" class="text-[10px] text-stone-400" x-text="trustView.history.routes.length"></span>
                 </div>
+                <p x-show="trustHelpOpen === 'historyRoutes'" class="trust-help-popover" x-text="trustHelpText('historyRoutes')"></p>
                 <div class="space-y-1.5">
-                    <template x-for="(route, hri) in ((trustView && trustView.history && trustView.history.routes) || [])" :key="route.id || hri">
-                        <button type="button" class="trust-route-item" @click="selectTrustRoute(route)">
-                            <div class="flex items-center justify-between gap-2">
-                                <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
-                                <span class="text-[10px] text-stone-400 shrink-0" x-text="route.budget_level"></span>
+                    <template x-for="(route, hri) in visibleListItems('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6)" :key="route.id || hri">
+                        <div class="trust-route-item">
+                            <div class="flex items-start gap-2">
+                                <button type="button" class="min-w-0 flex-1 text-left" @click="selectTrustRoute(route)">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
+                                        <span class="text-[10px] text-stone-400 shrink-0" x-text="formatRouteBudgetLabel(route.budget_level)"></span>
+                                    </div>
+                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
+                                    <p x-show="formatRouteLimitations(route)" class="text-[10px] text-stone-400 truncate mt-1" x-text="formatRouteLimitations(route)"></p>
+                                </button>
+                                <button type="button" class="trust-help-btn shrink-0" @click.stop="trustHelpOpen = trustHelpOpen === ('history-route-help-' + (route.id || hri)) ? '' : ('history-route-help-' + (route.id || hri))">?</button>
                             </div>
-                            <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
-                        </button>
+                            <p x-show="trustHelpOpen === ('history-route-help-' + (route.id || hri))" class="trust-help-popover trust-route-detail mt-2" x-text="trustRouteHelpText(route)"></p>
+                        </div>
                     </template>
+                    <div x-show="trustView && trustView.history && trustView.history.routes && trustView.history.routes.length > 6" class="flex items-center justify-between gap-2 pt-1">
+                        <button type="button"
+                                x-show="hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6) > 0"
+                                class="text-[10px] text-brand-600 dark:text-brand-300 hover:underline"
+                                @click="showMoreListItems('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6, 6)"
+                                x-text="'再展示 ' + Math.min(6, hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6)) + ' 个'"></button>
+                        <button type="button"
+                                x-show="hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6) === 0"
+                                class="text-[10px] text-stone-500 dark:text-stone-400 hover:underline"
+                                @click="collapseListItems('historyRoutes')">收起</button>
+                    </div>
                     <p x-show="!trustLoading && !trustError && (!trustView || !trustView.history || !trustView.history.routes || trustView.history.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无历史路线。</p>
                 </div>
             </section>

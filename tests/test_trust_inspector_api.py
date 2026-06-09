@@ -21,6 +21,18 @@ def _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id):
     task_manager._next_id_val = old_next_id
 
 
+def _clear_confirmation_gate():
+    return {
+        "status": "clear",
+        "confirmation_type": "",
+        "question": "",
+        "blocking_reason": "",
+        "risk_fields": [],
+        "affected_routes": [],
+        "blocked_surfaces": [],
+    }
+
+
 def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_path):
     cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
     try:
@@ -59,6 +71,7 @@ def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_pa
                 "executable": [],
                 "exploratory": [],
                 "counts": {"executable": 0, "exploratory": 0},
+                "confirmation_gate": _clear_confirmation_gate(),
             },
             "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
         }
@@ -176,6 +189,7 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                 "executable": [],
                 "exploratory": [],
                 "counts": {"executable": 0, "exploratory": 0},
+                "confirmation_gate": _clear_confirmation_gate(),
             },
             "history": {
                 "datasets": [

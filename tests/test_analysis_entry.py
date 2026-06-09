@@ -177,6 +177,24 @@ def test_cleaning_confirmation_on_required_field_returns_clarify_intent():
     assert decision["risk_fields"] == ["date"]
 
 
+def test_pending_confirmation_blocks_direct_analysis_entry():
+    state = _state()
+    state.pending_confirmations = [{
+        "id": "scope_gate",
+        "status": "pending",
+        "confirmation_type": "scope_confirmation",
+        "question": "请先确认分析目标",
+        "blocking_reason": "目标会影响分析方向",
+    }]
+
+    decision = decide_analysis_entry("show revenue trend", _intent(), state)
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["required_user_action"] == "ask_user_question"
+    assert decision["reason"] == "A pending confirmation must be resolved before analysis recommendations or execution."
+    assert decision["confirmation_gate"]["question"] == "请先确认分析目标"
+
+
 def test_blocked_quality_returns_blocked():
     state = _state()
     state.dataset_contracts[0]["quality"] = {

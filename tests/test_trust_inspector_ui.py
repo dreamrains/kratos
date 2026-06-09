@@ -216,6 +216,86 @@ def test_session_side_panel_uses_chinese_trust_labels_and_help():
     assert "这是什么" in js
 
 
+def test_trust_routes_explain_items_and_budget_labels():
+    html = _index_html()
+    js = _app_js()
+
+    assert "formatRouteBudgetLabel(route.budget_level)" in html
+    assert "formatRouteReason(route)" in html
+    assert "formatRouteLimitations(route)" in html
+    assert "trustRouteHelpText(route)" in html
+    assert "trust-route-detail" in html
+    assert "route-help-" in html
+
+    assert "formatRouteBudgetLabel(level)" in js
+    assert "轻量" in js
+    assert "标准" in js
+    assert "深入" in js
+    assert "trustRouteHelpText(route)" in js
+    assert "为什么推荐" in js
+    assert "适合回答" in js
+
+
+def test_trust_routes_show_confirmation_gate_instead_of_candidate_routes():
+    html = _index_html()
+    js = _app_js()
+
+    assert "trustConfirmationGate()" in html
+    assert "trustConfirmationGate()" in js
+    assert "需要先确认信息" in html
+    assert "不会展示存疑的候选方向" in html
+    assert "this.trustView?.recommendations?.confirmation_gate" in js
+    assert "trustConfirmationPending()" in html
+    assert "trustConfirmationPending()" in js
+
+
+def test_trust_long_lists_use_reusable_show_more_controls():
+    html = _index_html()
+    js = _app_js()
+
+    assert "expandedListCounts: {}" in js
+    assert "visibleListItems(key, items, defaultLimit = 6)" in js
+    assert "hiddenListCount(key, items, defaultLimit = 6)" in js
+    assert "showMoreListItems(key, items, step = 6, defaultLimit = 6)" in js
+    assert "collapseListItems(key)" in js
+    assert "visibleListItems('historyRoutes'" in html
+    assert "hiddenListCount('historyRoutes'" in html
+    assert "showMoreListItems('historyRoutes'" in html
+    assert "collapseListItems('historyRoutes')" in html
+    assert "再展示" in html
+    assert "收起" in html
+
+
+def test_current_data_and_verification_have_help_text():
+    html = _index_html()
+    js = _app_js()
+
+    assert "trustHelpText('currentData')" in html
+    assert "trustHelpText('verification')" in html
+    assert "当前用于推荐和分析的数据" in js
+    assert "一致性检查" in js
+
+
+def test_history_routes_share_route_explanations():
+    html = _index_html()
+
+    assert "trustHelpText('historyRoutes')" in html
+    assert "history-route-help-" in html
+    assert "trustRouteHelpText(route)" in html
+    assert "formatRouteLimitations(route)" in html
+
+
+def test_trust_risk_messages_are_localized_in_ui():
+    html = _index_html()
+    js = _app_js()
+
+    assert "formatRiskMessage(risk.message)" in html
+    assert "formatRiskMessage(message)" in js
+    assert "相关性不代表因果关系" in js
+    assert "未识别到可用于分组拆解的维度字段" in js
+    assert "当前数据粒度偏汇总" in js
+
+
 def test_trust_inspector_empty_states_hide_during_loading_or_error():
     html = _index_html()
 
