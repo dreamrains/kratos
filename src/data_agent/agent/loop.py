@@ -656,6 +656,16 @@ class AgentLoop:
         self.context.turn_intent = intent
         self._last_turn_intent = intent
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
+        try:
+            from data_agent.agent.question_need_detector import detect_question_need
+
+            self._turn_question_need = detect_question_need(user_input, intent, state)
+        except Exception as exc:
+            self._turn_question_need = None
+            logger.warning(
+                "Question need detection skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
         profile = _intent_to_budget_profile(intent.intent_type)
         cfg = get_config()
         self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
@@ -668,6 +678,29 @@ class AgentLoop:
             self._extract_user_requirements(user_input)
 
         return controller.activate_tool_groups(registry, intent, state, user_input)
+
+    def _maybe_auto_suspend_for_required_question(self) -> SuspendedForConfirmation | None:
+        question_need = getattr(self, "_turn_question_need", None)
+        if not isinstance(question_need, dict) or question_need.get("status") != "hard_question":
+            return None
+        state = getattr(self.context, "analysis_state", None)
+        if state is not None and any(c.get("status", "pending") == "pending" for c in getattr(state, "pending_confirmations", []) or []):
+            return None
+
+        susp = SuspendedForConfirmation(
+            suspension_id=uuid.uuid4().hex[:8],
+            question=str(question_need.get("question") or "请先确认关键信息后再继续分析。"),
+            options=list(question_need.get("options") or []),
+            context="",
+            snapshot={"messages": self._serialize_messages()},
+            multi_select=False,
+            confirmation_type=str(question_need.get("question_type") or "scope_confirmation"),
+            blocking_reason=str(question_need.get("reason") or ""),
+            state_updates=json.dumps({"stage": "scope"}, ensure_ascii=False),
+        )
+        self._register_confirmation(susp)
+        SuspensionManager(get_config().sessions_resolved).save(susp)
+        return susp
 
     def _extract_user_requirements(self, user_input: str) -> None:
         """Use LLM to extract quality/format requirements from user input (once per session)."""
@@ -1022,8 +1055,15 @@ class AgentLoop:
         # 根据用户输入激活相关工具分组
         with use_agent_context(self.context):
             new_groups = self._prepare_analysis_turn(user_input)
+            required_question = self._maybe_auto_suspend_for_required_question()
         if new_groups:
             logger.info("Activated tool groups", extra={"extra_data": {"groups": list(new_groups)}})
+        if required_question is not None:
+            reply = self._handle_cli_suspension(required_question)
+            self._maybe_archive(user_input, reply)
+            self._auto_save()
+            logger.info("Turn completed (with auto confirmation)", extra={"extra_data": {"session": self.session_id}})
+            return reply
         try:
             result = self._loop(user_input)
         except Exception as e:
@@ -1064,6 +1104,9 @@ class AgentLoop:
         self._prompt_cache_dirty = True
         with use_agent_context(self.context):
             self._prepare_analysis_turn(user_input)
+            required_question = self._maybe_auto_suspend_for_required_question()
+        if required_question is not None:
+            return required_question
         try:
             result = self._loop(user_input)
         except Exception as e:
@@ -1444,6 +1487,19 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         self._prepare_analysis_turn(user_input)
+        required_question = self._maybe_auto_suspend_for_required_question()
+        if required_question is not None:
+            yield {
+                "type": "suspended",
+                "suspension_id": required_question.suspension_id,
+                "question": required_question.question,
+                "options": required_question.options,
+                "context": required_question.context,
+                "multi_select": required_question.multi_select,
+                "confirmation_type": required_question.confirmation_type,
+                "blocking_reason": required_question.blocking_reason,
+            }
+            return
 
         final_text = ""
         round_num = 0

@@ -243,6 +243,86 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path):
         task_manager._next_id_val = old_next_id
 
 
+def test_structured_loop_auto_suspends_for_required_question(monkeypatch):
+    intent = TurnIntent(
+        intent_type="intent_negotiation",
+        clarity="vague",
+        data_state="data_loaded",
+        analysis_stage="discover",
+        recommended_action="guide_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("LLM should not be called before required confirmation")
+
+    workspace_obj = Workspace()
+    ctx = AgentContext(session_id="auto_question_gate", workspace=workspace_obj)
+    state = AnalysisSessionState(session_id="auto_question_gate", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "orders", "direction": "trend", "label": "Trend"},
+        {"id": "route_compare", "dataset": "orders", "direction": "period_compare", "label": "Compare"},
+    ]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=FailingClient(), session_id="auto_question_gate")
+    loop.context = ctx
+
+    with use_agent_context(ctx):
+        result = loop.run_turn_structured("please analyze this dataset")
+
+    from data_agent.agent.loop import SuspendedForConfirmation
+
+    assert isinstance(result, SuspendedForConfirmation)
+    assert result.confirmation_type == "route_selection"
+    assert len(result.options) == 2
+    assert state.pending_confirmations
+    assert state.pending_confirmations[0]["status"] == "pending"
+
+
+def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
+    intent = TurnIntent(
+        intent_type="intent_negotiation",
+        clarity="vague",
+        data_state="data_loaded",
+        analysis_stage="discover",
+        recommended_action="guide_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("LLM should not be called before required confirmation")
+
+    ctx = AgentContext(session_id="auto_question_gate_stream", workspace=Workspace())
+    state = AnalysisSessionState(session_id="auto_question_gate_stream", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.route_proposals = [
+        {"id": "route_trend", "dataset": "orders", "direction": "trend", "label": "Trend"},
+        {"id": "route_compare", "dataset": "orders", "direction": "period_compare", "label": "Compare"},
+    ]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=FailingClient(), session_id="auto_question_gate_stream")
+    loop.context = ctx
+
+    events = list(loop.stream_turn("please analyze this dataset"))
+
+    assert events[0]["type"] == "suspended"
+    assert events[0]["confirmation_type"] == "route_selection"
+    assert len(events[0]["options"]) == 2
+
+
 def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",

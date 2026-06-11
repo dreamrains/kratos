@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
+from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
 from data_agent.agent.trust_view import _hydrate_refs
 
 
@@ -56,6 +57,17 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             reason="The loaded data cannot support user-level retention analysis.",
             required_user_action="provide_user_level_retention_data",
             limitations=_unsupported_reasons(unsupported_retention),
+        )
+
+    question_need = detect_question_need(user_input, intent, state)
+    if question_need.get("status") == "hard_question":
+        return _decision(
+            "clarify_intent",
+            reason=question_need.get("reason", ""),
+            required_user_action="ask_user_question",
+            route_options=[],
+            risk_fields=question_need.get("risk_fields", []),
+            confirmation_gate=to_confirmation_gate(question_need),
         )
 
     route = _infer_requested_route(user_input, routes)

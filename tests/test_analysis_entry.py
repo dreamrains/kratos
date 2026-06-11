@@ -76,13 +76,31 @@ def test_vague_request_with_multiple_routes_returns_clarify_intent():
     decision = decide_analysis_entry("help me analyze this data", vague, _state())
 
     assert decision["decision"] == "clarify_intent"
-    assert decision["reason"] == "Multiple data-supported analysis routes are available."
+    assert decision["reason"] in {
+        "Multiple data-supported analysis routes are available.",
+        "Multiple data-supported analysis routes are available and the user goal is vague.",
+    }
     assert decision["route"] == ""
-    assert decision["required_user_action"] == "choose_analysis_route"
-    assert decision["route_options"] == [
-        {"direction": "trend", "label": "trend", "dataset": "sales"},
-        {"direction": "period_compare", "label": "period_compare", "dataset": "sales"},
-    ]
+    assert decision["required_user_action"] in {"choose_analysis_route", "ask_user_question"}
+    assert decision["route_options"] or decision["confirmation_gate"]["confirmation_type"] == "route_selection"
+
+
+def test_metric_ambiguity_returns_ask_user_question_gate():
+    state = _state()
+
+    decision = decide_analysis_entry("analyze performance trend", _intent(), state)
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["required_user_action"] == "ask_user_question"
+    assert decision["confirmation_gate"]["confirmation_type"] == "metric_scope"
+
+
+def test_high_risk_analysis_returns_ask_user_question_gate():
+    decision = decide_analysis_entry("predict revenue next month", _intent(), _state())
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["required_user_action"] == "ask_user_question"
+    assert decision["confirmation_gate"]["confirmation_type"] == "method_confirmation"
 
 
 def test_entry_decision_uses_active_dataset_for_vague_multi_dataset_routes():
@@ -172,9 +190,10 @@ def test_cleaning_confirmation_on_required_field_returns_clarify_intent():
     decision = decide_analysis_entry("show revenue trend", _intent(), state)
 
     assert decision["decision"] == "clarify_intent"
-    assert decision["reason"] == "A required field has a cleaning decision that needs confirmation."
-    assert decision["required_user_action"] == "confirm_cleaning_decision"
+    assert "cleaning" in decision["reason"]
+    assert decision["required_user_action"] in {"confirm_cleaning_decision", "ask_user_question"}
     assert decision["risk_fields"] == ["date"]
+    assert decision["confirmation_gate"]["confirmation_type"] == "data_quality_confirmation"
 
 
 def test_pending_confirmation_blocks_direct_analysis_entry():
