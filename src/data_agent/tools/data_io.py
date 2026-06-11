@@ -461,12 +461,14 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         except Exception:
             pass
 
+        ctx = None
+        state = None
+        contract_for_bundle: dict[str, Any] = {"field_roles": {}}
         try:
             from data_agent.agent.context import get_current_context
             ctx = get_current_context()
             state = getattr(ctx, "analysis_state", None) if ctx is not None else None
             if ctx is not None and state is not None:
-                contract_for_bundle: dict[str, Any] = {"field_roles": {}}
                 contract_id, route_count, contract = _record_trust_workflow(
                     session_id=ctx.session_id,
                     state=state,
@@ -487,9 +489,6 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 f"[trust_workflow_warning] skipped: {type(trust_error).__name__} [/trust_workflow_warning]"
             )
         try:
-            from data_agent.agent.context import get_current_context
-            ctx = get_current_context()
-            state = getattr(ctx, "analysis_state", None) if ctx is not None else None
             if ctx is not None and state is not None:
                 _register_loaded_data_bundle(
                     state=state,
@@ -497,7 +496,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                     path=path,
                     dataset=name,
                     df=df,
-                    contract=locals().get("contract_for_bundle", {"field_roles": {}}),
+                    contract=contract_for_bundle,
                     user_input=context,
                 )
         except Exception as bundle_error:
