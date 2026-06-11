@@ -243,6 +243,62 @@ def _metric_names_claim_rate(y_cols: list[str]) -> bool:
     return any(_title_claims_rate(col) for col in y_cols)
 
 
+def _refresh_chart_metadata(metadata: dict | None, df: pd.DataFrame, x_col: str, y_cols: list[str], aggregation: str = "") -> None:
+    if metadata is None:
+        return
+    if aggregation:
+        metadata["aggregation"] = aggregation
+    metadata["row_count"] = int(len(df))
+    metadata["missing_summary"] = {
+        col: int(df[col].isna().sum())
+        for col in ([x_col] if x_col else []) + y_cols
+        if col in df.columns
+    }
+
+
+def _prepare_chart_dataframe(
+    df: pd.DataFrame,
+    chart_type: str,
+    x_col: str,
+    y_cols: list[str],
+    color_col: str,
+    metadata: dict | None,
+) -> pd.DataFrame:
+    if not x_col or not y_cols or x_col not in df.columns:
+        return df
+
+    if chart_type == "line" and _is_date_like(df[x_col]):
+        parsed = pd.to_datetime(df[x_col], errors="coerce")
+        day_values = parsed.dt.normalize()
+        if parsed.notna().any() and (day_values.duplicated().any() or len(df) > day_values.nunique(dropna=True)):
+            plot_df = df.copy()
+            plot_df[x_col] = day_values.dt.strftime("%Y-%m-%d")
+            group_cols = [x_col] + ([color_col] if color_col else [])
+            plot_df = plot_df.groupby(group_cols, sort=False, dropna=False)[y_cols].sum().reset_index()
+            _refresh_chart_metadata(metadata, plot_df, x_col, y_cols, "daily_sum")
+            if metadata is not None:
+                metadata.setdefault("validation_warnings", []).append(
+                    f"line chart aggregated duplicate date values in '{x_col}' by daily sum"
+                )
+                metadata["validation_status"] = "warning"
+            return plot_df
+
+    if chart_type == "bar":
+        group_cols = [x_col] + ([color_col] if color_col else [])
+        if not df.duplicated(subset=group_cols).any():
+            return df
+        plot_df = df.groupby(group_cols, sort=False, dropna=False)[y_cols].mean().reset_index()
+        _refresh_chart_metadata(metadata, plot_df, x_col, y_cols, "mean_by_x")
+        if metadata is not None:
+            metadata.setdefault("validation_warnings", []).append(
+                f"bar chart aggregated duplicate x values in '{x_col}' by mean"
+            )
+            metadata["validation_status"] = "warning"
+        return plot_df
+
+    return df
+
+
 def _validate_chart_spec(
     df: pd.DataFrame,
     chart_type: str,
@@ -286,7 +342,7 @@ def _validate_chart_spec(
     title_l = title.lower()
     time_terms = ("trend", "time", "daily", "weekly", "monthly", "趋势", "月度", "每日", "按月", "时间")
     if chart_type == "line" and x_col and any(term in title_l for term in time_terms):
-        if _looks_like_identifier(x_col, df[x_col]):
+        if not _is_date_like(df[x_col]) and _looks_like_identifier(x_col, df[x_col]):
             return None, _chart_error(
                 "time trend chart cannot use an identifier-like x axis",
                 [f"identifier-like x axis: {x_col}"],
@@ -416,6 +472,9 @@ def create_chart(
                     "purpose 'evidence' or 'insight' requires evidence_ids",
                     ["missing evidence_ids for evidence-backed chart"],
                 )
+
+        y_cols_for_plot = [c.strip() for c in y_col.split(",") if c.strip()]
+        df = _prepare_chart_dataframe(df, chart_type, x_col, y_cols_for_plot, color_col, metadata)
 
         if chart_type == "line":
             if x_col and y_col:

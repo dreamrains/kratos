@@ -224,6 +224,73 @@ def test_line_chart_color_col_creates_grouped_traces(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
+def test_line_chart_aggregates_duplicate_dates_to_daily_sum(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ws = Workspace()
+    ws.add("orders", pd.DataFrame({
+        "paid_at": [
+            "2026-05-01 10:00:00",
+            "2026-05-01 11:00:00",
+            "2026-05-02 09:00:00",
+        ],
+        "revenue": [10, 15, 7],
+    }))
+    ctx = AgentContext(session_id="chart_daily_sum", workspace=ws)
+
+    try:
+        with use_agent_context(ctx):
+            result = create_chart(
+                "line",
+                data="orders",
+                x_col="paid_at",
+                y_col="revenue",
+                title="Daily revenue trend",
+            )
+
+        assert "Chart saved:" in result
+        chart_dir = tmp_path / "sessions" / "chart_daily_sum" / "charts"
+        html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+        metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf-8"))
+        assert "2026-05-01" in html
+        assert "2026-05-02" in html
+        assert "2026-05-01 10:00:00" not in html
+        assert metadata["aggregation"] == "daily_sum"
+        assert metadata["row_count"] == 2
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_bar_chart_aggregates_duplicate_x_groups_for_multi_metric_comparison(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ws = Workspace()
+    ws.add("active_days", pd.DataFrame({
+        "period": ["before", "before", "after", "after"],
+        "active_days": [20, 16, 15, 17],
+        "orders": [80, 60, 50, 46],
+    }))
+    ctx = AgentContext(session_id="chart_bar_duplicate_x", workspace=ws)
+
+    try:
+        with use_agent_context(ctx):
+            result = create_chart(
+                "bar",
+                data="active_days",
+                x_col="period",
+                y_col="active_days,orders",
+                title="Before after active payment days",
+            )
+
+        assert "Chart saved:" in result
+        chart_dir = tmp_path / "sessions" / "chart_bar_duplicate_x" / "charts"
+        html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+        metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf-8"))
+        assert '"x":["after","before"]' in html or '"x":["before","after"]' in html
+        assert metadata["aggregation"] == "mean_by_x"
+        assert metadata["row_count"] == 2
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_funnel_chart_uses_stage_value_labels(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ctx = AgentContext(session_id="chart_funnel_stage", workspace=Workspace())

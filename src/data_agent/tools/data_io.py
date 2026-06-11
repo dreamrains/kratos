@@ -228,7 +228,13 @@ def _register_loaded_data_bundle(
         "status": "loaded",
     })
 
-    existing_files = [item for item in state.data_pool if item.get("file_id") != file_id]
+    active_file_ids = set()
+    if isinstance(previous_bundle, dict):
+        active_file_ids = {str(item) for item in previous_bundle.get("file_ids", []) if item}
+    existing_files = [
+        item for item in state.data_pool
+        if item.get("file_id") != file_id and str(item.get("file_id") or "") in active_file_ids
+    ]
     relationship = classify_file_relationship([file_ref], existing_files, user_input=user_input)
     existing_file_ids = [item.get("file_id") for item in existing_files]
     relationship["relationship_id"] = f"rel_{file_id}"
@@ -460,6 +466,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             ctx = get_current_context()
             state = getattr(ctx, "analysis_state", None) if ctx is not None else None
             if ctx is not None and state is not None:
+                contract_for_bundle: dict[str, Any] = {"field_roles": {}}
                 contract_id, route_count, contract = _record_trust_workflow(
                     session_id=ctx.session_id,
                     state=state,
@@ -471,21 +478,31 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                     interpretation_data=interpretation_data,
                     detail_path=detail_path,
                 )
+                contract_for_bundle = contract
                 summary_parts.append(
                     f"[trust_workflow] contract={contract_id} routes={route_count} [/trust_workflow]"
                 )
+        except Exception as trust_error:
+            summary_parts.append(
+                f"[trust_workflow_warning] skipped: {type(trust_error).__name__} [/trust_workflow_warning]"
+            )
+        try:
+            from data_agent.agent.context import get_current_context
+            ctx = get_current_context()
+            state = getattr(ctx, "analysis_state", None) if ctx is not None else None
+            if ctx is not None and state is not None:
                 _register_loaded_data_bundle(
                     state=state,
                     session_id=ctx.session_id,
                     path=path,
                     dataset=name,
                     df=df,
-                    contract=contract,
+                    contract=locals().get("contract_for_bundle", {"field_roles": {}}),
                     user_input=context,
                 )
-        except Exception as trust_error:
+        except Exception as bundle_error:
             summary_parts.append(
-                f"[trust_workflow_warning] skipped: {type(trust_error).__name__} [/trust_workflow_warning]"
+                f"[bundle_workflow_warning] skipped: {type(bundle_error).__name__} [/bundle_workflow_warning]"
             )
 
         if applied:

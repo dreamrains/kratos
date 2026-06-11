@@ -394,9 +394,79 @@ def test_loaded_dataset_registers_data_pool_and_active_bundle(tmp_path):
         with use_agent_context(ctx):
             result = load_data(str(csv_path), name="orders")
 
-        assert "Error" not in result
+        assert not result.startswith("Error:")
         assert state.data_pool
         assert state.active_bundle_id
         assert state.active_bundle()["dataset_names"] == ["orders"]
+    finally:
+        config._config = old_cfg
+
+
+def test_register_loaded_data_bundle_relationship_scopes_to_active_bundle(tmp_path):
+    import pandas as pd
+
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.tools.data_io import _register_loaded_data_bundle
+
+    state = AnalysisSessionState(session_id="relationship_scope")
+    state.add_data_pool_file({"file_id": "file_unrelated", "filename": "game.xlsx", "dataset": "game"})
+    state.add_data_pool_file({"file_id": "file_orders", "filename": "orders.xlsx", "dataset": "orders"})
+    state.set_active_bundle({
+        "bundle_id": "bundle_orders",
+        "file_ids": ["file_orders"],
+        "dataset_names": ["orders"],
+        "version": 1,
+    })
+
+    path = tmp_path / "orders_flow.xlsx"
+    df = pd.DataFrame({"user_id": [1, 2], "amount": [12, 45]})
+    contract = {"field_roles": {"ids": ["user_id"], "date": []}}
+
+    _register_loaded_data_bundle(
+        state=state,
+        session_id="relationship_scope",
+        path=path,
+        dataset="orders_flow",
+        df=df,
+        contract=contract,
+    )
+
+    relationship = state.file_relationships[-1]
+    assert "file_unrelated" not in relationship["file_ids"]
+    assert set(relationship["file_ids"]) == {"file_orders", state.data_pool[-1]["file_id"]}
+
+
+def test_load_data_registers_data_pool_when_trust_workflow_fails(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from data_agent import config
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.config import AgentConfig
+    from data_agent.session.workspace import Workspace
+    from data_agent.tools import data_io
+
+    old_cfg = config._config
+    config._config = AgentConfig(
+        PROJECT_DIR=tmp_path / "project",
+        SESSIONS_DIR=tmp_path / "sessions",
+    )
+    try:
+        csv_path = tmp_path / "orders.csv"
+        pd.DataFrame({"user_id": [1, 2], "amount": [12, 45]}).to_csv(csv_path, index=False)
+        state = AnalysisSessionState(session_id="trust_failure")
+        ctx = AgentContext(session_id="trust_failure", workspace=Workspace(), analysis_state=state)
+
+        def fail_trust_workflow(**kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(data_io, "_record_trust_workflow", fail_trust_workflow)
+
+        with use_agent_context(ctx):
+            result = data_io.load_data(str(csv_path), name="orders")
+
+        assert not result.startswith("Error:")
+        assert state.data_pool
+        assert state.active_bundle_id
     finally:
         config._config = old_cfg
