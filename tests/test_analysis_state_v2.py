@@ -12,6 +12,106 @@ from data_agent.agent.analysis_state import (
 )
 
 
+def test_data_pool_and_bundle_round_trip():
+    state = AnalysisSessionState(session_id="bundle_state")
+    file_ref = state.add_data_pool_file({
+        "file_id": "file_orders",
+        "filename": "orders.xlsx",
+        "dataset": "orders",
+        "row_count": 10,
+        "column_count": 3,
+        "key_fields": ["user_id"],
+        "time_range": {"start": "2026-04-01", "end": "2026-04-30"},
+    })
+    bundle = state.set_active_bundle({
+        "bundle_id": "bundle_orders_v1",
+        "label": "orders",
+        "file_ids": [file_ref["file_id"]],
+        "dataset_names": ["orders"],
+        "version": 1,
+        "relationship_status": "linked",
+    })
+    state.add_file_relationship({
+        "relationship_id": "rel_orders",
+        "file_ids": ["file_orders"],
+        "status": "linked",
+        "confidence": "high",
+        "evidence": ["single file active bundle"],
+    })
+
+    restored = AnalysisSessionState.from_dict(state.to_dict(), "bundle_state")
+
+    assert restored.data_pool[0]["file_id"] == "file_orders"
+    assert restored.dataset_bundles[0]["bundle_id"] == "bundle_orders_v1"
+    assert restored.active_bundle_id == bundle["bundle_id"]
+    assert restored.active_bundle()["bundle_id"] == "bundle_orders_v1"
+    assert restored.active_scope["active_dataset"] == "orders"
+    assert restored.file_relationships[0]["status"] == "linked"
+
+
+def test_bundle_helpers_upsert_by_stable_ids():
+    state = AnalysisSessionState(session_id="bundle_state")
+
+    state.add_data_pool_file({
+        "id": "artifact_old",
+        "file_id": "file_orders",
+        "filename": "old.xlsx",
+        "row_count": 10,
+        "key_fields": ["user_id"],
+    })
+    state.add_data_pool_file({"id": "artifact_new", "file_id": "file_orders", "filename": "new.xlsx"})
+    state.set_active_bundle({
+        "id": "artifact_bundle_old",
+        "bundle_id": "bundle_orders",
+        "version": 1,
+        "file_ids": ["file_orders"],
+    })
+    state.set_active_bundle({"id": "artifact_bundle_new", "bundle_id": "bundle_orders", "version": 2})
+    state.add_file_relationship({
+        "id": "artifact_rel_old",
+        "relationship_id": "rel_orders",
+        "status": "possibly_linked",
+        "evidence": ["same user_id"],
+    })
+    state.add_file_relationship({"id": "artifact_rel_new", "relationship_id": "rel_orders", "status": "linked"})
+
+    assert len(state.data_pool) == 1
+    assert state.data_pool[0]["id"] == "file_orders"
+    assert state.data_pool[0]["filename"] == "new.xlsx"
+    assert state.data_pool[0]["row_count"] == 10
+    assert state.data_pool[0]["key_fields"] == ["user_id"]
+    assert len(state.dataset_bundles) == 1
+    assert state.dataset_bundles[0]["id"] == "bundle_orders"
+    assert state.dataset_bundles[0]["version"] == 2
+    assert state.dataset_bundles[0]["file_ids"] == ["file_orders"]
+    assert len(state.file_relationships) == 1
+    assert state.file_relationships[0]["id"] == "rel_orders"
+    assert state.file_relationships[0]["status"] == "linked"
+    assert state.file_relationships[0]["evidence"] == ["same user_id"]
+
+
+def test_set_active_bundle_records_bundle_ref_without_polluting_dataset_contracts():
+    state = AnalysisSessionState(session_id="bundle_state")
+
+    state.set_active_bundle({
+        "bundle_id": "bundle_orders",
+        "dataset_names": ["orders"],
+    })
+
+    related = state.active_scope["related_ref_ids"]
+    assert related["dataset_bundles"] == ["bundle_orders"]
+    assert "dataset_contracts" not in related
+    assert state.active_scope["active_dataset"] == "orders"
+
+    state.set_active_route("trend", goal="analyze trend", dataset="orders")
+    state.set_active_bundle({"bundle_id": "bundle_unscoped"})
+
+    assert state.active_scope["active_dataset"] == ""
+    assert state.active_scope["active_route"] == ""
+    assert state.active_scope["active_goal"] == ""
+    assert state.active_scope["active_mode"] == "data_loaded"
+
+
 class TestAnalysisSessionState:
     """Test AnalysisSessionState dataclass and transitions."""
 

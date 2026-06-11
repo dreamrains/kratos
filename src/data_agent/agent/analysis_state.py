@@ -77,6 +77,10 @@ class AnalysisSessionState:
     stage: str = "discover"
     data_state: str = "unknown"
     data_requirements: list[dict[str, Any]] = field(default_factory=list)
+    data_pool: list[dict[str, Any]] = field(default_factory=list)
+    dataset_bundles: list[dict[str, Any]] = field(default_factory=list)
+    file_relationships: list[dict[str, Any]] = field(default_factory=list)
+    active_bundle_id: str = ""
     analysis_plan: dict[str, Any] | None = None
     analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
@@ -104,6 +108,10 @@ class AnalysisSessionState:
             stage=stage,
             data_state=data_state,
             data_requirements=list(data.get("data_requirements") or []),
+            data_pool=list(data.get("data_pool") or []),
+            dataset_bundles=list(data.get("dataset_bundles") or []),
+            file_relationships=list(data.get("file_relationships") or []),
+            active_bundle_id=data.get("active_bundle_id") or "",
             analysis_plan=data.get("analysis_plan") or data.get("analysis_spec"),
             analysis_spec=data.get("analysis_spec"),
             evidence_records=list(data.get("evidence_records") or []),
@@ -129,6 +137,10 @@ class AnalysisSessionState:
             "stage": self.stage,
             "data_state": self.data_state,
             "data_requirements": self.data_requirements,
+            "data_pool": self.data_pool,
+            "dataset_bundles": self.dataset_bundles,
+            "file_relationships": self.file_relationships,
+            "active_bundle_id": self.active_bundle_id,
             "analysis_plan": self.analysis_plan,
             "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
@@ -261,6 +273,24 @@ class AnalysisSessionState:
         collection.append(item)
         return item
 
+    def _upsert_ref_by_key(self, collection: list[dict[str, Any]], ref: dict[str, Any], key: str) -> dict[str, Any]:
+        item = dict(ref)
+        key_value = str(item.get(key) or item.get("id") or "")
+        if key_value:
+            item[key] = key_value
+            item["id"] = key_value
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault(key, item["id"])
+        item.setdefault("created_at", _now())
+        for index, existing in enumerate(collection):
+            if existing.get(key) == item.get(key) or existing.get("id") == item.get("id"):
+                merged = dict(existing)
+                merged.update(item)
+                collection[index] = merged
+                return merged
+        collection.append(item)
+        return item
+
     def _active_related_refs(self) -> dict[str, list[str]]:
         related = self.active_scope.get("related_ref_ids")
         if not isinstance(related, dict):
@@ -324,6 +354,39 @@ class AnalysisSessionState:
 
     def add_preview_digest_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         return self._upsert_ref(self.preview_digests, ref)
+
+    def add_data_pool_file(self, ref: dict[str, Any]) -> dict[str, Any]:
+        item = self._upsert_ref_by_key(self.data_pool, ref, "file_id")
+        item.setdefault("status", "available")
+        return item
+
+    def set_active_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        item = self._upsert_ref_by_key(self.dataset_bundles, bundle, "bundle_id")
+        bundle_id = str(item.get("bundle_id") or item.get("id") or "")
+        item["bundle_id"] = bundle_id
+        self.active_bundle_id = bundle_id
+        datasets = item.get("dataset_names") if isinstance(item.get("dataset_names"), list) else []
+        if datasets:
+            self.set_active_dataset(str(datasets[0]))
+            self._add_active_ref("dataset_bundles", bundle_id)
+        else:
+            self.active_scope = _normalize_active_scope(self.active_scope)
+            self.active_scope["active_dataset"] = ""
+            self.active_scope["active_route"] = ""
+            self.active_scope["active_goal"] = ""
+            self.active_scope["active_mode"] = "data_loaded"
+            self.active_scope["updated_at"] = _now()
+            self._add_active_ref("dataset_bundles", bundle_id)
+        return item
+
+    def active_bundle(self) -> dict[str, Any] | None:
+        for bundle in self.dataset_bundles:
+            if bundle.get("bundle_id") == self.active_bundle_id or bundle.get("id") == self.active_bundle_id:
+                return bundle
+        return None
+
+    def add_file_relationship(self, relationship: dict[str, Any]) -> dict[str, Any]:
+        return self._upsert_ref_by_key(self.file_relationships, relationship, "relationship_id")
 
     def add_route_proposal_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         return self._upsert_ref(self.route_proposals, ref)
