@@ -655,6 +655,11 @@ class AgentLoop:
             )
         self.context.turn_intent = intent
         self._last_turn_intent = intent
+        self._turn_existing_pending_ids = {
+            str(c.get("id") or c.get("suspension_id") or "")
+            for c in getattr(state, "pending_confirmations", []) or []
+            if isinstance(c, dict) and c.get("status", "pending") == "pending"
+        }
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
         try:
             from data_agent.agent.question_need_detector import detect_question_need
@@ -684,7 +689,8 @@ class AgentLoop:
         if not isinstance(question_need, dict) or question_need.get("status") != "hard_question":
             return None
         state = getattr(self.context, "analysis_state", None)
-        if state is not None and any(c.get("status", "pending") == "pending" for c in getattr(state, "pending_confirmations", []) or []):
+        pending = self._pending_confirmation_for_auto_suspend(state)
+        if pending is False:
             return None
 
         susp = SuspendedForConfirmation(
@@ -698,9 +704,38 @@ class AgentLoop:
             blocking_reason=str(question_need.get("reason") or ""),
             state_updates=json.dumps({"stage": "scope"}, ensure_ascii=False),
         )
-        self._register_confirmation(susp)
+        if isinstance(pending, dict):
+            pending["suspension_id"] = susp.suspension_id
+            pending.setdefault("question", susp.question)
+            pending.setdefault("options", susp.options)
+            pending.setdefault("context", susp.context)
+            pending.setdefault("confirmation_type", susp.confirmation_type)
+            pending.setdefault("blocking_reason", susp.blocking_reason)
+            pending.setdefault("state_updates", susp.state_updates)
+            if state is not None:
+                state.save()
+        else:
+            self._register_confirmation(susp)
         SuspensionManager(get_config().sessions_resolved).save(susp)
         return susp
+
+    def _pending_confirmation_for_auto_suspend(self, state: Any) -> dict[str, Any] | bool | None:
+        if state is None:
+            return None
+        pending_items = [
+            c for c in getattr(state, "pending_confirmations", []) or []
+            if isinstance(c, dict) and c.get("status", "pending") == "pending"
+        ]
+        if not pending_items:
+            return None
+        if any(c.get("suspension_id") for c in pending_items):
+            return False
+        existing_ids = getattr(self, "_turn_existing_pending_ids", set()) or set()
+        for item in pending_items:
+            item_id = str(item.get("id") or item.get("suspension_id") or "")
+            if item_id not in existing_ids:
+                return item
+        return False
 
     def _extract_user_requirements(self, user_input: str) -> None:
         """Use LLM to extract quality/format requirements from user input (once per session)."""

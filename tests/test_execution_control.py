@@ -286,6 +286,44 @@ def test_structured_loop_auto_suspends_for_required_question(monkeypatch):
     assert state.pending_confirmations[0]["status"] == "pending"
 
 
+def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr("data_agent.agent.llm_playbook.select_playbook_llm", lambda **kwargs: None)
+
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("LLM should not be called before required confirmation")
+
+    ctx = AgentContext(session_id="playbook_pending_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="playbook_pending_gate", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "main"
+    state.active_scope["active_mode"] = "data_loaded"
+    ctx.analysis_state = state
+    loop = AgentLoop(client=FailingClient(), session_id="playbook_pending_gate")
+    loop.context = ctx
+
+    with use_agent_context(ctx):
+        result = loop.run_turn_structured("forecast revenue and ROI next month")
+
+    from data_agent.agent.loop import SuspendedForConfirmation
+
+    assert isinstance(result, SuspendedForConfirmation)
+    assert result.confirmation_type == "method_confirmation"
+    pending = [item for item in state.pending_confirmations if item.get("status") == "pending"]
+    assert len(pending) == 1
+    assert pending[0]["suspension_id"] == result.suspension_id
+
+
 def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
     intent = TurnIntent(
         intent_type="intent_negotiation",
