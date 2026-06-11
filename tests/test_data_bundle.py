@@ -357,3 +357,46 @@ def test_stable_file_id_is_deterministic_and_dataset_sensitive():
     assert same == stable_file_id("orders.xlsx", "orders")
     assert same != stable_file_id("orders.xlsx", "flow")
     assert same.startswith("file_")
+
+
+def test_loaded_dataset_registers_data_pool_and_active_bundle(tmp_path):
+    import pandas as pd
+
+    from data_agent import config
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.config import AgentConfig
+    from data_agent.session.workspace import Workspace
+    from data_agent.tools.data_io import load_data
+
+    old_cfg = config._config
+    config._config = AgentConfig(
+        PROJECT_DIR=tmp_path / "project",
+        SESSIONS_DIR=tmp_path / "sessions",
+    )
+    try:
+        csv_path = tmp_path / "orders.csv"
+        pd.DataFrame(
+            {
+                "user_id": [1, 2],
+                "paid_at": ["2026-04-01", "2026-04-02"],
+                "amount": [12, 45],
+            }
+        ).to_csv(csv_path, index=False)
+
+        state = AnalysisSessionState(session_id="load_bundle")
+        ctx = AgentContext(
+            session_id="load_bundle",
+            workspace=Workspace(),
+            analysis_state=state,
+        )
+
+        with use_agent_context(ctx):
+            result = load_data(str(csv_path), name="orders")
+
+        assert "Error" not in result
+        assert state.data_pool
+        assert state.active_bundle_id
+        assert state.active_bundle()["dataset_names"] == ["orders"]
+    finally:
+        config._config = old_cfg

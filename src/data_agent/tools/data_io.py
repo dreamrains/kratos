@@ -119,7 +119,7 @@ def _record_trust_workflow(
     quality: dict[str, Any],
     interpretation_data: dict[str, Any],
     detail_path: str,
-) -> tuple[str, int]:
+) -> tuple[str, int, dict[str, Any]]:
     from data_agent.agent.trust_contracts import (
         build_cleaning_decision_log,
         build_dataset_understanding_contract,
@@ -185,7 +185,83 @@ def _record_trust_workflow(
         })
 
     _save_trust_state(state, session_id)
-    return contract["id"], len(routes)
+    return contract["id"], len(routes), contract
+
+
+def _unique_values(values: list[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "")
+        if not text or text in seen:
+            continue
+        result.append(text)
+        seen.add(text)
+    return result
+
+
+def _register_loaded_data_bundle(
+    *,
+    state: Any,
+    session_id: str,
+    path: Path,
+    dataset: str,
+    df: pd.DataFrame,
+    contract: dict[str, Any],
+    user_input: str = "",
+) -> None:
+    from data_agent.agent.data_bundle import classify_file_relationship, stable_file_id
+
+    field_roles = contract.get("field_roles") if isinstance(contract.get("field_roles"), dict) else {}
+    file_id = stable_file_id(path.name, dataset)
+    previous_bundle = state.active_bundle() if hasattr(state, "active_bundle") else None
+    file_ref = state.add_data_pool_file({
+        "file_id": file_id,
+        "filename": path.name,
+        "dataset": dataset,
+        "row_count": int(len(df)),
+        "column_count": int(len(df.columns)),
+        "columns": [str(column) for column in list(df.columns)[:30]],
+        "key_fields": list(field_roles.get("ids") or []),
+        "time_fields": list(field_roles.get("date") or []),
+        "time_range": contract.get("time_range") if isinstance(contract.get("time_range"), dict) else {},
+        "status": "loaded",
+    })
+
+    existing_files = [item for item in state.data_pool if item.get("file_id") != file_id]
+    relationship = classify_file_relationship([file_ref], existing_files, user_input=user_input)
+    existing_file_ids = [item.get("file_id") for item in existing_files]
+    relationship["relationship_id"] = f"rel_{file_id}"
+    relationship["file_ids"] = _unique_values(existing_file_ids + [file_id])
+    state.add_file_relationship(relationship)
+
+    if relationship.get("requires_confirmation"):
+        if previous_bundle:
+            state.set_active_bundle(previous_bundle)
+        _save_trust_state(state, session_id)
+        return
+
+    if previous_bundle and relationship.get("status") == "linked":
+        file_ids = _unique_values(list(previous_bundle.get("file_ids") or []) + [file_id])
+        dataset_names = _unique_values(list(previous_bundle.get("dataset_names") or []) + [dataset])
+        state.set_active_bundle({
+            **previous_bundle,
+            "file_ids": file_ids,
+            "dataset_names": dataset_names,
+            "version": int(previous_bundle.get("version") or 1) + 1,
+            "relationship_status": relationship.get("status"),
+        })
+    else:
+        state.set_active_bundle({
+            "bundle_id": f"bundle_{file_id}_v1",
+            "label": dataset,
+            "file_ids": [file_id],
+            "dataset_names": [dataset],
+            "version": 1,
+            "relationship_status": relationship.get("status"),
+        })
+
+    _save_trust_state(state, session_id)
 
 
 @registry.register(
@@ -384,7 +460,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             ctx = get_current_context()
             state = getattr(ctx, "analysis_state", None) if ctx is not None else None
             if ctx is not None and state is not None:
-                contract_id, route_count = _record_trust_workflow(
+                contract_id, route_count, contract = _record_trust_workflow(
                     session_id=ctx.session_id,
                     state=state,
                     dataset=name,
@@ -397,6 +473,15 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 )
                 summary_parts.append(
                     f"[trust_workflow] contract={contract_id} routes={route_count} [/trust_workflow]"
+                )
+                _register_loaded_data_bundle(
+                    state=state,
+                    session_id=ctx.session_id,
+                    path=path,
+                    dataset=name,
+                    df=df,
+                    contract=contract,
+                    user_input=context,
                 )
         except Exception as trust_error:
             summary_parts.append(
