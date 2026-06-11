@@ -214,6 +214,23 @@ def test_pending_confirmation_blocks_direct_analysis_entry():
     assert decision["confirmation_gate"]["question"] == "请先确认分析目标"
 
 
+def test_pending_file_relationship_returns_ask_user_question_gate():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_sales_history",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "join_logic_confirmation",
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    decision = decide_analysis_entry("show revenue trend", _intent(), state)
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["required_user_action"] == "ask_user_question"
+    assert decision["confirmation_gate"]["confirmation_type"] == "join_logic_confirmation"
+
+
 def test_blocked_quality_returns_blocked():
     state = _state()
     state.dataset_contracts[0]["quality"] = {

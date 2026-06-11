@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -9,6 +10,56 @@ BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_g
 BLOCKED_SURFACES_EXECUTION = ["analysis_execution", "report_generation"]
 
 _CONSULTING_INTENTS = {"simple_response", "knowledge_qa", "analysis_consultation", "result_followup"}
+_PENDING_RELATIONSHIP_STATUSES = {"possibly_linked", "independent", "insufficient_preview"}
+_LATEST_ONLY_PHRASES = (
+    "latest only",
+    "latest upload only",
+    "only analyze latest",
+    "only analyze the latest",
+    "only latest",
+    "only use latest",
+    "only use the latest",
+    "only the latest",
+    "use latest only",
+    "exclude historical",
+    "exclude history",
+    "ignore historical",
+    "ignore history",
+    "no historical",
+    "no history",
+    "not historical",
+    "without historical",
+    "without history",
+    "\u53ea\u5206\u6790\u6700\u65b0",
+    "\u53ea\u5206\u6790\u65b0\u6587\u4ef6",
+    "\u53ea\u770b\u6700\u65b0",
+    "\u4ec5\u5206\u6790\u6700\u65b0",
+    "\u4ec5\u4f7f\u7528\u6700\u65b0",
+    "\u4e0d\u770b\u5386\u53f2",
+    "\u4e0d\u8981\u5386\u53f2",
+    "\u6392\u9664\u5386\u53f2",
+)
+_LATEST_ONLY_RELATIONSHIP_SCOPE_TERMS = (
+    "compare",
+    "comparison",
+    "historical",
+    "history",
+    "previous",
+    "with history",
+    "merge",
+    "join",
+    "combine",
+    "relate",
+    "relationship",
+    "对比",
+    "比较",
+    "历史",
+    "之前",
+    "关联",
+    "结合",
+    "合并",
+    "一起",
+)
 _HIGH_RISK_KEYWORDS = (
     "predict",
     "forecast",
@@ -72,8 +123,12 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     if state is None or _intent_type(intent) in _CONSULTING_INTENTS:
         return empty_question_need()
 
-    routes = _scoped_routes(state)
     text = (user_input or "").lower()
+    relationship_gate = _pending_file_relationship_gate(text, state)
+    if relationship_gate:
+        return relationship_gate
+
+    routes = _scoped_routes(state)
 
     if _is_vague_route_request(intent) and len(routes) > 1:
         return _hard_gate(
@@ -197,6 +252,113 @@ def _hard_gate(
         "risk_fields": _dedupe(risk_fields or []),
         "affected_routes": _dedupe(affected_routes or []),
     }
+
+
+def _pending_file_relationship_gate(text: str, state: Any) -> dict[str, Any] | None:
+    if _explicit_latest_only_without_relationship_scope(text):
+        return None
+    for relationship in _list_attr(state, "file_relationships"):
+        if not relationship.get("requires_confirmation"):
+            continue
+        status = _text(relationship.get("status"))
+        if status not in _PENDING_RELATIONSHIP_STATUSES:
+            continue
+        confirmation_type = _text(relationship.get("confirmation_type")) or "file_relationship_confirmation"
+        return _hard_gate(
+            confirmation_type,
+            _relationship_reason(relationship),
+            _relationship_question(relationship, confirmation_type),
+            options=_relationship_options(confirmation_type),
+            blocking_surfaces=BLOCKED_SURFACES_ALL,
+        )
+    return None
+
+
+def _explicit_latest_only_without_relationship_scope(text: str) -> bool:
+    lowered = (text or "").lower()
+    if _relationship_scope_requested(lowered):
+        return False
+    if any(phrase in lowered for phrase in _LATEST_ONLY_PHRASES):
+        return True
+    return bool(
+        re.search(r"\bonly\s+(analy[sz]e|use|look at)\s+(the\s+)?(latest|newest)\s+(file|upload|data|dataset)\b", lowered)
+        or re.search(r"\b(exclude|ignore|skip|without)\s+(previous|historical|history|old)\s+(file|upload|data|dataset|files|uploads|datasets)?\b", lowered)
+    )
+
+
+def _relationship_scope_requested(text: str) -> bool:
+    lowered = (text or "").lower()
+    lowered = re.sub(r"\bnot\s+(previous|historical|history)\b", "", lowered)
+    lowered = re.sub(r"\bwithout\s+(previous|historical|history)\b", "", lowered)
+    lowered = re.sub(r"\b(exclude|ignore|skip|no)\s+(previous|historical|history|old)\b", "", lowered)
+    lowered = lowered.replace("不要历史", "").replace("不看历史", "").replace("不包含历史", "").replace("排除历史", "")
+    return any(term in lowered for term in _LATEST_ONLY_RELATIONSHIP_SCOPE_TERMS)
+
+
+def _relationship_reason(relationship: dict[str, Any]) -> str:
+    uncertainties = _text_list(relationship.get("uncertainties"))
+    if uncertainties:
+        return uncertainties[0]
+    return "多个数据文件之间的关系尚未确认，可能影响本次分析范围。"
+
+
+def _relationship_question(relationship: dict[str, Any], confirmation_type: str) -> str:
+    file_summary = _relationship_file_summary(relationship)
+    if confirmation_type == "file_exclusion_confirmation":
+        if file_summary:
+            return f"新上传的数据文件看起来可能不属于当前分析目标。请确认是否要纳入本轮分析。{file_summary}"
+        return "新上传的数据文件看起来可能不属于当前分析目标。请确认是否要纳入本轮分析。"
+    if file_summary:
+        return f"新上传的数据文件可能与当前分析目标有关，但关系尚不确定。请确认这些文件是否应一起分析。{file_summary}"
+    return "新上传的数据文件可能与当前分析目标有关，但关系尚不确定。请确认这些文件是否应一起分析。"
+
+
+def _relationship_file_summary(relationship: dict[str, Any]) -> str:
+    new_files = _text_list(relationship.get("new_files") or relationship.get("new_file_ids") or relationship.get("new_file_names"))
+    existing_files = _text_list(
+        relationship.get("existing_files")
+        or relationship.get("existing_file_ids")
+        or relationship.get("existing_file_names")
+    )
+    parts = []
+    if new_files:
+        parts.append("新文件：" + ", ".join(new_files[:3]))
+    if existing_files:
+        parts.append("已有文件：" + ", ".join(existing_files[:3]))
+    return "；".join(parts)
+
+
+def _relationship_options(confirmation_type: str) -> list[dict[str, str]]:
+    if confirmation_type == "file_exclusion_confirmation":
+        return [
+            {
+                "label": "纳入当前分析",
+                "value": "include_in_active_bundle",
+                "description": "将新文件视为当前分析目标的一部分。",
+            },
+            {
+                "label": "暂不纳入",
+                "value": "exclude_from_active_bundle",
+                "description": "本轮分析先不使用该文件，保持当前分析范围。",
+            },
+        ]
+    return [
+        {
+            "label": "一起分析",
+            "value": "include_in_active_bundle",
+            "description": "把这些文件放入同一分析范围，后续综合判断。",
+        },
+        {
+            "label": "分开分析",
+            "value": "separate_bundle",
+            "description": "将新文件与当前分析范围分开处理。",
+        },
+        {
+            "label": "只分析最新文件",
+            "value": "latest_only",
+            "description": "本轮只使用最新上传的数据文件，不纳入历史文件。",
+        },
+    ]
 
 
 def _intent_type(intent: Any) -> str:

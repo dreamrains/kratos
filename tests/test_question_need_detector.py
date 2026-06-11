@@ -1,6 +1,7 @@
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.question_need_detector import detect_question_need
+import pytest
 
 
 def _intent(intent_type="directed_analysis", **overrides):
@@ -122,3 +123,121 @@ def test_cleaning_risk_on_required_field_requires_data_quality_question():
     assert gate["status"] == "hard_question"
     assert gate["question_type"] == "data_quality_confirmation"
     assert gate["risk_fields"] == ["order_date"]
+
+
+def test_pending_file_relationship_requires_hard_question():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_orders_history",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "join_logic_confirmation",
+        "new_files": ["orders_latest.csv"],
+        "existing_files": ["orders_history.csv"],
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    gate = detect_question_need("analyze revenue trend", _intent(), state)
+
+    assert gate["status"] == "hard_question"
+    assert gate["question_type"] == "join_logic_confirmation"
+    assert gate["reason"] == "Shared IDs exist but business theme evidence is unclear."
+    assert [option["value"] for option in gate["options"]] == [
+        "include_in_active_bundle",
+        "separate_bundle",
+        "latest_only",
+    ]
+
+
+def test_file_exclusion_confirmation_uses_include_or_exclude_options():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_independent",
+        "status": "independent",
+        "requires_confirmation": True,
+        "confirmation_type": "file_exclusion_confirmation",
+        "uncertainties": ["User may know an external relationship not visible in the file profiles."],
+    }]
+
+    gate = detect_question_need("analyze the data", _intent(), state)
+
+    assert gate["status"] == "hard_question"
+    assert gate["question_type"] == "file_exclusion_confirmation"
+    assert [option["value"] for option in gate["options"]] == [
+        "include_in_active_bundle",
+        "exclude_from_active_bundle",
+    ]
+
+
+def test_latest_only_request_skips_file_relationship_confirmation():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_latest_only",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "file_relationship_confirmation",
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    gate = detect_question_need("only analyze latest file revenue trend", _intent(), state)
+
+    assert gate["status"] == "clear"
+
+
+@pytest.mark.parametrize("user_input", [
+    "exclude historical files",
+    "ignore history",
+    "no history",
+])
+def test_explicit_history_exclusion_skips_file_relationship_confirmation(user_input):
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_exclude_history",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "file_relationship_confirmation",
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    gate = detect_question_need(user_input, _intent(), state)
+
+    assert gate["status"] == "clear"
+
+
+def test_latest_with_historical_comparison_still_requires_relationship_confirmation():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_latest_compare_history",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "file_relationship_confirmation",
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    gate = detect_question_need(
+        "only analyze the latest file and compare it with historical orders",
+        _intent(),
+        state,
+    )
+
+    assert gate["status"] == "hard_question"
+    assert gate["question_type"] == "file_relationship_confirmation"
+
+
+def test_consulting_intent_does_not_block_on_pending_file_relationship():
+    state = _state()
+    state.file_relationships = [{
+        "relationship_id": "rel_consulting",
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "file_relationship_confirmation",
+        "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
+    }]
+
+    gate = detect_question_need(
+        "what is a good way to compare these files?",
+        _intent("analysis_consultation", recommended_action="answer_directly"),
+        state,
+    )
+
+    assert gate["status"] == "clear"
