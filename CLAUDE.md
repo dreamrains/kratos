@@ -56,47 +56,54 @@ uv run pytest tests/test_interaction.py::test_function_name -v
 
 ### Knowledge & Memory System: `data_agent/knowledge/`
 
-**Legacy three-layer merge** (YAML-based): **Global → Object → Session** (session overrides object overrides global)
-- `DomainKnowledge` (`domain.py`): Domain-specific indicators, rules, pitfalls. Templates for ecommerce/gaming
-- `ExperienceLog` (`experience.py`): Learned patterns with draft/confirmed/deprecated lifecycle and confidence scores
-- `ProjectRules` (`rules.py`): Markdown project rules injected into system prompt
-
-**New knowledge & memory subsystem** (SQLite-backed):
-- `KnowledgeLibrary` (`library.py`): Versioned knowledge items with create/deprecate/supersede lifecycle
-- `MemoryStore` (`memory.py`): Candidate → draft → confirmed memories with auto-extraction from tool results
-- `EvidenceStore` (`evidence.py`): Evidence records linked to analysis sessions and knowledge items
-- `MemoryCandidateExtractor` (`candidates.py`): Auto-extracts memory candidates from tool outputs
-- `RetrievalEngine` (`retrieval.py`): Context retrieval with token budget and relevance scoring
+**Primary system** (SQLite-backed, no layer merging):
+- `KnowledgeLibrary` (`library.py`): Versioned knowledge items stored as Markdown files with SQLite metadata. Lifecycle: ACTIVE → DEPRECATED → ARCHIVED. Global scope, no per-project layering
+- `MemoryStore` (`memory.py`): Ephemeral memory candidates with lifecycle CANDIDATE → CONFIRMED/REJECTED/DEPRECATED. Types: PREFERENCE, DOMAIN_FACT, WORKFLOW_PATTERN, CORRECTION, TOOL_USAGE. Auto-deduplication via `dedup_key`
+- `EvidenceStore` (`evidence.py`): Session-indexed evidence records (MESSAGE, TOOL_CALL, ANALYSIS_RESULT, USER_CORRECTION, REPORT). Links analysis claims to source data
+- `MemoryCandidateExtractor` (`candidates.py`): Auto-extracts memory candidates from tool outputs by detecting markers (preferences, corrections, metric definitions, workflow patterns)
+- `RetrievalEngine` (`retrieval.py`): Unified retrieval across KnowledgeLibrary + MemoryStore + EvidenceStore with conflict detection and token budget management
 - `KnowledgeDatabase` (`sqlite_store.py`): SQLite storage layer for knowledge/memory/evidence
 - `models.py`: Pydantic models (KnowledgeItem, MemoryItem, EvidenceRecord, RetrievedContext, etc.)
 
-Knowledge promotion: session → object (explicit action). Migration between objects on re-binding.
+**Legacy YAML-based components** (still in use, pending migration to the primary system):
+- `DomainKnowledge` (`domain.py`): Domain-specific indicators, rules, pitfalls with templates for ecommerce/gaming. Still uses three-layer merge (global → project → session)
+- `ExperienceLog` (`experience.py`): Learned patterns with draft/confirmed/deprecated lifecycle and confidence scores. Still uses three-layer union (global ∪ project ∪ session)
+- `ProjectRules` (`rules.py`): Markdown project rules injected into system prompt. Still uses three-layer append (global → project → session)
 
 ### Config: `data_agent/config.py`
 
 `AgentConfig` via pydantic-settings reads `.env`. Key paths resolved as properties:
-- `project_resolved` → `./project/` (data, knowledge, skills, objects subdirs)
+- `workspace_resolved` → `./workspace/` (data, knowledge, projects, inbox subdirs). Legacy alias: `project_resolved`
 - `sessions_resolved` → `./sessions/`
 - `global_dir` → `~/.data-agent/` (cross-project skills, MCP config)
+- `projects_dir` → `<workspace>/projects/`
+- `objects_dir` → `<workspace>/objects/` (legacy, kept for migration only)
 
-`config_resolver.py` merges global + project configs (skills dirs, MCP servers, settings).
+`config_resolver.py` merges global + workspace configs (skills dirs, MCP servers, settings).
 
 ### MCP Integration: `data_agent/mcp/`
 
 - `MCPClientManager` manages multiple MCP server connections via a background asyncio event loop thread
 - Supports stdio, SSE, and streamable-http transports
 - `MCPToolBridge` discovers MCP tools and registers them into `ToolRegistry` as if native
-- Config in `project/mcp_servers.yaml` and `~/.data-agent/mcp_servers.yaml`
+- Config in `workspace/mcp_servers.yaml` and `~/.data-agent/mcp_servers.yaml`
 
 ### Skills: `data_agent/skills/`
 
-- `SkillLoader` discovers `SKILL.md` files in `~/.data-agent/skills/` (global) and `project/skills/` (project-level, overrides global)
+- `SkillLoader` discovers `SKILL.md` files in `~/.data-agent/skills/` (global) and `workspace/skills/` (workspace-level, overrides global)
 - Skills have YAML frontmatter (name, trigger_keywords, tools_required, task_template) + instruction body
 - Loaded skills get injected into the system prompt as `<skill>` XML blocks
 
+### Project Management: `data_agent/project_manager.py`
+
+- `ProjectManager` manages projects within `workspace/projects/{name}/`
+- Each project has `meta.yaml` (name, description, status, tags), `data/`, and `tasks/`
+- Sessions can be bound to projects via `bind_session_to_project()` (session/history.py)
+- `list_objects()` exists as a backward-compatible alias for `list_projects()`
+
 ### Web GUI: `data_agent/web/`
 
-Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop to SSE responses. Blueprints: `chat.py`, `sessions.py`, `objects.py`, `tasks.py`, `artifacts.py`, `commands.py`, `uploads.py`, `management.py` (knowledge/memory/evidence admin panel).
+Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop to SSE responses. Blueprints: `chat.py`, `sessions.py`, `objects.py` (handles `/api/projects` endpoints), `tasks.py`, `artifacts.py`, `commands.py`, `uploads.py`, `capabilities.py`, `management.py` (knowledge/memory/evidence admin panel).
 
 ### Lifecycle: `data_agent/lifecycle.py`
 
@@ -105,23 +112,61 @@ Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop 
 ## Key Patterns
 
 - **Module-level singletons**: Config, ToolRegistry, DomainKnowledge, ExperienceLog all use `get_X()` accessor functions with lazy init
-- **Decorator-based registration**: Tools use `@registry.register(name=..., description=..., capability=...)` 
-- **Three-layer knowledge merge**: Global → Object → Session, with promotion/migration APIs
-- **Context management**: `AgentContext` (agent/context.py) tracks per-turn state (active groups, executed tools)
+- **Decorator-based registration**: Tools use `@registry.register(name=..., description=..., capability=...)`
+- **Unified retrieval with conflict detection**: RetrievalEngine composes context from KnowledgeLibrary + MemoryStore + EvidenceStore, auto-detecting conflicts between knowledge and memory
+- **Context management**: `AgentContext` (agent/context.py) tracks per-turn state (active groups, executed tools). `project_name` is primary field; `object_name` is a backward-compatible alias
 - **Windows compatibility**: UTF-8 reconfiguration on win32, `ThreadPoolExecutor`-based timeouts instead of `signal`
 - **LLM provider**: Uses litellm for multi-provider support. `LITELLM_LOCAL_MODEL_COST_MAP=true` avoids network calls at init
 
-## Project Directory Structure
+## Directory Structure
+
+### Source Code
 
 ```
-project/              # User data workspace
-  data/               # Processed datasets
-  inbox/              # Raw uploaded files
-  knowledge/          # domain_knowledge.yaml, experience_log.yaml, project_rules.md
-  skills/             # Project-level SKILL.md files
-  objects/            # Per-object knowledge (object_name/knowledge/)
-  mcp_servers.yaml    # Project-level MCP server configs
-sessions/             # Session data (analyses, charts, knowledge per session)
-tests/                # pytest test suite
-reference/            # Reference code and docs (not part of runtime)
+src/data_agent/
+  agent/                # Core agent logic (loop, intent, synthesis_policy, analysis_state)
+  knowledge/            # Knowledge & memory system (library, memory, evidence, retrieval)
+  tools/                # Tool registry and native tools
+  skills/               # Skill loader
+  mcp/                  # MCP protocol integration
+  session/              # Session persistence (history, workspace, task_manager)
+  web/                  # Flask web GUI (blueprints, static, templates)
+  plugins/              # Plugin system
+  llm/                  # LLM client integration
+  utils/                # Utility functions
+```
+
+### Runtime Data
+
+```
+workspace/              # User data workspace (default ./workspace)
+  data/                 # Processed datasets
+  inbox/                # Raw uploaded files
+  knowledge/            # Knowledge library (library/{domain}/*.md + SQLite)
+  projects/             # Per-project data and tasks
+    {name}/
+      meta.yaml         # Project metadata
+      data/             # Project-specific data
+      tasks/            # Project-specific tasks
+  mcp_servers.yaml      # Workspace-level MCP server configs (legacy)
+  skills/               # Workspace-level SKILL.md files (legacy)
+
+sessions/               # Session data (default ./sessions)
+  {session_id}/
+    meta.json           # Session metadata
+    conversation.jsonl  # Active conversation (rotates to .json)
+    analysis_state.json # Analysis state persistence
+    artifacts.json      # Artifact registry
+    analyses/           # Analysis results (report + charts)
+    knowledge/          # Session-level knowledge
+    data/               # Session-level data
+    tool_outputs/       # Tool execution outputs
+
+~/.data-agent/          # Global config
+  skills/               # Global SKILL.md files
+  mcp_servers.yaml      # Global MCP server configs
+  settings.yaml         # Global settings
+
+tests/                  # pytest test suite
+reference/              # Reference code and docs (not part of runtime)
 ```
