@@ -468,12 +468,22 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.data_requirement and state.data_state in {"no_data", "insufficient_data", "unknown"}:
         if not _contains_playbook_artifact(state.data_requirements, selection.primary_playbook_id):
             state.add_data_requirement(selection.data_requirement)
-    if selection.analysis_spec and not state.analysis_spec:
-        state.set_analysis_spec(selection.analysis_spec)
-    if selection.requires_confirmation and selection.analysis_spec:
+    analysis_spec = state.analysis_spec
+    if selection.analysis_spec:
+        current_spec = state.analysis_spec or {}
+        selected_spec_id = selection.analysis_spec.get("id")
+        current_spec_id = current_spec.get("id")
+        selected_playbook_id = selection.analysis_spec.get("playbook_id")
+        current_playbook_id = current_spec.get("playbook_id")
+        should_replace_spec = (
+            not state.analysis_spec
+            or (selected_spec_id and selected_spec_id != current_spec_id)
+            or (selected_playbook_id and selected_playbook_id != current_playbook_id)
+        )
+        analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
+    if selection.requires_confirmation and analysis_spec:
         confirmation_id = f"method_{selection.primary_playbook_id}"
         if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
-            analysis_spec = state.analysis_spec or selection.analysis_spec
             confirmation_policy = analysis_spec.get("confirmation_policy", {})
             state.add_confirmation({
                 "id": confirmation_id,
@@ -484,10 +494,11 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
                 "related_spec_id": analysis_spec.get("id", ""),
                 "state_updates": json.dumps(
                     {
-                        "stage": "method_confirmation",
+                        "stage": "plan",
                         "method_confirmation": {
                             "playbook_id": selection.primary_playbook_id,
                             "analysis_spec_id": analysis_spec.get("id", ""),
+                            "allowed_actions": ["confirm_method", "clarify_method_scope"],
                         },
                     },
                     ensure_ascii=False,

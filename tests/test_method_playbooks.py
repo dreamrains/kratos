@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from data_agent.agent.analysis_flow_controller import AnalysisFlowController
-from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.analysis_state import AnalysisSessionState, STAGES
 from data_agent.agent.intent import TurnIntent, plan_turn_intent
 from data_agent.agent.method_playbooks import (
     PLAYBOOKS,
@@ -103,6 +103,80 @@ def test_method_confirmation_is_answerable_when_playbook_requires_confirmation()
     assert confirmation["blocking_reason"]
     assert confirmation["state_updates"]
     assert confirmation["source"] == "method_playbook"
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_method_confirmation_uses_new_selection_spec_when_existing_state_has_stale_spec():
+    state = AnalysisSessionState(session_id="method_stale_spec", data_state="data_loaded")
+    state.set_analysis_spec({
+        "id": "old_spec",
+        "playbook_id": "driver_decomposition",
+        "confirmation_policy": {
+            "requires_confirmation": True,
+            "confirmation_type": "method_confirmation",
+            "blocking_reason": "old reason",
+        },
+    })
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+    selection = choose_playbook("forecast revenue and ROI", intent, has_data=True)
+    assert selection.analysis_spec is not None
+    selection.analysis_spec["id"] = "new_forecast_spec"
+
+    apply_selection_to_state(state, selection)
+
+    confirmation = next(
+        item for item in state.pending_confirmations
+        if item.get("id") == "method_forecast_decision_simulation"
+    )
+    updates = json.loads(confirmation["state_updates"])
+    assert confirmation["related_spec_id"] == selection.analysis_spec["id"]
+    assert state.analysis_spec["id"] == selection.analysis_spec["id"]
+    assert state.analysis_spec["playbook_id"] == "forecast_decision_simulation"
+    assert updates["method_confirmation"]["analysis_spec_id"] == selection.analysis_spec["id"]
+    assert confirmation["blocking_reason"] != "old reason"
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_method_confirmation_state_updates_are_safe_for_resolution_options():
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+
+    for answer in ("confirm_method", "clarify_method_scope"):
+        state = AnalysisSessionState(session_id=f"method_resolution_{answer}", data_state="data_loaded")
+        selection = choose_playbook("forecast next month revenue and estimate ROI", intent, has_data=True)
+        apply_selection_to_state(state, selection)
+        confirmation = next(
+            item for item in state.pending_confirmations
+            if item.get("id") == "method_forecast_decision_simulation"
+        )
+        updates = json.loads(confirmation["state_updates"])
+
+        assert updates["stage"] in STAGES
+        assert updates["method_confirmation"] == {
+            "playbook_id": "forecast_decision_simulation",
+            "analysis_spec_id": state.analysis_spec["id"],
+            "allowed_actions": ["confirm_method", "clarify_method_scope"],
+        }
+
+        result = state.resolve_confirmation("method_forecast_decision_simulation", answer)
+
+        assert result is not None
+        assert result["status"] == "resolved"
+        assert state.stage in STAGES
+        assert state.active_scope["active_mode"] in {"consulting", "data_loaded", "analysis", "artifact_review"}
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
