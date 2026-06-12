@@ -7,7 +7,9 @@ dist/
 build/
 sessions/
 .claude/
+.superpowers/
 .worktrees/
+workspace/
 project/data/
 project/objects/
 project/reports/
