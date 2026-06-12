@@ -7,6 +7,7 @@ conclusions.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -455,6 +456,11 @@ def select_playbooks(
     )
 
 
+def choose_playbook(user_input: str, intent: TurnIntent, has_data: bool = False) -> PlaybookSelection:
+    dataset_profile = "- data loaded" if has_data else ""
+    return select_playbooks(user_input, intent, dataset_profile=dataset_profile)
+
+
 def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSelection) -> None:
     paths = selection.recommended_paths
     if paths:
@@ -467,13 +473,52 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.requires_confirmation and selection.analysis_spec:
         confirmation_id = f"method_{selection.primary_playbook_id}"
         if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
+            analysis_spec = state.analysis_spec or selection.analysis_spec
+            confirmation_policy = analysis_spec.get("confirmation_policy", {})
             state.add_confirmation({
                 "id": confirmation_id,
-                "confirmation_type": selection.analysis_spec.get("confirmation_policy", {}).get("confirmation_type", "method_confirmation"),
-                "blocking_reason": selection.analysis_spec.get("confirmation_policy", {}).get("blocking_reason", "method confirmation required"),
-                "related_spec_id": selection.analysis_spec.get("id", ""),
+                "confirmation_type": confirmation_policy.get("confirmation_type", "method_confirmation"),
+                "question": _method_confirmation_question(selection),
+                "options": _method_confirmation_options(),
+                "blocking_reason": confirmation_policy.get("blocking_reason", "method confirmation required"),
+                "related_spec_id": analysis_spec.get("id", ""),
+                "state_updates": json.dumps(
+                    {
+                        "stage": "method_confirmation",
+                        "method_confirmation": {
+                            "playbook_id": selection.primary_playbook_id,
+                            "analysis_spec_id": analysis_spec.get("id", ""),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                "source": "method_playbook",
                 "status": "pending",
             })
+
+
+def _method_confirmation_question(selection: PlaybookSelection) -> str:
+    playbook = PLAYBOOKS.get(selection.primary_playbook_id)
+    readable_name = playbook.name if playbook else selection.primary_playbook_id
+    return (
+        f"当前问题适合按「{readable_name}」方法继续。"
+        "请确认是否使用这个方法计划，或先补充目标口径、时间窗口和比较对象？"
+    )
+
+
+def _method_confirmation_options() -> list[dict[str, str]]:
+    return [
+        {
+            "label": "按此方法继续",
+            "value": "confirm_method",
+            "description": "使用当前方法计划继续，但结论仍会按证据强度标注限制。",
+        },
+        {
+            "label": "先补充目标口径",
+            "value": "clarify_method_scope",
+            "description": "暂停执行，先说明目标指标、时间窗口或比较对象。",
+        },
+    ]
 
 
 def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -> bool:

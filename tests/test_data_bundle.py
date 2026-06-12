@@ -1,8 +1,14 @@
+import json
+
+import pandas as pd
+
+from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.data_bundle import (
     classify_file_relationship,
     compact_bundle_summary,
     stable_file_id,
 )
+from data_agent.tools import data_io
 
 
 def test_related_files_link_on_shared_strong_id_and_theme_time_overlap():
@@ -434,6 +440,52 @@ def test_register_loaded_data_bundle_relationship_scopes_to_active_bundle(tmp_pa
     relationship = state.file_relationships[-1]
     assert "file_unrelated" not in relationship["file_ids"]
     assert set(relationship["file_ids"]) == {"file_orders", state.data_pool[-1]["file_id"]}
+
+
+def test_register_loaded_data_bundle_adds_answerable_file_relationship_confirmation(tmp_path, monkeypatch):
+    state = AnalysisSessionState(session_id="file_confirm", data_state="data_loaded")
+    state.add_data_pool_file({
+        "file_id": "file_old",
+        "filename": "orders.xlsx",
+        "dataset": "orders",
+        "key_fields": ["user_id"],
+        "status": "loaded",
+    })
+    state.set_active_bundle({
+        "bundle_id": "bundle_old",
+        "file_ids": ["file_old"],
+        "dataset_names": ["orders"],
+        "version": 1,
+    })
+    monkeypatch.setattr(data_io, "_save_trust_state", lambda *_args, **_kwargs: None)
+
+    data_io._register_loaded_data_bundle(
+        state=state,
+        session_id="file_confirm",
+        path=tmp_path / "activity.xlsx",
+        dataset="activity",
+        df=pd.DataFrame({
+            "user_id": [1, 2],
+            "event_time": ["2026-01-01", "2026-01-02"],
+        }),
+        contract={
+            "field_roles": {"ids": ["user_id"], "date": ["event_time"]},
+            "time_range": {},
+        },
+        user_input="analyze revenue",
+    )
+
+    pending = [
+        item for item in state.pending_confirmations
+        if item.get("confirmation_type") == "file_relationship_confirmation"
+    ]
+    assert pending
+    confirmation = pending[0]
+    assert confirmation["question"]
+    assert confirmation["options"]
+    assert confirmation["blocking_reason"]
+    assert confirmation["source"]
+    assert "file_relationship_confirmation" in json.loads(confirmation["state_updates"])
 
 
 def test_load_data_registers_data_pool_when_trust_workflow_fails(tmp_path, monkeypatch):

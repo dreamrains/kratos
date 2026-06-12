@@ -683,6 +683,45 @@ def test_trust_view_hides_current_routes_when_confirmation_is_pending():
     assert len(view["history"]["routes"]) == 2
 
 
+def test_trust_view_does_not_gate_on_orphaned_file_relationship_flag():
+    state = AnalysisSessionState(session_id="orphaned_relationship", data_state="data_loaded")
+    state.active_scope["active_mode"] = "data_loaded"
+    state.file_relationships = [
+        {
+            "relationship_id": "rel_orders_activity",
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+            "confirmation_type": "file_relationship_confirmation",
+        }
+    ]
+
+    view = build_trust_view(state)
+
+    assert view["file_relationships"][0]["requires_confirmation"] is True
+    assert view["recommendations"]["confirmation_gate"] == _clear_confirmation_gate()
+
+
+def test_trust_view_surfaces_pending_confirmation_gate_question():
+    state = AnalysisSessionState(session_id="pending_relationship", data_state="data_loaded")
+    state.active_scope["active_mode"] = "data_loaded"
+    state.pending_confirmations = [
+        {
+            "id": "confirm_rel_orders_activity",
+            "status": "pending",
+            "confirmation_type": "file_relationship_confirmation",
+            "question": "请确认 activity.xlsx 是否要和 orders.xlsx 一起分析？",
+            "blocking_reason": "文件关系尚未确认。",
+        }
+    ]
+
+    view = build_trust_view(state)
+
+    gate = view["recommendations"]["confirmation_gate"]
+    assert gate["status"] == "needs_confirmation"
+    assert gate["confirmation_type"] == "file_relationship_confirmation"
+    assert gate["question"] == "请确认 activity.xlsx 是否要和 orders.xlsx 一起分析？"
+
+
 def test_trust_view_history_routes_and_counts_are_not_display_limited():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"

@@ -5,8 +5,14 @@ import pandas as pd
 
 from data_agent.agent.analysis_flow_controller import AnalysisFlowController
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.intent import plan_turn_intent
-from data_agent.agent.method_playbooks import PLAYBOOKS, list_playbooks, select_playbooks
+from data_agent.agent.intent import TurnIntent, plan_turn_intent
+from data_agent.agent.method_playbooks import (
+    PLAYBOOKS,
+    apply_selection_to_state,
+    choose_playbook,
+    list_playbooks,
+    select_playbooks,
+)
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.analysis_flow import record_analysis_spec
 from data_agent.tools.registry import registry
@@ -67,6 +73,36 @@ def test_method_playbooks_are_complete():
 
     for high_risk in ("evaluation_causal", "forecast_decision_simulation", "retention_lifecycle"):
         assert PLAYBOOKS[high_risk].confirmation_policy["requires_confirmation"] is True
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_method_confirmation_is_answerable_when_playbook_requires_confirmation():
+    state = AnalysisSessionState(session_id="method_confirmation_contract", data_state="data_loaded")
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+
+    selection = choose_playbook("predict user churn next month", intent, has_data=True)
+    apply_selection_to_state(state, selection)
+
+    pending = [
+        item for item in state.pending_confirmations
+        if item.get("confirmation_type") == "method_confirmation"
+    ]
+    assert pending
+    confirmation = pending[0]
+    assert confirmation["status"] == "pending"
+    assert confirmation["confirmation_type"] == "method_confirmation"
+    assert confirmation["question"]
+    assert confirmation["options"]
+    assert confirmation["blocking_reason"]
+    assert confirmation["state_updates"]
+    assert confirmation["source"] == "method_playbook"
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
