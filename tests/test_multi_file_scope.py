@@ -33,6 +33,18 @@ def test_infer_file_grain_prefers_order_level_when_order_id_exists():
     assert infer_file_grain(profile)["grain"] == "order_level"
 
 
+def test_infer_file_grain_prefers_user_level_before_retention_filename_hint():
+    profile = {
+        "file_id": "retention_detail",
+        "filename": "留存明细.csv",
+        "columns": ["用户ID", "日期", "是否留存"],
+        "key_fields": ["用户ID"],
+        "time_fields": ["日期"],
+    }
+
+    assert infer_file_grain(profile)["grain"] == "user_level"
+
+
 def test_scope_plan_includes_relevant_user_files_and_excludes_unrelated_game_file():
     state = AnalysisSessionState(session_id="scope_plan", data_state="data_loaded")
     state.goal = "评估省钱卡是否值得继续运营"
@@ -73,3 +85,35 @@ def test_scope_plan_includes_relevant_user_files_and_excludes_unrelated_game_fil
     assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
     assert plan["scope_status"] == "needs_confirmation"
     assert any("主用户ID" in assumption for assumption in plan["assumptions"])
+
+
+def test_scope_plan_excludes_unrelated_game_file_even_when_active_bundle_includes_it():
+    state = AnalysisSessionState(session_id="scope_plan_active_game", data_state="data_loaded")
+    state.goal = "评估省钱卡是否值得继续运营"
+    state.data_pool = [
+        {
+            "file_id": "orders",
+            "filename": "省钱卡订单.xlsx",
+            "dataset": "省钱卡订单",
+            "columns": ["order_id", "user_id", "支付时间", "实收金额"],
+            "key_fields": ["order_id", "user_id"],
+            "time_fields": ["支付时间"],
+        },
+        {
+            "file_id": "game",
+            "filename": "游戏互推.xlsx",
+            "dataset": "游戏互推",
+            "columns": ["设备ID", "游戏", "留存"],
+            "key_fields": ["设备ID"],
+        },
+    ]
+    state.set_active_bundle({
+        "bundle_id": "bundle_with_game",
+        "file_ids": ["orders", "game"],
+        "dataset_names": ["省钱卡订单", "游戏互推"],
+    })
+
+    plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
+
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
+    assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]

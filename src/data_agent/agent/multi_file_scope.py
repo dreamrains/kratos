@@ -48,10 +48,10 @@ def infer_file_grain(profile: dict[str, Any]) -> dict[str, str]:
             "grain": "coupon_usage_level",
             "reason": f"coupon and user fields: {entities['coupon'][0]}, {entities['user'][0]}",
         }
-    if _has_any(filename, ("retention", "留存")):
-        return {"grain": "cohort_aggregate", "reason": "filename suggests retention/cohort aggregate"}
     if entities["user"]:
         return {"grain": "user_level", "reason": f"user id field: {entities['user'][0]}"}
+    if _has_any(filename, ("retention", "留存")):
+        return {"grain": "cohort_aggregate", "reason": "filename suggests retention/cohort aggregate"}
     return {"grain": "unknown", "reason": "no canonical entity fields detected"}
 
 
@@ -69,11 +69,11 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     for profile in data_pool:
         summary = _file_summary(profile)
         file_id = summary["file_id"]
-        if file_id in active_file_ids or _is_relevant_file(profile, goal):
+        if _is_explicitly_unrelated(profile, goal):
+            excluded_files.append(summary)
+        elif file_id in active_file_ids or _is_relevant_file(profile, goal):
             included_files.append(summary)
             assumptions.extend(_alias_assumptions(profile))
-        elif _is_explicitly_unrelated(profile, goal):
-            excluded_files.append(summary)
         else:
             pending_files.append(summary)
 
