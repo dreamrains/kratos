@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data_agent.agent.multi_file_scope import build_analysis_scope_plan
 from data_agent.agent.route_capabilities import build_route_capabilities
 
 
@@ -38,6 +39,10 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
     active_bundle = _active_bundle_summary(state)
     file_relationships = _file_relationship_summaries(
         _list_attr(state, "file_relationships")
+    )
+    analysis_scope_plan = build_analysis_scope_plan(
+        state,
+        user_goal=active_scope["active_goal"] or _text(getattr(state, "goal", "")),
     )
 
     if active_scope["active_mode"] == "consulting":
@@ -81,6 +86,7 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
             ),
         },
         "recommendations": recommendations,
+        "analysis_scope_plan": analysis_scope_plan,
         "active_bundle": active_bundle,
         "file_relationships": file_relationships,
         "history": {
@@ -132,6 +138,7 @@ def _empty_view(session_id: str) -> dict[str, Any]:
                 "blocked_surfaces": [],
             },
         },
+        "analysis_scope_plan": None,
         "active_bundle": None,
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},

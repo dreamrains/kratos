@@ -46,6 +46,7 @@ def test_none_state_returns_empty_view_for_requested_session():
             "counts": {"executable": 0, "exploratory": 0},
             "confirmation_gate": _clear_confirmation_gate(),
         },
+        "analysis_scope_plan": None,
         "active_bundle": None,
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
@@ -701,6 +702,24 @@ def test_trust_view_does_not_gate_on_orphaned_file_relationship_flag():
     assert view["recommendations"]["confirmation_gate"] == _clear_confirmation_gate()
 
 
+def test_trust_view_exposes_analysis_scope_plan():
+    state = AnalysisSessionState(session_id="trust_scope", data_state="data_loaded")
+    state.goal = "评估省钱卡是否值得继续运营"
+    state.data_pool = [{
+        "file_id": "orders",
+        "filename": "省钱卡订单.xlsx",
+        "dataset": "省钱卡订单",
+        "columns": ["order_id", "user_id", "支付时间"],
+        "key_fields": ["order_id", "user_id"],
+        "time_fields": ["支付时间"],
+    }]
+
+    view = build_trust_view(state)
+
+    assert view["analysis_scope_plan"]["scope_status"] == "ready"
+    assert view["analysis_scope_plan"]["included_files"][0]["file_id"] == "orders"
+
+
 def test_trust_view_surfaces_pending_confirmation_gate_question():
     state = AnalysisSessionState(session_id="pending_relationship", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"
@@ -875,6 +894,20 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
             "exploratory": [],
             "counts": {"executable": 0, "exploratory": 0},
             "confirmation_gate": _clear_confirmation_gate(),
+        },
+        "analysis_scope_plan": {
+            "scope_status": "ready",
+            "goal": "",
+            "included_files": [],
+            "excluded_files": [],
+            "pending_files": [],
+            "assumptions": [],
+            "context_budget": {
+                "included_file_count": 0,
+                "excluded_file_count": 0,
+                "pending_file_count": 0,
+                "max_included_files": 5,
+            },
         },
         "active_bundle": None,
         "file_relationships": [],
