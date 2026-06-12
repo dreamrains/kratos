@@ -15,6 +15,7 @@ _ROUTE_KEYWORDS = {
     "period_compare": ("period", "compare", "comparison", "\u540c\u6bd4", "\u73af\u6bd4", "\u5bf9\u6bd4"),
     "dimension_decomposition": ("segment", "dimension", "breakdown", "\u5206\u7ef4", "\u5f52\u56e0"),
     "cohort": ("cohort", "retention", "\u7559\u5b58"),
+    "user_level_retention": ("retention", "user retention", "\u7559\u5b58"),
 }
 
 
@@ -40,7 +41,12 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     else:
         capability_routes = capability_model["executable"]
         exploratory_routes = capability_model["exploratory"]
-        if not capability_routes and not _explicit_active_mode(state):
+        if (
+            not capability_routes
+            and not exploratory_routes
+            and capability_model["active_mode"] == "consulting"
+            and not _explicit_active_mode(state)
+        ):
             routes = raw_routes
         else:
             routes = capability_routes
@@ -131,7 +137,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     )
 
 
-def _route_capabilities(state: Any) -> dict[str, list[dict[str, Any]]] | None:
+def _route_capabilities(state: Any) -> dict[str, Any] | None:
     try:
         from data_agent.agent.route_capabilities import build_route_capabilities
     except ImportError:
@@ -147,6 +153,7 @@ def _route_capabilities(state: Any) -> dict[str, list[dict[str, Any]]] | None:
     return {
         "executable": [item for item in executable if isinstance(item, dict)],
         "exploratory": [item for item in exploratory if isinstance(item, dict)],
+        "active_mode": _text(model.get("active_mode")),
     }
 
 

@@ -193,6 +193,29 @@ def test_decide_analysis_entry_enforces_missing_data_route_without_explicit_mode
     assert decision["limitations"] == ["user_id", "event_date"]
 
 
+def test_decide_analysis_entry_does_not_fall_back_to_demoted_raw_route():
+    state = AnalysisSessionState(session_id="entry_guard_no_raw_fallback", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = ""
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {"date": ["event_date"], "metrics": ["revenue"]},
+    }]
+    state.route_proposals = [{
+        "id": "route_user_retention",
+        "dataset": "orders",
+        "direction": "user_level_retention",
+        "evidence_requirements": ["user_id", "event_date"],
+    }]
+
+    decision = decide_analysis_entry("analyze retention", _intent("directed_analysis"), state)
+
+    assert decision["decision"] == "request_data"
+    assert decision["decision"] != "direct_analysis"
+    assert decision["required_user_action"] == "provide_required_data"
+    assert "user_id" in decision["limitations"]
+
+
 def test_consulting_mode_does_not_fall_back_to_raw_routes():
     state = AnalysisSessionState(session_id="entry_tests", data_state="data_loaded")
     state.set_consulting_mode("discuss method")
