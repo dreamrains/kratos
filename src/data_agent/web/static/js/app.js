@@ -1213,19 +1213,31 @@ function chatApp() {
         },
 
         formatFileRelationshipSummary(relationship) {
+            return [
+                this.formatFileRelationshipMeta(relationship),
+                this.formatFileRelationshipEvidence(relationship),
+                this.formatFileRelationshipUncertainty(relationship),
+            ].filter(Boolean).join('；');
+        },
+
+        formatFileRelationshipMeta(relationship) {
             if (!relationship) return '关系状态：暂无记录';
             const fileCount = Number(relationship.file_count || 0);
             const mode = this.formatRelationshipMode(relationship.relationship_mode);
             const status = relationship.requires_confirmation
                 ? '等待确认'
                 : '已按选择处理';
-            const evidence = Array.isArray(relationship.evidence) && relationship.evidence.length
-                ? `；依据：${relationship.evidence.join('、')}`
-                : '';
-            const uncertainty = Array.isArray(relationship.uncertainties) && relationship.uncertainties.length
-                ? `；不确定：${relationship.uncertainties.join('、')}`
-                : '';
-            return `${fileCount} 个文件 / ${mode} / ${status}${evidence}${uncertainty}`;
+            return `${fileCount} 个文件 / ${mode} / ${status}`;
+        },
+
+        formatFileRelationshipEvidence(relationship) {
+            if (!relationship || !Array.isArray(relationship.evidence) || !relationship.evidence.length) return '';
+            return `依据：${relationship.evidence.join('、')}`;
+        },
+
+        formatFileRelationshipUncertainty(relationship) {
+            if (!relationship || !Array.isArray(relationship.uncertainties) || !relationship.uncertainties.length) return '';
+            return `不确定：${relationship.uncertainties.join('、')}`;
         },
 
         formatRelationshipMode(mode) {

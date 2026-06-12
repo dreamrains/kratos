@@ -295,7 +295,10 @@ def test_current_data_shows_active_bundle_and_file_relationship_state():
     assert "formatBundleFileSummary(file)" in html
     assert "active_bundle.remaining_file_count" in html
     assert "trustView.file_relationships" in html
-    assert "formatFileRelationshipSummary(relationship)" in html
+    assert "formatFileRelationshipMeta(relationship)" in html
+    assert "formatFileRelationshipEvidence(relationship)" in html
+    assert "formatFileRelationshipUncertainty(relationship)" in html
+    assert "formatFileRelationshipSummary(relationship)" not in html
     assert "relationship.requires_confirmation" in html
     assert "当前范围" in html
     assert "关系状态" in html
@@ -303,6 +306,9 @@ def test_current_data_shows_active_bundle_and_file_relationship_state():
     assert "formatActiveBundleSummary(bundle)" in js
     assert "formatBundleFileSummary(file)" in js
     assert "formatFileRelationshipSummary(relationship)" in js
+    assert "formatFileRelationshipMeta(relationship)" in js
+    assert "formatFileRelationshipEvidence(relationship)" in js
+    assert "formatFileRelationshipUncertainty(relationship)" in js
     assert "formatRelationshipMode(mode)" in js
     assert "等待确认" in js
     assert "已按选择处理" in js

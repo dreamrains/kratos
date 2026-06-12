@@ -578,9 +578,13 @@
                         <p class="text-[10px] font-medium text-stone-400">关系状态</p>
                         <template x-for="(relationship, ri) in (trustView.file_relationships || [])" :key="relationship.relationship_id || ri">
                             <div class="trust-risk-item">
-                                <div class="flex items-center gap-2">
-                                    <span class="trust-pill" :class="relationship.requires_confirmation ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.requires_confirmation ? '等待确认' : trustStatusLabel(relationship.status || 'unknown')"></span>
-                                    <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="formatFileRelationshipSummary(relationship)"></span>
+                                <div class="flex items-start gap-2">
+                                    <span class="trust-pill shrink-0" :class="relationship.requires_confirmation ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.requires_confirmation ? '等待确认' : trustStatusLabel(relationship.status || 'unknown')"></span>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatFileRelationshipMeta(relationship)"></p>
+                                        <p x-show="formatFileRelationshipEvidence(relationship)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatFileRelationshipEvidence(relationship)"></p>
+                                        <p x-show="formatFileRelationshipUncertainty(relationship)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="formatFileRelationshipUncertainty(relationship)"></p>
+                                    </div>
                                 </div>
                             </div>
                         </template>
