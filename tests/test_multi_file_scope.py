@@ -117,3 +117,36 @@ def test_scope_plan_excludes_unrelated_game_file_even_when_active_bundle_include
 
     assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
     assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
+
+
+def test_scope_plan_marks_pending_ambiguous_files_as_needing_confirmation():
+    state = AnalysisSessionState(session_id="scope_plan_pending", data_state="data_loaded")
+    state.goal = "评估省钱卡是否值得继续运营"
+    state.data_pool = [
+        {
+            "file_id": "orders",
+            "filename": "省钱卡订单.xlsx",
+            "dataset": "省钱卡订单",
+            "columns": ["order_id", "user_id", "支付时间", "实收金额"],
+            "key_fields": ["order_id", "user_id"],
+            "time_fields": ["支付时间"],
+        },
+        {
+            "file_id": "ambiguous",
+            "filename": "运营备注.xlsx",
+            "dataset": "运营备注",
+            "columns": ["备注", "标签"],
+            "key_fields": [],
+        },
+    ]
+    state.set_active_bundle({
+        "bundle_id": "bundle_orders",
+        "file_ids": ["orders"],
+        "dataset_names": ["省钱卡订单"],
+    })
+
+    plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
+
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
+    assert [item["file_id"] for item in plan["pending_files"]] == ["ambiguous"]
+    assert plan["scope_status"] == "needs_confirmation"

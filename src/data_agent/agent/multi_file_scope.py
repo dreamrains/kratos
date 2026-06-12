@@ -79,7 +79,7 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
 
     assumptions = _dedupe(assumptions)
     return {
-        "scope_status": "needs_confirmation" if assumptions else "ready",
+        "scope_status": "needs_confirmation" if assumptions or pending_files else "ready",
         "goal": goal,
         "included_files": included_files,
         "excluded_files": excluded_files,
