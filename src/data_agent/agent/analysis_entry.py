@@ -74,6 +74,15 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
 
     question_need = detect_question_need(user_input, intent, state)
     if question_need.get("status") == "hard_question":
+        if question_need.get("question_type") == "route_selection":
+            return _decision(
+                "clarify_intent",
+                reason=question_need.get("reason", ""),
+                required_user_action="choose_analysis_route",
+                route_options=_route_options(routes),
+                risk_fields=question_need.get("risk_fields", []),
+                confirmation_gate=to_confirmation_gate(question_need),
+            )
         return _decision(
             "clarify_intent",
             reason=question_need.get("reason", ""),

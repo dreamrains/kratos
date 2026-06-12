@@ -135,6 +135,30 @@ def test_user_id_requirement_is_not_satisfied_by_other_id_fields():
     assert model["exploratory"][0]["missing_requirements"] == ["user_id"]
 
 
+def test_conceptual_period_coverage_requirement_does_not_demote_supported_route():
+    state = AnalysisSessionState(session_id="support_guard_period", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {"date": ["order_date"], "metrics": ["revenue"]},
+    }]
+    state.route_proposals = [{
+        "id": "route_compare",
+        "dataset": "orders",
+        "direction": "period_compare",
+        "label": "Period comparison",
+        "evidence_requirements": ["order_date", "revenue", "period coverage"],
+    }]
+
+    model = build_route_capabilities(state)
+
+    route = model["executable"][0]
+    assert route["direction"] == "period_compare"
+    assert route["support_status"] in {"supported", "supported_with_limits"}
+    assert route["missing_requirements"] == []
+
+
 def test_route_key_is_accepted_as_executable_direction():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"

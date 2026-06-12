@@ -85,6 +85,45 @@ def test_vague_request_with_multiple_routes_returns_clarify_intent():
     assert decision["route_options"] or decision["confirmation_gate"]["confirmation_type"] == "route_selection"
 
 
+def test_vague_multi_route_keeps_period_compare_with_conceptual_requirement():
+    state = AnalysisSessionState(session_id="entry_period_compare", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {"date": ["order_date"], "metrics": ["revenue"]},
+    }]
+    state.route_proposals = [
+        {
+            "id": "route_trend",
+            "dataset": "orders",
+            "direction": "trend",
+            "evidence_requirements": ["order_date", "revenue"],
+        },
+        {
+            "id": "route_compare",
+            "dataset": "orders",
+            "direction": "period_compare",
+            "evidence_requirements": ["order_date", "revenue", "period coverage"],
+        },
+    ]
+    vague = _intent(
+        "intent_negotiation",
+        clarity="vague",
+        analysis_stage="discover",
+        recommended_action="guide_analysis",
+    )
+
+    decision = decide_analysis_entry("help me analyze this data", vague, state)
+
+    assert decision["decision"] == "clarify_intent"
+    assert decision["required_user_action"] == "choose_analysis_route"
+    assert [option["direction"] for option in decision["route_options"]] == [
+        "trend",
+        "period_compare",
+    ]
+
+
 def test_metric_ambiguity_returns_ask_user_question_gate():
     state = _state()
 

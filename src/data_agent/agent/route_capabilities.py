@@ -14,6 +14,13 @@ from data_agent.agent.confirmation_policy import (
 
 
 _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
+_CONCEPTUAL_REQUIREMENTS = {
+    "limitations",
+    "metric_delta",
+    "period coverage",
+    "sample_size",
+}
+_FIELD_TERM_MARKERS = ("时间", "日期", "金额", "用户", "订单")
 
 
 def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
@@ -152,14 +159,7 @@ def _role_requirement_aliases(role: str) -> list[str]:
 
 
 def _route_support(route: dict[str, Any], contract: dict[str, Any] | None) -> dict[str, Any]:
-    requirements = _required_fields(route)
-    available = _available_fields(contract)
-    has_field_inventory = _contract_has_field_inventory(contract)
-    missing = [
-        requirement
-        for requirement in requirements
-        if has_field_inventory and requirement not in available
-    ]
+    missing = _missing_field_requirements(route, contract)
     reasons = _support_reasons(route)
     if missing:
         return {
@@ -189,6 +189,48 @@ def _contract_has_field_inventory(contract: dict[str, Any] | None) -> bool:
 def _support_reasons(route: dict[str, Any]) -> list[str]:
     reason = _text(route.get("reason"))
     return [reason] if reason else []
+
+
+def _missing_field_requirements(
+    route: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> list[str]:
+    if not _contract_has_field_inventory(contract):
+        return []
+    available = _available_fields(contract)
+    role_requirements = set(_route_field_role_requirements(route))
+    requirements = [
+        requirement
+        for requirement in _required_fields(route)
+        if _is_field_like_requirement(requirement, role_requirements, available)
+    ]
+    return [
+        requirement
+        for requirement in _dedupe(requirements)
+        if requirement not in available
+    ]
+
+
+def _is_field_like_requirement(
+    requirement: str,
+    role_requirements: set[str],
+    available: set[str],
+) -> bool:
+    normalized = _text(requirement)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if lowered in _CONCEPTUAL_REQUIREMENTS:
+        return False
+    if normalized in role_requirements or normalized in available:
+        return True
+    if " " in normalized:
+        return False
+    if "_" in normalized:
+        return True
+    if lowered in {"id", "ids"} or lowered.endswith("_id"):
+        return True
+    return any(marker in normalized for marker in _FIELD_TERM_MARKERS)
 
 
 def _demoted_route_item(
@@ -321,6 +363,12 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
     required = _text_list(route.get("evidence_requirements"))
+    required.extend(_route_field_role_requirements(route))
+    return _dedupe(required)
+
+
+def _route_field_role_requirements(route: dict[str, Any]) -> list[str]:
+    required: list[str] = []
     roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
     direction = _text(route.get("direction") or route.get("route"))
     if direction in {"trend", "period_compare"}:
