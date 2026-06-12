@@ -1192,6 +1192,52 @@ function chatApp() {
             return `范围：${dataset} / ${route} / ${mode}`;
         },
 
+        formatActiveBundleSummary(bundle) {
+            if (!bundle) return '当前范围：未选择文件范围';
+            const fileCount = Number(bundle.file_count || 0);
+            const datasets = Array.isArray(bundle.dataset_names) && bundle.dataset_names.length
+                ? bundle.dataset_names.join('、')
+                : '未标注数据集';
+            const status = this.trustStatusLabel(bundle.relationship_status || 'unknown');
+            const mode = this.formatRelationshipMode(bundle.relationship_mode);
+            const label = bundle.label ? `${bundle.label}，` : '';
+            return `当前范围：${label}${fileCount} 个文件 / 数据集 ${datasets} / 状态 ${status} / ${mode}`;
+        },
+
+        formatBundleFileSummary(file) {
+            if (!file) return '';
+            const dataset = file.dataset || '未标注数据集';
+            const rows = Number(file.rows || 0);
+            const columns = Number(file.columns || 0);
+            return `${dataset} / ${rows} 行 / ${columns} 列`;
+        },
+
+        formatFileRelationshipSummary(relationship) {
+            if (!relationship) return '关系状态：暂无记录';
+            const fileCount = Number(relationship.file_count || 0);
+            const mode = this.formatRelationshipMode(relationship.relationship_mode);
+            const status = relationship.requires_confirmation
+                ? '等待确认'
+                : '已按选择处理';
+            const evidence = Array.isArray(relationship.evidence) && relationship.evidence.length
+                ? `；依据：${relationship.evidence.join('、')}`
+                : '';
+            const uncertainty = Array.isArray(relationship.uncertainties) && relationship.uncertainties.length
+                ? `；不确定：${relationship.uncertainties.join('、')}`
+                : '';
+            return `${fileCount} 个文件 / ${mode} / ${status}${evidence}${uncertainty}`;
+        },
+
+        formatRelationshipMode(mode) {
+            const labels = {
+                include_in_active_bundle: '合并分析',
+                separate_bundle: '分开分析',
+                latest_only: '只看最新文件',
+                exclude_from_active_bundle: '暂不纳入',
+            };
+            return labels[mode || ''] || '关系待确认';
+        },
+
         formatRouteBudgetLabel(level) {
             const labels = {
                 light: '轻量',
@@ -1313,6 +1359,13 @@ function chatApp() {
                 inconclusive: '不确定',
                 weakened: '减弱',
                 unsupported_by_data: '数据不支持',
+                confirmed: '已确认',
+                resolved: '已处理',
+                linked: '已关联',
+                possibly_linked: '可能关联',
+                user_scoped_latest_only: '用户选择',
+                available: '可用',
+                excluded: '已排除',
                 unknown: '未知',
             };
             return labels[status || 'unknown'] || labels.unknown;
@@ -1343,6 +1396,13 @@ function chatApp() {
                 inconclusive: 'trust-pill-warn',
                 weakened: 'trust-pill-warn',
                 unsupported_by_data: 'trust-pill-blocked',
+                confirmed: 'trust-pill-ok',
+                resolved: 'trust-pill-ok',
+                linked: 'trust-pill-ok',
+                possibly_linked: 'trust-pill-warn',
+                user_scoped_latest_only: 'trust-pill-ok',
+                available: 'trust-pill-ok',
+                excluded: 'trust-pill-muted',
                 fail: 'trust-pill-blocked',
                 blocked: 'trust-pill-blocked',
                 empty: 'trust-pill-muted',

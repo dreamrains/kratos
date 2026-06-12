@@ -46,8 +46,178 @@ def test_none_state_returns_empty_view_for_requested_session():
             "counts": {"executable": 0, "exploratory": 0},
             "confirmation_gate": _clear_confirmation_gate(),
         },
+        "active_bundle": None,
+        "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
+
+
+def test_trust_view_exposes_active_bundle_and_recent_relationships_without_mutating_state():
+    state = AnalysisSessionState(session_id="bundle_session", data_state="data_loaded")
+    state.data_pool = [
+        {
+            "file_id": "file_orders_old",
+            "filename": "orders_old.csv",
+            "dataset": "orders_old",
+            "row_count": 120,
+            "column_count": 6,
+            "columns": ["a", "b", "c", "d", "e", "f", "large_column_list_should_not_leak"],
+            "status": "available",
+        },
+        {
+            "file_id": "file_orders_new",
+            "filename": "orders_new.csv",
+            "dataset": "orders_new",
+            "rows": 98,
+            "columns": ["order_id", "revenue"],
+            "status": "available",
+        },
+        {
+            "file_id": "file_region",
+            "filename": "region.csv",
+            "dataset": "regions",
+            "row_count": 12,
+            "column_count": 3,
+            "status": "excluded",
+        },
+        {
+            "file_id": "file_hidden_1",
+            "filename": "hidden1.csv",
+            "dataset": "hidden1",
+            "row_count": 1,
+            "column_count": 1,
+        },
+        {
+            "file_id": "file_hidden_2",
+            "filename": "hidden2.csv",
+            "dataset": "hidden2",
+            "row_count": 1,
+            "column_count": 1,
+        },
+        {
+            "file_id": "file_hidden_3",
+            "filename": "hidden3.csv",
+            "dataset": "hidden3",
+            "row_count": 1,
+            "column_count": 1,
+        },
+    ]
+    state.dataset_bundles = [
+        {
+            "bundle_id": "bundle_orders",
+            "label": "Orders scope",
+            "file_ids": [
+                "file_orders_old",
+                "file_orders_new",
+                "file_region",
+                "file_hidden_1",
+                "file_hidden_2",
+                "file_hidden_3",
+            ],
+            "dataset_names": ["orders_old", "orders_new", "regions"],
+            "relationship_status": "confirmed",
+            "relationship_mode": "include_in_active_bundle",
+        }
+    ]
+    state.active_bundle_id = "bundle_orders"
+    state.file_relationships = [
+        {
+            "relationship_id": "rel_old",
+            "file_ids": ["old"],
+            "status": "linked",
+            "evidence": ["older evidence"],
+        },
+        {
+            "relationship_id": "rel_pending",
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+            "relationship_mode": "include_in_active_bundle",
+            "confirmation_type": "scope_confirmation",
+            "file_ids": ["file_orders_old", "file_orders_new", "file_region", "file_hidden_1"],
+            "evidence": ["same order_id", "overlapping dates", "third evidence should not leak"],
+            "uncertainties": ["different row counts", "missing region keys", "third uncertainty should not leak"],
+        },
+    ]
+    before = state.to_dict()
+
+    view = build_trust_view(state)
+
+    assert state.to_dict() == before
+    assert view["active_bundle"] == {
+        "bundle_id": "bundle_orders",
+        "label": "Orders scope",
+        "file_count": 6,
+        "dataset_names": ["orders_old", "orders_new", "regions"],
+        "relationship_status": "confirmed",
+        "relationship_mode": "include_in_active_bundle",
+        "files": [
+            {
+                "file_id": "file_orders_old",
+                "filename": "orders_old.csv",
+                "dataset": "orders_old",
+                "rows": 120,
+                "columns": 6,
+                "status": "available",
+            },
+            {
+                "file_id": "file_orders_new",
+                "filename": "orders_new.csv",
+                "dataset": "orders_new",
+                "rows": 98,
+                "columns": 2,
+                "status": "available",
+            },
+            {
+                "file_id": "file_region",
+                "filename": "region.csv",
+                "dataset": "regions",
+                "rows": 12,
+                "columns": 3,
+                "status": "excluded",
+            },
+            {
+                "file_id": "file_hidden_1",
+                "filename": "hidden1.csv",
+                "dataset": "hidden1",
+                "rows": 1,
+                "columns": 1,
+                "status": "",
+            },
+            {
+                "file_id": "file_hidden_2",
+                "filename": "hidden2.csv",
+                "dataset": "hidden2",
+                "rows": 1,
+                "columns": 1,
+                "status": "",
+            },
+        ],
+        "remaining_file_count": 1,
+    }
+    assert view["file_relationships"] == [
+        {
+            "relationship_id": "rel_pending",
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+            "relationship_mode": "include_in_active_bundle",
+            "confirmation_type": "scope_confirmation",
+            "file_count": 4,
+            "file_ids": ["file_orders_old", "file_orders_new", "file_region"],
+            "evidence": ["same order_id", "overlapping dates"],
+            "uncertainties": ["different row counts", "missing region keys"],
+        },
+        {
+            "relationship_id": "rel_old",
+            "status": "linked",
+            "requires_confirmation": False,
+            "relationship_mode": "",
+            "confirmation_type": "",
+            "file_count": 1,
+            "file_ids": ["old"],
+            "evidence": ["older evidence"],
+            "uncertainties": [],
+        },
+    ]
 
 
 def test_dataset_summaries_combine_contracts_and_preview_digests():
@@ -667,6 +837,8 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
             "counts": {"executable": 0, "exploratory": 0},
             "confirmation_gate": _clear_confirmation_gate(),
         },
+        "active_bundle": None,
+        "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
 

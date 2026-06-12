@@ -35,6 +35,10 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
     verification = _verification_summary(verification_reports)
     all_datasets = _dataset_summaries(contracts, previews)
     all_hypotheses = _hypothesis_summaries(hypothesis_sets, limit=len(hypothesis_sets))
+    active_bundle = _active_bundle_summary(state)
+    file_relationships = _file_relationship_summaries(
+        _list_attr(state, "file_relationships")
+    )
 
     if active_scope["active_mode"] == "consulting":
         datasets = all_datasets
@@ -77,6 +81,8 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
             ),
         },
         "recommendations": recommendations,
+        "active_bundle": active_bundle,
+        "file_relationships": file_relationships,
         "history": {
             "datasets": all_datasets,
             "routes": all_routes,
@@ -126,6 +132,8 @@ def _empty_view(session_id: str) -> dict[str, Any]:
                 "blocked_surfaces": [],
             },
         },
+        "active_bundle": None,
+        "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
 
@@ -305,6 +313,80 @@ def _hypothesis_summaries(
                 for hypothesis in hypotheses[:2]
                 if _text(hypothesis.get("claim"))
             ],
+        })
+        if len(summaries) >= limit:
+            break
+    return summaries
+
+
+def _active_bundle_summary(state: Any) -> dict[str, Any] | None:
+    bundle = _find_active_bundle(state)
+    if not bundle:
+        return None
+
+    file_ids = _text_list(bundle.get("file_ids"))
+    data_pool_by_file_id = {
+        _text(item.get("file_id") or item.get("id")): item
+        for item in _list_attr(state, "data_pool")
+        if _text(item.get("file_id") or item.get("id"))
+    }
+    files = [
+        _bundle_file_summary(file_id, data_pool_by_file_id.get(file_id, {}))
+        for file_id in file_ids[:5]
+    ]
+    return {
+        "bundle_id": _text(bundle.get("bundle_id") or bundle.get("id")),
+        "label": _text(bundle.get("label") or bundle.get("name")),
+        "file_count": len(file_ids),
+        "dataset_names": _text_list(bundle.get("dataset_names"))[:6],
+        "relationship_status": _text(bundle.get("relationship_status") or bundle.get("status")),
+        "relationship_mode": _text(bundle.get("relationship_mode")),
+        "files": files,
+        "remaining_file_count": max(len(file_ids) - len(files), 0),
+    }
+
+
+def _find_active_bundle(state: Any) -> dict[str, Any] | None:
+    active_bundle_id = _text(getattr(state, "active_bundle_id", ""))
+    if not active_bundle_id:
+        return None
+    for bundle in _list_attr(state, "dataset_bundles"):
+        if _text(bundle.get("bundle_id")) == active_bundle_id or _text(bundle.get("id")) == active_bundle_id:
+            return bundle
+    return None
+
+
+def _bundle_file_summary(file_id: str, file_ref: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file_id": file_id,
+        "filename": _text(file_ref.get("filename") or file_ref.get("name")),
+        "dataset": _text(file_ref.get("dataset") or file_ref.get("dataset_name")),
+        "rows": _number_or_zero(file_ref.get("row_count", file_ref.get("rows"))),
+        "columns": _column_count(file_ref.get("column_count", file_ref.get("columns"))),
+        "status": _text(file_ref.get("status")),
+    }
+
+
+def _file_relationship_summaries(
+    relationships: list[dict[str, Any]],
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for relationship in reversed(relationships):
+        relationship_id = _text(relationship.get("relationship_id") or relationship.get("id"))
+        if not relationship_id:
+            continue
+        file_ids = _text_list(relationship.get("file_ids"))
+        summaries.append({
+            "relationship_id": relationship_id,
+            "status": _text(relationship.get("status")),
+            "requires_confirmation": relationship.get("requires_confirmation") is True,
+            "relationship_mode": _text(relationship.get("relationship_mode")),
+            "confirmation_type": _text(relationship.get("confirmation_type")),
+            "file_count": len(file_ids),
+            "file_ids": file_ids[:3],
+            "evidence": _text_list(relationship.get("evidence"))[:2],
+            "uncertainties": _text_list(relationship.get("uncertainties"))[:2],
         })
         if len(summaries) >= limit:
             break

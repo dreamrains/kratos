@@ -551,11 +551,42 @@
                         <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
                         <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'currentData' ? '' : 'currentData'">?</button>
                     </div>
-                    <span x-show="trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
+                    <span x-show="trustView && trustView.active_bundle" class="text-[10px] text-stone-400" x-text="trustView.active_bundle.file_count"></span>
+                    <span x-show="trustView && !trustView.active_bundle && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
                 <p x-show="trustHelpOpen === 'currentData'" class="trust-help-popover" x-text="trustHelpText('currentData')"></p>
                 <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
-                <div class="space-y-1.5">
+                <div x-show="trustView && trustView.active_bundle" class="space-y-1.5">
+                    <div class="trust-data-item">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-xs font-medium text-stone-700 dark:text-stone-300">当前范围</p>
+                            <span class="trust-pill" :class="trustStatusClass(trustView.active_bundle.relationship_status || 'unknown')" x-text="trustStatusLabel(trustView.active_bundle.relationship_status || 'unknown')"></span>
+                        </div>
+                        <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatActiveBundleSummary(trustView.active_bundle)"></p>
+                    </div>
+                    <template x-for="(file, fi) in ((trustView.active_bundle && trustView.active_bundle.files) || [])" :key="file.file_id || fi">
+                        <div class="trust-data-item">
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.filename || file.file_id"></p>
+                                <span x-show="file.status" class="trust-pill" :class="trustStatusClass(file.status || 'unknown')" x-text="trustStatusLabel(file.status || 'unknown')"></span>
+                            </div>
+                            <p class="text-[10px] text-stone-400 mt-1" x-text="formatBundleFileSummary(file)"></p>
+                        </div>
+                    </template>
+                    <p x-show="trustView.active_bundle && trustView.active_bundle.remaining_file_count > 0" class="text-[10px] text-stone-400" x-text="'另有 ' + trustView.active_bundle.remaining_file_count + ' 个文件未展开'"></p>
+                    <div x-show="trustView.file_relationships && trustView.file_relationships.length" class="space-y-1.5 pt-1">
+                        <p class="text-[10px] font-medium text-stone-400">关系状态</p>
+                        <template x-for="(relationship, ri) in (trustView.file_relationships || [])" :key="relationship.relationship_id || ri">
+                            <div class="trust-risk-item">
+                                <div class="flex items-center gap-2">
+                                    <span class="trust-pill" :class="relationship.requires_confirmation ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.requires_confirmation ? '等待确认' : trustStatusLabel(relationship.status || 'unknown')"></span>
+                                    <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="formatFileRelationshipSummary(relationship)"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <div class="space-y-1.5" x-show="!trustView || !trustView.active_bundle">
                     <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
                         <div class="trust-data-item">
                             <div class="flex items-center justify-between gap-2">
