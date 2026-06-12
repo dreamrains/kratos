@@ -146,7 +146,7 @@ def _role_requirement_aliases(role: str) -> list[str]:
         "metrics": ["metric", "metrics"],
         "rate_metrics": ["rate_metric", "rate_metrics", "metric", "metrics"],
         "dimensions": ["dimension", "dimensions"],
-        "ids": ["id", "ids", "user_id"],
+        "ids": ["id", "ids"],
     }
     return aliases.get(role, [role] if role else [])
 
