@@ -31,6 +31,31 @@ Its core advantage should be:
 
 The chat remains the primary interaction surface. The side workbench supports the chat by showing context, assumptions, risks, and evidence. It should not become a second route-selection product.
 
+## Recommendation Validity Contract
+
+Analysis direction recommendations must be evidence-scoped. A recommendation is valid only when it is grounded in one of these sources:
+
+- loaded data profiles, contracts, previews, field roles, and active analysis scope,
+- explicit user-provided business context,
+- existing session goal, active bundle, or confirmed assumptions,
+- known method knowledge when the user is asking for consultation rather than data execution.
+
+When data is loaded, recommendations must not exceed what the data can support without saying so. If the system suggests an analysis that is outside the current data scope, it must label the suggestion as exploratory or data-needed and explain:
+
+- what current data cannot support,
+- what extra fields or files are needed,
+- what conclusion would remain unsafe without those additions.
+
+When no data is loaded, recommendations must be framed as consultation based on the user's stated goal. The system may recommend analysis methods or required data, but it must not imply feasibility from nonexistent data.
+
+Examples:
+
+- Valid loaded-data recommendation: "当前数据包含用户、订单金额和支付时间，因此可以做用户付费趋势和周期对比。"
+- Valid exploratory recommendation: "可以考虑留存分析，但当前数据没有用户后续活跃或复购事件，因此只能说明所需数据，不能直接计算留存。"
+- Invalid recommendation: "建议做留存、归因、预测" without linking each direction to fields, missing data, or user context.
+
+This contract applies to chat recommendations, side workbench route explanations, data requirement guidance, and any future multi-file scope plan.
+
 ## User Archetype
 
 Primary user: business, product, operations, or management user who can describe goals but may not know statistics, SQL, table grain, or join logic.
@@ -111,6 +136,28 @@ The system should produce a data requirement plan rather than analysis results:
 - what conclusions are possible with partial data.
 
 For the membership card example, minimum data may include purchase/order records, card purchase records, user id, timestamps, paid amount, refunds/cancellations if relevant, and a comparison period or control group. Optional data may include coupon usage, user acquisition source, product/category, activity exposure, and user lifecycle status.
+
+## Existing Capability Reuse
+
+The next implementation must improve current capabilities instead of creating parallel flows.
+
+Existing functions and concepts to reuse:
+
+- intent types such as `knowledge_qa`, `analysis_consultation`, `data_requirement`, `intent_negotiation`, and direct analysis intents,
+- `decide_analysis_entry` as the deterministic entry guard for whether analysis can proceed,
+- `build_route_capabilities` as the route support model, after tightening its evidence-scoping behavior,
+- `dataset_contracts`, `preview_digests`, `route_proposals`, and `unsupported_analyses` as existing data-support signals,
+- `active_scope`, `data_requirements`, and `last_recommended_paths` for consulting and data-needed scenarios,
+- `ask_user_question` and `pending_confirmations` for structured user confirmation.
+
+The redesign should not create a new "consulting mode" if the existing consultation intent can be refined. It should not create a second route recommendation engine if `route_capabilities` can be made stricter. It should not create side-panel-only confirmation if the existing suspension and confirmation system can be repaired.
+
+Required review before implementation:
+
+1. Identify the existing module responsible for the behavior.
+2. Decide whether the module should be fixed, extended, or retired.
+3. Add tests around the existing behavior before changing it.
+4. Remove or hide obsolete UI surfaces only after confirming they are not the source of chat recommendations.
 
 ## Side Workbench Role
 
@@ -219,6 +266,18 @@ Confirmation sources include:
 
 The next implementation should replace the simple file relationship classifier with a layered analysis planner.
 
+The goal is not to join every uploaded file. The goal is to decide, for the user's current objective, which provided files can be safely used together, which files should be excluded, which files are only supporting context, and which assumptions must be confirmed before analysis results are trustworthy.
+
+The system should produce an analysis-scope decision before final analysis:
+
+- use together: files are relevant to the goal and have a defensible relationship,
+- use separately: files are relevant but should not be merged for this analysis,
+- exclude from current goal: files are unrelated or unsupported for the stated target,
+- ask user: the relationship or business role is plausible but high-impact and uncertain,
+- request more data: the current files cannot support the intended analysis.
+
+This decision should become part of the evidence behind the final answer. A final report should be able to state which files were used, why they were used, which files were excluded, and how unresolved assumptions affected confidence.
+
 ### Layer 1: File Inventory
 
 Maintain all uploaded and loaded files in session state. For each file, store compact metadata and preview-derived facts:
@@ -295,6 +354,20 @@ Before final recommendations, create a compact plan:
 
 Only the compact plan should enter the LLM prompt by default. Detailed schema, previews, and raw relationship edges should stay in state and be loaded only when needed.
 
+### Layer 6: Recommendation Guard
+
+Before route recommendations are shown or sent to chat, the system should evaluate each recommendation against the active scope plan.
+
+Each recommendation should be classified as:
+
+- `supported`: current scoped data can support the analysis at the required grain,
+- `supported_with_limits`: current data supports a descriptive or partial version, but not stronger claims,
+- `needs_confirmation`: a user answer can change whether the recommendation is valid,
+- `needs_more_data`: the method is relevant to the goal but cannot be run from current data,
+- `out_of_scope`: the method is unrelated to the user goal or active data.
+
+Only `supported` and `supported_with_limits` should be presented as directly analyzable. `needs_more_data` can be presented as data requirement guidance. `out_of_scope` should be hidden by default.
+
 ## Context Budget Rules
 
 The multi-file system must not solve relationship quality by dumping all schemas into context.
@@ -322,6 +395,8 @@ Detailed previews should be fetched only when:
 2. Ensure every displayed confirmation has a real resumable confirmation object.
 3. Fix method confirmations that currently create pending records without question text or suspension data.
 4. Stop showing orphaned relationship confirmation states.
+5. Tighten route recommendations so every recommendation carries a source basis: data-supported, user-context-supported, exploratory, or data-needed.
+6. Reuse and improve existing consultation and data requirement flows instead of adding a parallel system.
 
 ### Phase B: Multi-File Analysis Planner
 
@@ -329,7 +404,8 @@ Detailed previews should be fetched only when:
 2. Add grain detection.
 3. Add relationship graph scoring.
 4. Add analysis scope plan.
-5. Add regression tests from real sessions such as `a4237f2cee72`, `6ed6b0a043fb`, and `557adfd17254`.
+5. Add recommendation guard classifications from the active scope plan.
+6. Add regression tests from real sessions such as `a4237f2cee72`, `6ed6b0a043fb`, and `557adfd17254`.
 
 ### Phase C: Workbench Reframing
 
@@ -346,6 +422,9 @@ Detailed previews should be fetched only when:
 5. The side workbench no longer duplicates the chat route-selection experience as its primary value.
 6. No broad schema dumps are added to normal prompts; multi-file context is represented by compact scope plans.
 7. Non-file consulting remains first-class and does not trigger irrelevant data workflow UI.
+8. Every recommended analysis direction is labeled by support status and grounded in current data, user context, or explicit data-needed consultation.
+9. Recommendations outside the current data scope are never presented as directly executable.
+10. Final analysis can cite the scope decision: which files were used, which were excluded, and what assumptions protect the conclusion.
 
 ## Out Of Scope For This Phase
 
@@ -354,4 +433,3 @@ Detailed previews should be fetched only when:
 - General-purpose semantic layer or BI modeling system.
 - Permanent deletion of historical session data.
 - Domain playbook expansion beyond what is needed to support the multi-file planner.
-
