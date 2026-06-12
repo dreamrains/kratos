@@ -142,6 +142,10 @@ def test_pending_file_relationship_requires_hard_question():
     assert gate["status"] == "hard_question"
     assert gate["question_type"] == "join_logic_confirmation"
     assert gate["reason"] == "Shared IDs exist but business theme evidence is unclear."
+    assert gate["state_updates"] == {
+        "stage": "scope",
+        "file_relationship_confirmation": {"relationship_id": "rel_orders_history"},
+    }
     assert [option["value"] for option in gate["options"]] == [
         "include_in_active_bundle",
         "separate_bundle",

@@ -693,6 +693,10 @@ class AgentLoop:
         if pending is False:
             return None
 
+        state_updates = question_need.get("state_updates")
+        if not isinstance(state_updates, dict):
+            state_updates = {"stage": "scope"}
+        state_updates_text = json.dumps(state_updates, ensure_ascii=False)
         susp = SuspendedForConfirmation(
             suspension_id=uuid.uuid4().hex[:8],
             question=str(question_need.get("question") or "请先确认关键信息后再继续分析。"),
@@ -702,7 +706,7 @@ class AgentLoop:
             multi_select=False,
             confirmation_type=str(question_need.get("question_type") or "scope_confirmation"),
             blocking_reason=str(question_need.get("reason") or ""),
-            state_updates=json.dumps({"stage": "scope"}, ensure_ascii=False),
+            state_updates=state_updates_text,
         )
         if isinstance(pending, dict):
             pending["suspension_id"] = susp.suspension_id
@@ -711,7 +715,8 @@ class AgentLoop:
             pending.setdefault("context", susp.context)
             pending.setdefault("confirmation_type", susp.confirmation_type)
             pending.setdefault("blocking_reason", susp.blocking_reason)
-            pending.setdefault("state_updates", susp.state_updates)
+            if not pending.get("state_updates"):
+                pending["state_updates"] = susp.state_updates
             if state is not None:
                 state.save()
         else:

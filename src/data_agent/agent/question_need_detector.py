@@ -241,8 +241,10 @@ def _hard_gate(
     blocking_surfaces: list[str] | None = None,
     risk_fields: list[str] | None = None,
     affected_routes: list[str] | None = None,
+    state_updates: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    gate = {
         "status": "hard_question",
         "question_type": question_type,
         "question": question,
@@ -252,6 +254,11 @@ def _hard_gate(
         "risk_fields": _dedupe(risk_fields or []),
         "affected_routes": _dedupe(affected_routes or []),
     }
+    if state_updates:
+        gate["state_updates"] = state_updates
+    if metadata:
+        gate["metadata"] = metadata
+    return gate
 
 
 def _pending_file_relationship_gate(text: str, state: Any) -> dict[str, Any] | None:
@@ -270,6 +277,16 @@ def _pending_file_relationship_gate(text: str, state: Any) -> dict[str, Any] | N
             _relationship_question(relationship, confirmation_type),
             options=_relationship_options(confirmation_type),
             blocking_surfaces=BLOCKED_SURFACES_ALL,
+            state_updates={
+                "stage": "scope",
+                "file_relationship_confirmation": {
+                    "relationship_id": _text(relationship.get("relationship_id") or relationship.get("id")),
+                },
+            },
+            metadata={
+                "relationship_id": _text(relationship.get("relationship_id") or relationship.get("id")),
+                "file_ids": _text_list(relationship.get("file_ids")),
+            },
         )
     return None
 

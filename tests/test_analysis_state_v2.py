@@ -479,6 +479,150 @@ class TestConfirmations:
         state.resolve_confirmation("c1", "yes")
         assert state.last_recommended_paths == paths
 
+    def test_resolve_file_relationship_include_merges_files_into_active_bundle(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_data_pool_file({"file_id": "file_old", "dataset": "orders_old"})
+        state.add_data_pool_file({"file_id": "file_new", "dataset": "orders_new"})
+        state.set_active_bundle({
+            "bundle_id": "bundle_orders",
+            "file_ids": ["file_old"],
+            "dataset_names": ["orders_old"],
+            "version": 1,
+        })
+        state.add_file_relationship({
+            "relationship_id": "rel_orders",
+            "file_ids": ["file_old", "file_new"],
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+        })
+        state.add_confirmation({
+            "id": "c1",
+            "state_updates": json.dumps({
+                "stage": "scope",
+                "file_relationship_confirmation": {"relationship_id": "rel_orders"},
+            }),
+        })
+
+        state.resolve_confirmation("c1", "include_in_active_bundle")
+
+        assert state.active_bundle()["file_ids"] == ["file_old", "file_new"]
+        assert state.active_bundle()["dataset_names"] == ["orders_old", "orders_new"]
+        rel = state.file_relationships[0]
+        assert rel["status"] == "confirmed"
+        assert rel["resolved"] is True
+        assert rel["relationship_mode"] == "include_in_active_bundle"
+        assert rel["requires_confirmation"] is False
+
+    def test_resolve_file_relationship_include_preserves_existing_bundle_dataset_names(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_data_pool_file({"file_id": "file_new", "dataset": "orders_new"})
+        state.set_active_bundle({
+            "bundle_id": "bundle_orders",
+            "file_ids": ["file_old"],
+            "dataset_names": ["orders_old"],
+            "version": 1,
+        })
+        state.add_file_relationship({
+            "relationship_id": "rel_orders",
+            "file_ids": ["file_old", "file_new"],
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+        })
+        state.add_confirmation({
+            "id": "c1",
+            "state_updates": {
+                "file_relationship_confirmation": {"relationship_id": "rel_orders"},
+            },
+        })
+
+        state.resolve_confirmation("c1", "include_in_active_bundle")
+
+        assert state.active_bundle()["file_ids"] == ["file_old", "file_new"]
+        assert state.active_bundle()["dataset_names"] == ["orders_old", "orders_new"]
+
+    def test_resolve_file_relationship_separate_uses_cli_label_and_new_files(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_data_pool_file({"file_id": "file_old", "dataset": "orders_old"})
+        state.add_data_pool_file({"file_id": "file_new", "dataset": "orders_new"})
+        state.set_active_bundle({
+            "bundle_id": "bundle_orders",
+            "file_ids": ["file_old"],
+            "dataset_names": ["orders_old"],
+        })
+        state.add_file_relationship({
+            "relationship_id": "rel_orders",
+            "file_ids": ["file_old", "file_new"],
+            "new_file_ids": ["file_new"],
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+        })
+        state.add_confirmation({
+            "id": "c1",
+            "state_updates": {
+                "file_relationship_confirmation": {"relationship_id": "rel_orders"},
+            },
+        })
+
+        state.resolve_confirmation("c1", "Keep separate")
+
+        assert state.active_bundle_id.startswith("bundle_rel_orders_separate")
+        assert state.active_bundle()["file_ids"] == ["file_new"]
+        assert state.active_bundle()["dataset_names"] == ["orders_new"]
+        rel = state.file_relationships[0]
+        assert rel["status"] == "resolved"
+        assert rel["relationship_mode"] == "separate_bundle"
+        assert rel["requires_confirmation"] is False
+
+    def test_resolve_file_relationship_latest_only_uses_only_new_files(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.add_data_pool_file({"file_id": "file_old", "dataset": "orders_old"})
+        state.add_data_pool_file({"file_id": "file_new", "dataset": "orders_new"})
+        state.set_active_bundle({"bundle_id": "bundle_orders", "file_ids": ["file_old"]})
+        state.add_file_relationship({
+            "relationship_id": "rel_orders",
+            "file_ids": ["file_old", "file_new"],
+            "status": "possibly_linked",
+            "requires_confirmation": True,
+        })
+        state.add_confirmation({
+            "id": "c1",
+            "state_updates": {
+                "file_relationship_confirmation": {"relationship_id": "rel_orders"},
+            },
+        })
+
+        state.resolve_confirmation("c1", "Latest file only")
+
+        assert state.active_bundle()["file_ids"] == ["file_new"]
+        rel = state.file_relationships[0]
+        assert rel["status"] == "resolved"
+        assert rel["relationship_mode"] == "latest_only"
+        assert rel["requires_confirmation"] is False
+
+    def test_resolve_file_relationship_exclude_keeps_active_bundle_unchanged(self):
+        state = AnalysisSessionState(session_id="s1")
+        state.set_active_bundle({"bundle_id": "bundle_orders", "file_ids": ["file_old"]})
+        state.add_file_relationship({
+            "relationship_id": "rel_orders",
+            "file_ids": ["file_old", "file_new"],
+            "status": "independent",
+            "requires_confirmation": True,
+        })
+        state.add_confirmation({
+            "id": "c1",
+            "state_updates": {
+                "file_relationship_confirmation": {"relationship_id": "rel_orders"},
+            },
+        })
+
+        state.resolve_confirmation("c1", "Exclude")
+
+        assert state.active_bundle()["file_ids"] == ["file_old"]
+        rel = state.file_relationships[0]
+        assert rel["status"] == "excluded"
+        assert rel["relationship_mode"] == "exclude_from_active_bundle"
+        assert rel["requires_confirmation"] is False
+
 
 class TestAnalysisStateSummary:
     def test_none_state_returns_empty(self):

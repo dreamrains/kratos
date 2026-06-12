@@ -63,6 +63,92 @@ def _normalize_active_scope(value: Any) -> dict[str, Any]:
     return scope
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
+
+
+def _text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            text = _text(item.get("file_id") or item.get("id") or item.get("filename") or item.get("name"))
+        else:
+            text = _text(item)
+        if text:
+            result.append(text)
+    return result
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalize_file_relationship_action(answer: Any) -> str:
+    normalized = _text(answer).lower()
+    if not normalized:
+        return ""
+    if normalized in {
+        "include_in_active_bundle",
+        "separate_bundle",
+        "latest_only",
+        "exclude_from_active_bundle",
+    }:
+        return normalized
+    include_terms = (
+        "include",
+        "analyze together",
+        "together",
+        "\u7eb3\u5165\u5f53\u524d\u5206\u6790",
+        "\u4e00\u8d77\u5206\u6790",
+    )
+    exclude_terms = (
+        "exclude",
+        "skip",
+        "not include",
+        "\u6682\u4e0d\u7eb3\u5165",
+        "\u4e0d\u7eb3\u5165",
+        "\u6392\u9664",
+    )
+    separate_terms = (
+        "separate",
+        "keep separate",
+        "\u5206\u5f00\u5206\u6790",
+        "\u5206\u5f00",
+    )
+    latest_terms = (
+        "latest",
+        "newest",
+        "latest file only",
+        "\u53ea\u5206\u6790\u6700\u65b0\u6587\u4ef6",
+        "\u53ea\u5206\u6790\u6700\u65b0",
+        "\u6700\u65b0\u6587\u4ef6",
+    )
+    if any(term in normalized for term in latest_terms):
+        return "latest_only"
+    if any(term in normalized for term in exclude_terms):
+        return "exclude_from_active_bundle"
+    if any(term in normalized for term in separate_terms):
+        return "separate_bundle"
+    if any(term in normalized for term in include_terms):
+        return "include_in_active_bundle"
+    return ""
+
+
 def _state_path(session_id: str) -> Path:
     return get_config().sessions_resolved / session_id / "analysis_state.json"
 
@@ -411,11 +497,11 @@ class AnalysisSessionState:
                 item["status"] = "resolved"
                 item["answer"] = answer
                 item["resolved_at"] = _now()
-                self.apply_state_updates(item.get("state_updates"))
+                self.apply_state_updates(item.get("state_updates"), answer=answer)
                 return item
         return None
 
-    def apply_state_updates(self, updates: Any) -> None:
+    def apply_state_updates(self, updates: Any, answer: Any = None) -> None:
         if isinstance(updates, str) and updates.strip():
             try:
                 updates = json.loads(updates)
@@ -433,6 +519,133 @@ class AnalysisSessionState:
                 setattr(self, key, value)
         if "analysis_spec" in updates and isinstance(updates["analysis_spec"], dict):
             self.analysis_spec = updates["analysis_spec"]
+        if isinstance(updates.get("file_relationship_confirmation"), dict):
+            self._apply_file_relationship_confirmation(
+                updates["file_relationship_confirmation"],
+                _normalize_file_relationship_action(answer),
+            )
+
+    def _apply_file_relationship_confirmation(self, confirmation: dict[str, Any], action: str) -> None:
+        relationship_id = _text(confirmation.get("relationship_id") or confirmation.get("id"))
+        if not relationship_id or not action:
+            return
+        relationship = self._find_file_relationship(relationship_id)
+        if relationship is None:
+            return
+
+        file_ids = _dedupe(_text_list(relationship.get("file_ids")))
+        active_bundle = self.active_bundle()
+        active_file_ids = _dedupe(_text_list(active_bundle.get("file_ids")) if isinstance(active_bundle, dict) else [])
+        explicit_new_file_ids = _dedupe(
+            _text_list(
+                relationship.get("new_file_ids")
+                or relationship.get("new_files")
+                or relationship.get("new_file_names")
+            )
+        )
+        new_file_ids = explicit_new_file_ids or [file_id for file_id in file_ids if file_id not in active_file_ids]
+        if not new_file_ids and file_ids and not active_file_ids:
+            new_file_ids = list(file_ids)
+
+        if action == "include_in_active_bundle":
+            include_ids = _dedupe(active_file_ids + file_ids)
+            if not include_ids:
+                include_ids = list(new_file_ids)
+            self._set_relationship_bundle(
+                relationship,
+                include_ids,
+                mode=action,
+                bundle_id=(active_bundle or {}).get("bundle_id") if isinstance(active_bundle, dict) else "",
+                relationship_status="confirmed",
+            )
+            relationship["status"] = "confirmed"
+            relationship["confirmed"] = True
+        elif action in {"separate_bundle", "latest_only"}:
+            target_ids = new_file_ids or file_ids
+            self._set_relationship_bundle(
+                relationship,
+                target_ids,
+                mode=action,
+                bundle_id=f"bundle_{relationship_id}_{'latest' if action == 'latest_only' else 'separate'}",
+                relationship_status="resolved",
+            )
+            relationship["status"] = "resolved"
+        elif action == "exclude_from_active_bundle":
+            relationship["status"] = "excluded"
+            relationship["excluded"] = True
+
+        relationship["resolved"] = True
+        relationship["relationship_mode"] = action
+        relationship["requires_confirmation"] = False
+        relationship["resolved_at"] = _now()
+
+    def _find_file_relationship(self, relationship_id: str) -> dict[str, Any] | None:
+        for relationship in self.file_relationships:
+            if not isinstance(relationship, dict):
+                continue
+            if relationship.get("relationship_id") == relationship_id or relationship.get("id") == relationship_id:
+                return relationship
+        return None
+
+    def _set_relationship_bundle(
+        self,
+        relationship: dict[str, Any],
+        file_ids: list[str],
+        *,
+        mode: str,
+        bundle_id: Any = "",
+        relationship_status: str = "",
+    ) -> None:
+        clean_file_ids = _dedupe([file_id for file_id in file_ids if file_id])
+        if not clean_file_ids:
+            return
+        rel_id = _text(relationship.get("relationship_id") or relationship.get("id")) or uuid.uuid4().hex[:10]
+        current_bundle = self.active_bundle()
+        if not bundle_id:
+            bundle_id = f"bundle_{rel_id}_active"
+        bundle: dict[str, Any] = {}
+        if isinstance(current_bundle, dict) and _text(bundle_id) in {
+            _text(current_bundle.get("bundle_id")),
+            _text(current_bundle.get("id")),
+        }:
+            bundle.update(current_bundle)
+        resolved_dataset_names = self._dataset_names_for_file_ids(clean_file_ids)
+        if isinstance(current_bundle, dict) and _text(bundle_id) in {
+            _text(current_bundle.get("bundle_id")),
+            _text(current_bundle.get("id")),
+        }:
+            resolved_dataset_names = _dedupe(
+                _text_list(current_bundle.get("dataset_names")) + resolved_dataset_names
+            )
+        bundle.update({
+            "bundle_id": _text(bundle_id),
+            "file_ids": clean_file_ids,
+            "dataset_names": resolved_dataset_names,
+            "relationship_status": relationship_status or relationship.get("status") or "resolved",
+            "relationship_mode": mode,
+        })
+        if isinstance(current_bundle, dict) and _text(bundle_id) in {
+            _text(current_bundle.get("bundle_id")),
+            _text(current_bundle.get("id")),
+        }:
+            bundle["version"] = int(current_bundle.get("version") or 1) + 1
+        else:
+            bundle.setdefault("version", 1)
+        self.set_active_bundle(bundle)
+
+    def _dataset_names_for_file_ids(self, file_ids: list[str]) -> list[str]:
+        datasets: list[str] = []
+        wanted = set(file_ids)
+        for item in self.data_pool:
+            if not isinstance(item, dict):
+                continue
+            file_id = _text(item.get("file_id") or item.get("id"))
+            if file_id not in wanted:
+                continue
+            dataset = _text(item.get("dataset") or item.get("dataset_name") or item.get("name"))
+            if dataset:
+                datasets.append(dataset)
+        return _dedupe(datasets)
 
 
 def load_analysis_state(session_id: str, project_name: Optional[str] = None) -> AnalysisSessionState:
