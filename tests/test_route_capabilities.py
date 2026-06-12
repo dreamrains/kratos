@@ -54,6 +54,64 @@ def test_builds_ready_executable_routes_for_active_dataset():
     ]
 
 
+def test_executable_route_carries_data_supported_basis():
+    state = AnalysisSessionState(session_id="support_guard", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {
+            "date": ["order_date"],
+            "metrics": ["revenue"],
+            "dimensions": ["channel"],
+            "ids": ["user_id"],
+        },
+        "supported_analyses": ["trend"],
+    }]
+    state.route_proposals = [{
+        "id": "route_trend",
+        "dataset": "orders",
+        "direction": "trend",
+        "label": "Revenue trend",
+        "reason": "date and revenue fields exist",
+        "evidence_requirements": ["order_date", "revenue"],
+    }]
+
+    model = build_route_capabilities(state)
+
+    route = model["executable"][0]
+    assert route["support_status"] == "supported"
+    assert route["support_basis"] == "data_supported"
+    assert route["support_reasons"] == ["date and revenue fields exist"]
+    assert route["missing_requirements"] == []
+
+
+def test_route_missing_required_fields_becomes_exploratory_not_executable():
+    state = AnalysisSessionState(session_id="support_guard_missing", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {"date": ["order_date"], "metrics": ["revenue"]},
+        "unsupported_analyses": [],
+    }]
+    state.route_proposals = [{
+        "id": "route_retention",
+        "dataset": "orders",
+        "direction": "cohort",
+        "label": "Retention",
+        "reason": "retention may answer lifecycle questions",
+        "evidence_requirements": ["user_id", "event_date"],
+    }]
+
+    model = build_route_capabilities(state)
+
+    assert model["executable"] == []
+    assert model["exploratory"][0]["category"] == "needs_more_data"
+    assert model["exploratory"][0]["support_status"] == "needs_more_data"
+    assert model["exploratory"][0]["missing_requirements"] == ["user_id", "event_date"]
+
+
 def test_route_key_is_accepted_as_executable_direction():
     state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"

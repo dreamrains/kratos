@@ -14,6 +14,7 @@ _ROUTE_KEYWORDS = {
     "trend": ("trend", "time series", "\u8d8b\u52bf", "\u8d70\u52bf"),
     "period_compare": ("period", "compare", "comparison", "\u540c\u6bd4", "\u73af\u6bd4", "\u5bf9\u6bd4"),
     "dimension_decomposition": ("segment", "dimension", "breakdown", "\u5206\u7ef4", "\u5f52\u56e0"),
+    "cohort": ("cohort", "retention", "\u7559\u5b58"),
 }
 
 
@@ -32,11 +33,17 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     raw_routes = _hydrate_refs(_list_attr(state, "route_proposals"))
     active_dataset = _active_dataset(state)
     scoped_contracts = _filter_by_dataset(contracts, active_dataset)
-    capability_routes = _executable_routes_from_capabilities(state)
-    if capability_routes is None or (not capability_routes and not _explicit_active_mode(state)):
+    capability_model = _route_capabilities(state)
+    if capability_model is None:
         routes = raw_routes
+        exploratory_routes: list[dict[str, Any]] = []
     else:
-        routes = capability_routes
+        capability_routes = capability_model["executable"]
+        exploratory_routes = capability_model["exploratory"]
+        if not capability_routes and not _explicit_active_mode(state):
+            routes = raw_routes
+        else:
+            routes = capability_routes
     cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
 
     blocked = _blocked_contract(scoped_contracts)
@@ -68,6 +75,19 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             route_options=[],
             risk_fields=question_need.get("risk_fields", []),
             confirmation_gate=to_confirmation_gate(question_need),
+        )
+
+    missing_route = _infer_requested_exploratory_route(user_input, exploratory_routes)
+    if missing_route:
+        missing_requirements = _text_list(missing_route.get("missing_requirements"))
+        return _decision(
+            "request_data",
+            dataset=_text(missing_route.get("dataset")),
+            route=_route_direction(missing_route),
+            reason="The requested analysis route needs data that is not available in the current scope.",
+            required_user_action="provide_required_data",
+            limitations=missing_requirements,
+            evidence_requirements=_text_list(missing_route.get("evidence_requirements")),
         )
 
     route = _infer_requested_route(user_input, routes)
@@ -111,17 +131,23 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     )
 
 
-def _executable_routes_from_capabilities(state: Any) -> list[dict[str, Any]] | None:
+def _route_capabilities(state: Any) -> dict[str, list[dict[str, Any]]] | None:
     try:
         from data_agent.agent.route_capabilities import build_route_capabilities
     except ImportError:
         return None
 
     model = build_route_capabilities(state)
-    routes = model.get("executable") if isinstance(model, dict) else None
-    if not isinstance(routes, list):
+    if not isinstance(model, dict):
         return None
-    return [item for item in routes if isinstance(item, dict)]
+    executable = model.get("executable")
+    exploratory = model.get("exploratory")
+    if not isinstance(executable, list) or not isinstance(exploratory, list):
+        return None
+    return {
+        "executable": [item for item in executable if isinstance(item, dict)],
+        "exploratory": [item for item in exploratory if isinstance(item, dict)],
+    }
 
 
 def _decision(decision: str, **overrides: Any) -> dict[str, Any]:
@@ -214,6 +240,31 @@ def _infer_requested_route(user_input: str, routes: list[dict[str, Any]]) -> dic
         direction = _route_direction(route)
         keywords = _ROUTE_KEYWORDS.get(direction, (direction,))
         if any(keyword and keyword in text for keyword in keywords):
+            return route
+    return None
+
+
+def _infer_requested_exploratory_route(
+    user_input: str,
+    routes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    candidates = [
+        route
+        for route in routes
+        if _text(route.get("category")) == "needs_more_data"
+        and _text(route.get("support_status")) == "needs_more_data"
+    ]
+    route = _infer_requested_route(user_input, candidates)
+    if route:
+        return route
+    text = (user_input or "").lower()
+    for route in candidates:
+        labels = [
+            _text(route.get("analysis")),
+            _text(route.get("label")),
+            _route_direction(route),
+        ]
+        if any(label and label.lower() in text for label in labels):
             return route
     return None
 

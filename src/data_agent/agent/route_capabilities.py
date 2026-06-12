@@ -42,11 +42,17 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
         executable = []
         exploratory = _unsupported_exploratory(contracts, active_dataset, limit)
     else:
-        executable, route_gate = _executable_routes(routes, cleaning_logs, active_dataset, limit)
+        executable, route_gate, demoted = _executable_routes(
+            routes,
+            contracts,
+            cleaning_logs,
+            active_dataset,
+            limit,
+        )
         if route_gate:
             confirmation_gate = route_gate
             executable = []
-        exploratory = _unsupported_exploratory(contracts, active_dataset, limit)
+        exploratory = (demoted + _unsupported_exploratory(contracts, active_dataset, limit))[:limit]
 
     return {
         "active_dataset": active_dataset,
@@ -61,11 +67,13 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
 
 def _executable_routes(
     routes: list[dict[str, Any]],
+    contracts: list[dict[str, Any]],
     cleaning_logs: list[dict[str, Any]],
     active_dataset: str,
     limit: int,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[dict[str, Any]]]:
     items: list[dict[str, Any]] = []
+    demoted: list[dict[str, Any]] = []
     gate_risk_fields: list[str] = []
     gate_routes: list[str] = []
     for route in routes:
@@ -75,12 +83,16 @@ def _executable_routes(
         direction = _text(route.get("direction") or route.get("route"))
         if not direction:
             continue
+        support = _route_support(route, _contract_for_dataset(contracts, dataset))
+        if support["support_status"] == "needs_more_data":
+            demoted.append(_demoted_route_item(route, dataset, direction, support))
+            continue
         risk_fields = _required_field_risks(route, cleaning_logs)
         if risk_fields:
             gate_risk_fields.extend(risk_fields)
             gate_routes.append(direction)
             continue
-        items.append({
+        item = {
             "id": _text(route.get("id")) or f"route_{len(items) + 1}",
             "dataset": dataset,
             "route": direction,
@@ -94,13 +106,118 @@ def _executable_routes(
             "budget_level": _text(route.get("budget_level")),
             "prompt": _route_prompt(route, risk_fields),
             "auto_submit": False,
-        })
+        }
+        item.update(support)
+        items.append(item)
         if len(items) >= limit:
             break
     return items, route_confirmation_gate(
         risk_fields=gate_risk_fields,
         affected_routes=gate_routes,
-    )
+    ), demoted
+
+
+def _contract_for_dataset(contracts: list[dict[str, Any]], dataset: str) -> dict[str, Any] | None:
+    for contract in contracts:
+        if _text(contract.get("dataset")) == dataset:
+            return contract
+    return None
+
+
+def _available_fields(contract: dict[str, Any] | None) -> set[str]:
+    if not isinstance(contract, dict):
+        return set()
+    fields: list[str] = []
+    field_roles = contract.get("field_roles") if isinstance(contract.get("field_roles"), dict) else {}
+    for role, values in field_roles.items():
+        role_values = _text_list(values)
+        fields.extend(role_values)
+        if role_values:
+            fields.extend(_role_requirement_aliases(_text(role)))
+    for key in ("columns", "key_fields", "time_fields"):
+        fields.extend(_text_list(contract.get(key)))
+    return set(fields)
+
+
+def _role_requirement_aliases(role: str) -> list[str]:
+    aliases = {
+        "date": ["date", "time"],
+        "time": ["date", "time"],
+        "metrics": ["metric", "metrics"],
+        "rate_metrics": ["rate_metric", "rate_metrics", "metric", "metrics"],
+        "dimensions": ["dimension", "dimensions"],
+        "ids": ["id", "ids", "user_id"],
+    }
+    return aliases.get(role, [role] if role else [])
+
+
+def _route_support(route: dict[str, Any], contract: dict[str, Any] | None) -> dict[str, Any]:
+    requirements = _required_fields(route)
+    available = _available_fields(contract)
+    has_field_inventory = _contract_has_field_inventory(contract)
+    missing = [
+        requirement
+        for requirement in requirements
+        if has_field_inventory and requirement not in available
+    ]
+    reasons = _support_reasons(route)
+    if missing:
+        return {
+            "support_status": "needs_more_data",
+            "support_basis": "data_needed",
+            "support_reasons": reasons,
+            "missing_requirements": missing,
+        }
+    status = "supported_with_limits" if _text_list(route.get("limitations")) else "supported"
+    return {
+        "support_status": status,
+        "support_basis": "data_supported",
+        "support_reasons": reasons,
+        "missing_requirements": [],
+    }
+
+
+def _contract_has_field_inventory(contract: dict[str, Any] | None) -> bool:
+    if not isinstance(contract, dict):
+        return False
+    field_roles = contract.get("field_roles")
+    if isinstance(field_roles, dict) and any(_text_list(value) for value in field_roles.values()):
+        return True
+    return any(_text_list(contract.get(key)) for key in ("columns", "key_fields", "time_fields"))
+
+
+def _support_reasons(route: dict[str, Any]) -> list[str]:
+    reason = _text(route.get("reason"))
+    return [reason] if reason else []
+
+
+def _demoted_route_item(
+    route: dict[str, Any],
+    dataset: str,
+    direction: str,
+    support: dict[str, Any],
+) -> dict[str, Any]:
+    missing = _text_list(support.get("missing_requirements"))
+    item = {
+        "id": _text(route.get("id")) or f"explore_{_slug(dataset)}_{_slug(direction)}",
+        "dataset": dataset,
+        "analysis": direction,
+        "route": direction,
+        "direction": direction,
+        "label": _text(route.get("label")) or direction,
+        "category": "needs_more_data",
+        "reason": _text(route.get("reason")),
+        "data_requirements": missing,
+        "value_if_available": "",
+        "evidence_requirements": _text_list(route.get("evidence_requirements")),
+        "limitations": _text_list(route.get("limitations")),
+        "prompt": (
+            f'I want to explore "{direction}". Please tell me what data is missing, '
+            "why the current data cannot verify it, and what dataset would be needed."
+        ),
+    }
+    item.update(support)
+    return item
 
 
 def _active_mode(state: Any, scope: dict[str, Any], active_dataset: str) -> str:
