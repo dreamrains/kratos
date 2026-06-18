@@ -1380,6 +1380,9 @@ function chatApp() {
         trustStatusLabel(status) {
             const labels = {
                 empty: '空',
+                clear: '无需确认',
+                needs_confirmation: '待确认',
+                not_run: '尚未验证',
                 ready: '就绪',
                 ready_with_warnings: '有提醒',
                 pass: '通过',
@@ -1422,6 +1425,9 @@ function chatApp() {
 
         trustStatusClass(status) {
             const classes = {
+                clear: 'trust-pill-ok',
+                needs_confirmation: 'trust-pill-warn',
+                not_run: 'trust-pill-muted',
                 ready: 'trust-pill-ok',
                 ready_with_warnings: 'trust-pill-warn',
                 pass: 'trust-pill-ok',

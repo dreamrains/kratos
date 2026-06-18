@@ -588,6 +588,20 @@ def test_latest_verification_report_becomes_summary_and_counts_claim_checks():
     }
 
 
+def test_malformed_verification_summary_falls_back_to_not_run_in_workbench():
+    state = AnalysisSessionState(session_id="s1")
+    state.verification_reports = [{}]
+
+    view = build_trust_view(state)
+
+    assert view["workbench"]["trust_evidence"] == {
+        "status": "not_run",
+        "claim_count": 0,
+        "failed_count": 0,
+        "downgraded_count": 0,
+    }
+
+
 def test_trust_view_includes_compact_hypothesis_summary(tmp_path):
     hypothesis_path = tmp_path / "hypotheses.json"
     hypothesis_path.write_text(

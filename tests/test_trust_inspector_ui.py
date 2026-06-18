@@ -89,6 +89,9 @@ def test_trust_status_label_contract():
 
     expected_labels = {
         "empty": "空",
+        "clear": "无需确认",
+        "needs_confirmation": "待确认",
+        "not_run": "尚未验证",
         "ready": "就绪",
         "ready_with_warnings": "有提醒",
         "pass": "通过",
@@ -112,6 +115,9 @@ def test_trust_status_class_contract():
     body = _method_body(js, "trustStatusClass")
 
     expected_classes = {
+        "clear": "trust-pill-ok",
+        "needs_confirmation": "trust-pill-warn",
+        "not_run": "trust-pill-muted",
         "ready": "trust-pill-ok",
         "ready_with_warnings": "trust-pill-warn",
         "pass": "trust-pill-ok",
@@ -356,7 +362,6 @@ def test_trust_inspector_empty_states_hide_during_loading_or_error():
         "暂无待确认事项。",
         "暂无假设集合。",
         "暂无风险边界。",
-        "暂无可信证据。",
     ]
     for label in empty_state_labels:
         match = re.search(rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>', html)
@@ -364,6 +369,15 @@ def test_trust_inspector_empty_states_hide_during_loading_or_error():
         condition = match.group("condition")
         assert "!trustLoading" in condition
         assert "!trustError" in condition
+
+
+def test_not_run_trust_evidence_shows_explanation_and_hides_counts():
+    html = _index_html()
+
+    assert "尚未产生可验证的分析声明" in html
+    assert 'workbenchTrustEvidence().status === \'not_run\'' in html
+    assert 'workbenchTrustEvidence().status !== \'not_run\'' in html
+    assert "暂无可信证据。" not in html
 
 
 def test_trust_inspector_panel_css_contract():

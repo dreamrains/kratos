@@ -702,14 +702,14 @@
                 </div>
                 <p x-show="trustHelpOpen === 'trustEvidence'" class="trust-help-popover" x-text="trustHelpText('trustEvidence')"></p>
                 <div x-show="trustView && trustView.workbench && trustView.workbench.trust_evidence">
-                    <p class="text-xs text-stone-600 dark:text-stone-300">
+                    <p x-show="workbenchTrustEvidence().status !== 'not_run'" class="text-xs text-stone-600 dark:text-stone-300">
                         <span x-text="workbenchTrustEvidence().claim_count || 0"></span> 条声明 -
                         <span x-text="workbenchTrustEvidence().failed_count || 0"></span> 失败 -
                         <span x-text="workbenchTrustEvidence().downgraded_count || 0"></span> 降级
                     </p>
+                    <p x-show="workbenchTrustEvidence().status === 'not_run'" class="text-xs text-stone-400">尚未产生可验证的分析声明。</p>
                     <p x-show="workbenchTrustEvidence().created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="workbenchTrustEvidence().created_at || ''"></p>
                 </div>
-                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.workbench || !trustView.workbench.trust_evidence)" class="text-xs text-stone-400">暂无可信证据。</p>
             </section>
 
             <section class="trust-section" x-show="sessionSidePanelTab === 'history'">

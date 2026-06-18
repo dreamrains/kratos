@@ -333,6 +333,12 @@ def _workbench_summary(
     verification: dict[str, Any] | None,
 ) -> dict[str, Any]:
     plan = analysis_scope_plan if isinstance(analysis_scope_plan, dict) else {}
+    trust_evidence = verification if _has_meaningful_verification(verification) else {
+        "status": "not_run",
+        "claim_count": 0,
+        "failed_count": 0,
+        "downgraded_count": 0,
+    }
     return {
         "current_context": {
             "goal": _text(plan.get("goal")) or _text(getattr(state, "goal", "")),
@@ -347,13 +353,19 @@ def _workbench_summary(
             "question": _text(confirmation_gate.get("question")),
             "blocking_reason": _text(confirmation_gate.get("blocking_reason")),
         },
-        "trust_evidence": verification or {
-            "status": "not_run",
-            "claim_count": 0,
-            "failed_count": 0,
-            "downgraded_count": 0,
-        },
+        "trust_evidence": trust_evidence,
     }
+
+
+def _has_meaningful_verification(verification: dict[str, Any] | None) -> bool:
+    if not isinstance(verification, dict):
+        return False
+    status = _text(verification.get("status"))
+    return bool(
+        (status and status != "unknown")
+        or _text(verification.get("id"))
+        or _int_value(verification.get("claim_count")) > 0
+    )
 
 
 def _hypothesis_summaries(
