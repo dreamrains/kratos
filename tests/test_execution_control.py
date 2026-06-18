@@ -213,7 +213,16 @@ class _EvidenceThenFinalClient:
         return self._calls.pop(0)
 
 
-def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path):
+def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        AnalysisFlowController,
+        "prepare_turn",
+        lambda self, state, intent, user_input, dataset_profile: None,
+    )
+    monkeypatch.setattr(
+        "data_agent.agent.question_need_detector.detect_question_need",
+        lambda user_input, intent, state: {"status": "no_question"},
+    )
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -394,14 +403,24 @@ def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatc
 def test_auto_suspend_does_not_duplicate_pending_confirmation_with_suspension_id():
     ctx = AgentContext(session_id="existing_suspension_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="existing_suspension_gate", data_state="data_loaded")
-    state.pending_confirmations = [{
-        "id": "existing_confirmation",
-        "status": "pending",
-        "suspension_id": "susp_existing",
-        "question": "Already suspended?",
-        "options": [{"label": "Yes", "value": "yes"}],
-        "state_updates": json.dumps({"stage": "scope"}),
-    }]
+    state.pending_confirmations = [
+        {
+            "id": "existing_confirmation",
+            "status": "pending",
+            "suspension_id": "susp_existing",
+            "question": "Already suspended?",
+            "options": [{"label": "Yes", "value": "yes"}],
+            "state_updates": json.dumps({"stage": "scope"}),
+        },
+        {
+            "id": "second_confirmation",
+            "status": "pending",
+            "suspension_id": "susp_second",
+            "question": "Also suspended?",
+            "options": [{"label": "Yes", "value": "yes"}],
+            "state_updates": json.dumps({"stage": "plan"}),
+        },
+    ]
     ctx.analysis_state = state
     loop = AgentLoop(client=None, session_id="existing_suspension_gate")
     loop.context = ctx
@@ -415,8 +434,83 @@ def test_auto_suspend_does_not_duplicate_pending_confirmation_with_suspension_id
     }
 
     assert loop._maybe_auto_suspend_for_required_question() is None
-    assert len(state.pending_confirmations) == 1
-    assert state.pending_confirmations[0]["suspension_id"] == "susp_existing"
+    assert len(state.pending_confirmations) == 2
+    assert [item["suspension_id"] for item in state.pending_confirmations] == [
+        "susp_existing",
+        "susp_second",
+    ]
+
+
+def test_auto_suspend_selects_new_unsuspended_confirmation_after_suspended_pending():
+    ctx = AgentContext(session_id="new_confirmation_after_suspension", workspace=Workspace())
+    state = AnalysisSessionState(session_id="new_confirmation_after_suspension", data_state="data_loaded")
+    state.pending_confirmations = [
+        {
+            "id": "old_confirmation",
+            "status": "pending",
+            "suspension_id": "susp_old",
+            "question": "Old question?",
+            "options": [{"label": "Old", "value": "old"}],
+            "state_updates": json.dumps({"stage": "scope"}),
+        },
+        {
+            "id": "new_confirmation",
+            "status": "pending",
+            "question": "New question?",
+            "options": [{"label": "New", "value": "new"}],
+            "state_updates": json.dumps({"stage": "plan"}),
+        },
+    ]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=None, session_id="new_confirmation_after_suspension")
+    loop.context = ctx
+    loop._turn_existing_pending_ids = {"old_confirmation"}
+    loop._turn_question_need = {
+        "status": "hard_question",
+        "question_type": "scope_confirmation",
+        "question": "Detector question?",
+        "options": [{"label": "Continue", "value": "continue"}],
+        "reason": "Detector reason",
+        "state_updates": {"stage": "scope"},
+    }
+
+    result = loop._maybe_auto_suspend_for_required_question()
+
+    assert result is not None
+    assert result.question == "New question?"
+    assert state.pending_confirmations[0]["suspension_id"] == "susp_old"
+    assert state.pending_confirmations[1]["suspension_id"] == result.suspension_id
+    assert len(state.pending_confirmations) == 2
+
+
+def test_auto_suspend_falls_back_to_unsuspended_preexisting_confirmation():
+    ctx = AgentContext(session_id="preexisting_unsuspended_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="preexisting_unsuspended_gate", data_state="data_loaded")
+    state.pending_confirmations = [{
+        "id": "preexisting_confirmation",
+        "status": "pending",
+        "question": "Resume this question?",
+        "options": [{"label": "Resume", "value": "resume"}],
+        "state_updates": json.dumps({"stage": "plan"}),
+    }]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=None, session_id="preexisting_unsuspended_gate")
+    loop.context = ctx
+    loop._turn_existing_pending_ids = {"preexisting_confirmation"}
+    loop._turn_question_need = {
+        "status": "hard_question",
+        "question_type": "scope_confirmation",
+        "question": "Detector question?",
+        "options": [{"label": "Continue", "value": "continue"}],
+        "reason": "Detector reason",
+        "state_updates": {"stage": "scope"},
+    }
+
+    result = loop._maybe_auto_suspend_for_required_question()
+
+    assert result is not None
+    assert result.question == "Resume this question?"
+    assert state.pending_confirmations[0]["suspension_id"] == result.suspension_id
 
 
 def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatch):

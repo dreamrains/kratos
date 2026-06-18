@@ -739,23 +739,22 @@ class AgentLoop:
         ]
         if not pending_items:
             return None
-        if any(c.get("suspension_id") for c in pending_items):
+        eligible_items = [
+            item for item in pending_items
+            if not item.get("suspension_id")
+            and self._is_answerable_pending_confirmation(item)
+        ]
+        if not eligible_items:
             return False
         existing_ids = getattr(self, "_turn_existing_pending_ids", set()) or set()
-        existing_items = [
+        current_turn_items = [
             item
-            for item in pending_items
-            if str(item.get("id") or item.get("suspension_id") or "") in existing_ids
+            for item in eligible_items
+            if str(item.get("id") or "") not in existing_ids
         ]
-        if existing_items:
-            for item in existing_items:
-                if self._is_answerable_pending_confirmation(item):
-                    return item
-            return False
-        for item in pending_items:
-            if self._is_answerable_pending_confirmation(item):
-                return item
-        return False
+        if current_turn_items:
+            return current_turn_items[-1]
+        return eligible_items[-1]
 
     @staticmethod
     def _is_answerable_pending_confirmation(item: dict[str, Any]) -> bool:

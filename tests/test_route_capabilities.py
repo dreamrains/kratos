@@ -182,6 +182,8 @@ def test_conceptual_period_coverage_requirement_does_not_demote_supported_route(
             "time_scope",
             "denominator",
             "correlation_method",
+            "distribution",
+            "coverage",
         ],
     }]
 

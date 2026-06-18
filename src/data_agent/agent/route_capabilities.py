@@ -24,11 +24,13 @@ _CONCEPTUAL_REQUIREMENTS = {
     "correlation_method",
     "cohort_definition",
     "conversion_rates",
+    "coverage",
     "data grain",
     "data_grain",
     "data_needed",
     "denominator",
     "drivers",
+    "distribution",
     "effect_size",
     "field semantics",
     "field_semantics",
@@ -58,6 +60,40 @@ _CONCEPTUAL_REQUIREMENTS = {
     "validation_metric",
     "variables",
 }
+
+_COMMON_FIELD_REQUIREMENTS = {
+    "amount",
+    "benefit",
+    "channel",
+    "cost",
+    "frequency",
+    "outcome",
+    "price",
+    "profit",
+    "quantity",
+    "revenue",
+    "segment",
+    "treatment",
+}
+
+_FIELD_REQUIREMENT_SUFFIXES = (
+    "_amount",
+    "_at",
+    "_category",
+    "_code",
+    "_cost",
+    "_count",
+    "_date",
+    "_flag",
+    "_id",
+    "_name",
+    "_price",
+    "_rate",
+    "_time",
+    "_timestamp",
+    "_type",
+    "_value",
+)
 
 
 def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
@@ -257,13 +293,13 @@ def _is_field_like_requirement(
     if not normalized:
         return False
     lowered = normalized.lower()
-    if lowered in _CONCEPTUAL_REQUIREMENTS:
-        return False
     if normalized in role_requirements or normalized in available:
         return True
-    if " " in normalized:
+    if lowered in _CONCEPTUAL_REQUIREMENTS:
         return False
-    return True
+    if lowered in _COMMON_FIELD_REQUIREMENTS:
+        return True
+    return lowered.endswith(_FIELD_REQUIREMENT_SUFFIXES)
 
 
 def _demoted_route_item(
