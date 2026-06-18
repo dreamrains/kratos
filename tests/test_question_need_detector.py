@@ -1,3 +1,5 @@
+import json
+
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.question_need_detector import detect_question_need
@@ -91,6 +93,35 @@ def test_high_risk_predictive_analysis_requires_method_confirmation():
     assert gate["status"] == "hard_question"
     assert gate["question_type"] == "method_confirmation"
     assert gate["blocking_surfaces"] == ["analysis_execution", "report_generation"]
+
+
+def test_confirmed_matching_high_risk_spec_skips_generic_gate_but_changed_request_does_not():
+    state = _state()
+    state.analysis_spec = {
+        "id": "spec_forecast_revenue",
+        "goal": "predict next month revenue",
+        "playbook_id": "forecast_decision_simulation",
+        "confirmation_policy": {"requires_confirmation": True},
+    }
+    state.add_confirmation({
+        "id": "method_forecast_revenue",
+        "related_spec_id": "spec_forecast_revenue",
+        "state_updates": json.dumps({
+            "method_confirmation": {
+                "playbook_id": "forecast_decision_simulation",
+                "analysis_spec_id": "spec_forecast_revenue",
+                "allowed_actions": ["confirm_method", "clarify_method_scope"],
+            },
+        }),
+    })
+    state.resolve_confirmation("method_forecast_revenue", "confirm_method")
+
+    matching = detect_question_need("predict next month revenue", _intent(), state)
+    changed = detect_question_need("predict next quarter profit", _intent(), state)
+
+    assert matching["status"] == "clear"
+    assert changed["status"] == "hard_question"
+    assert changed["question_type"] == "method_confirmation"
 
 
 def test_consulting_and_knowledge_questions_do_not_block():

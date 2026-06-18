@@ -153,7 +153,7 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 affected_routes=[_route_direction(route)],
             )
 
-    if _is_high_risk_request(text):
+    if _is_high_risk_request(text) and not _has_confirmed_high_risk_spec(text, state):
         return _hard_gate(
             "method_confirmation",
             "High-risk analysis requires method, assumption, and evidence confirmation.",
@@ -487,6 +487,24 @@ def _route_needs_metric(route: dict[str, Any]) -> bool:
 
 def _is_high_risk_request(text: str) -> bool:
     return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
+
+
+def _has_confirmed_high_risk_spec(text: str, state: Any) -> bool:
+    spec = getattr(state, "analysis_spec", None)
+    if not isinstance(spec, dict):
+        return False
+    confirmation = spec.get("method_confirmation")
+    if not isinstance(confirmation, dict) or confirmation.get("status") != "approved":
+        return False
+    return (
+        _text(confirmation.get("analysis_spec_id")) == _text(spec.get("id"))
+        and _text(confirmation.get("playbook_id")) == _text(spec.get("playbook_id"))
+        and _material_request_identity(text) == _text(confirmation.get("request_identity"))
+    )
+
+
+def _material_request_identity(value: Any) -> str:
+    return " ".join(_text(value).casefold().split())
 
 
 def _has_time_window(text: str) -> bool:

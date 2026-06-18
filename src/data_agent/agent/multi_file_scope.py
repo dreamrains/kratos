@@ -13,6 +13,9 @@ USER_ALIASES = {
     "user_id",
     "userid",
     "uid",
+    "customer_id",
+    "member_id",
+    "account_id",
     "用户id",
     "用户ID",
     "用户_id",
@@ -80,6 +83,12 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     ]
     prioritized = sorted(classified, key=lambda item: (item["priority"], item["index"]))
     returned = prioritized[:MAX_SCOPE_FILES]
+    if any(item["scope"] == "pending" for item in classified) and not any(
+        item["scope"] == "pending" for item in returned
+    ):
+        pending_item = next(item for item in prioritized if item["scope"] == "pending")
+        returned[-1] = pending_item
+        returned.sort(key=lambda item: (item["priority"], item["index"]))
     included_files = [item["summary"] for item in returned if item["scope"] == "included"]
     excluded_files = [item["summary"] for item in returned if item["scope"] == "excluded"]
     pending_files = [item["summary"] for item in returned if item["scope"] == "pending"]

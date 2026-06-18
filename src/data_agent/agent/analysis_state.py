@@ -73,6 +73,10 @@ def _text(value: Any) -> str:
     return ""
 
 
+def _material_request_identity(value: Any) -> str:
+    return " ".join(_text(value).casefold().split())
+
+
 def _text_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -519,11 +523,62 @@ class AnalysisSessionState:
                 setattr(self, key, value)
         if "analysis_spec" in updates and isinstance(updates["analysis_spec"], dict):
             self.analysis_spec = updates["analysis_spec"]
+        if isinstance(updates.get("method_confirmation"), dict):
+            self._apply_method_confirmation(updates["method_confirmation"], _text(answer))
         if isinstance(updates.get("file_relationship_confirmation"), dict):
             self._apply_file_relationship_confirmation(
                 updates["file_relationship_confirmation"],
                 _normalize_file_relationship_action(answer),
             )
+
+    def _apply_method_confirmation(self, confirmation: dict[str, Any], action: str) -> None:
+        spec = self.analysis_spec if isinstance(self.analysis_spec, dict) else {}
+        spec_id = _text(confirmation.get("analysis_spec_id"))
+        playbook_id = _text(confirmation.get("playbook_id"))
+        if not spec_id or spec_id != _text(spec.get("id")):
+            return
+
+        resolution = {
+            "analysis_spec_id": spec_id,
+            "playbook_id": playbook_id,
+            "request_identity": _material_request_identity(spec.get("goal")),
+        }
+        if action == "confirm_method":
+            resolution["status"] = "approved"
+            self.stage = "plan"
+        elif action == "clarify_method_scope":
+            resolution["status"] = "clarification_required"
+            self.stage = "scope"
+            clarification_id = f"method_scope_{playbook_id}_{spec_id}"
+            if not any(
+                item.get("id") == clarification_id and item.get("status", "pending") == "pending"
+                for item in self.pending_confirmations
+            ):
+                self.add_confirmation({
+                    "id": clarification_id,
+                    "confirmation_type": "method_scope_clarification",
+                    "question": "Please clarify the target metric, time window, or comparison scope, then confirm the method plan.",
+                    "options": [
+                        {
+                            "label": "Use the clarified scope",
+                            "value": "confirm_method",
+                            "description": "Approve the current method plan with the clarified scope.",
+                        },
+                        {
+                            "label": "Keep clarifying scope",
+                            "value": "clarify_method_scope",
+                            "description": "Keep analysis execution blocked while the scope is refined.",
+                        },
+                    ],
+                    "blocking_reason": "method scope requires clarification before high-risk analysis",
+                    "related_spec_id": spec_id,
+                    "state_updates": {"method_confirmation": dict(confirmation)},
+                    "source": "method_scope_clarification",
+                })
+        else:
+            return
+        spec["method_confirmation"] = resolution
+        self.analysis_spec = spec
 
     def _apply_file_relationship_confirmation(self, confirmation: dict[str, Any], action: str) -> None:
         relationship_id = _text(confirmation.get("relationship_id") or confirmation.get("id"))

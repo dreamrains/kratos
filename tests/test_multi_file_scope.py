@@ -1,3 +1,5 @@
+import pytest
+
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.multi_file_scope import (
     build_analysis_scope_plan,
@@ -251,3 +253,53 @@ def test_scope_plan_enforces_deterministic_five_file_detail_budget():
         "omitted_file_count": 2,
         "max_scope_files": 5,
     }
+
+
+def test_scope_budget_keeps_one_pending_file_actionable_when_active_bundle_has_five_files():
+    state = AnalysisSessionState(session_id="scope_pending_budget", data_state="data_loaded")
+    state.data_pool = [
+        {"file_id": f"active_{index}", "filename": f"membership_active_{index}.xlsx"}
+        for index in range(1, 6)
+    ] + [{
+        "file_id": "pending_profile",
+        "filename": "customer_profile.xlsx",
+        "columns": ["customer_id", "segment"],
+    }]
+    state.set_active_bundle({
+        "bundle_id": "bundle_active",
+        "file_ids": [f"active_{index}" for index in range(1, 6)],
+    })
+
+    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
+
+    assert plan["scope_status"] == "needs_confirmation"
+    assert [item["file_id"] for item in plan["pending_files"]] == ["pending_profile"]
+    assert len(plan["included_files"]) == 4
+    assert plan["context_budget"] == {
+        "included_file_count": 4,
+        "excluded_file_count": 0,
+        "pending_file_count": 1,
+        "total_file_count": 6,
+        "returned_file_count": 5,
+        "omitted_file_count": 1,
+        "max_scope_files": 5,
+    }
+
+
+@pytest.mark.parametrize("alias", ["customer_id", "member_id", "account_id"])
+def test_user_identifier_aliases_produce_user_grain_and_pending_candidate_mapping(alias):
+    profile = {
+        "file_id": f"profile_{alias}",
+        "filename": "customer_profile.xlsx",
+        "columns": [alias, "segment"],
+    }
+
+    assert canonical_entity_fields(profile)["user"] == [alias]
+    assert infer_file_grain(profile)["grain"] == "user_level"
+
+    state = AnalysisSessionState(session_id=f"scope_alias_{alias}", data_state="data_loaded")
+    state.data_pool = [profile]
+    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
+
+    assert [item["file_id"] for item in plan["pending_files"]] == [f"profile_{alias}"]
+    assert any(alias in assumption for assumption in plan["assumptions"])

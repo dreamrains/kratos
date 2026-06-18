@@ -75,7 +75,13 @@ class AnalysisFlowController:
             return False
         if not self.is_high_risk_capability(capability_id, spec):
             return False
-        return self.has_pending_confirmation(state)
+        confirmation = spec.get("method_confirmation") or {}
+        approved = (
+            confirmation.get("status") == "approved"
+            and confirmation.get("analysis_spec_id") == spec.get("id")
+            and confirmation.get("playbook_id") == spec.get("playbook_id")
+        )
+        return not approved
 
     def is_tool_blocked_by_confirmation(self, state: AnalysisSessionState, tool_name: str) -> bool:
         cap = registry.capability_for(tool_name)

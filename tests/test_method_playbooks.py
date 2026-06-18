@@ -180,6 +180,47 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_method_scope_clarification_keeps_forecast_blocked_until_method_is_confirmed():
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+    controller = AnalysisFlowController("method_scope_resolution")
+
+    clarify_state = AnalysisSessionState(session_id="method_scope_clarify", data_state="data_loaded")
+    selection = choose_playbook("forecast next month revenue and estimate ROI", intent, has_data=True)
+    apply_selection_to_state(clarify_state, selection)
+    confirmation = next(item for item in clarify_state.pending_confirmations if item["status"] == "pending")
+
+    clarify_state.resolve_confirmation(confirmation["id"], "clarify_method_scope")
+
+    assert clarify_state.stage == "scope"
+    assert controller.is_capability_blocked_by_confirmation(clarify_state, "analysis.forecast") is True
+    clarification = next(item for item in clarify_state.pending_confirmations if item["status"] == "pending")
+    assert clarification["confirmation_type"] == "method_scope_clarification"
+    assert clarification["related_spec_id"] == clarify_state.analysis_spec["id"]
+    assert clarification["options"]
+
+    clarify_state.resolve_confirmation(clarification["id"], "confirm_method")
+
+    assert controller.is_capability_blocked_by_confirmation(clarify_state, "analysis.forecast") is False
+    assert not any(item["status"] == "pending" for item in clarify_state.pending_confirmations)
+
+    confirm_state = AnalysisSessionState(session_id="method_scope_confirm", data_state="data_loaded")
+    apply_selection_to_state(confirm_state, selection)
+    confirmation = next(item for item in confirm_state.pending_confirmations if item["status"] == "pending")
+
+    confirm_state.resolve_confirmation(confirmation["id"], "confirm_method")
+
+    assert confirm_state.analysis_spec["method_confirmation"]["status"] == "approved"
+    assert controller.is_capability_blocked_by_confirmation(confirm_state, "analysis.forecast") is False
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
 def test_changed_high_risk_request_replaces_spec_and_requires_new_confirmation():
     state = AnalysisSessionState(session_id="method_changed_request", data_state="data_loaded")
     intent = TurnIntent(
