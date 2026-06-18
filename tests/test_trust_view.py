@@ -14,6 +14,30 @@ def _clear_confirmation_gate():
     }
 
 
+def _empty_workbench(goal="", scope_status=""):
+    return {
+        "current_context": {
+            "goal": goal,
+            "scope_status": scope_status,
+            "included_files": [],
+            "excluded_files": [],
+            "pending_files": [],
+            "assumptions": [],
+        },
+        "confirmations": {
+            "status": "clear",
+            "question": "",
+            "blocking_reason": "",
+        },
+        "trust_evidence": {
+            "status": "not_run",
+            "claim_count": 0,
+            "failed_count": 0,
+            "downgraded_count": 0,
+        },
+    }
+
+
 def test_none_state_returns_empty_view_for_requested_session():
     assert build_trust_view(None, session_id="missing") == {
         "status": "empty",
@@ -47,10 +71,35 @@ def test_none_state_returns_empty_view_for_requested_session():
             "confirmation_gate": _clear_confirmation_gate(),
         },
         "analysis_scope_plan": None,
+        "workbench": _empty_workbench(),
         "active_bundle": None,
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }
+
+
+def test_trust_view_provides_workbench_context_not_route_selection_surface():
+    state = AnalysisSessionState(session_id="workbench", data_state="data_loaded")
+    state.goal = "评估省钱卡是否值得继续运营"
+    state.data_pool = [{
+        "file_id": "orders",
+        "filename": "省钱卡订单.xlsx",
+        "dataset": "省钱卡订单",
+        "columns": ["order_id", "user_id", "支付时间"],
+        "key_fields": ["order_id", "user_id"],
+    }]
+    state.route_proposals = [{
+        "id": "route_trend",
+        "dataset": "省钱卡订单",
+        "direction": "trend",
+        "label": "趋势分析",
+    }]
+
+    view = build_trust_view(state)
+
+    assert set(view["workbench"].keys()) == {"current_context", "confirmations", "trust_evidence"}
+    assert view["workbench"]["current_context"]["goal"] == "评估省钱卡是否值得继续运营"
+    assert "routes" not in view["workbench"]
 
 
 def test_trust_view_exposes_active_bundle_and_recent_relationships_without_mutating_state():
@@ -910,6 +959,7 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
             },
         },
         "active_bundle": None,
+        "workbench": _empty_workbench(scope_status="ready"),
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }

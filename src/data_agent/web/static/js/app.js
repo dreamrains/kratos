@@ -1259,8 +1259,29 @@ function chatApp() {
             return labels[level || ''] || level || '未分级';
         },
 
+        workbenchContext() {
+            return this.trustView?.workbench?.current_context || {};
+        },
+
+        workbenchConfirmations() {
+            return this.trustView?.workbench?.confirmations || {};
+        },
+
+        workbenchTrustEvidence() {
+            return this.trustView?.workbench?.trust_evidence || {};
+        },
+
+        formatWorkbenchFiles(files) {
+            const list = Array.isArray(files) ? files : [];
+            if (!list.length) return '';
+            return list
+                .map((file) => file.filename || file.dataset || file.file_id)
+                .filter(Boolean)
+                .join('、');
+        },
+
         trustConfirmationGate() {
-            return this.trustView?.recommendations?.confirmation_gate || {};
+            return this.workbenchConfirmations();
         },
 
         trustConfirmationPending() {
@@ -1385,7 +1406,10 @@ function chatApp() {
 
         trustHelpText(topic) {
             const help = {
-                routes: '这是什么：系统基于当前可用数据给出的可直接分析入口。为什么重要：它能让你从已有证据出发，避免空泛提问。你可以怎么做：点击路线填入输入框，按需修改后再发送。',
+                currentContext: '这是什么：当前分析目标、纳入文件、排除文件和仍待确认的上下文。为什么重要：它让侧栏先说明系统正在依据什么判断，而不是直接催促选择路线。你可以怎么做：核对目标和文件范围是否符合预期。',
+                confirmations: '这是什么：继续分析前需要用户确认的问题或阻塞原因。为什么重要：它把不确定性显式放在执行前，避免把候选方向包装成确定建议。你可以怎么做：先回答确认问题，再推进分析。',
+                trustEvidence: '这是什么：当前会话中的验证状态、声明数量、失败和降级情况。为什么重要：它展示结论可信度证据，而不是重复路线选择。你可以怎么做：看到失败或降级时回到证据、口径或数据质量重新确认。',
+                routes: '这是什么：历史或详情中的路线支持信息。为什么重要：它用于回看曾经生成的分析入口，不代表当前侧栏的主推荐动作。你可以怎么做：只在需要复用历史问题时点击路线。',
                 risks: '这是什么：当前分析可能遇到的数据质量、口径或覆盖范围边界。为什么重要：它提醒你哪些结论需要保留条件。你可以怎么做：先补充数据、缩小问题，或在结论中注明风险。',
                 hypotheses: '这是什么：围绕当前问题生成并被数据支持度标记的假设。为什么重要：它把探索方向和证据状态放在一起。你可以怎么做：优先推进支持或不确定的假设，并复核数据不支持的说法。',
                 currentData: '这是什么：当前用于推荐和分析的数据。为什么重要：当会话里有多个文件时，它说明系统此刻依据哪份数据判断路线、风险和验证状态。你可以怎么做：确认数据集、质量状态和关键字段是否符合你的分析目标。',

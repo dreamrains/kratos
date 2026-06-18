@@ -44,6 +44,15 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
         state,
         user_goal=active_scope["active_goal"] or _text(getattr(state, "goal", "")),
     )
+    confirmation_gate = recommendations.get("confirmation_gate")
+    if not isinstance(confirmation_gate, dict):
+        confirmation_gate = {}
+    workbench = _workbench_summary(
+        state,
+        analysis_scope_plan,
+        confirmation_gate,
+        verification,
+    )
 
     if active_scope["active_mode"] == "consulting":
         datasets = all_datasets
@@ -87,6 +96,7 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
         },
         "recommendations": recommendations,
         "analysis_scope_plan": analysis_scope_plan,
+        "workbench": workbench,
         "active_bundle": active_bundle,
         "file_relationships": file_relationships,
         "history": {
@@ -139,6 +149,27 @@ def _empty_view(session_id: str) -> dict[str, Any]:
             },
         },
         "analysis_scope_plan": None,
+        "workbench": {
+            "current_context": {
+                "goal": "",
+                "scope_status": "",
+                "included_files": [],
+                "excluded_files": [],
+                "pending_files": [],
+                "assumptions": [],
+            },
+            "confirmations": {
+                "status": "clear",
+                "question": "",
+                "blocking_reason": "",
+            },
+            "trust_evidence": {
+                "status": "not_run",
+                "claim_count": 0,
+                "failed_count": 0,
+                "downgraded_count": 0,
+            },
+        },
         "active_bundle": None,
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
@@ -292,6 +323,36 @@ def _verification_summary(reports: list[dict[str, Any]]) -> dict[str, Any] | Non
         "downgraded_count": _int_value(report.get("downgraded_count")),
         "evidence_signature": _text(report.get("evidence_signature")),
         "created_at": _text(report.get("created_at")),
+    }
+
+
+def _workbench_summary(
+    state: Any,
+    analysis_scope_plan: dict[str, Any] | None,
+    confirmation_gate: dict[str, Any],
+    verification: dict[str, Any] | None,
+) -> dict[str, Any]:
+    plan = analysis_scope_plan if isinstance(analysis_scope_plan, dict) else {}
+    return {
+        "current_context": {
+            "goal": _text(plan.get("goal")) or _text(getattr(state, "goal", "")),
+            "scope_status": _text(plan.get("scope_status")),
+            "included_files": _list_items(plan.get("included_files")),
+            "excluded_files": _list_items(plan.get("excluded_files")),
+            "pending_files": _list_items(plan.get("pending_files")),
+            "assumptions": _text_list(plan.get("assumptions")),
+        },
+        "confirmations": {
+            "status": _text(confirmation_gate.get("status")) or "clear",
+            "question": _text(confirmation_gate.get("question")),
+            "blocking_reason": _text(confirmation_gate.get("blocking_reason")),
+        },
+        "trust_evidence": verification or {
+            "status": "not_run",
+            "claim_count": 0,
+            "failed_count": 0,
+            "downgraded_count": 0,
+        },
     }
 
 

@@ -548,13 +548,25 @@
             <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-1.5">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前数据</h3>
-                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'currentData' ? '' : 'currentData'">?</button>
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前上下文</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'currentContext' ? '' : 'currentContext'">?</button>
                     </div>
                     <span x-show="trustView && trustView.active_bundle" class="text-[10px] text-stone-400" x-text="trustView.active_bundle.file_count"></span>
                     <span x-show="trustView && !trustView.active_bundle && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
-                <p x-show="trustHelpOpen === 'currentData'" class="trust-help-popover" x-text="trustHelpText('currentData')"></p>
+                <p x-show="trustHelpOpen === 'currentContext'" class="trust-help-popover" x-text="trustHelpText('currentContext')"></p>
+                <div class="space-y-1.5 mb-2" x-show="trustView && trustView.workbench && trustView.workbench.current_context">
+                    <div class="trust-data-item">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="workbenchContext().goal || '未设置目标'"></p>
+                            <span class="trust-pill" :class="trustStatusClass(workbenchContext().scope_status || 'unknown')" x-text="trustStatusLabel(workbenchContext().scope_status || 'unknown')"></span>
+                        </div>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().included_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'纳入：' + formatWorkbenchFiles(workbenchContext().included_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().pending_files)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="'待确认：' + formatWorkbenchFiles(workbenchContext().pending_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().excluded_files)" class="text-[10px] text-stone-400 mt-1" x-text="'排除：' + formatWorkbenchFiles(workbenchContext().excluded_files)"></p>
+                        <p x-show="workbenchContext().assumptions && workbenchContext().assumptions.length" class="text-[10px] text-stone-400 mt-1" x-text="'假设：' + workbenchContext().assumptions.join('；')"></p>
+                    </div>
+                </div>
                 <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
                 <div x-show="trustView && trustView.active_bundle" class="space-y-1.5">
                     <div class="trust-data-item">
@@ -610,38 +622,22 @@
             <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-1.5">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">可直接分析</h3>
-                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'routes' ? '' : 'routes'">?</button>
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">待确认事项</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'confirmations' ? '' : 'confirmations'">?</button>
                     </div>
-                    <span x-show="trustView && trustView.routes && trustView.routes.length" class="text-[10px] text-stone-400" x-text="trustView.routes.length"></span>
+                    <span x-show="trustView && trustView.workbench && trustView.workbench.confirmations && workbenchConfirmations().status" class="trust-pill" :class="trustStatusClass(workbenchConfirmations().status || 'unknown')" x-text="trustStatusLabel(workbenchConfirmations().status || 'unknown')"></span>
                 </div>
-                <p x-show="trustHelpOpen === 'routes'" class="trust-help-popover" x-text="trustHelpText('routes')"></p>
+                <p x-show="trustHelpOpen === 'confirmations'" class="trust-help-popover" x-text="trustHelpText('confirmations')"></p>
                 <div x-show="trustConfirmationPending()" class="trust-risk-item mb-2">
                     <div class="flex items-center gap-2">
                         <span class="trust-pill trust-pill-warn">待确认</span>
                         <span class="text-xs font-medium text-stone-700 dark:text-stone-300">需要先确认信息</span>
                     </div>
-                    <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="trustConfirmationGate().question || '请先回答确认问题，系统会在收集到必要信息后给出最终推荐方向。'"></p>
-                    <p class="text-[10px] text-stone-400 mt-1">当前不会展示存疑的候选方向，确认后会重新计算可直接分析路线。</p>
+                    <p class="text-xs text-stone-600 dark:text-stone-300 mt-1" x-text="workbenchConfirmations().question || '请先回答确认问题，系统会在收集到必要信息后继续分析。'"></p>
+                    <p x-show="workbenchConfirmations().blocking_reason" class="text-[10px] text-stone-400 mt-1" x-text="workbenchConfirmations().blocking_reason"></p>
                 </div>
                 <div class="space-y-1.5" x-show="!trustConfirmationPending()">
-                    <template x-for="(route, ri) in ((trustView && trustView.routes) || [])" :key="route.id || ri">
-                        <div class="trust-route-item">
-                            <div class="flex items-start gap-2">
-                                <button type="button" class="min-w-0 flex-1 text-left" @click="selectTrustRoute(route)">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
-                                        <span class="text-[10px] text-stone-400 shrink-0" x-text="formatRouteBudgetLabel(route.budget_level)"></span>
-                                    </div>
-                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="formatRouteReason(route)"></p>
-                                    <p x-show="formatRouteLimitations(route)" class="text-[10px] text-stone-400 truncate mt-1" x-text="formatRouteLimitations(route)"></p>
-                                </button>
-                                <button type="button" class="trust-help-btn shrink-0" @click.stop="trustHelpOpen = trustHelpOpen === ('route-help-' + (route.id || ri)) ? '' : ('route-help-' + (route.id || ri))">?</button>
-                            </div>
-                            <p x-show="trustHelpOpen === ('route-help-' + (route.id || ri))" class="trust-help-popover trust-route-detail mt-2" x-text="trustRouteHelpText(route)"></p>
-                        </div>
-                    </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.routes || trustView.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无可直接分析路线。</p>
+                    <p x-show="!trustLoading && !trustError" class="text-xs text-stone-400 py-1">暂无待确认事项。</p>
                 </div>
             </section>
 
@@ -699,21 +695,21 @@
             <section class="trust-section" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-1.5">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">验证</h3>
-                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'verification' ? '' : 'verification'">?</button>
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">可信证据</h3>
+                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'trustEvidence' ? '' : 'trustEvidence'">?</button>
                     </div>
-                    <span class="trust-pill" :class="trustStatusClass((trustView && trustView.verification && trustView.verification.status) || 'unknown')" x-text="trustStatusLabel((trustView && trustView.verification && trustView.verification.status) || 'unknown')"></span>
+                    <span class="trust-pill" :class="trustStatusClass(workbenchTrustEvidence().status || 'unknown')" x-text="trustStatusLabel(workbenchTrustEvidence().status || 'unknown')"></span>
                 </div>
-                <p x-show="trustHelpOpen === 'verification'" class="trust-help-popover" x-text="trustHelpText('verification')"></p>
-                <div x-show="trustView && trustView.verification">
+                <p x-show="trustHelpOpen === 'trustEvidence'" class="trust-help-popover" x-text="trustHelpText('trustEvidence')"></p>
+                <div x-show="trustView && trustView.workbench && trustView.workbench.trust_evidence">
                     <p class="text-xs text-stone-600 dark:text-stone-300">
-                        <span x-text="(trustView && trustView.verification && trustView.verification.claim_count) || 0"></span> 条声明 -
-                        <span x-text="(trustView && trustView.verification && trustView.verification.failed_count) || 0"></span> 失败 -
-                        <span x-text="(trustView && trustView.verification && trustView.verification.downgraded_count) || 0"></span> 降级
+                        <span x-text="workbenchTrustEvidence().claim_count || 0"></span> 条声明 -
+                        <span x-text="workbenchTrustEvidence().failed_count || 0"></span> 失败 -
+                        <span x-text="workbenchTrustEvidence().downgraded_count || 0"></span> 降级
                     </p>
-                    <p x-show="trustView && trustView.verification && trustView.verification.created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="trustView && trustView.verification ? trustView.verification.created_at : ''"></p>
+                    <p x-show="workbenchTrustEvidence().created_at" class="text-[10px] text-stone-400 truncate mt-1" x-text="workbenchTrustEvidence().created_at || ''"></p>
                 </div>
-                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.verification)" class="text-xs text-stone-400">暂无验证报告。</p>
+                <p x-show="!trustLoading && !trustError && (!trustView || !trustView.workbench || !trustView.workbench.trust_evidence)" class="text-xs text-stone-400">暂无可信证据。</p>
             </section>
 
             <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
@@ -755,7 +751,7 @@
                                         <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
                                         <span class="text-[10px] text-stone-400 shrink-0" x-text="formatRouteBudgetLabel(route.budget_level)"></span>
                                     </div>
-                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="route.reason || route.dataset || '填入提示词'"></p>
+                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="formatRouteReason(route)"></p>
                                     <p x-show="formatRouteLimitations(route)" class="text-[10px] text-stone-400 truncate mt-1" x-text="formatRouteLimitations(route)"></p>
                                 </button>
                                 <button type="button" class="trust-help-btn shrink-0" @click.stop="trustHelpOpen = trustHelpOpen === ('history-route-help-' + (route.id || hri)) ? '' : ('history-route-help-' + (route.id || hri))">?</button>

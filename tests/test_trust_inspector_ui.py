@@ -149,12 +149,25 @@ def test_trust_inspector_panel_markup_contract():
     assert "trust-inspector-panel" in html
     assert "session-side-tabs" in html
     assert "sessionSidePanelTab" in html
-    assert "trustView.datasets" in html
-    assert "trustView.routes" in html
+    assert "workbench.current_context" in html
+    assert "workbench.confirmations" in html
+    assert "workbench.trust_evidence" in html
+    assert "trustView.history.routes" in html
     assert "trustView.risks" in html
-    assert "trustView.verification" in html
+    assert "workbenchTrustEvidence()" in html
     assert '@click="selectTrustRoute(route)"' in html
     assert "trustInspectorCollapsed" in html
+
+
+def test_workbench_uses_context_confirmation_trust_sections():
+    html = _index_html()
+
+    assert "workbench.current_context" in html
+    assert "workbench.confirmations" in html
+    assert "workbench.trust_evidence" in html
+    assert "当前上下文" in html
+    assert "待确认事项" in html
+    assert "可信证据" in html
 
 
 def test_trust_inspector_contains_hypothesis_section():
@@ -209,7 +222,9 @@ def test_session_side_panel_uses_chinese_trust_labels_and_help():
 
     assert "Session Side Panel" not in html
     assert "trustHelpText" in js
-    assert "可直接分析" in html
+    assert "当前上下文" in html
+    assert "待确认事项" in html
+    assert "可信证据" in html
     assert "风险边界" in html
     assert "假设检验" in html
     assert "产出与导出" in html
@@ -240,11 +255,10 @@ def test_trust_routes_show_confirmation_gate_instead_of_candidate_routes():
     html = _index_html()
     js = _app_js()
 
-    assert "trustConfirmationGate()" in html
     assert "trustConfirmationGate()" in js
     assert "需要先确认信息" in html
-    assert "不会展示存疑的候选方向" in html
-    assert "this.trustView?.recommendations?.confirmation_gate" in js
+    assert "workbenchConfirmations()" in html
+    assert "return this.workbenchConfirmations();" in js
     assert "trustConfirmationPending()" in html
     assert "trustConfirmationPending()" in js
 
@@ -270,10 +284,12 @@ def test_current_data_and_verification_have_help_text():
     html = _index_html()
     js = _app_js()
 
-    assert "trustHelpText('currentData')" in html
-    assert "trustHelpText('verification')" in html
-    assert "当前用于推荐和分析的数据" in js
-    assert "一致性检查" in js
+    assert "trustHelpText('currentContext')" in html
+    assert "trustHelpText('confirmations')" in html
+    assert "trustHelpText('trustEvidence')" in html
+    assert "当前分析目标" in js
+    assert "继续分析前需要用户确认" in js
+    assert "当前会话中的验证状态" in js
 
 
 def test_history_routes_share_route_explanations():
@@ -337,10 +353,10 @@ def test_trust_inspector_empty_states_hide_during_loading_or_error():
 
     empty_state_labels = [
         "暂无数据画像。",
-        "暂无可直接分析路线。",
+        "暂无待确认事项。",
         "暂无假设集合。",
         "暂无风险边界。",
-        "暂无验证报告。",
+        "暂无可信证据。",
     ]
     for label in empty_state_labels:
         match = re.search(rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>', html)
