@@ -24,16 +24,32 @@ def test_scope_plan_keeps_orders_and_coupon_profiles_linkable_by_user_aliases():
             "time_fields": ["核销时间"],
         },
     ]
+    state.set_active_bundle({
+        "bundle_id": "bundle_orders",
+        "file_ids": ["orders"],
+        "dataset_names": ["省钱卡订单"],
+    })
+    state.file_relationships = [{
+        "relationship_id": "rel_orders_coupon",
+        "file_ids": ["orders", "coupon"],
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "evidence": ["User alias fields may connect coupon usage to orders."],
+    }]
 
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
+    assert [item["file_id"] for item in plan["pending_files"]] == ["coupon"]
     assert plan["scope_status"] == "needs_confirmation"
     assert any(
-        "主用户ID" in assumption and "产品用户ID" in assumption
+        "candidate" in assumption.lower()
+        and "coupon" in assumption
+        and "rel_orders_coupon" in assumption
+        and "主用户ID" in assumption
+        and "产品用户ID" in assumption
         for assumption in plan["assumptions"]
     )
-    assert "coupon" not in {item["file_id"] for item in plan["pending_files"]}
     assert "coupon" not in {item["file_id"] for item in plan["excluded_files"]}
 
 

@@ -78,13 +78,28 @@ def test_scope_plan_includes_relevant_user_files_and_excludes_unrelated_game_fil
         "file_ids": ["orders"],
         "dataset_names": ["省钱卡订单"],
     })
+    state.file_relationships = [{
+        "relationship_id": "rel_orders_coupon",
+        "file_ids": ["orders", "coupon"],
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "evidence": ["Coupon user aliases may map to the order user_id."],
+    }]
 
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
+    assert [item["file_id"] for item in plan["pending_files"]] == ["coupon"]
     assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
     assert plan["scope_status"] == "needs_confirmation"
-    assert any("主用户ID" in assumption for assumption in plan["assumptions"])
+    assert any(
+        "candidate" in assumption.lower()
+        and "coupon" in assumption
+        and "rel_orders_coupon" in assumption
+        and "主用户ID" in assumption
+        and "产品用户ID" in assumption
+        for assumption in plan["assumptions"]
+    )
 
 
 def test_scope_plan_excludes_unrelated_game_file_even_when_active_bundle_includes_it():
@@ -150,3 +165,89 @@ def test_scope_plan_marks_pending_ambiguous_files_as_needing_confirmation():
     assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
     assert [item["file_id"] for item in plan["pending_files"]] == ["ambiguous"]
     assert plan["scope_status"] == "needs_confirmation"
+
+
+def test_scope_plan_uses_relationship_evidence_before_canonical_ids():
+    state = AnalysisSessionState(session_id="scope_relationship_priority", data_state="data_loaded")
+    state.data_pool = [
+        {
+            "file_id": "historical_orders",
+            "filename": "archive.xlsx",
+            "columns": ["order_id", "user_id"],
+        },
+        {
+            "file_id": "confirmed_profile",
+            "filename": "customer_profile.xlsx",
+            "columns": ["user_id", "segment"],
+        },
+        {
+            "file_id": "active_orders",
+            "filename": "membership_orders.xlsx",
+            "columns": ["order_id", "user_id"],
+        },
+    ]
+    state.set_active_bundle({
+        "bundle_id": "bundle_active",
+        "file_ids": ["active_orders"],
+    })
+    state.file_relationships = [{
+        "relationship_id": "rel_profile",
+        "file_ids": ["active_orders", "confirmed_profile"],
+        "status": "linked",
+        "requires_confirmation": False,
+        "evidence": ["Shared strong key fields: user_id"],
+    }]
+
+    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
+
+    assert [item["file_id"] for item in plan["included_files"]] == [
+        "active_orders",
+        "confirmed_profile",
+    ]
+    assert [item["file_id"] for item in plan["pending_files"]] == ["historical_orders"]
+
+
+def test_scope_plan_enforces_deterministic_five_file_detail_budget():
+    state = AnalysisSessionState(session_id="scope_budget", data_state="data_loaded")
+    state.data_pool = [
+        {"file_id": "candidate_1", "filename": "membership_candidate_1.xlsx"},
+        {"file_id": "excluded", "filename": "game_retention.xlsx"},
+        {"file_id": "linked", "filename": "customer_profile.xlsx", "columns": ["user_id"]},
+        {"file_id": "active_2", "filename": "membership_active_2.xlsx"},
+        {"file_id": "candidate_2", "filename": "membership_candidate_2.xlsx"},
+        {"file_id": "active_1", "filename": "membership_active_1.xlsx"},
+        {"file_id": "candidate_3", "filename": "membership_candidate_3.xlsx"},
+    ]
+    state.set_active_bundle({
+        "bundle_id": "bundle_active",
+        "file_ids": ["active_1", "active_2"],
+    })
+    state.file_relationships = [{
+        "relationship_id": "rel_linked",
+        "file_ids": ["active_1", "linked"],
+        "status": "confirmed",
+        "requires_confirmation": False,
+    }]
+
+    first = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
+    second = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
+
+    assert first == second
+    assert [item["file_id"] for item in first["included_files"]] == [
+        "active_2",
+        "active_1",
+        "linked",
+        "candidate_1",
+        "candidate_2",
+    ]
+    assert first["pending_files"] == []
+    assert first["excluded_files"] == []
+    assert first["context_budget"] == {
+        "included_file_count": 5,
+        "excluded_file_count": 0,
+        "pending_file_count": 0,
+        "total_file_count": 7,
+        "returned_file_count": 5,
+        "omitted_file_count": 2,
+        "max_scope_files": 5,
+    }
