@@ -135,6 +135,28 @@ def test_user_id_requirement_is_not_satisfied_by_other_id_fields():
     assert model["exploratory"][0]["missing_requirements"] == ["user_id"]
 
 
+def test_plain_metric_and_dimension_requirements_missing_from_inventory_demote_route():
+    state = AnalysisSessionState(session_id="support_guard_plain_fields", data_state="data_loaded")
+    state.active_scope["active_dataset"] = "orders"
+    state.active_scope["active_mode"] = "data_loaded"
+    state.dataset_contracts = [{
+        "dataset": "orders",
+        "field_roles": {"date": ["order_date"], "metrics": ["profit"]},
+    }]
+    state.route_proposals = [{
+        "id": "route_profitability",
+        "dataset": "orders",
+        "direction": "dimension_decomposition",
+        "label": "Profitability",
+        "evidence_requirements": ["revenue", "cost", "channel"],
+    }]
+
+    model = build_route_capabilities(state)
+
+    assert model["executable"] == []
+    assert model["exploratory"][0]["missing_requirements"] == ["revenue", "cost", "channel"]
+
+
 def test_conceptual_period_coverage_requirement_does_not_demote_supported_route():
     state = AnalysisSessionState(session_id="support_guard_period", data_state="data_loaded")
     state.active_scope["active_dataset"] = "orders"
@@ -148,7 +170,19 @@ def test_conceptual_period_coverage_requirement_does_not_demote_supported_route(
         "dataset": "orders",
         "direction": "period_compare",
         "label": "Period comparison",
-        "evidence_requirements": ["order_date", "revenue", "period coverage"],
+        "evidence_requirements": [
+            "order_date",
+            "revenue",
+            "period coverage",
+            "sample_size",
+            "limitations",
+            "metric_delta",
+            "assumptions",
+            "confidence",
+            "time_scope",
+            "denominator",
+            "correlation_method",
+        ],
     }]
 
     model = build_route_capabilities(state)

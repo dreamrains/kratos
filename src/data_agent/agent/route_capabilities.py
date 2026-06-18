@@ -15,12 +15,49 @@ from data_agent.agent.confirmation_policy import (
 
 _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
 _CONCEPTUAL_REQUIREMENTS = {
+    "assumptions",
+    "confidence",
+    "confidence_interval",
+    "contribution",
+    "contribution_table",
+    "correlation",
+    "correlation_method",
+    "cohort_definition",
+    "conversion_rates",
+    "data grain",
+    "data_grain",
+    "data_needed",
+    "denominator",
+    "drivers",
+    "effect_size",
+    "field semantics",
+    "field_semantics",
+    "hypothesis",
+    "id_scope",
+    "impact",
     "limitations",
+    "method",
     "metric_delta",
+    "missingness",
     "period coverage",
+    "period_comparability",
+    "period_definition",
+    "period_coverage",
+    "periods",
+    "rate_definition",
+    "retention_metric",
     "sample_size",
+    "schema",
+    "significance",
+    "statistical_significance",
+    "step_definition",
+    "time_scope",
+    "trend",
+    "trend_statistics",
+    "validation",
+    "validation_metric",
+    "variables",
 }
-_FIELD_TERM_MARKERS = ("时间", "日期", "金额", "用户", "订单")
 
 
 def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
@@ -226,11 +263,7 @@ def _is_field_like_requirement(
         return True
     if " " in normalized:
         return False
-    if "_" in normalized:
-        return True
-    if lowered in {"id", "ids"} or lowered.endswith("_id"):
-        return True
-    return any(marker in normalized for marker in _FIELD_TERM_MARKERS)
+    return True
 
 
 def _demoted_route_item(

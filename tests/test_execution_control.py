@@ -333,6 +333,92 @@ def test_structured_loop_file_relationship_suspension_saves_state_updates(monkey
     assert state.pending_confirmations[0]["state_updates"] == result.state_updates
 
 
+def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+
+    class FailingClient:
+        def chat(self, *args, **kwargs):
+            raise AssertionError("LLM should not be called before required confirmation")
+
+    ctx = AgentContext(session_id="preexisting_relationship_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="preexisting_relationship_gate", data_state="data_loaded")
+    state.file_relationships = [{
+        "relationship_id": "rel_existing",
+        "file_ids": ["file_old", "file_new"],
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+        "confirmation_type": "file_relationship_confirmation",
+    }]
+    state.pending_confirmations = [{
+        "id": "existing_relationship_confirmation",
+        "status": "pending",
+        "question": "Use the existing relationship question?",
+        "options": [{"label": "Together", "value": "include_in_active_bundle"}],
+        "confirmation_type": "file_relationship_confirmation",
+        "blocking_reason": "Existing relationship reason",
+        "state_updates": json.dumps({
+            "stage": "plan",
+            "file_relationship_confirmation": {"relationship_id": "rel_existing"},
+        }),
+    }]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=FailingClient(), session_id="preexisting_relationship_gate")
+    loop.context = ctx
+
+    with use_agent_context(ctx):
+        result = loop.run_turn_structured("analyze revenue trend")
+
+    from data_agent.agent.loop import SuspendedForConfirmation
+
+    assert isinstance(result, SuspendedForConfirmation)
+    assert result.question == "Use the existing relationship question?"
+    assert result.options == [{"label": "Together", "value": "include_in_active_bundle"}]
+    assert result.confirmation_type == "file_relationship_confirmation"
+    assert result.blocking_reason == "Existing relationship reason"
+    assert json.loads(result.state_updates)["stage"] == "plan"
+    assert state.pending_confirmations[0]["suspension_id"] == result.suspension_id
+    assert len(state.pending_confirmations) == 1
+
+
+def test_auto_suspend_does_not_duplicate_pending_confirmation_with_suspension_id():
+    ctx = AgentContext(session_id="existing_suspension_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="existing_suspension_gate", data_state="data_loaded")
+    state.pending_confirmations = [{
+        "id": "existing_confirmation",
+        "status": "pending",
+        "suspension_id": "susp_existing",
+        "question": "Already suspended?",
+        "options": [{"label": "Yes", "value": "yes"}],
+        "state_updates": json.dumps({"stage": "scope"}),
+    }]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=None, session_id="existing_suspension_gate")
+    loop.context = ctx
+    loop._turn_question_need = {
+        "status": "hard_question",
+        "question_type": "scope_confirmation",
+        "question": "Regenerated question",
+        "options": [{"label": "Continue", "value": "continue"}],
+        "reason": "Regenerated reason",
+        "state_updates": {"stage": "scope"},
+    }
+
+    assert loop._maybe_auto_suspend_for_required_question() is None
+    assert len(state.pending_confirmations) == 1
+    assert state.pending_confirmations[0]["suspension_id"] == "susp_existing"
+
+
 def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
@@ -355,6 +441,7 @@ def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatc
             "id": "rich_pending",
             "confirmation_type": "file_relationship_confirmation",
             "question": "confirm relationship",
+            "options": [{"label": "Together", "value": "include_in_active_bundle"}],
             "state_updates": json.dumps({
                 "stage": "plan",
                 "file_relationship_confirmation": {"relationship_id": "rel_custom"},

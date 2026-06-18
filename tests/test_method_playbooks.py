@@ -133,7 +133,7 @@ def test_method_confirmation_uses_new_selection_spec_when_existing_state_has_sta
 
     confirmation = next(
         item for item in state.pending_confirmations
-        if item.get("id") == "method_forecast_decision_simulation"
+        if item.get("related_spec_id") == selection.analysis_spec["id"]
     )
     updates = json.loads(confirmation["state_updates"])
     assert confirmation["related_spec_id"] == selection.analysis_spec["id"]
@@ -160,7 +160,7 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
         apply_selection_to_state(state, selection)
         confirmation = next(
             item for item in state.pending_confirmations
-            if item.get("id") == "method_forecast_decision_simulation"
+            if item.get("related_spec_id") == state.analysis_spec["id"]
         )
         updates = json.loads(confirmation["state_updates"])
 
@@ -171,12 +171,58 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
             "allowed_actions": ["confirm_method", "clarify_method_scope"],
         }
 
-        result = state.resolve_confirmation("method_forecast_decision_simulation", answer)
+        result = state.resolve_confirmation(confirmation["id"], answer)
 
         assert result is not None
         assert result["status"] == "resolved"
         assert state.stage in STAGES
         assert state.active_scope["active_mode"] in {"consulting", "data_loaded", "analysis", "artifact_review"}
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_changed_high_risk_request_replaces_spec_and_requires_new_confirmation():
+    state = AnalysisSessionState(session_id="method_changed_request", data_state="data_loaded")
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+
+    first = choose_playbook("forecast revenue and ROI next month", intent, has_data=True)
+    assert first.analysis_spec is not None
+    assert first.analysis_spec["id"]
+    apply_selection_to_state(state, first)
+    first_spec_id = state.analysis_spec["id"]
+    first_confirmation = next(
+        item for item in state.pending_confirmations
+        if item.get("related_spec_id") == first_spec_id
+    )
+    state.resolve_confirmation(first_confirmation["id"], "confirm_method")
+
+    second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
+    duplicate_second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
+    assert second.analysis_spec is not None
+    assert duplicate_second.analysis_spec is not None
+    assert second.primary_playbook_id == first.primary_playbook_id
+    assert second.analysis_spec["id"] != first_spec_id
+    assert duplicate_second.analysis_spec["id"] == second.analysis_spec["id"]
+
+    apply_selection_to_state(state, second)
+    apply_selection_to_state(state, duplicate_second)
+
+    second_spec_id = second.analysis_spec["id"]
+    second_confirmations = [
+        item for item in state.pending_confirmations
+        if item.get("related_spec_id") == second_spec_id and item.get("status") == "pending"
+    ]
+    assert state.analysis_spec["id"] == second_spec_id
+    assert state.analysis_spec["goal"] == "forecast cost and ROI next quarter"
+    assert state.goal == "forecast cost and ROI next quarter"
+    assert len(second_confirmations) == 1
+    assert second_confirmations[0]["id"] != first_confirmation["id"]
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)

@@ -7,6 +7,7 @@ conclusions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -470,19 +471,17 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
             state.add_data_requirement(selection.data_requirement)
     analysis_spec = state.analysis_spec
     if selection.analysis_spec:
+        selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
         current_spec = state.analysis_spec or {}
         selected_spec_id = selection.analysis_spec.get("id")
         current_spec_id = current_spec.get("id")
-        selected_playbook_id = selection.analysis_spec.get("playbook_id")
-        current_playbook_id = current_spec.get("playbook_id")
         should_replace_spec = (
             not state.analysis_spec
-            or (selected_spec_id and selected_spec_id != current_spec_id)
-            or (selected_playbook_id and selected_playbook_id != current_playbook_id)
+            or selected_spec_id != current_spec_id
         )
         analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
     if selection.requires_confirmation and analysis_spec:
-        confirmation_id = f"method_{selection.primary_playbook_id}"
+        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_spec.get('id', '')}"
         if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
             confirmation_policy = analysis_spec.get("confirmation_policy", {})
             state.add_confirmation({
@@ -686,7 +685,7 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
             if section not in output_sections:
                 output_sections.append(section)
     playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
-    return {
+    spec = {
         "goal": user_input.strip() or playbook.name,
         "analysis_plan_version": "expert_flow_v2",
         "playbook_id": playbook.id,
@@ -715,6 +714,18 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
         "output_sections": output_sections,
         "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
+    spec["id"] = _analysis_spec_id(spec)
+    return spec
+
+
+def _analysis_spec_id(spec: dict[str, Any]) -> str:
+    material = {
+        key: value
+        for key, value in spec.items()
+        if key not in {"id", "created_at", "workflow_id"}
+    }
+    encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"spec_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _next_analysis_candidates(output_policies: list[dict[str, Any]]) -> list[str]:

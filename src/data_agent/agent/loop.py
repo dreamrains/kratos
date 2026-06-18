@@ -693,20 +693,26 @@ class AgentLoop:
         if pending is False:
             return None
 
-        state_updates = question_need.get("state_updates")
-        if not isinstance(state_updates, dict):
-            state_updates = {"stage": "scope"}
-        state_updates_text = json.dumps(state_updates, ensure_ascii=False)
+        pending_data = pending if isinstance(pending, dict) else {}
+        state_updates = pending_data.get("state_updates", question_need.get("state_updates"))
+        if isinstance(state_updates, dict):
+            state_updates_text = json.dumps(state_updates, ensure_ascii=False)
+        elif isinstance(state_updates, str) and state_updates.strip():
+            state_updates_text = state_updates
+        else:
+            state_updates_text = json.dumps({"stage": "scope"}, ensure_ascii=False)
         susp = SuspendedForConfirmation(
             suspension_id=uuid.uuid4().hex[:8],
-            question=str(question_need.get("question") or "请先确认关键信息后再继续分析。"),
-            options=list(question_need.get("options") or []),
-            context="",
+            question=str(pending_data.get("question") or question_need.get("question") or "请先确认关键信息后再继续分析。"),
+            options=list(pending_data.get("options") or question_need.get("options") or []),
+            context=str(pending_data.get("context") or ""),
             snapshot={"messages": self._serialize_messages()},
             multi_select=False,
-            confirmation_type=str(question_need.get("question_type") or "scope_confirmation"),
-            blocking_reason=str(question_need.get("reason") or ""),
+            confirmation_type=str(pending_data.get("confirmation_type") or question_need.get("question_type") or "scope_confirmation"),
+            blocking_reason=str(pending_data.get("blocking_reason") or question_need.get("reason") or ""),
             state_updates=state_updates_text,
+            related_task_id=int(pending_data.get("related_task_id") or 0),
+            related_spec_id=str(pending_data.get("related_spec_id") or ""),
         )
         if isinstance(pending, dict):
             pending["suspension_id"] = susp.suspension_id
@@ -736,11 +742,29 @@ class AgentLoop:
         if any(c.get("suspension_id") for c in pending_items):
             return False
         existing_ids = getattr(self, "_turn_existing_pending_ids", set()) or set()
+        existing_items = [
+            item
+            for item in pending_items
+            if str(item.get("id") or item.get("suspension_id") or "") in existing_ids
+        ]
+        if existing_items:
+            for item in existing_items:
+                if self._is_answerable_pending_confirmation(item):
+                    return item
+            return False
         for item in pending_items:
-            item_id = str(item.get("id") or item.get("suspension_id") or "")
-            if item_id not in existing_ids:
+            if self._is_answerable_pending_confirmation(item):
                 return item
         return False
+
+    @staticmethod
+    def _is_answerable_pending_confirmation(item: dict[str, Any]) -> bool:
+        return bool(
+            item.get("question")
+            and isinstance(item.get("options"), list)
+            and item.get("options")
+            and item.get("state_updates")
+        )
 
     def _extract_user_requirements(self, user_input: str) -> None:
         """Use LLM to extract quality/format requirements from user input (once per session)."""
