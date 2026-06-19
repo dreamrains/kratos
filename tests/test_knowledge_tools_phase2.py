@@ -12,6 +12,7 @@ from data_agent.tools.registry import registry
 def _configure(tmp_path: Path, monkeypatch):
     cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
     monkeypatch.setattr(config_module, "_config", cfg)
+    monkeypatch.setattr(knowledge_tools, "get_active_session_id", lambda: None)
     knowledge_tools.reset_knowledge_services_for_tests()
     knowledge_tools.set_active_session(None)
     return cfg
