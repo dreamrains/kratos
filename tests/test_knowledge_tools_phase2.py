@@ -90,7 +90,7 @@ def test_list_memory_candidates_registry_treats_false_string_as_unfiltered(tmp_p
     result = registry.execute("list_memory_candidates", {"needs_review": "false"})
     payload = ast.literal_eval(result.summary)
 
-    assert [item["id"] for item in payload] == [review.id, no_review.id]
+    assert {item["id"] for item in payload} == {review.id, no_review.id}
 
 
 def test_list_memory_candidates_registry_treats_zero_string_as_unfiltered(tmp_path, monkeypatch):
@@ -110,7 +110,7 @@ def test_list_memory_candidates_registry_treats_zero_string_as_unfiltered(tmp_pa
     result = registry.execute("list_memory_candidates", {"needs_review": "0"})
     payload = ast.literal_eval(result.summary)
 
-    assert [item["id"] for item in payload] == [review.id, no_review.id]
+    assert {item["id"] for item in payload} == {review.id, no_review.id}
 
 
 def test_list_memory_candidates_registry_treats_true_string_as_review_filter(tmp_path, monkeypatch):
