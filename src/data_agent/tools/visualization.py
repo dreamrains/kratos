@@ -302,7 +302,7 @@ def _prepare_chart_dataframe(
                 )
             return plot_df
 
-    if chart_type == "bar":
+    if chart_type in {"bar", "stacked_bar"}:
         group_cols = [x_col] + ([color_col] if color_col else [])
         if not df.duplicated(subset=group_cols).any():
             return df

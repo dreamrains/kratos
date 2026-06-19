@@ -99,6 +99,21 @@ def validate_chart_request(
             return result
         result.dataframe[column] = numeric.where(finite)
 
+    if chart_type == "line" and x_col and result.semantic_roles.get(x_col) == "identifier":
+        result.error = "Line charts require an ordered dimension, not an identifier axis."
+        result.error_code = "invalid_line_axis"
+        result.recovery_options = [
+            {
+                "chart_type": "scatter",
+                "description": "Compare numeric measures without ordering identifiers.",
+            },
+            {
+                "chart_type": "bar",
+                "description": "Use a documented small selection or aggregate first.",
+            },
+        ]
+        return result
+
     if chart_type == "line" and x_col and infer_semantic_role(
         x_col, result.dataframe[x_col]
     ) == "time":
@@ -112,12 +127,12 @@ def validate_chart_request(
             _set_aggregation_required(result)
             return result
 
-    if chart_type == "bar" and x_col:
+    if chart_type in {"bar", "stacked_bar"} and x_col:
         group_cols = [x_col] + ([color_col] if color_col else [])
         if result.dataframe.duplicated(subset=group_cols).any() and not aggregation:
             _set_aggregation_required(result)
             return result
-        if len(y_cols) > 1 and _has_divergent_scales(result.dataframe, y_cols):
+        if chart_type == "bar" and len(y_cols) > 1 and _has_divergent_scales(result.dataframe, y_cols):
             if not scale_mode:
                 result.error = "Metrics use divergent scales; choose raw values or explicit normalization."
                 result.error_code = "scale_mode_required"

@@ -195,3 +195,41 @@ def test_divergent_multi_metric_bar_requires_explicit_scale_mode(tmp_path):
 
     assert json.loads(result)["error_code"] == "scale_mode_required"
     assert not chart_dir.exists()
+
+
+def test_stacked_bar_duplicate_groups_require_explicit_aggregation(tmp_path):
+    rows = [
+        {"segment": "A", "period": "before", "value": 10},
+        {"segment": "A", "period": "before", "value": 20},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "duplicate_stacked_bar",
+        chart_type="stacked_bar",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="value",
+        color_col="period",
+        title="Stacked period value",
+    )
+
+    assert json.loads(result)["error_code"] == "aggregation_required"
+    assert not chart_dir.exists()
+
+
+def test_line_rejects_identifier_axis_even_without_trend_words(tmp_path):
+    rows = [{"user_id": i, "value": i * 2} for i in range(1, 8)]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "identifier_line",
+        chart_type="line",
+        data_json=json.dumps(rows),
+        x_col="user_id",
+        y_col="value",
+        title="User values",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_line_axis"
+    assert not chart_dir.exists()
