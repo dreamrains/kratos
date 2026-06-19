@@ -24,7 +24,7 @@
 - Create: `src/data_agent/tools/chart_contract.py`
 - Create: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write failing semantic-role tests**
+- [x] **Step 1: Write failing semantic-role tests**
 
 ```python
 import json
@@ -69,7 +69,7 @@ def test_low_cardinality_text_is_category():
     assert infer_semantic_role("segment", pd.Series(["A", "B", "A"])) == "category"
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -79,7 +79,7 @@ Run:
 
 Expected: collection fails because `data_agent.tools.chart_contract` does not exist.
 
-- [ ] **Step 3: Implement semantic typing and validation result**
+- [x] **Step 3: Implement semantic typing and validation result**
 
 ```python
 from __future__ import annotations
@@ -126,7 +126,7 @@ def infer_semantic_role(column: str, series: pd.Series) -> str:
     return "unknown"
 ```
 
-- [ ] **Step 4: Run the tests and verify GREEN**
+- [x] **Step 4: Run the tests and verify GREEN**
 
 Run:
 
@@ -136,7 +136,7 @@ Run:
 
 Expected: 4 tests pass.
 
-- [ ] **Step 5: Commit the semantic foundation**
+- [x] **Step 5: Commit the semantic foundation**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py tests/test_chart_semantics.py
@@ -150,7 +150,7 @@ git commit -m "feat: add chart semantic roles"
 - Modify: `src/data_agent/tools/visualization.py`
 - Modify: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write the failing reported-shape tests**
+- [x] **Step 1: Write the failing reported-shape tests**
 
 Add a local session-directory fixture equivalent to `_use_tmp_sessions` and these tests:
 
@@ -200,7 +200,7 @@ def test_low_cardinality_numeric_identifier_bar_uses_category_axis(tmp_path):
     assert "identifier_to_category" in metadata["transformations"]
 ```
 
-- [ ] **Step 2: Run the two tests and verify RED**
+- [x] **Step 2: Run the two tests and verify RED**
 
 Run:
 
@@ -210,7 +210,7 @@ Run:
 
 Expected: the 62-user request still returns `Chart saved`, and low-cardinality identifiers remain numeric in serialized Plotly data.
 
-- [ ] **Step 3: Add identifier-axis contract validation**
+- [x] **Step 3: Add identifier-axis contract validation**
 
 Implement in `chart_contract.py`:
 
@@ -251,7 +251,7 @@ def validate_chart_request(
 
 Extend `_chart_error` in `visualization.py` to accept `error_code` and `recovery_options`, call `validate_chart_request` before `_prepare_chart_dataframe`, and copy `semantic_roles`, `transformations`, and `category_count` into metadata.
 
-- [ ] **Step 4: Run the two tests and verify GREEN**
+- [x] **Step 4: Run the two tests and verify GREEN**
 
 Run:
 
@@ -261,7 +261,7 @@ Run:
 
 Expected: both tests pass and rejected requests create no chart directory.
 
-- [ ] **Step 5: Run existing chart tests**
+- [x] **Step 5: Run existing chart tests**
 
 Run:
 
@@ -271,7 +271,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit the identifier-axis fix**
+- [x] **Step 6: Commit the identifier-axis fix**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_semantics.py
@@ -286,7 +286,7 @@ git commit -m "fix: reject unreadable identifier charts"
 - Modify: `tests/test_chart_contract.py`
 - Modify: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write failing numeric-quality and duplicate-category tests**
+- [x] **Step 1: Write failing numeric-quality and duplicate-category tests**
 
 ```python
 def test_mostly_non_numeric_measure_is_rejected(tmp_path):
@@ -338,7 +338,7 @@ def test_divergent_multi_metric_bar_requires_explicit_scale_mode(tmp_path):
     assert not chart_dir.exists()
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -348,7 +348,7 @@ Run:
 
 Expected: mostly non-numeric input is accepted because one value coerces, bar duplicates are silently averaged, date duplicates are silently summed, and divergent metrics are silently normalized.
 
-- [ ] **Step 3: Add `aggregation` to the public tool schema and contract**
+- [x] **Step 3: Add `aggregation` to the public tool schema and contract**
 
 Add optional arguments `aggregation` with enum `"", "sum", "mean", "median", "count"` and `scale_mode` with enum `"", "raw", "normalize"`. In `chart_contract.py`, reject duplicate bar or normalized-date line groups when aggregation is empty, reject divergent multi-metric bars when `scale_mode` is empty, and apply only the requested behavior:
 
@@ -369,7 +369,7 @@ def aggregate_bar_rows(df, group_cols, y_cols, aggregation):
 
 Require at least 80% finite numeric values for measure columns, coerce accepted measure columns to numeric, and record `aggregation:<name>` in transformations.
 
-- [ ] **Step 4: Update the existing intentional-mean test**
+- [x] **Step 4: Update the existing intentional-mean test**
 
 Change `test_bar_chart_aggregates_duplicate_x_groups_for_multi_metric_comparison` to call:
 
@@ -403,7 +403,7 @@ result = create_chart(
 
 Keep its existing normalized-axis assertions and add `assert "scale:normalize" in metadata["transformations"]`. The new `test_divergent_multi_metric_bar_requires_explicit_scale_mode` above covers the rejected default.
 
-- [ ] **Step 5: Run chart tests and verify GREEN**
+- [x] **Step 5: Run chart tests and verify GREEN**
 
 Run:
 
@@ -413,7 +413,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit explicit aggregation**
+- [x] **Step 6: Commit explicit aggregation**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_contract.py tests/test_chart_semantics.py
@@ -427,7 +427,7 @@ git commit -m "fix: require explicit chart aggregation"
 - Modify: `src/data_agent/tools/visualization.py`
 - Modify: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write failing family tests**
+- [x] **Step 1: Write failing family tests**
 
 ```python
 def test_stacked_bar_converts_numeric_identifier_categories(tmp_path):
@@ -455,7 +455,7 @@ def test_line_rejects_identifier_axis_even_without_trend_words(tmp_path):
     assert not chart_dir.exists()
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -465,11 +465,11 @@ Run:
 
 Expected: stacked bars keep numeric axes and line validation depends on title keywords.
 
-- [ ] **Step 3: Implement family rules**
+- [x] **Step 3: Implement family rules**
 
 Apply identifier conversion to both bar families, set `xaxis.type="category"` for converted axes, and reject identifier line axes regardless of title. Apply daily time aggregation only when the caller supplied an explicit aggregation and record it in transformations.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run:
 
@@ -479,7 +479,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit family contracts**
+- [x] **Step 5: Commit family contracts**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_semantics.py
@@ -493,7 +493,7 @@ git commit -m "fix: enforce categorical and line chart contracts"
 - Modify: `src/data_agent/tools/visualization.py`
 - Modify: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write failing measure-role and box grouping tests**
+- [x] **Step 1: Write failing measure-role and box grouping tests**
 
 ```python
 def test_scatter_rejects_numeric_identifier_measure(tmp_path):
@@ -531,7 +531,7 @@ def test_box_uses_x_as_category_and_y_as_measure(tmp_path):
     assert '"y":[10,20,12,18]' in html
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -541,7 +541,7 @@ Run:
 
 Expected: identifier measures are accepted and box creates separate `period` and `value` series.
 
-- [ ] **Step 3: Implement the three contracts**
+- [x] **Step 3: Implement the three contracts**
 
 Require scatter and histogram axes to have semantic role `measure`. For box charts with both columns, require `x_col` to be category/identifier and `y_col` to be measure, then build exactly one trace:
 
@@ -553,7 +553,7 @@ fig.add_trace(go.Box(
 ))
 ```
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run:
 
@@ -563,7 +563,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit measure-family contracts**
+- [x] **Step 5: Commit measure-family contracts**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_semantics.py
@@ -577,7 +577,7 @@ git commit -m "fix: validate distribution and scatter chart measures"
 - Modify: `src/data_agent/tools/visualization.py`
 - Modify: `tests/test_chart_semantics.py`
 
-- [ ] **Step 1: Write failing pie and heatmap tests**
+- [x] **Step 1: Write failing pie and heatmap tests**
 
 ```python
 def test_pie_uses_category_labels_and_supplied_measure(tmp_path):
@@ -623,7 +623,7 @@ def test_heatmap_uses_only_explicit_numeric_columns(tmp_path):
     assert "unrelated" not in html
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -633,11 +633,11 @@ Run:
 
 Expected: pie counts revenue values instead of using them as measures, negative values are accepted, high cardinality is silently truncated, and heatmap includes `unrelated`.
 
-- [ ] **Step 3: Implement explicit semantics**
+- [x] **Step 3: Implement explicit semantics**
 
 For pie, require category `x_col`, optional measure `y_col`, non-negative finite measures, aggregate duplicate labels only with explicit aggregation, retain count mode when only one category column is supplied, and reject category counts above 10 instead of silently truncating. For heatmap, require at least two explicit comma-separated numeric measure columns through `y_col`, or treat `x_col` plus one `y_col` as the selected pair; reject identifier columns and fewer than two valid measures.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run:
 
@@ -647,7 +647,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit pie and heatmap fixes**
+- [x] **Step 5: Commit pie and heatmap fixes**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_semantics.py
@@ -662,7 +662,7 @@ git commit -m "fix: honor pie and heatmap chart fields"
 - Modify: `tests/test_chart_semantics.py`
 - Test: `tests/test_chart_contract.py`
 
-- [ ] **Step 1: Write failing no-trace and non-finite tests**
+- [x] **Step 1: Write failing no-trace and non-finite tests**
 
 ```python
 def test_empty_chart_spec_is_rejected_before_save(tmp_path):
@@ -684,7 +684,7 @@ def test_all_infinite_measure_is_rejected_before_save(tmp_path):
     assert not chart_dir.exists()
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -694,7 +694,7 @@ Run:
 
 Expected: an empty figure can be saved and infinite values are not rejected consistently.
 
-- [ ] **Step 3: Implement pre-save figure validation**
+- [x] **Step 3: Implement pre-save figure validation**
 
 ```python
 import math
@@ -741,7 +741,7 @@ def validate_figure_renderability(fig) -> str:
 
 Call this after trace construction and before `fig.update_layout` and `_save_chart`. Return structured `non_renderable_figure` errors with no file writes.
 
-- [ ] **Step 4: Run chart tests and verify GREEN**
+- [x] **Step 4: Run chart tests and verify GREEN**
 
 Run:
 
@@ -751,7 +751,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the artifact boundary**
+- [x] **Step 5: Commit the artifact boundary**
 
 ```powershell
 git add src/data_agent/tools/chart_contract.py src/data_agent/tools/visualization.py tests/test_chart_semantics.py
@@ -763,7 +763,7 @@ git commit -m "fix: block non-renderable chart artifacts"
 **Files:**
 - Verify only; no production changes unless a failing regression is reproduced with a new failing test first.
 
-- [ ] **Step 1: Run the complete chart and registry slice**
+- [x] **Step 1: Run the complete chart and registry slice**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_chart_contract.py tests/test_chart_semantics.py tests/test_tool_registry.py tests/test_tool_result_web.py -q
@@ -771,7 +771,7 @@ git commit -m "fix: block non-renderable chart artifacts"
 
 Expected: PASS.
 
-- [ ] **Step 2: Run report and artifact consumers**
+- [x] **Step 2: Run report and artifact consumers**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_report_strategy.py tests/test_report_chart_matching.py tests/test_web_gui.py -q
@@ -779,7 +779,7 @@ Expected: PASS.
 
 Expected: PASS.
 
-- [ ] **Step 3: Run unaffected neighboring workflow tests**
+- [x] **Step 3: Run unaffected neighboring workflow tests**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_execution_control.py tests/test_data_bundle.py tests/test_multi_file_scope.py tests/test_trust_view.py -q
@@ -787,11 +787,11 @@ Expected: PASS.
 
 Expected: PASS with no behavior changes outside visualization.
 
-- [ ] **Step 4: Reproduce the reported session shapes without mutating the session**
+- [x] **Step 4: Reproduce the reported session shapes without mutating the session**
 
 Run the two 62-row regression fixtures from `tests/test_chart_semantics.py` with `-vv` and confirm both return structured validation errors with recovery options and zero registered artifacts.
 
-- [ ] **Step 5: Inspect the diff boundary**
+- [x] **Step 5: Inspect the diff boundary**
 
 ```powershell
 git diff --check
@@ -801,7 +801,7 @@ git diff --stat HEAD~7..HEAD
 
 Expected: only `chart_contract.py`, `visualization.py`, chart tests, and this plan/spec documentation changed during Stage 1.
 
-- [ ] **Step 6: Record Stage 1 completion**
+- [x] **Step 6: Record Stage 1 completion**
 
 Update the design document Stage 1 status with exact test counts and any residual limitations, then commit only that documentation update:
 

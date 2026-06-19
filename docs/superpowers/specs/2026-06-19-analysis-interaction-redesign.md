@@ -317,6 +317,17 @@ Stage gate:
 - rejected charts leave no HTML, JSON, PNG, or artifact-registry entry;
 - chart, registry, report-consumer, and artifact tests pass before Stage 2 starts.
 
+**Status (2026-06-19): complete on `codex/chart-contract-renderability`.**
+
+- 48 focused chart contract and semantic tests pass, including the reported 62-user failure shape and artifact non-creation assertions.
+- 213 chart, report, artifact, and offline Web consumer tests pass.
+- 100 neighboring confirmation, multi-file, question-detection, and Trust View tests pass without production changes in those areas.
+- The full pytest-compatible suite passes in four deterministic partitions: 1,637 passed and 11 skipped. Script-style modules are executed separately rather than collected by pytest.
+- `test_tools_comprehensive.py` passes 108 checks with 2 documented skips after its duplicate stacked-bar fixture declares `aggregation="sum"`.
+- `test_comparability.py` passes 13 checks. `test_v91.py` retains 4 baseline failures and `test_v10_new.py` retains 2 baseline failures; both reproduce unchanged on `main` and are outside Stage 1.
+- Live-server scripts `test_sse_reactivity.py` and `test_web_gui.py` were not run because this stage changes the chart backend and their required server was not started; offline Web consumer tests cover the affected artifact paths.
+- Stage 2 has not started.
+
 ### Stage 2: Confirmation lifecycle
 
 **Owns:** confirmation state transitions, sync/stream loop promotion, suspension persistence, session restoration, resume/cancel behavior, and final-response invariants.
