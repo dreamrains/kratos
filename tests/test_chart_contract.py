@@ -244,6 +244,7 @@ def test_line_chart_aggregates_duplicate_dates_to_daily_sum(tmp_path):
                 data="orders",
                 x_col="paid_at",
                 y_col="revenue",
+                aggregation="sum",
                 title="Daily revenue trend",
             )
 
@@ -254,7 +255,8 @@ def test_line_chart_aggregates_duplicate_dates_to_daily_sum(tmp_path):
         assert "2026-05-01" in html
         assert "2026-05-02" in html
         assert "2026-05-01 10:00:00" not in html
-        assert metadata["aggregation"] == "daily_sum"
+        assert metadata["aggregation"] == "sum_by_day"
+        assert "aggregation:sum" in metadata["transformations"]
         assert metadata["row_count"] == 2
     finally:
         cfg.sessions_dir = old_sessions
@@ -277,6 +279,7 @@ def test_bar_chart_aggregates_duplicate_x_groups_for_multi_metric_comparison(tmp
                 data="active_days",
                 x_col="period",
                 y_col="active_days,orders",
+                aggregation="mean",
                 title="Before after active payment days",
             )
 
@@ -286,6 +289,7 @@ def test_bar_chart_aggregates_duplicate_x_groups_for_multi_metric_comparison(tmp
         metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf-8"))
         assert '"x":["after","before"]' in html or '"x":["before","after"]' in html
         assert metadata["aggregation"] == "mean_by_x"
+        assert "aggregation:mean" in metadata["transformations"]
         assert metadata["row_count"] == 2
     finally:
         cfg.sessions_dir = old_sessions
@@ -389,6 +393,7 @@ def test_multi_metric_bar_with_different_scales_uses_normalized_single_axis(tmp_
                 data="metrics",
                 x_col="company",
                 y_col="revenue,exposure,clicks",
+                scale_mode="normalize",
                 title="Metric total comparison",
             )
 
@@ -401,6 +406,7 @@ def test_multi_metric_bar_with_different_scales_uses_normalized_single_axis(tmp_
         assert "Original value" in html
         assert metadata["validation_status"] == "warning"
         assert any("normalized" in w.lower() for w in metadata["validation_warnings"])
+        assert "scale:normalize" in metadata["transformations"]
     finally:
         cfg.sessions_dir = old_sessions
 

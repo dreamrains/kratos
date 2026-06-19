@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
+import numpy as np
 import pandas as pd
 
 
@@ -76,6 +77,8 @@ def validate_chart_request(
     x_col: str,
     y_cols: list[str],
     color_col: str = "",
+    aggregation: str = "",
+    scale_mode: str = "",
 ) -> ChartContractResult:
     """Validate semantic chart inputs and apply safe, recorded transforms."""
 
@@ -86,6 +89,51 @@ def validate_chart_request(
         for name in referenced
         if name in result.dataframe.columns
     }
+
+    for column in y_cols:
+        numeric = pd.to_numeric(result.dataframe[column], errors="coerce")
+        finite = numeric.notna() & np.isfinite(numeric)
+        if not len(numeric) or float(finite.mean()) < 0.5:
+            result.error = f"Measure column '{column}' is not sufficiently numeric."
+            result.error_code = "invalid_measure"
+            return result
+        result.dataframe[column] = numeric.where(finite)
+
+    if chart_type == "line" and x_col and infer_semantic_role(
+        x_col, result.dataframe[x_col]
+    ) == "time":
+        parsed = pd.to_datetime(result.dataframe[x_col], errors="coerce")
+        days = parsed.dt.normalize()
+        group_cols = [days] + (
+            [result.dataframe[color_col]] if color_col else []
+        )
+        duplicated_days = pd.DataFrame(group_cols).T.duplicated().any()
+        if duplicated_days and not aggregation:
+            _set_aggregation_required(result)
+            return result
+
+    if chart_type == "bar" and x_col:
+        group_cols = [x_col] + ([color_col] if color_col else [])
+        if result.dataframe.duplicated(subset=group_cols).any() and not aggregation:
+            _set_aggregation_required(result)
+            return result
+        if len(y_cols) > 1 and _has_divergent_scales(result.dataframe, y_cols):
+            if not scale_mode:
+                result.error = "Metrics use divergent scales; choose raw values or explicit normalization."
+                result.error_code = "scale_mode_required"
+                result.recovery_options = [
+                    {
+                        "scale_mode": "raw",
+                        "description": "Keep original values on one shared axis.",
+                    },
+                    {
+                        "scale_mode": "normalize",
+                        "description": "Normalize each metric to its own maximum of 100.",
+                    },
+                ]
+                return result
+            if scale_mode == "normalize":
+                result.transformations.append("scale:normalize")
 
     if chart_type not in {"bar", "stacked_bar"} or not x_col:
         return result
@@ -119,6 +167,28 @@ def validate_chart_request(
         )
         result.transformations.append("identifier_to_category")
     return result
+
+
+def _set_aggregation_required(result: ChartContractResult) -> None:
+    result.error = "Duplicate chart groups require an explicit aggregation."
+    result.error_code = "aggregation_required"
+    result.recovery_options = [
+        {
+            "aggregation": aggregation,
+            "description": f"Aggregate duplicate groups using {aggregation}.",
+        }
+        for aggregation in ("sum", "mean", "median", "count")
+    ]
+
+
+def _has_divergent_scales(df: pd.DataFrame, y_cols: list[str]) -> bool:
+    maxima = []
+    for column in y_cols:
+        values = pd.to_numeric(df[column], errors="coerce").abs().dropna()
+        maximum = float(values.max()) if len(values) else 0.0
+        if maximum > 0:
+            maxima.append(maximum)
+    return bool(maxima) and max(maxima) / min(maxima) >= 50
 
 
 __all__ = [

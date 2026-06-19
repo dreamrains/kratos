@@ -272,6 +272,7 @@ def _prepare_chart_dataframe(
     y_cols: list[str],
     color_col: str,
     metadata: dict | None,
+    aggregation: str = "",
 ) -> pd.DataFrame:
     if not x_col or not y_cols or x_col not in df.columns:
         return df
@@ -279,30 +280,48 @@ def _prepare_chart_dataframe(
     if chart_type == "line" and _is_date_like(df[x_col]):
         parsed = pd.to_datetime(df[x_col], errors="coerce")
         day_values = parsed.dt.normalize()
-        if parsed.notna().any() and (day_values.duplicated().any() or len(df) > day_values.nunique(dropna=True)):
-            plot_df = df.copy()
-            plot_df[x_col] = day_values.dt.strftime("%Y-%m-%d")
-            group_cols = [x_col] + ([color_col] if color_col else [])
-            plot_df = plot_df.groupby(group_cols, sort=False, dropna=False)[y_cols].sum().reset_index()
-            _refresh_chart_metadata(metadata, plot_df, x_col, y_cols, "daily_sum")
+        plot_df = df.copy()
+        plot_df[x_col] = day_values.dt.strftime("%Y-%m-%d")
+        group_cols = [x_col] + ([color_col] if color_col else [])
+        if parsed.notna().any() and plot_df.duplicated(subset=group_cols).any():
+            plot_df = (
+                plot_df.groupby(group_cols, sort=False, dropna=False)[y_cols]
+                .agg(aggregation)
+                .reset_index()
+            )
+            _refresh_chart_metadata(
+                metadata,
+                plot_df,
+                x_col,
+                y_cols,
+                f"{aggregation}_by_day",
+            )
             if metadata is not None:
-                metadata.setdefault("validation_warnings", []).append(
-                    f"line chart aggregated duplicate date values in '{x_col}' by daily sum"
+                metadata.setdefault("transformations", []).append(
+                    f"aggregation:{aggregation}"
                 )
-                metadata["validation_status"] = "warning"
             return plot_df
 
     if chart_type == "bar":
         group_cols = [x_col] + ([color_col] if color_col else [])
         if not df.duplicated(subset=group_cols).any():
             return df
-        plot_df = df.groupby(group_cols, sort=False, dropna=False)[y_cols].mean().reset_index()
-        _refresh_chart_metadata(metadata, plot_df, x_col, y_cols, "mean_by_x")
+        plot_df = (
+            df.groupby(group_cols, sort=False, dropna=False)[y_cols]
+            .agg(aggregation)
+            .reset_index()
+        )
+        _refresh_chart_metadata(
+            metadata,
+            plot_df,
+            x_col,
+            y_cols,
+            f"{aggregation}_by_x",
+        )
         if metadata is not None:
-            metadata.setdefault("validation_warnings", []).append(
-                f"bar chart aggregated duplicate x values in '{x_col}' by mean"
+            metadata.setdefault("transformations", []).append(
+                f"aggregation:{aggregation}"
             )
-            metadata["validation_status"] = "warning"
         return plot_df
 
     return df
@@ -420,6 +439,8 @@ def _validate_chart_spec(
         "y_col": {"description": "Y 轴列名，逗号分隔支持多列"},
         "color_col": {"description": "颜色分组列"},
         "data_json": {"description": "JSON 格式数据（funnel 必须用此参数）"},
+        "aggregation": {"description": "重复分组的聚合方式", "enum": ["", "sum", "mean", "median", "count"]},
+        "scale_mode": {"description": "多指标尺度处理", "enum": ["", "raw", "normalize"]},
     },
 )
 def create_chart(
@@ -432,6 +453,8 @@ def create_chart(
     data_json: str = "",
     purpose: str = "exploratory",
     evidence_ids: str = "",
+    aggregation: str = "",
+    scale_mode: str = "",
 ) -> str:
     fig = go.Figure()
 
@@ -489,6 +512,8 @@ def create_chart(
             x_col,
             y_cols_for_plot,
             color_col,
+            aggregation,
+            scale_mode,
         )
         if not contract.valid:
             return _chart_error(
@@ -506,7 +531,15 @@ def create_chart(
                 if x_col and x_col in df.columns
                 else 0
             )
-        df = _prepare_chart_dataframe(df, chart_type, x_col, y_cols_for_plot, color_col, metadata)
+        df = _prepare_chart_dataframe(
+            df,
+            chart_type,
+            x_col,
+            y_cols_for_plot,
+            color_col,
+            metadata,
+            aggregation,
+        )
 
         if chart_type == "line":
             if x_col and y_col:
@@ -550,7 +583,7 @@ def create_chart(
             if x_col and y_col:
                 y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
                 if len(y_cols) > 1:
-                    normalize = _bar_chart_needs_normalization(df, y_cols)
+                    normalize = scale_mode == "normalize"
                     for col in y_cols:
                         values = pd.to_numeric(df[col], errors="coerce")
                         if normalize:

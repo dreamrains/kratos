@@ -106,3 +106,92 @@ def test_low_cardinality_numeric_identifier_bar_uses_category_axis(tmp_path):
     assert '"type":"category"' in html
     assert metadata["semantic_roles"]["user_id"] == "identifier"
     assert "identifier_to_category" in metadata["transformations"]
+
+
+def test_mostly_non_numeric_measure_is_rejected(tmp_path):
+    rows = [
+        {"segment": "A", "value": "bad"},
+        {"segment": "B", "value": 2},
+        {"segment": "C", "value": "also bad"},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "bad_measure",
+        chart_type="bar",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="value",
+        title="Bad measure",
+    )
+
+    payload = json.loads(result)
+    assert payload["error_code"] == "invalid_measure"
+    assert not chart_dir.exists()
+
+
+def test_duplicate_bar_categories_require_explicit_aggregation(tmp_path):
+    rows = [
+        {"period": "before", "value": 10},
+        {"period": "before", "value": 20},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "duplicate_bar",
+        chart_type="bar",
+        data_json=json.dumps(rows),
+        x_col="period",
+        y_col="value",
+        title="Period value",
+    )
+
+    payload = json.loads(result)
+    assert payload["error_code"] == "aggregation_required"
+    assert {item["aggregation"] for item in payload["recovery_options"]} == {
+        "sum",
+        "mean",
+        "median",
+        "count",
+    }
+    assert not chart_dir.exists()
+
+
+def test_duplicate_date_line_requires_explicit_aggregation(tmp_path):
+    rows = [
+        {"paid_at": "2026-05-01 10:00:00", "revenue": 10},
+        {"paid_at": "2026-05-01 11:00:00", "revenue": 20},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "duplicate_line",
+        chart_type="line",
+        data_json=json.dumps(rows),
+        x_col="paid_at",
+        y_col="revenue",
+        title="Daily revenue",
+    )
+
+    assert json.loads(result)["error_code"] == "aggregation_required"
+    assert not chart_dir.exists()
+
+
+def test_divergent_multi_metric_bar_requires_explicit_scale_mode(tmp_path):
+    rows = [
+        {"segment": "A", "revenue": 100, "exposure": 200_000_000},
+        {"segment": "B", "revenue": 200, "exposure": 400_000_000},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "divergent_bar",
+        chart_type="bar",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="revenue,exposure",
+        title="Revenue and exposure",
+    )
+
+    assert json.loads(result)["error_code"] == "scale_mode_required"
+    assert not chart_dir.exists()
