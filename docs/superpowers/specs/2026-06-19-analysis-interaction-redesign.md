@@ -322,7 +322,7 @@ Stage gate:
 - 48 focused chart contract and semantic tests pass, including the reported 62-user failure shape and artifact non-creation assertions.
 - 213 chart, report, artifact, and offline Web consumer tests pass.
 - 100 neighboring confirmation, multi-file, question-detection, and Trust View tests pass without production changes in those areas.
-- The full pytest-compatible suite passes in four deterministic partitions: 1,637 passed and 11 skipped. Script-style modules are executed separately rather than collected by pytest.
+- The full pytest-compatible suite passes in four deterministic partitions: 1,554 passed and 11 skipped. Script-style modules are executed separately rather than collected by pytest.
 - `test_tools_comprehensive.py` passes 108 checks with 2 documented skips after its duplicate stacked-bar fixture declares `aggregation="sum"`.
 - `test_comparability.py` passes 13 checks. `test_v91.py` retains 4 baseline failures and `test_v10_new.py` retains 2 baseline failures; both reproduce unchanged on `main` and are outside Stage 1.
 - Live-server scripts `test_sse_reactivity.py` and `test_web_gui.py` were not run because this stage changes the chart backend and their required server was not started; offline Web consumer tests cover the affected artifact paths.
