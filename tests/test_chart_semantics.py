@@ -342,6 +342,19 @@ def test_histogram_rejects_mostly_non_numeric_values(tmp_path):
     assert not chart_dir.exists()
 
 
+def test_histogram_without_numeric_columns_is_rejected_before_save(tmp_path):
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "empty_histogram",
+        chart_type="histogram",
+        data_json=json.dumps([{"label": "A"}, {"label": "B"}]),
+        title="Distribution",
+    )
+
+    assert json.loads(result)["error_code"] == "non_renderable_figure"
+    assert not chart_dir.exists()
+
+
 def test_box_uses_x_as_category_and_y_as_measure(tmp_path):
     rows = [
         {"period": "before", "value": 10},

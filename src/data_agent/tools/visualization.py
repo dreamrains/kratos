@@ -674,8 +674,10 @@ def create_chart(
             if col and col in df.columns:
                 fig.add_trace(go.Histogram(x=df[col].dropna(), name=col))
             else:
-                col = df.select_dtypes(include="number").columns[0]
-                fig.add_trace(go.Histogram(x=df[col].dropna(), name=col))
+                numeric_cols = df.select_dtypes(include="number").columns
+                if len(numeric_cols):
+                    col = numeric_cols[0]
+                    fig.add_trace(go.Histogram(x=df[col].dropna(), name=col))
 
         elif chart_type == "heatmap":
             selected_cols = list(dict.fromkeys(
