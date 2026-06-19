@@ -233,3 +233,63 @@ def test_line_rejects_identifier_axis_even_without_trend_words(tmp_path):
 
     assert json.loads(result)["error_code"] == "invalid_line_axis"
     assert not chart_dir.exists()
+
+
+def test_scatter_rejects_numeric_identifier_measure(tmp_path):
+    rows = [
+        {"user_id": 1001, "revenue": 10},
+        {"user_id": 1002, "revenue": 20},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "identifier_scatter",
+        chart_type="scatter",
+        data_json=json.dumps(rows),
+        x_col="user_id",
+        y_col="revenue",
+        title="User revenue relationship",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_scatter_measure"
+    assert not chart_dir.exists()
+
+
+def test_histogram_rejects_numeric_identifier(tmp_path):
+    rows = [{"order_id": 10001}, {"order_id": 10002}]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "identifier_histogram",
+        chart_type="histogram",
+        data_json=json.dumps(rows),
+        x_col="order_id",
+        title="Order distribution",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_histogram_measure"
+    assert not chart_dir.exists()
+
+
+def test_box_uses_x_as_category_and_y_as_measure(tmp_path):
+    rows = [
+        {"period": "before", "value": 10},
+        {"period": "before", "value": 20},
+        {"period": "after", "value": 12},
+        {"period": "after", "value": 18},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "grouped_box",
+        chart_type="box",
+        data_json=json.dumps(rows),
+        x_col="period",
+        y_col="value",
+        title="Value distribution",
+    )
+
+    assert "Chart saved:" in result
+    html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+    assert '"x":["before","before","after","after"]' in html
+    assert '"y":[10,20,12,18]' in html

@@ -655,9 +655,15 @@ def create_chart(
                     fig.add_trace(go.Scatter(x=df[numeric_cols[0]], y=df[numeric_cols[1]], mode="markers"))
 
         elif chart_type == "box":
-            cols = [x_col, y_col] if x_col and y_col else list(df.select_dtypes(include="number").columns[:5])
-            for col in cols:
-                if col in df.columns:
+            if x_col and y_col:
+                fig.add_trace(go.Box(
+                    x=_plotly_axis_values(df[x_col]),
+                    y=pd.to_numeric(df[y_col], errors="coerce").tolist(),
+                    name=y_col,
+                ))
+            else:
+                cols = list(df.select_dtypes(include="number").columns[:5])
+                for col in cols:
                     fig.add_trace(go.Box(y=df[col].dropna(), name=col))
 
         elif chart_type == "histogram":

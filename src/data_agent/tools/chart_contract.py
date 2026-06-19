@@ -114,6 +114,24 @@ def validate_chart_request(
         ]
         return result
 
+    if chart_type == "scatter" and (
+        result.semantic_roles.get(x_col) == "identifier"
+        or any(result.semantic_roles.get(column) == "identifier" for column in y_cols)
+    ):
+        result.error = "Scatter axes must be numeric measures, not identifiers."
+        result.error_code = "invalid_scatter_measure"
+        return result
+
+    histogram_col = y_cols[0] if y_cols else x_col
+    if (
+        chart_type == "histogram"
+        and histogram_col
+        and result.semantic_roles.get(histogram_col) == "identifier"
+    ):
+        result.error = "Histogram values must be a measure, not an identifier."
+        result.error_code = "invalid_histogram_measure"
+        return result
+
     if chart_type == "line" and x_col and infer_semantic_role(
         x_col, result.dataframe[x_col]
     ) == "time":
