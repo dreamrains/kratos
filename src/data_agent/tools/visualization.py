@@ -13,7 +13,10 @@ import plotly.graph_objects as go
 from data_agent.config import get_config
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import get_df
-from data_agent.tools.chart_contract import validate_chart_request
+from data_agent.tools.chart_contract import (
+    validate_chart_request,
+    validate_figure_renderability,
+)
 from data_agent.tools.registry import registry
 
 
@@ -738,6 +741,18 @@ def create_chart(
 
         else:
             return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie, funnel"
+
+        renderability_error = validate_figure_renderability(fig)
+        if renderability_error:
+            return _chart_error(
+                renderability_error,
+                [],
+                error_code="non_renderable_figure",
+                recovery_options=[{
+                    "presentation": "table",
+                    "description": "Inspect the selected fields and present verified values as a table.",
+                }],
+            )
 
         fig.update_layout(title=title, template="plotly_white")
         if "identifier_to_category" in contract.transformations:

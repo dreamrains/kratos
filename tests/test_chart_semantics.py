@@ -372,3 +372,37 @@ def test_heatmap_uses_only_explicit_numeric_columns(tmp_path):
     assert "Chart saved:" in result
     html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
     assert "unrelated" not in html
+
+
+def test_empty_chart_spec_is_rejected_before_save(tmp_path):
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "empty_bar",
+        chart_type="bar",
+        data_json='[{"label":"A"}]',
+        title="Empty bar",
+    )
+
+    payload = json.loads(result)
+    assert payload["error_code"] == "non_renderable_figure"
+    assert not chart_dir.exists()
+
+
+def test_constant_heatmap_is_rejected_before_save(tmp_path):
+    rows = [
+        {"a": 1, "b": 2},
+        {"a": 1, "b": 2},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "constant_heatmap",
+        chart_type="heatmap",
+        data_json=json.dumps(rows),
+        x_col="a",
+        y_col="b",
+        title="Constant correlation",
+    )
+
+    assert json.loads(result)["error_code"] == "non_renderable_figure"
+    assert not chart_dir.exists()

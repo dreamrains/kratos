@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 import re
 
 import numpy as np
@@ -255,8 +256,53 @@ def _has_divergent_scales(df: pd.DataFrame, y_cols: list[str]) -> bool:
     return bool(maxima) and max(maxima) / min(maxima) >= 50
 
 
+def _contains_finite_numeric(value) -> bool:
+    if value is None:
+        return False
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)):
+        value = [value]
+    for item in value:
+        if isinstance(item, (list, tuple)):
+            if _contains_finite_numeric(item):
+                return True
+            continue
+        try:
+            if math.isfinite(float(item)):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def validate_figure_renderability(fig) -> str:
+    """Return an error when a Plotly figure has no finite measure values."""
+
+    if not fig.data:
+        return "Figure contains no traces."
+    for trace in fig.data:
+        trace_type = str(getattr(trace, "type", ""))
+        measure_fields = {
+            "bar": ("y",),
+            "box": ("y",),
+            "funnel": ("x",),
+            "heatmap": ("z",),
+            "histogram": ("x",),
+            "pie": ("values",),
+            "scatter": ("y",),
+        }.get(trace_type, ("y", "values", "z"))
+        if any(
+            _contains_finite_numeric(getattr(trace, field, None))
+            for field in measure_fields
+        ):
+            return ""
+    return "Figure contains no finite plottable values."
+
+
 __all__ = [
     "ChartContractResult",
     "infer_semantic_role",
     "validate_chart_request",
+    "validate_figure_renderability",
 ]
