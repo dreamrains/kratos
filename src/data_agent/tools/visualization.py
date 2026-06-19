@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from data_agent.config import get_config
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import get_df
+from data_agent.tools.chart_contract import validate_chart_request
 from data_agent.tools.registry import registry
 
 
@@ -202,11 +203,19 @@ def _normalize_funnel_rows(rows: list[dict]) -> tuple[list[dict], str | None]:
     return normalized, None
 
 
-def _chart_error(message: str, warnings: list[str]) -> str:
+def _chart_error(
+    message: str,
+    warnings: list[str],
+    *,
+    error_code: str = "chart_validation",
+    recovery_options: list[dict[str, str]] | None = None,
+) -> str:
     return json.dumps({
         "error": message,
         "error_type": "chart_validation",
+        "error_code": error_code,
         "validation_warnings": warnings,
+        "recovery_options": recovery_options or [],
     }, ensure_ascii=False)
 
 
@@ -474,6 +483,29 @@ def create_chart(
                 )
 
         y_cols_for_plot = [c.strip() for c in y_col.split(",") if c.strip()]
+        contract = validate_chart_request(
+            df,
+            chart_type,
+            x_col,
+            y_cols_for_plot,
+            color_col,
+        )
+        if not contract.valid:
+            return _chart_error(
+                contract.error,
+                contract.warnings,
+                error_code=contract.error_code,
+                recovery_options=contract.recovery_options,
+            )
+        df = contract.dataframe
+        if metadata is not None:
+            metadata["semantic_roles"] = contract.semantic_roles
+            metadata["transformations"] = contract.transformations
+            metadata["category_count"] = (
+                int(df[x_col].nunique(dropna=True))
+                if x_col and x_col in df.columns
+                else 0
+            )
         df = _prepare_chart_dataframe(df, chart_type, x_col, y_cols_for_plot, color_col, metadata)
 
         if chart_type == "line":
@@ -649,6 +681,8 @@ def create_chart(
             return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie, funnel"
 
         fig.update_layout(title=title, template="plotly_white")
+        if "identifier_to_category" in contract.transformations:
+            fig.update_xaxes(type="category")
         path = _save_chart(fig, title, metadata)
         return path
 
