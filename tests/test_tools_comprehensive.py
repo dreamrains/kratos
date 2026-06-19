@@ -964,7 +964,8 @@ def test_chart_pie():
 def test_chart_stacked_bar():
     from data_agent.tools.visualization import create_chart
     result = create_chart(chart_type="stacked_bar", data="test",
-                         x_col="channel", y_col="sales", color_col="region", title="Test Stacked")
+                         x_col="channel", y_col="sales", color_col="region",
+                         aggregation="sum", title="Test Stacked")
     r = assert_ok(result, "stacked_bar")
     if r is not True:
         return r
