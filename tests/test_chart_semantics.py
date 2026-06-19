@@ -293,3 +293,82 @@ def test_box_uses_x_as_category_and_y_as_measure(tmp_path):
     html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
     assert '"x":["before","before","after","after"]' in html
     assert '"y":[10,20,12,18]' in html
+
+
+def test_pie_uses_category_labels_and_supplied_measure(tmp_path):
+    rows = [
+        {"segment": "A", "revenue": 100},
+        {"segment": "B", "revenue": 20},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "measure_pie",
+        chart_type="pie",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="revenue",
+        title="Revenue share",
+    )
+
+    assert "Chart saved:" in result
+    html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+    assert '"labels":["A","B"]' in html
+    assert '"values":[100,20]' in html
+
+
+def test_pie_rejects_negative_measure(tmp_path):
+    rows = [
+        {"segment": "A", "profit": 10},
+        {"segment": "B", "profit": -5},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "negative_pie",
+        chart_type="pie",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="profit",
+        title="Profit share",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_pie_measure"
+    assert not chart_dir.exists()
+
+
+def test_pie_rejects_high_cardinality_instead_of_silent_top_ten(tmp_path):
+    rows = [{"segment": f"S{i}"} for i in range(12)]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "wide_pie",
+        chart_type="pie",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        title="Segment share",
+    )
+
+    assert json.loads(result)["error_code"] == "unreadable_pie_cardinality"
+    assert not chart_dir.exists()
+
+
+def test_heatmap_uses_only_explicit_numeric_columns(tmp_path):
+    rows = [
+        {"a": 1, "b": 2, "unrelated": 99},
+        {"a": 2, "b": 4, "unrelated": 98},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "selected_heatmap",
+        chart_type="heatmap",
+        data_json=json.dumps(rows),
+        x_col="a",
+        y_col="b",
+        title="A and B correlation",
+    )
+
+    assert "Chart saved:" in result
+    html = next(chart_dir.glob("*.html")).read_text(encoding="utf-8")
+    assert "unrelated" not in html

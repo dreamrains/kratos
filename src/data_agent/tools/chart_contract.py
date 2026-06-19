@@ -132,6 +132,37 @@ def validate_chart_request(
         result.error_code = "invalid_histogram_measure"
         return result
 
+    if chart_type == "pie" and x_col:
+        category_count = int(result.dataframe[x_col].nunique(dropna=True))
+        if category_count > 10:
+            result.error = "Pie charts support at most 10 readable categories."
+            result.error_code = "unreadable_pie_cardinality"
+            result.recovery_options = [
+                {
+                    "chart_type": "bar",
+                    "description": "Use a sorted bar chart or an explicit Top N.",
+                }
+            ]
+            return result
+        if y_cols:
+            values = pd.to_numeric(result.dataframe[y_cols[0]], errors="coerce")
+            if (values < 0).any():
+                result.error = "Pie chart measures must be non-negative."
+                result.error_code = "invalid_pie_measure"
+                return result
+            if result.dataframe.duplicated(subset=[x_col]).any() and not aggregation:
+                _set_aggregation_required(result)
+                return result
+
+    if chart_type == "heatmap":
+        selected = [name for name in [x_col, *y_cols] if name]
+        if len(selected) < 2 or any(
+            result.semantic_roles.get(name) != "measure" for name in selected
+        ):
+            result.error = "Heatmaps require at least two explicit numeric measure columns."
+            result.error_code = "invalid_heatmap_measures"
+            return result
+
     if chart_type == "line" and x_col and infer_semantic_role(
         x_col, result.dataframe[x_col]
     ) == "time":

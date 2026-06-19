@@ -675,7 +675,10 @@ def create_chart(
                 fig.add_trace(go.Histogram(x=df[col].dropna(), name=col))
 
         elif chart_type == "heatmap":
-            numeric_df = df.select_dtypes(include="number")
+            selected_cols = list(dict.fromkeys(
+                [name for name in [x_col, *y_cols_for_plot] if name]
+            ))
+            numeric_df = df[selected_cols].apply(pd.to_numeric, errors="coerce")
             corr = numeric_df.corr()
             fig.add_trace(go.Heatmap(
                 z=corr.values,
@@ -709,12 +712,29 @@ def create_chart(
             ))
 
         elif chart_type == "pie":
-            col = y_col or x_col
-            if col and col in df.columns:
-                counts = df[col].value_counts().head(10)
-                fig.add_trace(go.Pie(labels=counts.index, values=counts.values))
+            if x_col and y_col:
+                pie_df = df[[x_col, y_col]].copy()
+                if pie_df.duplicated(subset=[x_col]).any():
+                    pie_df = (
+                        pie_df.groupby(x_col, sort=False, dropna=False)[y_col]
+                        .agg(aggregation)
+                        .reset_index()
+                    )
+                fig.add_trace(go.Pie(
+                    labels=pie_df[x_col].astype(str).tolist(),
+                    values=pd.to_numeric(pie_df[y_col], errors="coerce").tolist(),
+                ))
+            elif x_col and x_col in df.columns:
+                counts = df[x_col].value_counts()
+                fig.add_trace(go.Pie(
+                    labels=counts.index.astype(str).tolist(),
+                    values=counts.values.tolist(),
+                ))
             else:
-                return "Error: pie 图需要指定一个列"
+                return _chart_error(
+                    "pie chart requires x_col for category labels",
+                    ["missing pie category column"],
+                )
 
         else:
             return f"Error: 不支持的图表类型 '{chart_type}'。支持: line, bar, stacked_bar, scatter, box, histogram, heatmap, pie, funnel"

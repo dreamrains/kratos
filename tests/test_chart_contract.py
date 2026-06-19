@@ -496,7 +496,7 @@ def test_rate_title_warns_when_metric_is_count_column(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
-def test_pie_warns_when_category_cardinality_is_high(tmp_path):
+def test_pie_rejects_when_category_cardinality_is_high(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     rows = [{"game": f"g{i}"} for i in range(12)]
     ctx = AgentContext(session_id="chart_pie_many_categories", workspace=Workspace())
@@ -510,10 +510,9 @@ def test_pie_warns_when_category_cardinality_is_high(tmp_path):
                 title="Game share",
             )
 
-        assert "Chart saved:" in result
-        metadata = json.loads(next((tmp_path / "sessions" / "chart_pie_many_categories" / "charts").glob("*.json")).read_text(encoding="utf-8"))
-        assert metadata["validation_status"] == "warning"
-        assert any("pie" in w.lower() and "top 10" in w.lower() for w in metadata["validation_warnings"])
+        payload = json.loads(result)
+        assert payload["error_code"] == "unreadable_pie_cardinality"
+        assert not (tmp_path / "sessions" / "chart_pie_many_categories" / "charts").exists()
     finally:
         cfg.sessions_dir = old_sessions
 
