@@ -81,6 +81,23 @@ def test_high_cardinality_numeric_identifier_bar_is_rejected_without_artifacts(t
     assert not chart_dir.exists()
 
 
+def test_high_cardinality_text_bar_is_rejected_without_artifacts(tmp_path):
+    rows = [{"segment": f"segment-{i}", "value": i + 1} for i in range(41)]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "wide_category_bar",
+        chart_type="bar",
+        data_json=json.dumps(rows),
+        x_col="segment",
+        y_col="value",
+        title="Value by segment",
+    )
+
+    assert json.loads(result)["error_code"] == "unreadable_category_axis"
+    assert not chart_dir.exists()
+
+
 def test_low_cardinality_numeric_identifier_bar_uses_category_axis(tmp_path):
     rows = [
         {"user_id": 200000000000000001, "revenue": 10},
@@ -235,6 +252,23 @@ def test_line_rejects_identifier_axis_even_without_trend_words(tmp_path):
     assert not chart_dir.exists()
 
 
+def test_line_rejects_high_cardinality_unordered_category_axis(tmp_path):
+    rows = [{"label": f"label-{i}", "value": i + 1} for i in range(41)]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "unordered_line",
+        chart_type="line",
+        data_json=json.dumps(rows),
+        x_col="label",
+        y_col="value",
+        title="Values",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_line_axis"
+    assert not chart_dir.exists()
+
+
 def test_scatter_rejects_numeric_identifier_measure(tmp_path):
     rows = [
         {"user_id": 1001, "revenue": 10},
@@ -255,6 +289,27 @@ def test_scatter_rejects_numeric_identifier_measure(tmp_path):
     assert not chart_dir.exists()
 
 
+def test_scatter_rejects_mostly_non_numeric_axis(tmp_path):
+    rows = [
+        {"input": "bad", "output": 10},
+        {"input": 2, "output": 20},
+        {"input": "also bad", "output": 30},
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "dirty_scatter",
+        chart_type="scatter",
+        data_json=json.dumps(rows),
+        x_col="input",
+        y_col="output",
+        title="Input output relationship",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_scatter_measure"
+    assert not chart_dir.exists()
+
+
 def test_histogram_rejects_numeric_identifier(tmp_path):
     rows = [{"order_id": 10001}, {"order_id": 10002}]
 
@@ -265,6 +320,22 @@ def test_histogram_rejects_numeric_identifier(tmp_path):
         data_json=json.dumps(rows),
         x_col="order_id",
         title="Order distribution",
+    )
+
+    assert json.loads(result)["error_code"] == "invalid_histogram_measure"
+    assert not chart_dir.exists()
+
+
+def test_histogram_rejects_mostly_non_numeric_values(tmp_path):
+    rows = [{"value": "bad"}, {"value": 2}, {"value": "also bad"}]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "dirty_histogram",
+        chart_type="histogram",
+        data_json=json.dumps(rows),
+        x_col="value",
+        title="Value distribution",
     )
 
     assert json.loads(result)["error_code"] == "invalid_histogram_measure"

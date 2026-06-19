@@ -100,7 +100,17 @@ def validate_chart_request(
             return result
         result.dataframe[column] = numeric.where(finite)
 
-    if chart_type == "line" and x_col and result.semantic_roles.get(x_col) == "identifier":
+    if (
+        chart_type == "line"
+        and x_col
+        and (
+            result.semantic_roles.get(x_col) == "identifier"
+            or (
+                result.semantic_roles.get(x_col) not in {"time", "measure"}
+                and result.dataframe[x_col].nunique(dropna=True) > MAX_BAR_CATEGORIES
+            )
+        )
+    ):
         result.error = "Line charts require an ordered dimension, not an identifier axis."
         result.error_code = "invalid_line_axis"
         result.recovery_options = [
@@ -115,11 +125,12 @@ def validate_chart_request(
         ]
         return result
 
-    if chart_type == "scatter" and (
-        result.semantic_roles.get(x_col) == "identifier"
-        or any(result.semantic_roles.get(column) == "identifier" for column in y_cols)
+    if chart_type == "scatter" and any(
+        result.semantic_roles.get(column) != "measure"
+        for column in [x_col, *y_cols]
+        if column
     ):
-        result.error = "Scatter axes must be numeric measures, not identifiers."
+        result.error = "Scatter axes must be numeric measures."
         result.error_code = "invalid_scatter_measure"
         return result
 
@@ -127,11 +138,37 @@ def validate_chart_request(
     if (
         chart_type == "histogram"
         and histogram_col
-        and result.semantic_roles.get(histogram_col) == "identifier"
+        and result.semantic_roles.get(histogram_col) != "measure"
     ):
-        result.error = "Histogram values must be a measure, not an identifier."
+        result.error = "Histogram values must be a numeric measure."
         result.error_code = "invalid_histogram_measure"
         return result
+
+    if chart_type in {"bar", "stacked_bar"} and x_col:
+        category_count = int(result.dataframe[x_col].nunique(dropna=True))
+        if category_count > MAX_BAR_CATEGORIES:
+            is_identifier = result.semantic_roles.get(x_col) == "identifier"
+            result.error = "Category axis has too many values for a readable bar chart."
+            result.error_code = (
+                "unreadable_identifier_axis"
+                if is_identifier
+                else "unreadable_category_axis"
+            )
+            result.recovery_options = [
+                {
+                    "chart_type": "scatter",
+                    "description": "Compare numeric measures without one bar per category.",
+                },
+                {
+                    "chart_type": "box",
+                    "description": "Compare distributions across meaningful groups.",
+                },
+                {
+                    "chart_type": "bar",
+                    "description": "Aggregate or select a documented Top N first.",
+                },
+            ]
+            return result
 
     if chart_type == "pie" and x_col:
         category_count = int(result.dataframe[x_col].nunique(dropna=True))
@@ -201,29 +238,6 @@ def validate_chart_request(
                 result.transformations.append("scale:normalize")
 
     if chart_type not in {"bar", "stacked_bar"} or not x_col:
-        return result
-
-    category_count = int(result.dataframe[x_col].nunique(dropna=True))
-    if (
-        result.semantic_roles.get(x_col) == "identifier"
-        and category_count > MAX_BAR_CATEGORIES
-    ):
-        result.error = "Identifier axis has too many categories for a readable bar chart."
-        result.error_code = "unreadable_identifier_axis"
-        result.recovery_options = [
-            {
-                "chart_type": "scatter",
-                "description": "Compare before and after measures directly.",
-            },
-            {
-                "chart_type": "box",
-                "description": "Compare distributions without one bar per identifier.",
-            },
-            {
-                "chart_type": "bar",
-                "description": "Aggregate or select a documented Top N first.",
-            },
-        ]
         return result
 
     if result.semantic_roles.get(x_col) == "identifier":
