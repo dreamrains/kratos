@@ -203,7 +203,7 @@ git commit -m "feat: validate confirmation trigger policy"
 - Create: `src/data_agent/agent/confirmation/store.py`
 - Create: `tests/test_confirmation_store.py`
 
-- [ ] **Step 1: Write failing persistence tests**
+- [x] **Step 1: Write failing persistence tests**
 
 Test:
 
@@ -237,19 +237,19 @@ def test_duplicate_event_id_is_idempotent(tmp_path):
 
 Also test mid-log corruption fails closed, atomic snapshot replacement leaves no temporary file, event `fsync` is invoked through an injectable sync helper, and two threads cannot create conflicting snapshot versions.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_store.py -q`. Expected: import failure.
 
-- [ ] **Step 3: Implement session-scoped store**
+- [x] **Step 3: Implement session-scoped store**
 
 Use paths under `<sessions_root>/<session_id>/confirmations`. Append one compact JSON event per line, flush, and call `os.fsync`. Write snapshots to `snapshot.json.tmp`, flush/fsync, then `os.replace`. Maintain a process-local `RLock` per resolved session path. Replay validates event sequence and returns `StoreLoadResult(records, event_ids, integrity_status, error)`.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run store plus model tests. Expected: PASS.
 
-- [ ] **Step 5: Commit event store**
+- [x] **Step 5: Commit event store**
 
 ```powershell
 git add src/data_agent/agent/confirmation/store.py tests/test_confirmation_store.py
