@@ -262,7 +262,7 @@ git commit -m "feat: persist confirmation event log"
 - Create: `src/data_agent/agent/confirmation/actions.py`
 - Create: `tests/test_confirmation_actions.py`
 
-- [ ] **Step 1: Write failing registry tests**
+- [x] **Step 1: Write failing registry tests**
 
 ```python
 def test_registry_rejects_unknown_action():
@@ -282,19 +282,19 @@ def test_action_receipt_makes_repeated_apply_idempotent():
 
 Also test conflicting reuse of a resolution ID, answer validation before handler invocation, and handler exception receipts.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_actions.py -q`. Expected: import failure.
 
-- [ ] **Step 3: Implement registry and receipt store interface**
+- [x] **Step 3: Implement registry and receipt store interface**
 
 Define `ResolutionContext`, `ResolutionReceipt`, an in-memory receipt repository for Stage 2A tests, and a registry that requires unique action names. A repeated identical resolution ID returns the prior receipt. Reuse with different action, answer, or context raises `ResolutionConflict`.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run action and model tests. Expected: PASS.
 
-- [ ] **Step 5: Commit action registry**
+- [x] **Step 5: Commit action registry**
 
 ```powershell
 git add src/data_agent/agent/confirmation/actions.py tests/test_confirmation_actions.py
