@@ -8,6 +8,12 @@ from data_agent.agent.confirmation.models import (
     ConfirmationRecord,
     ConfirmationRequest,
     ConfirmationStatus,
+    QuestionCandidate,
+)
+from data_agent.agent.confirmation.policy import (
+    PolicyResult,
+    QuestionPolicy,
+    RequestDisposition,
 )
 
 __all__ = [
@@ -18,4 +24,8 @@ __all__ = [
     "ConfirmationRecord",
     "ConfirmationRequest",
     "ConfirmationStatus",
+    "PolicyResult",
+    "QuestionCandidate",
+    "QuestionPolicy",
+    "RequestDisposition",
 ]

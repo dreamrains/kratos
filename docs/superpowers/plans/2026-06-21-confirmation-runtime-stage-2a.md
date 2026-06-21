@@ -34,7 +34,7 @@
 - Create: `src/data_agent/agent/confirmation/models.py`
 - Create: `tests/test_confirmation_models.py`
 
-- [ ] **Step 1: Write failing validation and round-trip tests**
+- [x] **Step 1: Write failing validation and round-trip tests**
 
 Add tests for:
 
@@ -89,7 +89,7 @@ def test_record_and_event_json_round_trip():
 
 Also cover free-text mode, multi-select mode, missing blocking surfaces, missing resolution action, unknown fields ignored only during `from_dict`, and enum parsing failures.
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -100,7 +100,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: collection fails because `data_agent.agent.confirmation` does not exist.
 
-- [ ] **Step 3: Implement immutable contracts**
+- [x] **Step 3: Implement immutable contracts**
 
 Implement:
 
@@ -125,11 +125,11 @@ class AnswerMode(str, Enum):
 
 Use frozen dataclasses for `ConfirmationOption`, `ConfirmationRequest`, `ConfirmationRecord`, and `ConfirmationEvent`. Validate trimmed IDs, decision key, source, operation, question, impact, blocking surfaces, action name, option uniqueness, and mode-specific option rules in `__post_init__`. Serialize tuples as lists and enums as values.
 
-- [ ] **Step 4: Run the tests and verify GREEN**
+- [x] **Step 4: Run the tests and verify GREEN**
 
 Run the Task 1 command. Expected: all model tests pass.
 
-- [ ] **Step 5: Commit domain contracts**
+- [x] **Step 5: Commit domain contracts**
 
 ```powershell
 git add src/data_agent/agent/confirmation tests/test_confirmation_models.py
@@ -142,7 +142,12 @@ git commit -m "feat: add confirmation domain contracts"
 - Create: `src/data_agent/agent/confirmation/policy.py`
 - Create: `tests/test_confirmation_policy.py`
 
-- [ ] **Step 1: Write failing policy tests**
+Implementation refinement: producers submit a `QuestionCandidate`, which may
+represent non-blocking uncertainty. Policy creates a strict
+`ConfirmationRequest` only for accepted blocking decisions, preserving the
+request contract while still supporting advisory downgrade.
+
+- [x] **Step 1: Write failing policy tests**
 
 Cover these exact outcomes:
 
@@ -173,19 +178,19 @@ def test_policy_does_not_reuse_answer_after_spec_version_changes():
 
 Also reject legacy records as trigger inputs, speculative file relationships without an imminent operation, and requests with a declared safe default.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_policy.py -q`. Expected: import failure.
 
-- [ ] **Step 3: Implement policy results**
+- [x] **Step 3: Implement policy results**
 
 Add `RequestDisposition` (`confirmation`, `advisory`, `reused`, `rejected`) and immutable `PolicyResult`. `QuestionPolicy.evaluate()` must be deterministic and must not inspect chat text or call an LLM. Reuse requires equal decision key, data version, spec version, and a resolved terminal state.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run model and policy tests together. Expected: PASS.
 
-- [ ] **Step 5: Commit policy**
+- [x] **Step 5: Commit policy**
 
 ```powershell
 git add src/data_agent/agent/confirmation/policy.py tests/test_confirmation_policy.py

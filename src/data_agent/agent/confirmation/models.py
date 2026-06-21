@@ -87,6 +87,60 @@ class ConfirmationOption:
 
 
 @dataclass(frozen=True)
+class QuestionCandidate:
+    """A producer proposal that policy may accept, reuse, or downgrade."""
+
+    confirmation_id: str
+    session_id: str
+    turn_id: str
+    decision_key: str
+    source: str
+    operation: str
+    question: str
+    decision_impact: str
+    answer_mode: AnswerMode
+    options: tuple[ConfirmationOption, ...]
+    blocking_surfaces: tuple[str, ...]
+    skippable: bool
+    resolution_action: str
+    resolution_params: Mapping[str, Any] = field(default_factory=dict)
+    data_version: str = ""
+    spec_version: str = ""
+    safe_default: str = ""
+
+    def __post_init__(self) -> None:
+        for name in (
+            "confirmation_id",
+            "session_id",
+            "turn_id",
+            "decision_key",
+            "source",
+            "question",
+            "decision_impact",
+        ):
+            object.__setattr__(self, name, _required_text(getattr(self, name), name))
+        mode = self.answer_mode
+        if not isinstance(mode, AnswerMode):
+            mode = AnswerMode(mode)
+        object.__setattr__(self, "answer_mode", mode)
+        options = tuple(self.options or ())
+        if any(not isinstance(option, ConfirmationOption) for option in options):
+            raise ConfirmationContractError("options must contain ConfirmationOption values")
+        object.__setattr__(self, "options", options)
+        object.__setattr__(
+            self,
+            "blocking_surfaces",
+            tuple(str(value).strip() for value in (self.blocking_surfaces or ()) if str(value).strip()),
+        )
+        object.__setattr__(self, "operation", str(self.operation or "").strip())
+        object.__setattr__(self, "resolution_action", str(self.resolution_action or "").strip())
+        object.__setattr__(self, "resolution_params", _mapping(self.resolution_params))
+        object.__setattr__(self, "data_version", str(self.data_version or "").strip())
+        object.__setattr__(self, "spec_version", str(self.spec_version or "").strip())
+        object.__setattr__(self, "safe_default", str(self.safe_default or "").strip())
+
+
+@dataclass(frozen=True)
 class ConfirmationRequest:
     confirmation_id: str
     session_id: str
@@ -164,6 +218,28 @@ class ConfirmationRequest:
             "spec_version": self.spec_version,
             "safe_default": self.safe_default,
         }
+
+    @classmethod
+    def from_candidate(cls, candidate: QuestionCandidate) -> "ConfirmationRequest":
+        return cls(
+            confirmation_id=candidate.confirmation_id,
+            session_id=candidate.session_id,
+            turn_id=candidate.turn_id,
+            decision_key=candidate.decision_key,
+            source=candidate.source,
+            operation=candidate.operation,
+            question=candidate.question,
+            decision_impact=candidate.decision_impact,
+            answer_mode=candidate.answer_mode,
+            options=candidate.options,
+            blocking_surfaces=candidate.blocking_surfaces,
+            skippable=candidate.skippable,
+            resolution_action=candidate.resolution_action,
+            resolution_params=candidate.resolution_params,
+            data_version=candidate.data_version,
+            spec_version=candidate.spec_version,
+            safe_default=candidate.safe_default,
+        )
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "ConfirmationRequest":
