@@ -307,7 +307,7 @@ git commit -m "feat: add idempotent confirmation actions"
 - Create: `src/data_agent/agent/confirmation/continuation.py`
 - Create: `tests/test_confirmation_continuation.py`
 
-- [ ] **Step 1: Write failing continuation tests**
+- [x] **Step 1: Write failing continuation tests**
 
 Test immutable continuation creation, atomic save/load, completed tool-call preservation, confirmation-ID matching, checksum failure, and terminal continuation states.
 
@@ -328,19 +328,19 @@ def test_continuation_round_trip_preserves_completed_tools(tmp_path):
     assert store.load("cf_metric_1") == continuation
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_continuation.py -q`. Expected: import failure.
 
-- [ ] **Step 3: Implement atomic continuation store**
+- [x] **Step 3: Implement atomic continuation store**
 
 Store one JSON file per confirmation under the session confirmation directory. Include a SHA-256 checksum of the canonical payload. Use temp-file write, fsync, and atomic replace. Invalid checksum raises `ContinuationIntegrityError` rather than returning partial state.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run continuation tests. Expected: PASS.
 
-- [ ] **Step 5: Commit continuation records**
+- [x] **Step 5: Commit continuation records**
 
 ```powershell
 git add src/data_agent/agent/confirmation/continuation.py tests/test_confirmation_continuation.py
