@@ -221,6 +221,23 @@ def test_action_failure_persists_failed_state(tmp_path):
     assert calls == ["revenue"]
 
 
+def test_failed_resolution_blocks_next_queue_item(tmp_path):
+    service, _, _ = _service(tmp_path, fail_action=True)
+    service.request(_candidate(1))
+    service.request(_candidate(2))
+    active = service.checkpoint("session_1")
+    with pytest.raises(ConfirmationResolutionFailed):
+        service.respond(
+            "session_1", active.confirmation_id, "revenue", active.version, "answer_1"
+        )
+
+    blocker = service.checkpoint("session_1")
+
+    assert blocker.status == ConfirmationStatus.FAILED
+    assert blocker.confirmation_id == "cf_1"
+    assert service.get("session_1", "cf_2").status == ConfirmationStatus.PENDING
+
+
 def test_service_restores_active_confirmation_from_disk(tmp_path):
     service, registry, _ = _service(tmp_path)
     service.request(_candidate())
@@ -262,6 +279,14 @@ def test_matching_open_decision_is_not_queued_twice(tmp_path):
 
     assert repeated.record == first.record
     assert service.checkpoint("session_1").confirmation_id == "cf_1"
+
+
+def test_reused_confirmation_id_rejects_a_different_contract(tmp_path):
+    service, _, _ = _service(tmp_path)
+    service.request(_candidate())
+
+    with pytest.raises(ConfirmationVersionConflict, match="confirmation_id"):
+        service.request(_candidate(decision_key="another_decision"))
     assert service.checkpoint("session_1").confirmation_id == "cf_1"
 
 

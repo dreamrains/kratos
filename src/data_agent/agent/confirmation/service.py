@@ -101,6 +101,23 @@ class ConfirmationService:
                     reused_confirmation_id=policy_result.reused_confirmation_id,
                 )
 
+            existing = records.get(candidate.confirmation_id)
+            if existing is not None:
+                request_payload = policy_result.request.to_dict()
+                existing_payload = existing.to_dict()
+                if any(
+                    existing_payload[key] != value
+                    for key, value in request_payload.items()
+                ):
+                    raise ConfirmationVersionConflict(
+                        "confirmation_id already belongs to a different request"
+                    )
+                return ServiceRequestResult(
+                    disposition=RequestDisposition.CONFIRMATION,
+                    reason="The confirmation already exists.",
+                    record=existing,
+                )
+
             matching_open = next(
                 (
                     record
@@ -125,14 +142,6 @@ class ConfirmationService:
                     record=matching_open,
                 )
 
-            existing = records.get(candidate.confirmation_id)
-            if existing is not None:
-                return ServiceRequestResult(
-                    disposition=RequestDisposition.CONFIRMATION,
-                    reason="The confirmation already exists.",
-                    record=existing,
-                )
-
             now = self.clock()
             record = ConfirmationRecord.from_request(policy_result.request, now=now)
             store.append(
@@ -153,6 +162,13 @@ class ConfirmationService:
             records = store.load_records()
             for record in records.values():
                 if record.status == ConfirmationStatus.SUSPENDED:
+                    return record
+            for record in records.values():
+                if record.status in {
+                    ConfirmationStatus.RESPONSE_RECEIVED,
+                    ConfirmationStatus.APPLYING,
+                    ConfirmationStatus.FAILED,
+                }:
                     return record
             for record in records.values():
                 if record.status == ConfirmationStatus.PENDING:
