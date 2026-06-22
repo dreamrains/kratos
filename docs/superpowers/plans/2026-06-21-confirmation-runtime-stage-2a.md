@@ -354,7 +354,7 @@ git commit -m "feat: persist confirmation continuations"
 - Create: `tests/test_confirmation_service.py`
 - Modify: `src/data_agent/agent/confirmation/__init__.py`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Cover:
 
@@ -401,17 +401,17 @@ def test_illegal_transition_fails_closed(tmp_path):
 
 Also test advisory/reused policy results, skip authorization, cancel, expire, action failure to `failed`, stale version conflicts, invalid answer values, deterministic queue order, store integrity failure, and restoration after recreating the service.
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_service.py -q`. Expected: import failure.
 
-- [ ] **Step 3: Implement the sole transition authority**
+- [x] **Step 3: Implement the sole transition authority**
 
 `ConfirmationService` receives store, policy, action registry, continuation store, clock, and ID factory dependencies. Every public transition loads authoritative state, validates expected status/version, appends an event, and returns the materialized record. `respond()` appends `response_received`, transitions to `applying`, invokes the registry with a stable resolution ID, then appends `resolved` or `failed`.
 
 Expose only public contracts and service types from `confirmation/__init__.py`.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run all `tests/test_confirmation_*.py -q`. Expected: PASS.
 

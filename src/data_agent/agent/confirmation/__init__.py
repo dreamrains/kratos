@@ -15,6 +15,15 @@ from data_agent.agent.confirmation.policy import (
     QuestionPolicy,
     RequestDisposition,
 )
+from data_agent.agent.confirmation.service import (
+    ConfirmationAnswerError,
+    ConfirmationResolutionFailed,
+    ConfirmationService,
+    ConfirmationVersionConflict,
+    InvalidConfirmationTransition,
+    ServiceRequestResult,
+    SkipNotAllowed,
+)
 
 __all__ = [
     "AnswerMode",
@@ -23,9 +32,16 @@ __all__ = [
     "ConfirmationOption",
     "ConfirmationRecord",
     "ConfirmationRequest",
+    "ConfirmationResolutionFailed",
+    "ConfirmationService",
     "ConfirmationStatus",
+    "ConfirmationVersionConflict",
+    "ConfirmationAnswerError",
+    "InvalidConfirmationTransition",
     "PolicyResult",
     "QuestionCandidate",
     "QuestionPolicy",
     "RequestDisposition",
+    "ServiceRequestResult",
+    "SkipNotAllowed",
 ]
