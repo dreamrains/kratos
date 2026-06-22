@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-21
 
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design; Stage 2A verified, Stage 2B and 2C pending
 
 **Scope:** Stage 2 confirmation lifecycle only
 
@@ -361,3 +361,34 @@ The matrix includes direct model questions, detector questions, post-tool questi
 8. Invalid state transitions and store corruption fail explicitly.
 9. Sync, streaming, CLI, reload, restart, concurrency, and failure-injection tests pass.
 10. The complete project regression suite passes before Stage 3 begins.
+
+## 19. Stage 2A Verification
+
+Stage 2A implements the dormant domain kernel only. It does not connect any
+Agent Loop, CLI, SSE, Web API, task, or legacy confirmation producer to the new
+runtime.
+
+Verification completed on 2026-06-22:
+
+- confirmation kernel: 58 passed;
+- neighboring legacy confirmation paths: 189 passed;
+- pytest-compatible project suite: 1610 passed, 13 skipped across 92 modules;
+- script-style tool suite: 108 passed, 2 skipped, 0 failed;
+- confirmation package compilation and `git diff --check`: passed.
+
+The kernel now provides strict request contracts, deterministic trigger policy,
+decision deduplication, append-only events, reconstructable snapshots, explicit
+integrity failures, a single lifecycle transition authority, per-session queue
+serialization, optimistic versions, typed idempotent resolution actions, and
+checksummed continuation records.
+
+Residual limitations are intentional stage boundaries, not production claims:
+
+- no production confirmation path uses `ConfirmationService` until Stage 2B;
+- continuation records are not yet attached to Agent Loop suspension/resume;
+- action receipts are process-local, so crash recovery while `applying` remains
+  part of Stage 2C durable recovery work;
+- session API restoration, SSE replay, client reconstruction, and final-response
+  guards remain unimplemented until Stage 2C;
+- legacy confirmation readers and writers remain unchanged until the Stage 2B
+  hard cutover.

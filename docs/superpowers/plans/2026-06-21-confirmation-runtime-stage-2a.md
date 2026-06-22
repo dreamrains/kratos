@@ -415,7 +415,7 @@ Expose only public contracts and service types from `confirmation/__init__.py`.
 
 Run all `tests/test_confirmation_*.py -q`. Expected: PASS.
 
-- [ ] **Step 5: Commit service**
+- [x] **Step 5: Commit service**
 
 ```powershell
 git add src/data_agent/agent/confirmation tests/test_confirmation_service.py
@@ -427,7 +427,7 @@ git commit -m "feat: add confirmation lifecycle service"
 **Files:**
 - Modify only if a failure is reproduced by a new failing test first.
 
-- [ ] **Step 1: Run the complete Stage 2A suite**
+- [x] **Step 1: Run the complete Stage 2A suite**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -436,7 +436,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: PASS.
 
-- [ ] **Step 2: Run neighboring existing confirmation tests**
+- [x] **Step 2: Run neighboring existing confirmation tests**
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_interaction.py tests/test_execution_control.py tests/test_question_need_detector.py tests/test_analysis_state_v2.py tests/test_analysis_entry.py tests/test_route_capabilities.py tests/test_method_playbooks.py -q
@@ -444,7 +444,7 @@ Expected: PASS.
 
 Expected: PASS because Stage 2A is dormant.
 
-- [ ] **Step 3: Run static compilation and diff checks**
+- [x] **Step 3: Run static compilation and diff checks**
 
 ```powershell
 .\.venv\Scripts\python.exe -m compileall -q src\data_agent\agent\confirmation
@@ -454,15 +454,17 @@ git status --short
 
 Expected: compilation succeeds; only Stage 2A files and plan status are changed.
 
-- [ ] **Step 4: Run the pytest-compatible full suite in deterministic partitions**
+- [x] **Step 4: Run the pytest-compatible full suite from an explicit module list**
 
-Exclude script-style modules already documented by Stage 1. Expected: zero failures.
+Exclude script-style modules already documented by Stage 1. Run in one process
+because several existing tests share session files and cannot be safely
+parallelized. Expected: zero failures.
 
-- [ ] **Step 5: Record Stage 2A verification**
+- [x] **Step 5: Record Stage 2A verification**
 
 Add exact test counts and residual limitations to the design document. Explicitly state that no production confirmation path uses the new runtime until Stage 2B.
 
-- [ ] **Step 6: Commit verification documentation**
+- [x] **Step 6: Commit verification documentation**
 
 ```powershell
 git add docs/superpowers/specs/2026-06-21-confirmation-runtime-design.md docs/superpowers/plans/2026-06-21-confirmation-runtime-stage-2a.md
