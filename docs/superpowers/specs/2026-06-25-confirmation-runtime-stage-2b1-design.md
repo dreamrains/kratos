@@ -2,9 +2,10 @@
 
 **Date:** 2026-06-25
 
-**Status:** Draft for user review
+**Status:** Implemented and verified
 
-**Scope:** Direct question path cutover only
+**Scope:** Direct question path cutover only; broader confirmation producers and
+global final-answer blocking remain later-stage work.
 
 ## 1. Goal
 
@@ -47,9 +48,9 @@ Stage 2B-1 changes:
   as the SSE `suspended` event.
 - `/api/chat/resume` answers the active confirmation through
   `ConfirmationService.respond()`.
-- The final-response guard refuses to return a normal final answer while the
-  session has `pending`, `suspended`, `response_received`, `applying`, or
-  `failed` confirmation records.
+- `/api/chat/resume` accepts `confirmation_id`, `expected_version`, and
+  `idempotency_key`, while treating legacy `suspension_id` as an alias during
+  the transition.
 - Direct-answer resolution uses registered actions, not arbitrary JSON merging.
 - Existing CLI and non-streaming paths follow the same service-backed
   transition as streaming paths.
@@ -66,6 +67,7 @@ Stage 2B-1 does not:
 - implement browser refresh restoration or SSE replay;
 - implement server-restart recovery for in-flight continuation;
 - migrate or resume historical `suspension_*.json` files.
+- enforce a global final-answer guard for advisory/gating confirmations.
 
 Those remain Stage 2B-2 or Stage 2C work.
 
@@ -114,9 +116,10 @@ non-streaming loop.
 }
 ```
 
-For this stage, the API may continue accepting `suspension_id` from the existing
-client, but the server treats it as a confirmation ID. It must not load
-root-level suspension files.
+For this stage, the API continues accepting `suspension_id` from the existing
+client, but the server treats it as a confirmation ID for new runtime-backed
+questions. Historical root-level suspension files remain a fallback only when
+no runtime confirmation record exists.
 
 The endpoint calls `ConfirmationService.respond()`. If the response resolves,
 Agent Loop appends a structured confirmation-response message and continues the
@@ -125,11 +128,13 @@ version, action, or store errors, the turn does not resume silently.
 
 ### 5.3 Final Guard
 
-Before returning any final text, Agent Loop asks the confirmation service for
-the current blocking checkpoint. If a record is active or failed, the loop
-returns a suspended/error state instead of a final answer.
+The direct `ask_user_question` path suspends immediately at the tool call, so it
+does not have a normal final-answer bypass in this stage. A broader final guard
+that checks all runtime and advisory/gating confirmations before every final
+answer is intentionally deferred to Stage 2B-2/2C, where the remaining
+confirmation producers are migrated.
 
-This guard is enforcement only. It does not create new questions.
+This guard remains enforcement only. It must not create new questions.
 
 ## 6. Resolution Actions
 
@@ -153,15 +158,15 @@ candidate. It must not pass the raw JSON into `AnalysisSessionState`.
 
 ## 7. Legacy Removal in This Stage
 
-Stage 2B-1 removes production use of:
+Stage 2B-1 removes production use of the old storage path for new direct
+questions:
 
 - `SuspensionManager.save()`;
-- `SuspensionManager.load()` inside resume;
-- `SuspensionManager.remove()` inside resume;
 - root-level `sessions/suspension_<id>.json` as the active question store.
 
-`SuspensionManager` may remain temporarily only for historical tests or until
-Stage 2C deletes obsolete code. New production direct questions must not call it.
+`SuspensionManager.load()` and `remove()` remain only as a historical fallback
+when `/chat/resume` receives an ID that is not present in the runtime store.
+New production direct questions must not call `SuspensionManager.save()`.
 
 Stage 2B-1 also stops direct-question paths from calling
 `AnalysisSessionState.add_confirmation()` or mutating a pending item with a
@@ -191,8 +196,8 @@ Required tests:
 - `/chat/resume` resolves the record through `ConfirmationService.respond()`;
 - duplicate resume with the same idempotency key applies the action once;
 - stale version or invalid option does not resume;
-- final guard blocks final text while a confirmation is pending, suspended,
-  applying, or failed;
+- direct-question paths do not mutate
+  `AnalysisSessionState.pending_confirmations`;
 - non-streaming loop and streaming loop use the same adapter;
 - legacy `SuspensionManager` tests are updated or isolated as historical-storage
   tests, not production-path tests;
@@ -208,8 +213,7 @@ Stage 2B-1 is complete only when:
 2. no new direct question writes a root-level `suspension_*.json` file;
 3. `/chat/resume` answers through `ConfirmationService.respond()`;
 4. direct-question resolution uses registered actions only;
-5. final responses are blocked while direct confirmation records remain
-   unresolved or failed;
+5. direct-question paths do not write legacy pending confirmations;
 6. old advisory/gating paths remain behaviorally unchanged;
 7. tests prove streaming and non-streaming paths share the same confirmation
    transition behavior.
@@ -220,3 +224,38 @@ The implementation plan should keep this stage small. If a test requires
 changing `question_need_detector`, multi-file relationship producers, Trust
 View, or client restoration, that test belongs to Stage 2B-2 or 2C rather than
 this batch.
+
+## 12. Verification Result
+
+Implemented commits:
+
+- `f3802d9 feat: adapt direct questions to confirmation runtime`
+- `c6340b1 feat: register direct confirmation actions`
+- `bcd2582 feat: route direct questions through confirmation runtime`
+- `f7cac2c feat: resume direct confirmations from runtime store`
+- `005713f feat: harden direct confirmation resume contract`
+
+Verification commands run in
+`D:\Project\Daily\data-agent\.worktrees\confirmation-runtime-stage-2b1`:
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path 'src').Path
+$tests = Get-ChildItem tests -Filter 'test_confirmation_*.py' | ForEach-Object { $_.FullName }
+D:\Project\Daily\data-agent\.venv\Scripts\python.exe -m pytest @tests tests/test_interaction.py tests/test_execution_control.py -q
+```
+
+Result: `149 passed in 21.41s`.
+
+Additional focused gates:
+
+- `tests/test_confirmation_runtime.py tests/test_interaction.py tests/test_execution_control.py -q`
+  passed with `91 passed`.
+- all `tests/test_confirmation_*.py` passed with `72 passed`.
+
+Known verification limitation:
+
+- `tests/test_sse_reactivity.py` could not be collected in this worktree
+  because it references
+  `D:\Project\Daily\data-agent\reference\workspace\test_sales.csv`, which is
+  absent in the isolated worktree. The failure happened before executing the
+  changed chat/SSE code.
