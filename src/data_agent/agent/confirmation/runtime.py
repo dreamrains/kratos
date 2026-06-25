@@ -1,0 +1,199 @@
+"""Runtime adapters that connect direct questions to the confirmation kernel."""
+
+from __future__ import annotations
+
+from typing import Any
+import hashlib
+import json
+
+from data_agent.agent.confirmation.models import (
+    AnswerMode,
+    ConfirmationOption,
+    ConfirmationRecord,
+    QuestionCandidate,
+)
+
+
+def build_direct_question_candidate(
+    *,
+    session_id: str,
+    turn_id: str,
+    message_version: int,
+    request: Any,
+) -> QuestionCandidate:
+    """Convert a direct ask_user_question signal into a policy candidate."""
+
+    identity = _direct_question_identity(session_id, turn_id, message_version, request)
+    options = _normalise_options(getattr(request, "options", ()))
+    answer_mode = _answer_mode(options, bool(getattr(request, "multi_select", False)))
+    resolution_params = _resolution_params_for(request)
+    return QuestionCandidate(
+        confirmation_id=f"direct_{identity[:24]}",
+        session_id=session_id,
+        turn_id=turn_id,
+        decision_key=f"{session_id}:direct_user_question:{identity}",
+        source="ask_user_question",
+        operation="direct_user_question",
+        question=str(getattr(request, "question", "") or "").strip(),
+        decision_impact=(
+            str(getattr(request, "blocking_reason", "") or "").strip()
+            or "The current agent turn cannot continue without this answer."
+        ),
+        answer_mode=answer_mode,
+        options=options,
+        blocking_surfaces=("agent_turn",),
+        skippable=True,
+        resolution_action=_resolution_action_for(request),
+        resolution_params=resolution_params,
+        data_version=f"messages:{int(message_version)}",
+        spec_version=str(getattr(request, "related_spec_id", "") or "").strip(),
+    )
+
+
+def confirmation_record_to_suspended_event(record: ConfirmationRecord) -> dict[str, Any]:
+    params = dict(record.resolution_params)
+    return {
+        "type": "suspended",
+        "confirmation_id": record.confirmation_id,
+        "suspension_id": record.confirmation_id,
+        "version": record.version,
+        "question": record.question,
+        "options": [option.to_dict() for option in record.options],
+        "context": str(params.get("context") or ""),
+        "multi_select": record.answer_mode == AnswerMode.MULTI_SELECT,
+        "confirmation_type": str(params.get("confirmation_type") or ""),
+        "blocking_reason": record.decision_impact,
+        "related_task_id": int(params.get("related_task_id") or 0),
+        "related_spec_id": str(params.get("related_spec_id") or ""),
+    }
+
+
+def confirmation_record_to_loop_result(
+    record: ConfirmationRecord,
+    snapshot: dict[str, Any],
+) -> Any:
+    from data_agent.agent.loop import SuspendedForConfirmation
+
+    event = confirmation_record_to_suspended_event(record)
+    return SuspendedForConfirmation(
+        suspension_id=record.confirmation_id,
+        question=record.question,
+        options=event["options"],
+        context=event["context"],
+        snapshot=snapshot,
+        multi_select=event["multi_select"],
+        confirmation_type=event["confirmation_type"],
+        blocking_reason=event["blocking_reason"],
+        related_task_id=event["related_task_id"],
+        related_spec_id=event["related_spec_id"],
+    )
+
+
+def _answer_mode(
+    options: tuple[ConfirmationOption, ...],
+    multi_select: bool,
+) -> AnswerMode:
+    if not options:
+        return AnswerMode.FREE_TEXT
+    if multi_select:
+        return AnswerMode.MULTI_SELECT
+    return AnswerMode.SINGLE_SELECT
+
+
+def _direct_question_identity(
+    session_id: str,
+    turn_id: str,
+    message_version: int,
+    request: Any,
+) -> str:
+    payload = {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "message_version": int(message_version),
+        "question": str(getattr(request, "question", "") or "").strip(),
+        "options": [option.to_dict() for option in _normalise_options(getattr(request, "options", ()))],
+        "multi_select": bool(getattr(request, "multi_select", False)),
+        "confirmation_type": str(getattr(request, "confirmation_type", "") or "").strip(),
+        "related_task_id": int(getattr(request, "related_task_id", 0) or 0),
+        "related_spec_id": str(getattr(request, "related_spec_id", "") or "").strip(),
+        "state_update_shape": _state_update_shape(getattr(request, "state_updates", "")),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _normalise_options(raw_options: Any) -> tuple[ConfirmationOption, ...]:
+    if isinstance(raw_options, str):
+        raw_options = json.loads(raw_options) if raw_options.strip().startswith("[") else []
+    options: list[ConfirmationOption] = []
+    for index, raw in enumerate(raw_options or (), start=1):
+        if isinstance(raw, dict):
+            label = str(raw.get("label") or raw.get("value") or "").strip()
+            value = str(raw.get("value") or raw.get("label") or "").strip()
+            description = str(raw.get("description") or "").strip()
+        else:
+            label = str(raw or "").strip()
+            value = label
+            description = ""
+        if not label:
+            label = f"Option {index}"
+        if not value:
+            value = label
+        options.append(ConfirmationOption(label=label, value=value, description=description))
+    return tuple(options)
+
+
+def _resolution_action_for(request: Any) -> str:
+    updates = _state_updates(getattr(request, "state_updates", ""))
+    if set(updates).issubset({"stage", "data_state"}) and updates:
+        return "set_analysis_stage"
+    if isinstance(updates.get("method_confirmation"), dict):
+        return "confirm_method"
+    if isinstance(updates.get("file_relationship_confirmation"), dict):
+        return "resolve_file_relationship"
+    return "record_confirmation_answer"
+
+
+def _resolution_params_for(request: Any) -> dict[str, Any]:
+    return {
+        "confirmation_type": str(getattr(request, "confirmation_type", "") or "").strip(),
+        "blocking_reason": str(getattr(request, "blocking_reason", "") or "").strip(),
+        "context": str(getattr(request, "context", "") or ""),
+        "related_task_id": int(getattr(request, "related_task_id", 0) or 0),
+        "related_spec_id": str(getattr(request, "related_spec_id", "") or "").strip(),
+        "state_updates": _safe_state_updates(getattr(request, "state_updates", "")),
+    }
+
+
+def _safe_state_updates(value: Any) -> dict[str, Any]:
+    updates = _state_updates(value)
+    allowed: dict[str, Any] = {}
+    for key in ("stage", "data_state"):
+        if isinstance(updates.get(key), str):
+            allowed[key] = updates[key]
+    for key in ("method_confirmation", "file_relationship_confirmation"):
+        if isinstance(updates.get(key), dict):
+            allowed[key] = dict(updates[key])
+    return allowed
+
+
+def _state_update_shape(value: Any) -> list[str]:
+    return sorted(_safe_state_updates(value))
+
+
+def _state_updates(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}

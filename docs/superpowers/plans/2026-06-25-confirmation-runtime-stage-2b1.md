@@ -29,7 +29,7 @@
 - Create: `src/data_agent/agent/confirmation/runtime.py`
 - Test: `tests/test_confirmation_runtime.py`
 
-- [ ] **Step 1: Write failing adapter tests**
+- [x] **Step 1: Write failing adapter tests**
 
 Add tests that describe the new adapter API:
 
@@ -97,7 +97,7 @@ def test_free_text_candidate_rejects_missing_question():
         )
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run:
 
@@ -108,7 +108,7 @@ D:\Project\Daily\data-agent\.venv\Scripts\python.exe -m pytest tests/test_confir
 
 Expected: import failure for `data_agent.agent.confirmation.runtime`.
 
-- [ ] **Step 3: Implement direct-question adapter**
+- [x] **Step 3: Implement direct-question adapter**
 
 Create `runtime.py` with:
 
@@ -192,7 +192,7 @@ Implementation rules:
 - set `resolution_action` to `record_confirmation_answer` unless a safe typed action is recognized;
 - do not apply or trust raw `state_updates`.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run:
 
