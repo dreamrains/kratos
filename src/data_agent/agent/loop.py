@@ -91,6 +91,8 @@ class SuspendedForConfirmation:
     options: list[dict]
     context: str
     snapshot: dict  # serialized messages
+    confirmation_id: str = ""
+    version: int = 1
     multi_select: bool = False
     confirmation_type: str = ""
     blocking_reason: str = ""
@@ -113,6 +115,8 @@ class SuspensionManager:
         path = self._dir / f"suspension_{suspension.suspension_id}.json"
         path.write_text(json.dumps({
             "suspension_id": suspension.suspension_id,
+            "confirmation_id": suspension.confirmation_id or suspension.suspension_id,
+            "version": suspension.version,
             "question": suspension.question,
             "options": suspension.options,
             "context": suspension.context,
@@ -137,6 +141,8 @@ class SuspensionManager:
             options=data["options"],
             context=data["context"],
             snapshot=data["snapshot"],
+            confirmation_id=data.get("confirmation_id", data["suspension_id"]),
+            version=int(data.get("version") or 1),
             multi_select=bool(data.get("multi_select", False)),
             confirmation_type=data.get("confirmation_type", ""),
             blocking_reason=data.get("blocking_reason", ""),
@@ -1103,6 +1109,82 @@ class AgentLoop:
             return f"{original}\n\n{confirmation}"
         return confirmation
 
+    def _confirmation_runtime(self):
+        from data_agent.agent.confirmation.runtime import build_action_registry
+        from data_agent.agent.confirmation.service import ConfirmationService
+
+        sessions_root = get_config().sessions_resolved
+        cached = getattr(self, "_confirmation_service", None)
+        cached_root = getattr(self, "_confirmation_service_root", None)
+        if cached is None or cached_root != sessions_root:
+            cached = ConfirmationService(
+                sessions_root,
+                action_registry=build_action_registry(),
+            )
+            self._confirmation_service = cached
+            self._confirmation_service_root = sessions_root
+        return cached
+
+    def _suspend_for_confirmation_request(
+        self,
+        request: UserConfirmationRequired,
+        *,
+        turn_id: str,
+    ) -> SuspendedForConfirmation:
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.runtime import (
+            build_direct_question_candidate,
+            confirmation_record_to_loop_result,
+        )
+
+        service = self._confirmation_runtime()
+        candidate = build_direct_question_candidate(
+            session_id=self.session_id,
+            turn_id=turn_id,
+            message_version=len(self.messages),
+            request=request,
+        )
+        request_result = service.request(candidate)
+        record = request_result.record
+        if record is None and request_result.reused_confirmation_id:
+            record = service.get(self.session_id, request_result.reused_confirmation_id)
+        if record is None:
+            raise RuntimeError(
+                f"confirmation request was not created: {request_result.reason}"
+            )
+
+        checkpoint = service.checkpoint(self.session_id)
+        if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
+            record = checkpoint
+        elif record.status == ConfirmationStatus.PENDING:
+            record = service.get(self.session_id, record.confirmation_id)
+            if record.status == ConfirmationStatus.PENDING:
+                raise RuntimeError(
+                    f"confirmation {record.confirmation_id} was not suspended"
+                )
+
+        return confirmation_record_to_loop_result(
+            record,
+            {"messages": self._serialize_messages()},
+        )
+
+    def _suspended_event(self, susp: SuspendedForConfirmation) -> dict[str, Any]:
+        confirmation_id = susp.confirmation_id or susp.suspension_id
+        return {
+            "type": "suspended",
+            "confirmation_id": confirmation_id,
+            "suspension_id": confirmation_id,
+            "version": susp.version,
+            "question": susp.question,
+            "options": susp.options,
+            "context": susp.context,
+            "multi_select": susp.multi_select,
+            "confirmation_type": susp.confirmation_type,
+            "blocking_reason": susp.blocking_reason,
+            "related_task_id": susp.related_task_id,
+            "related_spec_id": susp.related_spec_id,
+        }
+
     def run_turn(self, user_input: str) -> str:
         """处理一轮用户输入，返回回复文本。CLI 模式使用。"""
         logger.info("Turn started", extra={"extra_data": {"session": self.session_id}})
@@ -1457,40 +1539,17 @@ class AgentLoop:
             try:
                 tool_result = registry.execute(tc.name, tc.arguments)
             except UserConfirmationRequired as ucc:
-                from pathlib import Path
-                sessions_dir = get_config().sessions_resolved
-                mgr = SuspensionManager(sessions_dir)
-                susp = SuspendedForConfirmation(
-                    suspension_id=uuid.uuid4().hex[:8],
-                    question=ucc.question,
-                    options=ucc.options,
-                    context=ucc.context,
-                    snapshot={"messages": self._serialize_messages()},
-                    multi_select=ucc.multi_select,
-                    confirmation_type=ucc.confirmation_type,
-                    blocking_reason=ucc.blocking_reason,
-                    state_updates=ucc.state_updates,
-                    related_task_id=ucc.related_task_id,
-                    related_spec_id=ucc.related_spec_id,
+                susp = self._suspend_for_confirmation_request(
+                    ucc,
+                    turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
                 )
-                self._register_confirmation(susp)
-                mgr.save(susp)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
+                    "content": f"Suspended for user confirmation. confirmation_id={susp.confirmation_id or susp.suspension_id}",
                 })
                 self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Suspended for user confirmation")
-                yield {
-                    "type": "suspended",
-                    "suspension_id": susp.suspension_id,
-                    "question": susp.question,
-                    "options": susp.options,
-                    "context": susp.context,
-                    "multi_select": susp.multi_select,
-                    "confirmation_type": susp.confirmation_type,
-                    "blocking_reason": susp.blocking_reason,
-                }
+                yield self._suspended_event(susp)
                 return  # stop processing further tool calls
 
             duration_ms = int((time.monotonic() - t0) * 1000)
@@ -1891,27 +1950,14 @@ class AgentLoop:
         try:
             tool_result = registry.execute(tc.name, tc.arguments)
         except UserConfirmationRequired as ucc:
-            sessions_dir = get_config().sessions_resolved
-            mgr = SuspensionManager(sessions_dir)
-            susp = SuspendedForConfirmation(
-                suspension_id=uuid.uuid4().hex[:8],
-                question=ucc.question,
-                options=ucc.options,
-                context=ucc.context,
-                snapshot={"messages": self._serialize_messages()},
-                multi_select=ucc.multi_select,
-                confirmation_type=ucc.confirmation_type,
-                blocking_reason=ucc.blocking_reason,
-                state_updates=ucc.state_updates,
-                related_task_id=ucc.related_task_id,
-                related_spec_id=ucc.related_spec_id,
+            susp = self._suspend_for_confirmation_request(
+                ucc,
+                turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
             )
-            self._register_confirmation(susp)
-            mgr.save(susp)
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": f"Suspended for user confirmation. suspension_id={susp.suspension_id}",
+                "content": f"Suspended for user confirmation. confirmation_id={susp.confirmation_id or susp.suspension_id}",
             })
             self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
             return susp

@@ -81,6 +81,8 @@ def confirmation_record_to_loop_result(
     event = confirmation_record_to_suspended_event(record)
     return SuspendedForConfirmation(
         suspension_id=record.confirmation_id,
+        confirmation_id=record.confirmation_id,
+        version=record.version,
         question=record.question,
         options=event["options"],
         context=event["context"],

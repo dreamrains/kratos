@@ -4,7 +4,7 @@ from data_agent.agent.confirmation import (
     AnswerMode,
     ConfirmationContractError,
 )
-from data_agent.agent.loop import UserConfirmationRequired
+from data_agent.agent.loop import AgentLoop, UserConfirmationRequired
 
 
 def test_direct_question_candidate_uses_stable_identity():
@@ -160,3 +160,74 @@ def test_runtime_rejects_unsafe_state_update_action():
 
     assert candidate.resolution_action == "record_confirmation_answer"
     assert candidate.resolution_params["state_updates"] == {}
+
+
+class _ToolCall:
+    id = "tc_confirm"
+    name = "ask_user_question"
+    arguments = {"question": "Which metric?", "options": ["Revenue", "Orders"]}
+
+
+class _ToolResponse:
+    tool_calls = [_ToolCall()]
+
+
+def _raise_direct_question(_name, _arguments):
+    raise UserConfirmationRequired(
+        question="Which metric?",
+        options=[
+            {"label": "Revenue", "value": "revenue"},
+            {"label": "Orders", "value": "orders"},
+        ],
+        context="Choose the metric used by the next calculation.",
+        confirmation_type="metric_scope",
+        blocking_reason="The next calculation depends on this metric.",
+    )
+
+
+def _patch_direct_question_tool(monkeypatch, tmp_path):
+    import data_agent.agent.loop as loop_module
+
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+    monkeypatch.setattr(loop_module, "get_config", lambda: cfg)
+    monkeypatch.setattr(loop_module.registry, "expand_from_tool_call", lambda _name: None)
+    monkeypatch.setattr(loop_module.registry, "execute", _raise_direct_question)
+
+
+def test_agent_loop_direct_question_uses_confirmation_runtime(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="loop_direct_question")
+
+    result = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+
+    assert result.confirmation_id == result.suspension_id
+    assert result.version >= 2
+    assert result.question == "Which metric?"
+    assert (
+        tmp_path
+        / "loop_direct_question"
+        / "confirmations"
+        / "events.jsonl"
+    ).exists()
+    assert list(tmp_path.glob("suspension_*.json")) == []
+
+
+def test_streaming_direct_question_event_exposes_confirmation_identity(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="stream_direct_question")
+
+    events = list(loop._process_tool_calls(_ToolResponse(), round_num=1))
+    suspended = [event for event in events if event["type"] == "suspended"][0]
+
+    assert suspended["confirmation_id"] == suspended["suspension_id"]
+    assert suspended["version"] >= 2
+    assert suspended["question"] == "Which metric?"
+    assert (
+        tmp_path
+        / "stream_direct_question"
+        / "confirmations"
+        / "events.jsonl"
+    ).exists()
+    assert list(tmp_path.glob("suspension_*.json")) == []
