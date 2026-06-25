@@ -117,3 +117,46 @@ def test_candidate_identity_changes_with_message_version():
     )
 
     assert first.confirmation_id != second.confirmation_id
+
+
+def test_runtime_registers_record_confirmation_answer_action():
+    from data_agent.agent.confirmation.actions import ResolutionContext
+    from data_agent.agent.confirmation.runtime import build_action_registry
+
+    registry = build_action_registry()
+
+    receipt = registry.apply(
+        "record_confirmation_answer",
+        ResolutionContext("session_1", "cf_1", {"question": "Metric?"}),
+        "revenue",
+        "cf_1:answer_1",
+    )
+    repeated = registry.apply(
+        "record_confirmation_answer",
+        ResolutionContext("session_1", "cf_1", {"question": "Metric?"}),
+        "revenue",
+        "cf_1:answer_1",
+    )
+
+    assert receipt == repeated
+    assert receipt.status == "succeeded"
+    assert receipt.output["answer"] == "revenue"
+    assert receipt.output["question"] == "Metric?"
+
+
+def test_runtime_rejects_unsafe_state_update_action():
+    from data_agent.agent.confirmation.runtime import build_direct_question_candidate
+
+    candidate = build_direct_question_candidate(
+        session_id="session_1",
+        turn_id="turn_1",
+        message_version=1,
+        request=UserConfirmationRequired(
+            question="Proceed?",
+            options=[{"label": "Yes", "value": "yes"}],
+            state_updates='{"arbitrary": {"nested": "write"}}',
+        ),
+    )
+
+    assert candidate.resolution_action == "record_confirmation_answer"
+    assert candidate.resolution_params["state_updates"] == {}

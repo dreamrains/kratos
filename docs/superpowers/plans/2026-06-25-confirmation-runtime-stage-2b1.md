@@ -216,7 +216,7 @@ git commit -m "feat: adapt direct questions to confirmation runtime"
 - Modify: `src/data_agent/agent/confirmation/runtime.py`
 - Test: `tests/test_confirmation_runtime.py`
 
-- [ ] **Step 1: Write failing action tests**
+- [x] **Step 1: Write failing action tests**
 
 Add tests:
 
@@ -251,13 +251,13 @@ def test_runtime_rejects_unsafe_state_update_action():
     assert candidate.resolution_action == "record_confirmation_answer"
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run `pytest tests/test_confirmation_runtime.py -q`.
 
 Expected: missing `build_action_registry` or missing action behavior.
 
-- [ ] **Step 3: Implement runtime action registry**
+- [x] **Step 3: Implement runtime action registry**
 
 Add:
 
@@ -281,7 +281,7 @@ For Stage 2B-1, `record_confirmation_answer` must always be safe and side-effect
 
 Any unrecognized payload must fall back to `record_confirmation_answer`.
 
-- [ ] **Step 4: Run and verify GREEN**
+- [x] **Step 4: Run and verify GREEN**
 
 Run:
 

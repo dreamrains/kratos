@@ -12,6 +12,10 @@ from data_agent.agent.confirmation.models import (
     ConfirmationRecord,
     QuestionCandidate,
 )
+from data_agent.agent.confirmation.actions import (
+    ResolutionActionRegistry,
+    ResolutionContext,
+)
 
 
 def build_direct_question_candidate(
@@ -89,6 +93,27 @@ def confirmation_record_to_loop_result(
     )
 
 
+def build_action_registry() -> ResolutionActionRegistry:
+    registry = ResolutionActionRegistry()
+    registry.register("record_confirmation_answer", _record_confirmation_answer)
+    registry.register(
+        "set_analysis_stage",
+        _apply_state_update_action,
+        validator=_validate_stage_action,
+    )
+    registry.register(
+        "confirm_method",
+        _apply_state_update_action,
+        validator=_validate_method_action,
+    )
+    registry.register(
+        "resolve_file_relationship",
+        _apply_state_update_action,
+        validator=_validate_file_relationship_action,
+    )
+    return registry
+
+
 def _answer_mode(
     options: tuple[ConfirmationOption, ...],
     multi_select: bool,
@@ -98,6 +123,68 @@ def _answer_mode(
     if multi_select:
         return AnswerMode.MULTI_SELECT
     return AnswerMode.SINGLE_SELECT
+
+
+def _record_confirmation_answer(
+    context: ResolutionContext,
+    answer: Any,
+) -> dict[str, Any]:
+    return {
+        "confirmation_id": context.confirmation_id,
+        "question": str(context.parameters.get("question") or ""),
+        "answer": answer,
+    }
+
+
+def _apply_state_update_action(
+    context: ResolutionContext,
+    answer: Any,
+) -> dict[str, Any]:
+    updates = context.parameters.get("state_updates")
+    if not isinstance(updates, dict):
+        updates = {}
+    from data_agent.agent.analysis_state import load_analysis_state
+
+    state = load_analysis_state(context.session_id)
+    state.apply_state_updates(updates, answer=answer)
+    state.save()
+    return {
+        "confirmation_id": context.confirmation_id,
+        "applied": sorted(updates),
+        "answer": answer,
+    }
+
+
+def _validate_stage_action(context: ResolutionContext, answer: Any) -> bool:
+    updates = context.parameters.get("state_updates")
+    if not isinstance(updates, dict) or not updates:
+        return False
+    allowed_keys = {"stage", "data_state"}
+    if any(key not in allowed_keys for key in updates):
+        return False
+    from data_agent.agent.analysis_state import DATA_STATES, STAGES
+
+    stage = updates.get("stage")
+    data_state = updates.get("data_state")
+    if stage is not None and stage not in STAGES:
+        return False
+    if data_state is not None and data_state not in DATA_STATES:
+        return False
+    return True
+
+
+def _validate_method_action(context: ResolutionContext, answer: Any) -> bool:
+    updates = context.parameters.get("state_updates")
+    confirmation = updates.get("method_confirmation") if isinstance(updates, dict) else None
+    return isinstance(confirmation, dict) and bool(confirmation.get("analysis_spec_id"))
+
+
+def _validate_file_relationship_action(context: ResolutionContext, answer: Any) -> bool:
+    updates = context.parameters.get("state_updates")
+    confirmation = updates.get("file_relationship_confirmation") if isinstance(updates, dict) else None
+    return isinstance(confirmation, dict) and bool(
+        confirmation.get("relationship_id") or confirmation.get("id")
+    )
 
 
 def _direct_question_identity(
@@ -166,6 +253,7 @@ def _resolution_params_for(request: Any) -> dict[str, Any]:
         "context": str(getattr(request, "context", "") or ""),
         "related_task_id": int(getattr(request, "related_task_id", 0) or 0),
         "related_spec_id": str(getattr(request, "related_spec_id", "") or "").strip(),
+        "question": str(getattr(request, "question", "") or "").strip(),
         "state_updates": _safe_state_updates(getattr(request, "state_updates", "")),
     }
 
