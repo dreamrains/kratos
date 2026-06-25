@@ -707,21 +707,23 @@ class AgentLoop:
             state_updates_text = state_updates
         else:
             state_updates_text = json.dumps({"stage": "scope"}, ensure_ascii=False)
-        susp = SuspendedForConfirmation(
-            suspension_id=uuid.uuid4().hex[:8],
-            question=str(pending_data.get("question") or question_need.get("question") or "请先确认关键信息后再继续分析。"),
-            options=list(pending_data.get("options") or question_need.get("options") or []),
-            context=str(pending_data.get("context") or ""),
-            snapshot={"messages": self._serialize_messages()},
-            multi_select=False,
-            confirmation_type=str(pending_data.get("confirmation_type") or question_need.get("question_type") or "scope_confirmation"),
-            blocking_reason=str(pending_data.get("blocking_reason") or question_need.get("reason") or ""),
-            state_updates=state_updates_text,
-            related_task_id=int(pending_data.get("related_task_id") or 0),
-            related_spec_id=str(pending_data.get("related_spec_id") or ""),
+        payload = {
+            "question": str(pending_data.get("question") or question_need.get("question") or "Please confirm the key information before continuing."),
+            "options": list(pending_data.get("options") or question_need.get("options") or []),
+            "context": str(pending_data.get("context") or ""),
+            "multi_select": False,
+            "confirmation_type": str(pending_data.get("confirmation_type") or question_need.get("question_type") or "scope_confirmation"),
+            "blocking_reason": str(pending_data.get("blocking_reason") or question_need.get("reason") or ""),
+            "state_updates": state_updates_text,
+            "related_task_id": int(pending_data.get("related_task_id") or 0),
+            "related_spec_id": str(pending_data.get("related_spec_id") or ""),
+        }
+        susp = self._suspend_for_required_question_payload(
+            payload,
+            source="pending_confirmation" if isinstance(pending, dict) else "question_need_detector",
+            operation=str(payload["confirmation_type"] or "auto_required_question"),
         )
         if isinstance(pending, dict):
-            pending["suspension_id"] = susp.suspension_id
             pending.setdefault("question", susp.question)
             pending.setdefault("options", susp.options)
             pending.setdefault("context", susp.context)
@@ -731,9 +733,6 @@ class AgentLoop:
                 pending["state_updates"] = susp.state_updates
             if state is not None:
                 state.save()
-        else:
-            self._register_confirmation(susp)
-        SuspensionManager(get_config().sessions_resolved).save(susp)
         return susp
 
     def _pending_confirmation_for_auto_suspend(self, state: Any) -> dict[str, Any] | bool | None:
@@ -1143,6 +1142,52 @@ class AgentLoop:
             turn_id=turn_id,
             message_version=len(self.messages),
             request=request,
+        )
+        request_result = service.request(candidate)
+        record = request_result.record
+        if record is None and request_result.reused_confirmation_id:
+            record = service.get(self.session_id, request_result.reused_confirmation_id)
+        if record is None:
+            raise RuntimeError(
+                f"confirmation request was not created: {request_result.reason}"
+            )
+
+        checkpoint = service.checkpoint(self.session_id)
+        if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
+            record = checkpoint
+        elif record.status == ConfirmationStatus.PENDING:
+            record = service.get(self.session_id, record.confirmation_id)
+            if record.status == ConfirmationStatus.PENDING:
+                raise RuntimeError(
+                    f"confirmation {record.confirmation_id} was not suspended"
+                )
+
+        return confirmation_record_to_loop_result(
+            record,
+            {"messages": self._serialize_messages()},
+        )
+
+    def _suspend_for_required_question_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        source: str,
+        operation: str,
+    ) -> SuspendedForConfirmation:
+        from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.runtime import (
+            build_required_question_candidate,
+            confirmation_record_to_loop_result,
+        )
+
+        service = self._confirmation_runtime()
+        candidate = build_required_question_candidate(
+            session_id=self.session_id,
+            turn_id=str(payload.get("confirmation_type") or operation or "auto_required_question"),
+            message_version=len(self.messages),
+            request=payload,
+            source=source,
+            operation=operation or "auto_required_question",
         )
         request_result = service.request(candidate)
         record = request_result.record

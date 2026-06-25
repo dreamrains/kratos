@@ -291,8 +291,55 @@ def test_structured_loop_auto_suspends_for_required_question(monkeypatch):
     assert isinstance(result, SuspendedForConfirmation)
     assert result.confirmation_type == "route_selection"
     assert len(result.options) == 2
-    assert state.pending_confirmations
-    assert state.pending_confirmations[0]["status"] == "pending"
+    assert result.confirmation_id == result.suspension_id
+    assert state.pending_confirmations == []
+
+
+def test_auto_suspend_for_required_question_uses_confirmation_runtime(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+    from data_agent.agent.confirmation.models import ConfirmationStatus
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        ctx = AgentContext(session_id="auto_runtime_gate", workspace=Workspace())
+        state = AnalysisSessionState(session_id="auto_runtime_gate", data_state="data_loaded")
+        ctx.analysis_state = state
+        loop = AgentLoop(client=None, session_id="auto_runtime_gate")
+        loop.context = ctx
+        loop._turn_question_need = {
+            "status": "hard_question",
+            "question_type": "route_selection",
+            "question": "Choose an analysis route.",
+            "options": [
+                {"label": "Trend", "value": "trend"},
+                {"label": "Compare", "value": "period_compare"},
+            ],
+            "reason": "Different routes change the analysis output.",
+            "state_updates": {"stage": "scope"},
+        }
+
+        result = loop._maybe_auto_suspend_for_required_question()
+
+        assert result is not None
+        assert result.confirmation_id == result.suspension_id
+        assert result.version >= 2
+        assert (
+            cfg.sessions_resolved
+            / "auto_runtime_gate"
+            / "confirmations"
+            / "events.jsonl"
+        ).exists()
+        assert list(cfg.sessions_resolved.glob("suspension_*.json")) == []
+        record = loop._confirmation_runtime().get(
+            "auto_runtime_gate",
+            result.confirmation_id,
+        )
+        assert record.status == ConfirmationStatus.SUSPENDED
+        assert record.source == "question_need_detector"
+    finally:
+        cfg.sessions_dir = old_sessions
 
 
 def test_structured_loop_file_relationship_suspension_saves_state_updates(monkeypatch):
@@ -338,8 +385,8 @@ def test_structured_loop_file_relationship_suspension_saves_state_updates(monkey
         "stage": "scope",
         "file_relationship_confirmation": {"relationship_id": "rel_orders_history"},
     }
-    assert state.pending_confirmations
-    assert state.pending_confirmations[0]["state_updates"] == result.state_updates
+    assert state.pending_confirmations == []
+    assert result.confirmation_id == result.suspension_id
 
 
 def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatch):
@@ -392,11 +439,11 @@ def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatc
 
     assert isinstance(result, SuspendedForConfirmation)
     assert result.question == "Use the existing relationship question?"
-    assert result.options == [{"label": "Together", "value": "include_in_active_bundle"}]
+    assert result.options == [{"label": "Together", "value": "include_in_active_bundle", "description": ""}]
     assert result.confirmation_type == "file_relationship_confirmation"
     assert result.blocking_reason == "Existing relationship reason"
     assert json.loads(result.state_updates)["stage"] == "plan"
-    assert state.pending_confirmations[0]["suspension_id"] == result.suspension_id
+    assert "suspension_id" not in state.pending_confirmations[0]
     assert len(state.pending_confirmations) == 1
 
 
@@ -479,7 +526,8 @@ def test_auto_suspend_selects_new_unsuspended_confirmation_after_suspended_pendi
     assert result is not None
     assert result.question == "New question?"
     assert state.pending_confirmations[0]["suspension_id"] == "susp_old"
-    assert state.pending_confirmations[1]["suspension_id"] == result.suspension_id
+    assert "suspension_id" not in state.pending_confirmations[1]
+    assert result.confirmation_id == result.suspension_id
     assert len(state.pending_confirmations) == 2
 
 
@@ -510,7 +558,8 @@ def test_auto_suspend_falls_back_to_unsuspended_preexisting_confirmation():
 
     assert result is not None
     assert result.question == "Resume this question?"
-    assert state.pending_confirmations[0]["suspension_id"] == result.suspension_id
+    assert "suspension_id" not in state.pending_confirmations[0]
+    assert result.confirmation_id == result.suspension_id
 
 
 def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatch):
@@ -607,7 +656,8 @@ def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(mo
     assert result.confirmation_type == "method_confirmation"
     pending = [item for item in state.pending_confirmations if item.get("status") == "pending"]
     assert len(pending) == 1
-    assert pending[0]["suspension_id"] == result.suspension_id
+    assert "suspension_id" not in pending[0]
+    assert result.confirmation_id == result.suspension_id
 
 
 def test_stream_loop_auto_suspends_for_required_question(monkeypatch):

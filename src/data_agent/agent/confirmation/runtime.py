@@ -27,20 +27,70 @@ def build_direct_question_candidate(
 ) -> QuestionCandidate:
     """Convert a direct ask_user_question signal into a policy candidate."""
 
-    identity = _direct_question_identity(session_id, turn_id, message_version, request)
-    options = _normalise_options(getattr(request, "options", ()))
-    answer_mode = _answer_mode(options, bool(getattr(request, "multi_select", False)))
-    resolution_params = _resolution_params_for(request)
-    return QuestionCandidate(
-        confirmation_id=f"direct_{identity[:24]}",
+    return _build_question_candidate(
         session_id=session_id,
         turn_id=turn_id,
-        decision_key=f"{session_id}:direct_user_question:{identity}",
+        message_version=message_version,
+        request=request,
         source="ask_user_question",
         operation="direct_user_question",
-        question=str(getattr(request, "question", "") or "").strip(),
+        id_prefix="direct",
+    )
+
+
+def build_required_question_candidate(
+    *,
+    session_id: str,
+    turn_id: str,
+    message_version: int,
+    request: Any,
+    source: str,
+    operation: str,
+) -> QuestionCandidate:
+    """Convert an automatic hard-question signal into a policy candidate."""
+
+    return _build_question_candidate(
+        session_id=session_id,
+        turn_id=turn_id,
+        message_version=message_version,
+        request=request,
+        source=source,
+        operation=operation,
+        id_prefix="auto",
+    )
+
+
+def _build_question_candidate(
+    *,
+    session_id: str,
+    turn_id: str,
+    message_version: int,
+    request: Any,
+    source: str,
+    operation: str,
+    id_prefix: str,
+) -> QuestionCandidate:
+    identity = _question_identity(
+        session_id,
+        turn_id,
+        message_version,
+        request,
+        source=source,
+        operation=operation,
+    )
+    options = _normalise_options(_request_value(request, "options", ()))
+    answer_mode = _answer_mode(options, bool(_request_value(request, "multi_select", False)))
+    resolution_params = _resolution_params_for(request)
+    return QuestionCandidate(
+        confirmation_id=f"{id_prefix}_{identity[:24]}",
+        session_id=session_id,
+        turn_id=turn_id,
+        decision_key=f"{session_id}:{operation}:{identity}",
+        source=source,
+        operation=operation,
+        question=str(_request_value(request, "question", "") or "").strip(),
         decision_impact=(
-            str(getattr(request, "blocking_reason", "") or "").strip()
+            str(_request_value(request, "blocking_reason", "") or "").strip()
             or "The current agent turn cannot continue without this answer."
         ),
         answer_mode=answer_mode,
@@ -50,7 +100,7 @@ def build_direct_question_candidate(
         resolution_action=_resolution_action_for(request),
         resolution_params=resolution_params,
         data_version=f"messages:{int(message_version)}",
-        spec_version=str(getattr(request, "related_spec_id", "") or "").strip(),
+        spec_version=str(_request_value(request, "related_spec_id", "") or "").strip(),
     )
 
 
@@ -87,6 +137,10 @@ def confirmation_record_to_loop_result(
         options=event["options"],
         context=event["context"],
         snapshot=snapshot,
+        state_updates=json.dumps(
+            dict(record.resolution_params.get("state_updates") or {}),
+            ensure_ascii=False,
+        ),
         multi_select=event["multi_select"],
         confirmation_type=event["confirmation_type"],
         blocking_reason=event["blocking_reason"],
@@ -189,23 +243,28 @@ def _validate_file_relationship_action(context: ResolutionContext, answer: Any) 
     )
 
 
-def _direct_question_identity(
+def _question_identity(
     session_id: str,
     turn_id: str,
     message_version: int,
     request: Any,
+    *,
+    source: str,
+    operation: str,
 ) -> str:
     payload = {
         "session_id": session_id,
         "turn_id": turn_id,
         "message_version": int(message_version),
-        "question": str(getattr(request, "question", "") or "").strip(),
-        "options": [option.to_dict() for option in _normalise_options(getattr(request, "options", ()))],
-        "multi_select": bool(getattr(request, "multi_select", False)),
-        "confirmation_type": str(getattr(request, "confirmation_type", "") or "").strip(),
-        "related_task_id": int(getattr(request, "related_task_id", 0) or 0),
-        "related_spec_id": str(getattr(request, "related_spec_id", "") or "").strip(),
-        "state_update_shape": _state_update_shape(getattr(request, "state_updates", "")),
+        "source": str(source or "").strip(),
+        "operation": str(operation or "").strip(),
+        "question": str(_request_value(request, "question", "") or "").strip(),
+        "options": [option.to_dict() for option in _normalise_options(_request_value(request, "options", ()))],
+        "multi_select": bool(_request_value(request, "multi_select", False)),
+        "confirmation_type": str(_request_value(request, "confirmation_type", "") or "").strip(),
+        "related_task_id": int(_request_value(request, "related_task_id", 0) or 0),
+        "related_spec_id": str(_request_value(request, "related_spec_id", "") or "").strip(),
+        "state_update_shape": _state_update_shape(_request_value(request, "state_updates", "")),
     }
     encoded = json.dumps(
         payload,
@@ -238,7 +297,7 @@ def _normalise_options(raw_options: Any) -> tuple[ConfirmationOption, ...]:
 
 
 def _resolution_action_for(request: Any) -> str:
-    updates = _state_updates(getattr(request, "state_updates", ""))
+    updates = _state_updates(_request_value(request, "state_updates", ""))
     if set(updates).issubset({"stage", "data_state"}) and updates:
         return "set_analysis_stage"
     if isinstance(updates.get("method_confirmation"), dict):
@@ -250,14 +309,20 @@ def _resolution_action_for(request: Any) -> str:
 
 def _resolution_params_for(request: Any) -> dict[str, Any]:
     return {
-        "confirmation_type": str(getattr(request, "confirmation_type", "") or "").strip(),
-        "blocking_reason": str(getattr(request, "blocking_reason", "") or "").strip(),
-        "context": str(getattr(request, "context", "") or ""),
-        "related_task_id": int(getattr(request, "related_task_id", 0) or 0),
-        "related_spec_id": str(getattr(request, "related_spec_id", "") or "").strip(),
-        "question": str(getattr(request, "question", "") or "").strip(),
-        "state_updates": _safe_state_updates(getattr(request, "state_updates", "")),
+        "confirmation_type": str(_request_value(request, "confirmation_type", "") or "").strip(),
+        "blocking_reason": str(_request_value(request, "blocking_reason", "") or "").strip(),
+        "context": str(_request_value(request, "context", "") or ""),
+        "related_task_id": int(_request_value(request, "related_task_id", 0) or 0),
+        "related_spec_id": str(_request_value(request, "related_spec_id", "") or "").strip(),
+        "question": str(_request_value(request, "question", "") or "").strip(),
+        "state_updates": _safe_state_updates(_request_value(request, "state_updates", "")),
     }
+
+
+def _request_value(request: Any, key: str, default: Any = None) -> Any:
+    if isinstance(request, dict):
+        return request.get(key, default)
+    return getattr(request, key, default)
 
 
 def _safe_state_updates(value: Any) -> dict[str, Any]:

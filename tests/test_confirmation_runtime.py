@@ -119,6 +119,34 @@ def test_candidate_identity_changes_with_message_version():
     assert first.confirmation_id != second.confirmation_id
 
 
+def test_required_question_candidate_uses_runtime_source_and_operation():
+    from data_agent.agent.confirmation.runtime import build_required_question_candidate
+
+    candidate = build_required_question_candidate(
+        session_id="session_1",
+        turn_id="turn_auto",
+        message_version=2,
+        request={
+            "question": "Choose an analysis route.",
+            "options": [
+                {"label": "Trend", "value": "trend"},
+                {"label": "Compare", "value": "period_compare"},
+            ],
+            "confirmation_type": "route_selection",
+            "blocking_reason": "Different routes change the analysis output.",
+            "state_updates": {"stage": "scope"},
+        },
+        source="question_need_detector",
+        operation="auto_required_question",
+    )
+
+    assert candidate.confirmation_id.startswith("auto_")
+    assert candidate.source == "question_need_detector"
+    assert candidate.operation == "auto_required_question"
+    assert candidate.resolution_action == "set_analysis_stage"
+    assert candidate.resolution_params["state_updates"] == {"stage": "scope"}
+
+
 def test_runtime_registers_record_confirmation_answer_action():
     from data_agent.agent.confirmation.actions import ResolutionContext
     from data_agent.agent.confirmation.runtime import build_action_registry
