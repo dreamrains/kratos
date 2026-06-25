@@ -61,7 +61,9 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                 pass  # Internal event, skip
             elif etype == "suspended":
                 eq.put(SSEEvent("suspended", {
+                    "confirmation_id": event.get("confirmation_id") or event["suspension_id"],
                     "suspension_id": event["suspension_id"],
+                    "version": event.get("version"),
                     "question": event["question"],
                     "options": event["options"],
                     "context": event["context"],

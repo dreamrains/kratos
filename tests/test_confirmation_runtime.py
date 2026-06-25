@@ -4,7 +4,7 @@ from data_agent.agent.confirmation import (
     AnswerMode,
     ConfirmationContractError,
 )
-from data_agent.agent.loop import AgentLoop, UserConfirmationRequired
+from data_agent.agent.loop import AgentLoop, FinalResponse, UserConfirmationRequired
 
 
 def test_direct_question_candidate_uses_stable_identity():
@@ -231,3 +231,73 @@ def test_streaming_direct_question_event_exposes_confirmation_identity(tmp_path,
         / "events.jsonl"
     ).exists()
     assert list(tmp_path.glob("suspension_*.json")) == []
+
+
+def test_resume_turn_answers_runtime_confirmation(tmp_path, monkeypatch):
+    from data_agent.agent.confirmation.models import ConfirmationStatus
+
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_runtime_question")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+    loop._loop = lambda _user_input: FinalResponse(content="done")
+
+    result = loop.resume_turn(suspended.confirmation_id, "revenue")
+    record = loop._confirmation_runtime().get(
+        "resume_runtime_question",
+        suspended.confirmation_id,
+    )
+
+    assert result == FinalResponse(content="done")
+    assert record.status == ConfirmationStatus.RESOLVED
+    assert record.response == "revenue"
+    assert list(tmp_path.glob("suspension_*.json")) == []
+
+
+def test_resume_turn_is_idempotent_for_same_runtime_answer(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_runtime_idempotent")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+    loop._loop = lambda _user_input: FinalResponse(content="done")
+
+    loop.resume_turn(suspended.confirmation_id, "revenue")
+    events_path = (
+        tmp_path
+        / "resume_runtime_idempotent"
+        / "confirmations"
+        / "events.jsonl"
+    )
+    before = events_path.read_text(encoding="utf-8").splitlines()
+
+    repeated = loop.resume_turn(suspended.confirmation_id, "revenue")
+    after = events_path.read_text(encoding="utf-8").splitlines()
+
+    assert repeated == FinalResponse(content="done")
+    assert after == before
+
+
+def test_resume_turn_streaming_answers_runtime_confirmation(tmp_path, monkeypatch):
+    from data_agent.agent.confirmation.models import ConfirmationStatus
+    from data_agent.llm.client import Response
+
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_runtime_streaming")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+
+    def _stream_done(_round_num):
+        yield {
+            "type": "_response",
+            "response": Response(text="done"),
+            "streamed_text": "done",
+        }
+
+    loop._stream_llm_round = _stream_done
+
+    events = list(loop.resume_turn_streaming(suspended.confirmation_id, "revenue"))
+    record = loop._confirmation_runtime().get(
+        "resume_runtime_streaming",
+        suspended.confirmation_id,
+    )
+
+    assert [event for event in events if event["type"] == "error"] == []
+    assert record.status == ConfirmationStatus.RESOLVED
+    assert record.response == "revenue"

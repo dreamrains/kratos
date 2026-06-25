@@ -1185,6 +1185,114 @@ class AgentLoop:
             "related_spec_id": susp.related_spec_id,
         }
 
+    def _runtime_suspension_for_resume(
+        self,
+        confirmation_id: str,
+    ) -> SuspendedForConfirmation | None:
+        from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
+
+        try:
+            record = self._confirmation_runtime().get(self.session_id, confirmation_id)
+        except KeyError:
+            return None
+        return confirmation_record_to_loop_result(
+            record,
+            {"messages": self._serialize_messages()},
+        )
+
+    def _load_confirmation_for_resume(
+        self,
+        confirmation_id: str,
+    ) -> tuple[SuspendedForConfirmation | None, bool]:
+        runtime_suspension = self._runtime_suspension_for_resume(confirmation_id)
+        if runtime_suspension is not None:
+            return runtime_suspension, False
+
+        legacy = SuspensionManager(get_config().sessions_resolved).load(confirmation_id)
+        return legacy, True
+
+    def _resolve_runtime_confirmation(
+        self,
+        susp: SuspendedForConfirmation,
+        user_response: str,
+    ) -> SuspendedForConfirmation:
+        from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
+
+        confirmation_id = susp.confirmation_id or susp.suspension_id
+        service = self._confirmation_runtime()
+        record = service.get(self.session_id, confirmation_id)
+        response_text = str(user_response or "").strip()
+        lowered = response_text.lower()
+
+        if lowered == "skipped":
+            operation = "skip"
+            answer: Any = "skipped"
+            resolved = service.skip(
+                self.session_id,
+                confirmation_id,
+                record.version,
+                self._confirmation_response_key(confirmation_id, operation, answer),
+            )
+        elif lowered == "cancelled":
+            operation = "cancel"
+            answer = "cancelled"
+            resolved = service.cancel(
+                self.session_id,
+                confirmation_id,
+                record.version,
+                self._confirmation_response_key(confirmation_id, operation, answer),
+            )
+        else:
+            operation = "answer"
+            answer = self._normalise_runtime_answer(record, user_response)
+            resolved = service.respond(
+                self.session_id,
+                confirmation_id,
+                answer,
+                record.version,
+                self._confirmation_response_key(confirmation_id, operation, answer),
+            )
+
+        return confirmation_record_to_loop_result(
+            resolved,
+            {"messages": self._serialize_messages()},
+        )
+
+    @staticmethod
+    def _normalise_runtime_answer(record: Any, user_response: Any) -> Any:
+        from data_agent.agent.confirmation.models import AnswerMode
+
+        if record.answer_mode == AnswerMode.MULTI_SELECT:
+            if isinstance(user_response, (list, tuple)):
+                return [str(value).strip() for value in user_response if str(value).strip()]
+            return [
+                part.strip()
+                for part in str(user_response or "").split(",")
+                if part.strip()
+            ]
+        return str(user_response or "").strip()
+
+    @staticmethod
+    def _confirmation_response_key(
+        confirmation_id: str,
+        operation: str,
+        answer: Any,
+    ) -> str:
+        import hashlib
+
+        payload = json.dumps(
+            {
+                "confirmation_id": confirmation_id,
+                "operation": operation,
+                "answer": answer,
+            },
+            default=str,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return f"loop_resume:{hashlib.sha256(payload).hexdigest()}"
+
     def run_turn(self, user_input: str) -> str:
         """处理一轮用户输入，返回回复文本。CLI 模式使用。"""
         logger.info("Turn started", extra={"extra_data": {"session": self.session_id}})
@@ -1313,22 +1421,24 @@ class AgentLoop:
 
     def resume_turn(self, suspension_id: str, user_response: str) -> LoopResult:
         """Resume after user answers a suspended question. Web mode."""
-        from pathlib import Path
-        sessions_dir = get_config().sessions_resolved
-        mgr = SuspensionManager(sessions_dir)
-        susp = mgr.load(suspension_id)
+        susp, is_legacy = self._load_confirmation_for_resume(suspension_id)
         if not susp:
             return FinalResponse(content=f"Error: suspension {suspension_id} not found")
-        self._resolve_confirmation(susp, user_response)
+        if is_legacy:
+            self._resolve_confirmation(susp, user_response)
+        else:
+            susp = self._resolve_runtime_confirmation(susp, user_response)
         resumed_input = self._build_resume_user_input(susp, user_response)
+        confirmation_id = susp.confirmation_id or susp.suspension_id
 
         self.messages.append({"role": "user", "content": (
-            f"<confirmation_response suspension_id=\"{suspension_id}\">\n"
+            f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
             f"Question: {susp.question}\n"
             f"User answered: {user_response}\n"
             f"</confirmation_response>"
         )})
-        mgr.remove(suspension_id)
+        if is_legacy:
+            SuspensionManager(get_config().sessions_resolved).remove(suspension_id)
         result = self._loop(resumed_input)
         if isinstance(result, FinalResponse):
             self._maybe_archive("", result.content)
@@ -1752,25 +1862,27 @@ class AgentLoop:
 
     def resume_turn_streaming(self, suspension_id: str, user_response: str):
         """Generator variant of resume_turn for SSE streaming."""
-        from pathlib import Path
         set_current_context(self.context)
 
-        sessions_dir = get_config().sessions_resolved
-        mgr = SuspensionManager(sessions_dir)
-        susp = mgr.load(suspension_id)
+        susp, is_legacy = self._load_confirmation_for_resume(suspension_id)
         if not susp:
             yield {"type": "error", "message": f"Suspension {suspension_id} not found"}
             return
-        self._resolve_confirmation(susp, user_response)
+        if is_legacy:
+            self._resolve_confirmation(susp, user_response)
+        else:
+            susp = self._resolve_runtime_confirmation(susp, user_response)
         resumed_input = self._build_resume_user_input(susp, user_response)
+        confirmation_id = susp.confirmation_id or susp.suspension_id
 
         self.messages.append({"role": "user", "content": (
-            f"<confirmation_response suspension_id=\"{suspension_id}\">\n"
+            f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
             f"Question: {susp.question}\n"
             f"User answered: {user_response}\n"
             f"</confirmation_response>"
         )})
-        mgr.remove(suspension_id)
+        if is_legacy:
+            SuspensionManager(get_config().sessions_resolved).remove(suspension_id)
 
         final_text = ""
         round_num = 0

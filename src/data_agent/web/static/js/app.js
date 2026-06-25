@@ -2435,7 +2435,9 @@ function chatApp() {
                 case 'suspended':
                     turn.isThinking = false;
                     turn.confirmation = {
+                        confirmation_id: data.confirmation_id || data.suspension_id,
                         suspension_id: data.suspension_id,
+                        version: data.version || 1,
                         question: data.question,
                         options: data.options || [],
                         context: data.context || '',
