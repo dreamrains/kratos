@@ -233,6 +233,27 @@ def test_streaming_direct_question_event_exposes_confirmation_identity(tmp_path,
     assert list(tmp_path.glob("suspension_*.json")) == []
 
 
+def test_direct_question_does_not_write_legacy_pending_confirmation(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="loop_no_legacy_pending")
+
+    class _LegacyState:
+        pending_confirmations = []
+
+        def add_confirmation(self, _payload):
+            raise AssertionError("direct questions must not use legacy pending_confirmations")
+
+        def save(self):
+            raise AssertionError("direct questions must not save legacy confirmation state")
+
+    loop.context.analysis_state = _LegacyState()
+
+    result = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+
+    assert result.confirmation_id
+    assert loop.context.analysis_state.pending_confirmations == []
+
+
 def test_resume_turn_answers_runtime_confirmation(tmp_path, monkeypatch):
     from data_agent.agent.confirmation.models import ConfirmationStatus
 
@@ -301,3 +322,23 @@ def test_resume_turn_streaming_answers_runtime_confirmation(tmp_path, monkeypatc
     assert [event for event in events if event["type"] == "error"] == []
     assert record.status == ConfirmationStatus.RESOLVED
     assert record.response == "revenue"
+
+
+def test_resume_turn_uses_client_idempotency_key(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_runtime_client_key")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+    loop._loop = lambda _user_input: FinalResponse(content="done")
+
+    loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="client_retry_key",
+    )
+    record = loop._confirmation_runtime().get(
+        "resume_runtime_client_key",
+        suspended.confirmation_id,
+    )
+
+    assert record.response_id == "client_retry_key"

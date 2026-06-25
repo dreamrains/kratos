@@ -1726,7 +1726,7 @@ function chatApp() {
             return parts.join('; ');
         },
 
-        async resumeConfirmation(suspensionId, userResponse) {
+        async resumeConfirmation(suspensionId, userResponse, confirmation = null) {
             const state = this._getSessionState(this.currentSessionId);
             if (state._resuming) return;
             state._resuming = true;
@@ -1750,7 +1750,9 @@ function chatApp() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         session_id: this.currentSessionId,
+                        confirmation_id: confirmation?.confirmation_id || suspensionId,
                         suspension_id: suspensionId,
+                        expected_version: confirmation?.version || null,
                         user_response: userResponse,
                     }),
                 });
@@ -1812,10 +1814,10 @@ function chatApp() {
                 }
                 this._submitMultiQuestionStep(c, st, currentQ);
                 const response = this._multiQuestionComplete(c, st);
-                this.resumeConfirmation(c.suspension_id, response);
+                this.resumeConfirmation(c.suspension_id, response, c);
             } else {
                 const response = this._submitSingleAnswer(c, st);
-                this.resumeConfirmation(c.suspension_id, response);
+                this.resumeConfirmation(c.suspension_id, response, c);
             }
         },
 
@@ -1832,17 +1834,17 @@ function chatApp() {
                 st.freeText = '';
                 if (st.currentStep >= questions.length) {
                     const response = this._multiQuestionComplete(c, st);
-                    this.resumeConfirmation(c.suspension_id, response);
+                    this.resumeConfirmation(c.suspension_id, response, c);
                 }
             } else {
-                this.resumeConfirmation(c.suspension_id, 'skipped');
+                this.resumeConfirmation(c.suspension_id, 'skipped', c);
             }
         },
 
         _cancelConfirmation(turn) {
             const c = turn.confirmation;
             if (!c) return;
-            this.resumeConfirmation(c.suspension_id, 'cancelled');
+            this.resumeConfirmation(c.suspension_id, 'cancelled', c);
         },
 
         async interruptTurn() {

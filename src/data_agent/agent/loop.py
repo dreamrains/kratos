@@ -1215,12 +1215,17 @@ class AgentLoop:
         self,
         susp: SuspendedForConfirmation,
         user_response: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str = "",
     ) -> SuspendedForConfirmation:
         from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
 
         confirmation_id = susp.confirmation_id or susp.suspension_id
         service = self._confirmation_runtime()
         record = service.get(self.session_id, confirmation_id)
+        version = int(expected_version or record.version)
+        idempotency_key = str(idempotency_key or "").strip()
         response_text = str(user_response or "").strip()
         lowered = response_text.lower()
 
@@ -1230,8 +1235,9 @@ class AgentLoop:
             resolved = service.skip(
                 self.session_id,
                 confirmation_id,
-                record.version,
-                self._confirmation_response_key(confirmation_id, operation, answer),
+                version,
+                idempotency_key
+                or self._confirmation_response_key(confirmation_id, operation, answer),
             )
         elif lowered == "cancelled":
             operation = "cancel"
@@ -1239,8 +1245,9 @@ class AgentLoop:
             resolved = service.cancel(
                 self.session_id,
                 confirmation_id,
-                record.version,
-                self._confirmation_response_key(confirmation_id, operation, answer),
+                version,
+                idempotency_key
+                or self._confirmation_response_key(confirmation_id, operation, answer),
             )
         else:
             operation = "answer"
@@ -1249,8 +1256,9 @@ class AgentLoop:
                 self.session_id,
                 confirmation_id,
                 answer,
-                record.version,
-                self._confirmation_response_key(confirmation_id, operation, answer),
+                version,
+                idempotency_key
+                or self._confirmation_response_key(confirmation_id, operation, answer),
             )
 
         return confirmation_record_to_loop_result(
@@ -1419,7 +1427,14 @@ class AgentLoop:
             "message_count": len(self.messages),
         }
 
-    def resume_turn(self, suspension_id: str, user_response: str) -> LoopResult:
+    def resume_turn(
+        self,
+        suspension_id: str,
+        user_response: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str = "",
+    ) -> LoopResult:
         """Resume after user answers a suspended question. Web mode."""
         susp, is_legacy = self._load_confirmation_for_resume(suspension_id)
         if not susp:
@@ -1427,7 +1442,12 @@ class AgentLoop:
         if is_legacy:
             self._resolve_confirmation(susp, user_response)
         else:
-            susp = self._resolve_runtime_confirmation(susp, user_response)
+            susp = self._resolve_runtime_confirmation(
+                susp,
+                user_response,
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+            )
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 
@@ -1860,7 +1880,14 @@ class AgentLoop:
                 self._auto_save()
                 return
 
-    def resume_turn_streaming(self, suspension_id: str, user_response: str):
+    def resume_turn_streaming(
+        self,
+        suspension_id: str,
+        user_response: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str = "",
+    ):
         """Generator variant of resume_turn for SSE streaming."""
         set_current_context(self.context)
 
@@ -1871,7 +1898,12 @@ class AgentLoop:
         if is_legacy:
             self._resolve_confirmation(susp, user_response)
         else:
-            susp = self._resolve_runtime_confirmation(susp, user_response)
+            susp = self._resolve_runtime_confirmation(
+                susp,
+                user_response,
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+            )
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 

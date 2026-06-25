@@ -147,7 +147,9 @@ def resume_chat():
     """Resume a suspended turn after user answers ask_user_question."""
     data = request.get_json(force=True)
     session_id = data.get("session_id", "")
-    suspension_id = data.get("suspension_id", "")
+    confirmation_id = data.get("confirmation_id") or data.get("suspension_id", "")
+    expected_version = data.get("expected_version") or data.get("version")
+    idempotency_key = data.get("idempotency_key", "")
     user_response = data.get("user_response", "")
 
     manager = current_app.config["agent_manager"]
@@ -166,7 +168,12 @@ def resume_chat():
             **(_token_usage(agent_loop) or {}),
         }))
         _feed_events(eq, agent_loop, turn_id,
-                     agent_loop.resume_turn_streaming(suspension_id, user_response))
+                     agent_loop.resume_turn_streaming(
+                         confirmation_id,
+                         user_response,
+                         expected_version=expected_version,
+                         idempotency_key=idempotency_key,
+                     ))
 
     t = threading.Thread(target=run_in_thread, daemon=True)
     t.start()
