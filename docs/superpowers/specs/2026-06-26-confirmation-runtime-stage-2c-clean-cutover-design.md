@@ -367,3 +367,16 @@ After clean confirmation cutover, move to multi-file analysis scope:
   on them;
 - redesign the right side panel around user-facing scope status rather than
   technical relationship status.
+
+## 14. Stage 2C Verification
+
+- Confirmation runtime regression: `158 passed in 23.13s`.
+- Web/workbench regression: `10 passed in 2.63s`.
+- Legacy suspension scan: historical `sessions/suspension_*.json` files still
+  exist in the worktree, but `git status --short -- sessions` showed no
+  modified or newly tracked session files after the regression run.
+- Latest historical legacy suspension file observed during verification:
+  `2026-06-25 23:25:35`.
+- Known limitation: Stage 2C stops production resume fallback and validates
+  runtime-only confirmation state, but it does not delete historical session
+  artifacts.
