@@ -18,6 +18,7 @@ In scope:
 - `question_need_detector` hard questions and answerable pending confirmations create runtime records.
 - Runtime records preserve typed, whitelisted resolution actions.
 - Existing direct `ask_user_question` behavior remains unchanged.
+- Sync and streaming Agent Loop paths checkpoint runtime confirmations before returning final text.
 
 Out of scope:
 
@@ -25,7 +26,7 @@ Out of scope:
 - Current-session side panel redesign.
 - Full removal of `AnalysisSessionState.pending_confirmations`.
 - Reworking multi-file relationship classification or wording.
-- Global final-answer guard across all legacy producers.
+- Global final-answer guard across legacy advisory producers that have not yet migrated to runtime.
 
 ## Tasks
 

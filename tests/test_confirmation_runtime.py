@@ -370,3 +370,78 @@ def test_resume_turn_uses_client_idempotency_key(tmp_path, monkeypatch):
     )
 
     assert record.response_id == "client_retry_key"
+
+
+def test_sync_loop_blocks_final_response_when_runtime_confirmation_pending(tmp_path, monkeypatch):
+    from data_agent.llm.client import Response
+
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="final_guard_pending")
+    loop._get_system_prompt = lambda: ""
+    candidate = __import__(
+        "data_agent.agent.confirmation.runtime",
+        fromlist=["build_required_question_candidate"],
+    ).build_required_question_candidate(
+        session_id="final_guard_pending",
+        turn_id="turn_guard",
+        message_version=1,
+        request={
+            "question": "Confirm route?",
+            "options": [{"label": "Trend", "value": "trend"}],
+            "confirmation_type": "route_selection",
+            "blocking_reason": "Route affects the final answer.",
+        },
+        source="question_need_detector",
+        operation="route_selection",
+    )
+    loop._confirmation_runtime().request(candidate)
+
+    class FinalOnlyClient:
+        def chat(self, *args, **kwargs):
+            return Response(text="final answer should not bypass confirmation")
+
+    loop.client = FinalOnlyClient()
+
+    result = loop._loop("analyze data")
+
+    assert result.confirmation_id == result.suspension_id
+    assert result.question == "Confirm route?"
+
+
+def test_stream_loop_blocks_final_response_when_runtime_confirmation_pending(tmp_path, monkeypatch):
+    from data_agent.llm.client import Response
+
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="final_guard_stream_pending")
+    loop._get_system_prompt = lambda: ""
+    loop._prepare_analysis_turn = lambda _user_input: []
+    loop._turn_question_need = None
+    candidate = __import__(
+        "data_agent.agent.confirmation.runtime",
+        fromlist=["build_required_question_candidate"],
+    ).build_required_question_candidate(
+        session_id="final_guard_stream_pending",
+        turn_id="turn_guard",
+        message_version=1,
+        request={
+            "question": "Confirm stream route?",
+            "options": [{"label": "Trend", "value": "trend"}],
+            "confirmation_type": "route_selection",
+            "blocking_reason": "Route affects the final answer.",
+        },
+        source="question_need_detector",
+        operation="route_selection",
+    )
+    loop._confirmation_runtime().request(candidate)
+
+    loop._stream_llm_round = lambda _round_num: iter([{
+        "type": "_response",
+        "response": Response(text="stream final should not bypass"),
+        "streamed_text": "stream final should not bypass",
+    }])
+
+    events = list(loop.stream_turn("analyze data"))
+    suspended = [event for event in events if event["type"] == "suspended"][0]
+
+    assert suspended["confirmation_id"] == suspended["suspension_id"]
+    assert suspended["question"] == "Confirm stream route?"

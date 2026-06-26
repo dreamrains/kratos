@@ -1213,6 +1213,17 @@ class AgentLoop:
             {"messages": self._serialize_messages()},
         )
 
+    def _runtime_confirmation_checkpoint(self) -> SuspendedForConfirmation | None:
+        from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
+
+        record = self._confirmation_runtime().checkpoint(self.session_id)
+        if record is None:
+            return None
+        return confirmation_record_to_loop_result(
+            record,
+            {"messages": self._serialize_messages()},
+        )
+
     def _suspended_event(self, susp: SuspendedForConfirmation) -> dict[str, Any]:
         confirmation_id = susp.confirmation_id or susp.suspension_id
         return {
@@ -1823,6 +1834,11 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            blocked_confirmation = self._runtime_confirmation_checkpoint()
+            if blocked_confirmation is not None:
+                yield self._suspended_event(blocked_confirmation)
+                return
+
             buffer_text_events = self._is_analysis_quality_guard_candidate()
             pending_text_events = []
 
@@ -1882,6 +1898,10 @@ class AgentLoop:
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
+                blocked_confirmation = self._runtime_confirmation_checkpoint()
+                if blocked_confirmation is not None:
+                    yield self._suspended_event(blocked_confirmation)
+                    return
                 if buffer_text_events:
                     for ev in pending_text_events:
                         yield ev
@@ -2265,6 +2285,10 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
+            blocked_confirmation = self._runtime_confirmation_checkpoint()
+            if blocked_confirmation is not None:
+                return blocked_confirmation
+
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
@@ -2299,6 +2323,9 @@ class AgentLoop:
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
+                blocked_confirmation = self._runtime_confirmation_checkpoint()
+                if blocked_confirmation is not None:
+                    return blocked_confirmation
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
