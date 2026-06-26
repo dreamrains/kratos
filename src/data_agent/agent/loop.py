@@ -1259,13 +1259,8 @@ class AgentLoop:
     def _load_confirmation_for_resume(
         self,
         confirmation_id: str,
-    ) -> tuple[SuspendedForConfirmation | None, bool]:
-        runtime_suspension = self._runtime_suspension_for_resume(confirmation_id)
-        if runtime_suspension is not None:
-            return runtime_suspension, False
-
-        legacy = SuspensionManager(get_config().sessions_resolved).load(confirmation_id)
-        return legacy, True
+    ) -> SuspendedForConfirmation | None:
+        return self._runtime_suspension_for_resume(confirmation_id)
 
     def _resolve_runtime_confirmation(
         self,
@@ -1292,8 +1287,7 @@ class AgentLoop:
                 self.session_id,
                 confirmation_id,
                 version,
-                idempotency_key
-                or self._confirmation_response_key(confirmation_id, operation, answer),
+                idempotency_key,
             )
         elif lowered == "cancelled":
             operation = "cancel"
@@ -1302,8 +1296,7 @@ class AgentLoop:
                 self.session_id,
                 confirmation_id,
                 version,
-                idempotency_key
-                or self._confirmation_response_key(confirmation_id, operation, answer),
+                idempotency_key,
             )
         else:
             operation = "answer"
@@ -1313,8 +1306,7 @@ class AgentLoop:
                 confirmation_id,
                 answer,
                 version,
-                idempotency_key
-                or self._confirmation_response_key(confirmation_id, operation, answer),
+                idempotency_key,
             )
 
         return confirmation_record_to_loop_result(
@@ -1492,18 +1484,18 @@ class AgentLoop:
         idempotency_key: str = "",
     ) -> LoopResult:
         """Resume after user answers a suspended question. Web mode."""
-        susp, is_legacy = self._load_confirmation_for_resume(suspension_id)
+        susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
-            return FinalResponse(content=f"Error: suspension {suspension_id} not found")
-        if is_legacy:
-            self._resolve_confirmation(susp, user_response)
-        else:
+            return FinalResponse(content=f"Error: runtime confirmation {suspension_id} not found")
+        try:
             susp = self._resolve_runtime_confirmation(
                 susp,
                 user_response,
                 expected_version=expected_version,
                 idempotency_key=idempotency_key,
             )
+        except Exception as exc:
+            return FinalResponse(content=f"Error: {exc}")
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 
@@ -1513,8 +1505,6 @@ class AgentLoop:
             f"User answered: {user_response}\n"
             f"</confirmation_response>"
         )})
-        if is_legacy:
-            SuspensionManager(get_config().sessions_resolved).remove(suspension_id)
         result = self._loop(resumed_input)
         if isinstance(result, FinalResponse):
             self._maybe_archive("", result.content)
@@ -1956,19 +1946,20 @@ class AgentLoop:
         """Generator variant of resume_turn for SSE streaming."""
         set_current_context(self.context)
 
-        susp, is_legacy = self._load_confirmation_for_resume(suspension_id)
+        susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
-            yield {"type": "error", "message": f"Suspension {suspension_id} not found"}
+            yield {"type": "error", "message": f"runtime confirmation {suspension_id} not found"}
             return
-        if is_legacy:
-            self._resolve_confirmation(susp, user_response)
-        else:
+        try:
             susp = self._resolve_runtime_confirmation(
                 susp,
                 user_response,
                 expected_version=expected_version,
                 idempotency_key=idempotency_key,
             )
+        except Exception as exc:
+            yield {"type": "error", "message": str(exc)}
+            return
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
 
@@ -1978,8 +1969,6 @@ class AgentLoop:
             f"User answered: {user_response}\n"
             f"</confirmation_response>"
         )})
-        if is_legacy:
-            SuspensionManager(get_config().sessions_resolved).remove(suspension_id)
 
         final_text = ""
         round_num = 0

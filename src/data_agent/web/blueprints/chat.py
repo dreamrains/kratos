@@ -146,16 +146,32 @@ def chat():
 def resume_chat():
     """Resume a suspended turn after user answers ask_user_question."""
     data = request.get_json(force=True)
-    session_id = data.get("session_id", "")
-    confirmation_id = data.get("confirmation_id") or data.get("suspension_id", "")
-    expected_version = data.get("expected_version") or data.get("version")
-    idempotency_key = data.get("idempotency_key", "")
+    session_id = str(data.get("session_id") or "").strip()
+    confirmation_id = str(data.get("confirmation_id") or "").strip()
+    expected_version = data.get("expected_version")
+    idempotency_key = str(data.get("idempotency_key") or "").strip()
     user_response = data.get("user_response", "")
+
+    if not confirmation_id:
+        return jsonify({"error": "confirmation_id is required"}), 400
+    if expected_version is None:
+        return jsonify({"error": "expected_version is required"}), 400
+    if not idempotency_key:
+        return jsonify({"error": "idempotency_key is required"}), 400
+    try:
+        expected_version = int(expected_version)
+    except (TypeError, ValueError):
+        return jsonify({"error": "expected_version must be an integer"}), 400
 
     manager = current_app.config["agent_manager"]
     agent_loop = manager.get(session_id)
     if not agent_loop:
         return jsonify({"error": f"Session {session_id} not found"}), 404
+
+    try:
+        agent_loop._confirmation_runtime().get(agent_loop.session_id, confirmation_id)
+    except KeyError:
+        return jsonify({"error": f"runtime confirmation {confirmation_id} not found"}), 404
 
     turn_id = f"t_{uuid.uuid4().hex[:6]}"
     eq = EventQueue()

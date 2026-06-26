@@ -290,7 +290,12 @@ def test_resume_turn_answers_runtime_confirmation(tmp_path, monkeypatch):
     suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
     loop._loop = lambda _user_input: FinalResponse(content="done")
 
-    result = loop.resume_turn(suspended.confirmation_id, "revenue")
+    result = loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="answer_key",
+    )
     record = loop._confirmation_runtime().get(
         "resume_runtime_question",
         suspended.confirmation_id,
@@ -308,7 +313,12 @@ def test_resume_turn_is_idempotent_for_same_runtime_answer(tmp_path, monkeypatch
     suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
     loop._loop = lambda _user_input: FinalResponse(content="done")
 
-    loop.resume_turn(suspended.confirmation_id, "revenue")
+    loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="client_retry_key",
+    )
     events_path = (
         tmp_path
         / "resume_runtime_idempotent"
@@ -317,7 +327,12 @@ def test_resume_turn_is_idempotent_for_same_runtime_answer(tmp_path, monkeypatch
     )
     before = events_path.read_text(encoding="utf-8").splitlines()
 
-    repeated = loop.resume_turn(suspended.confirmation_id, "revenue")
+    repeated = loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="client_retry_key",
+    )
     after = events_path.read_text(encoding="utf-8").splitlines()
 
     assert repeated == FinalResponse(content="done")
@@ -341,7 +356,14 @@ def test_resume_turn_streaming_answers_runtime_confirmation(tmp_path, monkeypatc
 
     loop._stream_llm_round = _stream_done
 
-    events = list(loop.resume_turn_streaming(suspended.confirmation_id, "revenue"))
+    events = list(
+        loop.resume_turn_streaming(
+            suspended.confirmation_id,
+            "revenue",
+            expected_version=suspended.version,
+            idempotency_key="stream_answer_key",
+        )
+    )
     record = loop._confirmation_runtime().get(
         "resume_runtime_streaming",
         suspended.confirmation_id,
@@ -370,6 +392,45 @@ def test_resume_turn_uses_client_idempotency_key(tmp_path, monkeypatch):
     )
 
     assert record.response_id == "client_retry_key"
+
+
+def test_resume_turn_rejects_legacy_suspension_file(tmp_path, monkeypatch):
+    from data_agent.agent.loop import SuspendedForConfirmation, SuspensionManager
+
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    SuspensionManager(tmp_path).save(
+        SuspendedForConfirmation(
+            suspension_id="legacy_only",
+            question="Legacy question?",
+            options=[],
+            context="",
+            snapshot={"messages": []},
+        )
+    )
+    loop = AgentLoop(client=None, session_id="resume_rejects_legacy")
+    loop._loop = lambda _user_input: FinalResponse(content="done")
+
+    result = loop.resume_turn("legacy_only", "answer")
+
+    assert isinstance(result, FinalResponse)
+    assert "runtime confirmation legacy_only not found" in result.content
+
+
+def test_resume_turn_requires_runtime_idempotency_key(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_requires_key")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+    loop._loop = lambda _user_input: FinalResponse(content="done")
+
+    result = loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="",
+    )
+
+    assert isinstance(result, FinalResponse)
+    assert "idempotency_key is required" in result.content
 
 
 def test_sync_loop_blocks_final_response_when_runtime_confirmation_pending(tmp_path, monkeypatch):

@@ -158,6 +158,51 @@ function chatApp() {
             this.isCompact = s.isCompact;
         },
 
+        _confirmationFromPayload(payload) {
+            if (!payload) return null;
+            return {
+                confirmation_id: payload.confirmation_id,
+                suspension_id: payload.confirmation_id,
+                version: payload.version || 1,
+                status: payload.status || 'suspended',
+                question: payload.question || '',
+                options: payload.options || [],
+                context: payload.context || '',
+                multi_select: !!payload.multi_select,
+                confirmation_type: payload.confirmation_type || '',
+                blocking_reason: payload.blocking_reason || '',
+                related_task_id: payload.related_task_id || '',
+                related_spec_id: payload.related_spec_id || '',
+                skippable: payload.skippable !== false,
+                _resuming: false,
+                _error: '',
+                _idempotencyKey: '',
+                _state: this._initConfirmationState(),
+            };
+        },
+
+        _restoreActiveConfirmation(state, payload) {
+            const confirmation = payload?._state ? payload : this._confirmationFromPayload(payload);
+            if (!confirmation) return;
+            let turn = state.turns[state.turns.length - 1];
+            if (!turn || turn.role !== 'assistant') {
+                turn = {
+                    role: 'assistant',
+                    content: '',
+                    roundIndex: this._countUserTurns(state.turns),
+                    toolCalls: [],
+                    artifacts: [],
+                    confirmation: null,
+                    isThinking: false,
+                    thinkingText: '',
+                    _copied: false,
+                };
+                state.turns.push(turn);
+            }
+            turn.isThinking = false;
+            turn.confirmation = confirmation;
+        },
+
         _initialized: false,
 
         async init() {
@@ -930,6 +975,13 @@ function chatApp() {
                 const sess = this.sessions.find(s => s.session_id === sessionId);
                 if (sess) this.activeProjectName = sess.project_name || '';
             }
+            try {
+                const confirmationRes = await fetch(`/api/sessions/${sessionId}`);
+                const data = await confirmationRes.json();
+                const activeConfirmation = this._confirmationFromPayload(data.active_confirmation);
+                this._restoreActiveConfirmation(state, activeConfirmation);
+                this.turns = state.turns;
+            } catch {}
             await Promise.all([
                 this.loadAnalysisState(sessionId),
                 this.loadTrustView(sessionId),
@@ -1726,23 +1778,27 @@ function chatApp() {
             return parts.join('; ');
         },
 
-        async resumeConfirmation(suspensionId, userResponse, confirmation = null) {
+        async resumeConfirmation(userResponse, confirmation = null) {
             const state = this._getSessionState(this.currentSessionId);
             if (state._resuming) return;
             state._resuming = true;
             const turn = state.turns[state.turns.length - 1];
-            if (turn) turn.confirmation._resuming = true;
+            confirmation = confirmation || turn?.confirmation;
+            if (!confirmation || !confirmation.confirmation_id) {
+                if (turn?.confirmation) turn.confirmation._error = 'Confirmation is no longer active. Reload the session.';
+                state._resuming = false;
+                return;
+            }
+            if (!confirmation._idempotencyKey) {
+                confirmation._idempotencyKey = `web_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+            }
+            if (turn?.confirmation) {
+                turn.confirmation._resuming = true;
+                turn.confirmation._error = '';
+            }
             state._interrupted = false;
             let newTurn = null;
             const sseSessionId = this.currentSessionId;
-
-            // Display the user's response as a visible user turn
-            if (turn) turn.confirmation = null;
-            state.turns.push({
-                role: 'user', content: userResponse,
-                roundIndex: this._countUserTurns(state.turns) + 1,
-                isConfirmationResponse: true,
-            });
 
             try {
                 const response = await fetch('/api/chat/resume', {
@@ -1750,16 +1806,29 @@ function chatApp() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         session_id: this.currentSessionId,
-                        confirmation_id: confirmation?.confirmation_id || suspensionId,
-                        suspension_id: suspensionId,
-                        expected_version: confirmation?.version || null,
+                        confirmation_id: confirmation.confirmation_id,
+                        expected_version: confirmation.version,
+                        idempotency_key: confirmation._idempotencyKey,
                         user_response: userResponse,
                     }),
                 });
                 if (!response.ok) {
                     const errData = await response.json().catch(() => ({ error: response.statusText }));
-                    throw new Error(errData.error || `HTTP ${response.status}`);
+                    if (turn) {
+                        turn.confirmation = confirmation;
+                        turn.confirmation._resuming = false;
+                        turn.confirmation._error = errData.error || 'Confirmation failed. Please retry.';
+                    }
+                    state._resuming = false;
+                    this.turns = [...state.turns];
+                    return;
                 }
+                if (turn) turn.confirmation = null;
+                state.turns.push({
+                    role: 'user', content: userResponse,
+                    roundIndex: this._countUserTurns(state.turns) + 1,
+                    isConfirmationResponse: true,
+                });
                 state.turns.push({
                     role: 'assistant', content: '', toolCalls: [], artifacts: [],
                     confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
@@ -1814,10 +1883,10 @@ function chatApp() {
                 }
                 this._submitMultiQuestionStep(c, st, currentQ);
                 const response = this._multiQuestionComplete(c, st);
-                this.resumeConfirmation(c.suspension_id, response, c);
+                this.resumeConfirmation(response, c);
             } else {
                 const response = this._submitSingleAnswer(c, st);
-                this.resumeConfirmation(c.suspension_id, response, c);
+                this.resumeConfirmation(response, c);
             }
         },
 
@@ -1834,17 +1903,17 @@ function chatApp() {
                 st.freeText = '';
                 if (st.currentStep >= questions.length) {
                     const response = this._multiQuestionComplete(c, st);
-                    this.resumeConfirmation(c.suspension_id, response, c);
+                    this.resumeConfirmation(response, c);
                 }
             } else {
-                this.resumeConfirmation(c.suspension_id, 'skipped', c);
+                this.resumeConfirmation('skipped', c);
             }
         },
 
         _cancelConfirmation(turn) {
             const c = turn.confirmation;
             if (!c) return;
-            this.resumeConfirmation(c.suspension_id, 'cancelled', c);
+            this.resumeConfirmation('cancelled', c);
         },
 
         async interruptTurn() {
@@ -2436,20 +2505,20 @@ function chatApp() {
                     break;
                 case 'suspended':
                     turn.isThinking = false;
-                    turn.confirmation = {
+                    turn.confirmation = this._confirmationFromPayload({
                         confirmation_id: data.confirmation_id || data.suspension_id,
-                        suspension_id: data.suspension_id,
                         version: data.version || 1,
+                        status: 'suspended',
                         question: data.question,
                         options: data.options || [],
                         context: data.context || '',
+                        multi_select: !!data.multi_select,
                         confirmation_type: data.confirmation_type || '',
                         blocking_reason: data.blocking_reason || '',
                         related_task_id: data.related_task_id || '',
                         related_spec_id: data.related_spec_id || '',
-                        _resuming: false,
-                        _state: this._initConfirmationState(),
-                    };
+                        skippable: data.skippable !== false,
+                    });
                     if (isCurrentSession) {
                         this.turns = [...state.turns];
                     }

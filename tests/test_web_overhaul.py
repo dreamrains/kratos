@@ -628,3 +628,16 @@ class TestCoreRegression:
         ]:
             with open(f, encoding="utf-8") as fh:
                 ast.parse(fh.read())
+
+
+class TestConfirmationRuntimeRestore:
+    def test_session_load_restores_active_confirmation(self, js):
+        assert "_restoreActiveConfirmation" in js
+        assert "data.active_confirmation" in js
+        assert "_confirmationFromPayload(data.active_confirmation)" in js
+
+    def test_resume_payload_uses_runtime_confirmation_contract(self, js):
+        assert "confirmation_id: confirmation.confirmation_id" in js
+        assert "expected_version: confirmation.version" in js
+        assert "idempotency_key: confirmation._idempotencyKey" in js
+        assert "suspension_id: suspensionId" not in js
