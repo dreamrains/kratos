@@ -66,6 +66,18 @@ def get_session(session_id: str):
     else:
         data["token_usage"] = None
 
+    from data_agent.agent.confirmation.runtime import (
+        build_action_registry,
+        confirmation_session_state,
+    )
+    from data_agent.agent.confirmation.service import ConfirmationService
+
+    service = ConfirmationService(
+        cfg.sessions_resolved,
+        action_registry=build_action_registry(),
+    )
+    data.update(confirmation_session_state(service, session_id))
+
     return jsonify(data)
 
 

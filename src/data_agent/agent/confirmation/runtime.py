@@ -122,6 +122,36 @@ def confirmation_record_to_suspended_event(record: ConfirmationRecord) -> dict[s
     }
 
 
+def confirmation_record_to_session_payload(record: ConfirmationRecord) -> dict[str, Any]:
+    payload = confirmation_record_to_suspended_event(record)
+    payload["status"] = record.status.value
+    payload["skippable"] = bool(record.skippable)
+    return payload
+
+
+def confirmation_session_state(service: Any, session_id: str) -> dict[str, Any]:
+    from data_agent.agent.confirmation.models import ConfirmationStatus
+
+    records = service._store(session_id).load_records()
+    active = None
+    queued = 0
+    failed = 0
+    for record in records.values():
+        if record.status == ConfirmationStatus.SUSPENDED and active is None:
+            active = confirmation_record_to_session_payload(record)
+        elif record.status == ConfirmationStatus.PENDING:
+            queued += 1
+        elif record.status == ConfirmationStatus.FAILED:
+            failed += 1
+            if active is None:
+                active = confirmation_record_to_session_payload(record)
+    return {
+        "active_confirmation": active,
+        "queued_confirmation_count": queued,
+        "failed_confirmation_count": failed,
+    }
+
+
 def confirmation_record_to_loop_result(
     record: ConfirmationRecord,
     snapshot: dict[str, Any],
