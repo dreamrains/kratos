@@ -369,7 +369,8 @@ def _analysis_state_payload(state) -> dict:
             "has_spec": bool(state.analysis_spec),
             "evidence_records": len(state.evidence_records),
             "insight_records": len(state.insight_records),
-            "pending_confirmations": len(pending),
+            "pending_confirmations": 0,
+            "workflow_notes": len(pending),
             "recommended_paths": len(state.last_recommended_paths),
         },
     }

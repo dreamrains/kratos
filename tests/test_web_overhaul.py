@@ -641,3 +641,9 @@ class TestConfirmationRuntimeRestore:
         assert "expected_version: confirmation.version" in js
         assert "idempotency_key: confirmation._idempotencyKey" in js
         assert "suspension_id: suspensionId" not in js
+
+
+class TestConfirmationWorkbenchWording:
+    def test_workbench_distinguishes_workflow_notes_from_active_confirmations(self, js):
+        assert "workflow_notes" in js
+        assert "Workflow notes" in js

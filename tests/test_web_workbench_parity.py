@@ -85,7 +85,8 @@ def test_web_analysis_state_endpoint_and_reset(tmp_path):
         assert body["summary"]["requirements"] == 1
         assert body["summary"]["has_spec"] is True
         assert body["summary"]["evidence_records"] == 1
-        assert body["summary"]["pending_confirmations"] == 1
+        assert body["summary"]["workflow_notes"] == 1
+        assert body["summary"]["pending_confirmations"] == 0
 
         reset_resp = client.post(f"/api/sessions/{session_id}/analysis/reset")
         assert reset_resp.status_code == 200

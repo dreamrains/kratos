@@ -284,6 +284,7 @@ function chatApp() {
                 evidence_records: 0,
                 insight_records: 0,
                 pending_confirmations: 0,
+                workflow_notes: 0,
                 recommended_paths: 0,
             };
         },
@@ -1460,6 +1461,9 @@ function chatApp() {
         },
 
         trustHelpText(topic) {
+            if (topic === 'confirmations') {
+                return 'Workflow notes record historical risks or unclear context. Active confirmations are answerable cards in chat and must come from the confirmation runtime.';
+            }
             const help = {
                 currentContext: '这是什么：当前分析目标、纳入文件、排除文件和仍待确认的上下文。为什么重要：它让侧栏先说明系统正在依据什么判断，而不是直接催促选择路线。你可以怎么做：核对目标和文件范围是否符合预期。',
                 confirmations: '这是什么：继续分析前需要用户确认的问题或阻塞原因。为什么重要：它把不确定性显式放在执行前，避免把候选方向包装成确定建议。你可以怎么做：先回答确认问题，再推进分析。',
