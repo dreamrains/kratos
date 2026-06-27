@@ -8,6 +8,35 @@ from data_agent.agent.multi_file_scope import (
 )
 
 
+def _profile(file_id, *, dataset=None, filename=None, status="loaded", **overrides):
+    item = {
+        "file_id": file_id,
+        "filename": filename or f"{file_id}.csv",
+        "dataset": dataset or file_id,
+        "status": status,
+    }
+    item.update(overrides)
+    return item
+
+
+def _add_contract(state, dataset, *, status="ready"):
+    state.dataset_contracts.append({
+        "id": f"duc_{dataset}",
+        "dataset": dataset,
+        "quality_status": status,
+    })
+
+
+def _state(*profiles):
+    state = AnalysisSessionState(session_id="scope_contract", data_state="data_loaded")
+    state.data_pool = list(profiles)
+    for profile in profiles:
+        dataset = profile.get("dataset")
+        if dataset and profile.get("status") != "failed":
+            _add_contract(state, dataset)
+    return state
+
+
 def test_canonical_entity_fields_recognize_user_aliases():
     profile = {
         "file_id": "coupon",
@@ -35,273 +64,8 @@ def test_infer_file_grain_prefers_order_level_when_order_id_exists():
     assert infer_file_grain(profile)["grain"] == "order_level"
 
 
-def test_infer_file_grain_prefers_user_level_before_retention_filename_hint():
-    profile = {
-        "file_id": "retention_detail",
-        "filename": "留存明细.csv",
-        "columns": ["用户ID", "日期", "是否留存"],
-        "key_fields": ["用户ID"],
-        "time_fields": ["日期"],
-    }
-
-    assert infer_file_grain(profile)["grain"] == "user_level"
-
-
-def test_scope_plan_includes_relevant_user_files_and_excludes_unrelated_game_file():
-    state = AnalysisSessionState(session_id="scope_plan", data_state="data_loaded")
-    state.goal = "评估省钱卡是否值得继续运营"
-    state.data_pool = [
-        {
-            "file_id": "orders",
-            "filename": "省钱卡订单.xlsx",
-            "dataset": "省钱卡订单",
-            "columns": ["order_id", "user_id", "支付时间", "实收金额"],
-            "key_fields": ["order_id", "user_id"],
-            "time_fields": ["支付时间"],
-        },
-        {
-            "file_id": "coupon",
-            "filename": "代金券明细订单.xlsx",
-            "dataset": "代金券明细订单",
-            "columns": ["主用户ID", "产品用户ID", "优惠券ID", "核销时间"],
-            "key_fields": [],
-            "time_fields": ["核销时间"],
-        },
-        {
-            "file_id": "game",
-            "filename": "游戏互推.xlsx",
-            "dataset": "游戏互推",
-            "columns": ["设备ID", "游戏", "留存"],
-            "key_fields": ["设备ID"],
-        },
-    ]
-    state.set_active_bundle({
-        "bundle_id": "bundle_orders",
-        "file_ids": ["orders"],
-        "dataset_names": ["省钱卡订单"],
-    })
-    state.file_relationships = [{
-        "relationship_id": "rel_orders_coupon",
-        "file_ids": ["orders", "coupon"],
-        "status": "possibly_linked",
-        "requires_confirmation": True,
-        "evidence": ["Coupon user aliases may map to the order user_id."],
-    }]
-
-    plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
-
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
-    assert plan["decision_files"] == []
-    assert plan["pending_files"] == []
-    assert [item["file_id"] for item in plan["unused_files"]] == ["game"]
-    assert plan["scope_status"] == "ready_with_notes"
-    assert any(
-        "coupon" in note
-        and "join" in note.lower()
-        and "rel_orders_coupon" in note
-        for note in plan["notes"]
-    )
-
-
-def test_scope_plan_excludes_unrelated_game_file_even_when_active_bundle_includes_it():
-    state = AnalysisSessionState(session_id="scope_plan_active_game", data_state="data_loaded")
-    state.goal = "评估省钱卡是否值得继续运营"
-    state.data_pool = [
-        {
-            "file_id": "orders",
-            "filename": "省钱卡订单.xlsx",
-            "dataset": "省钱卡订单",
-            "columns": ["order_id", "user_id", "支付时间", "实收金额"],
-            "key_fields": ["order_id", "user_id"],
-            "time_fields": ["支付时间"],
-        },
-        {
-            "file_id": "game",
-            "filename": "游戏互推.xlsx",
-            "dataset": "游戏互推",
-            "columns": ["设备ID", "游戏", "留存"],
-            "key_fields": ["设备ID"],
-        },
-    ]
-    state.set_active_bundle({
-        "bundle_id": "bundle_with_game",
-        "file_ids": ["orders", "game"],
-        "dataset_names": ["省钱卡订单", "游戏互推"],
-    })
-
-    plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
-
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
-    assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
-
-
-def test_scope_plan_keeps_ambiguous_files_available_without_confirmation():
-    state = AnalysisSessionState(session_id="scope_plan_pending", data_state="data_loaded")
-    state.goal = "评估省钱卡是否值得继续运营"
-    state.data_pool = [
-        {
-            "file_id": "orders",
-            "filename": "省钱卡订单.xlsx",
-            "dataset": "省钱卡订单",
-            "columns": ["order_id", "user_id", "支付时间", "实收金额"],
-            "key_fields": ["order_id", "user_id"],
-            "time_fields": ["支付时间"],
-        },
-        {
-            "file_id": "ambiguous",
-            "filename": "运营备注.xlsx",
-            "dataset": "运营备注",
-            "columns": ["备注", "标签"],
-            "key_fields": [],
-        },
-    ]
-    state.set_active_bundle({
-        "bundle_id": "bundle_orders",
-        "file_ids": ["orders"],
-        "dataset_names": ["省钱卡订单"],
-    })
-
-    plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
-
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
-    assert [item["file_id"] for item in plan["available_files"]] == ["ambiguous"]
-    assert plan["decision_files"] == []
-    assert plan["pending_files"] == []
-    assert plan["scope_status"] == "ready_with_notes"
-
-
-def test_scope_plan_uses_relationship_evidence_before_canonical_ids():
-    state = AnalysisSessionState(session_id="scope_relationship_priority", data_state="data_loaded")
-    state.data_pool = [
-        {
-            "file_id": "historical_orders",
-            "filename": "archive.xlsx",
-            "columns": ["order_id", "user_id"],
-        },
-        {
-            "file_id": "confirmed_profile",
-            "filename": "customer_profile.xlsx",
-            "columns": ["user_id", "segment"],
-        },
-        {
-            "file_id": "active_orders",
-            "filename": "membership_orders.xlsx",
-            "columns": ["order_id", "user_id"],
-        },
-    ]
-    state.set_active_bundle({
-        "bundle_id": "bundle_active",
-        "file_ids": ["active_orders"],
-    })
-    state.file_relationships = [{
-        "relationship_id": "rel_profile",
-        "file_ids": ["active_orders", "confirmed_profile"],
-        "status": "linked",
-        "requires_confirmation": False,
-        "evidence": ["Shared strong key fields: user_id"],
-    }]
-
-    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
-
-    assert [item["file_id"] for item in plan["included_files"]] == [
-        "active_orders",
-        "confirmed_profile",
-    ]
-    assert [item["file_id"] for item in plan["available_files"]] == ["historical_orders"]
-    assert plan["decision_files"] == []
-    assert plan["pending_files"] == []
-
-
-def test_scope_plan_enforces_deterministic_five_file_detail_budget():
-    state = AnalysisSessionState(session_id="scope_budget", data_state="data_loaded")
-    state.data_pool = [
-        {"file_id": "candidate_1", "filename": "membership_candidate_1.xlsx"},
-        {"file_id": "excluded", "filename": "game_retention.xlsx"},
-        {"file_id": "linked", "filename": "customer_profile.xlsx", "columns": ["user_id"]},
-        {"file_id": "active_2", "filename": "membership_active_2.xlsx"},
-        {"file_id": "candidate_2", "filename": "membership_candidate_2.xlsx"},
-        {"file_id": "active_1", "filename": "membership_active_1.xlsx"},
-        {"file_id": "candidate_3", "filename": "membership_candidate_3.xlsx"},
-    ]
-    state.set_active_bundle({
-        "bundle_id": "bundle_active",
-        "file_ids": ["active_1", "active_2"],
-    })
-    state.file_relationships = [{
-        "relationship_id": "rel_linked",
-        "file_ids": ["active_1", "linked"],
-        "status": "confirmed",
-        "requires_confirmation": False,
-    }]
-
-    first = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
-    second = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
-
-    assert first == second
-    assert [item["file_id"] for item in first["included_files"]] == [
-        "active_2",
-        "active_1",
-        "linked",
-        "candidate_1",
-        "candidate_2",
-    ]
-    assert first["pending_files"] == []
-    assert first["excluded_files"] == []
-    assert first["context_budget"] == {
-        "included_file_count": 5,
-        "available_file_count": 0,
-        "unused_file_count": 0,
-        "decision_file_count": 0,
-        "unavailable_file_count": 0,
-        "excluded_file_count": 0,
-        "pending_file_count": 0,
-        "total_file_count": 7,
-        "returned_file_count": 5,
-        "omitted_file_count": 2,
-        "max_scope_files": 5,
-    }
-
-
-def test_scope_budget_keeps_active_files_visible_when_available_file_is_omitted():
-    state = AnalysisSessionState(session_id="scope_pending_budget", data_state="data_loaded")
-    state.data_pool = [
-        {"file_id": f"active_{index}", "filename": f"membership_active_{index}.xlsx"}
-        for index in range(1, 6)
-    ] + [{
-        "file_id": "pending_profile",
-        "filename": "customer_profile.xlsx",
-        "columns": ["customer_id", "segment"],
-    }]
-    state.set_active_bundle({
-        "bundle_id": "bundle_active",
-        "file_ids": [f"active_{index}" for index in range(1, 6)],
-    })
-
-    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
-
-    assert plan["scope_status"] == "ready_with_notes"
-    assert plan["pending_files"] == []
-    assert plan["decision_files"] == []
-    assert [item["file_id"] for item in plan["included_files"]] == [
-        f"active_{index}" for index in range(1, 6)
-    ]
-    assert plan["context_budget"] == {
-        "included_file_count": 5,
-        "available_file_count": 0,
-        "unused_file_count": 0,
-        "decision_file_count": 0,
-        "unavailable_file_count": 0,
-        "excluded_file_count": 0,
-        "pending_file_count": 0,
-        "total_file_count": 6,
-        "returned_file_count": 5,
-        "omitted_file_count": 1,
-        "max_scope_files": 5,
-    }
-
-
 @pytest.mark.parametrize("alias", ["customer_id", "member_id", "account_id"])
-def test_user_identifier_aliases_produce_user_grain_and_nonblocking_join_note(alias):
+def test_user_identifier_aliases_produce_user_grain(alias):
     profile = {
         "file_id": f"profile_{alias}",
         "filename": "customer_profile.xlsx",
@@ -311,12 +75,206 @@ def test_user_identifier_aliases_produce_user_grain_and_nonblocking_join_note(al
     assert canonical_entity_fields(profile)["user"] == [alias]
     assert infer_file_grain(profile)["grain"] == "user_level"
 
-    state = AnalysisSessionState(session_id=f"scope_alias_{alias}", data_state="data_loaded")
-    state.data_pool = [profile]
-    plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
 
-    assert [item["file_id"] for item in plan["available_files"]] == [f"profile_{alias}"]
-    assert plan["pending_files"] == []
-    assert plan["decision_files"] == []
+def test_scope_without_current_task_keeps_eligible_files_available():
+    state = _state(_profile("orders"), _profile("users"))
+
+    plan = build_analysis_scope_plan(state, "analyze revenue")
+
+    assert [item["file_id"] for item in plan["eligible_files"]] == ["orders", "users"]
+    assert plan["used_files"] == []
+    assert [item["reason_code"] for item in plan["available_files"]] == [
+        "eligible_not_yet_assigned",
+        "eligible_not_yet_assigned",
+    ]
+
+
+def test_scope_keeps_explicit_files_available_until_plan_has_bindings():
+    state = _state(_profile("orders"), _profile("users"))
+    state.analysis_plan = {"method_plan": [{"step": "legacy step without dataset bindings"}]}
+
+    plan = build_analysis_scope_plan(state, "analyze orders.csv and users.csv")
+
+    assert plan["used_files"] == []
+    assert [item["reason_code"] for item in plan["available_files"]] == [
+        "explicit_in_scope_pending_plan",
+        "explicit_in_scope_pending_plan",
+    ]
+
+
+def test_scope_separates_eligibility_from_plan_assignment():
+    state = _state(
+        _profile("orders"),
+        _profile("users"),
+        _profile("campaigns"),
+    )
+    state.analysis_plan = {
+        "method_plan": [
+            {"step_id": "task_orders", "dataset_inputs": ["orders"]},
+            {"step_id": "task_users", "dataset_inputs": ["users"]},
+        ]
+    }
+
+    plan = build_analysis_scope_plan(state, "analyze orders, users, and campaigns")
+
+    assert [item["file_id"] for item in plan["eligible_files"]] == [
+        "orders",
+        "users",
+        "campaigns",
+    ]
+    assert [item["file_id"] for item in plan["used_files"]] == ["orders", "users"]
+    assert [item["file_id"] for item in plan["not_needed_files"]] == ["campaigns"]
+    assert plan["used_files"][0]["reason_code"] == "plan_task_binding"
+    assert plan["not_needed_files"][0]["reason_code"] == "no_current_task"
+    assert plan["file_decisions"][0]["task_refs"] == ["task_orders"]
+    assert plan["file_decisions"][0]["dataset_contract_id"] == "duc_orders"
+    assert set(plan["file_decisions"][0]) == {
+        "file_id",
+        "filename",
+        "dataset",
+        "dataset_contract_id",
+        "grain",
+        "canonical_fields",
+        "eligibility",
+        "assignment",
+        "reason_code",
+        "reason",
+        "confidence",
+        "task_refs",
+    }
+    assert set(plan["used_files"][0]) == {
+        "file_id",
+        "filename",
+        "dataset",
+        "reason_code",
+    }
+    assert set(plan) == {
+        "scope_status",
+        "goal",
+        "file_decisions",
+        "eligible_files",
+        "used_files",
+        "available_files",
+        "not_needed_files",
+        "decision_files",
+        "unavailable_files",
+        "notes",
+        "context_budget",
+    }
+
+
+def test_scope_reports_all_unavailable_reasons():
+    state = AnalysisSessionState(session_id="scope_unavailable", data_state="data_loaded")
+    state.data_pool = [
+        _profile("failed", status="failed"),
+        _profile("missing_contract"),
+        _profile("blocked"),
+        {"filename": "anonymous.csv", "dataset": "anonymous", "status": "loaded"},
+    ]
+    _add_contract(state, "failed")
+    _add_contract(state, "blocked", status="blocked")
+    _add_contract(state, "anonymous")
+
+    plan = build_analysis_scope_plan(state, "inspect data quality")
+
+    assert [item["reason_code"] for item in plan["unavailable_files"]] == [
+        "load_failed",
+        "missing_dataset_contract",
+        "contract_blocked",
+        "missing_file_identity",
+    ]
     assert plan["scope_status"] == "ready_with_notes"
-    assert any(alias in note and "join" in note.lower() for note in plan["notes"])
+
+
+def test_explicit_exclusion_overrides_unavailable_and_never_blocks():
+    state = AnalysisSessionState(session_id="scope_exclusion", data_state="data_loaded")
+    state.data_pool = [_profile("broken", status="failed")]
+
+    plan = build_analysis_scope_plan(state, "exclude broken.csv")
+
+    decision = plan["file_decisions"][0]
+    assert decision["eligibility"] == "unavailable"
+    assert decision["assignment"] == "not_needed"
+    assert decision["reason_code"] == "explicit_user_exclusion"
+    assert plan["scope_status"] == "ready_with_notes"
+
+
+def test_unavailable_optional_file_does_not_block_eligible_work():
+    state = _state(_profile("orders"), _profile("broken", status="failed"))
+
+    plan = build_analysis_scope_plan(state, "analyze orders")
+
+    assert plan["scope_status"] == "ready_with_notes"
+    assert plan["unavailable_files"][0]["reason_code"] == "load_failed"
+
+
+@pytest.mark.parametrize("binding", [False, True])
+def test_unavailable_required_file_blocks_scope(binding):
+    state = AnalysisSessionState(session_id="scope_required_unavailable", data_state="data_loaded")
+    state.data_pool = [_profile("broken", status="failed")]
+    if binding:
+        state.analysis_plan = {
+            "method_plan": [{"step_id": "task_broken", "dataset_inputs": ["broken"]}]
+        }
+        goal = "analyze current data"
+    else:
+        goal = "analyze broken.csv"
+
+    plan = build_analysis_scope_plan(state, goal)
+
+    assert plan["scope_status"] == "blocked"
+    assert plan["unavailable_files"][0]["reason_code"] == "load_failed"
+
+
+def test_relationship_flags_never_change_eligibility_or_assignment():
+    state = _state(_profile("orders"), _profile("coupon"))
+    state.file_relationships = [{
+        "relationship_id": "rel_orders_coupon",
+        "file_ids": ["orders", "coupon"],
+        "status": "possibly_linked",
+        "requires_confirmation": True,
+    }]
+
+    plan = build_analysis_scope_plan(state, "analyze the uploaded files")
+
+    assert plan["used_files"] == []
+    assert [item["file_id"] for item in plan["available_files"]] == ["orders", "coupon"]
+    assert [item["reason_code"] for item in plan["available_files"]] == [
+        "explicit_all_pending_plan",
+        "explicit_all_pending_plan",
+    ]
+    assert plan["decision_files"] == []
+    assert all("relationship" not in item for item in plan["file_decisions"])
+
+
+def test_duplicate_explicit_reference_is_prioritized_with_bounded_full_counts():
+    profiles = [
+        _profile("sales_a", dataset="sales_a", filename="sales.csv"),
+        _profile("sales_b", dataset="sales_b", filename="sales.csv"),
+        *[_profile(f"extra_{index}") for index in range(1, 6)],
+    ]
+    state = _state(*profiles)
+
+    first = build_analysis_scope_plan(state, "analyze sales.csv")
+    second = build_analysis_scope_plan(state, "analyze sales.csv")
+
+    assert first == second
+    assert first["scope_status"] == "needs_decision"
+    assert [item["file_id"] for item in first["decision_files"]] == ["sales_a", "sales_b"]
+    assert all(
+        item["reason_code"] == "ambiguous_file_reference"
+        for item in first["decision_files"]
+    )
+    assert len(first["file_decisions"]) == 5
+    assert first["context_budget"] == {
+        "eligible_file_count": 7,
+        "used_file_count": 0,
+        "available_file_count": 5,
+        "not_needed_file_count": 0,
+        "decision_file_count": 2,
+        "unavailable_file_count": 0,
+        "total_file_count": 7,
+        "returned_file_count": 5,
+        "omitted_file_count": 2,
+        "max_scope_files": 5,
+    }

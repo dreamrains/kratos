@@ -4,7 +4,7 @@ from data_agent.agent.route_capabilities import build_route_capabilities
 from data_agent.agent.trust_view import build_trust_view
 
 
-def test_scope_plan_keeps_orders_and_coupon_profiles_linkable_by_user_aliases():
+def test_scope_plan_keeps_relationship_evidence_out_of_file_assignment():
     state = AnalysisSessionState(session_id="a4237f2cee72_regression", data_state="data_loaded")
     state.data_pool = [
         {
@@ -36,20 +36,19 @@ def test_scope_plan_keeps_orders_and_coupon_profiles_linkable_by_user_aliases():
         "requires_confirmation": True,
         "evidence": ["User alias fields may connect coupon usage to orders."],
     }]
+    state.dataset_contracts = [
+        {"id": "duc_orders", "dataset": "省钱卡订单", "quality_status": "ready"},
+        {"id": "duc_coupon", "dataset": "优惠券核销", "quality_status": "ready"},
+    ]
 
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
+    assert [item["file_id"] for item in plan["eligible_files"]] == ["orders", "coupon"]
+    assert [item["file_id"] for item in plan["available_files"]] == ["orders", "coupon"]
+    assert plan["used_files"] == []
     assert plan["decision_files"] == []
-    assert plan["pending_files"] == []
     assert plan["scope_status"] == "ready_with_notes"
-    assert any(
-        "coupon" in note
-        and "join" in note.lower()
-        and "rel_orders_coupon" in note
-        for note in plan["notes"]
-    )
-    assert "coupon" not in {item["file_id"] for item in plan["excluded_files"]}
+    assert all("relationship" not in item for item in plan["file_decisions"])
 
 
 def test_method_confirmation_surfaces_an_answerable_question_across_trust_view():

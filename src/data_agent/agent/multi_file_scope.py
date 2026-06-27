@@ -1,4 +1,4 @@
-"""Compact multi-file analysis scope planning helpers."""
+"""Compact multi-file eligibility and assignment planning helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,18 @@ from typing import Any
 
 
 MAX_SCOPE_FILES = 5
-MAX_RELATIONSHIP_EVIDENCE = 3
+
+REASON_MISSING_FILE_IDENTITY = "missing_file_identity"
+REASON_LOAD_FAILED = "load_failed"
+REASON_MISSING_DATASET_CONTRACT = "missing_dataset_contract"
+REASON_CONTRACT_BLOCKED = "contract_blocked"
+REASON_AMBIGUOUS_FILE_REFERENCE = "ambiguous_file_reference"
+REASON_EXPLICIT_USER_EXCLUSION = "explicit_user_exclusion"
+REASON_PLAN_TASK_BINDING = "plan_task_binding"
+REASON_NO_CURRENT_TASK = "no_current_task"
+REASON_EXPLICIT_IN_SCOPE_PENDING_PLAN = "explicit_in_scope_pending_plan"
+REASON_EXPLICIT_ALL_PENDING_PLAN = "explicit_all_pending_plan"
+REASON_ELIGIBLE_NOT_YET_ASSIGNED = "eligible_not_yet_assigned"
 
 USER_ALIASES = {
     "user_id",
@@ -27,18 +38,6 @@ USER_ALIASES = {
 ORDER_ALIASES = {"order_id", "订单ID", "订单id", "订单号", "订单编号"}
 COUPON_ALIASES = {"coupon_id", "优惠券ID", "优惠券id", "代金券ID", "代金券id"}
 TIME_ALIASES = {"paid_at", "pay_time", "event_time", "支付时间", "下单时间", "核销时间", "日期", "时间"}
-
-EXCLUDED_GAME_TERMS = ("game", "游戏", "互推")
-GAME_GOAL_TERMS = ("game", "游戏", "互推", "留存", "retention")
-MEMBERSHIP_GOAL_TERMS = ("省钱卡", "会员", "membership", "member", "card")
-GOAL_THEME_GROUPS = (
-    MEMBERSHIP_GOAL_TERMS,
-    GAME_GOAL_TERMS,
-    ("订单", "order"),
-    ("优惠券", "代金券", "coupon"),
-    ("收入", "营收", "revenue", "sales"),
-    ("留存", "retention", "cohort"),
-)
 
 
 def canonical_entity_fields(profile: dict[str, Any]) -> dict[str, list[str]]:
@@ -71,271 +70,369 @@ def infer_file_grain(profile: dict[str, Any]) -> dict[str, str]:
 
 
 def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]:
-    """Build a deterministic, compact scope plan from state.data_pool."""
+    """Build a deterministic, bounded eligibility and assignment plan."""
     goal = _text(user_goal) or _text(getattr(state, "goal", ""))
-    data_pool = _list_items(getattr(state, "data_pool", None))
-    active_file_ids = _active_bundle_file_ids(state)
-    relationships = _relationships_by_file(state)
+    profiles = _list_items(getattr(state, "data_pool", None))
+    contracts = _contracts_by_dataset(state)
+    has_binding_contract, bindings = _plan_dataset_bindings(state)
 
-    classified = [
-        _classify_scope_file(profile, index, goal, active_file_ids, relationships)
-        for index, profile in enumerate(data_pool)
-    ]
-    prioritized = sorted(classified, key=lambda item: (item["priority"], item["index"]))
-    returned = prioritized[:MAX_SCOPE_FILES]
-    if any(item["participation"] == "needs_scope_decision" for item in classified) and not any(
-        item["participation"] == "needs_scope_decision" for item in returned
-    ):
-        decision_item = next(
-            item for item in prioritized if item["participation"] == "needs_scope_decision"
+    eligibility_by_file: dict[str, str] = {}
+    for profile in profiles:
+        file_id = _file_id(profile)
+        contract = contracts.get(_dataset(profile))
+        eligibility_by_file[file_id] = _eligibility(profile, contract)[0]
+    eligible_ids = {
+        file_id
+        for file_id, eligibility in eligibility_by_file.items()
+        if file_id and eligibility == "eligible"
+    }
+    ambiguous_ids = _ambiguous_file_ids(profiles, eligible_ids, goal)
+
+    decisions = []
+    for index, profile in enumerate(profiles):
+        dataset = _dataset(profile)
+        decision = _decide_file(
+            profile,
+            contract=contracts.get(dataset),
+            goal=goal,
+            has_binding_contract=has_binding_contract,
+            task_refs=bindings.get(dataset, []),
+            ambiguous_file_ids=ambiguous_ids,
         )
-        returned[-1] = decision_item
-        returned.sort(key=lambda item: (item["priority"], item["index"]))
-    included_files = [item["summary"] for item in returned if item["participation"] == "included"]
-    available_files = [item["summary"] for item in returned if item["participation"] == "available"]
-    unused_files = [item["summary"] for item in returned if item["participation"] == "unused"]
+        decision["_index"] = index
+        decision["_required"] = _is_required(decision, profile, goal)
+        decisions.append(decision)
+
+    prioritized = sorted(decisions, key=_decision_priority)
+    returned = [
+        {key: value for key, value in item.items() if not key.startswith("_")}
+        for item in prioritized[:MAX_SCOPE_FILES]
+    ]
+
+    eligible_files = [_group_ref(item) for item in returned if item["eligibility"] == "eligible"]
+    used_files = [_group_ref(item) for item in returned if item["assignment"] == "used"]
+    available_files = [
+        _group_ref(item)
+        for item in returned
+        if item["assignment"] == "available" and item["eligibility"] == "eligible"
+    ]
+    not_needed_files = [
+        _group_ref(item) for item in returned if item["assignment"] == "not_needed"
+    ]
     decision_files = [
-        item["summary"] for item in returned if item["participation"] == "needs_scope_decision"
+        _group_ref(item) for item in returned if item["assignment"] == "needs_decision"
     ]
     unavailable_files = [
-        item["summary"] for item in returned if item["participation"] == "unavailable"
+        _group_ref(item) for item in returned if item["eligibility"] == "unavailable"
     ]
-    excluded_files = unused_files + unavailable_files
-    pending_files = decision_files
-    notes = _dedupe([
-        note
-        for item in returned
-        for note in _relationship_diagnostic_notes(item["profile"], item["relationship"])
-    ])
-    all_notes = _dedupe([
-        note
-        for item in classified
-        for note in _relationship_diagnostic_notes(item["profile"], item["relationship"])
-    ])
-    if any(item["participation"] == "unavailable" for item in classified):
+
+    blocked = any(
+        item["eligibility"] == "unavailable"
+        and item["assignment"] != "not_needed"
+        and item["_required"]
+        for item in decisions
+    )
+    has_decision = any(item["assignment"] == "needs_decision" for item in decisions)
+    has_notes = any(
+        item["eligibility"] == "unavailable" or item["assignment"] != "used"
+        for item in decisions
+    )
+    if blocked:
         scope_status = "blocked"
-    elif any(item["participation"] == "needs_scope_decision" for item in classified):
+    elif has_decision:
         scope_status = "needs_decision"
-    elif all_notes or any(
-        item["participation"] in {"available", "unused"} for item in classified
-    ):
+    elif has_notes:
         scope_status = "ready_with_notes"
     else:
         scope_status = "ready"
-    returned_file_count = len(returned)
+
+    notes = []
+    if any(item["eligibility"] == "unavailable" and not item["_required"] for item in decisions):
+        notes.append("Some uploaded files are unavailable but are not required by the current analysis.")
+    if any(item["assignment"] == "available" and item["eligibility"] == "eligible" for item in decisions):
+        notes.append("Some usable files are waiting for an explicit analysis task assignment.")
+    if any(item["assignment"] == "not_needed" for item in decisions):
+        notes.append("Some files are not needed by the current analysis plan or user scope.")
+
+    total = len(decisions)
+    returned_count = len(returned)
     return {
         "scope_status": scope_status,
         "goal": goal,
-        "included_files": included_files,
+        "file_decisions": returned,
+        "eligible_files": eligible_files,
+        "used_files": used_files,
         "available_files": available_files,
-        "unused_files": unused_files,
+        "not_needed_files": not_needed_files,
         "decision_files": decision_files,
         "unavailable_files": unavailable_files,
-        "excluded_files": excluded_files,
-        "pending_files": pending_files,
         "notes": notes,
-        "assumptions": notes,
         "context_budget": {
-            "included_file_count": len(included_files),
-            "available_file_count": len(available_files),
-            "unused_file_count": len(unused_files),
-            "decision_file_count": len(decision_files),
-            "unavailable_file_count": len(unavailable_files),
-            "excluded_file_count": len(excluded_files),
-            "pending_file_count": len(pending_files),
-            "total_file_count": len(classified),
-            "returned_file_count": returned_file_count,
-            "omitted_file_count": len(classified) - returned_file_count,
+            "eligible_file_count": sum(item["eligibility"] == "eligible" for item in decisions),
+            "used_file_count": sum(item["assignment"] == "used" for item in decisions),
+            "available_file_count": sum(
+                item["assignment"] == "available" and item["eligibility"] == "eligible"
+                for item in decisions
+            ),
+            "not_needed_file_count": sum(item["assignment"] == "not_needed" for item in decisions),
+            "decision_file_count": sum(item["assignment"] == "needs_decision" for item in decisions),
+            "unavailable_file_count": sum(item["eligibility"] == "unavailable" for item in decisions),
+            "total_file_count": total,
+            "returned_file_count": returned_count,
+            "omitted_file_count": total - returned_count,
             "max_scope_files": MAX_SCOPE_FILES,
         },
     }
 
 
-def _classify_scope_file(
+def _contracts_by_dataset(state: Any) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for contract in _list_items(getattr(state, "dataset_contracts", None)):
+        dataset = _text(contract.get("dataset"))
+        if dataset:
+            result[dataset] = contract
+    return result
+
+
+def _plan_dataset_bindings(state: Any) -> tuple[bool, dict[str, list[str]]]:
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict):
+        return False, {}
+    method_plan = plan.get("method_plan")
+    if not isinstance(method_plan, list):
+        return False, {}
+    has_binding_contract = False
+    bindings: dict[str, list[str]] = {}
+    for index, step in enumerate(method_plan, start=1):
+        if not isinstance(step, dict) or "dataset_inputs" not in step:
+            continue
+        has_binding_contract = True
+        step_id = _text(step.get("step_id")) or f"step_{index}"
+        for dataset in _text_list(step.get("dataset_inputs")):
+            bindings.setdefault(dataset, []).append(step_id)
+    return has_binding_contract, bindings
+
+
+def _decide_file(
     profile: dict[str, Any],
-    index: int,
+    *,
+    contract: dict[str, Any] | None,
     goal: str,
-    active_file_ids: set[str],
-    relationships: dict[str, list[dict[str, Any]]],
+    has_binding_contract: bool,
+    task_refs: list[str],
+    ambiguous_file_ids: set[str],
 ) -> dict[str, Any]:
-    file_id = _text(profile.get("file_id") or profile.get("id"))
-    relationship = _best_relationship(relationships.get(file_id, []))
-    summary = _file_summary(profile, relationship)
+    file_id = _file_id(profile)
+    eligibility, eligibility_reason_code, eligibility_reason = _eligibility(profile, contract)
+    decision = _file_summary(profile, contract)
+    assignment = "available"
+    reason_code = eligibility_reason_code
+    reason = eligibility_reason
+    confidence = "high" if eligibility == "unavailable" else "medium"
 
-    if not file_id:
-        participation, priority = "unavailable", 6
-    elif _is_explicitly_unrelated(profile, goal):
-        participation, priority = "unused", 5
-    elif file_id in active_file_ids:
-        participation, priority = "included", 0
-    elif _relationship_is_confirmed(relationship):
-        participation, priority = "included", 1
-    elif _relationship_is_excluded(relationship):
-        participation, priority = "unused", 5
-    elif _relationship_is_pending(relationship):
-        participation, priority = "included", 3
-    elif _has_strong_goal_theme_overlap(profile, goal):
-        participation, priority = "included", 2
-    else:
-        participation, priority = "available", 4
+    if _goal_excludes_profile(profile, goal):
+        assignment = "not_needed"
+        reason_code = REASON_EXPLICIT_USER_EXCLUSION
+        reason = "The user explicitly excluded this file from the current analysis."
+        confidence = "high"
+    elif eligibility == "eligible" and file_id in ambiguous_file_ids:
+        assignment = "needs_decision"
+        reason_code = REASON_AMBIGUOUS_FILE_REFERENCE
+        reason = "The request matches multiple usable files and needs one explicit selection."
+        confidence = "high"
+    elif eligibility == "eligible" and task_refs:
+        assignment = "used"
+        reason_code = REASON_PLAN_TASK_BINDING
+        reason = "The current AnalysisPlan binds this file to an analysis task."
+        confidence = "high"
+    elif eligibility == "eligible" and has_binding_contract:
+        assignment = "not_needed"
+        reason_code = REASON_NO_CURRENT_TASK
+        reason = "The current AnalysisPlan does not need this usable file."
+        confidence = "high"
+    elif eligibility == "eligible" and _goal_mentions_profile(profile, goal):
+        reason_code = REASON_EXPLICIT_IN_SCOPE_PENDING_PLAN
+        reason = "The file is explicitly in scope and is waiting for an analysis task binding."
+        confidence = "high"
+    elif eligibility == "eligible" and _goal_requests_all_files(goal):
+        reason_code = REASON_EXPLICIT_ALL_PENDING_PLAN
+        reason = "The user requested all files; this usable file is waiting for a task binding."
+        confidence = "high"
 
-    return {
-        "index": index,
-        "priority": priority,
-        "scope": _legacy_scope(participation),
-        "participation": participation,
-        "summary": summary,
-        "profile": profile,
-        "relationship": relationship,
-    }
+    decision.update({
+        "eligibility": eligibility,
+        "assignment": assignment,
+        "reason_code": reason_code,
+        "reason": reason,
+        "confidence": confidence,
+        "task_refs": list(task_refs),
+    })
+    return decision
+
+
+def _eligibility(
+    profile: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> tuple[str, str, str]:
+    if not _file_id(profile) or not _dataset(profile):
+        return (
+            "unavailable",
+            REASON_MISSING_FILE_IDENTITY,
+            "The file cannot be identified as a usable dataset.",
+        )
+    status = _normalize_alias(_text(profile.get("status")))
+    if status in {"failed", "error", "unavailable", "unreadable"}:
+        return (
+            "unavailable",
+            REASON_LOAD_FAILED,
+            "The file could not be loaded or inspected.",
+        )
+    if contract is None:
+        return (
+            "unavailable",
+            REASON_MISSING_DATASET_CONTRACT,
+            "The file has no usable dataset contract.",
+        )
+    quality = contract.get("quality") if isinstance(contract.get("quality"), dict) else {}
+    contract_status = _normalize_alias(
+        _text(contract.get("quality_status") or quality.get("status"))
+    )
+    if contract_status == "blocked":
+        return (
+            "unavailable",
+            REASON_CONTRACT_BLOCKED,
+            "The dataset contract blocks analysis until data quality is repaired.",
+        )
+    return (
+        "eligible",
+        REASON_ELIGIBLE_NOT_YET_ASSIGNED,
+        "The file is loaded and has a usable dataset contract.",
+    )
 
 
 def _file_summary(
     profile: dict[str, Any],
-    relationship: dict[str, Any] | None = None,
+    contract: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    summary = {
-        "file_id": _text(profile.get("file_id") or profile.get("id")),
+    return {
+        "file_id": _file_id(profile),
         "filename": _text(profile.get("filename") or profile.get("name")),
-        "dataset": _text(profile.get("dataset") or profile.get("dataset_name")),
+        "dataset": _dataset(profile),
+        "dataset_contract_id": _text(
+            (contract or {}).get("id")
+            or (contract or {}).get("contract_id")
+            or (contract or {}).get("dataset_contract_id")
+        ),
         "grain": infer_file_grain(profile)["grain"],
         "canonical_fields": canonical_entity_fields(profile),
     }
-    if relationship:
-        summary["relationship"] = {
-            "relationship_id": _relationship_id(relationship),
-            "status": _relationship_status(relationship),
-            "requires_confirmation": bool(relationship.get("requires_confirmation")),
-            "evidence": _text_list(relationship.get("evidence"))[:MAX_RELATIONSHIP_EVIDENCE],
-        }
-    return summary
 
 
-def _legacy_scope(participation: str) -> str:
-    if participation == "included":
-        return "included"
-    if participation == "needs_scope_decision":
-        return "pending"
-    if participation in {"unused", "unavailable"}:
-        return "excluded"
-    return "available"
+def _decision_priority(item: dict[str, Any]) -> tuple[int, int]:
+    if item["assignment"] == "needs_decision":
+        priority = 0
+    elif item["eligibility"] == "unavailable" and item["_required"]:
+        priority = 1
+    elif item["assignment"] == "used":
+        priority = 2
+    elif item["assignment"] == "available" and item["eligibility"] == "eligible":
+        priority = 3
+    elif item["assignment"] == "not_needed":
+        priority = 4
+    else:
+        priority = 5
+    return priority, item["_index"]
 
 
-def _has_strong_goal_theme_overlap(profile: dict[str, Any], goal: str) -> bool:
-    profile_theme = " ".join([
-        _text(profile.get("filename") or profile.get("name")),
-        _text(profile.get("dataset") or profile.get("dataset_name")),
-    ])
-    if not goal or not profile_theme:
+def _is_required(decision: dict[str, Any], profile: dict[str, Any], goal: str) -> bool:
+    if decision["assignment"] == "not_needed":
         return False
-    if any(_has_any(goal, group) and _has_any(profile_theme, group) for group in GOAL_THEME_GROUPS):
-        return True
-    goal_tokens = _theme_tokens(goal)
-    profile_tokens = _theme_tokens(profile_theme)
-    return bool(goal_tokens & profile_tokens)
+    return bool(decision["task_refs"]) or _goal_mentions_profile(profile, goal) or _goal_requests_all_files(goal)
 
 
-def _is_explicitly_unrelated(profile: dict[str, Any], goal: str) -> bool:
-    text = _profile_text(profile)
-    return _has_any(text, EXCLUDED_GAME_TERMS) and not _has_any(goal, GAME_GOAL_TERMS)
-
-
-def _relationship_diagnostic_notes(
-    profile: dict[str, Any],
-    relationship: dict[str, Any] | None,
-) -> list[str]:
-    notes: list[str] = []
-    file_id = _text(profile.get("file_id") or profile.get("id"))
-    relationship_id = _relationship_id(relationship) if relationship else "no relationship record"
-    if relationship and _relationship_is_pending(relationship):
-        notes.append(
-            f"Possible join evidence for file {file_id} ({relationship_id}); "
-            "confirm keys only if a merge, join, or entity mapping is needed."
-        )
-    user_fields = canonical_entity_fields(profile)["user"]
-    alias_fields = [field for field in user_fields if field != "user_id"]
-    if alias_fields:
-        aliases = ", ".join(alias_fields)
-        notes.append(
-            f"Candidate join fields for file {file_id} ({relationship_id}): "
-            f"{aliases} may represent user identifiers; confirm only before using them as join keys."
-        )
-    return notes
-
-
-def _relationships_by_file(state: Any) -> dict[str, list[dict[str, Any]]]:
-    result: dict[str, list[dict[str, Any]]] = {}
-    for relationship in _list_items(getattr(state, "file_relationships", None)):
-        for file_id in _text_list(relationship.get("file_ids")):
-            result.setdefault(file_id, []).append(relationship)
+def _ambiguous_file_ids(
+    profiles: list[dict[str, Any]],
+    eligible_ids: set[str],
+    goal: str,
+) -> set[str]:
+    normalized_goal = _normalize_alias(goal)
+    uniquely_named = {
+        _file_id(profile)
+        for profile in profiles
+        if _file_id(profile) in eligible_ids
+        and _normalize_alias(_file_id(profile)) in normalized_goal
+    }
+    if uniquely_named:
+        return set()
+    aliases: dict[str, list[str]] = {}
+    for profile in profiles:
+        file_id = _file_id(profile)
+        if file_id not in eligible_ids:
+            continue
+        for alias in _profile_aliases(profile):
+            if alias and alias in normalized_goal:
+                aliases.setdefault(alias, []).append(file_id)
+    result: set[str] = set()
+    for file_ids in aliases.values():
+        if len(set(file_ids)) > 1:
+            result.update(file_ids)
     return result
 
 
-def _best_relationship(relationships: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not relationships:
-        return None
-    return min(relationships, key=_relationship_priority)
+def _profile_aliases(profile: dict[str, Any]) -> list[str]:
+    filename = _text(profile.get("filename") or profile.get("name"))
+    stem = re.sub(r"\.[^.]+$", "", filename)
+    values = [_file_id(profile), filename, stem, _dataset(profile)]
+    return _dedupe([_normalize_alias(value) for value in values if value])
 
 
-def _relationship_priority(relationship: dict[str, Any]) -> int:
-    if _relationship_is_pending(relationship):
-        return 0
-    if _relationship_is_confirmed(relationship):
-        return 1
-    if _relationship_is_excluded(relationship):
-        return 2
-    return 3
+def _goal_mentions_profile(profile: dict[str, Any], goal: str) -> bool:
+    normalized_goal = _normalize_alias(goal)
+    return any(alias and alias in normalized_goal for alias in _profile_aliases(profile))
 
 
-def _relationship_is_confirmed(relationship: dict[str, Any] | None) -> bool:
-    if not relationship or relationship.get("requires_confirmation"):
-        return False
-    status = _relationship_status(relationship)
-    mode = _normalize_alias(_text(relationship.get("relationship_mode")))
-    return status in {"linked", "confirmed", "include_in_active_bundle"} or mode == "include_in_active_bundle"
+def _goal_requests_all_files(goal: str) -> bool:
+    normalized = _normalize_alias(goal)
+    phrases = (
+        "alluploadedfiles",
+        "allfiles",
+        "alluploadeddata",
+        "uploadedfiles",
+        "uploadeddata",
+        "全部上传文件",
+        "所有上传文件",
+        "全部文件",
+        "所有文件",
+    )
+    return any(_normalize_alias(phrase) in normalized for phrase in phrases)
 
 
-def _relationship_is_pending(relationship: dict[str, Any] | None) -> bool:
-    if not relationship:
-        return False
-    status = _relationship_status(relationship)
-    return bool(relationship.get("requires_confirmation")) or status == "possibly_linked" or status.startswith("insufficient")
+def _goal_excludes_profile(profile: dict[str, Any], goal: str) -> bool:
+    normalized_goal = _normalize_alias(goal)
+    exclusion_terms = ("exclude", "ignore", "skip", "排除", "忽略", "不要使用", "不分析")
+    for alias in _profile_aliases(profile):
+        for term in exclusion_terms:
+            marker = _normalize_alias(term)
+            if f"{marker}{alias}" in normalized_goal or f"{alias}{marker}" in normalized_goal:
+                return True
+    return False
 
 
-def _relationship_is_excluded(relationship: dict[str, Any] | None) -> bool:
-    if not relationship:
-        return False
-    status = _relationship_status(relationship)
-    mode = _normalize_alias(_text(relationship.get("relationship_mode")))
-    return status == "excluded" or mode == "exclude_from_active_bundle"
-
-
-def _relationship_status(relationship: dict[str, Any]) -> str:
-    return _normalize_alias(_text(relationship.get("status") or relationship.get("relationship_status")))
-
-
-def _relationship_id(relationship: dict[str, Any] | None) -> str:
-    if not relationship:
-        return ""
-    return _text(relationship.get("relationship_id") or relationship.get("id"))
-
-
-def _theme_tokens(value: str) -> set[str]:
+def _group_ref(item: dict[str, Any]) -> dict[str, str]:
     return {
-        token.casefold()
-        for token in re.findall(r"[a-zA-Z0-9_]+", value)
-        if len(token) >= 3
+        "file_id": _text(item.get("file_id")),
+        "filename": _text(item.get("filename")),
+        "dataset": _text(item.get("dataset")),
+        "reason_code": _text(item.get("reason_code")),
     }
 
 
-def _active_bundle_file_ids(state: Any) -> set[str]:
-    active_bundle_id = _text(getattr(state, "active_bundle_id", ""))
-    if not active_bundle_id:
-        return set()
-    for bundle in _list_items(getattr(state, "dataset_bundles", None)):
-        if _text(bundle.get("bundle_id") or bundle.get("id")) == active_bundle_id:
-            return set(_text_list(bundle.get("file_ids")))
-    return set()
+def _file_id(profile: dict[str, Any]) -> str:
+    return _text(profile.get("file_id") or profile.get("id"))
+
+
+def _dataset(profile: dict[str, Any]) -> str:
+    return _text(profile.get("dataset") or profile.get("dataset_name"))
 
 
 def _profile_fields(profile: dict[str, Any]) -> list[str]:
@@ -348,16 +445,6 @@ def _profile_fields(profile: dict[str, Any]) -> list[str]:
 def _matching_fields(fields: list[str], aliases: set[str]) -> list[str]:
     normalized_aliases = {_normalize_alias(alias) for alias in aliases}
     return [field for field in fields if _normalize_alias(field) in normalized_aliases]
-
-
-def _profile_text(profile: dict[str, Any]) -> str:
-    pieces = [
-        _text(profile.get("file_id") or profile.get("id")),
-        _text(profile.get("filename") or profile.get("name")),
-        _text(profile.get("dataset") or profile.get("dataset_name")),
-    ]
-    pieces.extend(_profile_fields(profile))
-    return " ".join(piece for piece in pieces if piece)
 
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
