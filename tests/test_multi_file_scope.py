@@ -295,3 +295,96 @@ def test_unique_file_id_does_not_hide_an_unrelated_duplicate_filename():
         "sales_b",
     ]
     assert [item["file_id"] for item in plan["available_files"]] == ["users"]
+
+
+def test_shared_dataset_plan_binding_requires_a_physical_file_decision():
+    state = AnalysisSessionState(session_id="shared_dataset", data_state="data_loaded")
+    state.data_pool = [
+        _profile("main_a", dataset="main", dataset_contract_id="duc_main_a"),
+        _profile("main_b", dataset="main", dataset_contract_id="duc_main_b"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main_a", "dataset": "main", "quality_status": "ready"},
+        {"id": "duc_main_b", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": ["main"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "run current analysis")
+
+    assert plan["used_files"] == []
+    assert [item["file_id"] for item in plan["decision_files"]] == ["main_a", "main_b"]
+    assert all(
+        item["reason_code"] == "ambiguous_file_reference"
+        for item in plan["decision_files"]
+    )
+
+
+def test_contract_id_plan_binding_selects_one_file_from_a_shared_dataset():
+    state = AnalysisSessionState(session_id="contract_binding", data_state="data_loaded")
+    state.data_pool = [
+        _profile("main_a", dataset="main", dataset_contract_id="duc_main_a"),
+        _profile("main_b", dataset="main", dataset_contract_id="duc_main_b"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main_a", "dataset": "main", "quality_status": "ready"},
+        {"id": "duc_main_b", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main_b", "dataset_inputs": ["duc_main_b"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "analyze main")
+
+    assert [item["file_id"] for item in plan["used_files"]] == ["main_b"]
+    assert [item["file_id"] for item in plan["not_needed_files"]] == ["main_a"]
+
+
+def test_dictionary_dataset_contracts_keep_unique_dataset_binding_supported():
+    state = AnalysisSessionState(session_id="dict_contract", data_state="data_loaded")
+    state.data_pool = [_profile("orders")]
+    state.dataset_contracts = {
+        "duc_orders": {"id": "duc_orders", "dataset": "orders", "quality_status": "ready"}
+    }
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_orders", "dataset_inputs": ["orders"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "analyze orders")
+
+    assert [item["file_id"] for item in plan["used_files"]] == ["orders"]
+
+
+def test_dataset_name_substring_does_not_count_as_an_explicit_reference():
+    state = AnalysisSessionState(session_id="substring_reference", data_state="data_loaded")
+    state.data_pool = [_profile("main", status="failed")]
+
+    plan = build_analysis_scope_plan(state, "domain analysis")
+
+    assert plan["scope_status"] == "ready_with_notes"
+
+
+def test_exact_dataset_name_still_counts_as_an_explicit_reference():
+    state = AnalysisSessionState(session_id="exact_reference", data_state="data_loaded")
+    state.data_pool = [_profile("main", status="failed")]
+
+    plan = build_analysis_scope_plan(state, "analyze main")
+
+    assert plan["scope_status"] == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("profile", "goal"),
+    [
+        (_profile("broken"), "exclude the broken.csv file"),
+        (_profile("broken_cn", filename="损坏.csv"), "请不要使用损坏.csv文件"),
+    ],
+)
+def test_explicit_exclusion_allows_connecting_words(profile, goal):
+    state = _state(profile)
+
+    plan = build_analysis_scope_plan(state, goal)
+
+    assert plan["file_decisions"][0]["assignment"] == "not_needed"
+    assert plan["file_decisions"][0]["reason_code"] == "explicit_user_exclusion"

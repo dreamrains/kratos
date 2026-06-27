@@ -73,30 +73,40 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     """Build a deterministic, bounded eligibility and assignment plan."""
     goal = _text(user_goal) or _text(getattr(state, "goal", ""))
     profiles = _list_items(getattr(state, "data_pool", None))
-    contracts = _contracts_by_dataset(state)
-    has_binding_contract, bindings = _plan_dataset_bindings(state)
+    contracts_by_id, contracts_by_dataset = _contract_indexes(state)
+    profile_contracts = [
+        _contract_for_profile(profile, contracts_by_id, contracts_by_dataset)
+        for profile in profiles
+    ]
+    has_binding_contract, input_bindings = _plan_dataset_bindings(state)
+    task_refs_by_index, plan_ambiguous_ids, plan_selected_ids = _resolve_plan_bindings(
+        profiles,
+        profile_contracts,
+        input_bindings,
+    )
 
     eligibility_by_file: dict[str, str] = {}
-    for profile in profiles:
+    for profile, contract in zip(profiles, profile_contracts):
         file_id = _file_id(profile)
-        contract = contracts.get(_dataset(profile))
         eligibility_by_file[file_id] = _eligibility(profile, contract)[0]
     eligible_ids = {
         file_id
         for file_id, eligibility in eligibility_by_file.items()
         if file_id and eligibility == "eligible"
     }
-    ambiguous_ids = _ambiguous_file_ids(profiles, eligible_ids, goal)
+    ambiguous_ids = (
+        _ambiguous_file_ids(profiles, eligible_ids, goal, selected_ids=plan_selected_ids)
+        | plan_ambiguous_ids
+    )
 
     decisions = []
-    for index, profile in enumerate(profiles):
-        dataset = _dataset(profile)
+    for index, (profile, contract) in enumerate(zip(profiles, profile_contracts)):
         decision = _decide_file(
             profile,
-            contract=contracts.get(dataset),
+            contract=contract,
             goal=goal,
             has_binding_contract=has_binding_contract,
-            task_refs=bindings.get(dataset, []),
+            task_refs=task_refs_by_index.get(index, []),
             ambiguous_file_ids=ambiguous_ids,
         )
         decision["_index"] = index
@@ -185,13 +195,37 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     }
 
 
-def _contracts_by_dataset(state: Any) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    for contract in _list_items(getattr(state, "dataset_contracts", None)):
+def _contract_indexes(
+    state: Any,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    by_id: dict[str, dict[str, Any]] = {}
+    by_dataset: dict[str, list[dict[str, Any]]] = {}
+    for contract in _contract_items(getattr(state, "dataset_contracts", None)):
+        contract_id = _contract_id(contract)
         dataset = _text(contract.get("dataset"))
+        if contract_id:
+            by_id[contract_id] = contract
         if dataset:
-            result[dataset] = contract
-    return result
+            by_dataset.setdefault(dataset, []).append(contract)
+    return by_id, by_dataset
+
+
+def _contract_for_profile(
+    profile: dict[str, Any],
+    contracts_by_id: dict[str, dict[str, Any]],
+    contracts_by_dataset: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    explicit_contract_id = _text(profile.get("dataset_contract_id"))
+    if explicit_contract_id:
+        return contracts_by_id.get(explicit_contract_id)
+    candidates = contracts_by_dataset.get(_dataset(profile), [])
+    file_id = _file_id(profile)
+    owned = [contract for contract in candidates if _contract_owns_file(contract, file_id)]
+    if len(owned) == 1:
+        return owned[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 def _plan_dataset_bindings(state: Any) -> tuple[bool, dict[str, list[str]]]:
@@ -211,6 +245,42 @@ def _plan_dataset_bindings(state: Any) -> tuple[bool, dict[str, list[str]]]:
         for dataset in _text_list(step.get("dataset_inputs")):
             bindings.setdefault(dataset, []).append(step_id)
     return has_binding_contract, bindings
+
+
+def _resolve_plan_bindings(
+    profiles: list[dict[str, Any]],
+    profile_contracts: list[dict[str, Any] | None],
+    input_bindings: dict[str, list[str]],
+) -> tuple[dict[int, list[str]], set[str], set[str]]:
+    task_refs_by_index: dict[int, list[str]] = {}
+    ambiguous_file_ids: set[str] = set()
+    selected_file_ids: set[str] = set()
+    for dataset_input, task_refs in input_bindings.items():
+        candidates = [
+            index for index, profile in enumerate(profiles)
+            if _file_id(profile) == dataset_input
+        ]
+        if not candidates:
+            candidates = [
+                index
+                for index, (profile, contract) in enumerate(zip(profiles, profile_contracts))
+                if _profile_contract_id(profile, contract) == dataset_input
+            ]
+        if not candidates:
+            candidates = [
+                index for index, profile in enumerate(profiles)
+                if _dataset(profile) == dataset_input
+            ]
+        if len(candidates) == 1:
+            task_refs_by_index.setdefault(candidates[0], []).extend(task_refs)
+            selected_file_ids.add(_file_id(profiles[candidates[0]]))
+        elif len(candidates) > 1:
+            for index in candidates:
+                task_refs_by_index.setdefault(index, []).extend(task_refs)
+                file_id = _file_id(profiles[index])
+                if file_id:
+                    ambiguous_file_ids.add(file_id)
+    return task_refs_by_index, ambiguous_file_ids, selected_file_ids
 
 
 def _decide_file(
@@ -318,11 +388,7 @@ def _file_summary(
         "file_id": _file_id(profile),
         "filename": _text(profile.get("filename") or profile.get("name")),
         "dataset": _dataset(profile),
-        "dataset_contract_id": _text(
-            (contract or {}).get("id")
-            or (contract or {}).get("contract_id")
-            or (contract or {}).get("dataset_contract_id")
-        ),
+        "dataset_contract_id": _profile_contract_id(profile, contract),
         "grain": infer_file_grain(profile)["grain"],
         "canonical_fields": canonical_entity_fields(profile),
     }
@@ -354,22 +420,24 @@ def _ambiguous_file_ids(
     profiles: list[dict[str, Any]],
     eligible_ids: set[str],
     goal: str,
+    *,
+    selected_ids: set[str] | None = None,
 ) -> set[str]:
-    normalized_goal = _normalize_alias(goal)
     uniquely_named = {
         _file_id(profile)
         for profile in profiles
         if _file_id(profile) in eligible_ids
-        and _normalize_alias(_file_id(profile)) in normalized_goal
+        and _goal_contains_alias(goal, _file_id(profile))
     }
+    uniquely_named.update(selected_ids or set())
     aliases: dict[str, list[str]] = {}
     for profile in profiles:
         file_id = _file_id(profile)
         if file_id not in eligible_ids:
             continue
         for alias in _profile_aliases(profile):
-            if alias and alias in normalized_goal:
-                aliases.setdefault(alias, []).append(file_id)
+            if alias and _goal_contains_alias(goal, alias):
+                aliases.setdefault(_normalize_alias(alias), []).append(file_id)
     result: set[str] = set()
     for file_ids in aliases.values():
         candidate_ids = set(file_ids)
@@ -382,39 +450,82 @@ def _profile_aliases(profile: dict[str, Any]) -> list[str]:
     filename = _text(profile.get("filename") or profile.get("name"))
     stem = re.sub(r"\.[^.]+$", "", filename)
     values = [_file_id(profile), filename, stem, _dataset(profile)]
-    return _dedupe([_normalize_alias(value) for value in values if value])
+    return _dedupe([value for value in values if value])
 
 
 def _goal_mentions_profile(profile: dict[str, Any], goal: str) -> bool:
-    normalized_goal = _normalize_alias(goal)
-    return any(alias and alias in normalized_goal for alias in _profile_aliases(profile))
+    return any(_goal_contains_alias(goal, alias) for alias in _profile_aliases(profile))
 
 
 def _goal_requests_all_files(goal: str) -> bool:
-    normalized = _normalize_alias(goal)
     phrases = (
-        "alluploadedfiles",
-        "allfiles",
-        "alluploadeddata",
-        "uploadedfiles",
-        "uploadeddata",
+        "all uploaded files",
+        "all files",
+        "all uploaded data",
+        "uploaded files",
+        "uploaded data",
         "全部上传文件",
         "所有上传文件",
         "全部文件",
         "所有文件",
     )
-    return any(_normalize_alias(phrase) in normalized for phrase in phrases)
+    return any(_goal_contains_alias(goal, phrase) for phrase in phrases)
 
 
 def _goal_excludes_profile(profile: dict[str, Any], goal: str) -> bool:
-    normalized_goal = _normalize_alias(goal)
-    exclusion_terms = ("exclude", "ignore", "skip", "排除", "忽略", "不要使用", "不分析")
     for alias in _profile_aliases(profile):
-        for term in exclusion_terms:
-            marker = _normalize_alias(term)
-            if f"{marker}{alias}" in normalized_goal or f"{alias}{marker}" in normalized_goal:
+        alias_pattern = _alias_pattern(alias)
+        if not alias_pattern:
+            continue
+        prefix = (
+            r"(?:exclude|ignore|skip|do\s+not\s+use|don't\s+use|"
+            r"do\s+not\s+analy[sz]e|don't\s+analy[sz]e)"
+            r"(?:\s+(?:the|this|that|uploaded|named|called|data|dataset|file))*\s+"
+        )
+        suffix = (
+            r"(?:\s+(?:file|dataset|data))?\s+"
+            r"(?:should\s+be\s+)?(?:excluded|ignored|skipped)"
+        )
+        if re.search(prefix + alias_pattern, goal, flags=re.IGNORECASE):
+            return True
+        if re.search(alias_pattern + suffix, goal, flags=re.IGNORECASE):
+            return True
+
+        normalized_goal = _normalize_alias(goal)
+        normalized_alias = _normalize_alias(alias)
+        position = normalized_goal.find(normalized_alias)
+        while position >= 0:
+            before = normalized_goal[max(0, position - 24):position]
+            after_start = position + len(normalized_alias)
+            after = normalized_goal[after_start:after_start + 16]
+            if before.endswith(("排除", "忽略", "不要使用", "不分析")):
                 return True
+            if after.startswith(("排除", "忽略", "不分析")):
+                return True
+            position = normalized_goal.find(normalized_alias, position + 1)
     return False
+
+
+def _goal_contains_alias(goal: str, alias: str) -> bool:
+    pattern = _alias_pattern(alias)
+    if not pattern:
+        return False
+    if _contains_cjk(alias):
+        return _normalize_alias(alias) in _normalize_alias(goal)
+    return re.search(pattern, goal, flags=re.IGNORECASE) is not None
+
+
+def _alias_pattern(alias: str) -> str:
+    value = _text(alias)
+    if not value:
+        return ""
+    escaped = re.escape(value)
+    escaped = re.sub(r"\\\s+", r"\\s+", escaped)
+    return rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])"
+
+
+def _contains_cjk(value: str) -> bool:
+    return re.search(r"[\u3400-\u9fff]", value) is not None
 
 
 def _group_ref(item: dict[str, Any]) -> dict[str, str]:
@@ -432,6 +543,50 @@ def _file_id(profile: dict[str, Any]) -> str:
 
 def _dataset(profile: dict[str, Any]) -> str:
     return _text(profile.get("dataset") or profile.get("dataset_name"))
+
+
+def _contract_id(contract: dict[str, Any] | None) -> str:
+    contract = contract or {}
+    return _text(
+        contract.get("id")
+        or contract.get("contract_id")
+        or contract.get("dataset_contract_id")
+    )
+
+
+def _profile_contract_id(
+    profile: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> str:
+    return _text(profile.get("dataset_contract_id")) or _contract_id(contract)
+
+
+def _contract_owns_file(contract: dict[str, Any], file_id: str) -> bool:
+    if not file_id:
+        return False
+    owner = _text(
+        contract.get("file_id")
+        or contract.get("source_file_id")
+        or contract.get("data_file_id")
+    )
+    return owner == file_id or file_id in _text_list(contract.get("file_ids"))
+
+
+def _contract_items(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    if any(key in value for key in ("dataset", "id", "contract_id", "quality_status")):
+        return [value]
+    result = []
+    for key, item in value.items():
+        if not isinstance(item, dict):
+            continue
+        contract = dict(item)
+        contract.setdefault("id", _text(key))
+        result.append(contract)
+    return result
 
 
 def _profile_fields(profile: dict[str, Any]) -> list[str]:
