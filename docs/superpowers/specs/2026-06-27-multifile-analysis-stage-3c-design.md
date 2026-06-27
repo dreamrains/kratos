@@ -19,6 +19,75 @@ The design deliberately does not treat "all files participate" as "all files
 must be joined." Participation, task assignment, and combination method are
 separate decisions.
 
+## Design Status And Continuation Handoff
+
+This specification was reviewed section by section with the user and accepted on
+2026-06-27. It is the source of truth for Stage 3C design decisions.
+
+Current repository status at the time of design:
+
+- Stage 1 chart-contract and renderability repairs are complete and remain a
+  separate concern.
+- Stage 2A through Stage 2C unified-confirmation runtime work is complete and must
+  be reused rather than replaced.
+- Stage 3A/3B participation-first scope and workbench changes are complete at
+  baseline commit `f66c7ce`.
+- No Stage 3C production implementation has started.
+
+The next allowed action after user review of this document is to invoke the
+writing-plans workflow for Stage 3C0A only. Do not implement Stage 3C0B, Stage
+3C1A, or Stage 3C1B in the Stage 3C0A plan. Each later slice requires the prior
+slice to pass its stop gate, a separate plan, and explicit approval.
+
+If conversation context is compressed, resume by reading this document, checking
+the current branch and worktree, and comparing the implementation against the
+slice stop gates. Do not reconstruct requirements from chat memory when this
+document provides the answer.
+
+## Confirmed Decisions And Invariants
+
+The following decisions have already been discussed and accepted. They should not
+be reopened during implementation unless repository evidence proves that a
+decision is unsafe or impossible:
+
+1. Confirmation is risk-based. Explicit, deterministic, low-risk operations may
+   execute automatically; not every cross-file action asks the user.
+2. User confirmation is not a universal safety override. Structural and resource
+   blocks remain blocked after confirmation.
+3. The first operation capability is exact two-dataset join. Union, fuzzy
+   matching, entity mapping, automatic repair, and executable many-to-many joins
+   are deferred.
+4. File participation does not require a relationship, and relationship evidence
+   cannot decide participation.
+5. Multiple files may all contribute to one analysis through independent tasks
+   and evidence synthesis even if only a subset can join.
+6. A file is not "used" until an AnalysisPlan step binds it. Uploading or being
+   eligible is not sufficient.
+7. The system should ask about a file choice only when ambiguity is material and
+   independent progress is not safe.
+8. Operation-specific ambiguity discovered by data preflight uses the same
+   confirmation runtime as existing intent and method questions.
+9. Confirmation must approve and resume an immutable operation reference, not a
+   newly generated LLM tool call.
+10. Derived join output must pass through the existing dataset preview, quality,
+    contract, and route workflow before downstream analysis uses it.
+11. Evidence based on derived data must carry operation lineage and must be
+    downgraded or rejected when that lineage is invalid.
+12. Full operation details remain in artifacts. Prompt context receives bounded
+    compact references only.
+13. Existing AnalysisPlan, workflow tasks, confirmation runtime, trust contracts,
+    evidence verification, and workbench are extended in place. Parallel systems
+    for the same responsibilities are prohibited.
+14. Delivery is additive and gated. Reliable smaller capabilities are preferred
+    over an ambitious first version that guesses unsupported behavior.
+15. Export and artifact-delivery behavior are outside this stage.
+
+The project currently has few users and no material migration burden. Stage 3C
+does not require in-place migration of historical sessions or preservation of
+obsolete relationship-driven behavior. A temporary compatibility projection is
+allowed only within a slice when an existing caller still needs it; it must not
+become a second source of truth or survive the slice without an explicit reason.
+
 ## Why This Stage Exists
 
 Stage 3A/3B separated file participation from pairwise relationship uncertainty
@@ -125,6 +194,47 @@ Combination mode belongs to an analysis step, not to a file globally.
 
 Stage 3C0B exposes only `independent` and `synthesis` as executable modes. Stage
 3C1 adds `join`. Unsupported modes must not be emitted as executable work.
+
+## Source-Of-Truth Hierarchy
+
+When records disagree, consumers use this order:
+
+1. Explicit current user inclusion or exclusion.
+2. Dataset eligibility derived from actual load, profile, and trust-contract
+   state.
+3. AnalysisPlan step bindings for current `used` assignment.
+4. DataOperationRecord for join parameters, risk, approval, execution, and
+   lineage.
+5. Unified confirmation runtime for whether a material decision is actively
+   suspended, resolved, failed, or cancelled.
+6. EvidenceRecord and verification reports for supported conclusions.
+7. Trust view and workbench as projections of the above records.
+
+`file_relationships`, filename similarity, the workbench display model, and the
+legacy transform log are never authoritative over this hierarchy.
+
+## Representative Four-File Scenario
+
+Use this scenario as the minimum mental model and acceptance fixture:
+
+- `orders`: order-level revenue and purchase events;
+- `users`: user-level profile attributes;
+- `coupons`: coupon issue and redemption events;
+- `campaigns`: campaign-level activity and spend.
+
+All four files may be eligible and explicitly required by the user. A valid plan
+can be:
+
+1. Join `orders` and `users` only when a user-level revenue task requires fields
+   from both datasets.
+2. Analyze `coupons` independently for issue, redemption, and discount evidence.
+3. Analyze `campaigns` independently for campaign trend and spend evidence.
+4. Synthesize the verified evidence from those tasks without joining coupon or
+   campaign rows into the user-level table.
+
+If the user's narrower goal needs only orders and users, coupons and campaigns
+remain eligible but become `available` or `not_needed` with explicit reasons.
+They are not forced into the join and are not silently labeled as used.
 
 ## Stage 3C0A: Trustworthy Participation Scope
 
@@ -579,6 +689,36 @@ The DataOperationRecord is new because no existing record owns immutable
 cross-dataset parameters, preflight evidence, approval, execution receipt, and
 derived lineage. It must remain the single source of truth for those concerns.
 
+### Existing Integration Points
+
+Implementation plans should begin from these existing ownership boundaries:
+
+- `src/data_agent/agent/multi_file_scope.py`: eligibility and assignment
+  projection, compact scope budgeting, and reason codes.
+- `src/data_agent/agent/analysis_state.py`: compact refs and active-focus state;
+  it must not become a second full operation store.
+- `src/data_agent/agent/analysis_entry.py` and
+  `src/data_agent/agent/route_capabilities.py`: select contracts for the current
+  scope or task bindings rather than one global active dataset.
+- `src/data_agent/tools/analysis_flow.py` and the existing task tools: extend
+  AnalysisPlan step bindings and evidence records.
+- `src/data_agent/agent/confirmation/`: policy, persistence, idempotency,
+  resolution actions, and continuation integrity.
+- `src/data_agent/tools/data_transform.py`: retain the public merge entry only as
+  an adapter to the operation service; it must not keep a bypassing `pandas.merge`
+  path.
+- `src/data_agent/tools/data_io.py` and
+  `src/data_agent/agent/trust_contracts.py`: extract and reuse the existing trust
+  artifact workflow for derived data.
+- `src/data_agent/agent/verification.py`: enforce operation lineage for derived
+  evidence.
+- `src/data_agent/agent/trust_view.py` and the existing web workbench: render
+  compact user-facing projections, not independent status.
+
+Before creating a new module or state collection, the implementation plan must
+state why none of these owners can correctly hold the responsibility. This is a
+required duplicate-system check, not an optional refactor preference.
+
 ## Trust Workflow Integration
 
 The current load-data trust workflow should be extracted into a reusable internal
@@ -734,6 +874,28 @@ Replay session `5ba97a7bb7db` and verify:
 - the workbench explains scope, task roles, and operation status;
 - prompt context remains bounded.
 
+### Verified Baseline Before Stage 3C
+
+At baseline commit `f66c7ce`, the following focused regression command passed
+with `129 passed`:
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path 'src').Path
+.\.venv\Scripts\python.exe -m pytest `
+  tests/test_multi_file_scope.py `
+  tests/test_multifile_regressions.py `
+  tests/test_confirmation_session_api.py `
+  tests/test_web_overhaul.py `
+  tests/test_web_workbench_parity.py -q
+```
+
+`node -c src/data_agent/web/static/js/app.js` and `git diff --check` also passed.
+The environment may emit a benign warning when pytest cannot write
+`.pytest_cache`; this warning is not a test failure.
+
+Every Stage 3C slice must rerun the relevant focused tests plus all tests affected
+by its new ownership boundary. Passing only new unit tests is insufficient.
+
 ## Principal Risks And Mitigations
 
 Risk: The new scope model silently replaces one mixed heuristic with another.
@@ -782,3 +944,25 @@ trust-workflow, web, chart, and single-file regression checks at each boundary.
 - Context growth remains bounded.
 - Union, fuzzy mapping, many-to-many execution, and automatic repair remain out of
   scope until this closed loop is proven stable.
+
+## Compression-Resistant Resume Checklist
+
+After any context reset or handoff:
+
+1. Read this specification completely.
+2. Check branch, worktree status, and recent commits before editing.
+3. Identify the current slice; never infer that approval of this design approved
+   implementation of every slice at once.
+4. Re-read that slice's goals, non-goals, acceptance criteria, and stop gate.
+5. Inspect the existing integration points before proposing new abstractions.
+6. Write and obtain approval for the slice implementation plan before code.
+7. Use red-green tests for each behavior change.
+8. Run focused and cross-system regressions before committing.
+9. Record implementation decisions, deviations, verification commands, and
+   results in the slice plan or verification note.
+10. Stop and return to design review if repository evidence conflicts with this
+    specification or reveals a new cross-system risk.
+
+As of this document revision, the design is complete and no Stage 3C production
+code has been implemented. The next planned deliverable is the Stage 3C0A
+implementation plan.
