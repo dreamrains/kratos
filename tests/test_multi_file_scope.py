@@ -278,3 +278,20 @@ def test_duplicate_explicit_reference_is_prioritized_with_bounded_full_counts():
         "omitted_file_count": 2,
         "max_scope_files": 5,
     }
+
+
+def test_unique_file_id_does_not_hide_an_unrelated_duplicate_filename():
+    state = _state(
+        _profile("users"),
+        _profile("sales_a", dataset="sales_a", filename="sales.csv"),
+        _profile("sales_b", dataset="sales_b", filename="sales.csv"),
+    )
+
+    plan = build_analysis_scope_plan(state, "compare users with sales.csv")
+
+    assert plan["scope_status"] == "needs_decision"
+    assert [item["file_id"] for item in plan["decision_files"]] == [
+        "sales_a",
+        "sales_b",
+    ]
+    assert [item["file_id"] for item in plan["available_files"]] == ["users"]

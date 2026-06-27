@@ -362,8 +362,6 @@ def _ambiguous_file_ids(
         if _file_id(profile) in eligible_ids
         and _normalize_alias(_file_id(profile)) in normalized_goal
     }
-    if uniquely_named:
-        return set()
     aliases: dict[str, list[str]] = {}
     for profile in profiles:
         file_id = _file_id(profile)
@@ -374,8 +372,9 @@ def _ambiguous_file_ids(
                 aliases.setdefault(alias, []).append(file_id)
     result: set[str] = set()
     for file_ids in aliases.values():
-        if len(set(file_ids)) > 1:
-            result.update(file_ids)
+        candidate_ids = set(file_ids)
+        if len(candidate_ids) > 1 and not candidate_ids.intersection(uniquely_named):
+            result.update(candidate_ids)
     return result
 
 
