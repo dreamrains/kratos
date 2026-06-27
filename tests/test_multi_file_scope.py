@@ -90,17 +90,16 @@ def test_scope_plan_includes_relevant_user_files_and_excludes_unrelated_game_fil
 
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
-    assert [item["file_id"] for item in plan["pending_files"]] == ["coupon"]
-    assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
-    assert plan["scope_status"] == "needs_confirmation"
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
+    assert plan["decision_files"] == []
+    assert plan["pending_files"] == []
+    assert [item["file_id"] for item in plan["unused_files"]] == ["game"]
+    assert plan["scope_status"] == "ready_with_notes"
     assert any(
-        "candidate" in assumption.lower()
-        and "coupon" in assumption
-        and "rel_orders_coupon" in assumption
-        and "主用户ID" in assumption
-        and "产品用户ID" in assumption
-        for assumption in plan["assumptions"]
+        "coupon" in note
+        and "join" in note.lower()
+        and "rel_orders_coupon" in note
+        for note in plan["notes"]
     )
 
 
@@ -136,7 +135,7 @@ def test_scope_plan_excludes_unrelated_game_file_even_when_active_bundle_include
     assert [item["file_id"] for item in plan["excluded_files"]] == ["game"]
 
 
-def test_scope_plan_marks_pending_ambiguous_files_as_needing_confirmation():
+def test_scope_plan_keeps_ambiguous_files_available_without_confirmation():
     state = AnalysisSessionState(session_id="scope_plan_pending", data_state="data_loaded")
     state.goal = "评估省钱卡是否值得继续运营"
     state.data_pool = [
@@ -165,8 +164,10 @@ def test_scope_plan_marks_pending_ambiguous_files_as_needing_confirmation():
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
     assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
-    assert [item["file_id"] for item in plan["pending_files"]] == ["ambiguous"]
-    assert plan["scope_status"] == "needs_confirmation"
+    assert [item["file_id"] for item in plan["available_files"]] == ["ambiguous"]
+    assert plan["decision_files"] == []
+    assert plan["pending_files"] == []
+    assert plan["scope_status"] == "ready_with_notes"
 
 
 def test_scope_plan_uses_relationship_evidence_before_canonical_ids():
@@ -206,7 +207,9 @@ def test_scope_plan_uses_relationship_evidence_before_canonical_ids():
         "active_orders",
         "confirmed_profile",
     ]
-    assert [item["file_id"] for item in plan["pending_files"]] == ["historical_orders"]
+    assert [item["file_id"] for item in plan["available_files"]] == ["historical_orders"]
+    assert plan["decision_files"] == []
+    assert plan["pending_files"] == []
 
 
 def test_scope_plan_enforces_deterministic_five_file_detail_budget():
@@ -246,6 +249,10 @@ def test_scope_plan_enforces_deterministic_five_file_detail_budget():
     assert first["excluded_files"] == []
     assert first["context_budget"] == {
         "included_file_count": 5,
+        "available_file_count": 0,
+        "unused_file_count": 0,
+        "decision_file_count": 0,
+        "unavailable_file_count": 0,
         "excluded_file_count": 0,
         "pending_file_count": 0,
         "total_file_count": 7,
@@ -255,7 +262,7 @@ def test_scope_plan_enforces_deterministic_five_file_detail_budget():
     }
 
 
-def test_scope_budget_keeps_one_pending_file_actionable_when_active_bundle_has_five_files():
+def test_scope_budget_keeps_active_files_visible_when_available_file_is_omitted():
     state = AnalysisSessionState(session_id="scope_pending_budget", data_state="data_loaded")
     state.data_pool = [
         {"file_id": f"active_{index}", "filename": f"membership_active_{index}.xlsx"}
@@ -272,13 +279,20 @@ def test_scope_budget_keeps_one_pending_file_actionable_when_active_bundle_has_f
 
     plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
 
-    assert plan["scope_status"] == "needs_confirmation"
-    assert [item["file_id"] for item in plan["pending_files"]] == ["pending_profile"]
-    assert len(plan["included_files"]) == 4
+    assert plan["scope_status"] == "ready_with_notes"
+    assert plan["pending_files"] == []
+    assert plan["decision_files"] == []
+    assert [item["file_id"] for item in plan["included_files"]] == [
+        f"active_{index}" for index in range(1, 6)
+    ]
     assert plan["context_budget"] == {
-        "included_file_count": 4,
+        "included_file_count": 5,
+        "available_file_count": 0,
+        "unused_file_count": 0,
+        "decision_file_count": 0,
+        "unavailable_file_count": 0,
         "excluded_file_count": 0,
-        "pending_file_count": 1,
+        "pending_file_count": 0,
         "total_file_count": 6,
         "returned_file_count": 5,
         "omitted_file_count": 1,
@@ -287,7 +301,7 @@ def test_scope_budget_keeps_one_pending_file_actionable_when_active_bundle_has_f
 
 
 @pytest.mark.parametrize("alias", ["customer_id", "member_id", "account_id"])
-def test_user_identifier_aliases_produce_user_grain_and_pending_candidate_mapping(alias):
+def test_user_identifier_aliases_produce_user_grain_and_nonblocking_join_note(alias):
     profile = {
         "file_id": f"profile_{alias}",
         "filename": "customer_profile.xlsx",
@@ -301,5 +315,8 @@ def test_user_identifier_aliases_produce_user_grain_and_pending_candidate_mappin
     state.data_pool = [profile]
     plan = build_analysis_scope_plan(state, user_goal="evaluate membership revenue")
 
-    assert [item["file_id"] for item in plan["pending_files"]] == [f"profile_{alias}"]
-    assert any(alias in assumption for assumption in plan["assumptions"])
+    assert [item["file_id"] for item in plan["available_files"]] == [f"profile_{alias}"]
+    assert plan["pending_files"] == []
+    assert plan["decision_files"] == []
+    assert plan["scope_status"] == "ready_with_notes"
+    assert any(alias in note and "join" in note.lower() for note in plan["notes"])

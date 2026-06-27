@@ -561,10 +561,12 @@
                             <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="workbenchContext().goal || '未设置目标'"></p>
                             <span class="trust-pill" :class="trustStatusClass(workbenchContext().scope_status || 'unknown')" x-text="trustStatusLabel(workbenchContext().scope_status || 'unknown')"></span>
                         </div>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().included_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'纳入：' + formatWorkbenchFiles(workbenchContext().included_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().pending_files)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="'待确认：' + formatWorkbenchFiles(workbenchContext().pending_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().excluded_files)" class="text-[10px] text-stone-400 mt-1" x-text="'排除：' + formatWorkbenchFiles(workbenchContext().excluded_files)"></p>
-                        <p x-show="workbenchContext().assumptions && workbenchContext().assumptions.length" class="text-[10px] text-stone-400 mt-1" x-text="'假设：' + workbenchContext().assumptions.join('；')"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().included_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'本次使用：' + formatWorkbenchFiles(workbenchContext().included_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().available_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'可用但本次暂未使用：' + formatWorkbenchFiles(workbenchContext().available_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().unused_files)" class="text-[10px] text-stone-400 mt-1" x-text="'未使用：' + formatWorkbenchFiles(workbenchContext().unused_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().decision_files)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="'需要你决定：' + formatWorkbenchFiles(workbenchContext().decision_files)"></p>
+                        <p x-show="formatWorkbenchFiles(workbenchContext().unavailable_files)" class="text-[10px] text-red-700 dark:text-red-300 mt-1" x-text="'暂不可用：' + formatWorkbenchFiles(workbenchContext().unavailable_files)"></p>
+                        <p x-show="workbenchContext().notes && workbenchContext().notes.length" class="text-[10px] text-stone-400 mt-1" x-text="'说明：' + workbenchContext().notes.join('；')"></p>
                     </div>
                 </div>
                 <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
@@ -586,16 +588,16 @@
                         </div>
                     </template>
                     <p x-show="trustView.active_bundle && trustView.active_bundle.remaining_file_count > 0" class="text-[10px] text-stone-400" x-text="'另有 ' + trustView.active_bundle.remaining_file_count + ' 个文件未展开'"></p>
-                    <div x-show="trustView.file_relationships && trustView.file_relationships.length" class="space-y-1.5 pt-1">
-                        <p class="text-[10px] font-medium text-stone-400">关系状态</p>
-                        <template x-for="(relationship, ri) in (trustView.file_relationships || [])" :key="relationship.relationship_id || ri">
+                    <div x-show="workbenchRelationshipDiagnostics().length" class="space-y-1.5 pt-1">
+                        <p class="text-[10px] font-medium text-stone-400">技术关系说明</p>
+                        <template x-for="(relationship, ri) in workbenchRelationshipDiagnostics()" :key="relationship.relationship_id || ri">
                             <div class="trust-risk-item">
                                 <div class="flex items-start gap-2">
-                                    <span class="trust-pill shrink-0" :class="relationship.requires_confirmation ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.requires_confirmation ? '等待确认' : trustStatusLabel(relationship.status || 'unknown')"></span>
+                                    <span class="trust-pill shrink-0" :class="relationship.actionable ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.actionable ? '需要确认' : '仅供参考'"></span>
                                     <div class="min-w-0 flex-1">
-                                        <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatFileRelationshipMeta(relationship)"></p>
-                                        <p x-show="formatFileRelationshipEvidence(relationship)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatFileRelationshipEvidence(relationship)"></p>
-                                        <p x-show="formatFileRelationshipUncertainty(relationship)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="formatFileRelationshipUncertainty(relationship)"></p>
+                                        <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatRelationshipDiagnosticMeta(relationship)"></p>
+                                        <p x-show="formatRelationshipDiagnosticEvidence(relationship)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatRelationshipDiagnosticEvidence(relationship)"></p>
+                                        <p x-show="formatRelationshipDiagnosticUncertainty(relationship)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="formatRelationshipDiagnosticUncertainty(relationship)"></p>
                                     </div>
                                 </div>
                             </div>

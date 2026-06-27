@@ -39,16 +39,15 @@ def test_scope_plan_keeps_orders_and_coupon_profiles_linkable_by_user_aliases():
 
     plan = build_analysis_scope_plan(state, user_goal="评估省钱卡是否值得继续运营")
 
-    assert [item["file_id"] for item in plan["included_files"]] == ["orders"]
-    assert [item["file_id"] for item in plan["pending_files"]] == ["coupon"]
-    assert plan["scope_status"] == "needs_confirmation"
+    assert [item["file_id"] for item in plan["included_files"]] == ["orders", "coupon"]
+    assert plan["decision_files"] == []
+    assert plan["pending_files"] == []
+    assert plan["scope_status"] == "ready_with_notes"
     assert any(
-        "candidate" in assumption.lower()
-        and "coupon" in assumption
-        and "rel_orders_coupon" in assumption
-        and "主用户ID" in assumption
-        and "产品用户ID" in assumption
-        for assumption in plan["assumptions"]
+        "coupon" in note
+        and "join" in note.lower()
+        and "rel_orders_coupon" in note
+        for note in plan["notes"]
     )
     assert "coupon" not in {item["file_id"] for item in plan["excluded_files"]}
 
@@ -133,6 +132,11 @@ def test_orphan_relationship_flag_does_not_create_an_actionable_confirmation_gat
         "question": "",
         "blocking_reason": "",
     }
+    context = view["workbench"]["current_context"]
+    assert context["decision_files"] == []
+    assert context["pending_files"] == []
+    assert view["workbench"]["relationship_diagnostics"][0]["actionable"] is False
+    assert "active confirmation" in view["workbench"]["relationship_diagnostics"][0]["note"]
 
 
 def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
@@ -147,8 +151,13 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
         "goal": "",
         "scope_status": "ready",
         "included_files": [],
+        "available_files": [],
+        "unused_files": [],
+        "decision_files": [],
+        "unavailable_files": [],
         "excluded_files": [],
         "pending_files": [],
+        "notes": [],
         "assumptions": [],
     }
     assert view["workbench"]["trust_evidence"] == {

@@ -1324,6 +1324,30 @@ function chatApp() {
             return this.trustView?.workbench?.trust_evidence || {};
         },
 
+        workbenchRelationshipDiagnostics() {
+            return this.trustView?.workbench?.relationship_diagnostics || [];
+        },
+
+        formatRelationshipDiagnosticMeta(diagnostic) {
+            if (!diagnostic) return '技术关系说明：暂无记录';
+            const fileIds = Array.isArray(diagnostic.file_ids) && diagnostic.file_ids.length
+                ? diagnostic.file_ids.join('、')
+                : '未标注文件';
+            const status = diagnostic.actionable ? '需要确认' : '仅供参考';
+            const note = diagnostic.note || '仅作为后续合并、关联或映射时的技术参考。';
+            return `${fileIds} / ${status} / ${note}`;
+        },
+
+        formatRelationshipDiagnosticEvidence(diagnostic) {
+            if (!diagnostic || !Array.isArray(diagnostic.evidence) || !diagnostic.evidence.length) return '';
+            return `依据：${diagnostic.evidence.join('、')}`;
+        },
+
+        formatRelationshipDiagnosticUncertainty(diagnostic) {
+            if (!diagnostic || !Array.isArray(diagnostic.uncertainties) || !diagnostic.uncertainties.length) return '';
+            return `不确定性：${diagnostic.uncertainties.join('、')}`;
+        },
+
         formatWorkbenchFiles(files) {
             const list = Array.isArray(files) ? files : [];
             if (!list.length) return '';

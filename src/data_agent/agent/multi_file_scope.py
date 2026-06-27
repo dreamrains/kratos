@@ -83,32 +83,64 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     ]
     prioritized = sorted(classified, key=lambda item: (item["priority"], item["index"]))
     returned = prioritized[:MAX_SCOPE_FILES]
-    if any(item["scope"] == "pending" for item in classified) and not any(
-        item["scope"] == "pending" for item in returned
+    if any(item["participation"] == "needs_scope_decision" for item in classified) and not any(
+        item["participation"] == "needs_scope_decision" for item in returned
     ):
-        pending_item = next(item for item in prioritized if item["scope"] == "pending")
-        returned[-1] = pending_item
+        decision_item = next(
+            item for item in prioritized if item["participation"] == "needs_scope_decision"
+        )
+        returned[-1] = decision_item
         returned.sort(key=lambda item: (item["priority"], item["index"]))
-    included_files = [item["summary"] for item in returned if item["scope"] == "included"]
-    excluded_files = [item["summary"] for item in returned if item["scope"] == "excluded"]
-    pending_files = [item["summary"] for item in returned if item["scope"] == "pending"]
-    assumptions = _dedupe([
-        assumption
+    included_files = [item["summary"] for item in returned if item["participation"] == "included"]
+    available_files = [item["summary"] for item in returned if item["participation"] == "available"]
+    unused_files = [item["summary"] for item in returned if item["participation"] == "unused"]
+    decision_files = [
+        item["summary"] for item in returned if item["participation"] == "needs_scope_decision"
+    ]
+    unavailable_files = [
+        item["summary"] for item in returned if item["participation"] == "unavailable"
+    ]
+    excluded_files = unused_files + unavailable_files
+    pending_files = decision_files
+    notes = _dedupe([
+        note
         for item in returned
-        if item["scope"] == "pending"
-        for assumption in _alias_candidate_assumptions(item["profile"], item["relationship"])
+        for note in _relationship_diagnostic_notes(item["profile"], item["relationship"])
     ])
-    has_pending = any(item["scope"] == "pending" for item in classified)
+    all_notes = _dedupe([
+        note
+        for item in classified
+        for note in _relationship_diagnostic_notes(item["profile"], item["relationship"])
+    ])
+    if any(item["participation"] == "unavailable" for item in classified):
+        scope_status = "blocked"
+    elif any(item["participation"] == "needs_scope_decision" for item in classified):
+        scope_status = "needs_decision"
+    elif all_notes or any(
+        item["participation"] in {"available", "unused"} for item in classified
+    ):
+        scope_status = "ready_with_notes"
+    else:
+        scope_status = "ready"
     returned_file_count = len(returned)
     return {
-        "scope_status": "needs_confirmation" if has_pending else "ready",
+        "scope_status": scope_status,
         "goal": goal,
         "included_files": included_files,
+        "available_files": available_files,
+        "unused_files": unused_files,
+        "decision_files": decision_files,
+        "unavailable_files": unavailable_files,
         "excluded_files": excluded_files,
         "pending_files": pending_files,
-        "assumptions": assumptions,
+        "notes": notes,
+        "assumptions": notes,
         "context_budget": {
             "included_file_count": len(included_files),
+            "available_file_count": len(available_files),
+            "unused_file_count": len(unused_files),
+            "decision_file_count": len(decision_files),
+            "unavailable_file_count": len(unavailable_files),
             "excluded_file_count": len(excluded_files),
             "pending_file_count": len(pending_files),
             "total_file_count": len(classified),
@@ -130,25 +162,28 @@ def _classify_scope_file(
     relationship = _best_relationship(relationships.get(file_id, []))
     summary = _file_summary(profile, relationship)
 
-    if _is_explicitly_unrelated(profile, goal):
-        scope, priority = "excluded", 5
+    if not file_id:
+        participation, priority = "unavailable", 6
+    elif _is_explicitly_unrelated(profile, goal):
+        participation, priority = "unused", 5
     elif file_id in active_file_ids:
-        scope, priority = "included", 0
+        participation, priority = "included", 0
     elif _relationship_is_confirmed(relationship):
-        scope, priority = "included", 1
-    elif _relationship_is_pending(relationship):
-        scope, priority = "pending", 3
+        participation, priority = "included", 1
     elif _relationship_is_excluded(relationship):
-        scope, priority = "excluded", 5
+        participation, priority = "unused", 5
+    elif _relationship_is_pending(relationship):
+        participation, priority = "included", 3
     elif _has_strong_goal_theme_overlap(profile, goal):
-        scope, priority = "included", 2
+        participation, priority = "included", 2
     else:
-        scope, priority = "pending", 4
+        participation, priority = "available", 4
 
     return {
         "index": index,
         "priority": priority,
-        "scope": scope,
+        "scope": _legacy_scope(participation),
+        "participation": participation,
         "summary": summary,
         "profile": profile,
         "relationship": relationship,
@@ -176,6 +211,16 @@ def _file_summary(
     return summary
 
 
+def _legacy_scope(participation: str) -> str:
+    if participation == "included":
+        return "included"
+    if participation == "needs_scope_decision":
+        return "pending"
+    if participation in {"unused", "unavailable"}:
+        return "excluded"
+    return "available"
+
+
 def _has_strong_goal_theme_overlap(profile: dict[str, Any], goal: str) -> bool:
     profile_theme = " ".join([
         _text(profile.get("filename") or profile.get("name")),
@@ -195,21 +240,27 @@ def _is_explicitly_unrelated(profile: dict[str, Any], goal: str) -> bool:
     return _has_any(text, EXCLUDED_GAME_TERMS) and not _has_any(goal, GAME_GOAL_TERMS)
 
 
-def _alias_candidate_assumptions(
+def _relationship_diagnostic_notes(
     profile: dict[str, Any],
     relationship: dict[str, Any] | None,
 ) -> list[str]:
-    user_fields = canonical_entity_fields(profile)["user"]
-    alias_fields = [field for field in user_fields if field != "user_id"]
-    if not alias_fields:
-        return []
+    notes: list[str] = []
     file_id = _text(profile.get("file_id") or profile.get("id"))
     relationship_id = _relationship_id(relationship) if relationship else "no relationship record"
-    aliases = ", ".join(alias_fields)
-    return [
-        f"Candidate mapping for pending file {file_id} ({relationship_id}): "
-        f"{aliases} may represent user identifiers; confirm before using them as join keys."
-    ]
+    if relationship and _relationship_is_pending(relationship):
+        notes.append(
+            f"Possible join evidence for file {file_id} ({relationship_id}); "
+            "confirm keys only if a merge, join, or entity mapping is needed."
+        )
+    user_fields = canonical_entity_fields(profile)["user"]
+    alias_fields = [field for field in user_fields if field != "user_id"]
+    if alias_fields:
+        aliases = ", ".join(alias_fields)
+        notes.append(
+            f"Candidate join fields for file {file_id} ({relationship_id}): "
+            f"{aliases} may represent user identifiers; confirm only before using them as join keys."
+        )
+    return notes
 
 
 def _relationships_by_file(state: Any) -> dict[str, list[dict[str, Any]]]:

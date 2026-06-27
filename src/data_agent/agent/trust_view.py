@@ -154,8 +154,13 @@ def _empty_view(session_id: str) -> dict[str, Any]:
                 "goal": "",
                 "scope_status": "",
                 "included_files": [],
+                "available_files": [],
+                "unused_files": [],
+                "decision_files": [],
+                "unavailable_files": [],
                 "excluded_files": [],
                 "pending_files": [],
+                "notes": [],
                 "assumptions": [],
             },
             "confirmations": {
@@ -169,6 +174,7 @@ def _empty_view(session_id: str) -> dict[str, Any]:
                 "failed_count": 0,
                 "downgraded_count": 0,
             },
+            "relationship_diagnostics": [],
         },
         "active_bundle": None,
         "file_relationships": [],
@@ -344,8 +350,13 @@ def _workbench_summary(
             "goal": _text(plan.get("goal")) or _text(getattr(state, "goal", "")),
             "scope_status": _text(plan.get("scope_status")),
             "included_files": _list_items(plan.get("included_files")),
+            "available_files": _list_items(plan.get("available_files")),
+            "unused_files": _list_items(plan.get("unused_files")),
+            "decision_files": _list_items(plan.get("decision_files")),
+            "unavailable_files": _list_items(plan.get("unavailable_files")),
             "excluded_files": _list_items(plan.get("excluded_files")),
             "pending_files": _list_items(plan.get("pending_files")),
+            "notes": _text_list(plan.get("notes")),
             "assumptions": _text_list(plan.get("assumptions")),
         },
         "confirmations": {
@@ -354,6 +365,10 @@ def _workbench_summary(
             "blocking_reason": _text(confirmation_gate.get("blocking_reason")),
         },
         "trust_evidence": trust_evidence,
+        "relationship_diagnostics": _relationship_diagnostics(
+            _list_attr(state, "file_relationships"),
+            confirmation_gate,
+        ),
     }
 
 
@@ -471,6 +486,42 @@ def _file_relationship_summaries(
         if len(summaries) >= limit:
             break
     return summaries
+
+
+def _relationship_diagnostics(
+    relationships: list[dict[str, Any]],
+    confirmation_gate: dict[str, Any],
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    active_type = _text(confirmation_gate.get("confirmation_type"))
+    active_status = _text(confirmation_gate.get("status"))
+    diagnostics: list[dict[str, Any]] = []
+    for relationship in reversed(relationships):
+        relationship_id = _text(relationship.get("relationship_id") or relationship.get("id"))
+        if not relationship_id:
+            continue
+        confirmation_type = _text(relationship.get("confirmation_type"))
+        actionable = (
+            active_status == "needs_confirmation"
+            and bool(active_type)
+            and confirmation_type == active_type
+        )
+        diagnostics.append({
+            "relationship_id": relationship_id,
+            "status": _text(relationship.get("status")),
+            "actionable": actionable,
+            "note": (
+                "Requires the active confirmation card."
+                if actionable
+                else "Historical relationship metadata; not an active confirmation."
+            ),
+            "file_ids": _text_list(relationship.get("file_ids"))[:3],
+            "evidence": _text_list(relationship.get("evidence"))[:2],
+            "uncertainties": _text_list(relationship.get("uncertainties"))[:2],
+        })
+        if len(diagnostics) >= limit:
+            break
+    return diagnostics
 
 
 def _active_scope(value: Any) -> dict[str, Any]:
