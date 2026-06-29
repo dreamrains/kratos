@@ -648,10 +648,13 @@ class TestConfirmationWorkbenchWording:
         assert "workflow_notes" in js
         assert "Workflow notes" in js
 
-    def test_sidebar_uses_participation_scope_and_nonblocking_relationship_diagnostics(self, html, js):
-        assert "本次使用：" in html
-        assert "可用但本次暂未使用：" in html
+    def test_sidebar_uses_assignment_scope_and_nonblocking_relationship_diagnostics(self, html, js):
+        assert "workbenchContext().file_decisions" in html
+        assert "formatWorkbenchAssignmentLabel(file)" in html
+        assert "formatWorkbenchFileReason(file)" in html
         assert "技术关系说明" in html
         assert "workbenchRelationshipDiagnostics()" in html
         assert "formatRelationshipDiagnosticMeta" in js
         assert "仅供参考" in js
+        assert "关系待确认" not in html
+        assert "等待确认" not in html

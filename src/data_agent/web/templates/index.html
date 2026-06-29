@@ -551,8 +551,8 @@
                         <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">当前上下文</h3>
                         <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'currentContext' ? '' : 'currentContext'">?</button>
                     </div>
-                    <span x-show="trustView && trustView.active_bundle" class="text-[10px] text-stone-400" x-text="trustView.active_bundle.file_count"></span>
-                    <span x-show="trustView && !trustView.active_bundle && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
+                    <span x-show="workbenchContext().file_decisions && workbenchContext().file_decisions.length" class="text-[10px] text-stone-400" x-text="workbenchContext().file_decisions.length"></span>
+                    <span x-show="(!workbenchContext().file_decisions || workbenchContext().file_decisions.length === 0) && trustView && trustView.datasets && trustView.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.datasets.length"></span>
                 </div>
                 <p x-show="trustHelpOpen === 'currentContext'" class="trust-help-popover" x-text="trustHelpText('currentContext')"></p>
                 <div class="space-y-1.5 mb-2" x-show="trustView && trustView.workbench && trustView.workbench.current_context">
@@ -561,39 +561,28 @@
                             <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="workbenchContext().goal || '未设置目标'"></p>
                             <span class="trust-pill" :class="trustStatusClass(workbenchContext().scope_status || 'unknown')" x-text="trustStatusLabel(workbenchContext().scope_status || 'unknown')"></span>
                         </div>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().included_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'本次使用：' + formatWorkbenchFiles(workbenchContext().included_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().available_files)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'可用但本次暂未使用：' + formatWorkbenchFiles(workbenchContext().available_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().unused_files)" class="text-[10px] text-stone-400 mt-1" x-text="'未使用：' + formatWorkbenchFiles(workbenchContext().unused_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().decision_files)" class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="'需要你决定：' + formatWorkbenchFiles(workbenchContext().decision_files)"></p>
-                        <p x-show="formatWorkbenchFiles(workbenchContext().unavailable_files)" class="text-[10px] text-red-700 dark:text-red-300 mt-1" x-text="'暂不可用：' + formatWorkbenchFiles(workbenchContext().unavailable_files)"></p>
                         <p x-show="workbenchContext().notes && workbenchContext().notes.length" class="text-[10px] text-stone-400 mt-1" x-text="'说明：' + workbenchContext().notes.join('；')"></p>
                     </div>
                 </div>
                 <p x-show="trustView && trustView.active_scope" class="text-[10px] text-stone-500 dark:text-stone-400 mb-2" x-text="formatActiveScope(trustView.active_scope)"></p>
-                <div x-show="trustView && trustView.active_bundle" class="space-y-1.5">
-                    <div class="trust-data-item">
-                        <div class="flex items-center justify-between gap-2">
-                            <p class="text-xs font-medium text-stone-700 dark:text-stone-300">当前范围</p>
-                            <span class="trust-pill" :class="trustStatusClass(trustView.active_bundle.relationship_status || 'unknown')" x-text="trustStatusLabel(trustView.active_bundle.relationship_status || 'unknown')"></span>
-                        </div>
-                        <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatActiveBundleSummary(trustView.active_bundle)"></p>
-                    </div>
-                    <template x-for="(file, fi) in ((trustView.active_bundle && trustView.active_bundle.files) || [])" :key="file.file_id || fi">
+                <div class="space-y-1.5" x-show="workbenchContext().file_decisions && workbenchContext().file_decisions.length">
+                    <template x-for="(file, index) in workbenchContext().file_decisions" :key="(file.file_id || file.dataset || file.filename || 'file') + ':' + index">
                         <div class="trust-data-item">
                             <div class="flex items-center justify-between gap-2">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.filename || file.file_id"></p>
-                                <span x-show="file.status" class="trust-pill" :class="trustStatusClass(file.status || 'unknown')" x-text="trustStatusLabel(file.status || 'unknown')"></span>
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.filename || file.dataset || file.file_id"></p>
+                                <span class="trust-pill" :class="trustStatusClass(workbenchDecisionStatus(file))" x-text="formatWorkbenchAssignmentLabel(file)"></span>
                             </div>
-                            <p class="text-[10px] text-stone-400 mt-1" x-text="formatBundleFileSummary(file)"></p>
+                            <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatWorkbenchFileReason(file)"></p>
                         </div>
                     </template>
-                    <p x-show="trustView.active_bundle && trustView.active_bundle.remaining_file_count > 0" class="text-[10px] text-stone-400" x-text="'另有 ' + trustView.active_bundle.remaining_file_count + ' 个文件未展开'"></p>
-                    <div x-show="workbenchRelationshipDiagnostics().length" class="space-y-1.5 pt-1">
-                        <p class="text-[10px] font-medium text-stone-400">技术关系说明</p>
+                </div>
+                <details x-show="workbenchRelationshipDiagnostics().length" class="pt-2">
+                    <summary class="text-[10px] font-medium text-stone-400 cursor-pointer">技术关系说明</summary>
+                    <div class="space-y-1.5 pt-1">
                         <template x-for="(relationship, ri) in workbenchRelationshipDiagnostics()" :key="relationship.relationship_id || ri">
                             <div class="trust-risk-item">
                                 <div class="flex items-start gap-2">
-                                    <span class="trust-pill shrink-0" :class="relationship.actionable ? 'trust-pill-warn' : trustStatusClass(relationship.status || 'unknown')" x-text="relationship.actionable ? '需要确认' : '仅供参考'"></span>
+                                    <span class="trust-pill shrink-0" :class="trustStatusClass(relationship.status || 'unknown')">仅供参考</span>
                                     <div class="min-w-0 flex-1">
                                         <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatRelationshipDiagnosticMeta(relationship)"></p>
                                         <p x-show="formatRelationshipDiagnosticEvidence(relationship)" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatRelationshipDiagnosticEvidence(relationship)"></p>
@@ -603,8 +592,8 @@
                             </div>
                         </template>
                     </div>
-                </div>
-                <div class="space-y-1.5" x-show="!trustView || !trustView.active_bundle">
+                </details>
+                <div class="space-y-1.5" x-show="!workbenchContext().file_decisions || workbenchContext().file_decisions.length === 0">
                     <template x-for="(dataset, di) in ((trustView && trustView.datasets) || [])" :key="dataset.dataset || di">
                         <div class="trust-data-item">
                             <div class="flex items-center justify-between gap-2">

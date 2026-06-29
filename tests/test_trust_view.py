@@ -1,5 +1,5 @@
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.trust_view import build_trust_view
+from data_agent.agent.trust_view import _workbench_summary, build_trust_view
 
 
 def _clear_confirmation_gate():
@@ -14,15 +14,19 @@ def _clear_confirmation_gate():
     }
 
 
-def _empty_workbench(goal="", scope_status=""):
+def _empty_workbench(goal="", scope_status="ready"):
     return {
         "current_context": {
             "goal": goal,
             "scope_status": scope_status,
-            "included_files": [],
-            "excluded_files": [],
-            "pending_files": [],
-            "assumptions": [],
+            "file_decisions": [],
+            "eligible_files": [],
+            "used_files": [],
+            "available_files": [],
+            "not_needed_files": [],
+            "decision_files": [],
+            "unavailable_files": [],
+            "notes": [],
         },
         "confirmations": {
             "status": "clear",
@@ -35,6 +39,7 @@ def _empty_workbench(goal="", scope_status=""):
             "failed_count": 0,
             "downgraded_count": 0,
         },
+        "relationship_diagnostics": [],
     }
 
 
@@ -78,6 +83,36 @@ def test_none_state_returns_empty_view_for_requested_session():
     }
 
 
+def test_workbench_scope_status_defaults_to_ready_for_missing_or_malformed_plan():
+    state = AnalysisSessionState(session_id="scope_status_defaults")
+
+    missing = _workbench_summary(state, None, {}, None)
+    malformed = _workbench_summary(state, ["not", "a", "plan"], {}, None)
+    malformed_status = _workbench_summary(
+        state,
+        {"scope_status": {"unexpected": True}},
+        {},
+        None,
+    )
+
+    assert missing["current_context"]["scope_status"] == "ready"
+    assert malformed["current_context"]["scope_status"] == "ready"
+    assert malformed_status["current_context"]["scope_status"] == "ready"
+
+
+def test_workbench_scope_status_preserves_explicit_non_empty_status():
+    state = AnalysisSessionState(session_id="scope_status_explicit")
+
+    workbench = _workbench_summary(
+        state,
+        {"scope_status": "needs_decision"},
+        {},
+        None,
+    )
+
+    assert workbench["current_context"]["scope_status"] == "needs_decision"
+
+
 def test_trust_view_provides_workbench_context_not_route_selection_surface():
     state = AnalysisSessionState(session_id="workbench", data_state="data_loaded")
     state.goal = "评估省钱卡是否值得继续运营"
@@ -97,9 +132,79 @@ def test_trust_view_provides_workbench_context_not_route_selection_surface():
 
     view = build_trust_view(state)
 
-    assert set(view["workbench"].keys()) == {"current_context", "confirmations", "trust_evidence"}
+    assert set(view["workbench"].keys()) == {
+        "current_context",
+        "confirmations",
+        "trust_evidence",
+        "relationship_diagnostics",
+    }
     assert view["workbench"]["current_context"]["goal"] == "评估省钱卡是否值得继续运营"
     assert "routes" not in view["workbench"]
+
+
+def test_workbench_context_projects_full_file_decisions_without_legacy_aliases():
+    state = AnalysisSessionState(session_id="workbench_scope", data_state="data_loaded")
+    state.goal = "analyze orders"
+    state.data_pool = [{
+        "file_id": "orders",
+        "filename": "orders.csv",
+        "dataset": "orders",
+        "status": "loaded",
+        "columns": ["order_id", "amount"],
+    }]
+    state.dataset_contracts = [{
+        "id": "duc_orders",
+        "dataset": "orders",
+        "quality_status": "ready",
+    }]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_orders", "dataset_inputs": ["orders"]}]
+    }
+
+    context = build_trust_view(state)["workbench"]["current_context"]
+
+    assert set(context) == {
+        "goal",
+        "scope_status",
+        "file_decisions",
+        "eligible_files",
+        "used_files",
+        "available_files",
+        "not_needed_files",
+        "decision_files",
+        "unavailable_files",
+        "notes",
+    }
+    decision = context["file_decisions"][0]
+    assert decision["assignment"] == "used"
+    assert decision["reason_code"] == "plan_task_binding"
+    assert decision["reason"]
+    assert decision["task_refs"] == ["task_orders"]
+
+
+def test_relationship_diagnostics_never_become_actionable_from_runtime_gate():
+    state = AnalysisSessionState(session_id="relationship_diagnostic", data_state="data_loaded")
+    state.pending_confirmations = [{
+        "id": "confirm_method",
+        "status": "pending",
+        "confirmation_type": "method_confirmation",
+        "question": "Which method should be used?",
+        "blocking_reason": "The method changes the result.",
+    }]
+    state.file_relationships = [{
+        "relationship_id": "rel_orders_users",
+        "status": "possibly_linked",
+        "relationship_mode": "include_in_active_bundle",
+        "confirmation_type": "method_confirmation",
+        "file_ids": ["orders", "users"],
+    }]
+
+    view = build_trust_view(state)
+
+    assert view["workbench"]["confirmations"]["status"] == "needs_confirmation"
+    diagnostic = view["workbench"]["relationship_diagnostics"][0]
+    assert diagnostic["relationship_mode"] == "include_in_active_bundle"
+    assert diagnostic["actionable"] is False
 
 
 def test_trust_view_exposes_active_bundle_and_recent_relationships_without_mutating_state():
@@ -779,11 +884,11 @@ def test_trust_view_exposes_analysis_scope_plan():
 
     view = build_trust_view(state)
 
-    assert view["analysis_scope_plan"]["scope_status"] == "ready"
-    assert view["analysis_scope_plan"]["included_files"][0]["file_id"] == "orders"
+    assert view["analysis_scope_plan"]["scope_status"] == "ready_with_notes"
+    assert view["analysis_scope_plan"]["unavailable_files"][0]["file_id"] == "orders"
 
 
-def test_trust_view_surfaces_pending_confirmation_gate_question():
+def test_trust_view_ignores_obsolete_relationship_confirmation():
     state = AnalysisSessionState(session_id="pending_relationship", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"
     state.pending_confirmations = [
@@ -799,9 +904,12 @@ def test_trust_view_surfaces_pending_confirmation_gate_question():
     view = build_trust_view(state)
 
     gate = view["recommendations"]["confirmation_gate"]
-    assert gate["status"] == "needs_confirmation"
-    assert gate["confirmation_type"] == "file_relationship_confirmation"
-    assert gate["question"] == "请确认 activity.xlsx 是否要和 orders.xlsx 一起分析？"
+    assert gate == _clear_confirmation_gate()
+    assert view["workbench"]["confirmations"] == {
+        "status": "clear",
+        "question": "",
+        "blocking_reason": "",
+    }
 
 
 def test_trust_view_history_routes_and_counts_are_not_display_limited():
@@ -961,14 +1069,21 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
         "analysis_scope_plan": {
             "scope_status": "ready",
             "goal": "",
-            "included_files": [],
-            "excluded_files": [],
-            "pending_files": [],
-            "assumptions": [],
+            "file_decisions": [],
+            "eligible_files": [],
+            "used_files": [],
+            "available_files": [],
+            "not_needed_files": [],
+            "decision_files": [],
+            "unavailable_files": [],
+            "notes": [],
             "context_budget": {
-                "included_file_count": 0,
-                "excluded_file_count": 0,
-                "pending_file_count": 0,
+                "eligible_file_count": 0,
+                "used_file_count": 0,
+                "available_file_count": 0,
+                "not_needed_file_count": 0,
+                "decision_file_count": 0,
+                "unavailable_file_count": 0,
                 "total_file_count": 0,
                 "returned_file_count": 0,
                 "omitted_file_count": 0,

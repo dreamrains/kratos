@@ -33,6 +33,66 @@ def _clear_confirmation_gate():
     }
 
 
+def _empty_current_context(scope_status="ready"):
+    return {
+        "goal": "",
+        "scope_status": scope_status,
+        "file_decisions": [],
+        "eligible_files": [],
+        "used_files": [],
+        "available_files": [],
+        "not_needed_files": [],
+        "decision_files": [],
+        "unavailable_files": [],
+        "notes": [],
+    }
+
+
+def _empty_workbench(scope_status="ready", trust_evidence=None):
+    return {
+        "current_context": _empty_current_context(scope_status),
+        "confirmations": {
+            "status": "clear",
+            "question": "",
+            "blocking_reason": "",
+        },
+        "trust_evidence": trust_evidence or {
+            "status": "not_run",
+            "claim_count": 0,
+            "failed_count": 0,
+            "downgraded_count": 0,
+        },
+        "relationship_diagnostics": [],
+    }
+
+
+def _empty_scope_plan():
+    return {
+        "scope_status": "ready",
+        "goal": "",
+        "file_decisions": [],
+        "eligible_files": [],
+        "used_files": [],
+        "available_files": [],
+        "not_needed_files": [],
+        "decision_files": [],
+        "unavailable_files": [],
+        "notes": [],
+        "context_budget": {
+            "eligible_file_count": 0,
+            "used_file_count": 0,
+            "available_file_count": 0,
+            "not_needed_file_count": 0,
+            "decision_file_count": 0,
+            "unavailable_file_count": 0,
+            "total_file_count": 0,
+            "returned_file_count": 0,
+            "omitted_file_count": 0,
+            "max_scope_files": 5,
+        },
+    }
+
+
 def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_path):
     cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
     try:
@@ -74,27 +134,7 @@ def test_trust_view_endpoint_returns_exact_empty_view_for_missing_session(tmp_pa
                 "confirmation_gate": _clear_confirmation_gate(),
             },
             "analysis_scope_plan": None,
-            "workbench": {
-                "current_context": {
-                    "goal": "",
-                    "scope_status": "",
-                    "included_files": [],
-                    "excluded_files": [],
-                    "pending_files": [],
-                    "assumptions": [],
-                },
-                "confirmations": {
-                    "status": "clear",
-                    "question": "",
-                    "blocking_reason": "",
-                },
-                "trust_evidence": {
-                    "status": "not_run",
-                    "claim_count": 0,
-                    "failed_count": 0,
-                    "downgraded_count": 0,
-                },
-            },
+            "workbench": _empty_workbench(),
             "active_bundle": None,
             "file_relationships": [],
             "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
@@ -215,38 +255,10 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                 "counts": {"executable": 0, "exploratory": 0},
                 "confirmation_gate": _clear_confirmation_gate(),
             },
-            "analysis_scope_plan": {
-                "scope_status": "ready",
-                "goal": "",
-                "included_files": [],
-                "excluded_files": [],
-                "pending_files": [],
-                "assumptions": [],
-                "context_budget": {
-                    "included_file_count": 0,
-                    "excluded_file_count": 0,
-                    "pending_file_count": 0,
-                    "total_file_count": 0,
-                    "returned_file_count": 0,
-                    "omitted_file_count": 0,
-                    "max_scope_files": 5,
-                },
-            },
-            "workbench": {
-                "current_context": {
-                    "goal": "",
-                    "scope_status": "ready",
-                    "included_files": [],
-                    "excluded_files": [],
-                    "pending_files": [],
-                    "assumptions": [],
-                },
-                "confirmations": {
-                    "status": "clear",
-                    "question": "",
-                    "blocking_reason": "",
-                },
-                "trust_evidence": {
+            "analysis_scope_plan": _empty_scope_plan(),
+            "workbench": _empty_workbench(
+                scope_status="ready",
+                trust_evidence={
                     "id": "verify_1",
                     "status": "pass",
                     "claim_count": 3,
@@ -255,7 +267,7 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                     "evidence_signature": "sig-123",
                     "created_at": "2026-06-07 12:35:00",
                 },
-            },
+            ),
             "active_bundle": None,
             "file_relationships": [],
             "history": {
@@ -406,8 +418,56 @@ def test_trust_view_endpoint_returns_active_bundle_summary_without_mutating_stat
                 "uncertainties": ["row counts differ", "missing region keys"],
             }
         ]
+        assert payload["workbench"]["relationship_diagnostics"][0]["actionable"] is False
         assert "large" not in json.dumps(payload["active_bundle"], ensure_ascii=False)
         assert state_path.read_text(encoding="utf-8") == before
+    finally:
+        _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
+
+
+def test_trust_view_endpoint_projects_used_file_decision(tmp_path):
+    cfg, old_sessions, old_tasks_dir, old_next_id = _use_tmp_state(tmp_path)
+    session_id = "trust_scope_contract"
+    state_dir = tmp_path / "sessions" / session_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "analysis_state.json").write_text(
+        json.dumps({
+            "session_id": session_id,
+            "data_state": "data_loaded",
+            "goal": "analyze orders",
+            "data_pool": [{
+                "file_id": "orders",
+                "filename": "orders.csv",
+                "dataset": "orders",
+                "status": "loaded",
+            }],
+            "dataset_contracts": [{
+                "id": "duc_orders",
+                "dataset": "orders",
+                "quality_status": "ready",
+            }],
+            "analysis_plan": {
+                "method_plan": [{
+                    "step_id": "task_orders",
+                    "dataset_inputs": ["orders"],
+                }],
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    try:
+        from data_agent.web.app import create_app
+
+        payload = create_app().test_client().get(
+            f"/api/sessions/{session_id}/trust"
+        ).get_json()
+
+        decision = payload["workbench"]["current_context"]["file_decisions"][0]
+        assert decision["assignment"] == "used"
+        assert decision["reason_code"] == "plan_task_binding"
+        assert decision["reason"]
+        assert decision["task_refs"] == ["task_orders"]
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
 

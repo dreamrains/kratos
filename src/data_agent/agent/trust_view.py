@@ -152,16 +152,15 @@ def _empty_view(session_id: str) -> dict[str, Any]:
         "workbench": {
             "current_context": {
                 "goal": "",
-                "scope_status": "",
-                "included_files": [],
+                "scope_status": "ready",
+                "file_decisions": [],
+                "eligible_files": [],
+                "used_files": [],
                 "available_files": [],
-                "unused_files": [],
+                "not_needed_files": [],
                 "decision_files": [],
                 "unavailable_files": [],
-                "excluded_files": [],
-                "pending_files": [],
                 "notes": [],
-                "assumptions": [],
             },
             "confirmations": {
                 "status": "clear",
@@ -348,16 +347,15 @@ def _workbench_summary(
     return {
         "current_context": {
             "goal": _text(plan.get("goal")) or _text(getattr(state, "goal", "")),
-            "scope_status": _text(plan.get("scope_status")),
-            "included_files": _list_items(plan.get("included_files")),
+            "scope_status": _text(plan.get("scope_status")) or "ready",
+            "file_decisions": _list_items(plan.get("file_decisions")),
+            "eligible_files": _list_items(plan.get("eligible_files")),
+            "used_files": _list_items(plan.get("used_files")),
             "available_files": _list_items(plan.get("available_files")),
-            "unused_files": _list_items(plan.get("unused_files")),
+            "not_needed_files": _list_items(plan.get("not_needed_files")),
             "decision_files": _list_items(plan.get("decision_files")),
             "unavailable_files": _list_items(plan.get("unavailable_files")),
-            "excluded_files": _list_items(plan.get("excluded_files")),
-            "pending_files": _list_items(plan.get("pending_files")),
             "notes": _text_list(plan.get("notes")),
-            "assumptions": _text_list(plan.get("assumptions")),
         },
         "confirmations": {
             "status": _text(confirmation_gate.get("status")) or "clear",
@@ -367,7 +365,6 @@ def _workbench_summary(
         "trust_evidence": trust_evidence,
         "relationship_diagnostics": _relationship_diagnostics(
             _list_attr(state, "file_relationships"),
-            confirmation_gate,
         ),
     }
 
@@ -490,31 +487,19 @@ def _file_relationship_summaries(
 
 def _relationship_diagnostics(
     relationships: list[dict[str, Any]],
-    confirmation_gate: dict[str, Any],
     limit: int = 4,
 ) -> list[dict[str, Any]]:
-    active_type = _text(confirmation_gate.get("confirmation_type"))
-    active_status = _text(confirmation_gate.get("status"))
     diagnostics: list[dict[str, Any]] = []
     for relationship in reversed(relationships):
         relationship_id = _text(relationship.get("relationship_id") or relationship.get("id"))
         if not relationship_id:
             continue
-        confirmation_type = _text(relationship.get("confirmation_type"))
-        actionable = (
-            active_status == "needs_confirmation"
-            and bool(active_type)
-            and confirmation_type == active_type
-        )
         diagnostics.append({
             "relationship_id": relationship_id,
             "status": _text(relationship.get("status")),
-            "actionable": actionable,
-            "note": (
-                "Requires the active confirmation card."
-                if actionable
-                else "Historical relationship metadata; not an active confirmation."
-            ),
+            "relationship_mode": _text(relationship.get("relationship_mode")),
+            "actionable": False,
+            "note": "Historical relationship metadata; not an active confirmation.",
             "file_ids": _text_list(relationship.get("file_ids"))[:3],
             "evidence": _text_list(relationship.get("evidence"))[:2],
             "uncertainties": _text_list(relationship.get("uncertainties"))[:2],

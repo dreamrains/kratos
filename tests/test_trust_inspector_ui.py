@@ -1,4 +1,6 @@
+import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -15,6 +17,90 @@ def _index_html() -> str:
 
 def _app_css() -> str:
     return (ROOT / "src/data_agent/web/static/css/app.css").read_text(encoding="utf-8")
+
+
+def _run_workbench_formatters(files):
+    script = r"""
+const fs = require('fs');
+const vm = require('vm');
+vm.runInThisContext(fs.readFileSync(process.argv[1], 'utf8'));
+const app = chatApp();
+const files = JSON.parse(process.argv[2]);
+process.stdout.write(JSON.stringify(files.map((file) => ({
+    label: app.formatWorkbenchAssignmentLabel(file),
+    status: app.workbenchDecisionStatus(file),
+    style: app.trustStatusClass(app.workbenchDecisionStatus(file)),
+    reason: app.formatWorkbenchFileReason(file),
+}))));
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(ROOT / "src/data_agent/web/static/js/app.js"),
+            json.dumps(files, ensure_ascii=False),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
+
+
+def _run_relationship_diagnostic_formatters(diagnostics):
+    script = r"""
+const fs = require('fs');
+const vm = require('vm');
+vm.runInThisContext(fs.readFileSync(process.argv[1], 'utf8'));
+const app = chatApp();
+const diagnostics = JSON.parse(process.argv[2]);
+process.stdout.write(JSON.stringify(diagnostics.map((diagnostic) =>
+    app.formatRelationshipDiagnosticMeta(diagnostic)
+)));
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(ROOT / "src/data_agent/web/static/js/app.js"),
+            json.dumps(diagnostics, ensure_ascii=False),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
+
+
+def _run_file_decision_keys(files):
+    html = _index_html()
+    loop = re.search(
+        r'<template x-for="\(file, index\) in workbenchContext\(\)\.file_decisions" '
+        r':key="(?P<expression>[^"]+)">',
+        html,
+    )
+    assert loop, "file decision loop with indexed key not found"
+    script = r"""
+const files = JSON.parse(process.argv[1]);
+const expression = process.argv[2];
+const keyFor = new Function('file', 'index', `return ${expression};`);
+process.stdout.write(JSON.stringify(files.map((file, index) => keyFor(file, index))));
+"""
+    result = subprocess.run(
+        ["node", "-e", script, json.dumps(files), loop.group("expression")],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
 
 
 def _method_body(js: str, name: str, async_method: bool = False) -> str:
@@ -307,33 +393,40 @@ def test_history_routes_share_route_explanations():
     assert "formatRouteLimitations(route)" in html
 
 
-def test_current_data_shows_active_bundle_and_file_relationship_state():
+def test_current_data_uses_unified_file_decisions_and_folded_relationship_diagnostics():
     html = _index_html()
     js = _app_js()
 
-    assert "trustView.active_bundle" in html
-    assert "formatActiveBundleSummary(trustView.active_bundle)" in html
-    assert "active_bundle.files" in html
-    assert "formatBundleFileSummary(file)" in html
-    assert "active_bundle.remaining_file_count" in html
-    assert "trustView.file_relationships" in html
-    assert "formatFileRelationshipMeta(relationship)" in html
-    assert "formatFileRelationshipEvidence(relationship)" in html
-    assert "formatFileRelationshipUncertainty(relationship)" in html
-    assert "formatFileRelationshipSummary(relationship)" not in html
-    assert "relationship.requires_confirmation" in html
-    assert "当前范围" in html
-    assert "关系状态" in html
+    assert 'x-for="(file, index) in workbenchContext().file_decisions"' in html
+    assert ':key="(file.file_id || file.dataset || file.filename || \'file\') + \':\' + index"' in html
+    assert "workbenchContext().file_decisions.length" in html
+    assert "formatWorkbenchAssignmentLabel(file)" in html
+    assert "formatWorkbenchFileReason(file)" in html
+    assert "workbenchDecisionStatus(file)" in html
+    assert "<details" in html
+    assert "技术关系说明" in html
+    assert "workbenchRelationshipDiagnostics()" in html
+    assert "trustView.active_bundle" not in html
+    assert "formatActiveBundleSummary(trustView.active_bundle)" not in html
+    assert "active_bundle.files" not in html
+    assert "formatBundleFileSummary(file)" not in html
+    assert "relationship_status" not in html
 
-    assert "formatActiveBundleSummary(bundle)" in js
-    assert "formatBundleFileSummary(file)" in js
-    assert "formatFileRelationshipSummary(relationship)" in js
-    assert "formatFileRelationshipMeta(relationship)" in js
-    assert "formatFileRelationshipEvidence(relationship)" in js
-    assert "formatFileRelationshipUncertainty(relationship)" in js
+    assert "formatWorkbenchAssignmentLabel(file)" in js
+    assert "formatWorkbenchFileReason(file)" in js
+    assert "workbenchDecisionStatus(file)" in js
+    assert "formatActiveBundleSummary(bundle)" not in js
+    assert "formatBundleFileSummary(file)" not in js
+    assert "formatWorkbenchFiles(files)" not in js
+    assert "formatFileRelationshipSummary(relationship)" not in js
+    assert "formatFileRelationshipMeta(relationship)" not in js
+    assert "formatFileRelationshipEvidence(relationship)" not in js
+    assert "formatFileRelationshipUncertainty(relationship)" not in js
     assert "formatRelationshipMode(mode)" in js
-    assert "等待确认" in js
-    assert "已按选择处理" in js
+    for label in ("文件可用", "本次使用", "本次不需要", "需要你选择", "暂不可用"):
+        assert label in js
+    assert "暂无说明" in js
+    assert "${taskCount} 个分析任务" in js
     assert "confirmed: '已确认'" in js
     assert "linked: '已关联'" in js
     assert "possibly_linked: '可能关联'" in js
@@ -341,6 +434,135 @@ def test_current_data_shows_active_bundle_and_file_relationship_state():
     assert "excluded: '已排除'" in js
     assert "confirmed: 'trust-pill-ok'" in js
     assert "possibly_linked: 'trust-pill-warn'" in js
+
+
+def test_workbench_file_helpers_map_contract_states_without_green_unknown_fallbacks():
+    formatted = _run_workbench_formatters([
+        {
+            "eligibility": "unavailable",
+            "assignment": "not_needed",
+            "reason_code": "load_failed",
+            "reason": "  后端原始说明  ",
+            "task_refs": ["task_a", "task_b"],
+        },
+        {
+            "eligibility": "eligible",
+            "assignment": "available",
+            "reason": "可用于后续任务",
+        },
+        {
+            "eligibility": "eligible",
+            "assignment": "used",
+            "reason": "原始 reason",
+        },
+        {
+            "eligibility": "eligible",
+            "assignment": "not_needed",
+            "reason": "",
+            "task_refs": [],
+        },
+        {
+            "eligibility": "eligible",
+            "assignment": "needs_decision",
+            "reason": "存在同名文件",
+        },
+        None,
+        {},
+        {"eligibility": "eligible", "assignment": "future_state"},
+    ])
+
+    assert formatted == [
+        {
+            "label": "暂不可用",
+            "status": "unavailable",
+            "style": "trust-pill-blocked",
+            "reason": "后端原始说明 / 2 个分析任务",
+        },
+        {
+            "label": "文件可用",
+            "status": "available",
+            "style": "trust-pill-ok",
+            "reason": "可用于后续任务",
+        },
+        {
+            "label": "本次使用",
+            "status": "used",
+            "style": "trust-pill-ok",
+            "reason": "原始 reason",
+        },
+        {
+            "label": "本次不需要",
+            "status": "not_needed",
+            "style": "trust-pill-muted",
+            "reason": "暂无说明",
+        },
+        {
+            "label": "需要你选择",
+            "status": "needs_decision",
+            "style": "trust-pill-warn",
+            "reason": "存在同名文件",
+        },
+        {
+            "label": "状态未知",
+            "status": "unknown",
+            "style": "trust-pill-muted",
+            "reason": "暂无说明",
+        },
+        {
+            "label": "状态未知",
+            "status": "unknown",
+            "style": "trust-pill-muted",
+            "reason": "暂无说明",
+        },
+        {
+            "label": "状态未知",
+            "status": "unknown",
+            "style": "trust-pill-muted",
+            "reason": "暂无说明",
+        },
+    ]
+
+
+def test_relationship_diagnostic_meta_formats_known_mode_without_empty_separator():
+    formatted = _run_relationship_diagnostic_formatters([
+        {
+            "file_ids": ["orders", "users"],
+            "relationship_mode": "include_in_active_bundle",
+        },
+        {
+            "file_ids": ["orders"],
+            "relationship_mode": "",
+        },
+        {
+            "file_ids": ["users"],
+            "relationship_mode": "future_mode",
+        },
+    ])
+
+    assert formatted[0] == (
+        "orders、users / 合并分析 / 仅供参考 / "
+        "可用于后续合并、关联或映射时的技术判断。"
+    )
+    assert formatted[1] == (
+        "orders / 仅供参考 / 可用于后续合并、关联或映射时的技术判断。"
+    )
+    assert formatted[2] == (
+        "users / 仅供参考 / 可用于后续合并、关联或映射时的技术判断。"
+    )
+    assert all(" /  / " not in item for item in formatted)
+
+
+def test_file_decision_keys_are_unique_when_identity_fields_are_missing():
+    files = [
+        {"reason_code": "missing_file_identity"},
+        {"reason_code": "missing_file_identity"},
+    ]
+
+    keys = _run_file_decision_keys(files)
+
+    assert keys == ["file:0", "file:1"]
+    assert len(keys) == len(set(keys))
+    assert all(keys)
 
 
 def test_trust_risk_messages_are_localized_in_ui():

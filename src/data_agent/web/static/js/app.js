@@ -1245,54 +1245,6 @@ function chatApp() {
             return `范围：${dataset} / ${route} / ${mode}`;
         },
 
-        formatActiveBundleSummary(bundle) {
-            if (!bundle) return '当前范围：未选择文件范围';
-            const fileCount = Number(bundle.file_count || 0);
-            const datasets = Array.isArray(bundle.dataset_names) && bundle.dataset_names.length
-                ? bundle.dataset_names.join('、')
-                : '未标注数据集';
-            const status = this.trustStatusLabel(bundle.relationship_status || 'unknown');
-            const mode = this.formatRelationshipMode(bundle.relationship_mode);
-            const label = bundle.label ? `${bundle.label}，` : '';
-            return `当前范围：${label}${fileCount} 个文件 / 数据集 ${datasets} / 状态 ${status} / ${mode}`;
-        },
-
-        formatBundleFileSummary(file) {
-            if (!file) return '';
-            const dataset = file.dataset || '未标注数据集';
-            const rows = Number(file.rows || 0);
-            const columns = Number(file.columns || 0);
-            return `${dataset} / ${rows} 行 / ${columns} 列`;
-        },
-
-        formatFileRelationshipSummary(relationship) {
-            return [
-                this.formatFileRelationshipMeta(relationship),
-                this.formatFileRelationshipEvidence(relationship),
-                this.formatFileRelationshipUncertainty(relationship),
-            ].filter(Boolean).join('；');
-        },
-
-        formatFileRelationshipMeta(relationship) {
-            if (!relationship) return '关系状态：暂无记录';
-            const fileCount = Number(relationship.file_count || 0);
-            const mode = this.formatRelationshipMode(relationship.relationship_mode);
-            const status = relationship.requires_confirmation
-                ? '等待确认'
-                : '已按选择处理';
-            return `${fileCount} 个文件 / ${mode} / ${status}`;
-        },
-
-        formatFileRelationshipEvidence(relationship) {
-            if (!relationship || !Array.isArray(relationship.evidence) || !relationship.evidence.length) return '';
-            return `依据：${relationship.evidence.join('、')}`;
-        },
-
-        formatFileRelationshipUncertainty(relationship) {
-            if (!relationship || !Array.isArray(relationship.uncertainties) || !relationship.uncertainties.length) return '';
-            return `不确定：${relationship.uncertainties.join('、')}`;
-        },
-
         formatRelationshipMode(mode) {
             const labels = {
                 include_in_active_bundle: '合并分析',
@@ -1300,7 +1252,7 @@ function chatApp() {
                 latest_only: '只看最新文件',
                 exclude_from_active_bundle: '暂不纳入',
             };
-            return labels[mode || ''] || '关系待确认';
+            return labels[String(mode || '').trim()] || '';
         },
 
         formatRouteBudgetLabel(level) {
@@ -1333,9 +1285,13 @@ function chatApp() {
             const fileIds = Array.isArray(diagnostic.file_ids) && diagnostic.file_ids.length
                 ? diagnostic.file_ids.join('、')
                 : '未标注文件';
-            const status = diagnostic.actionable ? '需要确认' : '仅供参考';
-            const note = diagnostic.note || '仅作为后续合并、关联或映射时的技术参考。';
-            return `${fileIds} / ${status} / ${note}`;
+            const mode = this.formatRelationshipMode(diagnostic.relationship_mode);
+            return [
+                fileIds,
+                mode,
+                '仅供参考',
+                '可用于后续合并、关联或映射时的技术判断。',
+            ].filter(Boolean).join(' / ');
         },
 
         formatRelationshipDiagnosticEvidence(diagnostic) {
@@ -1348,13 +1304,29 @@ function chatApp() {
             return `不确定性：${diagnostic.uncertainties.join('、')}`;
         },
 
-        formatWorkbenchFiles(files) {
-            const list = Array.isArray(files) ? files : [];
-            if (!list.length) return '';
-            return list
-                .map((file) => file.filename || file.dataset || file.file_id)
-                .filter(Boolean)
-                .join('、');
+        formatWorkbenchAssignmentLabel(file) {
+            if (file?.eligibility === 'unavailable') return '暂不可用';
+            const labels = {
+                used: '本次使用',
+                available: '文件可用',
+                not_needed: '本次不需要',
+                needs_decision: '需要你选择',
+            };
+            return labels[file?.assignment] || '状态未知';
+        },
+
+        workbenchDecisionStatus(file) {
+            if (file?.eligibility === 'unavailable') return 'unavailable';
+            const assignment = file?.assignment;
+            return ['used', 'available', 'not_needed', 'needs_decision'].includes(assignment)
+                ? assignment
+                : 'unknown';
+        },
+
+        formatWorkbenchFileReason(file) {
+            const reason = String(file?.reason || '').trim() || '暂无说明';
+            const taskCount = Array.isArray(file?.task_refs) ? file.task_refs.length : 0;
+            return taskCount ? `${reason} / ${taskCount} 个分析任务` : reason;
         },
 
         trustConfirmationGate() {
@@ -1461,6 +1433,7 @@ function chatApp() {
                 needs_confirmation: '待确认',
                 not_run: '尚未验证',
                 ready: '就绪',
+                ready_with_notes: '可用，有说明',
                 ready_with_warnings: '有提醒',
                 pass: '通过',
                 pass_with_downgrades: '有降级',
@@ -1478,6 +1451,10 @@ function chatApp() {
                 possibly_linked: '可能关联',
                 user_scoped_latest_only: '用户选择',
                 available: '可用',
+                used: '本次使用',
+                not_needed: '本次不需要',
+                needs_decision: '需要你选择',
+                unavailable: '暂不可用',
                 excluded: '已排除',
                 unknown: '未知',
             };
@@ -1509,6 +1486,7 @@ function chatApp() {
                 needs_confirmation: 'trust-pill-warn',
                 not_run: 'trust-pill-muted',
                 ready: 'trust-pill-ok',
+                ready_with_notes: 'trust-pill-warn',
                 ready_with_warnings: 'trust-pill-warn',
                 pass: 'trust-pill-ok',
                 pass_with_downgrades: 'trust-pill-warn',
@@ -1524,6 +1502,10 @@ function chatApp() {
                 possibly_linked: 'trust-pill-warn',
                 user_scoped_latest_only: 'trust-pill-ok',
                 available: 'trust-pill-ok',
+                used: 'trust-pill-ok',
+                not_needed: 'trust-pill-muted',
+                needs_decision: 'trust-pill-warn',
+                unavailable: 'trust-pill-blocked',
                 excluded: 'trust-pill-muted',
                 fail: 'trust-pill-blocked',
                 blocked: 'trust-pill-blocked',
