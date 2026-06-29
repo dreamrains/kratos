@@ -1,5 +1,3 @@
-import json
-
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
@@ -402,8 +400,10 @@ def test_loaded_dataset_registers_data_pool_and_active_bundle(tmp_path):
 
         assert not result.startswith("Error:")
         assert state.data_pool
+        assert state.data_pool[0]["dataset_contract_id"] == state.dataset_contracts[0]["id"]
         assert state.active_bundle_id
         assert state.active_bundle()["dataset_names"] == ["orders"]
+        assert state.active_bundle()["relationship_status"] == "diagnostic_only"
     finally:
         config._config = old_cfg
 
@@ -442,7 +442,7 @@ def test_register_loaded_data_bundle_relationship_scopes_to_active_bundle(tmp_pa
     assert set(relationship["file_ids"]) == {"file_orders", state.data_pool[-1]["file_id"]}
 
 
-def test_register_loaded_data_bundle_adds_answerable_file_relationship_confirmation(tmp_path, monkeypatch):
+def test_register_loaded_data_bundle_keeps_relationship_diagnostic_and_non_blocking(tmp_path, monkeypatch):
     state = AnalysisSessionState(session_id="file_confirm", data_state="data_loaded")
     state.add_data_pool_file({
         "file_id": "file_old",
@@ -457,6 +457,12 @@ def test_register_loaded_data_bundle_adds_answerable_file_relationship_confirmat
         "dataset_names": ["orders"],
         "version": 1,
     })
+    state.add_confirmation({
+        "id": "confirm_method",
+        "confirmation_type": "method_confirmation",
+        "question": "Which method?",
+        "status": "pending",
+    })
     monkeypatch.setattr(data_io, "_save_trust_state", lambda *_args, **_kwargs: None)
 
     data_io._register_loaded_data_bundle(
@@ -469,23 +475,89 @@ def test_register_loaded_data_bundle_adds_answerable_file_relationship_confirmat
             "event_time": ["2026-01-01", "2026-01-02"],
         }),
         contract={
+            "id": "contract_activity",
             "field_roles": {"ids": ["user_id"], "date": ["event_time"]},
             "time_range": {},
         },
         user_input="analyze revenue",
     )
 
-    pending = [
-        item for item in state.pending_confirmations
-        if item.get("confirmation_type") == "file_relationship_confirmation"
-    ]
-    assert pending
-    confirmation = pending[0]
-    assert confirmation["question"]
-    assert confirmation["options"]
-    assert confirmation["blocking_reason"]
-    assert confirmation["source"]
-    assert "file_relationship_confirmation" in json.loads(confirmation["state_updates"])
+    relationship = state.file_relationships[-1]
+    assert relationship["status"] == "possibly_linked"
+    assert relationship["diagnostic_only"] is True
+    assert relationship["requires_confirmation"] is False
+    assert relationship["confirmation_type"] == ""
+    assert len(state.pending_confirmations) == 1
+    assert state.pending_confirmations[0]["id"] == "confirm_method"
+    assert state.pending_confirmations[0]["confirmation_type"] == "method_confirmation"
+    assert state.pending_confirmations[0]["status"] == "pending"
+    assert set(state.active_bundle()["file_ids"]) == {"file_old", state.data_pool[-1]["file_id"]}
+    assert state.active_bundle()["relationship_status"] == "diagnostic_only"
+    assert state.data_pool[-1]["dataset_contract_id"] == "contract_activity"
+
+
+def test_register_loaded_data_bundle_keeps_insufficient_relationship_diagnostic(tmp_path, monkeypatch):
+    from data_agent.agent import data_bundle
+
+    state = AnalysisSessionState(session_id="insufficient_relationship")
+    state.add_data_pool_file({"file_id": "file_old", "filename": "orders.xlsx", "dataset": "orders"})
+    state.set_active_bundle({
+        "bundle_id": "bundle_old",
+        "file_ids": ["file_old"],
+        "dataset_names": ["orders"],
+        "version": 1,
+    })
+    monkeypatch.setattr(data_io, "_save_trust_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        data_bundle,
+        "classify_file_relationship",
+        lambda *_args, **_kwargs: {
+            "status": "insufficient_preview",
+            "confidence": "low",
+            "evidence": [],
+            "uncertainties": ["Preview is incomplete."],
+            "requires_confirmation": True,
+            "confirmation_type": "file_relationship_confirmation",
+            "relationship_mode": "",
+        },
+    )
+
+    data_io._register_loaded_data_bundle(
+        state=state,
+        session_id="insufficient_relationship",
+        path=tmp_path / "activity.xlsx",
+        dataset="activity",
+        df=pd.DataFrame({"event": [1, 2]}),
+        contract={"id": "contract_activity", "field_roles": {}},
+    )
+
+    relationship = state.file_relationships[-1]
+    assert relationship["status"] == "insufficient_preview"
+    assert relationship["diagnostic_only"] is True
+    assert relationship["requires_confirmation"] is False
+    assert relationship["confirmation_type"] == ""
+    assert state.pending_confirmations == []
+    assert set(state.active_bundle()["file_ids"]) == {"file_old", state.data_pool[-1]["file_id"]}
+
+
+def test_register_loaded_data_bundle_is_idempotent_for_same_file(tmp_path, monkeypatch):
+    state = AnalysisSessionState(session_id="duplicate_bundle")
+    monkeypatch.setattr(data_io, "_save_trust_state", lambda *_args, **_kwargs: None)
+    kwargs = {
+        "state": state,
+        "session_id": "duplicate_bundle",
+        "path": tmp_path / "orders.xlsx",
+        "dataset": "orders",
+        "df": pd.DataFrame({"order_id": [1, 2]}),
+        "contract": {"id": "contract_orders", "field_roles": {"ids": ["order_id"]}},
+    }
+
+    data_io._register_loaded_data_bundle(**kwargs)
+    data_io._register_loaded_data_bundle(**kwargs)
+
+    assert len(state.data_pool) == 1
+    assert state.active_bundle()["file_ids"] == [state.data_pool[0]["file_id"]]
+    assert len(state.file_relationships) == 1
 
 
 def test_load_data_registers_data_pool_when_trust_workflow_fails(tmp_path, monkeypatch):

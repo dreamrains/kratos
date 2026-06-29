@@ -51,6 +51,7 @@ def test_load_data_creates_trust_workflow_records(tmp_path):
         assert len(state.cleaning_logs) == 1
         assert len(state.preview_digests) == 1
         assert len(state.dataset_contracts) == 1
+        assert state.data_pool[0]["dataset_contract_id"] == state.dataset_contracts[0]["id"]
         assert route_count >= 1
 
         tool_outputs_dir = tmp_path / "sessions" / "trust_load" / "tool_outputs"

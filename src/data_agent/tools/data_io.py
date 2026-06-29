@@ -200,90 +200,6 @@ def _unique_values(values: list[Any]) -> list[str]:
     return result
 
 
-def _add_file_relationship_confirmation(state: Any, relationship: dict[str, Any]) -> None:
-    relationship_id = str(relationship.get("relationship_id") or relationship.get("id") or "")
-    if not relationship_id:
-        return
-    confirmation_id = f"confirm_{relationship_id}"
-    for item in getattr(state, "pending_confirmations", []) or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("id") == confirmation_id and item.get("status", "pending") == "pending":
-            return
-
-    confirmation_type = str(
-        relationship.get("confirmation_type") or "file_relationship_confirmation"
-    )
-    state.add_confirmation({
-        "id": confirmation_id,
-        "confirmation_type": confirmation_type,
-        "question": _file_relationship_question(relationship, confirmation_type),
-        "options": _file_relationship_options(confirmation_type),
-        "blocking_reason": _file_relationship_reason(relationship),
-        "state_updates": json.dumps(
-            {
-                "stage": "scope",
-                "file_relationship_confirmation": {
-                    "relationship_id": relationship_id,
-                },
-            },
-            ensure_ascii=False,
-        ),
-        "source": "file_relationship",
-        "status": "pending",
-    })
-
-
-def _file_relationship_reason(relationship: dict[str, Any]) -> str:
-    uncertainties = relationship.get("uncertainties")
-    if isinstance(uncertainties, list):
-        for uncertainty in uncertainties:
-            if uncertainty:
-                return str(uncertainty)
-    return "新上传文件与当前分析范围的关系尚未确认，可能影响本轮分析应使用哪些数据。"
-
-
-def _file_relationship_question(relationship: dict[str, Any], confirmation_type: str) -> str:
-    file_ids = _unique_values(list(relationship.get("file_ids") or []))
-    file_text = f"相关文件：{', '.join(file_ids[:4])}。" if file_ids else ""
-    if confirmation_type == "file_exclusion_confirmation":
-        return f"新上传的数据看起来可能不属于当前分析范围。请确认是否纳入本轮分析？{file_text}"
-    return f"新上传的数据可能与当前分析范围有关，但关系尚不确定。请确认这些文件是否应一起分析？{file_text}"
-
-
-def _file_relationship_options(confirmation_type: str) -> list[dict[str, str]]:
-    if confirmation_type == "file_exclusion_confirmation":
-        return [
-            {
-                "label": "纳入当前分析",
-                "value": "include_in_active_bundle",
-                "description": "将新文件视为当前分析目标的一部分。",
-            },
-            {
-                "label": "暂不纳入",
-                "value": "exclude_from_active_bundle",
-                "description": "本轮分析先不使用该文件，保持当前分析范围。",
-            },
-        ]
-    return [
-        {
-            "label": "一起分析",
-            "value": "include_in_active_bundle",
-            "description": "把这些文件放入同一分析范围，后续综合判断。",
-        },
-        {
-            "label": "分开分析",
-            "value": "separate_bundle",
-            "description": "将新文件与当前分析范围分开处理。",
-        },
-        {
-            "label": "只分析最新文件",
-            "value": "latest_only",
-            "description": "本轮只使用最新上传的数据文件，不纳入历史文件。",
-        },
-    ]
-
-
 def _register_loaded_data_bundle(
     *,
     state: Any,
@@ -309,6 +225,7 @@ def _register_loaded_data_bundle(
         "key_fields": list(field_roles.get("ids") or []),
         "time_fields": list(field_roles.get("date") or []),
         "time_range": contract.get("time_range") if isinstance(contract.get("time_range"), dict) else {},
+        "dataset_contract_id": str(contract.get("id") or ""),
         "status": "loaded",
     })
 
@@ -323,16 +240,12 @@ def _register_loaded_data_bundle(
     existing_file_ids = [item.get("file_id") for item in existing_files]
     relationship["relationship_id"] = f"rel_{file_id}"
     relationship["file_ids"] = _unique_values(existing_file_ids + [file_id])
+    relationship["diagnostic_only"] = True
+    relationship["requires_confirmation"] = False
+    relationship["confirmation_type"] = ""
     state.add_file_relationship(relationship)
 
-    if relationship.get("requires_confirmation"):
-        _add_file_relationship_confirmation(state, relationship)
-        if previous_bundle:
-            state.set_active_bundle(previous_bundle)
-        _save_trust_state(state, session_id)
-        return
-
-    if previous_bundle and relationship.get("status") == "linked":
+    if previous_bundle:
         file_ids = _unique_values(list(previous_bundle.get("file_ids") or []) + [file_id])
         dataset_names = _unique_values(list(previous_bundle.get("dataset_names") or []) + [dataset])
         state.set_active_bundle({
@@ -340,7 +253,7 @@ def _register_loaded_data_bundle(
             "file_ids": file_ids,
             "dataset_names": dataset_names,
             "version": int(previous_bundle.get("version") or 1) + 1,
-            "relationship_status": relationship.get("status"),
+            "relationship_status": "diagnostic_only",
         })
     else:
         state.set_active_bundle({
@@ -349,7 +262,7 @@ def _register_loaded_data_bundle(
             "file_ids": [file_id],
             "dataset_names": [dataset],
             "version": 1,
-            "relationship_status": relationship.get("status"),
+            "relationship_status": "diagnostic_only",
         })
 
     _save_trust_state(state, session_id)
