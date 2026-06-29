@@ -342,7 +342,7 @@ def test_auto_suspend_for_required_question_uses_confirmation_runtime(tmp_path, 
         cfg.sessions_dir = old_sessions
 
 
-def test_structured_loop_file_relationship_suspension_saves_state_updates(monkeypatch):
+def test_structured_loop_relationship_diagnostic_does_not_suspend(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -356,9 +356,9 @@ def test_structured_loop_file_relationship_suspension_saves_state_updates(monkey
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
 
-    class FailingClient:
+    class FinalClient:
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            return Response(text="analysis continued")
 
     ctx = AgentContext(session_id="auto_file_relationship_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="auto_file_relationship_gate", data_state="data_loaded")
@@ -372,24 +372,20 @@ def test_structured_loop_file_relationship_suspension_saves_state_updates(monkey
         "confirmation_type": "file_relationship_confirmation",
     }]
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="auto_file_relationship_gate")
+    loop = AgentLoop(client=FinalClient(), session_id="auto_file_relationship_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("analyze revenue trend")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    from data_agent.agent.loop import FinalResponse
 
-    assert isinstance(result, SuspendedForConfirmation)
-    assert json.loads(result.state_updates) == {
-        "stage": "scope",
-        "file_relationship_confirmation": {"relationship_id": "rel_orders_history"},
-    }
+    assert isinstance(result, FinalResponse)
+    assert result.content == "analysis continued"
     assert state.pending_confirmations == []
-    assert result.confirmation_id == result.suspension_id
 
 
-def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatch):
+def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -402,34 +398,28 @@ def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatc
     )
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+    monkeypatch.setattr(
+        "data_agent.agent.question_need_detector.detect_question_need",
+        lambda user_input, intent, state: {"status": "clear"},
+    )
 
     class FailingClient:
         def chat(self, *args, **kwargs):
             raise AssertionError("LLM should not be called before required confirmation")
 
-    ctx = AgentContext(session_id="preexisting_relationship_gate", workspace=Workspace())
-    state = AnalysisSessionState(session_id="preexisting_relationship_gate", data_state="data_loaded")
-    state.file_relationships = [{
-        "relationship_id": "rel_existing",
-        "file_ids": ["file_old", "file_new"],
-        "status": "possibly_linked",
-        "requires_confirmation": True,
-        "confirmation_type": "file_relationship_confirmation",
-    }]
+    ctx = AgentContext(session_id="preexisting_method_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="preexisting_method_gate", data_state="data_loaded")
     state.pending_confirmations = [{
-        "id": "existing_relationship_confirmation",
+        "id": "existing_method_confirmation",
         "status": "pending",
-        "question": "Use the existing relationship question?",
-        "options": [{"label": "Together", "value": "include_in_active_bundle"}],
-        "confirmation_type": "file_relationship_confirmation",
-        "blocking_reason": "Existing relationship reason",
-        "state_updates": json.dumps({
-            "stage": "plan",
-            "file_relationship_confirmation": {"relationship_id": "rel_existing"},
-        }),
+        "question": "Confirm the existing method?",
+        "options": [{"label": "Confirm", "value": "confirm_method"}],
+        "confirmation_type": "method_confirmation",
+        "blocking_reason": "Method choice changes the analysis",
+        "state_updates": json.dumps({"stage": "plan"}),
     }]
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="preexisting_relationship_gate")
+    loop = AgentLoop(client=FailingClient(), session_id="preexisting_method_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
@@ -438,10 +428,10 @@ def test_structured_loop_promotes_preexisting_answerable_confirmation(monkeypatc
     from data_agent.agent.loop import SuspendedForConfirmation
 
     assert isinstance(result, SuspendedForConfirmation)
-    assert result.question == "Use the existing relationship question?"
-    assert result.options == [{"label": "Together", "value": "include_in_active_bundle", "description": ""}]
-    assert result.confirmation_type == "file_relationship_confirmation"
-    assert result.blocking_reason == "Existing relationship reason"
+    assert result.question == "Confirm the existing method?"
+    assert result.options == [{"label": "Confirm", "value": "confirm_method", "description": ""}]
+    assert result.confirmation_type == "method_confirmation"
+    assert result.blocking_reason == "Method choice changes the analysis"
     assert json.loads(result.state_updates)["stage"] == "plan"
     assert "suspension_id" not in state.pending_confirmations[0]
     assert len(state.pending_confirmations) == 1
@@ -562,7 +552,7 @@ def test_auto_suspend_falls_back_to_unsuspended_preexisting_confirmation():
     assert result.confirmation_id == result.suspension_id
 
 
-def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatch):
+def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -574,15 +564,19 @@ def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatc
         ambiguities=[],
     )
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
+    monkeypatch.setattr(
+        "data_agent.agent.question_need_detector.detect_question_need",
+        lambda user_input, intent, state: {"status": "clear"},
+    )
 
-    class FailingClient:
+    class FinalClient:
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            return Response(text="analysis continued")
 
     def prepare_turn_with_rich_confirmation(self, state, intent, user_input, dataset_profile):
         state.add_confirmation({
             "id": "rich_pending",
-            "confirmation_type": "file_relationship_confirmation",
+            "action": "resolve_file_relationship",
             "question": "confirm relationship",
             "options": [{"label": "Together", "value": "include_in_active_bundle"}],
             "state_updates": json.dumps({
@@ -604,21 +598,23 @@ def test_structured_loop_preserves_pending_confirmation_state_updates(monkeypatc
         "confirmation_type": "file_relationship_confirmation",
     }]
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="preserve_pending_updates")
+    loop = AgentLoop(client=FinalClient(), session_id="preserve_pending_updates")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("analyze revenue trend")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    from data_agent.agent.loop import FinalResponse
 
-    assert isinstance(result, SuspendedForConfirmation)
+    assert isinstance(result, FinalResponse)
+    assert result.content == "analysis continued"
     saved_updates = json.loads(state.pending_confirmations[0]["state_updates"])
     assert saved_updates == {
         "stage": "plan",
         "file_relationship_confirmation": {"relationship_id": "rel_custom"},
         "analysis_spec": {"goal": "preserve me"},
     }
+    assert "suspension_id" not in state.pending_confirmations[0]
 
 
 def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(monkeypatch):

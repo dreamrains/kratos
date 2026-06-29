@@ -133,7 +133,13 @@ def test_orphan_relationship_flag_does_not_create_an_actionable_confirmation_gat
     }
     context = view["workbench"]["current_context"]
     assert context["decision_files"] == []
-    assert context["pending_files"] == []
+    assert not {
+        "included_files",
+        "unused_files",
+        "excluded_files",
+        "pending_files",
+        "assumptions",
+    }.intersection(context)
     assert view["workbench"]["relationship_diagnostics"][0]["actionable"] is False
     assert "active confirmation" in view["workbench"]["relationship_diagnostics"][0]["note"]
 
@@ -149,15 +155,14 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
     assert view["workbench"]["current_context"] == {
         "goal": "",
         "scope_status": "ready",
-        "included_files": [],
+        "file_decisions": [],
+        "eligible_files": [],
+        "used_files": [],
         "available_files": [],
-        "unused_files": [],
+        "not_needed_files": [],
         "decision_files": [],
         "unavailable_files": [],
-        "excluded_files": [],
-        "pending_files": [],
         "notes": [],
-        "assumptions": [],
     }
     assert view["workbench"]["trust_evidence"] == {
         "status": "not_run",

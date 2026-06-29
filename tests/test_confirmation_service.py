@@ -4,7 +4,10 @@ import pytest
 
 from data_agent.agent.confirmation import (
     AnswerMode,
+    ConfirmationEvent,
     ConfirmationOption,
+    ConfirmationRecord,
+    ConfirmationRequest,
     ConfirmationStatus,
     QuestionCandidate,
     RequestDisposition,
@@ -18,7 +21,7 @@ from data_agent.agent.confirmation.service import (
     InvalidConfirmationTransition,
     SkipNotAllowed,
 )
-from data_agent.agent.confirmation.store import StoreIntegrityError
+from data_agent.agent.confirmation.store import ConfirmationStore, StoreIntegrityError
 
 
 def _candidate(index=1, **overrides):
@@ -66,6 +69,23 @@ def _service(tmp_path, *, fail_action=False):
         id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
     )
     return service, registry, calls
+
+
+def _append_obsolete_id_collision(tmp_path):
+    candidate = _candidate(
+        confirmation_id="cf_1",
+        operation="metric_scope",
+        resolution_action="resolve_file_relationship",
+        resolution_params={"confirmation_type": "metric_scope"},
+    )
+    record = ConfirmationRecord.from_request(
+        ConfirmationRequest.from_candidate(candidate),
+        now="2026-06-20T00:00:00Z",
+    )
+    ConfirmationStore(tmp_path, "session_1").append(
+        ConfirmationEvent.requested(record, event_id="event_obsolete_collision")
+    )
+    return record
 
 
 def test_service_allows_only_one_suspended_confirmation(tmp_path):
@@ -279,6 +299,69 @@ def test_matching_open_decision_is_not_queued_twice(tmp_path):
 
     assert repeated.record == first.record
     assert service.checkpoint("session_1").confirmation_id == "cf_1"
+
+
+def test_obsolete_record_id_collision_gets_deterministic_replacement_and_reuses_it(tmp_path):
+    service, _, _ = _service(tmp_path)
+    obsolete = _append_obsolete_id_collision(tmp_path)
+    candidate = _candidate(
+        confirmation_id="cf_1",
+        operation="metric_scope",
+        resolution_action="choose_metric",
+        resolution_params={"confirmation_type": "metric_scope"},
+    )
+
+    first = service.request(candidate)
+    repeated = service.request(candidate)
+
+    assert first.disposition == RequestDisposition.CONFIRMATION
+    assert first.record is not None
+    assert first.record.confirmation_id != obsolete.confirmation_id
+    assert first.record.confirmation_id.startswith("cf_1_")
+    assert repeated.record == first.record
+    assert service.get("session_1", "cf_1") == obsolete
+    records = service._store("session_1").load_records()
+    assert set(records) == {"cf_1", first.record.confirmation_id}
+
+
+def test_user_operations_reject_obsolete_record_without_writing_events(tmp_path):
+    service, _, _ = _service(tmp_path)
+    obsolete = _append_obsolete_id_collision(tmp_path)
+    events_path = tmp_path / "session_1" / "confirmations" / "events.jsonl"
+    before_events = events_path.read_bytes()
+
+    operations = (
+        lambda: service.respond(
+            "session_1", obsolete.confirmation_id, "revenue", obsolete.version, "answer_old"
+        ),
+        lambda: service.skip(
+            "session_1", obsolete.confirmation_id, obsolete.version, "skip_old"
+        ),
+        lambda: service.cancel(
+            "session_1", obsolete.confirmation_id, obsolete.version, "cancel_old"
+        ),
+    )
+    for operation in operations:
+        with pytest.raises(InvalidConfirmationTransition, match="obsolete"):
+            operation()
+
+    assert service.get("session_1", obsolete.confirmation_id) == obsolete
+    assert events_path.read_bytes() == before_events
+
+
+def test_internal_expire_can_archive_obsolete_record(tmp_path):
+    service, _, _ = _service(tmp_path)
+    obsolete = _append_obsolete_id_collision(tmp_path)
+
+    expired = service.expire(
+        "session_1",
+        obsolete.confirmation_id,
+        obsolete.version,
+        "retired confirmation workflow",
+    )
+
+    assert expired.status == ConfirmationStatus.EXPIRED
+    assert expired.failure_reason == "retired confirmation workflow"
 
 
 def test_reused_confirmation_id_rejects_a_different_contract(tmp_path):

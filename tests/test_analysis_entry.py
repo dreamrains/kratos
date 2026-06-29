@@ -322,7 +322,7 @@ def test_pending_confirmation_blocks_direct_analysis_entry():
     assert decision["confirmation_gate"]["question"] == "请先确认分析目标"
 
 
-def test_pending_file_relationship_returns_ask_user_question_gate():
+def test_file_relationship_diagnostic_does_not_block_analysis_entry():
     state = _state()
     state.file_relationships = [{
         "relationship_id": "rel_sales_history",
@@ -332,11 +332,43 @@ def test_pending_file_relationship_returns_ask_user_question_gate():
         "uncertainties": ["Shared IDs exist but business theme evidence is unclear."],
     }]
 
-    decision = decide_analysis_entry("show revenue trend", _intent(), state)
+    decision = decide_analysis_entry("show revenue trend by date", _intent(), state)
+
+    assert decision["decision"] == "direct_analysis"
+    assert decision["required_user_action"] == ""
+
+
+def test_obsolete_pending_confirmation_does_not_hide_new_real_question():
+    state = _state()
+    state.pending_confirmations = [{
+        "id": "legacy_join_gate",
+        "status": "pending",
+        "confirmation_type": "join_logic_confirmation",
+        "question": "Legacy relationship question",
+    }]
+
+    decision = decide_analysis_entry("compare revenue", _intent(), state)
 
     assert decision["decision"] == "clarify_intent"
-    assert decision["required_user_action"] == "ask_user_question"
-    assert decision["confirmation_gate"]["confirmation_type"] == "join_logic_confirmation"
+    assert decision["confirmation_gate"]["confirmation_type"] == "time_window"
+
+
+def test_flow_controller_ignores_obsolete_pending_confirmation():
+    from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+
+    state = _state()
+    state.pending_confirmations = [{
+        "status": "pending",
+        "confirmation_type": "file_exclusion_confirmation",
+    }]
+
+    assert not AnalysisFlowController("analysis_entry").has_pending_confirmation(state)
+
+    state.pending_confirmations.append({
+        "status": "pending",
+        "confirmation_type": "method_confirmation",
+    })
+    assert AnalysisFlowController("analysis_entry").has_pending_confirmation(state)
 
 
 def test_blocked_quality_returns_blocked():

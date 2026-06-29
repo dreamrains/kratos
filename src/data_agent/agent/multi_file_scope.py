@@ -78,11 +78,13 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
         _contract_for_profile(profile, contracts_by_id, contracts_by_dataset)
         for profile in profiles
     ]
+    explicit_selected_ids = _explicit_goal_file_ids(profiles, goal)
     has_binding_contract, input_bindings = _plan_dataset_bindings(state)
-    task_refs_by_index, plan_ambiguous_ids, plan_selected_ids = _resolve_plan_bindings(
+    task_refs_by_index, plan_selected_ids, plan_ambiguity_groups = _resolve_plan_bindings(
         profiles,
         profile_contracts,
         input_bindings,
+        explicit_selected_ids=explicit_selected_ids,
     )
 
     eligibility_by_file: dict[str, str] = {}
@@ -94,10 +96,19 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
         for file_id, eligibility in eligibility_by_file.items()
         if file_id and eligibility == "eligible"
     }
-    ambiguous_ids = (
-        _ambiguous_file_ids(profiles, eligible_ids, goal, selected_ids=plan_selected_ids)
-        | plan_ambiguous_ids
+    ambiguity_groups = _material_ambiguity_groups(
+        profiles,
+        eligible_ids,
+        goal,
+        selected_ids=plan_selected_ids,
+        plan_groups=plan_ambiguity_groups,
     )
+    ambiguous_ids = {
+        _text(item.get("file_id"))
+        for group in ambiguity_groups
+        for item in group["files"]
+        if _text(item.get("file_id"))
+    }
 
     decisions = []
     for index, (profile, contract) in enumerate(zip(profiles, profile_contracts)):
@@ -108,8 +119,10 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
             has_binding_contract=has_binding_contract,
             task_refs=task_refs_by_index.get(index, []),
             ambiguous_file_ids=ambiguous_ids,
+            explicit_selected_ids=explicit_selected_ids,
         )
         decision["_index"] = index
+        decision["_explicit_selected"] = _file_id(profile) in explicit_selected_ids
         decision["_required"] = _is_required(decision, profile, goal)
         decisions.append(decision)
 
@@ -195,6 +208,40 @@ def build_analysis_scope_plan(state: Any, user_goal: str = "") -> dict[str, Any]
     }
 
 
+def build_material_ambiguity_groups(
+    state: Any,
+    user_goal: str = "",
+) -> list[dict[str, Any]]:
+    """Return full compact candidate groups without expanding the scope plan."""
+    goal = _text(user_goal) or _text(getattr(state, "goal", ""))
+    profiles = _list_items(getattr(state, "data_pool", None))
+    contracts_by_id, contracts_by_dataset = _contract_indexes(state)
+    profile_contracts = [
+        _contract_for_profile(profile, contracts_by_id, contracts_by_dataset)
+        for profile in profiles
+    ]
+    explicit_selected_ids = _explicit_goal_file_ids(profiles, goal)
+    _, input_bindings = _plan_dataset_bindings(state)
+    _, plan_selected_ids, plan_groups = _resolve_plan_bindings(
+        profiles,
+        profile_contracts,
+        input_bindings,
+        explicit_selected_ids=explicit_selected_ids,
+    )
+    eligible_ids = {
+        _file_id(profile)
+        for profile, contract in zip(profiles, profile_contracts)
+        if _file_id(profile) and _eligibility(profile, contract)[0] == "eligible"
+    }
+    return _material_ambiguity_groups(
+        profiles,
+        eligible_ids,
+        goal,
+        selected_ids=plan_selected_ids,
+        plan_groups=plan_groups,
+    )
+
+
 def _contract_indexes(
     state: Any,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]]]:
@@ -251,36 +298,60 @@ def _resolve_plan_bindings(
     profiles: list[dict[str, Any]],
     profile_contracts: list[dict[str, Any] | None],
     input_bindings: dict[str, list[str]],
-) -> tuple[dict[int, list[str]], set[str], set[str]]:
+    *,
+    explicit_selected_ids: set[str] | None = None,
+) -> tuple[
+    dict[int, list[str]],
+    set[str],
+    list[tuple[str, list[int]]],
+]:
     task_refs_by_index: dict[int, list[str]] = {}
-    ambiguous_file_ids: set[str] = set()
     selected_file_ids: set[str] = set()
+    explicit_selected_ids = explicit_selected_ids or set()
+    ambiguity_groups: list[tuple[str, list[int]]] = []
     for dataset_input, task_refs in input_bindings.items():
+        match_kind = "file_id"
         candidates = [
             index for index, profile in enumerate(profiles)
             if _file_id(profile) == dataset_input
         ]
         if not candidates:
+            match_kind = "contract_id"
             candidates = [
                 index
                 for index, (profile, contract) in enumerate(zip(profiles, profile_contracts))
                 if _profile_contract_id(profile, contract) == dataset_input
             ]
         if not candidates:
+            match_kind = "dataset"
             candidates = [
                 index for index, profile in enumerate(profiles)
                 if _dataset(profile) == dataset_input
             ]
+        if match_kind == "dataset" and candidates:
+            eligible_candidates = [
+                index
+                for index in candidates
+                if _eligibility(profiles[index], profile_contracts[index])[0] == "eligible"
+            ]
+            if eligible_candidates:
+                candidates = eligible_candidates
+        if len(candidates) > 1:
+            explicitly_selected_candidates = [
+                index
+                for index in candidates
+                if _file_id(profiles[index]) in explicit_selected_ids
+            ]
+            if len(explicitly_selected_candidates) == 1:
+                candidates = explicitly_selected_candidates
         if len(candidates) == 1:
             task_refs_by_index.setdefault(candidates[0], []).extend(task_refs)
             selected_file_ids.add(_file_id(profiles[candidates[0]]))
         elif len(candidates) > 1:
+            ambiguity_groups.append((dataset_input, list(candidates)))
             for index in candidates:
                 task_refs_by_index.setdefault(index, []).extend(task_refs)
-                file_id = _file_id(profiles[index])
-                if file_id:
-                    ambiguous_file_ids.add(file_id)
-    return task_refs_by_index, ambiguous_file_ids, selected_file_ids
+    return task_refs_by_index, selected_file_ids, ambiguity_groups
 
 
 def _decide_file(
@@ -291,6 +362,7 @@ def _decide_file(
     has_binding_contract: bool,
     task_refs: list[str],
     ambiguous_file_ids: set[str],
+    explicit_selected_ids: set[str],
 ) -> dict[str, Any]:
     file_id = _file_id(profile)
     eligibility, eligibility_reason_code, eligibility_reason = _eligibility(profile, contract)
@@ -320,7 +392,9 @@ def _decide_file(
         reason_code = REASON_NO_CURRENT_TASK
         reason = "The current AnalysisPlan does not need this usable file."
         confidence = "high"
-    elif eligibility == "eligible" and _goal_mentions_profile(profile, goal):
+    elif eligibility == "eligible" and (
+        file_id in explicit_selected_ids or _goal_mentions_profile(profile, goal)
+    ):
         reason_code = REASON_EXPLICIT_IN_SCOPE_PENDING_PLAN
         reason = "The file is explicitly in scope and is waiting for an analysis task binding."
         confidence = "high"
@@ -413,48 +487,146 @@ def _decision_priority(item: dict[str, Any]) -> tuple[int, int]:
 def _is_required(decision: dict[str, Any], profile: dict[str, Any], goal: str) -> bool:
     if decision["assignment"] == "not_needed":
         return False
-    return bool(decision["task_refs"]) or _goal_mentions_profile(profile, goal) or _goal_requests_all_files(goal)
+    return (
+        bool(decision["task_refs"])
+        or bool(decision.get("_explicit_selected"))
+        or _goal_mentions_profile(profile, goal)
+        or _goal_requests_all_files(goal)
+    )
 
 
-def _ambiguous_file_ids(
+def _material_ambiguity_groups(
     profiles: list[dict[str, Any]],
     eligible_ids: set[str],
     goal: str,
     *,
     selected_ids: set[str] | None = None,
-) -> set[str]:
-    uniquely_named = {
+    plan_groups: list[tuple[str, list[int]]] | None = None,
+) -> list[dict[str, Any]]:
+    uniquely_named = _explicit_goal_file_ids(profiles, goal)
+    uniquely_named.update({
         _file_id(profile)
         for profile in profiles
         if _file_id(profile) in eligible_ids
-        and _goal_contains_alias(goal, _file_id(profile))
-    }
+        and alias_in_goal(goal, _file_id(profile), alias_kind="file_id")
+    })
     uniquely_named.update(selected_ids or set())
-    aliases: dict[str, list[str]] = {}
-    for profile in profiles:
+    alias_groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for profile_index, profile in enumerate(profiles, start=1):
         file_id = _file_id(profile)
         if file_id not in eligible_ids:
             continue
-        for alias in _profile_aliases(profile):
-            if alias and _goal_contains_alias(goal, alias):
-                aliases.setdefault(_normalize_alias(alias), []).append(file_id)
-    result: set[str] = set()
-    for file_ids in aliases.values():
-        candidate_ids = set(file_ids)
-        if len(candidate_ids) > 1 and not candidate_ids.intersection(uniquely_named):
-            result.update(candidate_ids)
+        for alias, alias_kind in _profile_alias_entries(profile):
+            if alias_kind == "file_id" or not alias_in_goal(goal, alias, alias_kind=alias_kind):
+                continue
+            key = (_normalize_alias(alias), alias_kind)
+            group = alias_groups.setdefault(key, {"alias": alias, "files": []})
+            if file_id not in {_text(item.get("file_id")) for item in group["files"]}:
+                group["files"].append(_ambiguity_file_ref(profile, profile_index))
+
+    result: list[dict[str, Any]] = []
+    seen_groups: set[tuple[str, ...]] = set()
+    for group in alias_groups.values():
+        file_ids = tuple(_text(item.get("file_id")) for item in group["files"])
+        if len(file_ids) < 2 or set(file_ids).intersection(uniquely_named):
+            continue
+        if file_ids in seen_groups:
+            continue
+        seen_groups.add(file_ids)
+        result.append(group)
+
+    for binding, indexes in plan_groups or []:
+        files = [
+            _ambiguity_file_ref(profiles[index], index + 1)
+            for index in indexes
+            if _file_id(profiles[index]) in eligible_ids
+        ]
+        file_ids = tuple(_text(item.get("file_id")) for item in files)
+        if len(file_ids) < 2 or set(file_ids).intersection(uniquely_named):
+            continue
+        if file_ids in seen_groups:
+            continue
+        seen_groups.add(file_ids)
+        result.append({"alias": binding, "files": files})
+    return result
+
+
+def _ambiguity_file_ref(profile: dict[str, Any], upload_order: int) -> dict[str, Any]:
+    return {
+        "file_id": _file_id(profile),
+        "filename": _text(profile.get("filename") or profile.get("name")),
+        "dataset": _dataset(profile),
+        "upload_order": upload_order,
+    }
+
+
+def _explicit_goal_file_ids(
+    profiles: list[dict[str, Any]],
+    goal: str,
+) -> set[str]:
+    selected = {
+        _file_id(profile)
+        for profile in profiles
+        if _file_id(profile)
+        and alias_in_goal(goal, _file_id(profile), alias_kind="file_id")
+    }
+    ordinal = _upload_order_reference(goal, len(profiles))
+    if ordinal is not None:
+        # data_pool is serialized as a list and upserts preserve its current-session upload order.
+        file_id = _file_id(profiles[ordinal - 1])
+        if file_id:
+            selected.add(file_id)
+    return selected
+
+
+def _upload_order_reference(goal: str, file_count: int) -> int | None:
+    chinese = re.findall(
+        r"第\s*(\d+)\s*个\s*文件(?=$|[\s,，。；;:：、\"'“”‘’()（）\[\]{}]|和|与|及|并|或)",
+        goal or "",
+    )
+    english = re.findall(
+        r"(?<![A-Za-z0-9_])file\s+(\d+)(?![A-Za-z0-9_])",
+        goal or "",
+        flags=re.IGNORECASE,
+    )
+    references = {int(value) for value in chinese + english}
+    if len(references) != 1:
+        return None
+    ordinal = next(iter(references))
+    if ordinal < 1 or ordinal > file_count:
+        return None
+    return ordinal
+
+
+def _profile_alias_entries(profile: dict[str, Any]) -> list[tuple[str, str]]:
+    filename = _text(profile.get("filename") or profile.get("name"))
+    stem = re.sub(r"\.[^.]+$", "", filename)
+    entries = [
+        (_file_id(profile), "file_id"),
+        (filename, "filename"),
+        (stem, "stem"),
+        (_dataset(profile), "dataset"),
+    ]
+    seen: set[tuple[str, str]] = set()
+    result = []
+    for alias, alias_kind in entries:
+        key = (_normalize_alias(alias), alias_kind)
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        result.append((alias, alias_kind))
     return result
 
 
 def _profile_aliases(profile: dict[str, Any]) -> list[str]:
-    filename = _text(profile.get("filename") or profile.get("name"))
-    stem = re.sub(r"\.[^.]+$", "", filename)
-    values = [_file_id(profile), filename, stem, _dataset(profile)]
-    return _dedupe([value for value in values if value])
+    return _dedupe([alias for alias, _ in _profile_alias_entries(profile)])
 
 
 def _goal_mentions_profile(profile: dict[str, Any], goal: str) -> bool:
-    return any(_goal_contains_alias(goal, alias) for alias in _profile_aliases(profile))
+    return any(
+        alias_in_goal(goal, alias, alias_kind=alias_kind)
+        for alias, alias_kind in _profile_alias_entries(profile)
+    )
 
 
 def _goal_requests_all_files(goal: str) -> bool:
@@ -469,7 +641,7 @@ def _goal_requests_all_files(goal: str) -> bool:
         "全部文件",
         "所有文件",
     )
-    return any(_goal_contains_alias(goal, phrase) for phrase in phrases)
+    return any(alias_in_goal(goal, phrase, alias_kind="phrase") for phrase in phrases)
 
 
 def _goal_excludes_profile(profile: dict[str, Any], goal: str) -> bool:
@@ -506,12 +678,23 @@ def _goal_excludes_profile(profile: dict[str, Any], goal: str) -> bool:
     return False
 
 
-def _goal_contains_alias(goal: str, alias: str) -> bool:
+def alias_in_goal(goal: str, alias: str, *, alias_kind: str = "token") -> bool:
+    """Match an explicit alias without treating Chinese business terms as substrings."""
     pattern = _alias_pattern(alias)
     if not pattern:
         return False
     if _contains_cjk(alias):
-        return _normalize_alias(alias) in _normalize_alias(goal)
+        normalized_alias = _normalize_alias(alias)
+        normalized_goal = _normalize_alias(goal)
+        if normalized_goal == normalized_alias:
+            return True
+        if alias_kind == "phrase":
+            return normalized_alias in normalized_goal
+        if alias_kind == "filename" and re.search(r"\.[^./\\\s]+$", _text(alias)):
+            return normalized_alias in normalized_goal
+        escaped = re.escape(_text(alias))
+        escaped = re.sub(r"\\\s+", r"\\s+", escaped)
+        return re.search(rf"(?<!\w){escaped}(?!\w)", goal or "") is not None
     return re.search(pattern, goal, flags=re.IGNORECASE) is not None
 
 

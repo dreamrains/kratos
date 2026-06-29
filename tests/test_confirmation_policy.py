@@ -10,6 +10,12 @@ from data_agent.agent.confirmation import (
     QuestionPolicy,
     RequestDisposition,
 )
+from data_agent.agent.confirmation_policy import (
+    OBSOLETE_CONFIRMATION_TYPES,
+    is_actionable_pending_confirmation,
+    pending_confirmation_gate,
+)
+from data_agent.agent.analysis_state import AnalysisSessionState
 
 
 def _candidate(**overrides):
@@ -124,3 +130,83 @@ def test_policy_rejects_unanswerable_select_candidate():
 
     assert result.disposition == RequestDisposition.REJECTED
     assert "options" in result.reason
+
+
+def test_obsolete_confirmation_types_are_centralized_and_not_actionable():
+    assert OBSOLETE_CONFIRMATION_TYPES == frozenset({
+        "file_relationship_confirmation",
+        "file_exclusion_confirmation",
+        "join_logic_confirmation",
+    })
+
+    for confirmation_type in OBSOLETE_CONFIRMATION_TYPES:
+        assert not is_actionable_pending_confirmation({
+            "status": "pending",
+            "confirmation_type": confirmation_type,
+        })
+
+
+def test_only_pending_non_obsolete_confirmation_is_actionable():
+    assert is_actionable_pending_confirmation({
+        "status": "pending",
+        "confirmation_type": "method_confirmation",
+    })
+    assert not is_actionable_pending_confirmation({
+        "status": "resolved",
+        "confirmation_type": "method_confirmation",
+    })
+
+
+def test_untyped_legacy_pending_shapes_are_not_actionable():
+    legacy_items = [
+        {"status": "pending", "operation": "join_logic_confirmation"},
+        {"status": "pending", "action": "resolve_file_relationship"},
+        {"status": "pending", "resolution_action": "resolve_file_relationship"},
+        {
+            "status": "pending",
+            "state_updates": {
+                "file_relationship_confirmation": {"relationship_id": "rel_dict"},
+            },
+        },
+        {
+            "status": "pending",
+            "state_updates": (
+                '{"file_relationship_confirmation": '
+                '{"relationship_id": "rel_json"}}'
+            ),
+        },
+    ]
+
+    assert all(not is_actionable_pending_confirmation(item) for item in legacy_items)
+
+
+def test_pending_confirmation_gate_skips_obsolete_records_and_finds_real_gate():
+    state = AnalysisSessionState(session_id="confirmation_policy")
+    state.pending_confirmations = [
+        {
+            "status": "pending",
+            "confirmation_type": "join_logic_confirmation",
+            "question": "Legacy relationship question",
+        },
+        {
+            "status": "pending",
+            "confirmation_type": "metric_scope",
+            "question": "Which metric?",
+        },
+    ]
+
+    gate = pending_confirmation_gate(state)
+
+    assert gate is not None
+    assert gate["confirmation_type"] == "metric_scope"
+    assert gate["question"] == "Which metric?"
+
+
+def test_pending_confirmation_gate_is_clear_when_only_obsolete_records_remain():
+    state = AnalysisSessionState(session_id="confirmation_policy")
+    state.pending_confirmations = [
+        {"status": "pending", "confirmation_type": confirmation_type}
+        for confirmation_type in OBSOLETE_CONFIRMATION_TYPES
+    ]
+
+    assert pending_confirmation_gate(state) is None

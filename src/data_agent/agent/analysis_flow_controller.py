@@ -10,6 +10,7 @@ from data_agent.agent.analysis_state import (
     load_analysis_state,
 )
 from data_agent.agent.intent import TurnIntent
+from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
@@ -39,7 +40,7 @@ class AnalysisFlowController:
         state.save()
 
     def has_pending_confirmation(self, state: AnalysisSessionState) -> bool:
-        return any(c.get("status", "pending") == "pending" for c in state.pending_confirmations)
+        return any(is_actionable_pending_confirmation(c) for c in state.pending_confirmations)
 
     HIGH_RISK_CAPABILITIES = frozenset({
         "analysis.causal",
@@ -108,7 +109,10 @@ class AnalysisFlowController:
         ]
         if existing:
             return existing[0]
-        pending = next((c for c in state.pending_confirmations if c.get("status", "pending") == "pending"), {})
+        pending = next(
+            (c for c in state.pending_confirmations if is_actionable_pending_confirmation(c)),
+            {},
+        )
         policy = spec.get("confirmation_policy") or {}
         project_name = self.project_name or state.project_name or ""
         plan_id = task_manager.get_active_plan_id(self.session_id, project_name)

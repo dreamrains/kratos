@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 import threading
 from typing import Any, Callable
@@ -17,6 +19,7 @@ from data_agent.agent.confirmation.models import (
     AnswerMode,
     ConfirmationEvent,
     ConfirmationRecord,
+    ConfirmationRequest,
     ConfirmationStatus,
     QuestionCandidate,
 )
@@ -25,6 +28,7 @@ from data_agent.agent.confirmation.policy import (
     RequestDisposition,
 )
 from data_agent.agent.confirmation.store import ConfirmationStore
+from data_agent.agent.confirmation_policy import is_obsolete_confirmation_record
 
 
 class InvalidConfirmationTransition(RuntimeError):
@@ -91,9 +95,19 @@ class ConfirmationService:
 
     def request(self, candidate: QuestionCandidate) -> ServiceRequestResult:
         with _session_lock(self.sessions_root, candidate.session_id):
+            if is_obsolete_confirmation_record(candidate):
+                return ServiceRequestResult(
+                    disposition=RequestDisposition.REJECTED,
+                    reason="The confirmation belongs to a retired workflow.",
+                )
             store = self._store(candidate.session_id)
             records = store.load_records()
-            policy_result = self.policy.evaluate(candidate, existing=records.values())
+            candidate = self._replace_obsolete_collision_id(candidate, records)
+            current_records = tuple(
+                record for record in records.values()
+                if not is_obsolete_confirmation_record(record)
+            )
+            policy_result = self.policy.evaluate(candidate, existing=current_records)
             if policy_result.disposition != RequestDisposition.CONFIRMATION:
                 return ServiceRequestResult(
                     disposition=policy_result.disposition,
@@ -121,7 +135,7 @@ class ConfirmationService:
             matching_open = next(
                 (
                     record
-                    for record in records.values()
+                    for record in current_records
                     if record.decision_key == candidate.decision_key
                     and record.data_version == candidate.data_version
                     and record.spec_version == candidate.spec_version
@@ -156,14 +170,51 @@ class ConfirmationService:
                 record=record,
             )
 
+    @staticmethod
+    def _replace_obsolete_collision_id(
+        candidate: QuestionCandidate,
+        records: dict[str, ConfirmationRecord],
+    ) -> QuestionCandidate:
+        occupied = records.get(candidate.confirmation_id)
+        if occupied is None or not is_obsolete_confirmation_record(occupied):
+            return candidate
+
+        encoded = json.dumps(
+            ConfirmationRequest.from_candidate(candidate).to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        base_id = f"{candidate.confirmation_id}_r{hashlib.sha256(encoded).hexdigest()[:10]}"
+        replacement_id = base_id
+        suffix = 2
+        while True:
+            replacement = replace(candidate, confirmation_id=replacement_id)
+            existing = records.get(replacement_id)
+            if existing is None:
+                return replacement
+            request_payload = ConfirmationRequest.from_candidate(replacement).to_dict()
+            existing_payload = existing.to_dict()
+            if (
+                not is_obsolete_confirmation_record(existing)
+                and all(existing_payload[key] == value for key, value in request_payload.items())
+            ):
+                return replacement
+            replacement_id = f"{base_id}_{suffix}"
+            suffix += 1
+
     def checkpoint(self, session_id: str) -> ConfirmationRecord | None:
         with _session_lock(self.sessions_root, session_id):
             store = self._store(session_id)
             records = store.load_records()
             for record in records.values():
+                if is_obsolete_confirmation_record(record):
+                    continue
                 if record.status == ConfirmationStatus.SUSPENDED:
                     return record
             for record in records.values():
+                if is_obsolete_confirmation_record(record):
+                    continue
                 if record.status in {
                     ConfirmationStatus.RESPONSE_RECEIVED,
                     ConfirmationStatus.APPLYING,
@@ -171,6 +222,8 @@ class ConfirmationService:
                 }:
                     return record
             for record in records.values():
+                if is_obsolete_confirmation_record(record):
+                    continue
                 if record.status == ConfirmationStatus.PENDING:
                     return self._transition(
                         store,
@@ -194,6 +247,7 @@ class ConfirmationService:
                 record
                 for record in records.values()
                 if record.status == ConfirmationStatus.SUSPENDED
+                and not is_obsolete_confirmation_record(record)
             ),
             None,
         )
@@ -207,9 +261,10 @@ class ConfirmationService:
         idempotency_key: str,
     ) -> ConfirmationRecord:
         with _session_lock(self.sessions_root, session_id):
-            response_id = self._idempotency_key(idempotency_key)
             store = self._store(session_id)
             record = self._record(store, confirmation_id)
+            self._expect_actionable_user_record(record, "answer")
+            response_id = self._idempotency_key(idempotency_key)
 
             if record.status == ConfirmationStatus.RESOLVED:
                 normalized_answer = self._validate_answer(record, answer)
@@ -272,9 +327,10 @@ class ConfirmationService:
         idempotency_key: str,
     ) -> ConfirmationRecord:
         with _session_lock(self.sessions_root, session_id):
-            response_id = self._idempotency_key(idempotency_key)
             store = self._store(session_id)
             record = self._record(store, confirmation_id)
+            self._expect_actionable_user_record(record, "skip")
+            response_id = self._idempotency_key(idempotency_key)
             if (
                 record.status == ConfirmationStatus.SKIPPED
                 and record.response_id == response_id
@@ -301,9 +357,10 @@ class ConfirmationService:
         idempotency_key: str,
     ) -> ConfirmationRecord:
         with _session_lock(self.sessions_root, session_id):
-            response_id = self._idempotency_key(idempotency_key)
             store = self._store(session_id)
             record = self._record(store, confirmation_id)
+            self._expect_actionable_user_record(record, "cancel")
+            response_id = self._idempotency_key(idempotency_key)
             if (
                 record.status == ConfirmationStatus.CANCELLED
                 and record.response_id == response_id
@@ -327,6 +384,7 @@ class ConfirmationService:
         expected_version: int,
         reason: str,
     ) -> ConfirmationRecord:
+        # Expire is an internal archival primitive, so it may retire obsolete records.
         with _session_lock(self.sessions_root, session_id):
             store = self._store(session_id)
             record = self._record(store, confirmation_id)
@@ -362,6 +420,16 @@ class ConfirmationService:
         if record.status not in {ConfirmationStatus.PENDING, ConfirmationStatus.SUSPENDED}:
             raise InvalidConfirmationTransition(
                 f"cannot {operation} a {record.status.value} confirmation"
+            )
+
+    @staticmethod
+    def _expect_actionable_user_record(
+        record: ConfirmationRecord,
+        operation: str,
+    ) -> None:
+        if is_obsolete_confirmation_record(record):
+            raise InvalidConfirmationTransition(
+                f"cannot {operation} an obsolete confirmation"
             )
 
     @staticmethod

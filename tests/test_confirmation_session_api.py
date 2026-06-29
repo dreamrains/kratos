@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 from data_agent.config import AgentConfig
 
@@ -168,6 +169,72 @@ def test_session_detail_ignores_legacy_pending_confirmations(tmp_path, monkeypat
 
     client = create_app().test_client()
     body = client.get(f"/api/sessions/{session_id}").get_json()
+
+    assert body["active_confirmation"] is None
+    assert body["queued_confirmation_count"] == 0
+    assert body["failed_confirmation_count"] == 0
+
+
+def test_session_detail_ignores_obsolete_runtime_ledger_states(tmp_path, monkeypatch):
+    from data_agent.agent.confirmation import (
+        AnswerMode,
+        ConfirmationEvent,
+        ConfirmationOption,
+        ConfirmationRecord,
+        ConfirmationRequest,
+        ConfirmationStatus,
+        QuestionCandidate,
+    )
+    from data_agent.agent.confirmation.store import ConfirmationStore
+
+    cfg = _use_tmp_config(monkeypatch, tmp_path)
+    session_id = "session_obsolete_runtime"
+    _write_session(cfg, session_id)
+    store = ConfirmationStore(cfg.sessions_resolved, session_id)
+    for confirmation_id, status, confirmation_type in (
+        ("legacy_pending", ConfirmationStatus.PENDING, "file_relationship_confirmation"),
+        ("legacy_suspended", ConfirmationStatus.SUSPENDED, "file_exclusion_confirmation"),
+        ("legacy_failed", ConfirmationStatus.FAILED, "join_logic_confirmation"),
+    ):
+        candidate = QuestionCandidate(
+            confirmation_id=confirmation_id,
+            session_id=session_id,
+            turn_id="legacy_turn",
+            decision_key=f"legacy:{confirmation_id}",
+            source="legacy",
+            operation=confirmation_type,
+            question="Legacy relationship question?",
+            decision_impact="Legacy relationship gate",
+            answer_mode=AnswerMode.SINGLE_SELECT,
+            options=(ConfirmationOption("Include", "include"),),
+            blocking_surfaces=("agent_turn",),
+            skippable=True,
+            resolution_action="resolve_file_relationship",
+            resolution_params={"confirmation_type": confirmation_type},
+        )
+        record = ConfirmationRecord.from_request(
+            ConfirmationRequest.from_candidate(candidate),
+            now="2026-06-27T00:00:00Z",
+        )
+        record = replace(
+            record,
+            status=status,
+            suspension_id=(f"susp_{confirmation_id}" if status == ConfirmationStatus.SUSPENDED else ""),
+            failure_reason=("legacy action missing" if status == ConfirmationStatus.FAILED else ""),
+        )
+        store.append(ConfirmationEvent(
+            event_id=f"event_{confirmation_id}",
+            confirmation_id=confirmation_id,
+            session_id=session_id,
+            event_type="legacy_fixture",
+            version=record.version,
+            occurred_at=record.updated_at,
+            record=record,
+        ))
+
+    from data_agent.web.app import create_app
+
+    body = create_app().test_client().get(f"/api/sessions/{session_id}").get_json()
 
     assert body["active_confirmation"] is None
     assert body["queued_confirmation_count"] == 0

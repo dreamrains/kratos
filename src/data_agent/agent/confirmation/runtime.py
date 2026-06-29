@@ -8,9 +8,14 @@ import json
 
 from data_agent.agent.confirmation.models import (
     AnswerMode,
+    ConfirmationContractError,
     ConfirmationOption,
     ConfirmationRecord,
     QuestionCandidate,
+)
+from data_agent.agent.confirmation_policy import (
+    OBSOLETE_CONFIRMATION_TYPES,
+    is_obsolete_confirmation_record,
 )
 from data_agent.agent.confirmation.actions import (
     ResolutionActionRegistry,
@@ -70,6 +75,23 @@ def _build_question_candidate(
     operation: str,
     id_prefix: str,
 ) -> QuestionCandidate:
+    confirmation_type = str(_request_value(request, "confirmation_type", "") or "").strip()
+    raw_state_updates = _state_updates(_request_value(request, "state_updates", ""))
+    obsolete_request = {
+        "operation": operation,
+        "resolution_params": {
+            "confirmation_type": confirmation_type,
+            "state_updates": raw_state_updates,
+        },
+    }
+    if is_obsolete_confirmation_record(obsolete_request):
+        if confirmation_type in OBSOLETE_CONFIRMATION_TYPES:
+            detail = f"type is not actionable: {confirmation_type}"
+        else:
+            detail = "request is not actionable"
+        raise ConfirmationContractError(
+            f"obsolete confirmation {detail}"
+        )
     identity = _question_identity(
         session_id,
         turn_id,
@@ -137,6 +159,8 @@ def confirmation_session_state(service: Any, session_id: str) -> dict[str, Any]:
     queued = 0
     failed = 0
     for record in records.values():
+        if is_obsolete_confirmation_record(record):
+            continue
         if record.status == ConfirmationStatus.SUSPENDED and active is None:
             active = confirmation_record_to_session_payload(record)
         elif record.status == ConfirmationStatus.PENDING:
@@ -191,11 +215,6 @@ def build_action_registry() -> ResolutionActionRegistry:
         "confirm_method",
         _apply_state_update_action,
         validator=_validate_method_action,
-    )
-    registry.register(
-        "resolve_file_relationship",
-        _apply_state_update_action,
-        validator=_validate_file_relationship_action,
     )
     return registry
 
@@ -265,14 +284,6 @@ def _validate_method_action(context: ResolutionContext, answer: Any) -> bool:
     return isinstance(confirmation, dict) and bool(confirmation.get("analysis_spec_id"))
 
 
-def _validate_file_relationship_action(context: ResolutionContext, answer: Any) -> bool:
-    updates = context.parameters.get("state_updates")
-    confirmation = updates.get("file_relationship_confirmation") if isinstance(updates, dict) else None
-    return isinstance(confirmation, dict) and bool(
-        confirmation.get("relationship_id") or confirmation.get("id")
-    )
-
-
 def _question_identity(
     session_id: str,
     turn_id: str,
@@ -332,8 +343,6 @@ def _resolution_action_for(request: Any) -> str:
         return "set_analysis_stage"
     if isinstance(updates.get("method_confirmation"), dict):
         return "confirm_method"
-    if isinstance(updates.get("file_relationship_confirmation"), dict):
-        return "resolve_file_relationship"
     return "record_confirmation_answer"
 
 
@@ -361,7 +370,7 @@ def _safe_state_updates(value: Any) -> dict[str, Any]:
     for key in ("stage", "data_state"):
         if isinstance(updates.get(key), str):
             allowed[key] = updates[key]
-    for key in ("method_confirmation", "file_relationship_confirmation"):
+    for key in ("method_confirmation",):
         if isinstance(updates.get(key), dict):
             allowed[key] = dict(updates[key])
     return allowed

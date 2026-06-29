@@ -1,10 +1,67 @@
 import pytest
+from dataclasses import replace
+from types import SimpleNamespace
 
 from data_agent.agent.confirmation import (
     AnswerMode,
     ConfirmationContractError,
 )
 from data_agent.agent.loop import AgentLoop, FinalResponse, UserConfirmationRequired
+
+
+def _append_ledger_record(
+    sessions_root,
+    session_id,
+    *,
+    confirmation_id,
+    status,
+    confirmation_type,
+    resolution_action,
+):
+    from data_agent.agent.confirmation import (
+        AnswerMode,
+        ConfirmationEvent,
+        ConfirmationOption,
+        ConfirmationRecord,
+        ConfirmationRequest,
+        QuestionCandidate,
+    )
+    from data_agent.agent.confirmation.store import ConfirmationStore
+
+    candidate = QuestionCandidate(
+        confirmation_id=confirmation_id,
+        session_id=session_id,
+        turn_id="legacy_turn",
+        decision_key=f"{session_id}:{confirmation_id}",
+        source="legacy",
+        operation=confirmation_type,
+        question="Legacy relationship question?",
+        decision_impact="Legacy relationship gate",
+        answer_mode=AnswerMode.SINGLE_SELECT,
+        options=(ConfirmationOption("Include", "include"),),
+        blocking_surfaces=("agent_turn",),
+        skippable=True,
+        resolution_action=resolution_action,
+        resolution_params={"confirmation_type": confirmation_type},
+    )
+    request = ConfirmationRequest.from_candidate(candidate)
+    record = ConfirmationRecord.from_request(request, now="2026-06-27T00:00:00Z")
+    record = replace(
+        record,
+        status=status,
+        suspension_id=(f"susp_{confirmation_id}" if status.value == "suspended" else ""),
+        failure_reason=("legacy action missing" if status.value == "failed" else ""),
+    )
+    ConfirmationStore(sessions_root, session_id).append(ConfirmationEvent(
+        event_id=f"event_{confirmation_id}",
+        confirmation_id=confirmation_id,
+        session_id=session_id,
+        event_type="legacy_fixture",
+        version=record.version,
+        occurred_at=record.updated_at,
+        record=record,
+    ))
+    return record
 
 
 def test_direct_question_candidate_uses_stable_identity():
@@ -170,6 +227,451 @@ def test_runtime_registers_record_confirmation_answer_action():
     assert receipt.status == "succeeded"
     assert receipt.output["answer"] == "revenue"
     assert receipt.output["question"] == "Metric?"
+
+
+def test_runtime_does_not_register_resolve_file_relationship_action():
+    from data_agent.agent.confirmation.actions import (
+        ResolutionContext,
+        UnknownResolutionAction,
+    )
+    from data_agent.agent.confirmation.runtime import build_action_registry
+
+    registry = build_action_registry()
+
+    with pytest.raises(UnknownResolutionAction):
+        registry.apply(
+            "resolve_file_relationship",
+            ResolutionContext("session_1", "cf_legacy", {}),
+            "include_in_active_bundle",
+            "cf_legacy:answer_1",
+        )
+
+
+def test_checkpoint_restore_and_new_turn_ignore_obsolete_ledger_records(tmp_path, monkeypatch):
+    from data_agent.agent.confirmation import ConfirmationStatus
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+    from data_agent.config import get_config
+
+    session_id = "obsolete_ledger_checkpoint"
+    for confirmation_id, status, confirmation_type in (
+        ("legacy_pending", ConfirmationStatus.PENDING, "file_relationship_confirmation"),
+        ("legacy_suspended", ConfirmationStatus.SUSPENDED, "file_exclusion_confirmation"),
+        ("legacy_failed", ConfirmationStatus.FAILED, "join_logic_confirmation"),
+    ):
+        _append_ledger_record(
+            tmp_path,
+            session_id,
+            confirmation_id=confirmation_id,
+            status=status,
+            confirmation_type=confirmation_type,
+            resolution_action="resolve_file_relationship",
+        )
+
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    assert service.checkpoint(session_id) is None
+    assert service.restore(session_id) is None
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    loop = AgentLoop(client=None, session_id=session_id)
+    assert loop._runtime_confirmation_checkpoint() is None
+
+    assert service.get(session_id, "legacy_pending").status == ConfirmationStatus.PENDING
+    assert service.get(session_id, "legacy_suspended").status == ConfirmationStatus.SUSPENDED
+    assert service.get(session_id, "legacy_failed").status == ConfirmationStatus.FAILED
+
+
+def test_cached_obsolete_confirmation_id_is_not_projected_for_resume(tmp_path, monkeypatch):
+    from data_agent.agent.confirmation import ConfirmationStatus
+    from data_agent.config import get_config
+
+    session_id = "obsolete_cached_resume"
+    old = _append_ledger_record(
+        tmp_path,
+        session_id,
+        confirmation_id="legacy_cached",
+        status=ConfirmationStatus.SUSPENDED,
+        confirmation_type="file_relationship_confirmation",
+        resolution_action="resolve_file_relationship",
+    )
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    loop = AgentLoop(client=None, session_id=session_id)
+
+    assert loop._runtime_suspension_for_resume(old.confirmation_id) is None
+    result = loop.resume_turn(old.confirmation_id, "include")
+    assert isinstance(result, FinalResponse)
+    assert "not found" in result.content
+
+
+def test_method_ledger_record_remains_actionable(tmp_path):
+    from data_agent.agent.confirmation import ConfirmationStatus
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+
+    session_id = "method_ledger_checkpoint"
+    _append_ledger_record(
+        tmp_path,
+        session_id,
+        confirmation_id="method_pending",
+        status=ConfirmationStatus.PENDING,
+        confirmation_type="method_confirmation",
+        resolution_action="record_confirmation_answer",
+    )
+
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    checkpoint = service.checkpoint(session_id)
+
+    assert checkpoint is not None
+    assert checkpoint.confirmation_id == "method_pending"
+    assert checkpoint.status == ConfirmationStatus.SUSPENDED
+    assert service.restore(session_id).confirmation_id == "method_pending"
+
+
+def test_service_rejects_new_obsolete_candidate_and_cannot_revive_old_action(tmp_path):
+    from data_agent.agent.confirmation import (
+        AnswerMode,
+        ConfirmationOption,
+        ConfirmationStatus,
+        QuestionCandidate,
+        RequestDisposition,
+    )
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import (
+        ConfirmationService,
+        InvalidConfirmationTransition,
+    )
+
+    session_id = "obsolete_ledger_response"
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    candidate = QuestionCandidate(
+        confirmation_id="legacy_new",
+        session_id=session_id,
+        turn_id="turn_1",
+        decision_key="legacy:new",
+        source="legacy",
+        operation="join_logic_confirmation",
+        question="Legacy join question?",
+        decision_impact="Legacy join gate",
+        answer_mode=AnswerMode.SINGLE_SELECT,
+        options=(ConfirmationOption("Include", "include"),),
+        blocking_surfaces=("agent_turn",),
+        skippable=True,
+        resolution_action="resolve_file_relationship",
+        resolution_params={"confirmation_type": "join_logic_confirmation"},
+    )
+
+    result = service.request(candidate)
+
+    assert result.disposition == RequestDisposition.REJECTED
+    assert result.record is None
+
+    old = _append_ledger_record(
+        tmp_path,
+        session_id,
+        confirmation_id="legacy_old",
+        status=ConfirmationStatus.SUSPENDED,
+        confirmation_type="file_relationship_confirmation",
+        resolution_action="resolve_file_relationship",
+    )
+    with pytest.raises(InvalidConfirmationTransition, match="obsolete"):
+        service.respond(session_id, old.confirmation_id, "include", old.version, "old_answer")
+    assert service.get(session_id, old.confirmation_id).status == ConfirmationStatus.SUSPENDED
+
+
+def test_legacy_relationship_confirmation_type_is_rejected_not_fallback():
+    from data_agent.agent.confirmation.runtime import build_direct_question_candidate
+
+    with pytest.raises(ConfirmationContractError, match="obsolete confirmation type"):
+        build_direct_question_candidate(
+            session_id="session_1",
+            turn_id="turn_1",
+            message_version=1,
+            request=UserConfirmationRequired(
+                question="Legacy relationship question",
+                options=[{"label": "Include", "value": "include_in_active_bundle"}],
+                confirmation_type="file_relationship_confirmation",
+                state_updates={
+                    "file_relationship_confirmation": {"relationship_id": "rel_1"},
+                },
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "state_updates",
+    [
+        {"file_relationship_confirmation": {"relationship_id": "rel_1"}},
+        '{"file_relationship_confirmation": {"relationship_id": "rel_1"}}',
+    ],
+)
+def test_legacy_relationship_state_update_is_rejected_before_safe_fallback(
+    state_updates,
+):
+    from data_agent.agent.confirmation.runtime import build_direct_question_candidate
+
+    with pytest.raises(ConfirmationContractError, match="obsolete confirmation"):
+        build_direct_question_candidate(
+            session_id="session_1",
+            turn_id="turn_1",
+            message_version=1,
+            request=UserConfirmationRequired(
+                question="Legacy relationship question",
+                options=[{"label": "Include", "value": "include_in_active_bundle"}],
+                state_updates=state_updates,
+            ),
+        )
+
+
+def test_auto_suspend_ignores_only_obsolete_pending_confirmations():
+    from data_agent.agent.analysis_state import AnalysisSessionState
+
+    loop = AgentLoop(client=None, session_id="obsolete_pending")
+    state = AnalysisSessionState(session_id="obsolete_pending")
+    state.pending_confirmations = [{
+        "id": "legacy_relationship",
+        "status": "pending",
+        "confirmation_type": "file_relationship_confirmation",
+        "question": "Legacy relationship question",
+        "options": [{"label": "Include", "value": "include"}],
+        "state_updates": {"stage": "scope"},
+    }]
+
+    assert loop._pending_confirmation_for_auto_suspend(state) is None
+
+
+def test_auto_suspend_keeps_new_confirmation_types_actionable():
+    from data_agent.agent.analysis_state import AnalysisSessionState
+
+    loop = AgentLoop(client=None, session_id="new_pending")
+    state = AnalysisSessionState(session_id="new_pending")
+    pending = {
+        "id": "method_gate",
+        "status": "pending",
+        "confirmation_type": "method_confirmation",
+        "question": "Confirm the method?",
+        "options": [{"label": "Confirm", "value": "confirm_method"}],
+        "state_updates": {"stage": "plan"},
+    }
+    state.pending_confirmations = [pending]
+
+    assert loop._pending_confirmation_for_auto_suspend(state) is pending
+
+
+def _scope_selection_state():
+    from data_agent.agent.analysis_state import AnalysisSessionState
+
+    state = AnalysisSessionState(session_id="runtime_scope", data_state="data_loaded")
+    state.data_pool = [
+        {
+            "file_id": "sales_a",
+            "filename": "sales.csv",
+            "dataset": "sales_a",
+            "status": "loaded",
+        },
+        {
+            "file_id": "sales_b",
+            "filename": "sales.csv",
+            "dataset": "sales_b",
+            "status": "loaded",
+        },
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_sales_a", "dataset": "sales_a", "quality_status": "ready"},
+        {"id": "duc_sales_b", "dataset": "sales_b", "quality_status": "ready"},
+    ]
+    return state
+
+
+def _multiple_scope_selection_state():
+    state = _scope_selection_state()
+    state.data_pool.extend([
+        {
+            "file_id": "cost_a",
+            "filename": "cost.csv",
+            "dataset": "cost_a",
+            "status": "loaded",
+        },
+        {
+            "file_id": "cost_b",
+            "filename": "cost.csv",
+            "dataset": "cost_b",
+            "status": "loaded",
+        },
+    ])
+    state.dataset_contracts.extend([
+        {"id": "duc_cost_a", "dataset": "cost_a", "quality_status": "ready"},
+        {"id": "duc_cost_b", "dataset": "cost_b", "quality_status": "ready"},
+    ])
+    return state
+
+
+def _scope_selection_question(state):
+    from data_agent.agent.question_need_detector import detect_question_need
+
+    intent = SimpleNamespace(intent_type="directed_analysis", clarity="clear")
+    return detect_question_need("analyze sales.csv", intent, state)
+
+
+def _question_for_goal(state, goal):
+    from data_agent.agent.question_need_detector import detect_question_need
+
+    intent = SimpleNamespace(intent_type="directed_analysis", clarity="clear")
+    return detect_question_need(goal, intent, state)
+
+
+def test_auto_suspend_routes_scope_selection_through_unified_runtime(tmp_path, monkeypatch):
+    import data_agent.agent.loop as loop_module
+
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+    monkeypatch.setattr(loop_module, "get_config", lambda: cfg)
+    loop = AgentLoop(client=None, session_id="runtime_scope")
+    state = _scope_selection_state()
+    state.pending_confirmations = [{
+        "id": "legacy_relationship",
+        "status": "pending",
+        "confirmation_type": "file_relationship_confirmation",
+        "question": "Legacy relationship question",
+        "options": [{"label": "Include", "value": "include"}],
+        "state_updates": {"stage": "scope"},
+    }]
+    loop.context.analysis_state = state
+    loop._turn_existing_pending_ids = set()
+    loop._turn_question_need = _scope_selection_question(state)
+
+    result = loop._maybe_auto_suspend_for_required_question()
+
+    assert result is not None
+    assert result.confirmation_type == "file_scope_selection"
+    assert "file" in result.question.lower()
+    assert [option["value"] for option in result.options] == ["sales_a", "sales_b"]
+    assert result.confirmation_id == result.suspension_id
+
+
+def test_existing_actionable_confirmation_precedes_new_scope_question(tmp_path, monkeypatch):
+    import data_agent.agent.loop as loop_module
+
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+    monkeypatch.setattr(loop_module, "get_config", lambda: cfg)
+    loop = AgentLoop(client=None, session_id="runtime_scope_priority")
+    state = _scope_selection_state()
+    state.pending_confirmations = [{
+        "id": "method_gate",
+        "status": "pending",
+        "confirmation_type": "method_confirmation",
+        "question": "Confirm the method?",
+        "options": [{"label": "Confirm", "value": "confirm_method"}],
+        "state_updates": {"stage": "plan"},
+    }]
+    loop.context.analysis_state = state
+    loop._turn_existing_pending_ids = set()
+    loop._turn_question_need = _scope_selection_question(state)
+
+    result = loop._maybe_auto_suspend_for_required_question()
+
+    assert result is not None
+    assert result.confirmation_type == "method_confirmation"
+    assert result.question == "Confirm the method?"
+
+
+def test_runtime_confirms_independent_scope_groups_in_successive_rounds(tmp_path, monkeypatch):
+    import data_agent.agent.loop as loop_module
+
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+    monkeypatch.setattr(loop_module, "get_config", lambda: cfg)
+    loop = AgentLoop(client=None, session_id="runtime_scope_groups")
+    state = _multiple_scope_selection_state()
+    loop.context.analysis_state = state
+    loop._turn_existing_pending_ids = set()
+    loop._turn_question_need = _question_for_goal(
+        state,
+        "compare sales.csv with cost.csv",
+    )
+
+    first = loop._maybe_auto_suspend_for_required_question()
+
+    assert [option["value"] for option in first.options] == ["sales_a", "sales_b"]
+    loop._confirmation_runtime().respond(
+        loop.session_id,
+        first.confirmation_id,
+        "sales_b",
+        first.version,
+        "select_sales_b",
+    )
+    loop._turn_question_need = _question_for_goal(
+        state,
+        "compare sales.csv using sales_b with cost.csv",
+    )
+
+    second = loop._maybe_auto_suspend_for_required_question()
+
+    assert [option["value"] for option in second.options] == ["cost_a", "cost_b"]
+    assert second.confirmation_id == second.suspension_id
+    assert second.confirmation_id != first.confirmation_id
+
+
+def test_excessive_scope_candidates_suspend_as_free_text(tmp_path, monkeypatch):
+    import data_agent.agent.loop as loop_module
+    from data_agent.agent.analysis_state import AnalysisSessionState
+
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path)
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+    monkeypatch.setattr(loop_module, "get_config", lambda: cfg)
+    loop = AgentLoop(client=None, session_id="runtime_many_scope_candidates")
+    state = AnalysisSessionState(session_id="runtime_many_scope_candidates", data_state="data_loaded")
+    state.data_pool = [{
+        "file_id": "other_first",
+        "filename": "other.csv",
+        "dataset": "other",
+        "status": "loaded",
+    }] + [
+        {
+            "file_id": f"sales_{index}",
+            "filename": "sales.csv",
+            "dataset": f"sales_{index}",
+            "status": "loaded",
+        }
+        for index in range(21)
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_other", "dataset": "other", "quality_status": "ready"},
+    ] + [
+        {"id": f"duc_sales_{index}", "dataset": f"sales_{index}", "quality_status": "ready"}
+        for index in range(21)
+    ]
+    loop.context.analysis_state = state
+    loop._turn_existing_pending_ids = set()
+    loop._turn_question_need = _question_for_goal(state, "analyze sales.csv")
+
+    suspended = loop._maybe_auto_suspend_for_required_question()
+    record = loop._confirmation_runtime().get(loop.session_id, suspended.confirmation_id)
+
+    assert suspended.options == []
+    assert record.answer_mode == AnswerMode.FREE_TEXT
+    assert "第 N 个文件" in suspended.question
+    assert "2-22" in suspended.question
+
+    loop._confirmation_runtime().respond(
+        loop.session_id,
+        suspended.confirmation_id,
+        "第 22 个文件",
+        suspended.version,
+        "select_upload_21",
+    )
+    next_question = _question_for_goal(
+        state,
+        "analyze sales.csv using 第 22 个文件",
+    )
+
+    assert next_question["status"] == "clear"
 
 
 def test_runtime_rejects_unsafe_state_update_action():

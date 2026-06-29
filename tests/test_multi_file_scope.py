@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from data_agent.agent.analysis_state import AnalysisSessionState
@@ -280,6 +282,144 @@ def test_duplicate_explicit_reference_is_prioritized_with_bounded_full_counts():
     }
 
 
+def test_unique_file_id_resolves_its_duplicate_filename_group():
+    state = _state(
+        _profile("sales_a", dataset="sales_a", filename="sales.csv"),
+        _profile("sales_b", dataset="sales_b", filename="sales.csv"),
+    )
+
+    plan = build_analysis_scope_plan(state, "analyze sales.csv using sales_b")
+
+    assert plan["scope_status"] == "ready_with_notes"
+    assert plan["decision_files"] == []
+    assert [item["file_id"] for item in plan["available_files"]] == [
+        "sales_a",
+        "sales_b",
+    ]
+
+
+def test_unique_file_id_only_resolves_its_own_duplicate_alias_group():
+    state = _state(
+        _profile("sales_a", dataset="sales_a", filename="sales.csv"),
+        _profile("sales_b", dataset="sales_b", filename="sales.csv"),
+        _profile("cost_a", dataset="cost_a", filename="cost.csv"),
+        _profile("cost_b", dataset="cost_b", filename="cost.csv"),
+    )
+
+    plan = build_analysis_scope_plan(
+        state,
+        "analyze sales.csv using sales_b and compare cost.csv",
+    )
+
+    assert [item["file_id"] for item in plan["decision_files"]] == [
+        "cost_a",
+        "cost_b",
+    ]
+
+
+def test_unavailable_duplicate_filename_is_not_an_ambiguity_candidate():
+    state = AnalysisSessionState(session_id="eligible_aliases", data_state="data_loaded")
+    state.data_pool = [
+        _profile("sales_ready", dataset="sales_ready", filename="sales.csv"),
+        _profile("sales_failed", dataset="sales_failed", filename="sales.csv", status="failed"),
+    ]
+    _add_contract(state, "sales_ready")
+
+    plan = build_analysis_scope_plan(state, "analyze sales.csv")
+
+    assert plan["decision_files"] == []
+    assert [item["file_id"] for item in plan["available_files"]] == ["sales_ready"]
+    assert [item["file_id"] for item in plan["unavailable_files"]] == ["sales_failed"]
+
+
+def test_chinese_dataset_alias_does_not_match_a_longer_business_term():
+    state = AnalysisSessionState(session_id="chinese_alias_boundary", data_state="data_loaded")
+    state.data_pool = [
+        _profile("sales_a", dataset="销售", filename="sales_a.csv"),
+        _profile("sales_b", dataset="销售", filename="sales_b.csv"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_sales", "dataset": "销售", "quality_status": "ready"},
+    ]
+
+    plan = build_analysis_scope_plan(state, "分析销售额趋势")
+
+    assert plan["decision_files"] == []
+
+
+def test_chinese_dataset_alias_matches_when_delimited_by_quotes():
+    state = AnalysisSessionState(session_id="chinese_alias_quoted", data_state="data_loaded")
+    state.data_pool = [
+        _profile("sales_a", dataset="销售", filename="sales_a.csv"),
+        _profile("sales_b", dataset="销售", filename="sales_b.csv"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_sales", "dataset": "销售", "quality_status": "ready"},
+    ]
+
+    plan = build_analysis_scope_plan(state, "分析“销售”趋势")
+
+    assert [item["file_id"] for item in plan["decision_files"]] == ["sales_a", "sales_b"]
+
+
+def test_complete_chinese_filename_remains_an_explicit_reference():
+    state = _state(
+        _profile("sales_a", dataset="sales_a", filename="销售.csv"),
+        _profile("sales_b", dataset="sales_b", filename="销售.csv"),
+    )
+
+    plan = build_analysis_scope_plan(state, "分析销售.csv")
+
+    assert [item["file_id"] for item in plan["decision_files"]] == ["sales_a", "sales_b"]
+
+
+def test_material_ambiguity_groups_use_all_candidates_while_scope_stays_bounded():
+    profiles = [
+        _profile(f"sales_{index}", dataset=f"sales_{index}", filename="sales.csv")
+        for index in range(25)
+    ]
+    state = _state(*profiles)
+
+    plan = build_analysis_scope_plan(state, "analyze sales.csv")
+
+    assert len(plan["file_decisions"]) == 5
+    assert len(plan["decision_files"]) == 5
+    assert plan["context_budget"]["decision_file_count"] == 25
+    assert len(json.dumps(plan, ensure_ascii=False)) < 6000
+
+
+def test_large_eligible_history_keeps_full_counts_with_bounded_details():
+    state = _state(*[_profile(f"history_{index}") for index in range(20)])
+
+    plan = build_analysis_scope_plan(state, "analyze all files")
+
+    assert len(plan["file_decisions"]) == 5
+    assert plan["context_budget"]["eligible_file_count"] == 20
+    assert plan["context_budget"]["available_file_count"] == 20
+    assert plan["context_budget"]["total_file_count"] == 20
+    assert plan["context_budget"]["returned_file_count"] == 5
+    assert plan["context_budget"]["omitted_file_count"] == 15
+    assert len(json.dumps(plan, ensure_ascii=False)) < 6000
+
+
+def test_material_decision_at_end_of_large_history_is_kept_in_bounded_details():
+    profiles = [
+        *[_profile(f"history_{index}") for index in range(8)],
+        _profile("sales_a", dataset="sales_a", filename="sales.csv"),
+        _profile("sales_b", dataset="sales_b", filename="sales.csv"),
+    ]
+    state = _state(*profiles)
+
+    plan = build_analysis_scope_plan(state, "analyze sales.csv")
+
+    assert len(plan["file_decisions"]) == 5
+    assert plan["context_budget"]["decision_file_count"] == 2
+    assert any(
+        item["assignment"] == "needs_decision"
+        for item in plan["file_decisions"]
+    )
+
+
 def test_unique_file_id_does_not_hide_an_unrelated_duplicate_filename():
     state = _state(
         _profile("users"),
@@ -319,6 +459,161 @@ def test_shared_dataset_plan_binding_requires_a_physical_file_decision():
         item["reason_code"] == "ambiguous_file_reference"
         for item in plan["decision_files"]
     )
+
+
+def test_explicit_file_selection_narrows_shared_dataset_binding():
+    state = AnalysisSessionState(session_id="selected_shared_dataset", data_state="data_loaded")
+    state.data_pool = [
+        _profile("main_a", dataset="main", dataset_contract_id="duc_main_a"),
+        _profile("main_b", dataset="main", dataset_contract_id="duc_main_b"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main_a", "dataset": "main", "quality_status": "ready"},
+        {"id": "duc_main_b", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": ["main"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "use main_b")
+
+    assert [item["file_id"] for item in plan["used_files"]] == ["main_b"]
+    assert [item["file_id"] for item in plan["not_needed_files"]] == ["main_a"]
+    decisions = {item["file_id"]: item for item in plan["file_decisions"]}
+    assert decisions["main_a"]["task_refs"] == []
+    assert decisions["main_b"]["task_refs"] == ["task_main"]
+
+
+def test_upload_order_selection_narrows_large_shared_dataset_binding():
+    state = AnalysisSessionState(session_id="selected_large_dataset", data_state="data_loaded")
+    state.data_pool = [_profile("unrelated", dataset="other")]
+    state.data_pool.extend(
+        _profile(
+            f"main_{index}",
+            dataset="main",
+            dataset_contract_id=f"duc_main_{index}",
+        )
+        for index in range(1, 22)
+    )
+    state.dataset_contracts = [
+        {"id": "duc_other", "dataset": "other", "quality_status": "ready"},
+        *[
+            {"id": f"duc_main_{index}", "dataset": "main", "quality_status": "ready"}
+            for index in range(1, 22)
+        ],
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": ["main"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "use the 第 22 个文件")
+
+    assert plan["context_budget"]["used_file_count"] == 1
+    assert plan["context_budget"]["decision_file_count"] == 0
+    selected = next(item for item in plan["file_decisions"] if item["file_id"] == "main_21")
+    assert selected["assignment"] == "used"
+    assert selected["task_refs"] == ["task_main"]
+
+
+def test_explicit_selection_only_narrows_its_plan_binding_group():
+    state = AnalysisSessionState(session_id="selected_one_binding_group", data_state="data_loaded")
+    state.data_pool = [
+        _profile("sales_a", dataset="sales", dataset_contract_id="duc_sales_a"),
+        _profile("sales_b", dataset="sales", dataset_contract_id="duc_sales_b"),
+        _profile("cost_a", dataset="cost", dataset_contract_id="duc_cost_a"),
+        _profile("cost_b", dataset="cost", dataset_contract_id="duc_cost_b"),
+    ]
+    state.dataset_contracts = [
+        {"id": f"duc_{name}", "dataset": dataset, "quality_status": "ready"}
+        for name, dataset in (
+            ("sales_a", "sales"),
+            ("sales_b", "sales"),
+            ("cost_a", "cost"),
+            ("cost_b", "cost"),
+        )
+    ]
+    state.analysis_plan = {
+        "method_plan": [
+            {"step_id": "task_sales", "dataset_inputs": ["sales"]},
+            {"step_id": "task_cost", "dataset_inputs": ["cost"]},
+        ]
+    }
+
+    plan = build_analysis_scope_plan(state, "use sales_b")
+
+    assert [item["file_id"] for item in plan["used_files"]] == ["sales_b"]
+    assert [item["file_id"] for item in plan["decision_files"]] == ["cost_a", "cost_b"]
+    decisions = {item["file_id"]: item for item in plan["file_decisions"]}
+    assert decisions["sales_a"]["task_refs"] == []
+    assert decisions["cost_a"]["task_refs"] == ["task_cost"]
+    assert decisions["cost_b"]["task_refs"] == ["task_cost"]
+
+
+def test_unavailable_plan_candidate_does_not_make_the_only_eligible_file_ambiguous():
+    state = AnalysisSessionState(session_id="eligible_plan_binding", data_state="data_loaded")
+    state.data_pool = [
+        _profile("main_ready", dataset="main", filename="ready.csv"),
+        _profile("main_failed", dataset="main", filename="failed.csv", status="failed"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": ["main"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "run current analysis")
+
+    assert plan["scope_status"] == "ready_with_notes"
+    assert plan["decision_files"] == []
+    assert [item["file_id"] for item in plan["used_files"]] == ["main_ready"]
+    failed = next(item for item in plan["file_decisions"] if item["file_id"] == "main_failed")
+    assert failed["task_refs"] == []
+
+
+@pytest.mark.parametrize("dataset_input", ["main_failed", "duc_main_failed"])
+def test_explicit_file_or_contract_binding_to_unavailable_file_stays_blocked(dataset_input):
+    state = AnalysisSessionState(session_id="explicit_unavailable_binding", data_state="data_loaded")
+    state.data_pool = [
+        _profile(
+            "main_failed",
+            dataset="main",
+            filename="failed.csv",
+            status="failed",
+            dataset_contract_id="duc_main_failed",
+        ),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main_failed", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": [dataset_input]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "run current analysis")
+
+    assert plan["scope_status"] == "blocked"
+    assert plan["file_decisions"][0]["task_refs"] == ["task_main"]
+
+
+def test_dataset_binding_with_no_eligible_candidate_keeps_unavailable_files_required():
+    state = AnalysisSessionState(session_id="unavailable_dataset_binding", data_state="data_loaded")
+    state.data_pool = [
+        _profile("main_failed_a", dataset="main", filename="failed_a.csv", status="failed"),
+        _profile("main_failed_b", dataset="main", filename="failed_b.csv", status="failed"),
+    ]
+    state.dataset_contracts = [
+        {"id": "duc_main", "dataset": "main", "quality_status": "ready"},
+    ]
+    state.analysis_plan = {
+        "method_plan": [{"step_id": "task_main", "dataset_inputs": ["main"]}]
+    }
+
+    plan = build_analysis_scope_plan(state, "run current analysis")
+
+    assert plan["scope_status"] == "blocked"
+    assert plan["decision_files"] == []
+    assert all(item["task_refs"] == ["task_main"] for item in plan["file_decisions"])
 
 
 def test_contract_id_plan_binding_selects_one_file_from_a_shared_dataset():

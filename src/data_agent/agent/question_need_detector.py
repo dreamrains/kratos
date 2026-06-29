@@ -2,64 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
+
+from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
 BLOCKED_SURFACES_EXECUTION = ["analysis_execution", "report_generation"]
+MAX_SCOPE_SELECTION_OPTIONS = 20
+MAX_SCOPE_CANDIDATE_SAMPLE = 5
+MAX_SCOPE_ORDINAL_TEXT_LENGTH = 120
 
 _CONSULTING_INTENTS = {"simple_response", "knowledge_qa", "analysis_consultation", "result_followup"}
-_PENDING_RELATIONSHIP_STATUSES = {"possibly_linked", "independent", "insufficient_preview"}
-_LATEST_ONLY_PHRASES = (
-    "latest only",
-    "latest upload only",
-    "only analyze latest",
-    "only analyze the latest",
-    "only latest",
-    "only use latest",
-    "only use the latest",
-    "only the latest",
-    "use latest only",
-    "exclude historical",
-    "exclude history",
-    "ignore historical",
-    "ignore history",
-    "no historical",
-    "no history",
-    "not historical",
-    "without historical",
-    "without history",
-    "\u53ea\u5206\u6790\u6700\u65b0",
-    "\u53ea\u5206\u6790\u65b0\u6587\u4ef6",
-    "\u53ea\u770b\u6700\u65b0",
-    "\u4ec5\u5206\u6790\u6700\u65b0",
-    "\u4ec5\u4f7f\u7528\u6700\u65b0",
-    "\u4e0d\u770b\u5386\u53f2",
-    "\u4e0d\u8981\u5386\u53f2",
-    "\u6392\u9664\u5386\u53f2",
-)
-_LATEST_ONLY_RELATIONSHIP_SCOPE_TERMS = (
-    "compare",
-    "comparison",
-    "historical",
-    "history",
-    "previous",
-    "with history",
-    "merge",
-    "join",
-    "combine",
-    "relate",
-    "relationship",
-    "对比",
-    "比较",
-    "历史",
-    "之前",
-    "关联",
-    "结合",
-    "合并",
-    "一起",
-)
 _HIGH_RISK_KEYWORDS = (
     "predict",
     "forecast",
@@ -123,11 +77,11 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     if state is None or _intent_type(intent) in _CONSULTING_INTENTS:
         return empty_question_need()
 
-    text = (user_input or "").lower()
-    relationship_gate = _pending_file_relationship_gate(text, state)
-    if relationship_gate:
-        return relationship_gate
+    ambiguity_groups = build_material_ambiguity_groups(state, user_goal=user_input)
+    if ambiguity_groups:
+        return _file_scope_question(ambiguity_groups[0])
 
+    text = (user_input or "").lower()
     routes = _scoped_routes(state)
 
     if _is_vague_route_request(intent) and len(routes) > 1:
@@ -197,6 +151,108 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     return empty_question_need()
 
 
+def _file_scope_question(
+    ambiguity_group: dict[str, Any],
+) -> dict[str, Any]:
+    files = [
+        item for item in ambiguity_group.get("files", [])
+        if isinstance(item, dict)
+    ]
+    group_label = _text(ambiguity_group.get("alias")) or "the referenced data"
+    file_ids = [_text(item.get("file_id")) for item in files]
+    file_ids = [file_id for file_id in file_ids if file_id]
+    if len(files) > MAX_SCOPE_SELECTION_OPTIONS:
+        ordinals = sorted({
+            int(item.get("upload_order"))
+            for item in files
+            if isinstance(item.get("upload_order"), int)
+            and int(item.get("upload_order")) > 0
+        })
+        ordinal_text = _compress_upload_ordinals(ordinals)
+        if ordinal_text and len(ordinal_text) <= MAX_SCOPE_ORDINAL_TEXT_LENGTH:
+            answer_instruction = (
+                f"当前会话全局上传顺序中的有效序号为：{ordinal_text}。"
+                "请回复“第 N 个文件”。"
+            )
+        else:
+            ordinal_range = (
+                f"{ordinals[0]}-{ordinals[-1]}" if ordinals else "未知"
+            )
+            examples = "、".join(str(value) for value in ordinals[:MAX_SCOPE_CANDIDATE_SAMPLE])
+            answer_instruction = (
+                f"当前会话全局上传序号范围为 {ordinal_range}，"
+                f"共 {len(files)} 个候选；并非区间内每个序号都属于本组。"
+                "请在文件列表按全局上传顺序选择，并回复“第 N 个文件”。"
+                f"例如有效序号：{examples}。"
+            )
+        return _hard_gate(
+            "file_scope_selection",
+            "The file reference matches too many usable files for a complete single-select question.",
+            (
+                f"共有 {len(files)} 个同名候选文件（{group_label}）。"
+                f"{answer_instruction}"
+            ),
+            options=[],
+            blocking_surfaces=BLOCKED_SURFACES_ALL,
+            state_updates={"stage": "scope"},
+            metadata={
+                "candidate_count": len(files),
+                "candidate_sample": files[:MAX_SCOPE_CANDIDATE_SAMPLE],
+                "sample_ordinals": ordinals[:MAX_SCOPE_CANDIDATE_SAMPLE],
+            },
+        )
+
+    base_labels = [_scope_file_label(item) for item in files]
+    label_counts = {
+        label.casefold(): sum(other.casefold() == label.casefold() for other in base_labels)
+        for label in base_labels
+    }
+    options = []
+    for item, base_label in zip(files, base_labels):
+        file_id = _text(item.get("file_id"))
+        if not file_id:
+            continue
+        dataset = _text(item.get("dataset"))
+        has_conflict = label_counts.get(base_label.casefold(), 0) > 1
+        options.append({
+            "label": f"{base_label} [{file_id}]" if has_conflict else base_label,
+            "value": file_id,
+            "description": (
+                f"Dataset: {dataset or 'unknown'}; file_id: {file_id}"
+                if has_conflict
+                else dataset or f"Use {base_label} for this analysis."
+            ),
+        })
+    return _hard_gate(
+        "file_scope_selection",
+        "The file reference matches multiple usable files, and the choice changes the analysis scope.",
+        f"The request matches multiple files for {group_label}. Which file should be used for this analysis?",
+        options=options,
+        blocking_surfaces=BLOCKED_SURFACES_ALL,
+        state_updates={"stage": "scope"},
+        metadata={"file_ids": file_ids},
+    )
+
+
+def _scope_file_label(item: dict[str, Any]) -> str:
+    return _text(item.get("filename") or item.get("dataset") or item.get("file_id"))
+
+
+def _compress_upload_ordinals(values: list[int]) -> str:
+    if not values:
+        return ""
+    ranges = []
+    start = previous = values[0]
+    for value in values[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = value
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return "、".join(ranges)
+
+
 def empty_question_need() -> dict[str, Any]:
     return {
         "status": "clear",
@@ -259,123 +315,6 @@ def _hard_gate(
     if metadata:
         gate["metadata"] = metadata
     return gate
-
-
-def _pending_file_relationship_gate(text: str, state: Any) -> dict[str, Any] | None:
-    if _explicit_latest_only_without_relationship_scope(text):
-        return None
-    for relationship in _list_attr(state, "file_relationships"):
-        if not relationship.get("requires_confirmation"):
-            continue
-        status = _text(relationship.get("status"))
-        if status not in _PENDING_RELATIONSHIP_STATUSES:
-            continue
-        confirmation_type = _text(relationship.get("confirmation_type")) or "file_relationship_confirmation"
-        return _hard_gate(
-            confirmation_type,
-            _relationship_reason(relationship),
-            _relationship_question(relationship, confirmation_type),
-            options=_relationship_options(confirmation_type),
-            blocking_surfaces=BLOCKED_SURFACES_ALL,
-            state_updates={
-                "stage": "scope",
-                "file_relationship_confirmation": {
-                    "relationship_id": _text(relationship.get("relationship_id") or relationship.get("id")),
-                },
-            },
-            metadata={
-                "relationship_id": _text(relationship.get("relationship_id") or relationship.get("id")),
-                "file_ids": _text_list(relationship.get("file_ids")),
-            },
-        )
-    return None
-
-
-def _explicit_latest_only_without_relationship_scope(text: str) -> bool:
-    lowered = (text or "").lower()
-    if _relationship_scope_requested(lowered):
-        return False
-    if any(phrase in lowered for phrase in _LATEST_ONLY_PHRASES):
-        return True
-    return bool(
-        re.search(r"\bonly\s+(analy[sz]e|use|look at)\s+(the\s+)?(latest|newest)\s+(file|upload|data|dataset)\b", lowered)
-        or re.search(r"\b(exclude|ignore|skip|without)\s+(previous|historical|history|old)\s+(file|upload|data|dataset|files|uploads|datasets)?\b", lowered)
-    )
-
-
-def _relationship_scope_requested(text: str) -> bool:
-    lowered = (text or "").lower()
-    lowered = re.sub(r"\bnot\s+(previous|historical|history)\b", "", lowered)
-    lowered = re.sub(r"\bwithout\s+(previous|historical|history)\b", "", lowered)
-    lowered = re.sub(r"\b(exclude|ignore|skip|no)\s+(previous|historical|history|old)\b", "", lowered)
-    lowered = lowered.replace("不要历史", "").replace("不看历史", "").replace("不包含历史", "").replace("排除历史", "")
-    return any(term in lowered for term in _LATEST_ONLY_RELATIONSHIP_SCOPE_TERMS)
-
-
-def _relationship_reason(relationship: dict[str, Any]) -> str:
-    uncertainties = _text_list(relationship.get("uncertainties"))
-    if uncertainties:
-        return uncertainties[0]
-    return "多个数据文件之间的关系尚未确认，可能影响本次分析范围。"
-
-
-def _relationship_question(relationship: dict[str, Any], confirmation_type: str) -> str:
-    file_summary = _relationship_file_summary(relationship)
-    if confirmation_type == "file_exclusion_confirmation":
-        if file_summary:
-            return f"新上传的数据文件看起来可能不属于当前分析目标。请确认是否要纳入本轮分析。{file_summary}"
-        return "新上传的数据文件看起来可能不属于当前分析目标。请确认是否要纳入本轮分析。"
-    if file_summary:
-        return f"新上传的数据文件可能与当前分析目标有关，但关系尚不确定。请确认这些文件是否应一起分析。{file_summary}"
-    return "新上传的数据文件可能与当前分析目标有关，但关系尚不确定。请确认这些文件是否应一起分析。"
-
-
-def _relationship_file_summary(relationship: dict[str, Any]) -> str:
-    new_files = _text_list(relationship.get("new_files") or relationship.get("new_file_ids") or relationship.get("new_file_names"))
-    existing_files = _text_list(
-        relationship.get("existing_files")
-        or relationship.get("existing_file_ids")
-        or relationship.get("existing_file_names")
-    )
-    parts = []
-    if new_files:
-        parts.append("新文件：" + ", ".join(new_files[:3]))
-    if existing_files:
-        parts.append("已有文件：" + ", ".join(existing_files[:3]))
-    return "；".join(parts)
-
-
-def _relationship_options(confirmation_type: str) -> list[dict[str, str]]:
-    if confirmation_type == "file_exclusion_confirmation":
-        return [
-            {
-                "label": "纳入当前分析",
-                "value": "include_in_active_bundle",
-                "description": "将新文件视为当前分析目标的一部分。",
-            },
-            {
-                "label": "暂不纳入",
-                "value": "exclude_from_active_bundle",
-                "description": "本轮分析先不使用该文件，保持当前分析范围。",
-            },
-        ]
-    return [
-        {
-            "label": "一起分析",
-            "value": "include_in_active_bundle",
-            "description": "把这些文件放入同一分析范围，后续综合判断。",
-        },
-        {
-            "label": "分开分析",
-            "value": "separate_bundle",
-            "description": "将新文件与当前分析范围分开处理。",
-        },
-        {
-            "label": "只分析最新文件",
-            "value": "latest_only",
-            "description": "本轮只使用最新上传的数据文件，不纳入历史文件。",
-        },
-    ]
 
 
 def _intent_type(intent: Any) -> str:

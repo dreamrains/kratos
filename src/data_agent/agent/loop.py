@@ -664,7 +664,7 @@ class AgentLoop:
         self._turn_existing_pending_ids = {
             str(c.get("id") or c.get("suspension_id") or "")
             for c in getattr(state, "pending_confirmations", []) or []
-            if isinstance(c, dict) and c.get("status", "pending") == "pending"
+            if self._is_actionable_pending_confirmation(c)
         }
         controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
         try:
@@ -691,16 +691,21 @@ class AgentLoop:
         return controller.activate_tool_groups(registry, intent, state, user_input)
 
     def _maybe_auto_suspend_for_required_question(self) -> SuspendedForConfirmation | None:
-        question_need = getattr(self, "_turn_question_need", None)
-        if not isinstance(question_need, dict) or question_need.get("status") != "hard_question":
-            return None
         state = getattr(self.context, "analysis_state", None)
         pending = self._pending_confirmation_for_auto_suspend(state)
         if pending is False:
             return None
+        question_need = getattr(self, "_turn_question_need", None)
+        has_new_question = (
+            isinstance(question_need, dict)
+            and question_need.get("status") == "hard_question"
+        )
+        if not isinstance(pending, dict) and not has_new_question:
+            return None
 
         pending_data = pending if isinstance(pending, dict) else {}
-        state_updates = pending_data.get("state_updates", question_need.get("state_updates"))
+        question_data = question_need if isinstance(question_need, dict) else {}
+        state_updates = pending_data.get("state_updates", question_data.get("state_updates"))
         if isinstance(state_updates, dict):
             state_updates_text = json.dumps(state_updates, ensure_ascii=False)
         elif isinstance(state_updates, str) and state_updates.strip():
@@ -708,12 +713,12 @@ class AgentLoop:
         else:
             state_updates_text = json.dumps({"stage": "scope"}, ensure_ascii=False)
         payload = {
-            "question": str(pending_data.get("question") or question_need.get("question") or "Please confirm the key information before continuing."),
-            "options": list(pending_data.get("options") or question_need.get("options") or []),
+            "question": str(pending_data.get("question") or question_data.get("question") or "Please confirm the key information before continuing."),
+            "options": list(pending_data.get("options") or question_data.get("options") or []),
             "context": str(pending_data.get("context") or ""),
             "multi_select": False,
-            "confirmation_type": str(pending_data.get("confirmation_type") or question_need.get("question_type") or "scope_confirmation"),
-            "blocking_reason": str(pending_data.get("blocking_reason") or question_need.get("reason") or ""),
+            "confirmation_type": str(pending_data.get("confirmation_type") or question_data.get("question_type") or "scope_confirmation"),
+            "blocking_reason": str(pending_data.get("blocking_reason") or question_data.get("reason") or ""),
             "state_updates": state_updates_text,
             "related_task_id": int(pending_data.get("related_task_id") or 0),
             "related_spec_id": str(pending_data.get("related_spec_id") or ""),
@@ -740,7 +745,7 @@ class AgentLoop:
             return None
         pending_items = [
             c for c in getattr(state, "pending_confirmations", []) or []
-            if isinstance(c, dict) and c.get("status", "pending") == "pending"
+            if self._is_actionable_pending_confirmation(c)
         ]
         if not pending_items:
             return None
@@ -769,6 +774,12 @@ class AgentLoop:
             and item.get("options")
             and item.get("state_updates")
         )
+
+    @staticmethod
+    def _is_actionable_pending_confirmation(item: Any) -> bool:
+        from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
+
+        return is_actionable_pending_confirmation(item)
 
     def _extract_user_requirements(self, user_input: str) -> None:
         """Use LLM to extract quality/format requirements from user input (once per session)."""
@@ -1246,10 +1257,13 @@ class AgentLoop:
         confirmation_id: str,
     ) -> SuspendedForConfirmation | None:
         from data_agent.agent.confirmation.runtime import confirmation_record_to_loop_result
+        from data_agent.agent.confirmation_policy import is_obsolete_confirmation_record
 
         try:
             record = self._confirmation_runtime().get(self.session_id, confirmation_id)
         except KeyError:
+            return None
+        if is_obsolete_confirmation_record(record):
             return None
         return confirmation_record_to_loop_result(
             record,
