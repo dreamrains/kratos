@@ -35,6 +35,28 @@ def _matches_existing_projection(task: dict[str, Any], *, analysis_plan_id: str,
     return bool(analysis_spec_id and task.get("analysis_spec_id") == analysis_spec_id)
 
 
+def _find_step_duplicate(
+    manager: TaskManager,
+    *,
+    session_id: str,
+    project_name: str,
+    task_plan_id: str,
+    analysis_plan_id: str,
+    step_id: str,
+) -> dict[str, Any] | None:
+    for task in manager.list_for_scope(session_id=session_id, project_name=project_name):
+        if task.get("plan_id") != task_plan_id:
+            continue
+        if task.get("analysis_plan_id") != analysis_plan_id:
+            continue
+        if task.get("step_id") != step_id:
+            continue
+        if task.get("status") in ("deleted", "archived", "superseded"):
+            continue
+        return task
+    return None
+
+
 def project_plan_to_workflow_tasks(
     manager: TaskManager,
     plan: dict[str, Any],
@@ -51,7 +73,15 @@ def project_plan_to_workflow_tasks(
             "error": "legacy_plan_display_only",
         }
 
-    method_plan = plan.get("method_plan") if isinstance(plan.get("method_plan"), list) else []
+    method_plan = plan.get("method_plan")
+    if not isinstance(method_plan, list) or not method_plan:
+        return {
+            "created": 0,
+            "reused": 0,
+            "task_ids": [],
+            "error": "missing_method_plan",
+        }
+
     plan_id = _text(plan.get("id")) or f"plan_{uuid.uuid4().hex[:10]}"
     workflow_id = _text(plan.get("workflow_id")) or f"wf_{uuid.uuid4().hex[:8]}"
     analysis_spec_id = _text(plan.get("id"))
@@ -96,13 +126,24 @@ def project_plan_to_workflow_tasks(
     for index, step in enumerate(method_plan, 1):
         if not isinstance(step, dict):
             continue
-        step_id = _text(step.get("step_id")) or f"step_{index}"
-        duplicate = manager.find_duplicate_task(
-            session_id=session_id,
-            plan_id=plan_record["id"],
-            subject=_step_subject(step, index),
-            analysis_spec_id=analysis_spec_id,
-        )
+        explicit_step_id = _text(step.get("step_id"))
+        step_id = explicit_step_id or f"step_{index}"
+        if explicit_step_id:
+            duplicate = _find_step_duplicate(
+                manager,
+                session_id=session_id,
+                project_name=project_name,
+                task_plan_id=plan_record["id"],
+                analysis_plan_id=plan_id,
+                step_id=step_id,
+            )
+        else:
+            duplicate = manager.find_duplicate_task(
+                session_id=session_id,
+                plan_id=plan_record["id"],
+                subject=_step_subject(step, index),
+                analysis_spec_id=analysis_spec_id,
+            )
         if duplicate:
             reused.append(duplicate)
             by_step_id[step_id] = duplicate
@@ -114,7 +155,7 @@ def project_plan_to_workflow_tasks(
             workflow_id=workflow_id,
             project_name=project_name,
             stage="execute",
-            node_type=_text(step.get("combination_mode")) or "analysis",
+            node_type=_text(step.get("node_type")) or "analysis",
             analysis_spec_id=analysis_spec_id,
             analysis_plan_id=plan_id,
             step_id=step_id,

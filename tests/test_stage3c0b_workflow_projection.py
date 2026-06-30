@@ -59,6 +59,56 @@ def test_projector_carries_stage3c0b_bindings(tmp_path):
     assert banner["evidence_requirements"] == ["click_rate"]
 
 
+def test_projector_distinguishes_same_subject_steps_by_step_id(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    result = validate_analysis_plan_contract(
+        {
+            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "goal": "Analyze two independent files.",
+            "method_plan": [
+                {
+                    "step_id": "step_banner",
+                    "goal": "Analyze conversion metrics.",
+                    "dataset_inputs": ["banner"],
+                    "combination_mode": "independent",
+                    "expected_output": "Banner conversion evidence",
+                    "evidence_requirements": ["conversion_rate"],
+                },
+                {
+                    "step_id": "step_shop",
+                    "goal": "Analyze conversion metrics.",
+                    "dataset_inputs": ["shop"],
+                    "combination_mode": "independent",
+                    "expected_output": "Shop conversion evidence",
+                    "evidence_requirements": ["conversion_rate"],
+                },
+            ],
+        },
+        dataset_contracts=[
+            {"dataset": "banner", "id": "contract_banner"},
+            {"dataset": "shop", "id": "contract_shop"},
+        ],
+    )
+    assert result.ok
+
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        result.plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    assert projected["created"] == 2
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    banner = next(task for task in tasks if task["step_id"] == "step_banner")
+    shop = next(task for task in tasks if task["step_id"] == "step_shop")
+    assert banner["id"] != shop["id"]
+    assert banner["dataset_inputs"] == ["banner"]
+    assert banner["dataset_contract_ids"] == ["contract_banner"]
+    assert shop["dataset_inputs"] == ["shop"]
+    assert shop["dataset_contract_ids"] == ["contract_shop"]
+
+
 def test_projector_translates_required_evidence_to_task_dependencies(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     plan = _validated_plan()
@@ -97,6 +147,34 @@ def test_projector_reuses_existing_tasks_for_same_stage3c0b_plan(tmp_path):
     tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
     assert len(tasks) == 2
     assert len([task for task in tasks if task["task_kind"] == "plan_task"]) == 2
+
+
+def test_projector_rejects_malformed_stage3c0b_without_superseding_active_plan(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    first = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    active_plan_id = manager.get_active_plan_id("s1", "p1")
+
+    malformed = project_plan_to_workflow_tasks(
+        manager,
+        {
+            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "goal": "Malformed plan",
+        },
+        session_id="s1",
+        project_name="p1",
+    )
+
+    assert malformed["created"] == 0
+    assert malformed["error"] == "missing_method_plan"
+    assert manager.get_active_plan_id("s1", "p1") == active_plan_id
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    assert [task["id"] for task in tasks] == first["task_ids"]
 
 
 def test_task_manager_accepts_failed_terminal_status(tmp_path):
