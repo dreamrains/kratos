@@ -21,6 +21,12 @@ WORKFLOW_FIELDS = {
     "stage": "",
     "node_type": "",
     "analysis_spec_id": "",
+    "analysis_plan_id": "",
+    "step_id": "",
+    "dataset_inputs": [],
+    "dataset_contract_ids": [],
+    "combination_mode": "",
+    "required_evidence_step_ids": [],
     "required_data": [],
     "expected_output": "",
     "evidence_ids": [],
@@ -166,7 +172,7 @@ class TaskManager:
             return None
 
         if status is not None:
-            allowed = ("pending", "blocked", "in_progress", "completed", "superseded", "archived", "deleted")
+            allowed = ("pending", "blocked", "in_progress", "completed", "failed", "superseded", "archived", "deleted")
             if status not in allowed:
                 return None
             task["status"] = status
@@ -174,6 +180,9 @@ class TaskManager:
             if status == "completed":
                 task["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self._clear_dependency(tid)
+
+            if status == "failed":
+                task["failed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if status == "archived":
                 task["archived_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

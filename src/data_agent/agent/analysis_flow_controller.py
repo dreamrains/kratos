@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 from data_agent.agent.analysis_state import (
     AnalysisSessionState,
     analysis_state_summary,
@@ -153,99 +151,19 @@ class AnalysisFlowController:
         )
 
     def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
-        """Create workflow tasks for the current AnalysisSpec once per session.
-
-        The LLM may still call task_create explicitly, but core workflow task
-        creation should not depend on it remembering to do so.
-        """
-        spec = state.analysis_spec or {}
-        method_plan = spec.get("method_plan") or []
-        if not isinstance(method_plan, list) or not method_plan:
+        plan = state.analysis_plan or state.analysis_spec or {}
+        if not isinstance(plan, dict):
             return {"created": 0, "task_ids": []}
+        from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
-        spec_id = spec.get("id") or uuid.uuid4().hex[:10]
-        spec["id"] = spec_id
-        workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
-        spec["workflow_id"] = workflow_id
-        state.analysis_spec = spec
         project_name = self.project_name or state.project_name or ""
-
-        active_plan_id = task_manager.get_active_plan_id(self.session_id, project_name)
-        active_tasks = (
-            task_manager.list_active_for_scope(session_id=self.session_id, project_name=project_name)
-            if active_plan_id else []
-        )
-        existing = [
-            t for t in active_tasks
-            if (spec_id and t.get("analysis_spec_id") == spec_id)
-            or (workflow_id and t.get("workflow_id") == workflow_id)
-        ]
-        if existing:
-            return {"created": 0, "task_ids": [t["id"] for t in existing]}
-
-        plan = task_manager.create_plan(
+        return project_plan_to_workflow_tasks(
+            task_manager,
+            plan,
             session_id=self.session_id,
             project_name=project_name,
-            goal=spec.get("goal", state.goal),
-            source="analysis_spec",
-            analysis_spec_id=spec_id,
-            workflow_id=workflow_id,
+            source="analysis_plan",
         )
-
-        created = []
-        reused = []
-        for idx, step in enumerate(method_plan, 1):
-            if isinstance(step, dict):
-                subject = step.get("task") or step.get("step") or step.get("name") or step.get("title") or f"Analysis step {idx}"
-                expected_output = step.get("expected_output", "")
-                node_type = step.get("node_type", "analysis")
-                required_capability = step.get("required_capability", "")
-                evidence_requirements = step.get("evidence_requirements") or []
-                confirmation_policy = step.get("confirmation_policy") or spec.get("confirmation_policy") or {}
-            else:
-                subject = str(step)
-                expected_output = ""
-                node_type = "analysis"
-                required_capability = ""
-                evidence_requirements = []
-                confirmation_policy = spec.get("confirmation_policy") or {}
-
-            duplicate = task_manager.find_duplicate_task(
-                session_id=self.session_id,
-                plan_id=plan["id"],
-                subject=subject,
-                analysis_spec_id=spec_id,
-            )
-            if duplicate:
-                reused.append(duplicate)
-                continue
-
-            created.append(task_manager.create(
-                subject=subject,
-                description=expected_output,
-                session_id=self.session_id,
-                workflow_id=workflow_id,
-                project_name=project_name,
-                stage="execute",
-                node_type=node_type,
-                analysis_spec_id=spec_id,
-                required_data=spec.get("required_data") or [],
-                expected_output=expected_output,
-                required_capability=required_capability,
-                evidence_requirements=evidence_requirements,
-                confirmation_policy=confirmation_policy,
-                plan_id=plan["id"],
-                plan_version=plan.get("version", 1),
-                plan_status="active",
-                task_kind="plan_task",
-                source="analysis_spec",
-            ))
-
-        return {
-            "created": len(created),
-            "reused": len(reused),
-            "task_ids": [t["id"] for t in created + reused],
-        }
 
     def activate_tool_groups(self, registry, intent: TurnIntent, state: AnalysisSessionState, user_input: str) -> set[str]:
         """Activate tool groups using intent/state first, data signals second, keywords as fallback."""

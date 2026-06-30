@@ -71,6 +71,12 @@ def _workflow_fields_from_dict(data: dict) -> dict:
         "stage",
         "node_type",
         "analysis_spec_id",
+        "analysis_plan_id",
+        "step_id",
+        "dataset_inputs",
+        "dataset_contract_ids",
+        "combination_mode",
+        "required_evidence_step_ids",
         "required_data",
         "expected_output",
         "evidence_ids",
@@ -191,77 +197,15 @@ def _ensure_llm_plan_for_batch(task_list_data: list, current_spec: dict, active_
 
 
 def create_workflow_tasks_from_spec(spec: dict) -> dict:
-    method_plan = spec.get("method_plan") or []
-    if isinstance(method_plan, str):
-        method_plan = [line.strip() for line in method_plan.splitlines() if line.strip()]
-    if not isinstance(method_plan, list):
-        method_plan = []
+    from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
-    plan = _ensure_active_plan_for_spec(spec)
-    workflow_id = plan.get("workflow_id") or spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
-    spec_id = plan.get("analysis_spec_id") or spec.get("id", "")
-    plan_id = plan["id"]
-    plan_version = plan.get("version", 1)
-    created = []
-    reused = []
-    for idx, step in enumerate(method_plan, 1):
-        subject = _step_subject(step, idx)
-        description = _step_description(step)
-        if isinstance(step, dict):
-            node_type = step.get("node_type") or "analysis"
-            expected_output = step.get("expected_output", "")
-            required_data = step.get("required_data", spec.get("required_data", []))
-            required_capability = step.get("required_capability", "")
-            evidence_requirements = step.get("evidence_requirements", [])
-            confirmation_policy = step.get("confirmation_policy", {})
-        else:
-            subject = str(step)
-            description = str(step)
-            node_type = "analysis"
-            expected_output = ""
-            required_data = spec.get("required_data", [])
-            required_capability = ""
-            evidence_requirements = []
-            confirmation_policy = {}
-
-        duplicate = task_manager.find_duplicate_task(
-            session_id=_session_id(),
-            plan_id=plan_id,
-            subject=subject,
-            analysis_spec_id=spec_id,
-        )
-        if duplicate:
-            reused.append(duplicate)
-            continue
-
-        task = task_manager.create(
-            subject=subject[:120],
-            description=description,
-            session_id=_session_id(),
-            workflow_id=workflow_id,
-            project_name=_project_name(),
-            stage="execute",
-            node_type=node_type,
-            analysis_spec_id=spec_id,
-            required_data=required_data,
-            expected_output=expected_output,
-            required_capability=required_capability,
-            evidence_requirements=evidence_requirements,
-            confirmation_policy=confirmation_policy,
-            plan_id=plan_id,
-            plan_version=plan_version,
-            plan_status="active",
-            task_kind="plan_task",
-            source="analysis_spec",
-        )
-        created.append(task)
-    return {
-        "workflow_id": workflow_id,
-        "plan_id": plan_id,
-        "created": len(created),
-        "reused": len(reused),
-        "task_ids": [t["id"] for t in created + reused],
-    }
+    return project_plan_to_workflow_tasks(
+        task_manager,
+        spec,
+        session_id=_session_id(),
+        project_name=_project_name(),
+        source="analysis_plan",
+    )
 
 
 @registry.register(
@@ -374,11 +318,12 @@ def task_create(
 @registry.register(
     name="task_update",
     description=(
-        "更新任务状态和分析工作流字段。status 可选：pending/in_progress/completed/deleted。"
+        "更新任务状态和分析工作流字段。status 可选：pending/blocked/in_progress/completed/failed/superseded/archived/deleted。"
         "支持批量 updates JSON。"
     ),
     schema_overrides={
-        "updates": {"description": '批量更新模式：JSON 数组 [{"task_id": 1, "status": "completed"}]'},
+        "status": {"description": "可选状态：pending/blocked/in_progress/completed/failed/superseded/archived/deleted"},
+        "updates": {"description": '批量更新模式：JSON 数组 [{"task_id": 1, "status": "completed"}]；status 可用 pending/blocked/in_progress/completed/failed/superseded/archived/deleted'},
     },
 )
 def task_update(
