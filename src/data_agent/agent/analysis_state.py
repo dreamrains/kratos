@@ -290,6 +290,31 @@ class AnalysisSessionState:
         self.stage = "execute"
         return item
 
+    def upsert_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        item = dict(record)
+        if not item.get("id"):
+            try:
+                from data_agent.agent.evidence_contracts import evidence_id_for
+
+                if item.get("plan_id") and item.get("step_id") and item.get("claim_key"):
+                    item["id"] = evidence_id_for(item.get("plan_id"), item.get("step_id"), item.get("claim_key"))
+            except Exception:
+                pass
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item_id = item.get("id")
+        for index, existing in enumerate(self.evidence_records):
+            if existing.get("id") == item_id:
+                item.setdefault("created_at", existing.get("created_at") or _now())
+                merged = dict(existing)
+                merged.update(item)
+                self.evidence_records[index] = merged
+                self.stage = "execute"
+                return merged
+        item.setdefault("created_at", _now())
+        self.evidence_records.append(item)
+        self.stage = "execute"
+        return item
+
     def add_insight_record(self, record: dict[str, Any]) -> dict[str, Any]:
         item = dict(record)
         item.setdefault("id", uuid.uuid4().hex[:10])

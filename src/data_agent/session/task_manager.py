@@ -36,6 +36,7 @@ WORKFLOW_FIELDS = {
     "confidence": "",
     "required_capability": "",
     "evidence_requirements": [],
+    "satisfied_evidence_requirements": [],
     "confirmation_policy": {},
 }
 
@@ -515,6 +516,89 @@ class TaskManager:
             or evidence.get("tool_calls")
         )
 
+    def _evidence_id(self, evidence: dict) -> str:
+        evidence_id = str(evidence.get("id") or "")
+        if evidence_id:
+            return evidence_id
+        try:
+            from data_agent.agent.evidence_contracts import evidence_id_for
+
+            if evidence.get("plan_id") and evidence.get("step_id") and evidence.get("claim_key"):
+                return evidence_id_for(evidence.get("plan_id"), evidence.get("step_id"), evidence.get("claim_key"))
+        except Exception:
+            pass
+        return ""
+
+    def _is_stage3c0b_scoped_task(self, task: dict) -> bool:
+        return bool(task.get("analysis_plan_id") or task.get("step_id"))
+
+    def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
+        return str(evidence.get("evidence_requirement") or evidence.get("claim_key") or "")
+
+    def _stage3c0b_task_matches_evidence(self, task: dict, evidence: dict) -> bool:
+        task_plan_id = str(task.get("analysis_plan_id") or "")
+        if task_plan_id and str(evidence.get("plan_id") or "") != task_plan_id:
+            return False
+
+        task_step_id = str(task.get("step_id") or "")
+        if task_step_id and str(evidence.get("step_id") or "") != task_step_id:
+            return False
+
+        task_contract_ids = [str(item) for item in task.get("dataset_contract_ids") or [] if str(item)]
+        if task_contract_ids:
+            evidence_contract_ids = []
+            if evidence.get("dataset_contract_id"):
+                evidence_contract_ids.append(str(evidence.get("dataset_contract_id")))
+            evidence_contract_ids.extend(
+                str(item) for item in evidence.get("dataset_contract_ids") or [] if str(item)
+            )
+            if not set(task_contract_ids).intersection(evidence_contract_ids):
+                return False
+
+        task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+        if task_requirements and evidence_requirement not in task_requirements:
+            return False
+
+        return True
+
+    def _complete_stage3c0b_task_from_evidence(self, task: dict, evidence: dict) -> int | None:
+        if not self._stage3c0b_task_matches_evidence(task, evidence):
+            return None
+
+        evidence_id = self._evidence_id(evidence)
+        evidence_ids = list(task.get("evidence_ids") or [])
+        if evidence_id and evidence_id not in evidence_ids:
+            evidence_ids.append(evidence_id)
+
+        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+        satisfied = list(task.get("satisfied_evidence_requirements") or [])
+        if evidence_requirement and evidence_requirement not in satisfied:
+            satisfied.append(evidence_requirement)
+
+        required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+        all_satisfied = bool(required) and all(item in satisfied for item in required)
+        was_completed = task.get("status") == "completed"
+
+        update_fields = {
+            "evidence_ids": evidence_ids,
+            "result_summary": evidence.get("result_summary", "") or evidence.get("claim", ""),
+            "confidence": evidence.get("confidence", ""),
+            "satisfied_evidence_requirements": satisfied,
+        }
+        if all_satisfied:
+            self.update(
+                task["id"],
+                status="completed",
+                completed_by="evidence",
+                **update_fields,
+            )
+            if not was_completed:
+                return task["id"]
+        else:
+            self.update(task["id"], **update_fields)
+        return None
+
     def _complete_analysis_spec_plan_from_evidence(
         self,
         session_id: str,
@@ -525,10 +609,12 @@ class TaskManager:
             return []
 
         active_tasks = self.list_active_for_scope(session_id=session_id)
+        if any(t.get("analysis_plan_id") or t.get("step_id") for t in active_tasks):
+            return []
         if any(t.get("source") == "llm_plan" for t in active_tasks):
             return []
 
-        evidence_id = evidence.get("id", "")
+        evidence_id = self._evidence_id(evidence)
         completed: list[int] = []
         for task in active_tasks:
             if task.get("status") not in ("pending", "in_progress"):
@@ -567,12 +653,17 @@ class TaskManager:
         analysis_spec_id: str = "",
     ) -> list[int]:
         evidence_text = self._evidence_text(evidence)
-        evidence_id = evidence.get("id", "")
+        evidence_id = self._evidence_id(evidence)
         completed: list[int] = []
         for task in self.list_active_for_scope(session_id=session_id):
             if task.get("status") not in ("pending", "in_progress"):
                 continue
             if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
+                continue
+            if self._is_stage3c0b_scoped_task(task):
+                completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
+                if completed_task_id is not None:
+                    completed.append(completed_task_id)
                 continue
             terms = self._task_match_terms(task)
             if not any(term and term in evidence_text for term in terms):

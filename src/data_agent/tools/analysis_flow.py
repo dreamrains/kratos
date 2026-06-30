@@ -310,6 +310,33 @@ def record_evidence_record(record_json: str) -> str:
         payload = json.loads(record_json)
     except json.JSONDecodeError:
         return json.dumps({"error": "record_json 必须是有效 JSON"}, ensure_ascii=False)
+    if not isinstance(payload, dict):
+        return json.dumps({
+            "error": "EvidenceRecord must be a JSON object.",
+            "error_type": "invalid_evidence",
+        }, ensure_ascii=False)
+
+    state = _current_state()
+    current_plan_id = ""
+    if state is not None and isinstance(getattr(state, "analysis_plan", None), dict):
+        current_plan_id = str(state.analysis_plan.get("id") or "")
+
+    is_stage3c0b_evidence = any(key in payload for key in ("plan_id", "step_id", "measurements"))
+    if is_stage3c0b_evidence:
+        from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+
+        validation = validate_stage3c0b_evidence(
+            payload,
+            current_plan_id=current_plan_id or None,
+        )
+        if not validation.ok:
+            return json.dumps({
+                "error": validation.message,
+                "error_type": validation.error_type,
+                "details": validation.details,
+            }, ensure_ascii=False)
+        payload = validation.record
+
     required = ["claim", "dataset", "method", "tool_calls", "result_summary", "limitations", "confidence"]
     missing = [k for k in required if k not in payload]
     if missing:
@@ -356,16 +383,19 @@ def record_evidence_record(record_json: str) -> str:
             }, ensure_ascii=False)
         payload["insight_type"] = insight_type
 
-    _mark_statistical_detail_status(payload)
+    if not is_stage3c0b_evidence:
+        _mark_statistical_detail_status(payload)
 
     # Auto-generate limitations based on analysis context
     auto_lim = _auto_generate_limitations(payload)
     if auto_lim:
         payload["auto_generated_limitations"] = auto_lim
 
-    state = _current_state()
     if state is not None:
-        payload = state.add_evidence_record(payload)
+        if payload.get("plan_id") and "measurements" in payload:
+            payload = state.upsert_evidence_record(payload)
+        else:
+            payload = state.add_evidence_record(payload)
         state.save()
 
     result = _write_analysis_artifact("evidence_record", payload)
@@ -385,8 +415,9 @@ def record_evidence_record(record_json: str) -> str:
                 result["completed_task_ids"] = completed_task_ids
         except Exception as e:
             result["task_completion_error"] = str(e)
-    result["statistical_detail_status"] = payload.get("statistical_detail_status")
-    result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
+    if not is_stage3c0b_evidence:
+        result["statistical_detail_status"] = payload.get("statistical_detail_status")
+        result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
     if auto_lim:
         result["auto_generated_limitations"] = auto_lim
     if calibration_warnings:

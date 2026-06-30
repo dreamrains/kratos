@@ -86,6 +86,7 @@ def _workflow_fields_from_dict(data: dict) -> dict:
         "confidence",
         "required_capability",
         "evidence_requirements",
+        "satisfied_evidence_requirements",
         "confirmation_policy",
         "plan_id",
         "plan_version",
