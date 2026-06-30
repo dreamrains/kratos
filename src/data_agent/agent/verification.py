@@ -8,6 +8,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from data_agent.agent.evidence_compatibility import compare_measurements
+
 
 REQUIRED_EVIDENCE_FIELDS = (
     "dataset",
@@ -53,6 +55,22 @@ def _claim_external_id(claim: Any) -> str:
     if isinstance(claim, dict):
         return str(claim.get("id") or claim.get("claim_id") or "")
     return ""
+
+
+def _claim_evidence_id(claim: Any) -> str:
+    if isinstance(claim, dict):
+        return str(claim.get("evidence_id") or "")
+    return ""
+
+
+def _claim_compare_evidence_ids(claim: Any) -> list[str]:
+    if not isinstance(claim, dict):
+        return []
+    return [
+        str(item)
+        for item in _normalize_items(claim.get("compare_evidence_ids"))
+        if str(item or "").strip()
+    ]
 
 
 def _claim_id(claim: Any, index: int) -> str:
@@ -131,6 +149,36 @@ def _record_ids(record: dict[str, Any]) -> set[str]:
     return {str(record[field]) for field in fields if record.get(field)}
 
 
+def _record_matches_current_plan(record: dict[str, Any], current_plan_id: str) -> bool:
+    if not current_plan_id:
+        return True
+    return str(record.get("plan_id") or "").strip() == str(current_plan_id or "").strip()
+
+
+def _current_plan_evidence(
+    evidence_records: list[dict[str, Any]],
+    current_plan_id: str,
+) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in evidence_records
+        if _record_matches_current_plan(record, current_plan_id)
+    ]
+
+
+def _find_evidence_by_id(
+    evidence_id: str,
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not evidence_id:
+        return []
+    return [
+        record
+        for record in evidence_records
+        if str(record.get("id") or "") == evidence_id
+    ]
+
+
 def _find_evidence(claim: Any, evidence_records: list[dict[str, Any]]) -> dict[str, Any] | None:
     claim_text = _claim_text(claim)
     external_id = _claim_external_id(claim)
@@ -143,6 +191,60 @@ def _find_evidence(claim: Any, evidence_records: list[dict[str, Any]]) -> dict[s
         if _text_match_score(claim_text, str(record.get("claim") or "")) >= 0.74:
             return record
     return None
+
+
+def _first_measurement(record: dict[str, Any]) -> dict[str, Any] | None:
+    measurements = record.get("measurements")
+    if not isinstance(measurements, list) or not measurements:
+        return None
+    first = measurements[0]
+    return first if isinstance(first, dict) else None
+
+
+def _comparison_issues(
+    claim: Any,
+    evidence_records: list[dict[str, Any]],
+    current_plan_id: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    evidence_ids = _claim_compare_evidence_ids(claim)
+    if not evidence_ids:
+        return [], []
+
+    referenced_records: list[dict[str, Any]] = []
+    issues: list[str] = []
+    for evidence_id in evidence_ids:
+        matches = _find_evidence_by_id(evidence_id, evidence_records)
+        current_matches = [
+            record for record in matches if _record_matches_current_plan(record, current_plan_id)
+        ]
+        if matches and not current_matches:
+            issues.append(
+                f"Evidence {evidence_id} is outside the current plan and cannot support this claim"
+            )
+            continue
+        if not current_matches:
+            issues.append(f"Comparison evidence {evidence_id} was not found")
+            continue
+        referenced_records.append(current_matches[0])
+
+    first_measurements: list[tuple[str, dict[str, Any]]] = []
+    for record in referenced_records:
+        measurement = _first_measurement(record)
+        if measurement is None:
+            issues.append(f"Comparison evidence {record.get('id')} is missing measurements")
+            continue
+        first_measurements.append((str(record.get("id") or ""), measurement))
+
+    for left_index in range(len(first_measurements)):
+        for right_index in range(left_index + 1, len(first_measurements)):
+            compatibility = compare_measurements(
+                first_measurements[left_index][1],
+                first_measurements[right_index][1],
+            )
+            if not compatibility.compatible:
+                issues.append(f"Measurement compatibility failed: {compatibility.user_message}")
+
+    return referenced_records, issues
 
 
 def _uses_causal_language(text: str) -> bool:
@@ -180,9 +282,38 @@ def _check_claim(
     index: int,
     evidence_records: list[dict[str, Any]],
     cleaning_logs: list[dict[str, Any]],
+    current_plan_id: str = "",
 ) -> dict[str, Any]:
     text = _claim_text(claim)
-    evidence = _find_evidence(claim, evidence_records)
+    evidence: dict[str, Any] | None = None
+
+    comparison_records, comparison_issues = _comparison_issues(
+        claim,
+        evidence_records,
+        current_plan_id,
+    )
+    if comparison_records:
+        evidence = comparison_records[0]
+
+    explicit_evidence_id = _claim_evidence_id(claim)
+    if explicit_evidence_id:
+        explicit_matches = _find_evidence_by_id(explicit_evidence_id, evidence_records)
+        current_matches = [
+            record
+            for record in explicit_matches
+            if _record_matches_current_plan(record, current_plan_id)
+        ]
+        if current_matches:
+            evidence = current_matches[0]
+        elif explicit_matches:
+            evidence = None
+            comparison_issues.append(
+                f"Evidence {explicit_evidence_id} is outside the current plan and cannot support this claim"
+            )
+
+    if evidence is None and not comparison_issues:
+        evidence = _find_evidence(claim, _current_plan_evidence(evidence_records, current_plan_id))
+
     check = {
         "claim_id": _claim_id(claim, index),
         "claim": text,
@@ -191,6 +322,12 @@ def _check_claim(
         "strength": "confirmed" if str((evidence or {}).get("confidence") or "").lower() == "high" else "likely",
         "issues": [],
     }
+
+    if comparison_issues:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        check["issues"].extend(comparison_issues)
+        return check
 
     if evidence is None:
         check["status"] = "failed"
@@ -255,6 +392,7 @@ def verify_analysis_claims(
     evidence_records: list[dict[str, Any]],
     route_proposals: list[dict[str, Any]],
     cleaning_logs: list[dict[str, Any]],
+    current_plan_id: str = "",
 ) -> dict[str, Any]:
     """Verify claims against recorded evidence, route metadata, and cleaning risk."""
 
@@ -264,7 +402,7 @@ def verify_analysis_claims(
     safe_cleaning_logs = [log for log in _normalize_items(cleaning_logs) if isinstance(log, dict)]
 
     claim_checks = [
-        _check_claim(claim, index, safe_evidence, safe_cleaning_logs)
+        _check_claim(claim, index, safe_evidence, safe_cleaning_logs, str(current_plan_id or ""))
         for index, claim in enumerate(safe_claims)
     ]
     route_proposal_ids = [str(route["id"]) for route in safe_routes if route.get("id")]
@@ -275,6 +413,8 @@ def verify_analysis_claims(
         "cleaning_logs": safe_cleaning_logs,
         "claim_checks": claim_checks,
     }
+    if current_plan_id:
+        payload_for_id["current_plan_id"] = str(current_plan_id)
 
     return {
         "id": _stable_id(payload_for_id),
