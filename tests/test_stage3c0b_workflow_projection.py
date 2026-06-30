@@ -177,6 +177,39 @@ def test_projector_rejects_malformed_stage3c0b_without_superseding_active_plan(t
     assert [task["id"] for task in tasks] == first["task_ids"]
 
 
+def test_projector_rejects_non_object_steps_without_superseding_active_plan(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    first = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    active_plan_id = manager.get_active_plan_id("s1", "p1")
+
+    malformed = project_plan_to_workflow_tasks(
+        manager,
+        {
+            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "goal": "Malformed plan",
+            "method_plan": ["not an object"],
+        },
+        session_id="s1",
+        project_name="p1",
+    )
+
+    assert malformed == {
+        "created": 0,
+        "reused": 0,
+        "task_ids": [],
+        "error": "invalid_method_plan_step",
+    }
+    assert manager.get_active_plan_id("s1", "p1") == active_plan_id
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    assert [task["id"] for task in tasks] == first["task_ids"]
+
+
 def test_task_manager_accepts_failed_terminal_status(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     task = manager.create("analysis", session_id="s1", step_id="step_a")

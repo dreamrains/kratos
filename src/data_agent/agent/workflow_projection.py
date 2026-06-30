@@ -81,6 +81,13 @@ def project_plan_to_workflow_tasks(
             "task_ids": [],
             "error": "missing_method_plan",
         }
+    if any(not isinstance(step, dict) for step in method_plan):
+        return {
+            "created": 0,
+            "reused": 0,
+            "task_ids": [],
+            "error": "invalid_method_plan_step",
+        }
 
     plan_id = _text(plan.get("id")) or f"plan_{uuid.uuid4().hex[:10]}"
     workflow_id = _text(plan.get("workflow_id")) or f"wf_{uuid.uuid4().hex[:8]}"
