@@ -1,7 +1,10 @@
+import json
+
 from data_agent.agent.analysis_plan_contracts import (
     STAGE3C0B_CONTRACT_VERSION,
     validate_analysis_plan_contract,
 )
+from data_agent.tools.analysis_flow import record_analysis_plan
 
 
 def _contract(dataset: str, contract_id: str) -> dict:
@@ -158,3 +161,49 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
 
     assert result.ok is False
     assert result.error_type == "too_many_required_evidence_dependencies"
+
+
+def test_record_analysis_plan_rejects_legacy_stage3c0b_execution(monkeypatch):
+    monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
+    monkeypatch.setattr(
+        "data_agent.tools.analysis_flow._write_analysis_artifact",
+        lambda kind, payload: {"saved": "artifact.json", "type": kind, "payload": payload},
+    )
+
+    result = json.loads(record_analysis_plan(json.dumps({
+        "goal": "Analyze files",
+        "method_plan": [{"step_id": "s1"}],
+        "visualization_strategy": "none",
+    })))
+
+    assert result["error_type"] == "legacy_plan_display_only"
+
+
+def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
+    monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
+    monkeypatch.setattr(
+        "data_agent.tools.analysis_flow._write_analysis_artifact",
+        lambda kind, payload: {"saved": "artifact.json", "type": kind, "payload": payload},
+    )
+
+    payload = {
+        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "goal": "Analyze banner independently.",
+        "method_plan": [
+            {
+                "step_id": "step_banner",
+                "goal": "Analyze banner.",
+                "dataset_inputs": ["banner"],
+                "combination_mode": "independent",
+                "expected_output": "Banner evidence",
+                "evidence_requirements": ["click_rate"],
+            }
+        ],
+        "visualization_strategy": "none",
+    }
+
+    result = json.loads(record_analysis_plan(json.dumps(payload)))
+
+    assert result["analysis_plan_id"]
+    assert result["state_stage"] if "state_stage" in result else True
+    assert "error" not in result

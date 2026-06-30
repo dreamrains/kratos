@@ -7,6 +7,7 @@ from data_agent.agent.analysis_state import (
     analysis_state_summary,
     load_analysis_state,
 )
+from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
@@ -154,6 +155,13 @@ class AnalysisFlowController:
         plan = state.analysis_plan or state.analysis_spec or {}
         if not isinstance(plan, dict):
             return {"created": 0, "task_ids": []}
+        if plan.get("contract_version") != STAGE3C0B_CONTRACT_VERSION:
+            return {
+                "created": 0,
+                "task_ids": [],
+                "display_only": True,
+                "reason": "legacy_analysis_spec_display_only",
+            }
         from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
         project_name = self.project_name or state.project_name or ""

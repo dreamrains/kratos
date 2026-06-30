@@ -5,12 +5,42 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
+from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
 
 
 def _make_ctx(session_id="flow_test"):
     return AgentContext(session_id=session_id, project_name=None, workspace=Workspace())
+
+
+def _stage3c0b_plan(depth=None):
+    plan = {
+        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "goal": "analyze banner performance",
+        "method_plan": [
+            {
+                "step_id": "step_banner",
+                "goal": "Analyze banner performance.",
+                "dataset_inputs": ["banner"],
+                "combination_mode": "independent",
+                "expected_output": "Banner evidence",
+                "evidence_requirements": ["click_rate"],
+            },
+        ],
+        "visualization_strategy": [],
+    }
+    if depth is not None:
+        plan["depth"] = depth
+    return plan
+
+
+def _add_banner_contract(ctx):
+    from data_agent.agent.analysis_state import AnalysisSessionState
+
+    ctx.analysis_state = AnalysisSessionState(session_id=ctx.session_id, project_name=ctx.project_name)
+    ctx.analysis_state.dataset_contracts.append({"dataset": "banner", "id": "contract_banner", "quality_status": "ready"})
+    return ctx
 
 
 class TestRecordDataRequirement:
@@ -85,6 +115,39 @@ class TestRecordAnalysisSpec:
         assert result["type"] == "analysis_spec"
         assert result["analysis_spec_id"]
 
+    def test_legacy_spec_is_display_only_and_does_not_create_workflow(self, monkeypatch):
+        from data_agent.tools.analysis_flow import record_analysis_spec
+        from data_agent.tools import task_tools
+
+        def fail_if_called(_payload):
+            raise AssertionError("legacy specs must not create workflow tasks")
+
+        monkeypatch.setattr(task_tools, "create_workflow_tasks_from_spec", fail_if_called)
+
+        ctx = _make_ctx("legacy_spec_display_only")
+        with use_agent_context(ctx):
+            spec = {
+                "goal": "evaluate savings card",
+                "question_type": "evaluation",
+                "metrics": ["revenue", "retention"],
+                "dimensions": ["channel"],
+                "required_data": ["orders"],
+                "method_plan": [
+                    {"step": "profile data", "node_type": "data_check",
+                     "required_capability": "data.profile", "expected_output": "summary",
+                     "evidence_requirements": ["schema"]},
+                ],
+                "limitations": ["non-randomized"],
+            }
+            result = json.loads(record_analysis_spec(json.dumps(spec)))
+
+        assert result["workflow"] == {
+            "created": 0,
+            "task_ids": [],
+            "display_only": True,
+            "reason": "legacy_analysis_spec_display_only",
+        }
+
     def test_missing_fields(self):
         from data_agent.tools.analysis_flow import record_analysis_spec
         ctx = _make_ctx()
@@ -101,16 +164,9 @@ class TestRecordAnalysisSpec:
 class TestRecordAnalysisPlan:
     def test_valid_plan(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
-        ctx = _make_ctx("plan_test")
+        ctx = _add_banner_contract(_make_ctx("plan_test"))
         with use_agent_context(ctx):
-            plan = {
-                "goal": "analyze trends",
-                "method_plan": [
-                    {"step": "trend analysis", "required_capability": "analysis.time_series"},
-                ],
-                "visualization_strategy": [],
-            }
-            result = json.loads(record_analysis_plan(json.dumps(plan)))
+            result = json.loads(record_analysis_plan(json.dumps(_stage3c0b_plan())))
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
@@ -124,14 +180,9 @@ class TestRecordAnalysisPlan:
 
     def test_invalid_depth(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
-        ctx = _make_ctx()
+        ctx = _add_banner_contract(_make_ctx())
         with use_agent_context(ctx):
-            plan = {
-                "goal": "test",
-                "method_plan": [{"step": "x"}],
-                "visualization_strategy": [],
-                "depth": "invalid_depth",
-            }
+            plan = _stage3c0b_plan(depth="invalid_depth")
             result = json.loads(record_analysis_plan(json.dumps(plan)))
         assert "error" in result
         assert "invalid_depth" in result.get("error_type", "")
@@ -139,16 +190,32 @@ class TestRecordAnalysisPlan:
     def test_valid_depth_values(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
         for depth in ("lightweight", "standard", "comprehensive"):
-            ctx = _make_ctx(f"depth_{depth}")
+            ctx = _add_banner_contract(_make_ctx(f"depth_{depth}"))
             with use_agent_context(ctx):
-                plan = {
-                    "goal": "test",
-                    "method_plan": [{"step": "x"}],
-                    "visualization_strategy": [],
-                    "depth": depth,
-                }
+                plan = _stage3c0b_plan(depth=depth)
                 result = json.loads(record_analysis_plan(json.dumps(plan)))
             assert "error" not in result
+
+
+class TestAnalysisFlowControllerLegacyCutover:
+    def test_controller_keeps_legacy_spec_display_only(self):
+        from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+        from data_agent.agent.analysis_state import AnalysisSessionState
+
+        state = AnalysisSessionState(session_id="controller_legacy_cutover")
+        state.analysis_spec = {
+            "goal": "legacy trend analysis",
+            "method_plan": [{"step": "trend analysis"}],
+        }
+
+        result = AnalysisFlowController("controller_legacy_cutover").ensure_workflow_tasks(state)
+
+        assert result == {
+            "created": 0,
+            "task_ids": [],
+            "display_only": True,
+            "reason": "legacy_analysis_spec_display_only",
+        }
 
 
 class TestRecordEvidenceRecord:
