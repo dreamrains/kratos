@@ -35,6 +35,28 @@ MEASUREMENT_FIELDS = (
     "limitations",
 )
 
+NORMALIZED_EVIDENCE_TEXT_FIELDS = (
+    "plan_id",
+    "step_id",
+    "claim_key",
+    "dataset",
+    "dataset_contract_id",
+    "method",
+    "confidence",
+    "evidence_requirement",
+)
+
+NORMALIZED_MEASUREMENT_TEXT_FIELDS = (
+    "metric",
+    "definition",
+    "unit",
+    "grain",
+    "population_scope",
+    "time_scope",
+    "method",
+    "denominator",
+)
+
 
 @dataclass
 class EvidenceValidationResult:
@@ -145,6 +167,17 @@ def validate_stage3c0b_evidence(
             )
 
     normalized = dict(record)
+    for field_name in NORMALIZED_EVIDENCE_TEXT_FIELDS:
+        if field_name in normalized:
+            normalized[field_name] = _text(normalized[field_name])
+    normalized_measurements = []
+    for measurement in measurements:
+        normalized_measurement = dict(measurement)
+        for field_name in NORMALIZED_MEASUREMENT_TEXT_FIELDS:
+            if field_name in normalized_measurement:
+                normalized_measurement[field_name] = _text(normalized_measurement[field_name])
+        normalized_measurements.append(normalized_measurement)
+    normalized["measurements"] = normalized_measurements
     normalized["id"] = evidence_id_for(
         normalized.get("plan_id"),
         normalized.get("step_id"),

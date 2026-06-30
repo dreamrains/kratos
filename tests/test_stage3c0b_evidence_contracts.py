@@ -66,6 +66,55 @@ def test_valid_evidence_passes_has_id_and_preserves_measurement_unit():
     assert result.record["measurements"][0]["unit"] == "ratio"
 
 
+def test_whitespace_identity_fields_validate_normalize_and_complete_scoped_task(tmp_path):
+    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+
+    record = _canonical_evidence()
+    record["plan_id"] = "  plan_abc  "
+    record["step_id"] = "  step_banner  "
+    record["dataset"] = "  banner  "
+    record["dataset_contract_id"] = "  contract_banner  "
+    record["claim_key"] = "  click_rate  "
+    record["method"] = "  grouped aggregation  "
+    record["confidence"] = "  high  "
+    record["evidence_requirement"] = "  click_rate  "
+    record["measurements"][0]["metric"] = "  click_rate  "
+    record["measurements"][0]["unit"] = "  ratio  "
+    record["measurements"][0]["grain"] = "  banner_day  "
+
+    validation = validate_stage3c0b_evidence(record, current_plan_id="  plan_abc  ")
+
+    assert validation.ok is True
+    assert validation.record["id"] == "ev_plan_abc_step_banner_click_rate"
+    assert validation.record["plan_id"] == "plan_abc"
+    assert validation.record["step_id"] == "step_banner"
+    assert validation.record["dataset_contract_id"] == "contract_banner"
+    assert validation.record["evidence_requirement"] == "click_rate"
+    assert validation.record["measurements"][0]["metric"] == "click_rate"
+    assert validation.record["measurements"][0]["unit"] == "ratio"
+
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    task = mgr.create(
+        "Analyze banner click rate",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["click_rate"],
+    )
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence=validation.record,
+    )
+
+    assert completed == [task["id"]]
+    assert mgr.get(task["id"])["evidence_ids"] == ["ev_plan_abc_step_banner_click_rate"]
+
+
 def test_old_metrics_without_measurements_rejected_as_missing_measurements():
     from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
 
