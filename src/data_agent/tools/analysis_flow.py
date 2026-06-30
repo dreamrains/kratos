@@ -327,7 +327,7 @@ def record_evidence_record(record_json: str) -> str:
 
         validation = validate_stage3c0b_evidence(
             payload,
-            current_plan_id=current_plan_id or None,
+            current_plan_id=current_plan_id,
         )
         if not validation.ok:
             return json.dumps({

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from data_agent.session.task_manager import TaskManager
 
 
@@ -87,6 +89,52 @@ def test_evidence_from_other_plan_rejected_as_outside_current_plan():
     assert result.details["current_plan_id"] == "plan_other"
 
 
+def test_evidence_without_current_plan_rejected_as_outside_current_plan():
+    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+
+    result = validate_stage3c0b_evidence(_canonical_evidence(), current_plan_id="")
+
+    assert result.ok is False
+    assert result.error_type == "evidence_outside_current_plan"
+    assert result.details["current_plan_id"] == ""
+
+
+def test_empty_canonical_evidence_field_rejected():
+    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+
+    record = _canonical_evidence()
+    record["claim"] = "   "
+
+    result = validate_stage3c0b_evidence(record, current_plan_id="plan_abc")
+
+    assert result.ok is False
+    assert result.error_type == "missing_canonical_fields"
+    assert "claim" in result.details["missing"]
+
+
+def test_empty_measurement_compatibility_field_rejected():
+    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+
+    record = _canonical_evidence()
+    record["measurements"][0]["denominator"] = ""
+
+    result = validate_stage3c0b_evidence(record, current_plan_id="plan_abc")
+
+    assert result.ok is False
+    assert result.error_type == "missing_measurement_fields"
+    assert "denominator" in result.details["missing"]
+
+
+def test_record_evidence_record_rejects_stage3c0b_evidence_without_current_plan(monkeypatch):
+    from data_agent.tools.analysis_flow import record_evidence_record
+
+    monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
+
+    result = json.loads(record_evidence_record(json.dumps(_canonical_evidence())))
+
+    assert result["error_type"] == "evidence_outside_current_plan"
+
+
 def test_task_manager_requires_all_evidence_requirements_before_completion(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
@@ -146,3 +194,60 @@ def test_task_manager_completes_when_all_requirements_have_evidence_and_stores_i
     ]
     assert updated["satisfied_evidence_requirements"] == ["click_rate", "conversion_rate"]
     assert updated["completed_by"] == "evidence"
+
+
+def test_scoped_task_ignores_claim_key_without_evidence_requirement(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    task = mgr.create(
+        "Analyze banner metrics",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["click_rate"],
+    )
+    evidence = _canonical_evidence(evidence_requirement="click_rate")
+    evidence.pop("evidence_requirement")
+
+    completed = mgr.complete_matching_tasks_from_evidence(session_id="s1", evidence=evidence)
+
+    assert completed == []
+    updated = mgr.get(task["id"])
+    assert updated["status"] == "pending"
+    assert updated["evidence_ids"] == []
+    assert updated["satisfied_evidence_requirements"] == []
+
+
+def test_legacy_text_task_not_completed_while_scoped_stage3c0b_task_active(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    scoped = mgr.create(
+        "Scoped banner metric",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["conversion_rate"],
+    )
+    legacy = mgr.create(
+        "Legacy click-rate task",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        expected_output="click_rate summary",
+        evidence_requirements=["click_rate"],
+    )
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence=_canonical_evidence(evidence_requirement="click_rate"),
+    )
+
+    assert completed == []
+    assert mgr.get(scoped["id"])["status"] == "pending"
+    assert mgr.get(legacy["id"])["status"] == "pending"

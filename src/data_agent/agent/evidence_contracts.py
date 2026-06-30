@@ -55,6 +55,16 @@ def _text(value: Any) -> str:
     return ""
 
 
+def _missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    return False
+
+
 def _slug(value: Any) -> str:
     text = _text(value).strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
@@ -79,22 +89,27 @@ def validate_stage3c0b_evidence(
         return _error("invalid_evidence", "EvidenceRecord must be a JSON object.")
 
     plan_id = _text(record.get("plan_id"))
-    if current_plan_id and plan_id and plan_id != current_plan_id:
+    current_plan = _text(current_plan_id)
+    if not current_plan or plan_id != current_plan:
         return _error(
             "evidence_outside_current_plan",
             "EvidenceRecord plan_id does not match the current analysis plan.",
-            current_plan_id=current_plan_id,
+            current_plan_id=current_plan,
             record_plan_id=plan_id,
         )
 
-    if "measurements" not in record or record.get("measurements") in (None, "", [], {}):
+    if "measurements" not in record or _missing(record.get("measurements")):
         return _error(
             "missing_measurements",
             "Stage 3C0B EvidenceRecord requires non-empty canonical measurements.",
             has_legacy_metrics=bool(record.get("metrics")),
         )
 
-    missing = [field_name for field_name in CANONICAL_EVIDENCE_FIELDS if field_name not in record]
+    missing = [
+        field_name
+        for field_name in CANONICAL_EVIDENCE_FIELDS
+        if field_name not in record or _missing(record.get(field_name))
+    ]
     if missing:
         return _error(
             "missing_canonical_fields",
@@ -117,7 +132,9 @@ def validate_stage3c0b_evidence(
                 index=index,
             )
         missing_measurement_fields = [
-            field_name for field_name in MEASUREMENT_FIELDS if field_name not in measurement
+            field_name
+            for field_name in MEASUREMENT_FIELDS
+            if field_name not in measurement or _missing(measurement.get(field_name))
         ]
         if missing_measurement_fields:
             return _error(

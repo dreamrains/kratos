@@ -533,7 +533,7 @@ class TaskManager:
         return bool(task.get("analysis_plan_id") or task.get("step_id"))
 
     def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
-        return str(evidence.get("evidence_requirement") or evidence.get("claim_key") or "")
+        return str(evidence.get("evidence_requirement") or "")
 
     def _stage3c0b_task_matches_evidence(self, task: dict, evidence: dict) -> bool:
         task_plan_id = str(task.get("analysis_plan_id") or "")
@@ -557,7 +557,7 @@ class TaskManager:
 
         task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
         evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-        if task_requirements and evidence_requirement not in task_requirements:
+        if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
             return False
 
         return True
@@ -652,18 +652,28 @@ class TaskManager:
         evidence: dict,
         analysis_spec_id: str = "",
     ) -> list[int]:
-        evidence_text = self._evidence_text(evidence)
+        active_tasks = self.list_active_for_scope(session_id=session_id)
+        has_scoped_stage3c0b_tasks = any(self._is_stage3c0b_scoped_task(task) for task in active_tasks)
         evidence_id = self._evidence_id(evidence)
         completed: list[int] = []
-        for task in self.list_active_for_scope(session_id=session_id):
-            if task.get("status") not in ("pending", "in_progress"):
-                continue
-            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
-                continue
-            if self._is_stage3c0b_scoped_task(task):
+        if has_scoped_stage3c0b_tasks:
+            for task in active_tasks:
+                if task.get("status") not in ("pending", "in_progress"):
+                    continue
+                if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
+                    continue
+                if not self._is_stage3c0b_scoped_task(task):
+                    continue
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
+            return completed
+
+        evidence_text = self._evidence_text(evidence)
+        for task in active_tasks:
+            if task.get("status") not in ("pending", "in_progress"):
+                continue
+            if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
                 continue
             terms = self._task_match_terms(task)
             if not any(term and term in evidence_text for term in terms):
