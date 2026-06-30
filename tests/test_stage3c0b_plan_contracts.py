@@ -82,6 +82,32 @@ def test_rejects_join_hidden_as_executable_stage3c0b_mode():
     assert "join" in result.message
 
 
+def test_rejects_independent_step_with_missing_dataset_contract():
+    plan = {
+        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "goal": "Analyze a missing dataset.",
+        "method_plan": [
+            {
+                "step_id": "step_missing",
+                "goal": "Analyze the missing dataset.",
+                "dataset_inputs": ["missing"],
+                "combination_mode": "independent",
+                "expected_output": "Evidence",
+                "evidence_requirements": ["metric"],
+            }
+        ],
+    }
+
+    result = validate_analysis_plan_contract(
+        plan,
+        dataset_contracts=[_contract("banner", "contract_banner")],
+    )
+
+    assert result.ok is False
+    assert result.error_type == "missing_dataset_contract"
+    assert result.details["dataset_inputs"] == ["missing"]
+
+
 def test_rejects_oversize_execution_batch_instead_of_truncating():
     steps = [
         {

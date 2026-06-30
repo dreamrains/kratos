@@ -91,6 +91,9 @@ def validate_analysis_plan_contract(
     normalized.setdefault("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     normalized["review_status"] = "reviewed"
 
+    # ``dataset_contracts=None`` keeps the validator usable for pure plan-shape
+    # checks; any provided contract list, including an empty one, is enforced.
+    enforce_dataset_contracts = dataset_contracts is not None
     by_dataset, by_id = _contract_indexes(dataset_contracts or [])
     normalized_steps: list[dict[str, Any]] = []
     seen_step_ids: set[str] = set()
@@ -124,8 +127,17 @@ def validate_analysis_plan_contract(
                 "Stage 3C0B synthesis steps consume evidence, not raw datasets.",
                 step_id=step_id,
             )
+        resolved_contract_ids = _resolve_contract_ids(dataset_inputs, by_dataset, by_id)
+        if mode == "independent" and enforce_dataset_contracts and len(resolved_contract_ids) != 1:
+            return _error(
+                "missing_dataset_contract",
+                "Stage 3C0B independent steps require exactly one current dataset contract.",
+                step_id=step_id,
+                dataset_inputs=dataset_inputs,
+                dataset_contract_ids=resolved_contract_ids,
+            )
         required_evidence = _text_list(step.get("required_evidence_step_ids"))
-        if len(required_evidence) > MAX_SYNTHESIS_REQUIRED_EVIDENCE:
+        if mode == "synthesis" and len(required_evidence) > MAX_SYNTHESIS_REQUIRED_EVIDENCE:
             return _error(
                 "too_many_required_evidence_dependencies",
                 "Synthesis declares too many hard required evidence dependencies.",
@@ -148,7 +160,7 @@ def validate_analysis_plan_contract(
         step["step_id"] = step_id
         step["combination_mode"] = mode
         step["dataset_inputs"] = dataset_inputs
-        step["dataset_contract_ids"] = _resolve_contract_ids(dataset_inputs, by_dataset, by_id)
+        step["dataset_contract_ids"] = resolved_contract_ids
         step["required_evidence_step_ids"] = required_evidence
         normalized_steps.append(step)
 
