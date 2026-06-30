@@ -72,6 +72,33 @@ def test_projector_translates_required_evidence_to_task_dependencies(tmp_path):
     assert banner["blocks"] == [synthesis["id"]]
 
 
+def test_projector_reuses_existing_tasks_for_same_stage3c0b_plan(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+
+    first = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    assert first["created"] == 2
+
+    second = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    assert second["created"] == 0
+    assert second["reused"] == 2
+    assert second["task_ids"] == first["task_ids"]
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    assert len(tasks) == 2
+    assert len([task for task in tasks if task["task_kind"] == "plan_task"]) == 2
+
+
 def test_task_manager_accepts_failed_terminal_status(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     task = manager.create("analysis", session_id="s1", step_id="step_a")

@@ -27,6 +27,14 @@ def _step_subject(step: dict[str, Any], index: int) -> str:
     )
 
 
+def _matches_existing_projection(task: dict[str, Any], *, analysis_plan_id: str, workflow_id: str, analysis_spec_id: str) -> bool:
+    if analysis_plan_id and task.get("analysis_plan_id") == analysis_plan_id:
+        return True
+    if workflow_id and task.get("workflow_id") == workflow_id:
+        return True
+    return bool(analysis_spec_id and task.get("analysis_spec_id") == analysis_spec_id)
+
+
 def project_plan_to_workflow_tasks(
     manager: TaskManager,
     plan: dict[str, Any],
@@ -46,14 +54,40 @@ def project_plan_to_workflow_tasks(
     method_plan = plan.get("method_plan") if isinstance(plan.get("method_plan"), list) else []
     plan_id = _text(plan.get("id")) or f"plan_{uuid.uuid4().hex[:10]}"
     workflow_id = _text(plan.get("workflow_id")) or f"wf_{uuid.uuid4().hex[:8]}"
-    plan_record = manager.create_plan(
+    analysis_spec_id = _text(plan.get("id"))
+
+    active_tasks = manager.list_active_for_scope(
         session_id=session_id,
         project_name=project_name,
-        goal=_text(plan.get("goal")),
-        source=source,
-        analysis_spec_id=_text(plan.get("id")),
-        workflow_id=workflow_id,
     )
+    matching_active = [
+        task for task in active_tasks
+        if task.get("plan_id")
+        and task.get("task_kind") == "plan_task"
+        if _matches_existing_projection(
+            task,
+            analysis_plan_id=plan_id,
+            workflow_id=_text(plan.get("workflow_id")),
+            analysis_spec_id=analysis_spec_id,
+        )
+    ]
+    if matching_active:
+        existing_workflow_id = _text(matching_active[0].get("workflow_id"))
+        if existing_workflow_id:
+            workflow_id = existing_workflow_id
+        plan_record = {
+            "id": matching_active[0].get("plan_id", ""),
+            "version": matching_active[0].get("plan_version", 1),
+        }
+    else:
+        plan_record = manager.create_plan(
+            session_id=session_id,
+            project_name=project_name,
+            goal=_text(plan.get("goal")),
+            source=source,
+            analysis_spec_id=analysis_spec_id,
+            workflow_id=workflow_id,
+        )
 
     created: list[dict[str, Any]] = []
     reused: list[dict[str, Any]] = []
@@ -67,7 +101,7 @@ def project_plan_to_workflow_tasks(
             session_id=session_id,
             plan_id=plan_record["id"],
             subject=_step_subject(step, index),
-            analysis_spec_id=_text(plan.get("id")),
+            analysis_spec_id=analysis_spec_id,
         )
         if duplicate:
             reused.append(duplicate)
@@ -81,7 +115,7 @@ def project_plan_to_workflow_tasks(
             project_name=project_name,
             stage="execute",
             node_type=_text(step.get("combination_mode")) or "analysis",
-            analysis_spec_id=_text(plan.get("id")),
+            analysis_spec_id=analysis_spec_id,
             analysis_plan_id=plan_id,
             step_id=step_id,
             dataset_inputs=list(step.get("dataset_inputs") or []),
