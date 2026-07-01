@@ -125,6 +125,7 @@ class AnalysisSessionState:
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
+    data_understanding_bundles: list[dict[str, Any]] = field(default_factory=list)
     cleaning_logs: list[dict[str, Any]] = field(default_factory=list)
     preview_digests: list[dict[str, Any]] = field(default_factory=list)
     route_proposals: list[dict[str, Any]] = field(default_factory=list)
@@ -156,6 +157,7 @@ class AnalysisSessionState:
             evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
             dataset_contracts=list(data.get("dataset_contracts") or []),
+            data_understanding_bundles=list(data.get("data_understanding_bundles") or []),
             cleaning_logs=list(data.get("cleaning_logs") or []),
             preview_digests=list(data.get("preview_digests") or []),
             route_proposals=list(data.get("route_proposals") or []),
@@ -185,6 +187,7 @@ class AnalysisSessionState:
             "evidence_records": self.evidence_records,
             "insight_records": self.insight_records,
             "dataset_contracts": self.dataset_contracts,
+            "data_understanding_bundles": self.data_understanding_bundles,
             "cleaning_logs": self.cleaning_logs,
             "preview_digests": self.preview_digests,
             "route_proposals": self.route_proposals,
@@ -413,6 +416,35 @@ class AnalysisSessionState:
             self.set_active_dataset(dataset, related_ref_id=item.get("id"))
         return item
 
+    def add_data_understanding_bundle_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        item = dict(ref)
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id:
+            for index, existing in enumerate(self.data_understanding_bundles):
+                if existing.get("id") == item_id:
+                    merged = dict(existing)
+                    merged.update(item)
+                    merged.setdefault("created_at", existing.get("created_at") or _now())
+                    self.data_understanding_bundles[index] = merged
+                    item = merged
+                    break
+            else:
+                item.setdefault("created_at", _now())
+                self.data_understanding_bundles.append(item)
+        else:
+            item = self._upsert_ref(self.data_understanding_bundles, item)
+
+        self.data_state = "data_loaded"
+        dataset = item.get("dataset")
+        if isinstance(dataset, str) and dataset:
+            self.set_active_dataset(dataset)
+        else:
+            self.active_scope = _normalize_active_scope(self.active_scope)
+            self.active_scope["active_mode"] = "data_loaded"
+            self.active_scope["updated_at"] = _now()
+        self._add_active_ref("data_understanding_bundles", item.get("id"))
+        return item
+
     def add_cleaning_log_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
         return self._upsert_ref(self.cleaning_logs, ref)
 
@@ -639,6 +671,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- evidence_records: {len(state.evidence_records)}",
         f"- insight_records: {len(state.insight_records)}",
         f"- dataset_contracts: {len(state.dataset_contracts)}",
+        f"- data_understanding_bundles: {len(state.data_understanding_bundles)}",
         f"- cleaning_logs: {len(state.cleaning_logs)}",
         f"- preview_digests: {len(state.preview_digests)}",
         f"- route_proposals: {len(state.route_proposals)}",
