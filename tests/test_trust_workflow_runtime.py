@@ -141,6 +141,90 @@ def test_runtime_passes_analysis_plan_id_to_claim_verification(monkeypatch):
     assert captured.get("current_plan_id") == "plan_current"
 
 
+def _stage3c0b_runtime_measurement(**overrides):
+    measurement = {
+        "metric": "conversion_rate",
+        "definition": "Orders divided by visitors.",
+        "value": 0.18,
+        "unit": "ratio",
+        "grain": "day",
+        "time_scope": "2026-06",
+        "population_scope": "all visitors",
+        "method": "aggregate ratio",
+        "denominator": "visitors",
+        "limitations": ["descriptive only"],
+    }
+    measurement.update(overrides)
+    return measurement
+
+
+def _stage3c0b_runtime_evidence(evidence_id, claim, *, plan_id="plan_current", **overrides):
+    record = {
+        "id": evidence_id,
+        "plan_id": plan_id,
+        "step_id": "step_conversion",
+        "claim_key": evidence_id,
+        "claim": claim,
+        "dataset": "orders",
+        "dataset_contract_id": "contract_orders",
+        "method": "grouped aggregation",
+        "tool_calls": [{"name": "run_python"}],
+        "result_summary": claim,
+        "sample_size": 1000,
+        "time_scope": "2026-06",
+        "calculation_method": "orders divided by visitors",
+        "method_detail": "aggregated daily visitors and orders",
+        "limitations": ["descriptive only"],
+        "confidence": "high",
+        "evidence_requirement": "conversion_rate",
+        "measurements": [_stage3c0b_runtime_measurement()],
+    }
+    record.update(overrides)
+    return record
+
+
+def test_runtime_rejects_incompatible_current_plan_comparison():
+    state = AnalysisSessionState(session_id="runtime_verify_incompatible_comparison")
+    state.analysis_plan = {"id": "plan_current"}
+    state.evidence_records = [
+        _stage3c0b_runtime_evidence(
+            "ev_current",
+            "Current and new-user conversion rates are comparable.",
+            compare_evidence_ids=["ev_current", "ev_new_users"],
+        ),
+        _stage3c0b_runtime_evidence(
+            "ev_new_users",
+            "New-user conversion rate is 21%.",
+            measurements=[_stage3c0b_runtime_measurement(population_scope="new visitors")],
+        ),
+    ]
+
+    ref = maybe_verify_turn_claims("compare conversion rates", state)
+
+    assert ref is not None
+    assert ref["overall_status"] == "fail"
+    assert ref["failed_count"] == 1
+
+
+def test_runtime_verifies_only_current_plan_claims_and_evidence():
+    state = AnalysisSessionState(session_id="runtime_verify_current_plan_only")
+    state.analysis_plan = {"id": "plan_current"}
+    state.evidence_records = [
+        _stage3c0b_runtime_evidence(
+            "ev_old",
+            "An old-plan claim has no current-plan support.",
+            plan_id="plan_old",
+        ),
+        _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
+    ]
+
+    ref = maybe_verify_turn_claims("summarize current conversion", state)
+
+    assert ref is not None
+    assert ref["overall_status"] == "pass"
+    assert ref["claim_count"] == 1
+
+
 def test_runtime_verification_deduplicates_latest_evidence_signature():
     state = AnalysisSessionState(session_id="runtime_verify_dedupe")
     state.evidence_records = [{

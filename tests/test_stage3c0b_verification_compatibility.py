@@ -74,6 +74,14 @@ def test_compare_measurements_rejects_missing_compatibility_fields():
     assert result.fields
 
 
+def test_compare_measurements_rejects_non_scalar_compatibility_fields():
+    result = compare_measurements(_measurement(metric={}), _measurement(metric={}))
+
+    assert result.compatible is False
+    assert result.reason_code == "missing_measurement_field"
+    assert result.fields == ["metric"]
+
+
 def test_verify_analysis_claims_rejects_explicit_evidence_id_outside_current_plan():
     report = verify_analysis_claims(
         claims=[{"id": "claim_1", "claim": "Current conversion rate is 18%.", "evidence_id": "ev_other"}],
@@ -182,3 +190,44 @@ def test_verify_analysis_claims_rejects_compare_evidence_ids_with_malformed_meas
     assert check["status"] == "failed"
     assert check["strength"] == "unsupported"
     assert any("Measurement compatibility failed" in issue for issue in check["issues"])
+
+
+def test_verify_analysis_claims_rejects_single_comparison_record():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_compare",
+            "claim": "A single record cannot establish a comparison.",
+            "compare_evidence_ids": ["ev_current"],
+        }],
+        evidence_records=[_evidence(id="ev_current")],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "fail"
+    assert check["status"] == "failed"
+    assert any("at least two" in issue for issue in check["issues"])
+
+
+def test_verify_analysis_claims_rejects_malformed_later_measurement():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_compare",
+            "claim": "Every measurement in comparison evidence must be valid.",
+            "compare_evidence_ids": ["ev_current", "ev_other"],
+        }],
+        evidence_records=[
+            _evidence(id="ev_current", measurements=[_measurement(), {}]),
+            _evidence(id="ev_other", measurements=[_measurement(value=0.21)]),
+        ],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "fail"
+    assert check["status"] == "failed"
+    assert any("invalid measurement" in issue for issue in check["issues"])

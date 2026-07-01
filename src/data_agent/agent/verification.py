@@ -193,12 +193,32 @@ def _find_evidence(claim: Any, evidence_records: list[dict[str, Any]]) -> dict[s
     return None
 
 
-def _first_measurement(record: dict[str, Any]) -> dict[str, Any] | None:
+def _comparison_measurements(
+    record: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
     measurements = record.get("measurements")
     if not isinstance(measurements, list) or not measurements:
-        return None
-    first = measurements[0]
-    return first if isinstance(first, dict) else None
+        return [], [f"Comparison evidence {record.get('id')} is missing measurements"]
+
+    valid_measurements: list[dict[str, Any]] = []
+    issues: list[str] = []
+    for index, measurement in enumerate(measurements):
+        if not isinstance(measurement, dict):
+            issues.append(
+                "Measurement compatibility failed: "
+                f"comparison evidence {record.get('id')} has invalid measurement at index {index}"
+            )
+            continue
+        validity = compare_measurements(measurement, measurement)
+        if not validity.compatible:
+            issues.append(
+                "Measurement compatibility failed: "
+                f"comparison evidence {record.get('id')} has invalid measurement at index {index}: "
+                f"{validity.reason_code}"
+            )
+            continue
+        valid_measurements.append(measurement)
+    return valid_measurements, issues
 
 
 def _comparison_issues(
@@ -212,6 +232,7 @@ def _comparison_issues(
 
     referenced_records: list[dict[str, Any]] = []
     issues: list[str] = []
+    seen_record_ids: set[str] = set()
     for evidence_id in evidence_ids:
         matches = _find_evidence_by_id(evidence_id, evidence_records)
         current_matches = [
@@ -225,15 +246,22 @@ def _comparison_issues(
         if not current_matches:
             issues.append(f"Comparison evidence {evidence_id} was not found")
             continue
-        referenced_records.append(current_matches[0])
+        record = current_matches[0]
+        record_id = str(record.get("id") or "")
+        if record_id not in seen_record_ids:
+            referenced_records.append(record)
+            seen_record_ids.add(record_id)
+
+    if len(referenced_records) < 2:
+        issues.append("A comparison requires at least two evidence records")
 
     first_measurements: list[tuple[str, dict[str, Any]]] = []
     for record in referenced_records:
-        measurement = _first_measurement(record)
-        if measurement is None:
-            issues.append(f"Comparison evidence {record.get('id')} is missing measurements")
+        measurements, measurement_issues = _comparison_measurements(record)
+        issues.extend(measurement_issues)
+        if not measurements:
             continue
-        first_measurements.append((str(record.get("id") or ""), measurement))
+        first_measurements.append((str(record.get("id") or ""), measurements[0]))
 
     for left_index in range(len(first_measurements)):
         for right_index in range(left_index + 1, len(first_measurements)):

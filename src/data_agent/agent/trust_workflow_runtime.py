@@ -37,7 +37,11 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
     """Create one compact verification report for recorded evidence claims."""
 
     try:
-        evidence_records = _list_attr(state, "evidence_records")
+        current_plan_id = _current_analysis_plan_id(state)
+        evidence_records = _current_plan_records(
+            _list_attr(state, "evidence_records"),
+            current_plan_id,
+        )
         claims = _extract_claims(evidence_records)
         if not claims:
             return None
@@ -52,7 +56,7 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             evidence_records=evidence_records,
             route_proposals=_list_attr(state, "route_proposals"),
             cleaning_logs=_list_attr(state, "cleaning_logs"),
-            current_plan_id=_current_analysis_plan_id(state),
+            current_plan_id=current_plan_id,
         )
         ref = _compact_verification_ref(report, signature, fingerprint)
         add_ref = getattr(state, "add_verification_report_ref", None)
@@ -144,13 +148,28 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def _extract_claims(evidence_records: list[dict[str, Any]]) -> list[str]:
-    claims: list[str] = []
+def _extract_claims(evidence_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
     for record in evidence_records:
         claim = record.get("claim")
         if isinstance(claim, str) and claim.strip():
-            claims.append(claim.strip())
+            structured_claim = dict(record)
+            structured_claim["claim"] = claim.strip()
+            claims.append(structured_claim)
     return claims
+
+
+def _current_plan_records(
+    evidence_records: list[dict[str, Any]],
+    current_plan_id: str,
+) -> list[dict[str, Any]]:
+    if not current_plan_id:
+        return evidence_records
+    return [
+        record
+        for record in evidence_records
+        if str(record.get("plan_id") or "").strip() == current_plan_id
+    ]
 
 
 def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> str:

@@ -25,7 +25,7 @@ class MeasurementCompatibility:
 
 
 def _normalize_text(value: Any) -> str:
-    if value is None:
+    if value is None or not isinstance(value, (str, int, float, bool)):
         return ""
     return " ".join(str(value).strip().lower().split())
 
