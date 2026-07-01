@@ -107,6 +107,41 @@ def current_execution_scope(manager, session_id: str, project_name: str = "") ->
     )
 
 
+def current_context_execution_scope() -> ExecutionScope:
+    """Resolve execution scope from the context-local session and project."""
+    from data_agent.agent.context import get_current_context
+
+    context = get_current_context()
+    if context is None:
+        return ExecutionScope(active=False)
+
+    from data_agent.session.task_manager import task_manager
+
+    return current_execution_scope(
+        task_manager,
+        context.session_id,
+        context.project_name or "",
+    )
+
+
+def ensure_dataset_allowed_in_current_context(dataset: str) -> ScopeGuardResult:
+    """Guard a dataset read at a context-aware data-access boundary."""
+    from data_agent.agent.context import get_current_context
+
+    context = get_current_context()
+    if context is None:
+        return ScopeGuardResult(True)
+
+    from data_agent.session.task_manager import task_manager
+
+    return ensure_dataset_allowed_for_current_task(
+        task_manager,
+        context.session_id,
+        context.project_name or "",
+        dataset=dataset,
+    )
+
+
 def ensure_dataset_allowed_for_current_task(
     manager,
     session_id: str,

@@ -897,6 +897,17 @@ def _build_suggested_analyses(
 )
 def interpret_dataset(name: str) -> str:
     from data_agent.tools.registry import ToolResult, ArtifactRef
+    from data_agent.agent.execution_scope import (
+        current_context_execution_scope,
+        ensure_dataset_allowed_in_current_context,
+    )
+
+    guard = ensure_dataset_allowed_in_current_context(name)
+    if not guard.allowed:
+        return json.dumps(
+            {"error": guard.message, "error_type": guard.error_type},
+            ensure_ascii=False,
+        )
 
     df, err = get_df(name)
     if err:
@@ -962,7 +973,15 @@ def interpret_dataset(name: str) -> str:
     # 7. 多数据集关联分析推荐 (using shared detection function)
     cross_dataset_hints = []
     try:
-        existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
+        execution_scope = current_context_execution_scope()
+        if execution_scope.active:
+            existing = {
+                dataset: {}
+                for dataset in execution_scope.allowed_datasets
+                if dataset != name
+            }
+        else:
+            existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
         if existing:
             from data_agent.utils.data_features import detect_cross_dataset_relationships
             other_dfs = {}

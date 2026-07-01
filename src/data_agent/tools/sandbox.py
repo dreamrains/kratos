@@ -8,6 +8,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from contextlib import redirect_stdout
+from contextvars import copy_context
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,11 @@ from data_agent.tools.registry import registry
 
 def _get_dataset(name: str) -> pd.DataFrame | None:
     """沙盒内获取数据集的安全接口。"""
+    from data_agent.agent.execution_scope import ensure_dataset_allowed_in_current_context
+
+    guard = ensure_dataset_allowed_in_current_context(name)
+    if not guard.allowed:
+        raise PermissionError(f"{guard.error_type}: {guard.message}")
     return workspace.get(name)
 
 
@@ -118,7 +124,8 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_run_code, code, timeout)
+            context = copy_context()
+            future = pool.submit(context.run, _run_code, code, timeout)
             stdout, result = future.result(timeout=timeout)
     except FuturesTimeout:
         return json.dumps({"error": f"代码执行超时（{timeout}s）"}, ensure_ascii=False)

@@ -6,11 +6,12 @@ from dataclasses import FrozenInstanceError
 import pandas as pd
 import pytest
 
-from data_agent.agent.context import use_agent_context
+from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.agent.analysis_state import AnalysisSessionState, analysis_state_summary
 from data_agent.agent.loop import AgentLoop
 from data_agent.llm.client import Response, ToolCall
 from data_agent.session.task_manager import TaskManager
+from data_agent.session.workspace import Workspace
 from data_agent.tools.registry import ToolCapability, ToolDefinition, ToolResult, registry
 
 
@@ -158,6 +159,139 @@ def test_dataset_guard_blocks_synthesis_from_raw_dataset(tmp_path):
 
     assert result.allowed is False
     assert result.error_type == "synthesis_cannot_read_raw_dataset"
+
+
+def test_run_python_get_dataset_cannot_read_unbound_dataset(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.sandbox as sandbox
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"value": [1]}))
+    ws.add("iap", pd.DataFrame({"secret": [9876]}))
+    monkeypatch.setattr(sandbox, "workspace", ws)
+    ctx = AgentContext(session_id="s1", workspace=ws)
+
+    with use_agent_context(ctx):
+        payload = json.loads(sandbox.run_python("get_dataset('iap')['secret'].iloc[0]"))
+
+    assert "dataset_outside_current_task_scope" in payload.get("result", "")
+    assert "9876" not in payload.get("result", "")
+
+
+def test_run_python_get_dataset_blocks_raw_reads_during_synthesis(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.sandbox as sandbox
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=[], mode="synthesis")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"secret": [9876]}))
+    monkeypatch.setattr(sandbox, "workspace", ws)
+    ctx = AgentContext(session_id="s1", workspace=ws)
+
+    with use_agent_context(ctx):
+        payload = json.loads(sandbox.run_python("get_dataset('banner')['secret'].iloc[0]"))
+
+    assert "synthesis_cannot_read_raw_dataset" in payload.get("result", "")
+    assert "9876" not in payload.get("result", "")
+
+
+def test_run_python_get_dataset_keeps_allowed_and_inactive_reads_working(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.sandbox as sandbox
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"value": [42]}))
+    ws.add("iap", pd.DataFrame({"value": [84]}))
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=ws)):
+        allowed = json.loads(sandbox.run_python("get_dataset('banner')['value'].iloc[0]"))
+    with use_agent_context(AgentContext(session_id="legacy", workspace=ws)):
+        inactive = json.loads(sandbox.run_python("get_dataset('iap')['value'].iloc[0]"))
+
+    assert allowed["result"] == "42"
+    assert inactive["result"] == "84"
+    assert "list_datasets" not in sandbox._build_safe_globals()
+    assert "get_metadata" not in sandbox._build_safe_globals()
+
+
+def test_interpret_dataset_does_not_scan_unbound_datasets(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.data_understand as data_understand
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"user_id": [1, 2], "value": [10, 20]}))
+    ws.add("iap", pd.DataFrame({"user_id": [1, 2], "secret": [9876, 9877]}))
+    monkeypatch.setattr(data_understand, "workspace", ws)
+    monkeypatch.setattr("data_agent.tools._utils.workspace", ws)
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=ws)):
+        result = data_understand.interpret_dataset("banner")
+
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert result.data.get("cross_dataset_hints", []) == []
+    assert "iap" not in result.summary
+
+
+def test_interpret_dataset_blocks_synthesis_before_inspecting_data(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.data_understand as data_understand
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=[], mode="synthesis")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"secret": [9876]}))
+    monkeypatch.setattr(data_understand, "workspace", ws)
+    monkeypatch.setattr("data_agent.tools._utils.workspace", ws)
+    inspected = []
+    monkeypatch.setattr(
+        data_understand,
+        "_classify_columns",
+        lambda df: inspected.append(df) or {},
+    )
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=ws)):
+        result = data_understand.interpret_dataset("banner")
+
+    payload = json.loads(result)
+    assert payload["error_type"] == "synthesis_cannot_read_raw_dataset"
+    assert inspected == []
+
+
+def test_interpret_dataset_keeps_relationships_within_allowed_scope(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.data_understand as data_understand
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner", "iap"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    ws = Workspace()
+    ws.add("banner", pd.DataFrame({"user_id": [1, 2], "value": [10, 20]}))
+    ws.add("iap", pd.DataFrame({"user_id": [1, 2], "value": [30, 40]}))
+    monkeypatch.setattr(data_understand, "workspace", ws)
+    monkeypatch.setattr("data_agent.tools._utils.workspace", ws)
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=ws)):
+        result = data_understand.interpret_dataset("banner")
+
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert any(
+        hint["other_dataset"] == "iap"
+        for hint in result.data.get("cross_dataset_hints", [])
+    )
 
 
 def test_single_tool_guard_blocks_before_registry_execution(tmp_path, monkeypatch):
