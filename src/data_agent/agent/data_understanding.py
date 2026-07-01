@@ -47,16 +47,28 @@ _UNORDERED_LIST_PATHS = {
     ("relationship_candidates",),
 }
 _IDENTIFIER_FIELDS = {
+    "column",
     "contract_version",
     "dataset",
     "dataset_contract_id",
     "current_contract_id",
+    "field",
+    "grain",
     "id",
     "left_dataset",
+    "left_key",
     "right_dataset",
+    "right_key",
     "name",
     "status",
 }
+_SCALAR_IDENTIFIER_COLLECTIONS = {"entities", "metrics", "dimensions"}
+_IDENTIFIER_ITEM_FIELDS = {
+    "entities": {"entity", "identifier", "name", "id", "column", "field"},
+    "metrics": {"metric", "identifier", "name", "id", "column", "field"},
+    "dimensions": {"dimension", "identifier", "name", "id", "column", "field"},
+}
+_IDENTIFIER_LIST_FIELDS = {"columns", "shared_columns"}
 
 
 def _freeze(value: Any) -> Any:
@@ -131,10 +143,21 @@ def _is_identifier_path(path: tuple[str | int, ...]) -> bool:
         or field_name.endswith("_id")
         or "key_mapping" in string_parts
         or (
+            len(path) == 2
+            and path[0] in _SCALAR_IDENTIFIER_COLLECTIONS
+            and isinstance(path[1], int)
+        )
+        or (
+            len(path) >= 3
+            and path[0] in _IDENTIFIER_ITEM_FIELDS
+            and field_name in _IDENTIFIER_ITEM_FIELDS[path[0]]
+        )
+        or (
             len(path) >= 2
-            and path[-2] == "columns"
+            and path[-2] in _IDENTIFIER_LIST_FIELDS
             and isinstance(path[-1], int)
         )
+        or (len(path) == 2 and path[0] == "grain")
     )
 
 
@@ -158,10 +181,17 @@ def _normalize_semantic(value: Any, *, path: tuple[str | int, ...] = ()) -> Any:
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
             raise ValueError("Bundle object keys must be strings.")
-        return {
-            key: _normalize_semantic(item, path=(*path, key))
-            for key, item in sorted(value.items())
-        }
+        normalize_keys = bool(path and path[-1] == "key_mapping")
+        normalized: dict[str, Any] = {}
+        for key, item in sorted(value.items()):
+            normalized_key = key.strip() if normalize_keys else key
+            if not normalized_key or normalized_key in normalized:
+                raise ValueError("Bundle object keys must be unique non-empty strings.")
+            normalized[normalized_key] = _normalize_semantic(
+                item,
+                path=(*path, normalized_key),
+            )
+        return normalized
     raise ValueError(f"Unsupported bundle value type: {type(value).__name__}")
 
 
@@ -242,7 +272,7 @@ def _normalize_dataset(dataset: Any, index: int) -> BundleValidationResult:
     contract_id = _normalize_identifier(
         dataset.get("dataset_contract_id", dataset.get("current_contract_id"))
     )
-    grain = _normalize_text(dataset.get("grain"))
+    grain = _normalize_identifier(dataset.get("grain"))
     rows = dataset.get("rows")
     columns_field = "columns" if "columns" in dataset else "schema"
     columns = _normalize_columns(
@@ -339,7 +369,7 @@ def validate_data_understanding_bundle(bundle: Any) -> BundleValidationResult:
             )
 
     version = bundle.get("version")
-    if isinstance(version, bool) or version != 1:
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
         return _error(
             "invalid_bundle_version",
             "DataUnderstandingBundle version must be the integer 1.",

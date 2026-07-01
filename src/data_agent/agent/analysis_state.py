@@ -430,13 +430,16 @@ class AnalysisSessionState:
                 if existing.get("id") == item_id:
                     existing_fingerprint = existing.get("data_fingerprint")
                     incoming_fingerprint = item.get("data_fingerprint")
-                    if (
+                    if not (
                         isinstance(existing_fingerprint, str)
-                        and existing_fingerprint
+                        and existing_fingerprint.strip()
                         and isinstance(incoming_fingerprint, str)
-                        and incoming_fingerprint
-                        and existing_fingerprint != incoming_fingerprint
+                        and incoming_fingerprint.strip()
                     ):
+                        raise ValueError(
+                            f"Data understanding bundle {item_id!r} requires a non-empty string data_fingerprint on both records."
+                        )
+                    if existing_fingerprint != incoming_fingerprint:
                         raise ValueError(
                             f"Data understanding bundle {item_id!r} has a different data_fingerprint."
                         )

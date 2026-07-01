@@ -98,7 +98,7 @@ def test_identity_ignores_list_dict_order_and_harmless_whitespace():
             {
                 "columns": ["customer_id", " segment "],
                 "rows": 10,
-                "grain": " one   row per customer ",
+                "grain": " one row per customer ",
                 "dataset_contract_id": "duc_customers_v1",
                 "dataset": " customers ",
             },
@@ -149,6 +149,59 @@ def test_dataset_identifier_internal_whitespace_changes_identity():
 
     assert collapsed["id"] != first["id"]
     assert first["datasets"][0]["dataset"] == "Sales  Orders"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_path"),
+    [
+        ({"datasets": [_dataset(grain="order  level")]}, ("datasets", 0, "grain")),
+        ({"relationship_candidates": [{"id": "rel", "status": "proposed", "left_key": "customer  id", "right_key": "id"}]}, ("relationship_candidates", 0, "left_key")),
+        ({"relationship_candidates": [{"id": "rel", "status": "proposed", "left_key": "id", "right_key": "customer  id"}]}, ("relationship_candidates", 0, "right_key")),
+        ({"relationship_candidates": [{"id": "rel", "status": "proposed", "shared_columns": ["customer  id"]}]}, ("relationship_candidates", 0, "shared_columns", 0)),
+        ({"relationship_candidates": [{"id": "rel", "status": "proposed", "key_mapping": {"customer  id": "account  id"}}]}, ("relationship_candidates", 0, "key_mapping", "customer  id")),
+        ({"metrics": [{"column": "Total  Amount"}]}, ("metrics", 0, "column")),
+        ({"dimensions": ["Customer  Segment"]}, ("dimensions", 0)),
+        ({"entities": ["Sales  Order"]}, ("entities", 0)),
+        ({"metrics": ["Order  Count"]}, ("metrics", 0)),
+    ],
+)
+def test_contract_identifier_paths_preserve_internal_whitespace(overrides, expected_path):
+    first = _build(**overrides)
+    collapsed_overrides = deepcopy(overrides)
+    cursor = collapsed_overrides
+    for part in expected_path[:-1]:
+        cursor = cursor[part]
+    final = expected_path[-1]
+    if isinstance(cursor[final], str):
+        cursor[final] = cursor[final].replace("  ", " ")
+    else:
+        value = next(iter(cursor[final].values()))
+        key = next(iter(cursor[final]))
+        cursor[final] = {key.replace("  ", " "): value.replace("  ", " ")}
+    collapsed = _build(**collapsed_overrides)
+
+    assert collapsed["id"] != first["id"]
+
+
+def test_relationship_key_mapping_identifier_keys_trim_edges_only():
+    padded = _build(relationship_candidates=[{
+        "id": "rel",
+        "status": "proposed",
+        "key_mapping": {" customer  id ": " account  id "},
+    }])
+    trimmed = _build(relationship_candidates=[{
+        "id": "rel",
+        "status": "proposed",
+        "key_mapping": {"customer  id": "account  id"},
+    }])
+    collapsed = _build(relationship_candidates=[{
+        "id": "rel",
+        "status": "proposed",
+        "key_mapping": {"customer id": "account id"},
+    }])
+
+    assert padded["id"] == trimmed["id"]
+    assert collapsed["id"] != trimmed["id"]
 
 
 def test_schema_column_prose_still_collapses_harmless_whitespace():
@@ -349,7 +402,7 @@ def test_validation_rejects_wrong_version_and_empty_datasets():
     assert empty.error_type == "invalid_datasets"
 
 
-@pytest.mark.parametrize("version", [None, "1", [1], True, 2])
+@pytest.mark.parametrize("version", [None, "1", [1], True, 1.0, 2])
 def test_validation_rejects_malformed_root_version(version):
     result = validate_data_understanding_bundle({
         "contract_version": DATA_UNDERSTANDING_VERSION,
@@ -435,6 +488,36 @@ def test_analysis_state_rejects_bundle_id_fingerprint_collision():
         state.add_data_understanding_bundle_ref({
             "id": "dub_orders",
             "data_fingerprint": "sha256:second",
+        })
+
+
+@pytest.mark.parametrize("malformed", [None, "", 123, ["sha256:first"]])
+def test_analysis_state_rejects_malformed_incoming_bundle_fingerprint(malformed):
+    state = AnalysisSessionState(session_id="s1")
+    state.add_data_understanding_bundle_ref({
+        "id": "dub_orders",
+        "data_fingerprint": "sha256:first",
+    })
+
+    with pytest.raises(ValueError, match="non-empty string data_fingerprint"):
+        state.add_data_understanding_bundle_ref({
+            "id": "dub_orders",
+            "data_fingerprint": malformed,
+        })
+
+
+@pytest.mark.parametrize("malformed", [None, "", 123, ["sha256:first"]])
+def test_analysis_state_rejects_corrupted_existing_bundle_fingerprint(malformed):
+    state = AnalysisSessionState(session_id="s1")
+    state.data_understanding_bundles.append({
+        "id": "dub_orders",
+        "data_fingerprint": malformed,
+    })
+
+    with pytest.raises(ValueError, match="non-empty string data_fingerprint"):
+        state.add_data_understanding_bundle_ref({
+            "id": "dub_orders",
+            "data_fingerprint": "sha256:first",
         })
 
 
