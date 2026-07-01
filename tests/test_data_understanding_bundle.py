@@ -130,6 +130,21 @@ def test_meaningful_dataset_mutation_changes_fingerprint(field, value):
     assert second["id"] != first["id"]
 
 
+def test_created_at_schema_column_changes_fingerprint():
+    base_schema = {
+        "order_id": {"type": "string", "nullable": False},
+        "amount": {"type": "number", "nullable": True},
+    }
+    first = _build(datasets=[_dataset(columns=base_schema)])
+    second = _build(datasets=[_dataset(columns={
+        **base_schema,
+        "created_at": {"type": "timestamp", "nullable": False},
+    })])
+
+    assert second["data_fingerprint"] != first["data_fingerprint"]
+    assert second["id"] != first["id"]
+
+
 def test_quality_and_relationship_mutations_change_fingerprint():
     first = _build()
     changed_quality = _build(quality_findings=[{"dataset": "orders", "finding": "duplicate ids"}])
@@ -148,6 +163,41 @@ def test_quality_and_relationship_mutations_change_fingerprint():
     assert changed_quality["data_fingerprint"] != first["data_fingerprint"]
     assert changed_relationship["data_fingerprint"] != first["data_fingerprint"]
     assert changed_relationship_identity["data_fingerprint"] != first["data_fingerprint"]
+
+
+def test_nested_relationship_key_mapping_is_canonical_and_changes_identity():
+    first = _build(relationship_candidates=[{
+        "id": "orders_customers",
+        "status": "proposed",
+        "key_mapping": {
+            "created_at": "customer_created_at",
+            "customer_id": "id",
+        },
+        "validation": {"cardinality": " many_to_one ", "coverage": 0.95},
+    }])
+    reordered = _build(relationship_candidates=[{
+        "validation": {"coverage": 0.95, "cardinality": "many_to_one"},
+        "key_mapping": {
+            "customer_id": "id",
+            "created_at": " customer_created_at ",
+        },
+        "status": " proposed ",
+        "id": "orders_customers",
+    }])
+    changed = _build(relationship_candidates=[{
+        "id": "orders_customers",
+        "status": "proposed",
+        "key_mapping": {
+            "created_at": "account_created_at",
+            "customer_id": "id",
+        },
+        "validation": {"cardinality": "many_to_one", "coverage": 0.95},
+    }])
+
+    assert reordered["data_fingerprint"] == first["data_fingerprint"]
+    assert reordered["id"] == first["id"]
+    assert changed["data_fingerprint"] != first["data_fingerprint"]
+    assert changed["id"] != first["id"]
 
 
 @pytest.mark.parametrize(
@@ -247,11 +297,12 @@ def test_validation_rejects_wrong_version_and_empty_datasets():
     assert empty.error_type == "invalid_datasets"
 
 
-def test_bundle_timestamps_do_not_change_identity():
+def test_bundle_root_timestamps_do_not_change_identity():
     first = _build()
     with_timestamps = deepcopy(first)
     with_timestamps["created_at"] = "2026-07-01 10:00:00"
-    with_timestamps["quality_findings"][0]["updated_at"] = "2026-07-01 10:01:00"
+    with_timestamps["updated_at"] = "2026-07-01 10:01:00"
+    with_timestamps["generated_at"] = "2026-07-01 10:02:00"
 
     result = validate_data_understanding_bundle(with_timestamps)
 

@@ -19,7 +19,13 @@ RELATIONSHIP_STATUSES = {
     "needs_confirmation",
 }
 
-_VOLATILE_KEYS = {"created_at", "updated_at", "generated_at"}
+_FINGERPRINT_EXCLUDED_PATHS = {
+    ("id",),
+    ("data_fingerprint",),
+    ("created_at",),
+    ("updated_at",),
+    ("generated_at",),
+}
 _LIST_FIELDS = (
     "entities",
     "metrics",
@@ -83,21 +89,27 @@ def _normalize_semantic(value: Any) -> Any:
     raise ValueError(f"Unsupported bundle value type: {type(value).__name__}")
 
 
-def _without_identity_or_volatile(value: Any, *, top_level: bool = False) -> Any:
+def _without_fingerprint_excluded_paths(
+    value: Any,
+    *,
+    path: tuple[str | int, ...] = (),
+) -> Any:
     if isinstance(value, list):
-        return [_without_identity_or_volatile(item) for item in value]
+        return [
+            _without_fingerprint_excluded_paths(item, path=(*path, index))
+            for index, item in enumerate(value)
+        ]
     if isinstance(value, dict):
         return {
-            key: _without_identity_or_volatile(item)
+            key: _without_fingerprint_excluded_paths(item, path=(*path, key))
             for key, item in value.items()
-            if key not in _VOLATILE_KEYS
-            and (not top_level or key not in {"id", "data_fingerprint"})
+            if (*path, key) not in _FINGERPRINT_EXCLUDED_PATHS
         }
     return value
 
 
 def _identity_for(bundle: dict[str, Any]) -> tuple[str, str]:
-    semantic = _without_identity_or_volatile(bundle, top_level=True)
+    semantic = _without_fingerprint_excluded_paths(bundle)
     digest = hashlib.sha256(_canonical_json(semantic).encode("utf-8")).hexdigest()
     return f"sha256:{digest}", f"dub_{digest[:16]}"
 
