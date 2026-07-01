@@ -6,7 +6,8 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 
 DATA_UNDERSTANDING_VERSION = "data_understanding.v1"
@@ -37,15 +38,62 @@ _LIST_FIELDS = (
     "unsupported_questions",
     "analysis_constraints",
 )
+_UNORDERED_LIST_PATHS = {
+    ("datasets",),
+    ("entities",),
+    ("metrics",),
+    ("dimensions",),
+    ("quality_findings",),
+    ("relationship_candidates",),
+}
+_IDENTIFIER_FIELDS = {
+    "contract_version",
+    "dataset",
+    "dataset_contract_id",
+    "current_contract_id",
+    "id",
+    "left_dataset",
+    "right_dataset",
+    "name",
+    "status",
+}
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
 class BundleValidationResult:
     ok: bool
-    bundle: dict[str, Any] = field(default_factory=dict)
+    bundle: Mapping[str, Any] = field(default_factory=dict)
     error_type: str = ""
     message: str = ""
-    details: dict[str, Any] = field(default_factory=dict)
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "bundle", _freeze(self.bundle))
+        object.__setattr__(self, "details", _freeze(self.details))
+
+    def thaw_bundle(self) -> dict[str, Any]:
+        """Return an explicit mutable copy for callers that need ownership."""
+        return _thaw(self.bundle)
+
+    def thaw_details(self) -> dict[str, Any]:
+        """Return an explicit mutable copy of validation details."""
+        return _thaw(self.details)
 
 
 def _error(error_type: str, message: str, **details: Any) -> BundleValidationResult:
@@ -63,13 +111,36 @@ def _normalize_text(value: Any) -> str | None:
     return " ".join(value.split())
 
 
+def _normalize_identifier(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value.strip()
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _normalize_semantic(value: Any) -> Any:
+def _is_identifier_path(path: tuple[str | int, ...]) -> bool:
+    string_parts = [part for part in path if isinstance(part, str)]
+    if not string_parts:
+        return False
+    field_name = string_parts[-1]
+    return (
+        field_name in _IDENTIFIER_FIELDS
+        or field_name.endswith("_id")
+        or "key_mapping" in string_parts
+        or (
+            len(path) >= 2
+            and path[-2] == "columns"
+            and isinstance(path[-1], int)
+        )
+    )
+
+
+def _normalize_semantic(value: Any, *, path: tuple[str | int, ...] = ()) -> Any:
     if isinstance(value, str):
-        return " ".join(value.split())
+        return value.strip() if _is_identifier_path(path) else " ".join(value.split())
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
@@ -77,13 +148,18 @@ def _normalize_semantic(value: Any) -> Any:
             raise ValueError("Non-finite numbers are not valid bundle content.")
         return value
     if isinstance(value, list):
-        normalized = [_normalize_semantic(item) for item in value]
-        return sorted(normalized, key=_canonical_json)
+        normalized = [
+            _normalize_semantic(item, path=(*path, index))
+            for index, item in enumerate(value)
+        ]
+        if path in _UNORDERED_LIST_PATHS:
+            return sorted(normalized, key=_canonical_json)
+        return normalized
     if isinstance(value, dict):
         if not all(isinstance(key, str) for key in value):
             raise ValueError("Bundle object keys must be strings.")
         return {
-            key: _normalize_semantic(item)
+            key: _normalize_semantic(item, path=(*path, key))
             for key, item in sorted(value.items())
         }
     raise ValueError(f"Unsupported bundle value type: {type(value).__name__}")
@@ -114,35 +190,35 @@ def _identity_for(bundle: dict[str, Any]) -> tuple[str, str]:
     return f"sha256:{digest}", f"dub_{digest[:16]}"
 
 
-def _normalize_columns(value: Any) -> Any | None:
+def _normalize_columns(value: Any, *, path: tuple[str | int, ...]) -> Any | None:
     if isinstance(value, list) and value:
         normalized: list[Any] = []
         for column in value:
             if isinstance(column, str):
-                text = _normalize_text(column)
+                text = column.strip()
                 if not text:
                     return None
                 normalized.append(text)
                 continue
             if isinstance(column, dict):
-                name = _normalize_text(column.get("name"))
+                name = _normalize_identifier(column.get("name"))
                 if not name:
                     return None
                 try:
-                    item = _normalize_semantic(column)
+                    item = _normalize_semantic(column, path=(*path, len(normalized)))
                 except ValueError:
                     return None
                 item["name"] = name
                 normalized.append(item)
                 continue
             return None
-        return sorted(normalized, key=_canonical_json)
+        return normalized
     if isinstance(value, dict) and value:
         if not all(isinstance(key, str) and key.strip() for key in value):
             return None
         try:
             normalized = {
-                " ".join(key.split()): _normalize_semantic(item)
+                key.strip(): _normalize_semantic(item, path=(*path, key.strip()))
                 for key, item in value.items()
             }
         except ValueError:
@@ -162,14 +238,17 @@ def _normalize_dataset(dataset: Any, index: int) -> BundleValidationResult:
             fields=["dataset"],
         )
 
-    dataset_name = _normalize_text(dataset.get("dataset"))
-    contract_id = _normalize_text(
+    dataset_name = _normalize_identifier(dataset.get("dataset"))
+    contract_id = _normalize_identifier(
         dataset.get("dataset_contract_id", dataset.get("current_contract_id"))
     )
     grain = _normalize_text(dataset.get("grain"))
     rows = dataset.get("rows")
     columns_field = "columns" if "columns" in dataset else "schema"
-    columns = _normalize_columns(dataset.get(columns_field))
+    columns = _normalize_columns(
+        dataset.get(columns_field),
+        path=("datasets", index, columns_field),
+    )
 
     invalid_fields: list[str] = []
     if not dataset_name:
@@ -191,7 +270,7 @@ def _normalize_dataset(dataset: Any, index: int) -> BundleValidationResult:
         )
 
     try:
-        normalized = _normalize_semantic(dataset)
+        normalized = _normalize_semantic(dataset, path=("datasets", index))
     except ValueError as exc:
         return _error(
             "invalid_dataset_understanding",
@@ -228,7 +307,7 @@ def validate_data_understanding_bundle(bundle: Any) -> BundleValidationResult:
         result = _normalize_dataset(dataset, index)
         if not result.ok:
             return result
-        normalized_datasets.append(result.bundle)
+        normalized_datasets.append(result.thaw_bundle())
 
     relationships = bundle.get("relationship_candidates", [])
     if not isinstance(relationships, list):
@@ -259,14 +338,26 @@ def validate_data_understanding_bundle(bundle: Any) -> BundleValidationResult:
                 field=field_name,
             )
 
+    version = bundle.get("version")
+    if isinstance(version, bool) or version != 1:
+        return _error(
+            "invalid_bundle_version",
+            "DataUnderstandingBundle version must be the integer 1.",
+            actual=version,
+        )
+    grain = bundle.get("grain")
+    if not isinstance(grain, dict) or not all(isinstance(key, str) for key in grain):
+        return _error(
+            "invalid_bundle_grain",
+            "DataUnderstandingBundle grain must be an object with string keys.",
+        )
+
     normalized_source = dict(bundle)
     normalized_source["contract_version"] = DATA_UNDERSTANDING_VERSION
-    normalized_source["version"] = 1
     normalized_source["datasets"] = normalized_datasets
     normalized_source["relationship_candidates"] = normalized_relationships
     for field_name in _LIST_FIELDS:
         normalized_source.setdefault(field_name, [])
-    normalized_source.setdefault("grain", {})
 
     try:
         normalized = _normalize_semantic(normalized_source)
@@ -323,4 +414,4 @@ def build_data_understanding_bundle(
     result = validate_data_understanding_bundle(payload)
     if not result.ok:
         raise ValueError(f"{result.error_type}: {result.message}")
-    return result.bundle
+    return result.thaw_bundle()

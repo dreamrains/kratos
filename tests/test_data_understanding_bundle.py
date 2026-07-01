@@ -55,18 +55,24 @@ def test_bundle_is_versioned_fingerprinted_and_valid():
     assert bundle["id"].startswith("dub_")
     result = validate_data_understanding_bundle(bundle)
     assert result.ok is True
-    assert result.bundle == bundle
+    assert result.thaw_bundle() == bundle
 
 
 def test_validation_result_is_immutable_and_defaults_are_not_shared():
-    first = BundleValidationResult(True)
+    source = {"datasets": [{"columns": ["order_id"]}]}
+    first = BundleValidationResult(True, bundle=source, details={"fields": ["datasets"]})
     second = BundleValidationResult(True)
 
-    first.bundle["x"] = 1
-    first.details["field"] = "datasets"
+    with pytest.raises(TypeError):
+        first.bundle["datasets"][0]["columns"][0] = "customer_id"
+    with pytest.raises(TypeError):
+        first.details["fields"] += ("grain",)
+    source["datasets"][0]["columns"][0] = "mutated"
 
-    assert second.bundle == {}
-    assert second.details == {}
+    assert first.bundle["datasets"][0]["columns"] == ("order_id",)
+    assert first.details["fields"] == ("datasets",)
+    assert dict(second.bundle) == {}
+    assert dict(second.details) == {}
     with pytest.raises(FrozenInstanceError):
         first.ok = False
 
@@ -90,7 +96,7 @@ def test_identity_ignores_list_dict_order_and_harmless_whitespace():
     second = _build(
         datasets=[
             {
-                "columns": [" segment ", "customer_id"],
+                "columns": ["customer_id", " segment "],
                 "rows": 10,
                 "grain": " one   row per customer ",
                 "dataset_contract_id": "duc_customers_v1",
@@ -98,8 +104,8 @@ def test_identity_ignores_list_dict_order_and_harmless_whitespace():
             },
             _dataset(
                 columns=[
-                    {"type": "number", "name": "amount"},
                     {"type": "string", "name": "order_id"},
+                    {"type": "number", "name": "amount"},
                 ]
             ),
         ],
@@ -112,6 +118,52 @@ def test_identity_ignores_list_dict_order_and_harmless_whitespace():
     assert second == first
     assert second["data_fingerprint"] == first["data_fingerprint"]
     assert second["id"] == first["id"]
+
+
+def test_supported_question_order_changes_identity():
+    first = _build(supported_questions=["highest revenue", "lowest revenue"])
+    reversed_questions = _build(supported_questions=["lowest revenue", "highest revenue"])
+
+    assert reversed_questions["id"] != first["id"]
+
+
+@pytest.mark.parametrize("field", ["steps", "fields"])
+def test_nested_list_order_changes_identity(field):
+    first = _build(quality_findings=[{"finding": "review", field: ["first", "second"]}])
+    reversed_items = _build(quality_findings=[{"finding": "review", field: ["second", "first"]}])
+
+    assert reversed_items["id"] != first["id"]
+
+
+def test_schema_column_identifier_internal_whitespace_changes_identity():
+    first = _build(datasets=[_dataset(columns=["order_id", "Total  Amount"])])
+    collapsed = _build(datasets=[_dataset(columns=["order_id", "Total Amount"])])
+
+    assert collapsed["id"] != first["id"]
+    assert first["datasets"][0]["columns"][1] == "Total  Amount"
+
+
+def test_dataset_identifier_internal_whitespace_changes_identity():
+    first = _build(datasets=[_dataset(dataset="Sales  Orders")])
+    collapsed = _build(datasets=[_dataset(dataset="Sales Orders")])
+
+    assert collapsed["id"] != first["id"]
+    assert first["datasets"][0]["dataset"] == "Sales  Orders"
+
+
+def test_schema_column_prose_still_collapses_harmless_whitespace():
+    first = _build(datasets=[_dataset(columns=[{
+        "name": "amount",
+        "type": "number",
+        "description": "gross   order amount",
+    }])])
+    collapsed = _build(datasets=[_dataset(columns=[{
+        "name": "amount",
+        "type": "number",
+        "description": "gross order amount",
+    }])])
+
+    assert collapsed["id"] == first["id"]
 
 
 @pytest.mark.parametrize(
@@ -297,6 +349,31 @@ def test_validation_rejects_wrong_version_and_empty_datasets():
     assert empty.error_type == "invalid_datasets"
 
 
+@pytest.mark.parametrize("version", [None, "1", [1], True, 2])
+def test_validation_rejects_malformed_root_version(version):
+    result = validate_data_understanding_bundle({
+        "contract_version": DATA_UNDERSTANDING_VERSION,
+        "version": version,
+        "datasets": [_dataset()],
+    })
+
+    assert result.ok is False
+    assert result.error_type == "invalid_bundle_version"
+
+
+@pytest.mark.parametrize("grain", ["order", ["order"], 1])
+def test_validation_rejects_non_object_root_grain(grain):
+    result = validate_data_understanding_bundle({
+        "contract_version": DATA_UNDERSTANDING_VERSION,
+        "version": 1,
+        "grain": grain,
+        "datasets": [_dataset()],
+    })
+
+    assert result.ok is False
+    assert result.error_type == "invalid_bundle_grain"
+
+
 def test_bundle_root_timestamps_do_not_change_identity():
     first = _build()
     with_timestamps = deepcopy(first)
@@ -331,18 +408,34 @@ def test_analysis_state_bundle_ref_round_trip_upsert_summary_and_active_tracking
     updated = state.add_data_understanding_bundle_ref({
         "id": "dub_orders",
         "dataset": "orders",
-        "data_fingerprint": "sha256:second",
+        "data_fingerprint": "sha256:first",
+        "path": "updated.json",
     })
 
     assert len(state.data_understanding_bundles) == 1
     assert updated["created_at"] == first["created_at"]
-    assert updated["data_fingerprint"] == "sha256:second"
+    assert updated["data_fingerprint"] == "sha256:first"
+    assert updated["path"] == "updated.json"
     assert state.active_scope["active_dataset"] == "orders"
     assert state.active_scope["related_ref_ids"]["data_understanding_bundles"] == ["dub_orders"]
 
     restored = AnalysisSessionState.from_dict(state.to_dict(), "s1")
     assert restored.data_understanding_bundles == state.data_understanding_bundles
     assert "data_understanding_bundles: 1" in analysis_state_summary(restored)
+
+
+def test_analysis_state_rejects_bundle_id_fingerprint_collision():
+    state = AnalysisSessionState(session_id="s1")
+    state.add_data_understanding_bundle_ref({
+        "id": "dub_orders",
+        "data_fingerprint": "sha256:first",
+    })
+
+    with pytest.raises(ValueError, match="different data_fingerprint"):
+        state.add_data_understanding_bundle_ref({
+            "id": "dub_orders",
+            "data_fingerprint": "sha256:second",
+        })
 
 
 def test_old_analysis_state_defaults_bundle_refs_to_empty_list():

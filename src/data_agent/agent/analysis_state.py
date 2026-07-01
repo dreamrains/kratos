@@ -91,6 +91,12 @@ def _text_list(value: Any) -> list[str]:
     return result
 
 
+def _dict_list_or_empty(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        return []
+    return [dict(item) for item in value]
+
+
 def _dedupe(values: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -157,7 +163,7 @@ class AnalysisSessionState:
             evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
             dataset_contracts=list(data.get("dataset_contracts") or []),
-            data_understanding_bundles=list(data.get("data_understanding_bundles") or []),
+            data_understanding_bundles=_dict_list_or_empty(data.get("data_understanding_bundles")),
             cleaning_logs=list(data.get("cleaning_logs") or []),
             preview_digests=list(data.get("preview_digests") or []),
             route_proposals=list(data.get("route_proposals") or []),
@@ -422,6 +428,18 @@ class AnalysisSessionState:
         if isinstance(item_id, str) and item_id:
             for index, existing in enumerate(self.data_understanding_bundles):
                 if existing.get("id") == item_id:
+                    existing_fingerprint = existing.get("data_fingerprint")
+                    incoming_fingerprint = item.get("data_fingerprint")
+                    if (
+                        isinstance(existing_fingerprint, str)
+                        and existing_fingerprint
+                        and isinstance(incoming_fingerprint, str)
+                        and incoming_fingerprint
+                        and existing_fingerprint != incoming_fingerprint
+                    ):
+                        raise ValueError(
+                            f"Data understanding bundle {item_id!r} has a different data_fingerprint."
+                        )
                     merged = dict(existing)
                     merged.update(item)
                     merged.setdefault("created_at", existing.get("created_at") or _now())

@@ -318,6 +318,18 @@ class TestTrustworthyWorkflowRefs:
 
         assert state.active_scope["related_ref_ids"] == {"ok": ["x"]}
 
+    @pytest.mark.parametrize(
+        "malformed",
+        [123, "not-a-list", {"id": "dub_one"}, [{"id": "dub_one"}, "bad"]],
+    )
+    def test_from_dict_rejects_malformed_data_understanding_bundle_refs(self, malformed):
+        state = AnalysisSessionState.from_dict(
+            {"session_id": "s1", "data_understanding_bundles": malformed},
+            "s1",
+        )
+
+        assert state.data_understanding_bundles == []
+
     def test_dataset_contract_with_non_string_id_does_not_add_active_ref(self):
         state = AnalysisSessionState(session_id="s1")
 
