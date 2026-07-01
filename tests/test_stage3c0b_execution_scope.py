@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import FrozenInstanceError
 
+import pandas as pd
 import pytest
 
+from data_agent.agent.context import use_agent_context
 from data_agent.agent.analysis_state import AnalysisSessionState, analysis_state_summary
 from data_agent.agent.loop import AgentLoop
 from data_agent.llm.client import Response, ToolCall
@@ -36,8 +38,8 @@ def _scoped_task(
         plan_version=plan["version"],
         analysis_plan_id="analysis_plan_banner",
         step_id=step_id,
-        dataset_inputs=datasets or ["banner"],
-        dataset_contract_ids=contracts or ["contract_banner"],
+        dataset_inputs=datasets if datasets is not None else ["banner"],
+        dataset_contract_ids=contracts if contracts is not None else ["contract_banner"],
         combination_mode=mode,
     )
     manager.update(task["id"], status="in_progress")
@@ -330,6 +332,159 @@ def test_unrelated_tool_with_name_argument_is_not_falsely_guarded(tmp_path, monk
 
     assert called == ["iap"]
     assert loop.messages[-1]["content"] == "renamed"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("create_chart", {"chart_type": "bar", "data": "iap"}),
+        (
+            "export_output",
+            {"output_type": "data", "name": "iap", "path": "data/iap.csv"},
+        ),
+    ],
+)
+def test_real_dataset_output_tools_block_unbound_datasets(
+    tmp_path,
+    monkeypatch,
+    tool_name,
+    arguments,
+):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import data_io, visualization  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager)
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    executed = []
+    monkeypatch.setattr(
+        registry,
+        "execute",
+        lambda name, params: executed.append((name, params)) or ToolResult(summary="executed"),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    tc = ToolCall(id=f"tc_{tool_name}", name=tool_name, arguments=arguments)
+
+    loop._execute_single_tool(tc, [tc], 0)
+
+    assert executed == []
+    assert json.loads(loop.messages[-1]["content"])["error_type"] == (
+        "dataset_outside_current_task_scope"
+    )
+
+
+def test_create_chart_without_dataset_is_forced_to_unique_current_scope_dataset(
+    tmp_path,
+    monkeypatch,
+):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import visualization  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.workspace.add("banner", pd.DataFrame({"x": [1]}))
+    arguments = {"chart_type": "bar"}
+
+    with use_agent_context(loop.context):
+        error = loop._current_task_scope_guard("create_chart", arguments)
+
+    assert error == ""
+    assert arguments["data"] == "banner"
+
+
+@pytest.mark.parametrize("datasets", [[], ["banner", "iap"]])
+def test_create_chart_auto_read_fails_closed_without_unique_scope_dataset(
+    tmp_path,
+    monkeypatch,
+    datasets,
+):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import visualization  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=datasets)
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    arguments = {"chart_type": "bar"}
+
+    error = loop._current_task_scope_guard("create_chart", arguments)
+
+    assert json.loads(error)["error_type"] == "dataset_scope_requires_unique_dataset"
+    assert "data" not in arguments
+
+
+def test_create_chart_cannot_fall_back_when_scoped_dataset_is_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import visualization  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.workspace.add("iap", pd.DataFrame({"x": [1]}))
+
+    with use_agent_context(loop.context):
+        error = loop._current_task_scope_guard(
+            "create_chart",
+            {"chart_type": "bar", "data": "banner"},
+        )
+
+    assert json.loads(error)["error_type"] == "current_task_dataset_unavailable"
+
+
+def test_streaming_create_chart_cannot_auto_read_during_synthesis(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import visualization  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, mode="synthesis")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    executed = []
+    monkeypatch.setattr(
+        registry,
+        "execute",
+        lambda name, params: executed.append((name, params)) or ToolResult(summary="executed"),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    tc = ToolCall(id="tc_chart_synthesis", name="create_chart", arguments={"chart_type": "bar"})
+
+    list(loop._process_tool_calls(Response(tool_calls=[tc]), round_num=1))
+
+    assert executed == []
+    payload = json.loads(loop.messages[-1]["content"])
+    assert payload["error_type"] == "synthesis_cannot_read_raw_dataset"
+
+
+def test_export_output_non_data_mode_is_not_treated_as_dataset_read(tmp_path, monkeypatch):
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.tools import data_io  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager)
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    executed = []
+    monkeypatch.setattr(
+        registry,
+        "execute",
+        lambda name, params: executed.append((name, params)) or ToolResult(summary="disabled"),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    tc = ToolCall(
+        id="tc_export_report",
+        name="export_output",
+        arguments={"output_type": "report_md", "name": "iap"},
+    )
+
+    loop._execute_single_tool(tc, [tc], 0)
+
+    assert executed == [("export_output", tc.arguments)]
+    assert loop.messages[-1]["content"] == "disabled"
 
 
 def test_analysis_state_summary_injects_compact_current_task_scope(tmp_path, monkeypatch):

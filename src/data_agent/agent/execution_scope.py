@@ -45,11 +45,12 @@ _LEGACY_DATASET_ARGUMENTS: dict[str, frozenset[str]] = {
     "apply_type_conversion": frozenset({"name"}),
     "assess_readiness": frozenset({"name"}),
     "clean_data": frozenset({"name"}),
-    "create_chart": frozenset({"name"}),
+    "create_chart": frozenset({"data"}),
     "derive_features": frozenset({"name"}),
     "derive_field": frozenset({"name"}),
     "distribution_analysis": frozenset({"name"}),
     "export_data": frozenset({"name"}),
+    "export_output": frozenset({"name"}),
     "interpret_dataset": frozenset({"name"}),
     "segmentation_analysis": frozenset({"name"}),
     "shap_analysis": frozenset({"name"}),
@@ -138,6 +139,9 @@ def ensure_dataset_allowed_for_current_task(
 
 def dataset_arguments_for_tool(registry, tool_name: str, arguments: dict[str, Any]) -> list[str]:
     """Extract dataset references only from metadata-classified dataset-read tools."""
+    if tool_name == "export_output" and _text(arguments.get("output_type")).casefold() != "data":
+        return []
+
     tool = registry.get(tool_name)
     capability = getattr(tool, "capability", None) if tool is not None else None
     capability_id = _text(getattr(capability, "capability_id", ""))
@@ -161,6 +165,51 @@ def dataset_arguments_for_tool(registry, tool_name: str, arguments: dict[str, An
     return datasets
 
 
+def _prepare_create_chart_dataset(
+    manager,
+    session_id: str,
+    project_name: str,
+    arguments: dict[str, Any],
+) -> ScopeGuardResult | None:
+    """Replace create_chart's global auto-selection with a deterministic scoped dataset."""
+    dataset = _text(arguments.get("data"))
+    if not dataset and _text(arguments.get("data_json")):
+        return None
+
+    scope = current_execution_scope(manager, session_id, project_name)
+    if scope.error_type:
+        return ScopeGuardResult(False, scope.error_type, scope.message)
+    if not scope.active:
+        return None
+    if scope.combination_mode == "synthesis":
+        return ScopeGuardResult(
+            False,
+            "synthesis_cannot_read_raw_dataset",
+            "Synthesis tasks consume verified evidence and cannot read raw datasets.",
+        )
+
+    if not dataset:
+        if len(scope.allowed_datasets) != 1:
+            return ScopeGuardResult(
+                False,
+                "dataset_scope_requires_unique_dataset",
+                "create_chart requires one explicit dataset when the current task does not bind exactly one dataset.",
+            )
+        dataset = next(iter(scope.allowed_datasets))
+        arguments["data"] = dataset
+
+    if dataset in scope.allowed_datasets:
+        from data_agent.session.workspace import workspace
+
+        if dataset not in workspace.list_datasets():
+            return ScopeGuardResult(
+                False,
+                "current_task_dataset_unavailable",
+                f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+            )
+    return None
+
+
 def ensure_tool_allowed_for_current_task(
     registry,
     manager,
@@ -170,6 +219,16 @@ def ensure_tool_allowed_for_current_task(
     arguments: dict[str, Any],
 ) -> ScopeGuardResult:
     """Validate every raw dataset referenced by a dataset-read tool call."""
+    if tool_name == "create_chart":
+        preparation_error = _prepare_create_chart_dataset(
+            manager,
+            session_id,
+            project_name,
+            arguments,
+        )
+        if preparation_error is not None:
+            return preparation_error
+
     first_error: ScopeGuardResult | None = None
     for dataset in dataset_arguments_for_tool(registry, tool_name, arguments):
         result = ensure_dataset_allowed_for_current_task(
