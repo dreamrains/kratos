@@ -33,11 +33,29 @@ def _normalize_text(value: Any) -> str:
 def compare_measurements(left: Any, right: Any) -> MeasurementCompatibility:
     """Compare canonical measurement identity fields without conversion or alignment."""
 
-    left_record = left if isinstance(left, dict) else {}
-    right_record = right if isinstance(right, dict) else {}
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return MeasurementCompatibility(
+            compatible=False,
+            reason_code="missing_measurement_field",
+            user_message="测量字段缺失，不能直接比较。",
+            fields=list(COMPATIBILITY_FIELDS),
+        )
+
+    missing_fields = [
+        field_name
+        for field_name in COMPATIBILITY_FIELDS
+        if not _normalize_text(left.get(field_name)) or not _normalize_text(right.get(field_name))
+    ]
+    if missing_fields:
+        return MeasurementCompatibility(
+            compatible=False,
+            reason_code="missing_measurement_field",
+            user_message="测量字段缺失，不能直接比较。",
+            fields=missing_fields,
+        )
 
     for field_name in COMPATIBILITY_FIELDS:
-        if _normalize_text(left_record.get(field_name)) != _normalize_text(right_record.get(field_name)):
+        if _normalize_text(left.get(field_name)) != _normalize_text(right.get(field_name)):
             return MeasurementCompatibility(
                 compatible=False,
                 reason_code=f"{field_name}_mismatch",

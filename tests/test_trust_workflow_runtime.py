@@ -105,6 +105,42 @@ def test_runtime_generates_compact_verification_report_from_evidence_records():
     assert state.verification_reports[-1] == ref
 
 
+def test_runtime_passes_analysis_plan_id_to_claim_verification(monkeypatch):
+    state = AnalysisSessionState(session_id="runtime_verify_current_plan")
+    state.analysis_plan = {"id": "plan_current", "goal": "Analyze current plan"}
+    state.evidence_records = [{
+        "id": "ev_1",
+        "plan_id": "plan_current",
+        "claim": "Revenue increased 12%",
+        "result_summary": "Revenue increased 12% from 100 to 112",
+        "confidence": "high",
+    }]
+    captured = {}
+
+    def fake_verify_analysis_claims(**kwargs):
+        captured.update(kwargs)
+        return {
+            "id": "report_current_plan",
+            "claim_checks": [{
+                "claim_id": "claim_1",
+                "claim": "Revenue increased 12%",
+                "evidence_id": "ev_1",
+                "status": "passed",
+                "strength": "confirmed",
+                "issues": [],
+            }],
+            "route_proposal_ids": [],
+            "overall_status": "pass",
+        }
+
+    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
+
+    ref = maybe_verify_turn_claims("summarize revenue", state)
+
+    assert ref is not None
+    assert captured.get("current_plan_id") == "plan_current"
+
+
 def test_runtime_verification_deduplicates_latest_evidence_signature():
     state = AnalysisSessionState(session_id="runtime_verify_dedupe")
     state.evidence_records = [{

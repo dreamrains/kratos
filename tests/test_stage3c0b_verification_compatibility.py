@@ -66,6 +66,14 @@ def test_compare_measurements_rejects_population_scope_mismatch():
     assert "统计对象不同" in result.user_message
 
 
+def test_compare_measurements_rejects_missing_compatibility_fields():
+    result = compare_measurements({}, {})
+
+    assert result.compatible is False
+    assert result.reason_code == "missing_measurement_field"
+    assert result.fields
+
+
 def test_verify_analysis_claims_rejects_explicit_evidence_id_outside_current_plan():
     report = verify_analysis_claims(
         claims=[{"id": "claim_1", "claim": "Current conversion rate is 18%.", "evidence_id": "ev_other"}],
@@ -83,6 +91,26 @@ def test_verify_analysis_claims_rejects_explicit_evidence_id_outside_current_pla
     assert any("current plan" in issue for issue in check["issues"])
 
 
+def test_verify_analysis_claims_rejects_explicit_nonexistent_evidence_id():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_1",
+            "claim": "Current conversion rate is 18%.",
+            "evidence_id": "ev_missing",
+        }],
+        evidence_records=[_evidence(id="ev_current", claim="Current conversion rate is 18%.")],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "fail"
+    assert check["status"] == "failed"
+    assert check["strength"] == "unsupported"
+    assert any("ev_missing" in issue for issue in check["issues"])
+
+
 def test_verify_analysis_claims_rejects_incompatible_compare_evidence_ids():
     report = verify_analysis_claims(
         claims=[{
@@ -97,6 +125,52 @@ def test_verify_analysis_claims_rejects_incompatible_compare_evidence_ids():
                 claim="New-user conversion rate is 21%.",
                 measurements=[_measurement(value=0.21, population_scope="new product detail page visitors")],
             ),
+        ],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "fail"
+    assert check["status"] == "failed"
+    assert check["strength"] == "unsupported"
+    assert any("Measurement compatibility failed" in issue for issue in check["issues"])
+
+
+def test_verify_analysis_claims_accepts_compatible_compare_evidence_ids():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_compare",
+            "claim": "Current and comparison conversion rates are comparable.",
+            "compare_evidence_ids": ["ev_current", "ev_comparison"],
+        }],
+        evidence_records=[
+            _evidence(id="ev_current"),
+            _evidence(id="ev_comparison", claim="Comparison conversion rate is 21%."),
+        ],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "pass"
+    assert check["status"] == "passed"
+    assert check["evidence_id"] == "ev_current"
+    assert check["issues"] == []
+
+
+def test_verify_analysis_claims_rejects_compare_evidence_ids_with_malformed_measurements():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_compare",
+            "claim": "Malformed measurements are not comparable.",
+            "compare_evidence_ids": ["ev_current", "ev_other"],
+        }],
+        evidence_records=[
+            _evidence(id="ev_current", measurements=[{}]),
+            _evidence(id="ev_other", claim="Other conversion rate is 21%.", measurements=[{}]),
         ],
         route_proposals=[],
         cleaning_logs=[],

@@ -52,6 +52,7 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             evidence_records=evidence_records,
             route_proposals=_list_attr(state, "route_proposals"),
             cleaning_logs=_list_attr(state, "cleaning_logs"),
+            current_plan_id=_current_analysis_plan_id(state),
         )
         ref = _compact_verification_ref(report, signature, fingerprint)
         add_ref = getattr(state, "add_verification_report_ref", None)
@@ -156,7 +157,11 @@ def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> s
     evidence_ids = [str(record.get("id") or index) for index, record in enumerate(evidence_records)]
     route_ids = [str(route.get("id")) for route in _list_attr(state, "route_proposals") if route.get("id")]
     cleaning_ids = [str(log.get("id")) for log in _list_attr(state, "cleaning_logs") if log.get("id")]
-    return "|".join(evidence_ids) + "|routes:" + ",".join(route_ids) + "|cleaning:" + ",".join(cleaning_ids)
+    signature = "|".join(evidence_ids) + "|routes:" + ",".join(route_ids) + "|cleaning:" + ",".join(cleaning_ids)
+    current_plan_id = _current_analysis_plan_id(state)
+    if current_plan_id:
+        signature += "|plan:" + current_plan_id
+    return signature
 
 
 def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) -> str:
@@ -164,9 +169,18 @@ def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) ->
         "evidence_records": evidence_records,
         "route_proposals": _list_attr(state, "route_proposals"),
         "cleaning_logs": _list_attr(state, "cleaning_logs"),
+        "current_plan_id": _current_analysis_plan_id(state),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _current_analysis_plan_id(state: Any) -> str:
+    for attr_name in ("analysis_plan", "analysis_spec"):
+        plan = getattr(state, attr_name, None)
+        if isinstance(plan, dict) and plan.get("id"):
+            return str(plan.get("id") or "").strip()
+    return ""
 
 
 def _promote_verification_identity(state: Any, signature: str, fingerprint: str) -> bool:

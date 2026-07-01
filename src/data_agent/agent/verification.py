@@ -310,6 +310,14 @@ def _check_claim(
             comparison_issues.append(
                 f"Evidence {explicit_evidence_id} is outside the current plan and cannot support this claim"
             )
+        else:
+            evidence = None
+            if current_plan_id:
+                comparison_issues.append(
+                    f"Explicit evidence {explicit_evidence_id} was not found in the current plan"
+                )
+            else:
+                comparison_issues.append(f"Explicit evidence {explicit_evidence_id} was not found")
 
     if evidence is None and not comparison_issues:
         evidence = _find_evidence(claim, _current_plan_evidence(evidence_records, current_plan_id))
