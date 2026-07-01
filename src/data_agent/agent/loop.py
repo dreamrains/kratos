@@ -897,12 +897,42 @@ class AgentLoop:
         """
         try:
             from data_agent.session.task_manager import task_manager
-            tasks = task_manager.list_for_scope(session_id=self.session_id)
+            tasks = task_manager.list_for_scope(
+                session_id=self.session_id,
+                project_name=self.context.project_name,
+            )
             in_progress = [t for t in tasks if t["status"] == "in_progress"]
-            if in_progress and success:
-                task_manager.update(in_progress[0]["id"], status="completed")
+            legacy_in_progress = [
+                task for task in in_progress
+                if not (task.get("analysis_plan_id") or task.get("step_id"))
+            ]
+            if legacy_in_progress and success:
+                task_manager.update(legacy_in_progress[0]["id"], status="completed")
         except Exception:
             pass
+
+    def _current_task_scope_guard(self, tool_name: str, arguments: dict) -> str:
+        """Return a compact JSON error when a dataset-read call crosses task scope."""
+        try:
+            from data_agent.agent.execution_scope import ensure_tool_allowed_for_current_task
+            from data_agent.session.task_manager import task_manager
+
+            result = ensure_tool_allowed_for_current_task(
+                registry,
+                task_manager,
+                self.session_id,
+                self.context.project_name,
+                tool_name,
+                arguments,
+            )
+        except Exception:
+            return ""
+        if result.allowed:
+            return ""
+        return json.dumps(
+            {"error": result.message, "error_type": result.error_type},
+            ensure_ascii=False,
+        )
 
     def _repair_broken_tool_sequence(self) -> None:
         """Scan messages for assistant tool_calls missing corresponding tool responses and fill them in."""
@@ -1725,6 +1755,19 @@ class AgentLoop:
                 "round": round_num,
             }
 
+            scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+            if scope_error:
+                if turn_state is not None:
+                    turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error)
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": scope_error,
+                })
+                yield {"type": "error", "message": scope_error}
+                continue
+
             t0 = time.monotonic()
             try:
                 tool_result = registry.execute(tc.name, tc.arguments)
@@ -2159,6 +2202,18 @@ class AgentLoop:
 
         turn_state = getattr(self.context, "turn_state", None)
 
+        scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+        if scope_error:
+            if turn_state is not None:
+                turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error)
+            self.messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": scope_error,
+            })
+            return None
+
         try:
             tool_result = registry.execute(tc.name, tc.arguments)
         except UserConfirmationRequired as ucc:
@@ -2221,6 +2276,11 @@ class AgentLoop:
 
         def _run_tool(tc):
             try:
+                scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+                if scope_error:
+                    if turn_state is not None:
+                        turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+                    return (tc, scope_error)
                 t0 = time.monotonic()
                 tool_result = registry.execute(tc.name, tc.arguments)
                 duration_ms = int((time.monotonic() - t0) * 1000)

@@ -646,6 +646,24 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         f"- hypothesis_sets: {len(state.hypothesis_sets)}",
         f"- pending_confirmations: {len(pending)}",
     ]
+    try:
+        from data_agent.agent.execution_scope import current_execution_scope
+        from data_agent.session.task_manager import task_manager
+
+        execution_scope = current_execution_scope(
+            task_manager,
+            state.session_id,
+            state.project_name,
+        )
+        if execution_scope.active:
+            datasets = ",".join(sorted(execution_scope.allowed_datasets)) or "-"
+            lines.append(
+                f"- current_task_scope: task_id={execution_scope.task_id}, "
+                f"step_id={execution_scope.step_id or '-'}, "
+                f"mode={execution_scope.combination_mode or '-'}, datasets={datasets}"
+            )
+    except Exception:
+        pass
     contract_refs = _compact_trust_refs(
         state.dataset_contracts,
         ("id", "dataset", "quality_status"),
