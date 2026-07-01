@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from data_agent.agent.evidence_compatibility import compare_measurements
+from data_agent.agent.evidence_contracts import validate_stage3c0b_measurement
 
 
 REQUIRED_EVIDENCE_FIELDS = (
@@ -203,13 +204,16 @@ def _comparison_measurements(
     valid_measurements: list[dict[str, Any]] = []
     issues: list[str] = []
     for index, measurement in enumerate(measurements):
-        if not isinstance(measurement, dict):
+        validation = validate_stage3c0b_measurement(measurement, index=index)
+        if not validation.ok:
             issues.append(
                 "Measurement compatibility failed: "
-                f"comparison evidence {record.get('id')} has invalid measurement at index {index}"
+                f"comparison evidence {record.get('id')} has invalid measurement at index {index}: "
+                f"{validation.error_type}"
             )
             continue
-        validity = compare_measurements(measurement, measurement)
+        normalized_measurement = validation.record
+        validity = compare_measurements(normalized_measurement, normalized_measurement)
         if not validity.compatible:
             issues.append(
                 "Measurement compatibility failed: "
@@ -217,7 +221,7 @@ def _comparison_measurements(
                 f"{validity.reason_code}"
             )
             continue
-        valid_measurements.append(measurement)
+        valid_measurements.append(normalized_measurement)
     return valid_measurements, issues
 
 

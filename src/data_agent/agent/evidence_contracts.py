@@ -102,6 +102,38 @@ def _error(error_type: str, message: str, **details: Any) -> EvidenceValidationR
     return EvidenceValidationResult(False, error_type=error_type, message=message, details=details)
 
 
+def validate_stage3c0b_measurement(
+    measurement: Any,
+    *,
+    index: int = 0,
+) -> EvidenceValidationResult:
+    if not isinstance(measurement, dict):
+        return _error(
+            "invalid_measurement",
+            "Each Stage 3C0B measurement must be an object.",
+            index=index,
+        )
+
+    missing_measurement_fields = [
+        field_name
+        for field_name in MEASUREMENT_FIELDS
+        if field_name not in measurement or _missing(measurement.get(field_name))
+    ]
+    if missing_measurement_fields:
+        return _error(
+            "missing_measurement_fields",
+            "Stage 3C0B measurement is missing required fields.",
+            index=index,
+            missing=missing_measurement_fields,
+        )
+
+    normalized = dict(measurement)
+    for field_name in NORMALIZED_MEASUREMENT_TEXT_FIELDS:
+        if field_name in normalized:
+            normalized[field_name] = _text(normalized[field_name])
+    return EvidenceValidationResult(True, record=normalized)
+
+
 def validate_stage3c0b_evidence(
     record: Any,
     *,
@@ -146,37 +178,17 @@ def validate_stage3c0b_evidence(
             "Stage 3C0B EvidenceRecord requires a non-empty measurements list.",
         )
 
+    normalized_measurements = []
     for index, measurement in enumerate(measurements):
-        if not isinstance(measurement, dict):
-            return _error(
-                "invalid_measurement",
-                "Each Stage 3C0B measurement must be an object.",
-                index=index,
-            )
-        missing_measurement_fields = [
-            field_name
-            for field_name in MEASUREMENT_FIELDS
-            if field_name not in measurement or _missing(measurement.get(field_name))
-        ]
-        if missing_measurement_fields:
-            return _error(
-                "missing_measurement_fields",
-                "Stage 3C0B measurement is missing required fields.",
-                index=index,
-                missing=missing_measurement_fields,
-            )
+        measurement_validation = validate_stage3c0b_measurement(measurement, index=index)
+        if not measurement_validation.ok:
+            return measurement_validation
+        normalized_measurements.append(measurement_validation.record)
 
     normalized = dict(record)
     for field_name in NORMALIZED_EVIDENCE_TEXT_FIELDS:
         if field_name in normalized:
             normalized[field_name] = _text(normalized[field_name])
-    normalized_measurements = []
-    for measurement in measurements:
-        normalized_measurement = dict(measurement)
-        for field_name in NORMALIZED_MEASUREMENT_TEXT_FIELDS:
-            if field_name in normalized_measurement:
-                normalized_measurement[field_name] = _text(normalized_measurement[field_name])
-        normalized_measurements.append(normalized_measurement)
     normalized["measurements"] = normalized_measurements
     normalized["id"] = evidence_id_for(
         normalized.get("plan_id"),

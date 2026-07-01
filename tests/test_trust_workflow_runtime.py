@@ -225,6 +225,21 @@ def test_runtime_verifies_only_current_plan_claims_and_evidence():
     assert ref["claim_count"] == 1
 
 
+def test_runtime_falls_back_to_analysis_spec_when_analysis_plan_id_is_blank():
+    state = AnalysisSessionState(session_id="runtime_verify_analysis_spec_fallback")
+    state.analysis_plan = {"id": "   "}
+    state.analysis_spec = {"id": "plan_current"}
+    state.evidence_records = [
+        _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
+    ]
+
+    ref = maybe_verify_turn_claims("summarize current conversion", state)
+
+    assert ref is not None
+    assert ref["overall_status"] == "pass"
+    assert ref["evidence_signature"].endswith("|plan:plan_current")
+
+
 def test_runtime_verification_deduplicates_latest_evidence_signature():
     state = AnalysisSessionState(session_id="runtime_verify_dedupe")
     state.evidence_records = [{
