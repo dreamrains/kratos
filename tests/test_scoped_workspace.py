@@ -1,0 +1,333 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from dataclasses import FrozenInstanceError
+
+import pandas as pd
+import pytest
+
+from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.session.task_manager import TaskManager
+from data_agent.session.workspace import Workspace, workspace
+from data_agent.agent.loop import AgentLoop
+from data_agent.llm.client import Response, ToolCall
+from data_agent.tools.registry import ToolDefinition, registry
+
+
+def _stage3c0b_task(
+    manager: TaskManager,
+    *,
+    session_id: str = "s1",
+    project_name: str = "",
+    datasets: list[str] | None = None,
+    mode: str = "single",
+    status: str = "in_progress",
+) -> dict:
+    plan = manager.create_plan(session_id=session_id, project_name=project_name, source="analysis_plan")
+    task = manager.create(
+        "analyze",
+        session_id=session_id,
+        project_name=project_name,
+        plan_id=plan["id"],
+        analysis_plan_id="analysis_plan_1",
+        step_id="step_1",
+        dataset_inputs=datasets or ["bound"],
+        dataset_contract_ids=["contract_1"],
+        combination_mode=mode,
+    )
+    manager.update(task["id"], status=status)
+    return task
+
+
+def _bind_manager(monkeypatch, manager: TaskManager) -> None:
+    import data_agent.session.task_manager as task_manager_module
+
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+
+
+def _install_unclassified_reader(monkeypatch, name: str) -> None:
+    monkeypatch.setitem(
+        registry._tools,
+        name,
+        ToolDefinition(
+            name=name,
+            description="unclassified reader",
+            func=lambda: str(workspace.get("secret")),
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+
+def test_workspace_scope_snapshot_is_immutable_and_stably_fingerprinted():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    first = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        task_id=7,
+        step_id="step_1",
+        allowed_datasets=frozenset({"b", "a"}),
+        dataset_contract_ids=frozenset({"contract_1"}),
+    )
+    reordered = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        task_id=7,
+        step_id="step_1",
+        allowed_datasets=frozenset({"a", "b"}),
+        dataset_contract_ids=frozenset({"contract_1"}),
+    )
+
+    assert first.fingerprint == reordered.fingerprint
+    assert first.fingerprint.startswith("sha256:")
+    with pytest.raises(FrozenInstanceError):
+        first.phase = "legacy"
+
+
+def test_resolver_uses_exact_blank_inbox_scope_and_active_plan(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    inbox = _stage3c0b_task(manager, datasets=["inbox"])
+    _stage3c0b_task(manager, project_name="p1", datasets=["project"])
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+
+    assert scope.task_id == inbox["id"]
+    assert scope.project_name == ""
+    assert scope.allowed_datasets == frozenset({"inbox"})
+
+
+def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    task = _stage3c0b_task(manager, status="pending")
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+
+    assert scope.plan_id == manager.get_active_plan_id("s1", "")
+    assert scope.phase == "error"
+    assert scope.task_id == 0
+    assert scope.error_type == "stage3c0b_current_task_missing"
+    assert task["id"]
+
+
+def test_scoped_proxy_hides_unbound_dataset_and_returns_read_copies(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    ctx = AgentContext(session_id="s1", workspace=store)
+
+    with use_agent_context(ctx):
+        ctx.refresh_workspace_scope()
+        assert set(workspace.list_datasets()) == {"bound"}
+        assert workspace.exists("bound") is True
+        assert workspace.exists("secret") is False
+        assert workspace.get("secret") is None
+        assert workspace.get_metadata("secret") == {}
+        assert set(workspace._datasets) == {"bound"}
+        frame = workspace.get("bound")
+        frame.loc[0, "value"] = 100
+        assert workspace.get("bound").loc[0, "value"] == 1
+
+
+def test_synthesis_hides_all_raw_details_and_blocks_writes(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"], mode="synthesis")
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"secret_column": [9876]}))
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope()
+        assert workspace.list_datasets() == {}
+        assert workspace.get("bound") is None
+        assert workspace.get_metadata("bound") == {}
+        assert workspace.get_transform_log() == []
+        assert workspace.add("new", pd.DataFrame({"x": [1]})) == "Error: synthesis_cannot_mutate_raw_data"
+        assert store.get("new") is None
+
+
+def test_planning_exposes_schema_quality_and_bounded_preview_only(monkeypatch):
+    store = Workspace()
+    store.add("orders", pd.DataFrame({"order_id": [1, 2, 3], "amount": [10, 20, 30]}))
+    store.set_metadata("orders", "quality", {"missing": 0})
+    ctx = AgentContext(session_id="s1", workspace=store)
+
+    with use_agent_context(ctx):
+        with ctx.planning_workspace_scope(["orders"], preview_rows=2):
+            assert workspace.get("orders") is None
+            assert workspace.planning_schema("orders") == ["order_id", "amount"]
+            assert workspace.planning_quality("orders") == {"missing": 0}
+            preview = workspace.planning_preview("orders", rows=100)
+            assert list(preview) == [
+                {"order_id": 1, "amount": 10},
+                {"order_id": 2, "amount": 20},
+            ]
+
+
+def test_contextvar_scope_is_isolated_and_propagates_to_worker(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, session_id="s1", datasets=["one"])
+    _stage3c0b_task(manager, session_id="s2", datasets=["two"])
+    _bind_manager(monkeypatch, manager)
+    one = AgentContext(session_id="s1", workspace=Workspace())
+    two = AgentContext(session_id="s2", workspace=Workspace())
+    one.workspace.add("one", pd.DataFrame({"x": [1]}))
+    one.workspace.add("two", pd.DataFrame({"x": [2]}))
+    two.workspace.add("one", pd.DataFrame({"x": [1]}))
+    two.workspace.add("two", pd.DataFrame({"x": [2]}))
+
+    with use_agent_context(one):
+        one.refresh_workspace_scope()
+        copied = copy_context()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            worker_names = pool.submit(copied.run, lambda: set(workspace.list_datasets())).result()
+    with use_agent_context(two):
+        two.refresh_workspace_scope()
+        main_names = set(workspace.list_datasets())
+
+    assert worker_names == {"one"}
+    assert main_names == {"two"}
+
+
+def test_loop_profile_and_session_meta_use_scoped_facade(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    monkeypatch.setattr(loop, "_build_retrieval_query", lambda messages: "")
+    loop.context.workspace.add("bound", pd.DataFrame({"visible": [1]}))
+    loop.context.workspace.add("secret", pd.DataFrame({"hidden_column": [9876]}))
+
+    with use_agent_context(loop.context):
+        loop.context.refresh_workspace_scope()
+        profile = loop._current_dataset_profile()
+        meta = loop._build_session_meta()
+
+    assert "bound" in profile and "visible" in profile
+    assert "secret" not in profile and "hidden_column" not in profile
+    assert set(meta["datasets"]) == {"bound"}
+
+
+def test_prompt_cache_invalidates_on_scope_and_bundle_fingerprint(tmp_path, monkeypatch):
+    from data_agent.agent.data_understanding import build_data_understanding_bundle
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    first = _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    first_bundle = build_data_understanding_bundle(
+        datasets=[{
+            "dataset": "bound",
+            "dataset_contract_id": "contract_1",
+            "grain": "one row",
+            "rows": 1,
+            "columns": [{"name": "value", "type": "number"}],
+        }],
+        quality_findings=[{"finding": "first"}],
+        relationship_candidates=[],
+    )
+    second_bundle = build_data_understanding_bundle(
+        datasets=[{
+            "dataset": "bound",
+            "dataset_contract_id": "contract_1",
+            "grain": "one row",
+            "rows": 1,
+            "columns": [{"name": "value", "type": "number"}],
+        }],
+        quality_findings=[{"finding": "second"}],
+        relationship_candidates=[],
+    )
+    loop.context.analysis_state.data_understanding_bundles = [first_bundle]
+    builds: list[str] = []
+    monkeypatch.setattr(loop, "_build_system_prompt", lambda: builds.append("build") or f"prompt-{len(builds)}")
+
+    assert loop._get_system_prompt() == "prompt-1"
+    assert loop._get_system_prompt() == "prompt-1"
+    loop.context.analysis_state.data_understanding_bundles.append({"data_fingerprint": "sha256:not-valid"})
+    assert loop._get_system_prompt() == "prompt-1"
+    loop.context.analysis_state.data_understanding_bundles.append(second_bundle)
+    assert loop._get_system_prompt() == "prompt-2"
+
+    manager.update(first["id"], status="completed")
+    second = manager.create(
+        "synthesis",
+        session_id="s1",
+        plan_id=manager.get_active_plan_id("s1", ""),
+        analysis_plan_id="analysis_plan_1",
+        step_id="synthesis",
+        combination_mode="synthesis",
+    )
+    manager.update(second["id"], status="in_progress")
+    assert loop._get_system_prompt() == "prompt-3"
+    assert len(builds) == 3
+
+
+def test_single_parallel_and_streaming_unclassified_tools_cannot_bypass_scope(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace.add("bound", pd.DataFrame({"visible": [1]}))
+    loop.context.workspace.add("secret", pd.DataFrame({"token": [9876]}))
+    for name in ("unknown_single", "unknown_parallel", "unknown_stream"):
+        _install_unclassified_reader(monkeypatch, name)
+
+    single = ToolCall(id="single", name="unknown_single", arguments={})
+    loop._execute_single_tool(single, [single], 0)
+    parallel = loop._execute_tools_parallel([
+        ToolCall(id="parallel", name="unknown_parallel", arguments={})
+    ])
+    list(loop._process_tool_calls(
+        Response(tool_calls=[ToolCall(id="stream", name="unknown_stream", arguments={})]),
+        round_num=1,
+    ))
+
+    outputs = [loop.messages[-2]["content"], parallel[0][1], loop.messages[-1]["content"]]
+    assert all("9876" not in output for output in outputs)
+    assert all("None" in output for output in outputs)
+
+
+def test_synthesis_system_prompt_omits_dataset_names_and_schema(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["secret_dataset"], mode="synthesis")
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    monkeypatch.setattr(loop, "_build_retrieval_query", lambda messages: "")
+    loop.messages.append({"role": "user", "content": "summarize verified evidence"})
+    loop.context.workspace.add("secret_dataset", pd.DataFrame({"secret_column": [9876]}))
+    loop.context.analysis_state.dataset_contracts = [
+        {"id": "contract_1", "dataset": "secret_dataset", "quality_status": "valid"}
+    ]
+
+    prompt = loop._get_system_prompt()
+
+    assert "secret_dataset" not in prompt
+    assert "secret_column" not in prompt
+
+
+def test_error_scope_prompt_exposes_control_error_without_workspace_details(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["secret_dataset"], status="pending")
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    monkeypatch.setattr(loop, "_build_retrieval_query", lambda messages: "")
+    loop.context.workspace.add("secret_dataset", pd.DataFrame({"secret_column": [9876]}))
+
+    prompt = loop._get_system_prompt()
+
+    assert "stage3c0b_current_task_missing" in prompt
+    assert "secret_dataset" not in prompt
+    assert "secret_column" not in prompt

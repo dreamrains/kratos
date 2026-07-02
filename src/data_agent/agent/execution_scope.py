@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 from typing import Any
 
 
@@ -16,6 +18,58 @@ class ExecutionScope:
     dataset_contract_ids: set[str] = field(default_factory=set)
     error_type: str = ""
     message: str = ""
+
+
+@dataclass(frozen=True)
+class WorkspaceScopeSnapshot:
+    """Immutable identity of the raw-data visibility boundary for one context."""
+
+    phase: str = "legacy"
+    session_id: str = ""
+    project_name: str = ""
+    plan_id: str = ""
+    task_id: int = 0
+    step_id: str = ""
+    allowed_datasets: frozenset[str] = field(default_factory=frozenset)
+    dataset_contract_ids: frozenset[str] = field(default_factory=frozenset)
+    error_type: str = ""
+    message: str = ""
+    combination_mode: str = ""
+
+    def __post_init__(self) -> None:
+        if self.phase not in {"legacy", "planning", "execution", "synthesis", "error"}:
+            raise ValueError(f"Unsupported workspace scope phase: {self.phase}")
+        object.__setattr__(self, "session_id", _text(self.session_id))
+        object.__setattr__(self, "project_name", _text(self.project_name))
+        object.__setattr__(self, "plan_id", _text(self.plan_id))
+        object.__setattr__(self, "step_id", _text(self.step_id))
+        object.__setattr__(self, "allowed_datasets", frozenset(_text_set(self.allowed_datasets)))
+        object.__setattr__(self, "dataset_contract_ids", frozenset(_text_set(self.dataset_contract_ids)))
+        object.__setattr__(self, "error_type", _text(self.error_type))
+        object.__setattr__(self, "message", _text(self.message))
+        object.__setattr__(self, "combination_mode", _text(self.combination_mode).casefold())
+
+    @property
+    def fingerprint(self) -> str:
+        payload = {
+            "phase": self.phase,
+            "session_id": self.session_id,
+            "project_name": self.project_name,
+            "plan_id": self.plan_id,
+            "task_id": self.task_id,
+            "step_id": self.step_id,
+            "allowed_datasets": sorted(self.allowed_datasets),
+            "dataset_contract_ids": sorted(self.dataset_contract_ids),
+            "error_type": self.error_type,
+            "message": self.message,
+            "combination_mode": self.combination_mode,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @property
+    def active(self) -> bool:
+        return self.phase in {"execution", "synthesis"}
 
 
 @dataclass(frozen=True)
@@ -76,34 +130,91 @@ def _is_stage3c0b_task(task: dict[str, Any]) -> bool:
     return bool(_text(task.get("analysis_plan_id")) or _text(task.get("step_id")))
 
 
-def current_execution_scope(manager, session_id: str, project_name: str = "") -> ExecutionScope:
-    """Return the unique in-progress Stage 3C0B task scope for this session/project."""
-    active_tasks = manager.list_active_for_scope(
-        session_id=session_id,
-        project_name=project_name,
-    )
-    in_progress = [
+def resolve_workspace_scope(manager, session_id: str, project_name: str = "") -> WorkspaceScopeSnapshot:
+    """Resolve the exact active Stage 3C0B plan without wildcard scope semantics."""
+    session = _text(session_id)
+    project = _text(project_name)
+    plan_id = _text(manager.get_active_plan_id(session, project))
+    if not plan_id:
+        return WorkspaceScopeSnapshot(session_id=session, project_name=project)
+
+    tasks = [
         task
-        for task in active_tasks
-        if task.get("status") == "in_progress" and _is_stage3c0b_task(task)
+        for task in manager.list_all(include_stale=True)
+        if _text(task.get("session_id")) == session
+        and _text(task.get("project_name")) == project
+        and _text(task.get("plan_id")) == plan_id
+        and task.get("status") not in {"deleted", "archived", "superseded"}
     ]
-    if not in_progress:
-        return ExecutionScope(active=False)
-    if len(in_progress) > 1:
-        return ExecutionScope(
-            active=False,
-            error_type="multiple_in_progress_tasks",
-            message="Stage 3C0B allows only one in-progress task per session and project.",
+    stage_tasks = [task for task in tasks if _is_stage3c0b_task(task)]
+    if not stage_tasks:
+        return WorkspaceScopeSnapshot(session_id=session, project_name=project)
+
+    in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+    if len(in_progress) != 1:
+        error_type = (
+            "multiple_in_progress_tasks"
+            if len(in_progress) > 1
+            else "stage3c0b_current_task_missing"
+        )
+        message = (
+            "Stage 3C0B allows only one in-progress task per session and project."
+            if len(in_progress) > 1
+            else "The active Stage 3C0B plan has no unique in-progress task."
+        )
+        return WorkspaceScopeSnapshot(
+            phase="error",
+            session_id=session,
+            project_name=project,
+            plan_id=plan_id,
+            error_type=error_type,
+            message=message,
         )
 
     task = in_progress[0]
-    return ExecutionScope(
-        active=True,
+    mode = _text(task.get("combination_mode")).casefold()
+    return WorkspaceScopeSnapshot(
+        phase="synthesis" if mode == "synthesis" else "execution",
+        session_id=session,
+        project_name=project,
+        plan_id=plan_id,
         task_id=int(task.get("id") or 0),
         step_id=_text(task.get("step_id")),
-        combination_mode=_text(task.get("combination_mode")).casefold(),
-        allowed_datasets=_text_set(task.get("dataset_inputs")),
-        dataset_contract_ids=_text_set(task.get("dataset_contract_ids")),
+        allowed_datasets=frozenset(_text_set(task.get("dataset_inputs"))),
+        dataset_contract_ids=frozenset(_text_set(task.get("dataset_contract_ids"))),
+        combination_mode=mode,
+    )
+
+
+def planning_workspace_scope_snapshot(
+    session_id: str,
+    project_name: str = "",
+    *,
+    allowed_datasets: Any = (),
+    plan_id: str = "",
+) -> WorkspaceScopeSnapshot:
+    """Create a schema/quality/preview-only scope for deterministic planning."""
+    return WorkspaceScopeSnapshot(
+        phase="planning",
+        session_id=_text(session_id),
+        project_name=_text(project_name),
+        plan_id=_text(plan_id),
+        allowed_datasets=frozenset(_text_set(allowed_datasets)),
+    )
+
+
+def current_execution_scope(manager, session_id: str, project_name: str = "") -> ExecutionScope:
+    """Return the unique in-progress Stage 3C0B task scope for this session/project."""
+    snapshot = resolve_workspace_scope(manager, session_id, project_name)
+    return ExecutionScope(
+        active=snapshot.active,
+        task_id=snapshot.task_id,
+        step_id=snapshot.step_id,
+        combination_mode=snapshot.combination_mode,
+        allowed_datasets=set(snapshot.allowed_datasets),
+        dataset_contract_ids=set(snapshot.dataset_contract_ids),
+        error_type=snapshot.error_type,
+        message=snapshot.message,
     )
 
 

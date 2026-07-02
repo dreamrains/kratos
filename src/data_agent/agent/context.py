@@ -10,7 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterable, Optional
 
 
 @dataclass
@@ -26,6 +26,8 @@ class AgentContext:
     turn_state: object | None = None
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
+    workspace_scope: object | None = None
+    planning_preview_rows: int = 5
 
     @property
     def object_name(self) -> Optional[str]:
@@ -41,6 +43,52 @@ class AgentContext:
         self.active_tool_groups = {"core"}
         self.executed_tools.clear()
         self.turn_state = None
+
+    def refresh_workspace_scope(self):
+        """Atomically refresh this context's exact task-bound workspace scope."""
+        from data_agent.agent.execution_scope import resolve_workspace_scope
+        from data_agent.session.task_manager import task_manager
+
+        self.workspace_scope = resolve_workspace_scope(
+            task_manager,
+            self.session_id,
+            self.project_name or "",
+        )
+        return self.workspace_scope
+
+    @contextmanager
+    def bind_workspace_scope(self, snapshot):
+        previous = self.workspace_scope
+        self.workspace_scope = snapshot
+        try:
+            yield snapshot
+        finally:
+            self.workspace_scope = previous
+
+    @contextmanager
+    def planning_workspace_scope(
+        self,
+        datasets: Iterable[str],
+        *,
+        preview_rows: int = 5,
+        plan_id: str = "",
+    ):
+        """Bind a planning-only scope which never grants unrestricted frames."""
+        from data_agent.agent.execution_scope import planning_workspace_scope_snapshot
+
+        snapshot = planning_workspace_scope_snapshot(
+            self.session_id,
+            self.project_name or "",
+            allowed_datasets=list(datasets),
+            plan_id=plan_id,
+        )
+        previous_rows = self.planning_preview_rows
+        self.planning_preview_rows = max(0, min(int(preview_rows), 20))
+        try:
+            with self.bind_workspace_scope(snapshot):
+                yield snapshot
+        finally:
+            self.planning_preview_rows = previous_rows
 
 
 _current_context: ContextVar[AgentContext | None] = ContextVar(

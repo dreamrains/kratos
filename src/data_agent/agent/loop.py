@@ -271,6 +271,7 @@ class AgentLoop:
         self._last_data_file = ""
         self._prompt_cache: str = ""
         self._prompt_cache_dirty: bool = True
+        self._prompt_cache_key: tuple[str, str] | None = None
         self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
         self._compact_state = CompactState()
@@ -547,7 +548,17 @@ class AgentLoop:
 
         try:
             from data_agent.agent.analysis_state import analysis_state_summary
-            analysis_ctx = analysis_state_summary(self.context.analysis_state)
+            scope = self.context.workspace_scope or self.context.refresh_workspace_scope()
+            if scope.phase in {"synthesis", "error"}:
+                state = self.context.analysis_state
+                analysis_ctx = "\n".join([
+                    f"- session_id: {getattr(state, 'session_id', self.session_id)}",
+                    f"- evidence_records: {len(getattr(state, 'evidence_records', []) or [])}",
+                    f"- verification_reports: {len(getattr(state, 'verification_reports', []) or [])}",
+                    f"- pending_confirmations: {len(getattr(state, 'pending_confirmations', []) or [])}",
+                ])
+            else:
+                analysis_ctx = analysis_state_summary(self.context.analysis_state)
             if analysis_ctx:
                 session_ctx = (session_ctx + "\n\n" if session_ctx else "") + "<analysis_state>\n" + analysis_ctx + "\n</analysis_state>"
         except Exception:
@@ -620,9 +631,21 @@ class AgentLoop:
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
         with use_agent_context(self.context):
-            if self._prompt_cache_dirty or not self._prompt_cache:
+            scope = self.context.refresh_workspace_scope()
+            bundle_fingerprint = ""
+            state = getattr(self.context, "analysis_state", None)
+            from data_agent.agent.data_understanding import validate_data_understanding_bundle
+
+            for bundle in reversed(getattr(state, "data_understanding_bundles", []) or []):
+                validation = validate_data_understanding_bundle(bundle)
+                if validation.ok:
+                    bundle_fingerprint = str(validation.thaw_bundle().get("data_fingerprint") or "")
+                    break
+            cache_key = (scope.fingerprint, bundle_fingerprint)
+            if self._prompt_cache_dirty or not self._prompt_cache or cache_key != self._prompt_cache_key:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
+                self._prompt_cache_key = cache_key
             prompt = self._prompt_cache
             synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
             if synthesis_instruction:
@@ -823,6 +846,9 @@ class AgentLoop:
         logger.info("Quality reminder injected", extra={"extra_data": {"session_id": self.session_id}})
 
     def _execution_prompt_hint(self) -> str:
+        scope = self.context.workspace_scope or self.context.refresh_workspace_scope()
+        if scope.phase == "error":
+            return f"{scope.error_type}: {scope.message}"
         turn_state = getattr(self.context, "turn_state", None)
         if turn_state is None:
             return ""
@@ -1031,9 +1057,8 @@ class AgentLoop:
         return len(getattr(turn_state, "tool_errors", []) or [])
 
     def _current_dataset_profile(self) -> str:
-        workspace_obj = getattr(self.context, "workspace", None)
-        if workspace_obj is None:
-            return ""
+        from data_agent.session.workspace import workspace as workspace_obj
+
         try:
             datasets = workspace_obj.list_datasets()
         except Exception:
@@ -1510,7 +1535,7 @@ class AgentLoop:
             loaded_skills = [s.name for s in self._skill_loader.list_loaded()]
 
         return {
-            "project_name": workspace.active_project,
+            "project_name": self.context.project_name,
             "datasets": {
                 name: {"rows": info["rows"], "columns": info["columns"]}
                 for name, info in datasets.items()
@@ -1717,6 +1742,7 @@ class AgentLoop:
         import time
 
         for i, tc in enumerate(response.tool_calls):
+            self.context.refresh_workspace_scope()
             # Check interrupt between tool calls
             if self._interrupt_event.is_set():
                 self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
@@ -1770,7 +1796,9 @@ class AgentLoop:
 
             t0 = time.monotonic()
             try:
-                tool_result = registry.execute(tc.name, tc.arguments)
+                with use_agent_context(self.context):
+                    tool_result = registry.execute(tc.name, tc.arguments)
+                self.context.refresh_workspace_scope()
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -2200,6 +2228,7 @@ class AgentLoop:
         """
         import time
 
+        self.context.refresh_workspace_scope()
         turn_state = getattr(self.context, "turn_state", None)
 
         scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
@@ -2215,7 +2244,9 @@ class AgentLoop:
             return None
 
         try:
-            tool_result = registry.execute(tc.name, tc.arguments)
+            with use_agent_context(self.context):
+                tool_result = registry.execute(tc.name, tc.arguments)
+            self.context.refresh_workspace_scope()
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -2276,13 +2307,16 @@ class AgentLoop:
 
         def _run_tool(tc):
             try:
+                self.context.refresh_workspace_scope()
                 scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
                 if scope_error:
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error)
                 t0 = time.monotonic()
-                tool_result = registry.execute(tc.name, tc.arguments)
+                with use_agent_context(self.context):
+                    tool_result = registry.execute(tc.name, tc.arguments)
+                self.context.refresh_workspace_scope()
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
