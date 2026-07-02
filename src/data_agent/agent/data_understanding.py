@@ -57,8 +57,10 @@ _IDENTIFIER_FIELDS = {
     "id",
     "left_dataset",
     "left_key",
+    "normalized_left_key",
     "right_dataset",
     "right_key",
+    "normalized_right_key",
     "name",
     "status",
 }
