@@ -302,6 +302,8 @@ def _normalize_threshold(
         return None, error
     if maximum is not None and normalized > maximum:
         return None, error
+    if normalized == 0:
+        normalized = 0.0
     return normalized, None
 
 
@@ -310,7 +312,10 @@ def _normalize_dataset_identifier(name: str, value: Any) -> tuple[str | None, st
         return None, None
     if not isinstance(value, str):
         return None, f"invalid_{name}"
-    return value.strip(), None
+    normalized = value.strip()
+    if not normalized:
+        return None, f"invalid_{name}"
+    return normalized, None
 
 
 def _supported_column_index(frame: pd.DataFrame) -> bool:

@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
 import json
+import math
 from uuid import UUID
 
 import numpy as np
@@ -453,6 +454,32 @@ def test_equivalent_numeric_threshold_inputs_have_one_canonical_identity(value):
     assert result.relationship_id == canonical.relationship_id
 
 
+@pytest.mark.parametrize("threshold", ["min_row_coverage", "max_null_rate", "max_join_multiplier"])
+@pytest.mark.parametrize("signed_zero", [-0.0, np.float64(-0.0), Decimal("-0")])
+def test_signed_zero_thresholds_use_positive_zero_records_and_identity(threshold, signed_zero):
+    frame = pd.DataFrame({"id": [1, 2]})
+    signed = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        **{threshold: signed_zero},
+    )
+    positive = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        **{threshold: 0.0},
+    )
+
+    record_value = signed.to_record()[threshold]
+    assert type(record_value) is float
+    assert record_value == 0.0
+    assert math.copysign(1.0, record_value) == 1.0
+    assert signed.relationship_id == positive.relationship_id
+
+
 @pytest.mark.parametrize(
     ("threshold", "value"),
     [
@@ -538,6 +565,41 @@ def test_invalid_dataset_identifiers_are_rejected_and_strict_json_safe(side, val
     assert result.configuration_errors == (f"invalid_{side}_dataset",)
     assert getattr(result, f"{side}_dataset") is None
     json.dumps(result.to_record(), allow_nan=False)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_whitespace_only_dataset_identifier_is_rejected_and_strict_json_safe(side):
+    kwargs = {f"{side}_dataset": "  \t\r\n "}
+    result = validate_relationship(
+        pd.DataFrame({"id": [1]}),
+        pd.DataFrame({"id": [1]}),
+        left_key="id",
+        right_key="id",
+        **kwargs,
+    )
+
+    assert result.status == "rejected"
+    assert result.risks == (f"invalid_{side}_dataset",)
+    assert result.configuration_errors == (f"invalid_{side}_dataset",)
+    assert getattr(result, f"{side}_dataset") is None
+    json.dumps(result.to_record(), allow_nan=False)
+
+
+def test_none_dataset_identifiers_remain_none_and_match_omitted_identity():
+    frame = pd.DataFrame({"id": [1, 2]})
+    explicit_none = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        left_dataset=None,
+        right_dataset=None,
+    )
+    omitted = validate_relationship(frame, frame, left_key="id", right_key="id")
+
+    assert explicit_none.status == "validated"
+    assert explicit_none.left_dataset is explicit_none.right_dataset is None
+    assert explicit_none.relationship_id == omitted.relationship_id
 
 
 def test_dataset_identifiers_are_trimmed_before_identity_while_internal_whitespace_is_preserved():
