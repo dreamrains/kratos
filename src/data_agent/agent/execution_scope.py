@@ -152,12 +152,7 @@ def resolve_workspace_scope(manager, session_id: str, project_name: str = "") ->
         and task.get("status") not in {"deleted", "archived", "superseded"}
     ]
     stage_tasks = [task for task in tasks if _is_stage3c0b_task(task)]
-    plan_source = (
-        _text(manager.get_active_plan_source(session, project))
-        if hasattr(manager, "get_active_plan_source")
-        else ""
-    )
-    if not stage_tasks and plan_source != "analysis_plan":
+    if not stage_tasks and tasks:
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
 
     in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]

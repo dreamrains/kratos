@@ -204,17 +204,18 @@ class Workspace:
 class WorkspaceProxy:
     """Context-local, scope-enforcing public workspace facade."""
 
-    def __init__(self):
+    def __init__(self, context=None):
         self.__default = Workspace()
+        self.__context = context
 
     def _scope(self):
         from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
-        ctx = get_current_context()
+        ctx = self.__context or get_current_context()
         if ctx is None:
             return WorkspaceScopeSnapshot()
-        if ctx.workspace is None:
-            ctx.workspace = Workspace()
+        if object.__getattribute__(ctx, "_AgentContext__workspace_store") is None:
+            object.__setattr__(ctx, "_AgentContext__workspace_store", Workspace())
         if ctx.workspace_scope is None:
             return ctx.refresh_workspace_scope()
         return ctx.workspace_scope
@@ -238,22 +239,25 @@ class WorkspaceProxy:
     def get(self, name: str) -> Optional[pd.DataFrame]:
         if not self._readable(name) or self._scope().phase == "planning":
             return None
-        ctx = get_current_context()
-        frame = (ctx.workspace if ctx is not None else self.__default).get(name)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        frame = storage.get(name)
         return frame.copy(deep=True) if frame is not None else None
 
     def exists(self, name: str) -> bool:
         if not self._readable(name):
             return False
-        ctx = get_current_context()
-        return name in (ctx.workspace if ctx is not None else self.__default)._datasets
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return name in storage._datasets
 
     def list_datasets(self) -> dict[str, dict]:
         scope = self._scope()
         if scope.phase in {"synthesis", "error"}:
             return {}
-        ctx = get_current_context()
-        visible = (ctx.workspace if ctx is not None else self.__default).list_datasets()
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        visible = storage.list_datasets()
         if scope.phase == "legacy":
             return copy.deepcopy(visible)
         result = {
@@ -276,8 +280,9 @@ class WorkspaceProxy:
         scope = self._scope()
         if not self._readable(name) or scope.phase in {"synthesis", "error"}:
             return None if key else {}
-        ctx = get_current_context()
-        meta = copy.deepcopy((ctx.workspace if ctx is not None else self.__default).get_metadata(name))
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        meta = copy.deepcopy(storage.get_metadata(name))
         if scope.phase == "planning":
             safe = {k: v for k, v in meta.items() if k in {"quality", "schema", "context"}}
             return safe.get(key) if key else safe
@@ -286,34 +291,38 @@ class WorkspaceProxy:
     def planning_schema(self, name: str) -> list[str]:
         if self._scope().phase != "planning" or not self._readable(name):
             return []
-        ctx = get_current_context()
-        frame = (ctx.workspace if ctx is not None else self.__default).get(name)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        frame = storage.get(name)
         return list(frame.columns) if frame is not None else []
 
     def planning_quality(self, name: str) -> Any:
         if self._scope().phase != "planning" or not self._readable(name):
             return {}
-        ctx = get_current_context()
-        return copy.deepcopy((ctx.workspace if ctx is not None else self.__default).get_metadata(name, "quality") or {})
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return copy.deepcopy(storage.get_metadata(name, "quality") or {})
 
     def planning_preview(self, name: str, *, rows: int = 5) -> list[dict[str, Any]]:
         if self._scope().phase != "planning" or not self._readable(name):
             return []
-        ctx = get_current_context()
+        ctx = self.__context or get_current_context()
         bound = getattr(ctx, "planning_preview_rows", 5)
         limit = max(0, min(int(rows), int(bound), 20))
-        frame = (ctx.workspace if ctx is not None else self.__default).get(name)
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        frame = storage.get(name)
         return copy.deepcopy(frame.head(limit).to_dict("records")) if frame is not None else []
 
     def add(self, name: str, df: pd.DataFrame) -> str:
         error = self._write_error(name)
-        ctx = get_current_context()
-        return error or (ctx.workspace if ctx is not None else self.__default).add(name, df)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return error or storage.add(name, df)
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
         scope = self._scope()
-        ctx = get_current_context()
-        storage = ctx.workspace if ctx is not None else self.__default
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
         if scope.phase == "execution" and name not in storage._datasets:
             return "Error: derived_scope_not_registered"
         error = self._write_error(name, derived=True)
@@ -321,29 +330,33 @@ class WorkspaceProxy:
 
     def remove(self, name: str) -> str:
         error = self._write_error(name)
-        ctx = get_current_context()
-        return error or (ctx.workspace if ctx is not None else self.__default).remove(name)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return error or storage.remove(name)
 
     def set_metadata(self, name: str, key: str, value: Any) -> Any:
         error = self._write_error(name)
         if error:
             return error
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).set_metadata(name, key, copy.deepcopy(value))
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.set_metadata(name, key, copy.deepcopy(value))
 
     def log_transform(self, source: str, operation: str, target: str, detail: str = "") -> Any:
         error = self._write_error(target)
         if error:
             return error
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).log_transform(source, operation, target, detail)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.log_transform(source, operation, target, detail)
 
     def get_transform_log(self) -> list[dict[str, Any]]:
         scope = self._scope()
         if scope.phase in {"synthesis", "error", "planning"}:
             return []
-        ctx = get_current_context()
-        log = (ctx.workspace if ctx is not None else self.__default).get_transform_log()
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        log = storage.get_transform_log()
         if scope.phase == "legacy":
             return copy.deepcopy(log)
         allowed = scope.allowed_datasets
@@ -358,22 +371,25 @@ class WorkspaceProxy:
         dataset_names = None if scope.phase == "legacy" else scope.allowed_datasets
         if scope.phase in {"synthesis", "error"}:
             dataset_names = ()
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).save_meta(session_id, dataset_names)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.save_meta(session_id, dataset_names)
 
     def persist_dataset(self, session_id: str, name: str) -> str | None:
         if not self._readable(name):
             return None
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).persist_dataset(session_id, name)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.persist_dataset(session_id, name)
 
     def set_object(self, name: str) -> str:
         return self.set_project(name)
 
     def set_project(self, name: str) -> str:
         self._scope()
-        ctx = get_current_context()
-        result = (ctx.workspace if ctx is not None else self.__default).set_project(name)
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        result = storage.set_project(name)
         if ctx is not None:
             ctx.refresh_workspace_scope()
         return result
@@ -383,8 +399,9 @@ class WorkspaceProxy:
 
     def clear_project(self) -> str:
         self._scope()
-        ctx = get_current_context()
-        result = (ctx.workspace if ctx is not None else self.__default).clear_project()
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        result = storage.clear_project()
         if ctx is not None:
             ctx.refresh_workspace_scope()
         return result
@@ -395,28 +412,32 @@ class WorkspaceProxy:
     @property
     def _datasets(self):
         if self._scope().phase == "legacy":
-            ctx = get_current_context()
-            return (ctx.workspace if ctx is not None else self.__default)._datasets
+            ctx = self.__context or get_current_context()
+            storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+            return storage._datasets
         return {name: self.get(name) for name in self.list_datasets()}
 
     @property
     def _metadata(self):
         if self._scope().phase == "legacy":
-            ctx = get_current_context()
-            return (ctx.workspace if ctx is not None else self.__default)._metadata
+            ctx = self.__context or get_current_context()
+            storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+            return storage._metadata
         return {name: self.get_metadata(name) for name in self.list_datasets()}
 
     @property
     def active_object(self) -> Optional[str]:
         self._scope()
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).active_object
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.active_object
 
     @property
     def active_project(self) -> Optional[str]:
         self._scope()
-        ctx = get_current_context()
-        return (ctx.workspace if ctx is not None else self.__default).active_project
+        ctx = self.__context or get_current_context()
+        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
+        return storage.active_project
 
 
 # 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。

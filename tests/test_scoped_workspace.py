@@ -8,7 +8,7 @@ import json
 import pandas as pd
 import pytest
 
-from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.agent.context import AgentContext, get_current_context, use_agent_context
 from data_agent.session.task_manager import TaskManager
 from data_agent.session.workspace import Workspace, workspace
 from data_agent.agent.loop import AgentLoop
@@ -151,7 +151,7 @@ def test_active_analysis_plan_without_task_records_fails_closed(tmp_path):
     assert scope.error_type == "stage3c0b_current_task_missing"
 
 
-def test_active_non_stage3c0b_plan_without_task_records_remains_legacy(tmp_path):
+def test_active_plan_without_task_records_fails_closed_conservatively(tmp_path):
     from data_agent.agent.execution_scope import resolve_workspace_scope
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
@@ -159,7 +159,17 @@ def test_active_non_stage3c0b_plan_without_task_records_remains_legacy(tmp_path)
 
     scope = resolve_workspace_scope(manager, "s1", "")
 
-    assert scope.phase == "legacy"
+    assert scope.phase == "error"
+    assert scope.error_type == "stage3c0b_current_task_missing"
+
+
+def test_task_manager_does_not_introduce_active_plan_provenance_sidecar(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+
+    manager.create_plan(session_id="s1", source="analysis_plan")
+
+    assert not (tmp_path / "tasks" / "active_plan_sources.json").exists()
+    assert not hasattr(manager, "get_active_plan_source")
 
 
 def test_scoped_proxy_hides_unbound_dataset_and_returns_read_copies(tmp_path, monkeypatch):
@@ -199,6 +209,42 @@ def test_synthesis_hides_all_raw_details_and_blocks_writes(tmp_path, monkeypatch
         assert workspace.get_transform_log() == []
         assert workspace.add("new", pd.DataFrame({"x": [1]})) == "Error: synthesis_cannot_mutate_raw_data"
         assert store.get("new") is None
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "write_error"),
+    [
+        ("synthesis", "in_progress", "Error: synthesis_cannot_mutate_raw_data"),
+        ("single", "pending", "Error: error_cannot_mutate_raw_data"),
+    ],
+)
+def test_public_context_workspace_cannot_bypass_synthesis_or_error_scope(
+    tmp_path,
+    monkeypatch,
+    mode,
+    status,
+    write_error,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["secret"], mode=mode, status=status)
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("secret", pd.DataFrame({"secret_column": [9876]}))
+    store.set_metadata("secret", "context", "private context")
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope()
+        public_workspace = get_current_context().workspace
+        assert not isinstance(public_workspace, Workspace)
+        assert public_workspace.get("secret") is None
+        assert public_workspace.list_datasets() == {}
+        assert public_workspace._datasets == {}
+        assert public_workspace._metadata == {}
+        assert public_workspace.add("new", pd.DataFrame({"x": [1]})) == write_error
+        assert public_workspace.set_metadata("secret", "context", "changed") == write_error
+
+    assert store.get("new") is None
+    assert store.get_metadata("secret", "context") == "private context"
 
 
 def test_planning_exposes_schema_quality_and_bounded_preview_only(monkeypatch):
@@ -258,6 +304,17 @@ def test_contextvar_scope_is_isolated_and_propagates_to_worker(tmp_path, monkeyp
 
     assert worker_names == {"one"}
     assert main_names == {"two"}
+
+
+def test_explicit_blank_project_name_does_not_fall_back_to_object_name():
+    loop = AgentLoop(
+        client=object(),
+        session_id="s1",
+        object_name="legacy-project",
+        project_name="",
+    )
+
+    assert loop.context.project_name == ""
 
 
 def test_copied_context_keeps_scope_snapshot_when_original_context_is_rebound():

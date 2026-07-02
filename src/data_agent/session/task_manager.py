@@ -251,9 +251,6 @@ class TaskManager:
     def _active_plans_path(self) -> Path:
         return self.dir / "active_plans.json"
 
-    def _active_plan_sources_path(self) -> Path:
-        return self.dir / "active_plan_sources.json"
-
     def _plan_key(self, session_id: str = "", project_name: str = "") -> str:
         return f"{session_id or ''}::{project_name or ''}"
 
@@ -277,16 +274,6 @@ class TaskManager:
         value = active.get(self._plan_key(session_id, project_name), "")
         return str(value or "")
 
-    def get_active_plan_source(self, session_id: str = "", project_name: str = "") -> str:
-        path = self._active_plan_sources_path()
-        if not path.exists():
-            return ""
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return ""
-        return str(data.get(self._plan_key(session_id, project_name), "") or "") if isinstance(data, dict) else ""
-
     def _get_active_plan_ids_for_scope(self, session_id: str = "", project_name: str = "") -> set[str]:
         active = self._read_active_plans()
         if session_id and not project_name:
@@ -298,26 +285,7 @@ class TaskManager:
         active_plan_id = active.get(self._plan_key(session_id, project_name), "")
         return {str(active_plan_id)} if active_plan_id else set()
 
-    def _set_active_plan_id(
-        self,
-        plan_id: str,
-        session_id: str = "",
-        project_name: str = "",
-        source: str = "",
-    ) -> None:
-        sources_path = self._active_plan_sources_path()
-        try:
-            sources = (
-                json.loads(sources_path.read_text(encoding="utf-8"))
-                if sources_path.exists()
-                else {}
-            )
-        except (json.JSONDecodeError, OSError):
-            sources = {}
-        if not isinstance(sources, dict):
-            sources = {}
-        sources[self._plan_key(session_id, project_name)] = source
-        sources_path.write_text(json.dumps(sources, ensure_ascii=False, indent=2), encoding="utf-8")
+    def _set_active_plan_id(self, plan_id: str, session_id: str = "", project_name: str = "") -> None:
         active = self._read_active_plans()
         active[self._plan_key(session_id, project_name)] = plan_id
         self._write_active_plans(active)
@@ -376,7 +344,7 @@ class TaskManager:
         version = max(existing_versions, default=0) + 1
         plan_id = f"plan_{uuid.uuid4().hex[:10]}"
         self._supersede_active_plan(session_id=session_id, project_name=project_name, superseded_by=plan_id)
-        self._set_active_plan_id(plan_id, session_id, project_name, source)
+        self._set_active_plan_id(plan_id, session_id, project_name)
         return {
             "id": plan_id,
             "session_id": session_id,

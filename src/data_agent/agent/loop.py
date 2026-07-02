@@ -258,7 +258,7 @@ class AgentLoop:
         cfg = get_config()
         self.client = client or LLMClient()
         self.session_id = session_id or uuid.uuid4().hex[:12]
-        active_project = project_name or object_name
+        active_project = project_name if project_name is not None else object_name
         self.context = AgentContext(
             session_id=self.session_id,
             project_name=active_project,

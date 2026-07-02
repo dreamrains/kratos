@@ -17,7 +17,9 @@ from typing import Iterable, Optional
 class AgentContext:
     session_id: str
     project_name: Optional[str] = None
-    workspace: object | None = None
+    workspace: object | None = field(default=None, repr=False, compare=False)
+    __workspace_store: object | None = field(default=None, init=False, repr=False, compare=False)
+    __workspace_facade: object | None = field(default=None, init=False, repr=False, compare=False)
     active_tool_groups: set[str] = field(default_factory=lambda: {"core"})
     executed_tools: set[str] = field(default_factory=set)
     loaded_skills: list[str] = field(default_factory=list)
@@ -104,6 +106,24 @@ class AgentContext:
                 yield snapshot
         finally:
             self._planning_preview_rows.reset(rows_token)
+
+
+def _get_scoped_workspace(ctx: AgentContext):
+    facade = object.__getattribute__(ctx, "_AgentContext__workspace_facade")
+    if facade is None:
+        from data_agent.session.workspace import WorkspaceProxy
+
+        facade = WorkspaceProxy(ctx)
+        object.__setattr__(ctx, "_AgentContext__workspace_facade", facade)
+    return facade
+
+
+def _set_workspace_store(ctx: AgentContext, value: object | None) -> None:
+    object.__setattr__(ctx, "_AgentContext__workspace_store", value)
+
+
+# Keep the historical constructor/setter name while exposing only a scoped facade.
+AgentContext.workspace = property(_get_scoped_workspace, _set_workspace_store)
 
 
 _current_context: ContextVar[AgentContext | None] = ContextVar(
