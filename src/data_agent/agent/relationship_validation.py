@@ -240,6 +240,16 @@ def validate_relationship(
             left_rows=len(left),
             right_rows=len(right),
         )
+    if any(len(left.columns.get_indexer_for([key])) > 1 for key in normalized_left) or any(
+        len(right.columns.get_indexer_for([key])) > 1 for key in normalized_right
+    ):
+        return _rejected(
+            "ambiguous_key_column",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            left_rows=len(left),
+            right_rows=len(right),
+        )
     if left.empty:
         return _rejected(
             "empty_left_data",

@@ -161,6 +161,53 @@ def test_composite_keys_use_tuple_semantics():
     assert result.cardinality == "one_to_one"
 
 
+def test_duplicate_left_key_label_is_rejected_without_raising():
+    left = pd.DataFrame([[1, 10], [2, 20]], columns=["id", "id"])
+    right = pd.DataFrame({"id": [1, 2]})
+
+    result = validate_relationship(left, right, left_key="id", right_key="id")
+
+    assert result.status == "rejected"
+    assert result.risks == ("ambiguous_key_column",)
+
+
+def test_duplicate_right_key_label_is_rejected_without_raising():
+    left = pd.DataFrame({"id": [1, 2]})
+    right = pd.DataFrame([[1, 10], [2, 20]], columns=["id", "id"])
+
+    result = validate_relationship(left, right, left_key="id", right_key="id")
+
+    assert result.status == "rejected"
+    assert result.risks == ("ambiguous_key_column",)
+
+
+def test_duplicate_label_in_composite_key_is_rejected_without_raising():
+    left = pd.DataFrame(
+        [["a", 1, 10], ["b", 2, 20]],
+        columns=["tenant", "id", "id"],
+    )
+    right = pd.DataFrame({"tenant": ["a", "b"], "id": [1, 2]})
+
+    result = validate_relationship(
+        left,
+        right,
+        left_key=("tenant", "id"),
+        right_key=("tenant", "id"),
+    )
+
+    assert result.status == "rejected"
+    assert result.risks == ("ambiguous_key_column",)
+
+
+def test_duplicate_non_key_label_does_not_invalidate_relationship():
+    left = pd.DataFrame([[1, 10, 100], [2, 20, 200]], columns=["id", "value", "value"])
+    right = pd.DataFrame({"id": [1, 2]})
+
+    result = validate_relationship(left, right, left_key="id", right_key="id")
+
+    assert result.status == "validated"
+
+
 def test_type_family_mismatch_needs_confirmation():
     result = _validate([1, 2], ["1", "2"])
 
