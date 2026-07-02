@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+import json
 
 import pandas as pd
 import pytest
@@ -208,11 +209,101 @@ def test_duplicate_non_key_label_does_not_invalidate_relationship():
     assert result.status == "validated"
 
 
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_multiindex_columns_are_rejected_without_raising(side):
+    unusual = pd.DataFrame(
+        [[1, 10], [2, 20]],
+        columns=pd.MultiIndex.from_tuples([("id", "primary"), ("id", "secondary")]),
+    )
+    ordinary = pd.DataFrame({"id": [1, 2]})
+    left, right = (unusual, ordinary) if side == "left" else (ordinary, unusual)
+
+    result = validate_relationship(left, right, left_key="id", right_key="id")
+
+    assert result.status == "rejected"
+    assert result.risks == ("unsupported_column_index",)
+
+
+def test_non_scalar_column_index_is_rejected_without_raising():
+    columns = pd.Index([("id", "primary")], tupleize_cols=False)
+    left = pd.DataFrame([[1]], columns=columns)
+
+    result = validate_relationship(
+        left,
+        pd.DataFrame({"id": [1]}),
+        left_key="id",
+        right_key="id",
+    )
+
+    assert result.status == "rejected"
+    assert result.risks == ("unsupported_column_index",)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_duplicate_component_in_supplied_composite_key_is_rejected(side):
+    frame = pd.DataFrame({"id": [1, 2]})
+    left_key = ["id", "id"] if side == "left" else ["id"]
+    right_key = ["id", "id"] if side == "right" else ["id"]
+
+    result = validate_relationship(
+        frame,
+        frame,
+        left_key=left_key,
+        right_key=right_key,
+    )
+
+    assert result.status == "rejected"
+    assert result.risks == (f"duplicate_{side}_key_component",)
+
+
 def test_type_family_mismatch_needs_confirmation():
     result = _validate([1, 2], ["1", "2"])
 
     assert result.status == "needs_confirmation"
     assert "key_type_family_mismatch" in result.risks
+
+
+@pytest.mark.parametrize(
+    ("left_values", "right_values"),
+    [
+        (
+            pd.Series(pd.Categorical(pd.to_timedelta(["1 day", "2 days"]))),
+            pd.Series(pd.to_timedelta(["1 day", "2 days"])),
+        ),
+        (pd.Series(pd.Categorical([1, 2])), pd.Series([1, 2], dtype="Int64")),
+        (pd.Series(pd.Categorical(["a", "b"])), pd.Series(["a", "b"], dtype="string")),
+        (
+            pd.Series(pd.Categorical(pd.date_range("2024-01-01", periods=2, tz="UTC"))),
+            pd.Series(pd.date_range("2023-12-31 19:00", periods=2, tz="US/Eastern")),
+        ),
+        (
+            pd.Series(pd.Categorical(pd.period_range("2024-01", periods=2, freq="M"))),
+            pd.Series(pd.period_range("2024-01", periods=2, freq="M")),
+        ),
+        (
+            pd.Series(pd.Categorical(pd.arrays.IntervalArray.from_breaks([0, 1, 2]))),
+            pd.Series(pd.arrays.IntervalArray.from_breaks([0.0, 1.0, 2.0])),
+        ),
+    ],
+    ids=[
+        "categorical-timedelta",
+        "categorical-nullable-integer",
+        "categorical-nullable-string",
+        "timezone-aware-datetime",
+        "period",
+        "interval",
+    ],
+)
+def test_equivalent_extension_dtype_families_are_compatible(left_values, right_values):
+    result = validate_relationship(
+        pd.DataFrame({"id": left_values}),
+        pd.DataFrame({"id": right_values}),
+        left_key="id",
+        right_key="id",
+    )
+
+    assert "key_type_family_mismatch" not in result.risks
+    assert result.status == "validated"
 
 
 def test_low_coverage_threshold_is_inclusive_at_boundary():
@@ -290,6 +381,126 @@ def test_meaningful_changes_change_relationship_identity():
 
     assert base.relationship_id != changed_metric.relationship_id
     assert base.relationship_id != changed_key.relationship_id
+
+
+def test_source_fingerprints_distinguish_equal_aggregate_outcomes_without_exposing_values():
+    secret = "customer-secret-1"
+    first = _validate([secret, "customer-secret-2", "customer-secret-3"], [secret, "customer-secret-2", "x"])
+    second = _validate(["account-10", "account-20", "account-30"], ["account-10", "account-20", "y"])
+
+    assert first.status == second.status == "validated"
+    assert first.left_row_coverage == second.left_row_coverage
+    assert first.relationship_id != second.relationship_id
+    assert first.left_source_key_fingerprint != second.left_source_key_fingerprint
+    assert secret not in json.dumps(first.to_record())
+
+
+def test_source_fingerprint_is_stable_for_missing_timestamp_and_extension_values():
+    left = pd.DataFrame(
+        {
+            "tenant": pd.Series(["a", "private-null-row"], dtype="string"),
+            "id": pd.Series([1, pd.NA], dtype="Int64"),
+            "occurred_at": pd.Series(
+                [pd.Timestamp("2024-01-01", tz="UTC"), pd.NaT],
+                dtype="datetime64[ns, UTC]",
+            ),
+        }
+    )
+    right = left.copy(deep=True)
+    keys = ["tenant", "id", "occurred_at"]
+
+    first = validate_relationship(left, right, left_key=keys, right_key=keys)
+    repeated = validate_relationship(left.copy(deep=True), right.copy(deep=True), left_key=keys, right_key=keys)
+    changed = left.copy(deep=True)
+    changed.loc[1, "tenant"] = "different-null-row"
+    changed_result = validate_relationship(changed, right, left_key=keys, right_key=keys)
+
+    assert first.relationship_id == repeated.relationship_id
+    assert first.left_source_key_fingerprint == repeated.left_source_key_fingerprint
+    assert first.left_source_key_fingerprint != changed_result.left_source_key_fingerprint
+    assert "private-null-row" not in json.dumps(first.to_record())
+
+
+@pytest.mark.parametrize(
+    ("threshold", "changed_value"),
+    [
+        ("min_row_coverage", 0.6),
+        ("max_null_rate", 0.3),
+        ("max_join_multiplier", 1.5),
+    ],
+)
+def test_every_threshold_changes_identity_even_when_outcome_is_unchanged(threshold, changed_value):
+    base = _validate([1, 2, 3], [1, 2, 4])
+    changed = _validate([1, 2, 3], [1, 2, 4], **{threshold: changed_value})
+
+    assert base.status == changed.status == "validated"
+    assert base.risks == changed.risks
+    assert base.relationship_id != changed.relationship_id
+    assert getattr(changed, threshold) == changed_value
+
+
+def test_dataset_identifiers_bind_identity_and_are_exposed_for_audit():
+    frames = (pd.DataFrame({"id": [1, 2]}), pd.DataFrame({"id": [1, 2]}))
+    first = validate_relationship(
+        *frames,
+        left_key="id",
+        right_key="id",
+        left_dataset="orders",
+        right_dataset="customers",
+    )
+    changed = validate_relationship(
+        *frames,
+        left_key="id",
+        right_key="id",
+        left_dataset="archived_orders",
+        right_dataset="customers",
+    )
+
+    assert first.relationship_id != changed.relationship_id
+    assert first.to_record()["left_dataset"] == "orders"
+    assert first.to_record()["right_dataset"] == "customers"
+
+
+def test_row_and_distinct_coverage_use_their_documented_denominators():
+    result = _validate([1] * 8 + [2, 3], [1], min_row_coverage=0.0, max_join_multiplier=10.0)
+
+    assert result.left_row_coverage == pytest.approx(0.8)
+    assert result.left_distinct_key_coverage == pytest.approx(1 / 3)
+
+
+def test_composite_keys_with_nulls_and_duplicates_preserve_multiplicity_semantics():
+    left = pd.DataFrame({"tenant": ["a", "a", "a", "b"], "id": [1, 1, None, 2]})
+    right = pd.DataFrame({"tenant": ["a", "b", "b"], "id": [1, 2, 2]})
+
+    result = validate_relationship(
+        left,
+        right,
+        left_key=["tenant", "id"],
+        right_key=["tenant", "id"],
+    )
+
+    assert result.cardinality == "many_to_many"
+    assert result.left_non_null_key_rows == 3
+    assert result.left_null_rate == 0.25
+    assert result.expected_inner_join_rows == 4
+    assert result.status == "rejected"
+
+
+def test_zero_shared_keys_reports_zero_coverage_and_requires_confirmation():
+    result = _validate([1, 2], [3, 4])
+
+    assert result.expected_inner_join_rows == 0
+    assert result.left_row_coverage == result.right_row_coverage == 0.0
+    assert result.left_distinct_key_coverage == result.right_distinct_key_coverage == 0.0
+    assert result.status == "needs_confirmation"
+
+
+def test_many_to_many_rejection_precedes_above_threshold_multiplier_confirmation():
+    result = _validate([1, 1], [1, 1], max_join_multiplier=1.0)
+
+    assert result.row_multiplier == 2.0
+    assert "excessive_row_multiplier" in result.risks
+    assert result.status == "rejected"
 
 
 def test_canonical_record_is_accepted_by_bundle_validator():

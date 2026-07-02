@@ -14,13 +14,16 @@ import json
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from pandas.api import types as pd_types
 
 
-RELATIONSHIP_VALIDATION_VERSION = "relationship_validation.v1"
+RELATIONSHIP_VALIDATION_VERSION = "relationship_validation.v2"
 DEFAULT_MIN_ROW_COVERAGE = 0.5
 DEFAULT_MAX_NULL_RATE = 0.2
 DEFAULT_MAX_JOIN_MULTIPLIER = 1.0
@@ -33,8 +36,15 @@ class RelationshipValidation:
     relationship_id: str
     status: str
     cardinality: str | None = None
+    left_dataset: str | None = None
+    right_dataset: str | None = None
     normalized_left_key: tuple[str, ...] = field(default_factory=tuple)
     normalized_right_key: tuple[str, ...] = field(default_factory=tuple)
+    left_source_key_fingerprint: str | None = None
+    right_source_key_fingerprint: str | None = None
+    min_row_coverage: float = DEFAULT_MIN_ROW_COVERAGE
+    max_null_rate: float = DEFAULT_MAX_NULL_RATE
+    max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER
     left_row_count: int | None = None
     right_row_count: int | None = None
     left_non_null_key_rows: int | None = None
@@ -108,12 +118,26 @@ def _rejected(
     right_key: tuple[str, ...] = (),
     left_rows: int | None = None,
     right_rows: int | None = None,
+    left_dataset: str | None = None,
+    right_dataset: str | None = None,
+    left_source_key_fingerprint: str | None = None,
+    right_source_key_fingerprint: str | None = None,
+    min_row_coverage: float = DEFAULT_MIN_ROW_COVERAGE,
+    max_null_rate: float = DEFAULT_MAX_NULL_RATE,
+    max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER,
 ) -> RelationshipValidation:
     return _with_identity(
         {
             "status": "rejected",
+            "left_dataset": left_dataset,
+            "right_dataset": right_dataset,
             "normalized_left_key": left_key,
             "normalized_right_key": right_key,
+            "left_source_key_fingerprint": left_source_key_fingerprint,
+            "right_source_key_fingerprint": right_source_key_fingerprint,
+            "min_row_coverage": min_row_coverage,
+            "max_null_rate": max_null_rate,
+            "max_join_multiplier": max_join_multiplier,
             "left_row_count": left_rows,
             "right_row_count": right_rows,
             "risks": (risk,),
@@ -140,8 +164,67 @@ def _key_counts(frame: pd.DataFrame, key: tuple[str, ...]) -> tuple[Counter[tupl
     return counts, null_rows
 
 
-def _series_family(series: pd.Series) -> str:
-    dtype = series.dtype
+def _canonical_key_value(value: Any) -> Any:
+    """Return a typed, JSON-safe scalar representation used only inside hashes."""
+    if _is_null(value):
+        return ["null"]
+    if isinstance(value, pd.Timestamp):
+        return ["timestamp", value.isoformat()]
+    if isinstance(value, pd.Timedelta):
+        return ["timedelta", value.isoformat()]
+    if isinstance(value, pd.Period):
+        return ["period", value.ordinal, value.freqstr]
+    if isinstance(value, pd.Interval):
+        return [
+            "interval",
+            _canonical_key_value(value.left),
+            _canonical_key_value(value.right),
+            value.closed,
+        ]
+    if isinstance(value, np.datetime64):
+        return _canonical_key_value(pd.Timestamp(value))
+    if isinstance(value, np.timedelta64):
+        return _canonical_key_value(pd.Timedelta(value))
+    if isinstance(value, (bool, np.bool_)):
+        return ["boolean", bool(value)]
+    if isinstance(value, (int, np.integer)):
+        return ["integer", str(int(value))]
+    if isinstance(value, (float, np.floating)):
+        return ["floating", float(value).hex()]
+    if isinstance(value, (complex, np.complexfloating)):
+        scalar = complex(value)
+        return ["complex", scalar.real.hex(), scalar.imag.hex()]
+    if isinstance(value, Decimal):
+        return ["decimal", str(value)]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, bytes):
+        return ["bytes", value.hex()]
+    if isinstance(value, datetime):
+        return ["datetime", value.isoformat()]
+    if isinstance(value, date):
+        return ["date", value.isoformat()]
+    if isinstance(value, time):
+        return ["time", value.isoformat()]
+    if isinstance(value, tuple):
+        return ["tuple", [_canonical_key_value(item) for item in value]]
+    raise ValueError("unsupported_key_value")
+
+
+def _source_key_fingerprint(frame: pd.DataFrame, key: tuple[str, ...]) -> str:
+    row_hash_counts: Counter[str] = Counter()
+    for values in frame.loc[:, list(key)].itertuples(index=False, name=None):
+        canonical_row = [_canonical_key_value(value) for value in values]
+        row_hash = hashlib.sha256(_canonical_json(canonical_row).encode("utf-8")).hexdigest()
+        row_hash_counts[row_hash] += 1
+    multiplicities = [[row_hash, count] for row_hash, count in sorted(row_hash_counts.items())]
+    payload = {"key_arity": len(key), "row_hash_multiplicities": multiplicities}
+    return "sha256:" + hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _dtype_family(dtype: Any) -> str | None:
+    if isinstance(dtype, pd.CategoricalDtype):
+        return _dtype_family(dtype.categories.dtype)
     if pd_types.is_bool_dtype(dtype):
         return "boolean"
     if pd_types.is_numeric_dtype(dtype):
@@ -152,22 +235,36 @@ def _series_family(series: pd.Series) -> str:
         return "timedelta"
     if pd_types.is_string_dtype(dtype) and not pd_types.is_object_dtype(dtype):
         return "string"
+    if isinstance(dtype, pd.PeriodDtype):
+        return "period"
+    if isinstance(dtype, pd.IntervalDtype):
+        return "interval"
+    return None
 
-    families: set[str] = set()
-    for value in series.dropna():
-        if isinstance(value, bool):
-            families.add("boolean")
-        elif isinstance(value, (int, float, complex)) and not isinstance(value, bool):
-            families.add("numeric")
-        elif isinstance(value, (pd.Timestamp,)):
-            families.add("datetime")
-        elif isinstance(value, str):
-            families.add("string")
-        else:
-            families.add(type(value).__name__)
-    if not families:
+
+def _series_family(series: pd.Series) -> str:
+    family = _dtype_family(series.dtype)
+    if family is not None:
+        return family
+
+    inferred = pd.api.types.infer_dtype(series, skipna=True)
+    if inferred in {"boolean"}:
+        return "boolean"
+    if inferred in {"integer", "floating", "complex", "mixed-integer-float", "decimal"}:
+        return "numeric"
+    if inferred in {"datetime", "datetime64", "date"}:
+        return "datetime"
+    if inferred in {"timedelta", "timedelta64"}:
+        return "timedelta"
+    if inferred in {"string", "unicode"}:
+        return "string"
+    if inferred == "period":
+        return "period"
+    if inferred == "interval":
+        return "interval"
+    if inferred == "empty":
         return "unknown"
-    return next(iter(families)) if len(families) == 1 else "mixed"
+    return inferred
 
 
 def _valid_thresholds(min_row_coverage: Any, max_null_rate: Any, max_join_multiplier: Any) -> bool:
@@ -179,43 +276,86 @@ def _valid_thresholds(min_row_coverage: Any, max_null_rate: Any, max_join_multip
     return 0 <= min_row_coverage <= 1 and 0 <= max_null_rate <= 1 and max_join_multiplier >= 0
 
 
+def _supported_column_index(frame: pd.DataFrame) -> bool:
+    return not isinstance(frame.columns, pd.MultiIndex) and all(
+        pd.api.types.is_scalar(column) for column in frame.columns
+    )
+
+
 def validate_relationship(
     left: Any,
     right: Any,
     *,
     left_key: str | list[str] | tuple[str, ...],
     right_key: str | list[str] | tuple[str, ...],
+    left_dataset: str | None = None,
+    right_dataset: str | None = None,
     min_row_coverage: float = DEFAULT_MIN_ROW_COVERAGE,
     max_null_rate: float = DEFAULT_MAX_NULL_RATE,
     max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER,
 ) -> RelationshipValidation:
     """Validate only the exact supplied key mapping; no key inference is used."""
+    def reject(risk: str, **kwargs: Any) -> RelationshipValidation:
+        return _rejected(
+            risk,
+            left_dataset=left_dataset,
+            right_dataset=right_dataset,
+            min_row_coverage=min_row_coverage,
+            max_null_rate=max_null_rate,
+            max_join_multiplier=max_join_multiplier,
+            **kwargs,
+        )
+
     if not isinstance(left, pd.DataFrame):
-        return _rejected("invalid_left_type")
+        return reject("invalid_left_type")
     if not isinstance(right, pd.DataFrame):
-        return _rejected("invalid_right_type", left_rows=len(left))
+        return reject("invalid_right_type", left_rows=len(left))
 
     normalized_left, left_key_error = _normalize_key(left_key)
     normalized_right, right_key_error = _normalize_key(right_key)
     key_error = left_key_error or right_key_error
     if key_error:
-        return _rejected(
+        return reject(
             key_error,
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
             right_rows=len(right),
         )
+    if len(set(normalized_left)) != len(normalized_left):
+        return reject(
+            "duplicate_left_key_component",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            left_rows=len(left),
+            right_rows=len(right),
+        )
+    if len(set(normalized_right)) != len(normalized_right):
+        return reject(
+            "duplicate_right_key_component",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            left_rows=len(left),
+            right_rows=len(right),
+        )
     if len(normalized_left) != len(normalized_right):
-        return _rejected(
+        return reject(
             "key_arity_mismatch",
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
             right_rows=len(right),
         )
+    if not _supported_column_index(left) or not _supported_column_index(right):
+        return reject(
+            "unsupported_column_index",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            left_rows=len(left),
+            right_rows=len(right),
+        )
     if not _valid_thresholds(min_row_coverage, max_null_rate, max_join_multiplier):
-        return _rejected(
+        return reject(
             "invalid_thresholds",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -224,7 +364,7 @@ def validate_relationship(
         )
     missing_left = [key for key in normalized_left if key not in left.columns]
     if missing_left:
-        return _rejected(
+        return reject(
             "missing_left_key",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -233,7 +373,7 @@ def validate_relationship(
         )
     missing_right = [key for key in normalized_right if key not in right.columns]
     if missing_right:
-        return _rejected(
+        return reject(
             "missing_right_key",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -243,7 +383,17 @@ def validate_relationship(
     if any(len(left.columns.get_indexer_for([key])) > 1 for key in normalized_left) or any(
         len(right.columns.get_indexer_for([key])) > 1 for key in normalized_right
     ):
-        return _rejected(
+        return reject(
+            "ambiguous_key_column",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            left_rows=len(left),
+            right_rows=len(right),
+        )
+    if any(not isinstance(left[key], pd.Series) for key in normalized_left) or any(
+        not isinstance(right[key], pd.Series) for key in normalized_right
+    ):
+        return reject(
             "ambiguous_key_column",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -251,7 +401,7 @@ def validate_relationship(
             right_rows=len(right),
         )
     if left.empty:
-        return _rejected(
+        return reject(
             "empty_left_data",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -259,7 +409,7 @@ def validate_relationship(
             right_rows=len(right),
         )
     if right.empty:
-        return _rejected(
+        return reject(
             "empty_right_data",
             left_key=normalized_left,
             right_key=normalized_right,
@@ -267,32 +417,42 @@ def validate_relationship(
             right_rows=0,
         )
 
+    left_fingerprint: str | None = None
+    right_fingerprint: str | None = None
     try:
+        left_fingerprint = _source_key_fingerprint(left, normalized_left)
+        right_fingerprint = _source_key_fingerprint(right, normalized_right)
         left_counts, left_null_rows = _key_counts(left, normalized_left)
         right_counts, right_null_rows = _key_counts(right, normalized_right)
     except ValueError as exc:
-        return _rejected(
+        return reject(
             str(exc),
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
             right_rows=len(right),
+            left_source_key_fingerprint=left_fingerprint,
+            right_source_key_fingerprint=right_fingerprint,
         )
     if not left_counts:
-        return _rejected(
+        return reject(
             "all_null_left_key",
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
             right_rows=len(right),
+            left_source_key_fingerprint=left_fingerprint,
+            right_source_key_fingerprint=right_fingerprint,
         )
     if not right_counts:
-        return _rejected(
+        return reject(
             "all_null_right_key",
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
             right_rows=len(right),
+            left_source_key_fingerprint=left_fingerprint,
+            right_source_key_fingerprint=right_fingerprint,
         )
 
     left_unique = max(left_counts.values()) == 1
@@ -345,8 +505,15 @@ def validate_relationship(
         {
             "status": status,
             "cardinality": cardinality,
+            "left_dataset": left_dataset,
+            "right_dataset": right_dataset,
             "normalized_left_key": normalized_left,
             "normalized_right_key": normalized_right,
+            "left_source_key_fingerprint": left_fingerprint,
+            "right_source_key_fingerprint": right_fingerprint,
+            "min_row_coverage": min_row_coverage,
+            "max_null_rate": max_null_rate,
+            "max_join_multiplier": max_join_multiplier,
             "left_row_count": len(left),
             "right_row_count": len(right),
             "left_non_null_key_rows": len(left) - left_null_rows,
