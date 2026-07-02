@@ -26,8 +26,16 @@ class AgentContext:
     turn_state: object | None = None
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
-    workspace_scope: object | None = None
-    planning_preview_rows: int = 5
+    _workspace_scope: ContextVar[object | None] = field(
+        default_factory=lambda: ContextVar("data_agent_workspace_scope", default=None),
+        init=False,
+        repr=False,
+    )
+    _planning_preview_rows: ContextVar[int] = field(
+        default_factory=lambda: ContextVar("data_agent_planning_preview_rows", default=5),
+        init=False,
+        repr=False,
+    )
 
     @property
     def object_name(self) -> Optional[str]:
@@ -44,26 +52,34 @@ class AgentContext:
         self.executed_tools.clear()
         self.turn_state = None
 
+    @property
+    def workspace_scope(self):
+        return self._workspace_scope.get()
+
+    @property
+    def planning_preview_rows(self) -> int:
+        return self._planning_preview_rows.get()
+
     def refresh_workspace_scope(self):
         """Atomically refresh this context's exact task-bound workspace scope."""
         from data_agent.agent.execution_scope import resolve_workspace_scope
         from data_agent.session.task_manager import task_manager
 
-        self.workspace_scope = resolve_workspace_scope(
+        snapshot = resolve_workspace_scope(
             task_manager,
             self.session_id,
             self.project_name or "",
         )
-        return self.workspace_scope
+        self._workspace_scope.set(snapshot)
+        return snapshot
 
     @contextmanager
     def bind_workspace_scope(self, snapshot):
-        previous = self.workspace_scope
-        self.workspace_scope = snapshot
+        token = self._workspace_scope.set(snapshot)
         try:
             yield snapshot
         finally:
-            self.workspace_scope = previous
+            self._workspace_scope.reset(token)
 
     @contextmanager
     def planning_workspace_scope(
@@ -82,13 +98,12 @@ class AgentContext:
             allowed_datasets=list(datasets),
             plan_id=plan_id,
         )
-        previous_rows = self.planning_preview_rows
-        self.planning_preview_rows = max(0, min(int(preview_rows), 20))
+        rows_token = self._planning_preview_rows.set(max(0, min(int(preview_rows), 20)))
         try:
             with self.bind_workspace_scope(snapshot):
                 yield snapshot
         finally:
-            self.planning_preview_rows = previous_rows
+            self._planning_preview_rows.reset(rows_token)
 
 
 _current_context: ContextVar[AgentContext | None] = ContextVar(

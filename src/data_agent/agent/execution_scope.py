@@ -39,9 +39,9 @@ class WorkspaceScopeSnapshot:
     def __post_init__(self) -> None:
         if self.phase not in {"legacy", "planning", "execution", "synthesis", "error"}:
             raise ValueError(f"Unsupported workspace scope phase: {self.phase}")
-        object.__setattr__(self, "session_id", _text(self.session_id))
-        object.__setattr__(self, "project_name", _text(self.project_name))
-        object.__setattr__(self, "plan_id", _text(self.plan_id))
+        object.__setattr__(self, "session_id", _identity(self.session_id))
+        object.__setattr__(self, "project_name", _identity(self.project_name))
+        object.__setattr__(self, "plan_id", _identity(self.plan_id))
         object.__setattr__(self, "step_id", _text(self.step_id))
         object.__setattr__(self, "allowed_datasets", frozenset(_text_set(self.allowed_datasets)))
         object.__setattr__(self, "dataset_contract_ids", frozenset(_text_set(self.dataset_contract_ids)))
@@ -120,6 +120,11 @@ def _text(value: Any) -> str:
     return " ".join(str(value).split())
 
 
+def _identity(value: Any) -> str:
+    """Preserve exact identity strings; only ``None`` denotes missing identity."""
+    return "" if value is None else str(value)
+
+
 def _text_set(value: Any) -> set[str]:
     if not isinstance(value, (list, tuple, set, frozenset)):
         return set()
@@ -132,22 +137,27 @@ def _is_stage3c0b_task(task: dict[str, Any]) -> bool:
 
 def resolve_workspace_scope(manager, session_id: str, project_name: str = "") -> WorkspaceScopeSnapshot:
     """Resolve the exact active Stage 3C0B plan without wildcard scope semantics."""
-    session = _text(session_id)
-    project = _text(project_name)
-    plan_id = _text(manager.get_active_plan_id(session, project))
+    session = _identity(session_id)
+    project = _identity(project_name)
+    plan_id = _identity(manager.get_active_plan_id(session, project))
     if not plan_id:
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
 
     tasks = [
         task
         for task in manager.list_all(include_stale=True)
-        if _text(task.get("session_id")) == session
-        and _text(task.get("project_name")) == project
-        and _text(task.get("plan_id")) == plan_id
+        if _identity(task.get("session_id")) == session
+        and _identity(task.get("project_name")) == project
+        and _identity(task.get("plan_id")) == plan_id
         and task.get("status") not in {"deleted", "archived", "superseded"}
     ]
     stage_tasks = [task for task in tasks if _is_stage3c0b_task(task)]
-    if not stage_tasks:
+    plan_source = (
+        _text(manager.get_active_plan_source(session, project))
+        if hasattr(manager, "get_active_plan_source")
+        else ""
+    )
+    if not stage_tasks and plan_source != "analysis_plan":
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
 
     in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
@@ -196,9 +206,9 @@ def planning_workspace_scope_snapshot(
     """Create a schema/quality/preview-only scope for deterministic planning."""
     return WorkspaceScopeSnapshot(
         phase="planning",
-        session_id=_text(session_id),
-        project_name=_text(project_name),
-        plan_id=_text(plan_id),
+        session_id=_identity(session_id),
+        project_name=_identity(project_name),
+        plan_id=_identity(plan_id),
         allowed_datasets=frozenset(_text_set(allowed_datasets)),
     )
 

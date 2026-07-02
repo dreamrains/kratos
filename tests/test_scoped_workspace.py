@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import FrozenInstanceError
+import json
 
 import pandas as pd
 import pytest
@@ -104,6 +105,24 @@ def test_resolver_uses_exact_blank_inbox_scope_and_active_plan(tmp_path):
     assert scope.allowed_datasets == frozenset({"inbox"})
 
 
+def test_resolver_preserves_exact_nonblank_session_and_project_identity(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    task = _stage3c0b_task(
+        manager,
+        session_id=" session  one ",
+        project_name="Project  Alpha",
+        datasets=["bound"],
+    )
+
+    scope = resolve_workspace_scope(manager, " session  one ", "Project  Alpha")
+
+    assert scope.session_id == " session  one "
+    assert scope.project_name == "Project  Alpha"
+    assert scope.task_id == task["id"]
+
+
 def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
     from data_agent.agent.execution_scope import resolve_workspace_scope
 
@@ -117,6 +136,30 @@ def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
     assert scope.task_id == 0
     assert scope.error_type == "stage3c0b_current_task_missing"
     assert task["id"]
+
+
+def test_active_analysis_plan_without_task_records_fails_closed(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = manager.create_plan(session_id="s1", source="analysis_plan")
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+
+    assert scope.plan_id == plan["id"]
+    assert scope.phase == "error"
+    assert scope.error_type == "stage3c0b_current_task_missing"
+
+
+def test_active_non_stage3c0b_plan_without_task_records_remains_legacy(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    manager.create_plan(session_id="s1", source="user_replan")
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+
+    assert scope.phase == "legacy"
 
 
 def test_scoped_proxy_hides_unbound_dataset_and_returns_read_copies(tmp_path, monkeypatch):
@@ -176,6 +219,22 @@ def test_planning_exposes_schema_quality_and_bounded_preview_only(monkeypatch):
             ]
 
 
+def test_planning_list_datasets_exposes_only_approved_summary_fields():
+    store = Workspace()
+    store.add("orders", pd.DataFrame({"order_id": [1], "amount": [10]}))
+    store.set_metadata("orders", "quality", {"missing": 0})
+    store.set_metadata("orders", "secret", {"token": 9876})
+    store.set_metadata("orders", "context", "private planning notes")
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        with ctx.planning_workspace_scope(["orders"]):
+            info = workspace.list_datasets()["orders"]
+
+    assert set(info) == {"rows", "columns", "column_names", "derived_from"}
+    assert "9876" not in repr(info)
+    assert "private planning notes" not in repr(info)
+
+
 def test_contextvar_scope_is_isolated_and_propagates_to_worker(tmp_path, monkeypatch):
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _stage3c0b_task(manager, session_id="s1", datasets=["one"])
@@ -199,6 +258,66 @@ def test_contextvar_scope_is_isolated_and_propagates_to_worker(tmp_path, monkeyp
 
     assert worker_names == {"one"}
     assert main_names == {"two"}
+
+
+def test_copied_context_keeps_scope_snapshot_when_original_context_is_rebound():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    first = WorkspaceScopeSnapshot(phase="execution", allowed_datasets=frozenset({"one"}))
+    second = WorkspaceScopeSnapshot(phase="execution", allowed_datasets=frozenset({"two"}))
+
+    with use_agent_context(ctx):
+        with ctx.bind_workspace_scope(first):
+            copied = copy_context()
+            with ctx.bind_workspace_scope(second):
+                assert ctx.workspace_scope == second
+                assert copied.run(lambda: ctx.workspace_scope) == first
+
+
+def test_workspace_module_does_not_expose_raw_storage_resolver():
+    import data_agent.session.workspace as workspace_module
+
+    assert not hasattr(workspace_module, "_resolve_internal_workspace")
+    assert not any(
+        "storage" in name and callable(getattr(workspace, name))
+        for name in dir(workspace)
+    )
+
+
+@pytest.mark.parametrize("mode", ["execution", "synthesis", "error"])
+def test_save_meta_serializes_only_scope_approved_dataset_details(
+    tmp_path,
+    monkeypatch,
+    mode,
+):
+    import data_agent.session.history as history
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    monkeypatch.setattr(history, "_session_dir", lambda session_id: tmp_path)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible_column": [1]}))
+    store.add("secret", pd.DataFrame({"secret_column": [9876]}))
+    store.set_metadata("secret", "_source_path", "secret/source.csv")
+    store.set_metadata("secret", "context", "private context")
+    phase = "execution" if mode == "execution" else mode
+    snapshot = WorkspaceScopeSnapshot(
+        phase=phase,
+        allowed_datasets=frozenset({"bound"}),
+        error_type="scope_error" if phase == "error" else "",
+    )
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        with ctx.bind_workspace_scope(snapshot):
+            workspace.save_meta("s1")
+
+    payload = json.loads((tmp_path / "workspace_meta.json").read_text(encoding="utf-8"))
+    assert set(payload) == ({"bound"} if mode == "execution" else set())
+    serialized = json.dumps(payload)
+    assert "secret" not in serialized
+    assert "secret_column" not in serialized
+    assert "secret/source.csv" not in serialized
+    assert "private context" not in serialized
 
 
 def test_loop_profile_and_session_meta_use_scoped_facade(tmp_path, monkeypatch):
