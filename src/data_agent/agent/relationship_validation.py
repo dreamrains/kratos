@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import numpy as np
 import pandas as pd
@@ -42,9 +43,10 @@ class RelationshipValidation:
     normalized_right_key: tuple[str, ...] = field(default_factory=tuple)
     left_source_key_fingerprint: str | None = None
     right_source_key_fingerprint: str | None = None
-    min_row_coverage: float = DEFAULT_MIN_ROW_COVERAGE
-    max_null_rate: float = DEFAULT_MAX_NULL_RATE
-    max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER
+    min_row_coverage: float | None = DEFAULT_MIN_ROW_COVERAGE
+    max_null_rate: float | None = DEFAULT_MAX_NULL_RATE
+    max_join_multiplier: float | None = DEFAULT_MAX_JOIN_MULTIPLIER
+    configuration_errors: tuple[str, ...] = field(default_factory=tuple)
     left_row_count: int | None = None
     right_row_count: int | None = None
     left_non_null_key_rows: int | None = None
@@ -74,6 +76,7 @@ class RelationshipValidation:
         record["normalized_left_key"] = list(self.normalized_left_key)
         record["normalized_right_key"] = list(self.normalized_right_key)
         record["risks"] = list(self.risks)
+        record["configuration_errors"] = list(self.configuration_errors)
         return record
 
 
@@ -95,7 +98,13 @@ def _normalize_key(value: Any) -> tuple[tuple[str, ...], str | None]:
 
 
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def _with_identity(values: dict[str, Any]) -> RelationshipValidation:
@@ -122,9 +131,10 @@ def _rejected(
     right_dataset: str | None = None,
     left_source_key_fingerprint: str | None = None,
     right_source_key_fingerprint: str | None = None,
-    min_row_coverage: float = DEFAULT_MIN_ROW_COVERAGE,
-    max_null_rate: float = DEFAULT_MAX_NULL_RATE,
-    max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER,
+    min_row_coverage: float | None = DEFAULT_MIN_ROW_COVERAGE,
+    max_null_rate: float | None = DEFAULT_MAX_NULL_RATE,
+    max_join_multiplier: float | None = DEFAULT_MAX_JOIN_MULTIPLIER,
+    configuration_errors: tuple[str, ...] = (),
 ) -> RelationshipValidation:
     return _with_identity(
         {
@@ -138,6 +148,7 @@ def _rejected(
             "min_row_coverage": min_row_coverage,
             "max_null_rate": max_null_rate,
             "max_join_multiplier": max_join_multiplier,
+            "configuration_errors": configuration_errors,
             "left_row_count": left_rows,
             "right_row_count": right_rows,
             "risks": (risk,),
@@ -196,6 +207,8 @@ def _canonical_key_value(value: Any) -> Any:
         return ["complex", scalar.real.hex(), scalar.imag.hex()]
     if isinstance(value, Decimal):
         return ["decimal", str(value)]
+    if isinstance(value, UUID):
+        return ["uuid", value.hex]
     if isinstance(value, str):
         return ["string", value]
     if isinstance(value, bytes):
@@ -267,13 +280,37 @@ def _series_family(series: pd.Series) -> str:
     return inferred
 
 
-def _valid_thresholds(min_row_coverage: Any, max_null_rate: Any, max_join_multiplier: Any) -> bool:
-    values = (min_row_coverage, max_null_rate, max_join_multiplier)
-    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
-        return False
-    if not all(math.isfinite(float(value)) for value in values):
-        return False
-    return 0 <= min_row_coverage <= 1 and 0 <= max_null_rate <= 1 and max_join_multiplier >= 0
+def _normalize_threshold(
+    name: str,
+    value: Any,
+    *,
+    maximum: float | None,
+) -> tuple[float | None, str | None]:
+    error = f"invalid_{name}"
+    if isinstance(value, (bool, np.bool_)):
+        return None, error
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return None, error
+    elif not isinstance(value, (int, float, np.integer, np.floating)):
+        return None, error
+    try:
+        normalized = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None, error
+    if not math.isfinite(normalized) or normalized < 0:
+        return None, error
+    if maximum is not None and normalized > maximum:
+        return None, error
+    return normalized, None
+
+
+def _normalize_dataset_identifier(name: str, value: Any) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, f"invalid_{name}"
+    return value.strip(), None
 
 
 def _supported_column_index(frame: pd.DataFrame) -> bool:
@@ -295,6 +332,52 @@ def validate_relationship(
     max_join_multiplier: float = DEFAULT_MAX_JOIN_MULTIPLIER,
 ) -> RelationshipValidation:
     """Validate only the exact supplied key mapping; no key inference is used."""
+    normalized_min_coverage, min_coverage_error = _normalize_threshold(
+        "min_row_coverage",
+        min_row_coverage,
+        maximum=1.0,
+    )
+    normalized_max_null_rate, max_null_rate_error = _normalize_threshold(
+        "max_null_rate",
+        max_null_rate,
+        maximum=1.0,
+    )
+    normalized_max_multiplier, max_multiplier_error = _normalize_threshold(
+        "max_join_multiplier",
+        max_join_multiplier,
+        maximum=None,
+    )
+    normalized_left_dataset, left_dataset_error = _normalize_dataset_identifier(
+        "left_dataset",
+        left_dataset,
+    )
+    normalized_right_dataset, right_dataset_error = _normalize_dataset_identifier(
+        "right_dataset",
+        right_dataset,
+    )
+    threshold_errors = tuple(
+        error
+        for error in (min_coverage_error, max_null_rate_error, max_multiplier_error)
+        if error is not None
+    )
+    dataset_errors = tuple(
+        error
+        for error in (left_dataset_error, right_dataset_error)
+        if error is not None
+    )
+    configuration_errors = threshold_errors + dataset_errors
+    min_row_coverage = normalized_min_coverage
+    max_null_rate = normalized_max_null_rate
+    max_join_multiplier = normalized_max_multiplier
+    left_dataset = normalized_left_dataset
+    right_dataset = normalized_right_dataset
+    normalized_left, left_key_error = _normalize_key(left_key)
+    normalized_right, right_key_error = _normalize_key(right_key)
+    available_rows = {
+        "left_rows": len(left) if isinstance(left, pd.DataFrame) else None,
+        "right_rows": len(right) if isinstance(right, pd.DataFrame) else None,
+    }
+
     def reject(risk: str, **kwargs: Any) -> RelationshipValidation:
         return _rejected(
             risk,
@@ -303,16 +386,29 @@ def validate_relationship(
             min_row_coverage=min_row_coverage,
             max_null_rate=max_null_rate,
             max_join_multiplier=max_join_multiplier,
+            configuration_errors=configuration_errors,
             **kwargs,
         )
 
+    if threshold_errors:
+        return reject(
+            "invalid_thresholds",
+            left_key=normalized_left,
+            right_key=normalized_right,
+            **available_rows,
+        )
+    if dataset_errors:
+        return reject(
+            dataset_errors[0],
+            left_key=normalized_left,
+            right_key=normalized_right,
+            **available_rows,
+        )
     if not isinstance(left, pd.DataFrame):
         return reject("invalid_left_type")
     if not isinstance(right, pd.DataFrame):
         return reject("invalid_right_type", left_rows=len(left))
 
-    normalized_left, left_key_error = _normalize_key(left_key)
-    normalized_right, right_key_error = _normalize_key(right_key)
     key_error = left_key_error or right_key_error
     if key_error:
         return reject(
@@ -349,14 +445,6 @@ def validate_relationship(
     if not _supported_column_index(left) or not _supported_column_index(right):
         return reject(
             "unsupported_column_index",
-            left_key=normalized_left,
-            right_key=normalized_right,
-            left_rows=len(left),
-            right_rows=len(right),
-        )
-    if not _valid_thresholds(min_row_coverage, max_null_rate, max_join_multiplier):
-        return reject(
-            "invalid_thresholds",
             left_key=normalized_left,
             right_key=normalized_right,
             left_rows=len(left),
@@ -514,6 +602,7 @@ def validate_relationship(
             "min_row_coverage": min_row_coverage,
             "max_null_rate": max_null_rate,
             "max_join_multiplier": max_join_multiplier,
+            "configuration_errors": (),
             "left_row_count": len(left),
             "right_row_count": len(right),
             "left_non_null_key_rows": len(left) - left_null_rows,

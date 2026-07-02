@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from decimal import Decimal
 import json
+from uuid import UUID
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -437,6 +440,151 @@ def test_every_threshold_changes_identity_even_when_outcome_is_unchanged(thresho
     assert base.risks == changed.risks
     assert base.relationship_id != changed.relationship_id
     assert getattr(changed, threshold) == changed_value
+
+
+@pytest.mark.parametrize("value", [0, 0.0, np.int64(0), Decimal("0")])
+def test_equivalent_numeric_threshold_inputs_have_one_canonical_identity(value):
+    result = _validate([1, 2], [1, 2], min_row_coverage=value)
+    canonical = _validate([1, 2], [1, 2], min_row_coverage=0.0)
+
+    assert result.status == "validated"
+    assert result.min_row_coverage == 0.0
+    assert type(result.min_row_coverage) is float
+    assert result.relationship_id == canonical.relationship_id
+
+
+@pytest.mark.parametrize(
+    ("threshold", "value"),
+    [
+        ("min_row_coverage", Decimal("0.5")),
+        ("max_null_rate", np.float64(0.25)),
+        ("max_join_multiplier", Decimal("1.5")),
+    ],
+)
+def test_supported_numeric_threshold_scalars_are_normalized_to_native_float(threshold, value):
+    result = _validate([1, 2], [1, 2], **{threshold: value})
+
+    assert result.status == "validated"
+    assert type(getattr(result, threshold)) is float
+    json.dumps(result.to_record(), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_error"),
+    [
+        (True, "invalid_min_row_coverage"),
+        (object(), "invalid_min_row_coverage"),
+        ("0.5", "invalid_min_row_coverage"),
+        (float("nan"), "invalid_min_row_coverage"),
+        (float("inf"), "invalid_min_row_coverage"),
+        (float("-inf"), "invalid_min_row_coverage"),
+        (-0.1, "invalid_min_row_coverage"),
+        (1.1, "invalid_min_row_coverage"),
+    ],
+    ids=["bool", "object", "string", "nan", "positive-inf", "negative-inf", "below-domain", "above-domain"],
+)
+def test_invalid_threshold_inputs_are_structured_stable_and_strict_json_safe(value, expected_error):
+    result = _validate([1, 2], [1, 2], min_row_coverage=value)
+
+    assert result.status == "rejected"
+    assert result.risks == ("invalid_thresholds",)
+    assert result.configuration_errors == (expected_error,)
+    assert result.min_row_coverage is None
+    json.dumps(result.to_record(), allow_nan=False)
+
+
+def test_invalid_threshold_object_uses_stable_sentinel_instead_of_object_identity():
+    first = _validate([1, 2], [1, 2], min_row_coverage=object())
+    second = _validate([1, 2], [1, 2], min_row_coverage=object())
+
+    assert first.relationship_id == second.relationship_id
+    assert first.to_record() == second.to_record()
+
+
+@pytest.mark.parametrize("threshold", ["min_row_coverage", "max_null_rate", "max_join_multiplier"])
+def test_boolean_is_rejected_for_every_threshold_field(threshold):
+    result = _validate([1, 2], [1, 2], **{threshold: True})
+
+    assert result.status == "rejected"
+    assert result.configuration_errors == (f"invalid_{threshold}",)
+    assert getattr(result, threshold) is None
+    json.dumps(result.to_record(), allow_nan=False)
+
+
+@pytest.mark.parametrize(
+    ("side", "value"),
+    [
+        ("left", object()),
+        ("left", ["orders"]),
+        ("left", {"dataset": "orders"}),
+        ("right", object()),
+        ("right", ["customers"]),
+        ("right", {"dataset": "customers"}),
+    ],
+    ids=["left-object", "left-list", "left-dict", "right-object", "right-list", "right-dict"],
+)
+def test_invalid_dataset_identifiers_are_rejected_and_strict_json_safe(side, value):
+    kwargs = {f"{side}_dataset": value}
+    result = validate_relationship(
+        pd.DataFrame({"id": [1]}),
+        pd.DataFrame({"id": [1]}),
+        left_key="id",
+        right_key="id",
+        **kwargs,
+    )
+
+    assert result.status == "rejected"
+    assert result.risks == (f"invalid_{side}_dataset",)
+    assert result.configuration_errors == (f"invalid_{side}_dataset",)
+    assert getattr(result, f"{side}_dataset") is None
+    json.dumps(result.to_record(), allow_nan=False)
+
+
+def test_dataset_identifiers_are_trimmed_before_identity_while_internal_whitespace_is_preserved():
+    frame = pd.DataFrame({"id": [1, 2]})
+    clean = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        left_dataset="sales history",
+    )
+    padded = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        left_dataset="  sales history  ",
+    )
+    internal = validate_relationship(
+        frame,
+        frame,
+        left_key="id",
+        right_key="id",
+        left_dataset="sales  history",
+    )
+
+    assert padded.left_dataset == "sales history"
+    assert padded.relationship_id == clean.relationship_id
+    assert internal.left_dataset == "sales  history"
+    assert internal.relationship_id != clean.relationship_id
+
+
+@pytest.mark.parametrize(
+    "key_value",
+    [UUID("12345678-1234-5678-1234-567812345678"), Decimal("123.4500")],
+    ids=["uuid", "decimal"],
+)
+def test_common_typed_scalar_keys_fingerprint_deterministically(key_value):
+    left = pd.DataFrame({"id": [key_value]})
+    right = pd.DataFrame({"id": [key_value]})
+
+    first = validate_relationship(left, right, left_key="id", right_key="id")
+    repeated = validate_relationship(left.copy(deep=True), right.copy(deep=True), left_key="id", right_key="id")
+
+    assert first.status == "validated"
+    assert first.relationship_id == repeated.relationship_id
+    assert str(key_value) not in json.dumps(first.to_record())
 
 
 def test_dataset_identifiers_bind_identity_and_are_exposed_for_audit():
