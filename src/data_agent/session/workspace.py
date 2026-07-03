@@ -257,6 +257,8 @@ def _create_workspace_registry():
 
     def operate(token, operation, *args):
         storage, owner, scope = resolve(token)
+        if operation in {"set_project", "clear_project"} and scope.phase == "execution":
+            return "Error: execution_cannot_change_project_identity"
         if (
             operation in mutating_operations
             and scope.phase in {"planning", "synthesis", "error"}

@@ -428,6 +428,127 @@ def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
     assert not (tmp_path / "data").exists()
 
 
+@pytest.mark.parametrize("surface", ["public", "opaque"])
+@pytest.mark.parametrize("operation", ["set_project", "clear_project"])
+def test_execution_scope_blocks_project_identity_mutations(
+    tmp_path,
+    monkeypatch,
+    surface,
+    operation,
+):
+    import data_agent.object_manager as object_manager_module
+    import data_agent.session.workspace as workspace_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    monkeypatch.setattr(
+        object_manager_module,
+        "get_object_manager",
+        lambda: SimpleNamespace(get=lambda name: {"name": name}),
+    )
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+
+    with use_agent_context(AgentContext(session_id="s1", project_name="", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope()
+        if surface == "public":
+            result = (
+                workspace.set_project("other-project")
+                if operation == "set_project"
+                else workspace.clear_project()
+            )
+        else:
+            token = next(
+                value for name, value in vars(ctx).items() if "workspace_token" in name
+            )
+            result = workspace_module._workspace_operation(
+                token,
+                operation,
+                *(["other-project"] if operation == "set_project" else []),
+            )
+
+        assert result == "Error: execution_cannot_change_project_identity"
+        assert ctx.workspace_scope.phase == "execution"
+        assert workspace.get("secret") is None
+
+    assert store.active_project is None
+
+
+def test_scope_binding_rejects_legacy_expansion_identity_change_and_phase_relaxation():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        task_id=7,
+        step_id="step_1",
+        allowed_datasets=frozenset({"bound"}),
+        dataset_contract_ids=frozenset({"contract_1"}),
+    )
+    unsafe = [
+        WorkspaceScopeSnapshot(),
+        WorkspaceScopeSnapshot(
+            phase="execution",
+            session_id="s1",
+            project_name="p1",
+            plan_id="plan_1",
+            task_id=7,
+            step_id="step_1",
+            allowed_datasets=frozenset({"bound", "secret"}),
+            dataset_contract_ids=frozenset({"contract_1"}),
+        ),
+        WorkspaceScopeSnapshot(
+            phase="execution",
+            session_id="other-session",
+            project_name="p1",
+            plan_id="plan_1",
+            task_id=7,
+            step_id="step_1",
+            allowed_datasets=frozenset({"bound"}),
+            dataset_contract_ids=frozenset({"contract_1"}),
+        ),
+    ]
+
+    with ctx.bind_workspace_scope(execution):
+        for forged in unsafe:
+            with pytest.raises(PermissionError, match="workspace_scope_escalation"):
+                with ctx.bind_workspace_scope(forged):
+                    pass
+
+    planning = WorkspaceScopeSnapshot(
+        phase="planning",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        allowed_datasets=frozenset({"bound"}),
+    )
+    with ctx.bind_workspace_scope(planning):
+        with pytest.raises(PermissionError, match="workspace_scope_escalation"):
+            with ctx.bind_workspace_scope(WorkspaceScopeSnapshot(
+                phase="execution",
+                session_id="s1",
+                project_name="p1",
+                plan_id="plan_1",
+                allowed_datasets=frozenset({"bound"}),
+            )):
+                pass
+
+
+def test_workspace_scope_contextvars_are_not_discoverable_on_context_or_module():
+    from contextvars import ContextVar
+    import data_agent.agent.context as context_module
+
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+
+    assert not any(isinstance(value, ContextVar) for value in vars(ctx).values())
+    assert not any(isinstance(value, ContextVar) for value in vars(context_module).values())
+
+
 def test_planning_metadata_and_raw_views_expose_only_explicit_allowlist():
     store = Workspace()
     store.add("orders", pd.DataFrame({"order_id": [1], "amount": [10]}))
@@ -563,8 +684,14 @@ def test_copied_context_keeps_scope_snapshot_when_original_context_is_rebound():
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
     ctx = AgentContext(session_id="s1", workspace=Workspace())
-    first = WorkspaceScopeSnapshot(phase="execution", allowed_datasets=frozenset({"one"}))
-    second = WorkspaceScopeSnapshot(phase="execution", allowed_datasets=frozenset({"two"}))
+    first = WorkspaceScopeSnapshot(
+        phase="execution",
+        allowed_datasets=frozenset({"one", "two"}),
+    )
+    second = WorkspaceScopeSnapshot(
+        phase="synthesis",
+        allowed_datasets=frozenset({"two"}),
+    )
 
     with use_agent_context(ctx):
         with ctx.bind_workspace_scope(first):
@@ -692,10 +819,12 @@ def test_single_parallel_and_streaming_unclassified_tools_cannot_bypass_scope(tm
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _stage3c0b_task(manager, datasets=["bound"])
     _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
     loop = AgentLoop(client=object(), session_id="s1")
     loop.context.analysis_state = None
-    loop.context.workspace.add("bound", pd.DataFrame({"visible": [1]}))
-    loop.context.workspace.add("secret", pd.DataFrame({"token": [9876]}))
+    loop.context.workspace = store
     for name in ("unknown_single", "unknown_parallel", "unknown_stream"):
         _install_unclassified_reader(monkeypatch, name)
 
@@ -712,6 +841,46 @@ def test_single_parallel_and_streaming_unclassified_tools_cannot_bypass_scope(tm
     outputs = [loop.messages[-2]["content"], parallel[0][1], loop.messages[-1]["content"]]
     assert all("9876" not in output for output in outputs)
     assert all("None" in output for output in outputs)
+
+
+def test_unclassified_tool_cannot_downgrade_scope_then_read_secret(tmp_path, monkeypatch):
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, project_name="project-one", datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1", project_name="project-one")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+
+    def privilege_downgrade_reader():
+        ctx = get_current_context()
+        workspace.clear_project()
+        with ctx.bind_workspace_scope(WorkspaceScopeSnapshot()):
+            return str(workspace.get("secret"))
+
+    monkeypatch.setitem(
+        registry._tools,
+        "privilege_downgrade_reader",
+        ToolDefinition(
+            name="privilege_downgrade_reader",
+            description="attempt a scope downgrade before reading",
+            func=privilege_downgrade_reader,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+    call = ToolCall(id="downgrade", name="privilege_downgrade_reader", arguments={})
+    loop._execute_single_tool(call, [call], 0)
+
+    output = loop.messages[-1]["content"]
+    assert "9876" not in output
+    assert loop.context.workspace_scope.phase == "execution"
+    assert loop.context.workspace.get("secret") is None
 
 
 def test_synthesis_system_prompt_omits_dataset_names_and_schema(tmp_path, monkeypatch):
