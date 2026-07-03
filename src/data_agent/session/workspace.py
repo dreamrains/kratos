@@ -210,6 +210,7 @@ def _create_workspace_registry():
 
     stores = weakref.WeakKeyDictionary()
     owners = weakref.WeakKeyDictionary()
+    default_bindings = weakref.WeakKeyDictionary()
     mutating_operations = frozenset({
         "add",
         "derive",
@@ -229,6 +230,15 @@ def _create_workspace_registry():
             owners[token] = weakref.ref(owner)
         return token
 
+    def bind_default(proxy):
+        default_bindings[proxy] = bind(None, None)
+
+    def operate_default(proxy, operation, *args):
+        token = default_bindings.get(proxy)
+        if token is None:
+            raise RuntimeError("Default workspace binding is no longer available")
+        return operate(token, operation, *args)
+
     def resolve(token):
         storage = stores.get(token)
         if storage is None:
@@ -237,7 +247,21 @@ def _create_workspace_registry():
         owner = owner_ref() if owner_ref is not None else None
         from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
-        scope = WorkspaceScopeSnapshot() if owner is None else owner.workspace_scope
+        if owner is None:
+            active_owner = get_current_context()
+            active_scope = active_owner.workspace_scope if active_owner is not None else None
+            if active_scope is not None and active_scope.phase != "legacy":
+                active_token = object.__getattribute__(
+                    active_owner,
+                    "_AgentContext__workspace_token",
+                )
+                active_storage = stores.get(active_token)
+                if active_storage is None:
+                    raise RuntimeError("Active workspace binding is no longer available")
+                return active_storage, active_owner, active_scope
+            scope = WorkspaceScopeSnapshot()
+        else:
+            scope = owner.workspace_scope
         if owner is not None and scope is None:
             scope = owner.refresh_workspace_scope()
         return storage, owner, scope
@@ -385,10 +409,15 @@ def _create_workspace_registry():
             return storage.active_project
         raise ValueError(f"Unsupported workspace operation: {operation}")
 
-    return bind, operate
+    return bind, operate, bind_default, operate_default
 
 
-_bind_workspace_store, _workspace_operation = _create_workspace_registry()
+(
+    _bind_workspace_store,
+    _workspace_operation,
+    _bind_default_workspace,
+    _default_workspace_operation,
+) = _create_workspace_registry()
 del _create_workspace_registry
 
 
@@ -405,16 +434,18 @@ class WorkspaceProxy:
 
     def __init__(self, context=None):
         self.__context = context
-        self.__default_token = _bind_workspace_store(None, None) if context is None else None
+        if context is None:
+            _bind_default_workspace(self)
 
-    def __token(self):
+    def __operate(self, operation, *args):
         ctx = self.__context or get_current_context()
         if ctx is None:
-            return self.__default_token
-        return object.__getattribute__(ctx, "_AgentContext__workspace_token")
+            return _default_workspace_operation(self, operation, *args)
+        token = object.__getattribute__(ctx, "_AgentContext__workspace_token")
+        return _workspace_operation(token, operation, *args)
 
     def _scope(self):
-        return _workspace_operation(self.__token(), "scope")
+        return self.__operate("scope")
 
     def _readable(self, name: str) -> bool:
         scope = self._scope()
@@ -433,81 +464,81 @@ class WorkspaceProxy:
         return ""
 
     def get(self, name: str) -> Optional[pd.DataFrame]:
-        return _workspace_get_operation(self.__token(), name)
+        return self.__operate("get", name)
 
     def exists(self, name: str) -> bool:
-        return _workspace_operation(self.__token(), "exists", name)
+        return self.__operate("exists", name)
 
     def list_datasets(self) -> dict[str, dict]:
-        return _workspace_operation(self.__token(), "list")
+        return self.__operate("list")
 
     def get_metadata(self, name: str, key: str = "") -> Any:
-        return _workspace_operation(self.__token(), "metadata", name, key)
+        return self.__operate("metadata", name, key)
 
     def planning_schema(self, name: str) -> list[str]:
-        return _workspace_operation(self.__token(), "planning_schema", name)
+        return self.__operate("planning_schema", name)
 
     def planning_quality(self, name: str) -> Any:
-        return _workspace_operation(self.__token(), "planning_quality", name)
+        return self.__operate("planning_quality", name)
 
     def planning_preview(self, name: str, *, rows: int = 5) -> list[dict[str, Any]]:
-        return _workspace_operation(self.__token(), "planning_preview", name, rows)
+        return self.__operate("planning_preview", name, rows)
 
     def add(self, name: str, df: pd.DataFrame) -> str:
-        return _workspace_add_operation(self.__token(), name, df)
+        return self.__operate("add", name, df)
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
-        return _workspace_operation(self.__token(), "derive", source, name, df, expression)
+        return self.__operate("derive", source, name, df, expression)
 
     def remove(self, name: str) -> str:
-        return _workspace_operation(self.__token(), "remove", name)
+        return self.__operate("remove", name)
 
     def set_metadata(self, name: str, key: str, value: Any) -> Any:
-        return _workspace_operation(self.__token(), "set_metadata", name, key, value)
+        return self.__operate("set_metadata", name, key, value)
 
     def log_transform(self, source: str, operation: str, target: str, detail: str = "") -> Any:
-        return _workspace_operation(self.__token(), "log_transform", source, operation, target, detail)
+        return self.__operate("log_transform", source, operation, target, detail)
 
     def get_transform_log(self) -> list[dict[str, Any]]:
-        return _workspace_operation(self.__token(), "transform_log")
+        return self.__operate("transform_log")
 
     # Persistence operates on internal storage and does not return raw data.
     def save_meta(self, session_id: str) -> None:
-        return _workspace_operation(self.__token(), "save_meta", session_id)
+        return self.__operate("save_meta", session_id)
 
     def persist_dataset(self, session_id: str, name: str) -> str | None:
-        return _workspace_operation(self.__token(), "persist", session_id, name)
+        return self.__operate("persist", session_id, name)
 
     def set_object(self, name: str) -> str:
         return self.set_project(name)
 
     def set_project(self, name: str) -> str:
-        return _workspace_operation(self.__token(), "set_project", name)
+        return self.__operate("set_project", name)
 
     def clear_object(self) -> str:
         return self.clear_project()
 
     def clear_project(self) -> str:
-        return _workspace_operation(self.__token(), "clear_project")
+        return self.__operate("clear_project")
 
     def __getattr__(self, name):
         raise AttributeError(f"WorkspaceProxy does not expose '{name}'")
 
     @property
     def _datasets(self):
-        return _workspace_operation(self.__token(), "datasets_view")
+        return self.__operate("datasets_view")
 
     @property
     def _metadata(self):
-        return _workspace_operation(self.__token(), "metadata_view")
+        return self.__operate("metadata_view")
 
     @property
     def active_object(self) -> Optional[str]:
-        return _workspace_operation(self.__token(), "active_project")
+        return self.__operate("active_project")
 
     @property
     def active_project(self) -> Optional[str]:
-        return _workspace_operation(self.__token(), "active_project")
+        return self.__operate("active_project")
 
 
 # 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。

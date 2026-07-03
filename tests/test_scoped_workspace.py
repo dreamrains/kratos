@@ -292,6 +292,123 @@ def test_reflection_does_not_expose_raw_workspace_from_context_or_proxy(
     assert exposed == []
 
 
+@pytest.mark.parametrize("operation", ["get", "datasets_view"])
+def test_global_workspace_reflection_cannot_recover_default_binding_or_bypass_scope(operation):
+    import data_agent.session.workspace as workspace_module
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    secret_name = "reflection_default_secret"
+    workspace.remove(secret_name)
+    workspace.add(secret_name, pd.DataFrame({"token": [9876]}))
+    binding_type = type(workspace_module._bind_workspace_store(None, None))
+    reflected_tokens = []
+    for owner in (workspace, workspace_module):
+        reflected_tokens.extend(
+            value for value in vars(owner).values() if isinstance(value, binding_type)
+        )
+        for name in dir(owner):
+            try:
+                value = getattr(owner, name)
+            except Exception:
+                continue
+            if isinstance(value, binding_type):
+                reflected_tokens.append(value)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        allowed_datasets=frozenset({"bound"}),
+    )
+
+    try:
+        with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+            with ctx.bind_workspace_scope(execution):
+                for token in reflected_tokens:
+                    if operation == "get":
+                        assert workspace_module._workspace_operation(
+                            token,
+                            operation,
+                            secret_name,
+                        ) is None
+                    else:
+                        view = workspace_module._workspace_operation(token, operation)
+                        assert set(view) == {"bound"}
+                        assert not isinstance(view, Workspace)
+        assert reflected_tokens == []
+    finally:
+        workspace.remove(secret_name)
+
+
+@pytest.mark.parametrize(
+    ("phase", "write_error", "expected_names"),
+    [
+        ("planning", "Error: planning_cannot_mutate_raw_data", {"bound"}),
+        ("execution", "Error: dataset_outside_current_task_scope", {"bound"}),
+        ("synthesis", "Error: synthesis_cannot_mutate_raw_data", set()),
+        ("error", "Error: error_cannot_mutate_raw_data", set()),
+    ],
+)
+def test_ownerless_token_operations_follow_active_nonlegacy_scope(
+    phase,
+    write_error,
+    expected_names,
+):
+    import data_agent.session.workspace as workspace_module
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    workspace_module._workspace_operation(
+        ownerless,
+        "add",
+        "legacy_secret",
+        pd.DataFrame({"token": [9876]}),
+    )
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    store.set_metadata("bound", "context", "scoped context")
+    ctx = AgentContext(session_id="s1", workspace=store)
+    snapshot = WorkspaceScopeSnapshot(
+        phase=phase,
+        allowed_datasets=frozenset({"bound"}),
+        error_type="scope_error" if phase == "error" else "",
+    )
+
+    with use_agent_context(ctx):
+        with ctx.bind_workspace_scope(snapshot):
+            secret = workspace_module._workspace_operation(ownerless, "get", "legacy_secret")
+            datasets = workspace_module._workspace_operation(ownerless, "datasets_view")
+            metadata = workspace_module._workspace_operation(ownerless, "metadata_view")
+            result = workspace_module._workspace_operation(
+                ownerless,
+                "add",
+                "intruder",
+                pd.DataFrame({"x": [1]}),
+            )
+
+    assert result == write_error
+    assert secret is None
+    assert set(datasets) == expected_names
+    assert set(metadata) == expected_names
+    assert not isinstance(datasets, Workspace)
+    assert store.get("intruder") is None
+
+
+def test_ownerless_token_preserves_legacy_behavior_outside_active_context():
+    import data_agent.session.workspace as workspace_module
+
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    frame = pd.DataFrame({"value": [1]})
+
+    assert "Error:" not in workspace_module._workspace_operation(ownerless, "add", "legacy", frame)
+    pd.testing.assert_frame_equal(
+        workspace_module._workspace_operation(ownerless, "get", "legacy"),
+        frame,
+    )
+    datasets = workspace_module._workspace_operation(ownerless, "datasets_view")
+    datasets["legacy"].loc[0, "value"] = 2
+    assert workspace_module._workspace_operation(ownerless, "get", "legacy").loc[0, "value"] == 2
+
+
 @pytest.mark.parametrize(
     ("mode", "status", "write_error"),
     [
