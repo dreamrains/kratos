@@ -210,6 +210,17 @@ def _create_workspace_registry():
 
     stores = weakref.WeakKeyDictionary()
     owners = weakref.WeakKeyDictionary()
+    mutating_operations = frozenset({
+        "add",
+        "derive",
+        "remove",
+        "set_metadata",
+        "log_transform",
+        "save_meta",
+        "persist",
+        "set_project",
+        "clear_project",
+    })
 
     def bind(owner, storage):
         token = BindingToken()
@@ -246,6 +257,11 @@ def _create_workspace_registry():
 
     def operate(token, operation, *args):
         storage, owner, scope = resolve(token)
+        if (
+            operation in mutating_operations
+            and scope.phase in {"planning", "synthesis", "error"}
+        ):
+            return f"Error: {scope.phase}_cannot_mutate_raw_data"
         if operation == "scope":
             return scope
         if operation == "get":
@@ -284,7 +300,7 @@ def _create_workspace_registry():
                 return None if key else {}
             meta = copy.deepcopy(storage.get_metadata(name))
             if scope.phase == "planning":
-                safe = {k: v for k, v in meta.items() if k in {"quality", "schema", "context"}}
+                safe = {k: v for k, v in meta.items() if k in {"quality", "schema"}}
                 return safe.get(key) if key else safe
             return meta.get(key) if key else meta
         if operation == "planning_schema":

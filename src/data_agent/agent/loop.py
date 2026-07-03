@@ -328,16 +328,22 @@ class AgentLoop:
         if data is None:
             return
 
-        obj_name = data.get("project_name") or data.get("object_name")
-        if obj_name:
-            self.context.project_name = obj_name
+        has_project_name = "project_name" in data
+        has_legacy_object_name = "object_name" in data
+        obj_name = data["project_name"] if has_project_name else data.get("object_name")
+        if has_project_name or has_legacy_object_name:
             with use_agent_context(self.context):
-                workspace.set_project(obj_name)
+                if obj_name in (None, ""):
+                    workspace.clear_project()
+                else:
+                    workspace.set_project(obj_name)
+            self.context.project_name = obj_name
             set_active_object(obj_name)
 
             # Reload analysis_state to match restored project
             from data_agent.agent.analysis_state import load_analysis_state
             self.context.analysis_state = load_analysis_state(self.session_id, obj_name)
+            self.context.analysis_state.project_name = obj_name
 
             logger.info("Object context restored", extra={"extra_data": {"object": obj_name}})
 

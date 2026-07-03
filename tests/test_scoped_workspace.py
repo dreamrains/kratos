@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from dataclasses import FrozenInstanceError
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -353,6 +354,107 @@ def test_planning_exposes_schema_quality_and_bounded_preview_only(monkeypatch):
             ]
 
 
+@pytest.mark.parametrize("surface", ["public", "opaque"])
+@pytest.mark.parametrize("phase", ["planning", "synthesis", "error"])
+def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
+    tmp_path,
+    monkeypatch,
+    surface,
+    phase,
+):
+    import data_agent.session.history as history
+    import data_agent.session.workspace as workspace_module
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    monkeypatch.setattr(history, "_session_dir", lambda session_id: tmp_path)
+    store = Workspace()
+    original = pd.DataFrame({"order_id": [1], "amount": [10]})
+    store.add("orders", original)
+    store.set_metadata("orders", "quality", {"missing": 0})
+    store._active_project = "original-project"
+    ctx = AgentContext(session_id="s1", workspace=store)
+
+    with use_agent_context(ctx):
+        scope = (
+            ctx.planning_workspace_scope(["orders"])
+            if phase == "planning"
+            else ctx.bind_workspace_scope(WorkspaceScopeSnapshot(
+                phase=phase,
+                allowed_datasets=frozenset({"orders"}),
+                error_type="scope_error" if phase == "error" else "",
+            ))
+        )
+        with scope:
+            if surface == "public":
+                calls = [
+                    lambda: workspace.add("new", pd.DataFrame({"x": [1]})),
+                    lambda: workspace.derive("orders", "derived", original, "copy"),
+                    lambda: workspace.set_metadata("orders", "quality", {"missing": 1}),
+                    lambda: workspace.log_transform("orders", "filter", "orders", "x > 0"),
+                    lambda: workspace.save_meta("s1"),
+                    lambda: workspace.persist_dataset("s1", "orders"),
+                    lambda: workspace.set_project("other-project"),
+                    lambda: workspace.clear_project(),
+                    lambda: workspace.remove("orders"),
+                ]
+            else:
+                token = next(
+                    value for name, value in vars(ctx).items() if "workspace_token" in name
+                )
+                operate = workspace_module._workspace_operation
+                calls = [
+                    lambda: operate(token, "add", "new", pd.DataFrame({"x": [1]})),
+                    lambda: operate(token, "derive", "orders", "derived", original, "copy"),
+                    lambda: operate(token, "set_metadata", "orders", "quality", {"missing": 1}),
+                    lambda: operate(token, "log_transform", "orders", "filter", "orders", "x > 0"),
+                    lambda: operate(token, "save_meta", "s1"),
+                    lambda: operate(token, "persist", "s1", "orders"),
+                    lambda: operate(token, "set_project", "other-project"),
+                    lambda: operate(token, "clear_project"),
+                    lambda: operate(token, "remove", "orders"),
+                ]
+
+            results = [call() for call in calls]
+
+    assert results == [f"Error: {phase}_cannot_mutate_raw_data"] * len(calls)
+    pd.testing.assert_frame_equal(store.get("orders"), original)
+    assert store.get("new") is None
+    assert store.get("derived") is None
+    assert store._derived_lineage == {}
+    assert store.get_metadata("orders") == {"quality": {"missing": 0}}
+    assert store.get_transform_log() == []
+    assert store.active_project == "original-project"
+    assert not (tmp_path / "workspace_meta.json").exists()
+    assert not (tmp_path / "data").exists()
+
+
+def test_planning_metadata_and_raw_views_expose_only_explicit_allowlist():
+    store = Workspace()
+    store.add("orders", pd.DataFrame({"order_id": [1], "amount": [10]}))
+    store.set_metadata("orders", "schema", {"grain": "one row per order"})
+    store.set_metadata("orders", "quality", {"missing": 0})
+    store.set_metadata("orders", "context", "private planning context")
+    store.set_metadata("orders", "secret", {"token": 9876})
+    store.set_metadata("orders", "raw_notes", "do not disclose")
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        with ctx.planning_workspace_scope(["orders"]):
+            metadata = workspace.get_metadata("orders")
+            metadata_view = workspace._metadata
+            datasets_view = workspace._datasets
+
+    assert metadata == {
+        "schema": {"grain": "one row per order"},
+        "quality": {"missing": 0},
+    }
+    assert metadata_view == {"orders": metadata}
+    assert datasets_view == {"orders": None}
+    exposed = repr((metadata, metadata_view, datasets_view))
+    assert "private planning context" not in exposed
+    assert "9876" not in exposed
+    assert "do not disclose" not in exposed
+
+
 def test_planning_list_datasets_exposes_only_approved_summary_fields():
     store = Workspace()
     store.add("orders", pd.DataFrame({"order_id": [1], "amount": [10]}))
@@ -405,6 +507,58 @@ def test_explicit_blank_project_name_does_not_fall_back_to_object_name():
     assert loop.context.project_name == ""
 
 
+@pytest.mark.parametrize(
+    ("session_data", "expected_project", "expected_workspace_action"),
+    [
+        ({"project_name": "", "object_name": "legacy-project"}, "", ("clear", None)),
+        ({"object_name": "legacy-project"}, "legacy-project", ("set", "legacy-project")),
+        (
+            {"project_name": "  exact project  ", "object_name": "legacy-project"},
+            "  exact project  ",
+            ("set", "  exact project  "),
+        ),
+    ],
+)
+def test_restore_object_context_uses_project_key_presence_and_exact_identity(
+    monkeypatch,
+    session_data,
+    expected_project,
+    expected_workspace_action,
+):
+    import data_agent.agent.analysis_state as analysis_state_module
+    import data_agent.session.history as history
+    import data_agent.tools.knowledge_tools as knowledge_tools
+
+    loop = AgentLoop(client=object(), session_id="s1", project_name="initial-project")
+    workspace_actions = []
+    active_objects = []
+    monkeypatch.setattr(history, "load_session", lambda session_id: dict(session_data))
+    monkeypatch.setattr(
+        workspace,
+        "set_project",
+        lambda name: workspace_actions.append(("set", name)) or "ok",
+    )
+    monkeypatch.setattr(
+        workspace,
+        "clear_project",
+        lambda: workspace_actions.append(("clear", None)) or "ok",
+    )
+    monkeypatch.setattr(knowledge_tools, "set_active_session", lambda session_id: None)
+    monkeypatch.setattr(knowledge_tools, "set_active_object", active_objects.append)
+    monkeypatch.setattr(
+        analysis_state_module,
+        "load_analysis_state",
+        lambda session_id, project_name: SimpleNamespace(project_name=project_name),
+    )
+
+    loop.restore_object_context()
+
+    assert loop.context.project_name == expected_project
+    assert loop.context.analysis_state.project_name == expected_project
+    assert workspace_actions == [expected_workspace_action]
+    assert active_objects == [expected_project]
+
+
 def test_copied_context_keeps_scope_snapshot_when_original_context_is_rebound():
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
@@ -430,11 +584,9 @@ def test_workspace_module_does_not_expose_raw_storage_resolver():
     )
 
 
-@pytest.mark.parametrize("mode", ["execution", "synthesis", "error"])
-def test_save_meta_serializes_only_scope_approved_dataset_details(
+def test_execution_save_meta_serializes_only_scope_approved_dataset_details(
     tmp_path,
     monkeypatch,
-    mode,
 ):
     import data_agent.session.history as history
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
@@ -445,11 +597,9 @@ def test_save_meta_serializes_only_scope_approved_dataset_details(
     store.add("secret", pd.DataFrame({"secret_column": [9876]}))
     store.set_metadata("secret", "_source_path", "secret/source.csv")
     store.set_metadata("secret", "context", "private context")
-    phase = "execution" if mode == "execution" else mode
     snapshot = WorkspaceScopeSnapshot(
-        phase=phase,
+        phase="execution",
         allowed_datasets=frozenset({"bound"}),
-        error_type="scope_error" if phase == "error" else "",
     )
 
     with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
@@ -457,7 +607,7 @@ def test_save_meta_serializes_only_scope_approved_dataset_details(
             workspace.save_meta("s1")
 
     payload = json.loads((tmp_path / "workspace_meta.json").read_text(encoding="utf-8"))
-    assert set(payload) == ({"bound"} if mode == "execution" else set())
+    assert set(payload) == {"bound"}
     serialized = json.dumps(payload)
     assert "secret" not in serialized
     assert "secret_column" not in serialized
