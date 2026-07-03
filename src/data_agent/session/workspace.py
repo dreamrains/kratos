@@ -11,7 +11,7 @@ import weakref
 
 import pandas as pd
 
-from data_agent.agent.context import get_current_context
+from data_agent.agent.context import _ensure_context_workspace_scope, get_current_context
 from data_agent.utils.logging import get_logger
 
 logger = get_logger("workspace")
@@ -249,7 +249,11 @@ def _create_workspace_registry():
 
         if owner is None:
             active_owner = get_current_context()
-            active_scope = active_owner.workspace_scope if active_owner is not None else None
+            active_scope = (
+                _ensure_context_workspace_scope(active_owner)
+                if active_owner is not None
+                else None
+            )
             if active_scope is not None and active_scope.phase != "legacy":
                 active_token = object.__getattribute__(
                     active_owner,
@@ -263,7 +267,7 @@ def _create_workspace_registry():
         else:
             scope = owner.workspace_scope
         if owner is not None and scope is None:
-            scope = owner.refresh_workspace_scope()
+            scope = _ensure_context_workspace_scope(owner)
         return storage, owner, scope
 
     def readable(scope, name):

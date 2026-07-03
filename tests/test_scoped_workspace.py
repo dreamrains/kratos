@@ -48,6 +48,11 @@ def _bind_manager(monkeypatch, manager: TaskManager) -> None:
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_task_manager(tmp_path, monkeypatch):
+    _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "default_tasks"))
+
+
 def _install_unclassified_reader(monkeypatch, name: str) -> None:
     monkeypatch.setitem(
         registry._tools,
@@ -407,6 +412,140 @@ def test_ownerless_token_preserves_legacy_behavior_outside_active_context():
     datasets = workspace_module._workspace_operation(ownerless, "datasets_view")
     datasets["legacy"].loc[0, "value"] = 2
     assert workspace_module._workspace_operation(ownerless, "get", "legacy").loc[0, "value"] == 2
+
+
+def test_fresh_active_execution_scope_closes_ownerless_operation_window(tmp_path, monkeypatch):
+    import data_agent.session.workspace as workspace_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    workspace_module._workspace_operation(
+        ownerless,
+        "add",
+        "legacy_secret",
+        pd.DataFrame({"token": [9876]}),
+    )
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    ctx = AgentContext(session_id="s1", workspace=store)
+    assert ctx.workspace_scope is None
+
+    with use_agent_context(ctx):
+        secret = workspace_module._workspace_operation(ownerless, "get", "legacy_secret")
+        datasets = workspace_module._workspace_operation(ownerless, "datasets_view")
+        write = workspace_module._workspace_operation(
+            ownerless,
+            "add",
+            "intruder",
+            pd.DataFrame({"x": [1]}),
+        )
+
+    assert secret is None
+    assert set(datasets) == {"bound"}
+    assert write == "Error: dataset_outside_current_task_scope"
+    assert ctx.workspace_scope.phase == "execution"
+    assert store.get("intruder") is None
+
+
+def test_fresh_missing_current_task_scope_closes_ownerless_operation_window(
+    tmp_path,
+    monkeypatch,
+):
+    import data_agent.session.workspace as workspace_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"], status="pending")
+    _bind_manager(monkeypatch, manager)
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    workspace_module._workspace_operation(
+        ownerless,
+        "add",
+        "legacy_secret",
+        pd.DataFrame({"token": [9876]}),
+    )
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    assert ctx.workspace_scope is None
+
+    with use_agent_context(ctx):
+        secret = workspace_module._workspace_operation(ownerless, "get", "legacy_secret")
+        datasets = workspace_module._workspace_operation(ownerless, "datasets_view")
+        write = workspace_module._workspace_operation(
+            ownerless,
+            "add",
+            "intruder",
+            pd.DataFrame({"x": [1]}),
+        )
+
+    assert secret is None
+    assert datasets == {}
+    assert write == "Error: error_cannot_mutate_raw_data"
+    assert ctx.workspace_scope.phase == "error"
+    assert ctx.workspace_scope.error_type == "stage3c0b_current_task_missing"
+
+
+def test_fresh_active_context_rejects_forged_legacy_and_expanded_bindings(
+    tmp_path,
+    monkeypatch,
+):
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    forged = [
+        WorkspaceScopeSnapshot(),
+        WorkspaceScopeSnapshot(
+            phase="execution",
+            session_id="s1",
+            allowed_datasets=frozenset({"bound", "secret"}),
+        ),
+    ]
+    assert ctx.workspace_scope is None
+
+    for snapshot in forged:
+        with pytest.raises(PermissionError, match="workspace_scope_escalation"):
+            with ctx.bind_workspace_scope(snapshot):
+                pass
+
+    assert ctx.workspace_scope.phase == "execution"
+    assert ctx.workspace_scope.allowed_datasets == frozenset({"bound"})
+
+
+def test_fresh_no_plan_context_initializes_legacy_and_preserves_default_behavior(
+    tmp_path,
+    monkeypatch,
+):
+    import data_agent.session.workspace as workspace_module
+
+    _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "tasks"))
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    frame = pd.DataFrame({"value": [1]})
+    workspace_module._workspace_operation(ownerless, "add", "legacy", frame)
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+
+    with use_agent_context(ctx):
+        result = workspace_module._workspace_operation(ownerless, "get", "legacy")
+
+    pd.testing.assert_frame_equal(result, frame)
+    assert ctx.workspace_scope.phase == "legacy"
+
+
+def test_fresh_no_plan_context_can_bootstrap_planning_scope(tmp_path, monkeypatch):
+    _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "tasks"))
+    store = Workspace()
+    store.add("orders", pd.DataFrame({"order_id": [1], "amount": [10]}))
+    ctx = AgentContext(session_id="s1", workspace=store)
+    assert ctx.workspace_scope is None
+
+    with use_agent_context(ctx):
+        with ctx.planning_workspace_scope(["orders"]):
+            assert ctx.workspace_scope.phase == "planning"
+            assert workspace.planning_schema("orders") == ["order_id", "amount"]
+
+    assert ctx.workspace_scope.phase == "legacy"
 
 
 @pytest.mark.parametrize(

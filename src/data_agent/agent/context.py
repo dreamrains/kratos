@@ -73,6 +73,13 @@ def _create_context_state_registry():
         if access_rank[target.phase] > access_rank[current.phase]:
             reject_escalation(f"unsafe phase transition: {current.phase} -> {target.phase}")
 
+    def ensure_authoritative(owner, scope_var):
+        current = scope_var.get()
+        if current is None:
+            current = resolve_authoritative(owner)
+            scope_var.set(current)
+        return current
+
     def operate_scope(token, operation, *args):
         scope_var = scope_vars.get(token)
         preview_var = preview_vars.get(token)
@@ -82,9 +89,12 @@ def _create_context_state_registry():
             raise RuntimeError("Agent context scope binding is no longer available")
         if operation == "get":
             return scope_var.get()
+        if operation == "ensure":
+            return ensure_authoritative(owner, scope_var)
         if operation == "refresh":
+            current = ensure_authoritative(owner, scope_var)
             snapshot = resolve_authoritative(owner)
-            validate_transition(scope_var.get(), snapshot)
+            validate_transition(current, snapshot)
             scope_var.set(snapshot)
             return snapshot
         if operation == "refresh_authoritative":
@@ -96,7 +106,8 @@ def _create_context_state_registry():
             return snapshot
         if operation == "bind":
             snapshot = args[0]
-            validate_transition(scope_var.get(), snapshot)
+            current = ensure_authoritative(owner, scope_var)
+            validate_transition(current, snapshot)
             return scope_var.set(snapshot)
         if operation == "reset":
             scope_var.reset(args[0])
@@ -286,6 +297,11 @@ AgentContext.workspace = property(_get_scoped_workspace, _set_workspace_store)
 
 def get_current_context() -> AgentContext | None:
     return _get_current_context()
+
+
+def _ensure_context_workspace_scope(ctx: AgentContext):
+    token = object.__getattribute__(ctx, "_AgentContext__scope_token")
+    return _context_scope_operation(token, "ensure")
 
 
 def set_current_context(ctx: AgentContext):
