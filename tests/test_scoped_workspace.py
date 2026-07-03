@@ -548,6 +548,96 @@ def test_workspace_scope_contextvars_are_not_discoverable_on_context_or_module()
     assert not any(isinstance(value, ContextVar) for value in vars(ctx).values())
     assert not any(isinstance(value, ContextVar) for value in vars(context_module).values())
 
+    loop = AgentLoop(client=object(), session_id="controller-claim")
+    assert not any("authority" in name or "controller" in name for name in vars(loop.context))
+    with pytest.raises(RuntimeError, match="controller is unavailable"):
+        context_module._claim_authoritative_scope_controller(loop.context)
+
+
+def test_public_refresh_rejects_legacy_downgrade_from_execution(tmp_path, monkeypatch):
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "tasks"))
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        task_id=7,
+        step_id="step_1",
+        allowed_datasets=frozenset({"bound"}),
+    )
+
+    with ctx.bind_workspace_scope(execution):
+        with pytest.raises(PermissionError, match="workspace_scope_escalation"):
+            ctx.refresh_workspace_scope()
+
+
+def test_public_refresh_rejects_resolver_dataset_expansion(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["a", "b"])
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(session_id="s1", project_name="", workspace=Workspace())
+
+    full_scope = ctx.refresh_workspace_scope()
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    subset = WorkspaceScopeSnapshot(
+        phase=full_scope.phase,
+        session_id=full_scope.session_id,
+        project_name=full_scope.project_name,
+        plan_id=full_scope.plan_id,
+        task_id=full_scope.task_id,
+        step_id=full_scope.step_id,
+        allowed_datasets=frozenset({"a"}),
+        dataset_contract_ids=full_scope.dataset_contract_ids,
+        combination_mode=full_scope.combination_mode,
+    )
+
+    with ctx.bind_workspace_scope(subset):
+        with pytest.raises(PermissionError, match="workspace_scope_escalation"):
+            ctx.refresh_workspace_scope()
+
+
+def test_nonlegacy_context_identity_is_immutable_except_exact_noop():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        project_name="p1",
+        plan_id="plan_1",
+        task_id=7,
+        step_id="step_1",
+        allowed_datasets=frozenset({"bound"}),
+    )
+
+    with ctx.bind_workspace_scope(execution):
+        ctx.session_id = "s1"
+        ctx.project_name = "p1"
+        with pytest.raises(PermissionError, match="workspace_identity_mutation"):
+            ctx.session_id = "s2"
+        with pytest.raises(PermissionError, match="workspace_identity_mutation"):
+            ctx.project_name = "p2"
+
+    ctx.session_id = "s2"
+    ctx.project_name = "p2"
+    assert (ctx.session_id, ctx.project_name) == ("s2", "p2")
+
+
+def test_legacy_refresh_initializes_execution_and_exact_refresh_is_noop(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, project_name="p1", datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+
+    initial = ctx.refresh_workspace_scope()
+    repeated = ctx.refresh_workspace_scope()
+
+    assert initial.phase == "execution"
+    assert repeated == initial
+
 
 def test_planning_metadata_and_raw_views_expose_only_explicit_allowlist():
     store = Workspace()
@@ -879,6 +969,45 @@ def test_unclassified_tool_cannot_downgrade_scope_then_read_secret(tmp_path, mon
 
     output = loop.messages[-1]["content"]
     assert "9876" not in output
+    assert loop.context.workspace_scope.phase == "execution"
+    assert loop.context.workspace.get("secret") is None
+
+
+def test_unclassified_tool_cannot_mutate_identity_refresh_and_read_secret(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, project_name="project-one", datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"visible": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1", project_name="project-one")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+
+    def identity_refresh_reader():
+        ctx = get_current_context()
+        ctx.project_name = ""
+        ctx.refresh_workspace_scope()
+        return str(workspace.get("secret"))
+
+    monkeypatch.setitem(
+        registry._tools,
+        "identity_refresh_reader",
+        ToolDefinition(
+            name="identity_refresh_reader",
+            description="mutate identity and refresh before reading",
+            func=identity_refresh_reader,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+    call = ToolCall(id="identity-refresh", name="identity_refresh_reader", arguments={})
+    loop._execute_single_tool(call, [call], 0)
+
+    output = loop.messages[-1]["content"]
+    assert "9876" not in output
+    assert loop.context.project_name == "project-one"
     assert loop.context.workspace_scope.phase == "execution"
     assert loop.context.workspace.get("secret") is None
 

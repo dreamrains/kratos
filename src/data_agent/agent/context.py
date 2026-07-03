@@ -23,13 +23,19 @@ def _create_context_state_registry():
     scope_vars = weakref.WeakKeyDictionary()
     preview_vars = weakref.WeakKeyDictionary()
     owners = weakref.WeakKeyDictionary()
+    available_authorities = weakref.WeakKeyDictionary()
+    claimed_authorities = weakref.WeakKeyDictionary()
     current_context = ContextVar("data_agent_current_context", default=None)
+
+    class ResolverAuthority:
+        pass
 
     def bind_owner(owner):
         token = ScopeToken()
         scope_vars[token] = ContextVar("data_agent_workspace_scope", default=None)
         preview_vars[token] = ContextVar("data_agent_planning_preview_rows", default=5)
         owners[token] = weakref.ref(owner)
+        available_authorities[token] = ResolverAuthority()
         return token
 
     def reject_escalation(message):
@@ -77,14 +83,15 @@ def _create_context_state_registry():
         if operation == "get":
             return scope_var.get()
         if operation == "refresh":
-            from data_agent.agent.execution_scope import resolve_workspace_scope
-            from data_agent.session.task_manager import task_manager
-
-            snapshot = resolve_workspace_scope(
-                task_manager,
-                owner.session_id,
-                owner.project_name or "",
-            )
+            snapshot = resolve_authoritative(owner)
+            validate_transition(scope_var.get(), snapshot)
+            scope_var.set(snapshot)
+            return snapshot
+        if operation == "refresh_authoritative":
+            authority = claimed_authorities.get(token)
+            if authority is None or not args or args[0] is not authority:
+                raise PermissionError("workspace_scope_authority_required")
+            snapshot = resolve_authoritative(owner)
             scope_var.set(snapshot)
             return snapshot
         if operation == "bind":
@@ -103,6 +110,28 @@ def _create_context_state_registry():
             return None
         raise ValueError(f"Unsupported agent context scope operation: {operation}")
 
+    def resolve_authoritative(owner):
+        from data_agent.agent.execution_scope import resolve_workspace_scope
+        from data_agent.session.task_manager import task_manager
+
+        return resolve_workspace_scope(
+            task_manager,
+            owner.session_id,
+            owner.project_name or "",
+        )
+
+    def claim_authoritative_controller(owner):
+        token = object.__getattribute__(owner, "_AgentContext__scope_token")
+        authority = available_authorities.pop(token, None)
+        if authority is None:
+            raise RuntimeError("Authoritative workspace scope controller is unavailable")
+        claimed_authorities[token] = authority
+
+        def refresh_from_resolver():
+            return operate_scope(token, "refresh_authoritative", authority)
+
+        return refresh_from_resolver
+
     def get_current():
         return current_context.get()
 
@@ -112,12 +141,20 @@ def _create_context_state_registry():
     def reset_current(token):
         current_context.reset(token)
 
-    return bind_owner, operate_scope, get_current, bind_current, reset_current
+    return (
+        bind_owner,
+        operate_scope,
+        claim_authoritative_controller,
+        get_current,
+        bind_current,
+        reset_current,
+    )
 
 
 (
     _bind_context_scope,
     _context_scope_operation,
+    _claim_authoritative_scope_controller,
     _get_current_context,
     _bind_current_context,
     _reset_current_context,
@@ -141,6 +178,20 @@ class AgentContext:
     turn_state: object | None = None
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
+
+    def __setattr__(self, name, value) -> None:
+        if name in {"session_id", "project_name"} and name in self.__dict__:
+            current_value = self.__dict__[name]
+            if current_value != value:
+                scope_token = self.__dict__.get("_AgentContext__scope_token")
+                if scope_token is not None:
+                    current_scope = _context_scope_operation(scope_token, "get")
+                    if current_scope is not None and current_scope.phase != "legacy":
+                        raise PermissionError(
+                            f"workspace_identity_mutation: cannot change {name} "
+                            f"while scope phase is {current_scope.phase}"
+                        )
+        object.__setattr__(self, name, value)
     def __post_init__(self) -> None:
         object.__setattr__(self, "_AgentContext__scope_token", _bind_context_scope(self))
 

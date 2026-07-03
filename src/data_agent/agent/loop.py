@@ -27,6 +27,7 @@ from data_agent.tools._utils import persist_detail
 TOOL_SUMMARY_THRESHOLD = 3000  # chars: auto-persist tool output exceeding this
 from data_agent.agent.context import (
     AgentContext,
+    _claim_authoritative_scope_controller,
     set_current_context,
     reset_current_context,
     use_agent_context,
@@ -245,6 +246,15 @@ def get_mcp_bridge():
 
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
+
+    @property
+    def context(self) -> AgentContext:
+        return self.__context
+
+    @context.setter
+    def context(self, context: AgentContext) -> None:
+        self.__context = context
+        self.__refresh_workspace_scope = _claim_authoritative_scope_controller(context)
 
     def __init__(
         self,
@@ -554,7 +564,7 @@ class AgentLoop:
 
         try:
             from data_agent.agent.analysis_state import analysis_state_summary
-            scope = self.context.workspace_scope or self.context.refresh_workspace_scope()
+            scope = self.context.workspace_scope or self.__refresh_workspace_scope()
             if scope.phase in {"synthesis", "error"}:
                 state = self.context.analysis_state
                 analysis_ctx = "\n".join([
@@ -637,7 +647,7 @@ class AgentLoop:
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
         with use_agent_context(self.context):
-            scope = self.context.refresh_workspace_scope()
+            scope = self.__refresh_workspace_scope()
             bundle_fingerprint = ""
             state = getattr(self.context, "analysis_state", None)
             from data_agent.agent.data_understanding import validate_data_understanding_bundle
@@ -852,7 +862,7 @@ class AgentLoop:
         logger.info("Quality reminder injected", extra={"extra_data": {"session_id": self.session_id}})
 
     def _execution_prompt_hint(self) -> str:
-        scope = self.context.workspace_scope or self.context.refresh_workspace_scope()
+        scope = self.context.workspace_scope or self.__refresh_workspace_scope()
         if scope.phase == "error":
             return f"{scope.error_type}: {scope.message}"
         turn_state = getattr(self.context, "turn_state", None)
@@ -1748,7 +1758,7 @@ class AgentLoop:
         import time
 
         for i, tc in enumerate(response.tool_calls):
-            self.context.refresh_workspace_scope()
+            self.__refresh_workspace_scope()
             # Check interrupt between tool calls
             if self._interrupt_event.is_set():
                 self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
@@ -1804,7 +1814,7 @@ class AgentLoop:
             try:
                 with use_agent_context(self.context):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.context.refresh_workspace_scope()
+                self.__refresh_workspace_scope()
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -2234,7 +2244,7 @@ class AgentLoop:
         """
         import time
 
-        self.context.refresh_workspace_scope()
+        self.__refresh_workspace_scope()
         turn_state = getattr(self.context, "turn_state", None)
 
         scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
@@ -2252,7 +2262,7 @@ class AgentLoop:
         try:
             with use_agent_context(self.context):
                 tool_result = registry.execute(tc.name, tc.arguments)
-            self.context.refresh_workspace_scope()
+            self.__refresh_workspace_scope()
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -2313,7 +2323,7 @@ class AgentLoop:
 
         def _run_tool(tc):
             try:
-                self.context.refresh_workspace_scope()
+                self.__refresh_workspace_scope()
                 scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
                 if scope_error:
                     if turn_state is not None:
@@ -2322,7 +2332,7 @@ class AgentLoop:
                 t0 = time.monotonic()
                 with use_agent_context(self.context):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.context.refresh_workspace_scope()
+                self.__refresh_workspace_scope()
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
