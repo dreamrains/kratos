@@ -247,6 +247,94 @@ def test_public_context_workspace_cannot_bypass_synthesis_or_error_scope(
     assert store.get_metadata("secret", "context") == "private context"
 
 
+@pytest.mark.parametrize(
+    ("mode", "status"),
+    [("synthesis", "in_progress"), ("single", "pending")],
+)
+def test_reflection_does_not_expose_raw_workspace_from_context_or_proxy(
+    tmp_path,
+    monkeypatch,
+    mode,
+    status,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["secret"], mode=mode, status=status)
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("secret", pd.DataFrame({"secret_column": [9876]}))
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope()
+        public_workspace = ctx.workspace
+        inspected = [ctx, public_workspace, workspace]
+        exposed = []
+        for owner in inspected:
+            for name, value in vars(owner).items():
+                if isinstance(value, Workspace):
+                    exposed.append((type(owner).__name__, name))
+            for name in dir(owner):
+                try:
+                    value = getattr(owner, name)
+                except Exception:
+                    continue
+                if isinstance(value, Workspace):
+                    exposed.append((type(owner).__name__, name))
+
+        import data_agent.session.workspace as workspace_module
+
+        exposed.extend(
+            ("workspace_module", name)
+            for name, value in vars(workspace_module).items()
+            if isinstance(value, Workspace)
+        )
+
+    assert exposed == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "status", "write_error"),
+    [
+        ("synthesis", "in_progress", "Error: synthesis_cannot_mutate_raw_data"),
+        ("single", "pending", "Error: error_cannot_mutate_raw_data"),
+    ],
+)
+def test_opaque_workspace_capability_operations_still_enforce_scope(
+    tmp_path,
+    monkeypatch,
+    mode,
+    status,
+    write_error,
+):
+    import data_agent.session.workspace as workspace_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["secret"], mode=mode, status=status)
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("secret", pd.DataFrame({"secret_column": [9876]}))
+
+    with use_agent_context(AgentContext(session_id="s1", workspace=store)) as ctx:
+        ctx.refresh_workspace_scope()
+        token = next(
+            (value for name, value in vars(ctx).items() if "workspace_token" in name),
+            None,
+        )
+        get_operation = getattr(workspace_module, "_workspace_get_operation", None)
+        add_operation = getattr(workspace_module, "_workspace_add_operation", None)
+        generic_operation = getattr(workspace_module, "_workspace_operation", None)
+        assert token is not None
+        assert callable(get_operation)
+        assert callable(add_operation)
+        assert callable(generic_operation)
+        assert get_operation(token, "secret") is None
+        assert add_operation(token, "new", pd.DataFrame({"x": [1]})) == write_error
+        assert generic_operation(token, "get", "secret") is None
+        assert generic_operation(token, "add", "generic_new", pd.DataFrame({"x": [1]})) == write_error
+
+    assert store.get("new") is None
+    assert store.get("generic_new") is None
+
+
 def test_planning_exposes_schema_quality_and_bounded_preview_only(monkeypatch):
     store = Workspace()
     store.add("orders", pd.DataFrame({"order_id": [1, 2, 3], "amount": [10, 20, 30]}))

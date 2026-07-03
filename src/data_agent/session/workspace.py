@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
+import weakref
 
 import pandas as pd
 
@@ -201,24 +202,201 @@ class Workspace:
         return f"数据集 '{name}' 不存在"
 
 
+def _create_workspace_registry():
+    """Return opaque bindings and policy-enforcing operations over closure-local stores."""
+
+    class BindingToken:
+        __slots__ = ("__weakref__",)
+
+    stores = weakref.WeakKeyDictionary()
+    owners = weakref.WeakKeyDictionary()
+
+    def bind(owner, storage):
+        token = BindingToken()
+        stores[token] = storage if isinstance(storage, Workspace) else Workspace()
+        if owner is not None:
+            owners[token] = weakref.ref(owner)
+        return token
+
+    def resolve(token):
+        storage = stores.get(token)
+        if storage is None:
+            raise RuntimeError("Workspace binding is no longer available")
+        owner_ref = owners.get(token)
+        owner = owner_ref() if owner_ref is not None else None
+        from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+        scope = WorkspaceScopeSnapshot() if owner is None else owner.workspace_scope
+        if owner is not None and scope is None:
+            scope = owner.refresh_workspace_scope()
+        return storage, owner, scope
+
+    def readable(scope, name):
+        return scope.phase == "legacy" or (
+            scope.phase in {"execution", "planning"}
+            and name in scope.allowed_datasets
+        )
+
+    def write_error(scope, name, derived=False):
+        if scope.phase in {"synthesis", "error"}:
+            return f"Error: {scope.phase}_cannot_mutate_raw_data"
+        if scope.phase == "execution" and name not in scope.allowed_datasets:
+            return "Error: derived_scope_not_registered" if derived else "Error: dataset_outside_current_task_scope"
+        return ""
+
+    def operate(token, operation, *args):
+        storage, owner, scope = resolve(token)
+        if operation == "scope":
+            return scope
+        if operation == "get":
+            name = args[0]
+            if not readable(scope, name) or scope.phase == "planning":
+                return None
+            frame = storage.get(name)
+            return frame.copy(deep=True) if frame is not None else None
+        if operation == "exists":
+            name = args[0]
+            return readable(scope, name) and name in storage._datasets
+        if operation == "list":
+            if scope.phase in {"synthesis", "error"}:
+                return {}
+            visible = storage.list_datasets()
+            if scope.phase == "legacy":
+                return copy.deepcopy(visible)
+            result = {
+                name: copy.deepcopy(info)
+                for name, info in visible.items()
+                if name in scope.allowed_datasets
+            }
+            if scope.phase == "planning":
+                approved = {"rows", "columns", "column_names", "derived_from"}
+                result = {
+                    name: {key: value for key, value in info.items() if key in approved}
+                    for name, info in result.items()
+                }
+            for info in result.values():
+                if info.get("derived_from") not in scope.allowed_datasets:
+                    info["derived_from"] = None
+            return result
+        if operation == "metadata":
+            name, key = args
+            if not readable(scope, name) or scope.phase in {"synthesis", "error"}:
+                return None if key else {}
+            meta = copy.deepcopy(storage.get_metadata(name))
+            if scope.phase == "planning":
+                safe = {k: v for k, v in meta.items() if k in {"quality", "schema", "context"}}
+                return safe.get(key) if key else safe
+            return meta.get(key) if key else meta
+        if operation == "planning_schema":
+            name = args[0]
+            if scope.phase != "planning" or not readable(scope, name):
+                return []
+            frame = storage.get(name)
+            return list(frame.columns) if frame is not None else []
+        if operation == "planning_quality":
+            name = args[0]
+            if scope.phase != "planning" or not readable(scope, name):
+                return {}
+            return copy.deepcopy(storage.get_metadata(name, "quality") or {})
+        if operation == "planning_preview":
+            name, rows = args
+            if scope.phase != "planning" or not readable(scope, name):
+                return []
+            limit = max(0, min(int(rows), int(getattr(owner, "planning_preview_rows", 5)), 20))
+            frame = storage.get(name)
+            return copy.deepcopy(frame.head(limit).to_dict("records")) if frame is not None else []
+        if operation == "add":
+            name, frame = args
+            return write_error(scope, name) or storage.add(name, frame)
+        if operation == "derive":
+            source, name, frame, expression = args
+            if scope.phase == "execution" and name not in storage._datasets:
+                return "Error: derived_scope_not_registered"
+            return write_error(scope, name, True) or storage.derive(source, name, frame, expression)
+        if operation == "remove":
+            name = args[0]
+            return write_error(scope, name) or storage.remove(name)
+        if operation == "set_metadata":
+            name, key, value = args
+            return write_error(scope, name) or storage.set_metadata(name, key, copy.deepcopy(value))
+        if operation == "log_transform":
+            source, transform, target, detail = args
+            return write_error(scope, target) or storage.log_transform(source, transform, target, detail)
+        if operation == "transform_log":
+            if scope.phase in {"synthesis", "error", "planning"}:
+                return []
+            log = storage.get_transform_log()
+            if scope.phase == "legacy":
+                return copy.deepcopy(log)
+            allowed = scope.allowed_datasets
+            return copy.deepcopy([
+                entry for entry in log
+                if entry.get("from") in allowed and entry.get("to") in allowed
+            ])
+        if operation == "save_meta":
+            names = None if scope.phase == "legacy" else scope.allowed_datasets
+            if scope.phase in {"synthesis", "error"}:
+                names = ()
+            return storage.save_meta(args[0], names)
+        if operation == "persist":
+            session_id, name = args
+            return storage.persist_dataset(session_id, name) if readable(scope, name) else None
+        if operation == "set_project":
+            result = storage.set_project(args[0])
+            if owner is not None and not result.startswith("Error:"):
+                owner.project_name = args[0]
+                owner.refresh_workspace_scope()
+            return result
+        if operation == "clear_project":
+            result = storage.clear_project()
+            if owner is not None:
+                owner.project_name = None
+                owner.refresh_workspace_scope()
+            return result
+        if operation == "datasets_view":
+            if scope.phase == "legacy":
+                return storage._datasets
+            visible = operate(token, "list")
+            return {name: operate(token, "get", name) for name in visible}
+        if operation == "metadata_view":
+            if scope.phase == "legacy":
+                return storage._metadata
+            visible = operate(token, "list")
+            return {name: operate(token, "metadata", name, "") for name in visible}
+        if operation == "active_project":
+            return storage.active_project
+        raise ValueError(f"Unsupported workspace operation: {operation}")
+
+    return bind, operate
+
+
+_bind_workspace_store, _workspace_operation = _create_workspace_registry()
+del _create_workspace_registry
+
+
+def _workspace_get_operation(token, name):
+    return _workspace_operation(token, "get", name)
+
+
+def _workspace_add_operation(token, name, frame):
+    return _workspace_operation(token, "add", name, frame)
+
+
 class WorkspaceProxy:
     """Context-local, scope-enforcing public workspace facade."""
 
     def __init__(self, context=None):
-        self.__default = Workspace()
         self.__context = context
+        self.__default_token = _bind_workspace_store(None, None) if context is None else None
 
-    def _scope(self):
-        from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
-
+    def __token(self):
         ctx = self.__context or get_current_context()
         if ctx is None:
-            return WorkspaceScopeSnapshot()
-        if object.__getattribute__(ctx, "_AgentContext__workspace_store") is None:
-            object.__setattr__(ctx, "_AgentContext__workspace_store", Workspace())
-        if ctx.workspace_scope is None:
-            return ctx.refresh_workspace_scope()
-        return ctx.workspace_scope
+            return self.__default_token
+        return object.__getattribute__(ctx, "_AgentContext__workspace_token")
+
+    def _scope(self):
+        return _workspace_operation(self.__token(), "scope")
 
     def _readable(self, name: str) -> bool:
         scope = self._scope()
@@ -237,207 +415,81 @@ class WorkspaceProxy:
         return ""
 
     def get(self, name: str) -> Optional[pd.DataFrame]:
-        if not self._readable(name) or self._scope().phase == "planning":
-            return None
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        frame = storage.get(name)
-        return frame.copy(deep=True) if frame is not None else None
+        return _workspace_get_operation(self.__token(), name)
 
     def exists(self, name: str) -> bool:
-        if not self._readable(name):
-            return False
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return name in storage._datasets
+        return _workspace_operation(self.__token(), "exists", name)
 
     def list_datasets(self) -> dict[str, dict]:
-        scope = self._scope()
-        if scope.phase in {"synthesis", "error"}:
-            return {}
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        visible = storage.list_datasets()
-        if scope.phase == "legacy":
-            return copy.deepcopy(visible)
-        result = {
-            name: copy.deepcopy(info)
-            for name, info in visible.items()
-            if name in scope.allowed_datasets
-        }
-        if scope.phase == "planning":
-            approved = {"rows", "columns", "column_names", "derived_from"}
-            result = {
-                name: {key: value for key, value in info.items() if key in approved}
-                for name, info in result.items()
-            }
-        for info in result.values():
-            if info.get("derived_from") not in scope.allowed_datasets:
-                info["derived_from"] = None
-        return result
+        return _workspace_operation(self.__token(), "list")
 
     def get_metadata(self, name: str, key: str = "") -> Any:
-        scope = self._scope()
-        if not self._readable(name) or scope.phase in {"synthesis", "error"}:
-            return None if key else {}
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        meta = copy.deepcopy(storage.get_metadata(name))
-        if scope.phase == "planning":
-            safe = {k: v for k, v in meta.items() if k in {"quality", "schema", "context"}}
-            return safe.get(key) if key else safe
-        return meta.get(key) if key else meta
+        return _workspace_operation(self.__token(), "metadata", name, key)
 
     def planning_schema(self, name: str) -> list[str]:
-        if self._scope().phase != "planning" or not self._readable(name):
-            return []
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        frame = storage.get(name)
-        return list(frame.columns) if frame is not None else []
+        return _workspace_operation(self.__token(), "planning_schema", name)
 
     def planning_quality(self, name: str) -> Any:
-        if self._scope().phase != "planning" or not self._readable(name):
-            return {}
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return copy.deepcopy(storage.get_metadata(name, "quality") or {})
+        return _workspace_operation(self.__token(), "planning_quality", name)
 
     def planning_preview(self, name: str, *, rows: int = 5) -> list[dict[str, Any]]:
-        if self._scope().phase != "planning" or not self._readable(name):
-            return []
-        ctx = self.__context or get_current_context()
-        bound = getattr(ctx, "planning_preview_rows", 5)
-        limit = max(0, min(int(rows), int(bound), 20))
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        frame = storage.get(name)
-        return copy.deepcopy(frame.head(limit).to_dict("records")) if frame is not None else []
+        return _workspace_operation(self.__token(), "planning_preview", name, rows)
 
     def add(self, name: str, df: pd.DataFrame) -> str:
-        error = self._write_error(name)
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return error or storage.add(name, df)
+        return _workspace_add_operation(self.__token(), name, df)
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
-        scope = self._scope()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        if scope.phase == "execution" and name not in storage._datasets:
-            return "Error: derived_scope_not_registered"
-        error = self._write_error(name, derived=True)
-        return error or storage.derive(source, name, df, expression)
+        return _workspace_operation(self.__token(), "derive", source, name, df, expression)
 
     def remove(self, name: str) -> str:
-        error = self._write_error(name)
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return error or storage.remove(name)
+        return _workspace_operation(self.__token(), "remove", name)
 
     def set_metadata(self, name: str, key: str, value: Any) -> Any:
-        error = self._write_error(name)
-        if error:
-            return error
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.set_metadata(name, key, copy.deepcopy(value))
+        return _workspace_operation(self.__token(), "set_metadata", name, key, value)
 
     def log_transform(self, source: str, operation: str, target: str, detail: str = "") -> Any:
-        error = self._write_error(target)
-        if error:
-            return error
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.log_transform(source, operation, target, detail)
+        return _workspace_operation(self.__token(), "log_transform", source, operation, target, detail)
 
     def get_transform_log(self) -> list[dict[str, Any]]:
-        scope = self._scope()
-        if scope.phase in {"synthesis", "error", "planning"}:
-            return []
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        log = storage.get_transform_log()
-        if scope.phase == "legacy":
-            return copy.deepcopy(log)
-        allowed = scope.allowed_datasets
-        return copy.deepcopy([
-            entry for entry in log
-            if entry.get("from") in allowed and entry.get("to") in allowed
-        ])
+        return _workspace_operation(self.__token(), "transform_log")
 
     # Persistence operates on internal storage and does not return raw data.
     def save_meta(self, session_id: str) -> None:
-        scope = self._scope()
-        dataset_names = None if scope.phase == "legacy" else scope.allowed_datasets
-        if scope.phase in {"synthesis", "error"}:
-            dataset_names = ()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.save_meta(session_id, dataset_names)
+        return _workspace_operation(self.__token(), "save_meta", session_id)
 
     def persist_dataset(self, session_id: str, name: str) -> str | None:
-        if not self._readable(name):
-            return None
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.persist_dataset(session_id, name)
+        return _workspace_operation(self.__token(), "persist", session_id, name)
 
     def set_object(self, name: str) -> str:
         return self.set_project(name)
 
     def set_project(self, name: str) -> str:
-        self._scope()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        result = storage.set_project(name)
-        if ctx is not None:
-            ctx.refresh_workspace_scope()
-        return result
+        return _workspace_operation(self.__token(), "set_project", name)
 
     def clear_object(self) -> str:
         return self.clear_project()
 
     def clear_project(self) -> str:
-        self._scope()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        result = storage.clear_project()
-        if ctx is not None:
-            ctx.refresh_workspace_scope()
-        return result
+        return _workspace_operation(self.__token(), "clear_project")
 
     def __getattr__(self, name):
         raise AttributeError(f"WorkspaceProxy does not expose '{name}'")
 
     @property
     def _datasets(self):
-        if self._scope().phase == "legacy":
-            ctx = self.__context or get_current_context()
-            storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-            return storage._datasets
-        return {name: self.get(name) for name in self.list_datasets()}
+        return _workspace_operation(self.__token(), "datasets_view")
 
     @property
     def _metadata(self):
-        if self._scope().phase == "legacy":
-            ctx = self.__context or get_current_context()
-            storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-            return storage._metadata
-        return {name: self.get_metadata(name) for name in self.list_datasets()}
+        return _workspace_operation(self.__token(), "metadata_view")
 
     @property
     def active_object(self) -> Optional[str]:
-        self._scope()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.active_object
+        return _workspace_operation(self.__token(), "active_project")
 
     @property
     def active_project(self) -> Optional[str]:
-        self._scope()
-        ctx = self.__context or get_current_context()
-        storage = object.__getattribute__(ctx, "_AgentContext__workspace_store") if ctx is not None else self.__default
-        return storage.active_project
+        return _workspace_operation(self.__token(), "active_project")
 
 
 # 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。

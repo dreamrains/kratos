@@ -18,7 +18,7 @@ class AgentContext:
     session_id: str
     project_name: Optional[str] = None
     workspace: object | None = field(default=None, repr=False, compare=False)
-    __workspace_store: object | None = field(default=None, init=False, repr=False, compare=False)
+    __workspace_token: object | None = field(default=None, init=False, repr=False, compare=False)
     __workspace_facade: object | None = field(default=None, init=False, repr=False, compare=False)
     active_tool_groups: set[str] = field(default_factory=lambda: {"core"})
     executed_tools: set[str] = field(default_factory=set)
@@ -119,7 +119,11 @@ def _get_scoped_workspace(ctx: AgentContext):
 
 
 def _set_workspace_store(ctx: AgentContext, value: object | None) -> None:
-    object.__setattr__(ctx, "_AgentContext__workspace_store", value)
+    from data_agent.session.workspace import _bind_workspace_store
+
+    token = _bind_workspace_store(ctx, value)
+    object.__setattr__(ctx, "_AgentContext__workspace_token", token)
+    object.__setattr__(ctx, "_AgentContext__workspace_facade", None)
 
 
 # Keep the historical constructor/setter name while exposing only a scoped facade.
