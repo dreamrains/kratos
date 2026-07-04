@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -244,17 +245,58 @@ def get_mcp_bridge():
     return _mcp_bridge
 
 
+def _create_loop_context_registry():
+    bindings = weakref.WeakKeyDictionary()
+
+    def operate(loop, operation, *args):
+        binding = bindings.get(loop)
+        if operation == "get":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return binding[0]
+        if operation == "refresh":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return binding[1]()
+        if operation == "replace":
+            replacement = args[0]
+            if binding is not None:
+                current = binding[0]
+                if replacement is current:
+                    return None
+                from data_agent.agent.context import get_current_context
+
+                if get_current_context() is current:
+                    scope = current.workspace_scope
+                    if scope is None:
+                        scope = current.refresh_workspace_scope()
+                    if scope.phase != "legacy":
+                        raise PermissionError(
+                            "workspace_context_mutation: cannot replace the active "
+                            f"agent context while scope phase is {scope.phase}"
+                        )
+            refresh = _claim_authoritative_scope_controller(replacement)
+            bindings[loop] = (replacement, refresh)
+            return None
+        raise ValueError(f"Unsupported agent loop context operation: {operation}")
+
+    return operate
+
+
+_loop_context_operation = _create_loop_context_registry()
+del _create_loop_context_registry
+
+
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
     @property
     def context(self) -> AgentContext:
-        return self.__context
+        return _loop_context_operation(self, "get")
 
     @context.setter
     def context(self, context: AgentContext) -> None:
-        self.__context = context
-        self.__refresh_workspace_scope = _claim_authoritative_scope_controller(context)
+        _loop_context_operation(self, "replace", context)
 
     def __init__(
         self,
@@ -564,7 +606,7 @@ class AgentLoop:
 
         try:
             from data_agent.agent.analysis_state import analysis_state_summary
-            scope = self.context.workspace_scope or self.__refresh_workspace_scope()
+            scope = self.context.workspace_scope or _loop_context_operation(self, "refresh")
             if scope.phase in {"synthesis", "error"}:
                 state = self.context.analysis_state
                 analysis_ctx = "\n".join([
@@ -647,7 +689,7 @@ class AgentLoop:
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
         with use_agent_context(self.context):
-            scope = self.__refresh_workspace_scope()
+            scope = _loop_context_operation(self, "refresh")
             bundle_fingerprint = ""
             state = getattr(self.context, "analysis_state", None)
             from data_agent.agent.data_understanding import validate_data_understanding_bundle
@@ -862,7 +904,7 @@ class AgentLoop:
         logger.info("Quality reminder injected", extra={"extra_data": {"session_id": self.session_id}})
 
     def _execution_prompt_hint(self) -> str:
-        scope = self.context.workspace_scope or self.__refresh_workspace_scope()
+        scope = self.context.workspace_scope or _loop_context_operation(self, "refresh")
         if scope.phase == "error":
             return f"{scope.error_type}: {scope.message}"
         turn_state = getattr(self.context, "turn_state", None)
@@ -1758,7 +1800,7 @@ class AgentLoop:
         import time
 
         for i, tc in enumerate(response.tool_calls):
-            self.__refresh_workspace_scope()
+            _loop_context_operation(self, "refresh")
             # Check interrupt between tool calls
             if self._interrupt_event.is_set():
                 self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
@@ -1814,7 +1856,7 @@ class AgentLoop:
             try:
                 with use_agent_context(self.context):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.__refresh_workspace_scope()
+                _loop_context_operation(self, "refresh")
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -2244,7 +2286,7 @@ class AgentLoop:
         """
         import time
 
-        self.__refresh_workspace_scope()
+        _loop_context_operation(self, "refresh")
         turn_state = getattr(self.context, "turn_state", None)
 
         scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
@@ -2262,7 +2304,7 @@ class AgentLoop:
         try:
             with use_agent_context(self.context):
                 tool_result = registry.execute(tc.name, tc.arguments)
-            self.__refresh_workspace_scope()
+            _loop_context_operation(self, "refresh")
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -2323,7 +2365,7 @@ class AgentLoop:
 
         def _run_tool(tc):
             try:
-                self.__refresh_workspace_scope()
+                _loop_context_operation(self, "refresh")
                 scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
                 if scope_error:
                     if turn_state is not None:
@@ -2332,7 +2374,7 @@ class AgentLoop:
                 t0 = time.monotonic()
                 with use_agent_context(self.context):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.__refresh_workspace_scope()
+                _loop_context_operation(self, "refresh")
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 

@@ -26,6 +26,7 @@ def _create_context_state_registry():
     context_tokens = weakref.WeakKeyDictionary()
     workspace_tokens = weakref.WeakKeyDictionary()
     workspace_facades = weakref.WeakKeyDictionary()
+    identities = weakref.WeakKeyDictionary()
     available_authorities = weakref.WeakKeyDictionary()
     claimed_authorities = weakref.WeakKeyDictionary()
     identity_ready_tokens = weakref.WeakSet()
@@ -41,6 +42,42 @@ def _create_context_state_registry():
         owners[token] = weakref.ref(owner)
         available_authorities[token] = ResolverAuthority()
         context_tokens[owner] = token
+
+    def operate_identity(owner, operation, *args):
+        if operation == "initialize":
+            if owner in identities:
+                raise RuntimeError("Agent context identity is already initialized")
+            identities[owner] = (args[0], args[1])
+            return None
+        identity = identities.get(owner)
+        if identity is None:
+            raise RuntimeError("Agent context identity binding is no longer available")
+        if operation == "get":
+            return identity[0] if args[0] == "session_id" else identity[1]
+        if operation == "set":
+            name, value = args
+            index = 0 if name == "session_id" else 1
+            current_value = identity[index]
+            if current_value == value:
+                return None
+            invalidate_legacy = False
+            if owner in context_tokens and operate_scope(owner, "identity_ready"):
+                current_scope = operate_scope(owner, "get")
+                if current_scope is None:
+                    current_scope = operate_scope(owner, "ensure")
+                if current_scope is not None and current_scope.phase != "legacy":
+                    raise PermissionError(
+                        f"workspace_identity_mutation: cannot change {name} "
+                        f"while scope phase is {current_scope.phase}"
+                    )
+                invalidate_legacy = current_scope is not None
+            updated = list(identity)
+            updated[index] = value
+            identities[owner] = tuple(updated)
+            if invalidate_legacy:
+                operate_scope(owner, "invalidate_legacy")
+            return None
+        raise ValueError(f"Unsupported agent context identity operation: {operation}")
 
     def scope_token(owner):
         token = context_tokens.get(owner)
@@ -211,6 +248,7 @@ def _create_context_state_registry():
 
     return (
         bind_owner,
+        operate_identity,
         operate_scope,
         claim_authoritative_controller,
         bind_workspace,
@@ -226,6 +264,7 @@ def _create_context_state_registry():
 
 (
     _bind_context_scope,
+    _context_identity_operation,
     _context_scope_operation,
     _claim_authoritative_scope_controller,
     _bind_context_workspace,
@@ -242,8 +281,6 @@ del _create_context_state_registry
 
 @dataclass(slots=True, weakref_slot=True, eq=False, init=False)
 class AgentContext:
-    session_id: str
-    project_name: Optional[str] = None
     active_tool_groups: set[str] = field(default_factory=lambda: {"core"})
     executed_tools: set[str] = field(default_factory=set)
     loaded_skills: list[str] = field(default_factory=list)
@@ -269,8 +306,7 @@ class AgentContext:
         user_quality_requirements: str = "",
         turn_intent: object | None = None,
     ) -> None:
-        object.__setattr__(self, "session_id", session_id)
-        object.__setattr__(self, "project_name", project_name)
+        _context_identity_operation(self, "initialize", session_id, project_name)
         object.__setattr__(
             self,
             "active_tool_groups",
@@ -288,27 +324,21 @@ class AgentContext:
         _context_scope_operation(self, "mark_identity_ready")
         _bind_context_workspace(self, workspace)
 
-    def __setattr__(self, name, value) -> None:
-        invalidate_legacy = False
-        if (
-            name in {"session_id", "project_name"}
-            and _context_has_scope(self)
-            and _context_scope_operation(self, "identity_ready")
-        ):
-            current_value = object.__getattribute__(self, name)
-            if current_value != value:
-                current_scope = _context_scope_operation(self, "get")
-                if current_scope is None:
-                    current_scope = _context_scope_operation(self, "ensure")
-                if current_scope is not None and current_scope.phase != "legacy":
-                    raise PermissionError(
-                        f"workspace_identity_mutation: cannot change {name} "
-                        f"while scope phase is {current_scope.phase}"
-                    )
-                invalidate_legacy = current_scope is not None
-        object.__setattr__(self, name, value)
-        if invalidate_legacy:
-            _context_scope_operation(self, "invalidate_legacy")
+    @property
+    def session_id(self) -> str:
+        return _context_identity_operation(self, "get", "session_id")
+
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        _context_identity_operation(self, "set", "session_id", value)
+
+    @property
+    def project_name(self) -> Optional[str]:
+        return _context_identity_operation(self, "get", "project_name")
+
+    @project_name.setter
+    def project_name(self, value: Optional[str]) -> None:
+        _context_identity_operation(self, "set", "project_name", value)
 
     @property
     def object_name(self) -> Optional[str]:
