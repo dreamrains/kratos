@@ -11,7 +11,12 @@ import weakref
 
 import pandas as pd
 
-from data_agent.agent.context import _ensure_context_workspace_scope, get_current_context
+from data_agent.agent.context import (
+    _ensure_context_workspace_scope,
+    _is_context_workspace_token,
+    _operate_context_workspace,
+    get_current_context,
+)
 from data_agent.utils.logging import get_logger
 
 logger = get_logger("workspace")
@@ -247,25 +252,7 @@ def _create_workspace_registry():
         owner = owner_ref() if owner_ref is not None else None
         from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
-        if owner is None:
-            active_owner = get_current_context()
-            active_scope = (
-                _ensure_context_workspace_scope(active_owner)
-                if active_owner is not None
-                else None
-            )
-            if active_scope is not None and active_scope.phase != "legacy":
-                active_token = object.__getattribute__(
-                    active_owner,
-                    "_AgentContext__workspace_token",
-                )
-                active_storage = stores.get(active_token)
-                if active_storage is None:
-                    raise RuntimeError("Active workspace binding is no longer available")
-                return active_storage, active_owner, active_scope
-            scope = WorkspaceScopeSnapshot()
-        else:
-            scope = owner.workspace_scope
+        scope = WorkspaceScopeSnapshot() if owner is None else owner.workspace_scope
         if owner is not None and scope is None:
             scope = _ensure_context_workspace_scope(owner)
         return storage, owner, scope
@@ -284,6 +271,12 @@ def _create_workspace_registry():
         return ""
 
     def operate(token, operation, *args):
+        active_owner = get_current_context()
+        if (
+            active_owner is not None
+            and not _is_context_workspace_token(active_owner, token)
+        ):
+            return _operate_context_workspace(active_owner, operation, *args)
         storage, owner, scope = resolve(token)
         if operation in {"set_project", "clear_project"} and scope.phase == "execution":
             return "Error: execution_cannot_change_project_identity"
@@ -400,13 +393,9 @@ def _create_workspace_registry():
                 owner.refresh_workspace_scope()
             return result
         if operation == "datasets_view":
-            if scope.phase == "legacy":
-                return storage._datasets
             visible = operate(token, "list")
             return {name: operate(token, "get", name) for name in visible}
         if operation == "metadata_view":
-            if scope.phase == "legacy":
-                return storage._metadata
             visible = operate(token, "list")
             return {name: operate(token, "metadata", name, "") for name in visible}
         if operation == "active_project":
@@ -437,16 +426,17 @@ class WorkspaceProxy:
     """Context-local, scope-enforcing public workspace facade."""
 
     def __init__(self, context=None):
-        self.__context = context
+        self.__context_ref = weakref.ref(context) if context is not None else None
         if context is None:
             _bind_default_workspace(self)
 
     def __operate(self, operation, *args):
-        ctx = self.__context or get_current_context()
+        ctx = self.__context_ref() if self.__context_ref is not None else get_current_context()
+        if self.__context_ref is not None and ctx is None:
+            raise RuntimeError("Agent context workspace binding is no longer available")
         if ctx is None:
             return _default_workspace_operation(self, operation, *args)
-        token = object.__getattribute__(ctx, "_AgentContext__workspace_token")
-        return _workspace_operation(token, operation, *args)
+        return _operate_context_workspace(ctx, operation, *args)
 
     def _scope(self):
         return self.__operate("scope")

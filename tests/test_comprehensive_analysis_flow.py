@@ -428,6 +428,7 @@ class TestConversationFlow:
 
     def test_same_turn_file_plus_analysis_does_not_end_after_profile(self, tmp_path, clean_workspace):
         from data_agent.agent.loop import AgentLoop
+        from data_agent.agent.context import use_agent_context
         from data_agent.llm.client import Response, ToolCall
 
         df = _make_df(50)
@@ -465,7 +466,8 @@ class TestConversationFlow:
 
         assert "Suggested next analyses" not in reply
         assert "Final analysis" in reply
-        assert loop.context.workspace.list_datasets()
+        with use_agent_context(loop.context):
+            assert loop.context.workspace.list_datasets()
         self._assert_final_guard_history_is_not_user_visible(loop)
 
     def test_streaming_guard_does_not_emit_profile_only_text(self, tmp_path, clean_workspace):
