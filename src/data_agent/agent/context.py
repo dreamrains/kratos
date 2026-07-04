@@ -241,6 +241,16 @@ def _create_context_state_registry():
         return current_context.get()
 
     def bind_current(context):
+        current = current_context.get()
+        if current is not None and context is not current:
+            current_scope = operate_scope(current, "get")
+            if current_scope is None:
+                current_scope = operate_scope(current, "ensure")
+            if current_scope.phase != "legacy":
+                raise PermissionError(
+                    "workspace_context_mutation: cannot replace the active "
+                    f"agent context while scope phase is {current_scope.phase}"
+                )
         return current_context.set(context)
 
     def reset_current(token):
@@ -416,26 +426,46 @@ def _set_workspace_store(ctx: AgentContext, value: object | None) -> None:
 AgentContext.workspace = property(_get_scoped_workspace, _set_workspace_store)
 
 
-def get_current_context() -> AgentContext | None:
-    return _get_current_context()
-
-
 def _ensure_context_workspace_scope(ctx: AgentContext):
     return _context_scope_operation(ctx, "ensure")
 
 
-def set_current_context(ctx: AgentContext):
-    return _bind_current_context(ctx)
+def _create_current_context_facades(getter, binder, resetter):
+    """Capture guarded registry operations so module namespace shadows are inert."""
+
+    def get_current_context() -> AgentContext | None:
+        return getter()
+
+    def set_current_context(ctx: AgentContext):
+        return binder(ctx)
+
+    def reset_current_context(token) -> None:
+        resetter(token)
+
+    @contextmanager
+    def use_agent_context(ctx: AgentContext):
+        token = binder(ctx)
+        try:
+            yield ctx
+        finally:
+            resetter(token)
+
+    return (
+        get_current_context,
+        set_current_context,
+        reset_current_context,
+        use_agent_context,
+    )
 
 
-def reset_current_context(token) -> None:
-    _reset_current_context(token)
-
-
-@contextmanager
-def use_agent_context(ctx: AgentContext):
-    token = _bind_current_context(ctx)
-    try:
-        yield ctx
-    finally:
-        _reset_current_context(token)
+(
+    get_current_context,
+    set_current_context,
+    reset_current_context,
+    use_agent_context,
+) = _create_current_context_facades(
+    _get_current_context,
+    _bind_current_context,
+    _reset_current_context,
+)
+del _create_current_context_facades

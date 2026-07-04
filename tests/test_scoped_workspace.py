@@ -11,7 +11,13 @@ import weakref
 import pandas as pd
 import pytest
 
-from data_agent.agent.context import AgentContext, get_current_context, use_agent_context
+from data_agent.agent.context import (
+    AgentContext,
+    get_current_context,
+    reset_current_context,
+    set_current_context,
+    use_agent_context,
+)
 from data_agent.session.task_manager import TaskManager
 from data_agent.session.workspace import Workspace, workspace
 from data_agent.agent.loop import AgentLoop
@@ -1614,6 +1620,176 @@ def test_real_agent_loop_rejects_active_context_replacement_before_next_tool(
     assert all("4444" not in output for output in outputs)
     assert loop.context is original
     assert loop.context.project_name == "p1"
+
+
+@pytest.mark.parametrize("transition_api", ["set", "use", "module_bind"])
+@pytest.mark.parametrize("scope_state", ["execution", "uncached_execution", "uncached_error"])
+def test_real_agent_loop_rejects_current_context_injection_before_workspace_read(
+    tmp_path,
+    monkeypatch,
+    transition_api,
+    scope_state,
+):
+    import data_agent.agent.context as context_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    status = "pending" if scope_state == "uncached_error" else "in_progress"
+    _stage3c0b_task(manager, datasets=["bound"], status=status)
+    _bind_manager(monkeypatch, manager)
+    trusted = Workspace()
+    trusted.add("bound", pd.DataFrame({"value": [1]}))
+    attacker = Workspace()
+    attacker.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = trusted
+    donor = AgentContext(session_id="donor", workspace=attacker)
+    leaked_bindings = []
+
+    if scope_state == "execution":
+        loop.context.refresh_workspace_scope()
+    else:
+        assert loop.context.workspace_scope is None
+
+    def inject_then_read():
+        try:
+            if transition_api == "set":
+                leaked_bindings.append(set_current_context(donor))
+            elif transition_api == "use":
+                binding = use_agent_context(donor)
+                leaked_bindings.append(binding)
+                binding.__enter__()
+            else:
+                leaked_bindings.append(context_module._bind_current_context(donor))
+        except PermissionError:
+            pass
+        return str(workspace.get("secret"))
+
+    monkeypatch.setitem(
+        registry._tools,
+        "inject_current_context_then_read",
+        ToolDefinition(
+            name="inject_current_context_then_read",
+            description="attempt current-context injection before a workspace read",
+            func=inject_then_read,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+    call = ToolCall(id="inject-context", name="inject_current_context_then_read", arguments={})
+    loop._execute_single_tool(call, [call], 0)
+
+    assert "9876" not in loop.messages[-1]["content"]
+    assert get_current_context() is None
+    expected_phase = "error" if scope_state == "uncached_error" else "execution"
+    assert loop.context.workspace_scope.phase == expected_phase
+
+
+def test_current_context_transition_allows_same_object_no_current_and_true_legacy():
+    active = AgentContext(session_id="active", workspace=Workspace())
+    donor = AgentContext(session_id="donor", workspace=Workspace())
+
+    outer = set_current_context(active)
+    same = set_current_context(active)
+    reset_current_context(same)
+    legacy_replacement = set_current_context(donor)
+    assert get_current_context() is donor
+    reset_current_context(legacy_replacement)
+    assert get_current_context() is active
+    reset_current_context(outer)
+    assert get_current_context() is None
+
+    bootstrap = set_current_context(donor)
+    assert get_current_context() is donor
+    reset_current_context(bootstrap)
+    assert get_current_context() is None
+
+
+@pytest.mark.parametrize("shadow_api", ["setattr", "vars"])
+def test_current_context_facades_ignore_module_helper_shadows(shadow_api, monkeypatch):
+    import data_agent.agent.context as context_module
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+
+    active_store = Workspace()
+    active_store.add("bound", pd.DataFrame({"value": [1]}))
+    donor_store = Workspace()
+    donor_store.add("secret", pd.DataFrame({"token": [9876]}))
+    active = AgentContext(session_id="active", workspace=active_store)
+    donor = AgentContext(session_id="donor", workspace=donor_store)
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="active",
+        allowed_datasets=frozenset({"bound"}),
+    )
+
+    with use_agent_context(active):
+        with active.bind_workspace_scope(execution):
+            if shadow_api == "setattr":
+                monkeypatch.setattr(context_module, "_get_current_context", lambda: donor)
+                monkeypatch.setattr(context_module, "_bind_current_context", lambda _ctx: None)
+            else:
+                monkeypatch.setitem(vars(context_module), "_get_current_context", lambda: donor)
+                monkeypatch.setitem(vars(context_module), "_bind_current_context", lambda _ctx: None)
+
+            assert get_current_context() is active
+            with pytest.raises(PermissionError, match="workspace_context_mutation"):
+                set_current_context(donor)
+            assert workspace.get("secret") is None
+
+
+def test_loop_and_workspace_keep_captured_facades_when_public_names_are_shadowed(monkeypatch):
+    import data_agent.agent.context as context_module
+
+    trusted = Workspace()
+    trusted.add("bound", pd.DataFrame({"value": [1]}))
+    attacker = Workspace()
+    attacker.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = trusted
+    donor = AgentContext(session_id="donor", workspace=attacker)
+    monkeypatch.setitem(
+        registry._tools,
+        "read_after_public_context_facade_shadow",
+        ToolDefinition(
+            name="read_after_public_context_facade_shadow",
+            description="read through the workspace facade",
+            func=lambda: str(workspace.get("secret")),
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(context_module, "get_current_context", lambda: donor)
+        patch.setattr(context_module, "set_current_context", lambda _ctx: None)
+        patch.setattr(context_module, "use_agent_context", lambda _ctx: None)
+        call = ToolCall(
+            id="shadow-public-facades",
+            name="read_after_public_context_facade_shadow",
+            arguments={},
+        )
+        loop._execute_single_tool(call, [call], 0)
+
+    assert "9876" not in loop.messages[-1]["content"]
+    assert context_module.get_current_context() is None
+
+
+def test_current_context_reset_token_cannot_be_replayed_or_used_in_copied_context():
+    active = AgentContext(session_id="active", workspace=Workspace())
+    replay_token = set_current_context(active)
+    reset_current_context(replay_token)
+
+    with pytest.raises(RuntimeError):
+        reset_current_context(replay_token)
+
+    cross_context_token = set_current_context(active)
+    with pytest.raises(ValueError):
+        copy_context().run(reset_current_context, cross_context_token)
+    assert get_current_context() is active
+    reset_current_context(cross_context_token)
+    assert get_current_context() is None
 
 
 def test_context_identity_descriptors_reject_object_and_registry_bypasses():
