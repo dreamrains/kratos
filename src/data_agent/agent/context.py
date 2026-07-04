@@ -25,6 +25,7 @@ def _create_context_state_registry():
     owners = weakref.WeakKeyDictionary()
     available_authorities = weakref.WeakKeyDictionary()
     claimed_authorities = weakref.WeakKeyDictionary()
+    identity_ready_tokens = weakref.WeakSet()
     current_context = ContextVar("data_agent_current_context", default=None)
 
     class ResolverAuthority:
@@ -87,6 +88,11 @@ def _create_context_state_registry():
         owner = owner_ref() if owner_ref is not None else None
         if scope_var is None or preview_var is None or owner is None:
             raise RuntimeError("Agent context scope binding is no longer available")
+        if operation == "identity_ready":
+            return token in identity_ready_tokens
+        if operation == "mark_identity_ready":
+            identity_ready_tokens.add(token)
+            return None
         if operation == "get":
             return scope_var.get()
         if operation == "ensure":
@@ -111,6 +117,12 @@ def _create_context_state_registry():
             return scope_var.set(snapshot)
         if operation == "reset":
             scope_var.reset(args[0])
+            return None
+        if operation == "invalidate_legacy":
+            current = scope_var.get()
+            if current is not None and current.phase != "legacy":
+                reject_escalation("only legacy scope can be invalidated after identity change")
+            scope_var.set(None)
             return None
         if operation == "preview_get":
             return preview_var.get()
@@ -191,20 +203,33 @@ class AgentContext:
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
 
     def __setattr__(self, name, value) -> None:
-        if name in {"session_id", "project_name"} and name in self.__dict__:
+        invalidate_legacy = False
+        scope_token = self.__dict__.get("_AgentContext__scope_token")
+        if (
+            name in {"session_id", "project_name"}
+            and name in self.__dict__
+            and scope_token is not None
+            and _context_scope_operation(scope_token, "identity_ready")
+        ):
             current_value = self.__dict__[name]
             if current_value != value:
-                scope_token = self.__dict__.get("_AgentContext__scope_token")
-                if scope_token is not None:
-                    current_scope = _context_scope_operation(scope_token, "get")
-                    if current_scope is not None and current_scope.phase != "legacy":
-                        raise PermissionError(
-                            f"workspace_identity_mutation: cannot change {name} "
-                            f"while scope phase is {current_scope.phase}"
-                        )
+                current_scope = _context_scope_operation(scope_token, "get")
+                if current_scope is None:
+                    current_scope = _context_scope_operation(scope_token, "ensure")
+                if current_scope is not None and current_scope.phase != "legacy":
+                    raise PermissionError(
+                        f"workspace_identity_mutation: cannot change {name} "
+                        f"while scope phase is {current_scope.phase}"
+                    )
+                invalidate_legacy = current_scope is not None
         object.__setattr__(self, name, value)
+        if invalidate_legacy and scope_token is not None:
+            _context_scope_operation(scope_token, "invalidate_legacy")
+
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_AgentContext__scope_token", _bind_context_scope(self))
+        token = _bind_context_scope(self)
+        object.__setattr__(self, "_AgentContext__scope_token", token)
+        _context_scope_operation(token, "mark_identity_ready")
 
     def __scope_binding_token(self):
         return object.__getattribute__(self, "_AgentContext__scope_token")

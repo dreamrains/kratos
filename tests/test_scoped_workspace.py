@@ -549,6 +549,152 @@ def test_fresh_no_plan_context_can_bootstrap_planning_scope(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
+    ("field_name", "new_value"),
+    [("project_name", ""), ("session_id", "other-session")],
+)
+def test_fresh_active_identity_cannot_change_before_any_workspace_operation(
+    tmp_path,
+    monkeypatch,
+    field_name,
+    new_value,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(
+        manager,
+        session_id="s1",
+        project_name="p1",
+        datasets=["bound"],
+    )
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+    assert ctx.workspace_scope is None
+
+    with pytest.raises(PermissionError, match="workspace_identity_mutation"):
+        setattr(ctx, field_name, new_value)
+
+    assert ctx.session_id == "s1"
+    assert ctx.project_name == "p1"
+    assert ctx.workspace_scope.phase == "execution"
+
+
+def test_fresh_missing_task_error_scope_rejects_identity_mutation(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(
+        manager,
+        session_id="s1",
+        project_name="p1",
+        datasets=["bound"],
+        status="pending",
+    )
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+
+    with pytest.raises(PermissionError, match="workspace_identity_mutation"):
+        ctx.project_name = ""
+
+    assert ctx.project_name == "p1"
+    assert ctx.workspace_scope.phase == "error"
+    assert ctx.workspace_scope.error_type == "stage3c0b_current_task_missing"
+
+
+def test_fresh_identity_guard_blocks_real_unclassified_tool_before_read(
+    tmp_path,
+    monkeypatch,
+):
+    import data_agent.session.workspace as workspace_module
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(
+        manager,
+        session_id="s1",
+        project_name="p1",
+        datasets=["bound"],
+    )
+    _bind_manager(monkeypatch, manager)
+    ownerless = workspace_module._bind_workspace_store(None, None)
+    workspace_module._workspace_operation(
+        ownerless,
+        "add",
+        "legacy_secret",
+        pd.DataFrame({"token": [9876]}),
+    )
+    ctx = AgentContext(session_id="s1", project_name="p1", workspace=Workspace())
+
+    def mutate_then_read():
+        get_current_context().project_name = ""
+        return str(workspace_module._workspace_operation(ownerless, "get", "legacy_secret"))
+
+    monkeypatch.setitem(
+        registry._tools,
+        "fresh_identity_mutation_reader",
+        ToolDefinition(
+            name="fresh_identity_mutation_reader",
+            description="attempt identity mutation before reading",
+            func=mutate_then_read,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+
+    with use_agent_context(ctx):
+        result = registry.execute("fresh_identity_mutation_reader", {})
+
+    assert "9876" not in result.summary
+    assert "workspace_identity_mutation" in result.summary
+    assert ctx.project_name == "p1"
+
+
+def test_identity_construction_noop_legacy_restore_and_exact_whitespace(
+    tmp_path,
+    monkeypatch,
+):
+    _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "tasks"))
+    ctx = AgentContext(
+        session_id=" session one ",
+        project_name=" Project Alpha ",
+        workspace=Workspace(),
+    )
+    assert ctx.workspace_scope is None
+    assert not any("identity_guard_ready" in name for name in vars(ctx))
+
+    ctx.session_id = " session one "
+    ctx.project_name = " Project Alpha "
+    assert ctx.workspace_scope is None
+
+    ctx.project_name = " Restored Project "
+    assert ctx.project_name == " Restored Project "
+    assert ctx.workspace_scope is None
+    ctx.session_id = " restored session "
+    assert ctx.session_id == " restored session "
+    assert ctx.workspace_scope is None
+
+
+def test_fresh_active_exact_whitespace_identity_is_preserved(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(
+        manager,
+        session_id=" session one ",
+        project_name=" Project Alpha ",
+        datasets=["bound"],
+    )
+    _bind_manager(monkeypatch, manager)
+    ctx = AgentContext(
+        session_id=" session one ",
+        project_name=" Project Alpha ",
+        workspace=Workspace(),
+    )
+
+    ctx.session_id = " session one "
+    ctx.project_name = " Project Alpha "
+    assert ctx.workspace_scope is None
+    with pytest.raises(PermissionError, match="workspace_identity_mutation"):
+        ctx.project_name = "Project Alpha"
+
+    assert ctx.project_name == " Project Alpha "
+    assert ctx.workspace_scope.phase == "execution"
+
+
+@pytest.mark.parametrize(
     ("mode", "status", "write_error"),
     [
         ("synthesis", "in_progress", "Error: synthesis_cannot_mutate_raw_data"),
