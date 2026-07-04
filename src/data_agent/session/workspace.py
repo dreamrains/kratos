@@ -22,6 +22,21 @@ from data_agent.utils.logging import get_logger
 logger = get_logger("workspace")
 
 
+def _create_workspace_context_sync(current_context_getter):
+    """Capture the trusted getter used by legacy raw-storage project updates."""
+
+    def sync(project_name):
+        ctx = current_context_getter()
+        if ctx is not None:
+            ctx.project_name = project_name
+
+    return sync
+
+
+_sync_current_workspace_project = _create_workspace_context_sync(get_current_context)
+del _create_workspace_context_sync
+
+
 class Workspace:
     """管理工作空间中的数据集快照，支持分析项目绑定和变换血缘。"""
 
@@ -56,10 +71,7 @@ class Workspace:
 
         self._active_project = name
         try:
-            from data_agent.agent.context import get_current_context
-            ctx = get_current_context()
-            if ctx is not None:
-                ctx.project_name = name
+            _sync_current_workspace_project(name)
         except Exception:
             pass
         logger.info("Project activated", extra={"extra_data": {"project": name}})
@@ -74,10 +86,7 @@ class Workspace:
         old = self._active_project
         self._active_project = None
         try:
-            from data_agent.agent.context import get_current_context
-            ctx = get_current_context()
-            if ctx is not None:
-                ctx.project_name = None
+            _sync_current_workspace_project(None)
         except Exception:
             pass
         if old:
@@ -207,7 +216,7 @@ class Workspace:
         return f"数据集 '{name}' 不存在"
 
 
-def _create_workspace_registry():
+def _create_workspace_registry(current_context_getter):
     """Return opaque bindings and policy-enforcing operations over closure-local stores."""
 
     class BindingToken:
@@ -271,7 +280,7 @@ def _create_workspace_registry():
         return ""
 
     def operate(token, operation, *args):
-        active_owner = get_current_context()
+        active_owner = current_context_getter()
         if (
             active_owner is not None
             and not _is_context_workspace_token(active_owner, token)
@@ -410,7 +419,7 @@ def _create_workspace_registry():
     _workspace_operation,
     _bind_default_workspace,
     _default_workspace_operation,
-) = _create_workspace_registry()
+) = _create_workspace_registry(get_current_context)
 del _create_workspace_registry
 
 
@@ -422,6 +431,25 @@ def _workspace_add_operation(token, name, frame):
     return _workspace_operation(token, "add", name, frame)
 
 
+def _create_workspace_proxy_operation(
+    current_context_getter,
+    default_workspace_operation,
+    context_workspace_operation,
+):
+    """Capture trusted dispatch facades outside the mutable module namespace."""
+
+    def operate(proxy, operation, *args):
+        context_ref = object.__getattribute__(proxy, "_WorkspaceProxy__context_ref")
+        ctx = context_ref() if context_ref is not None else current_context_getter()
+        if context_ref is not None and ctx is None:
+            raise RuntimeError("Agent context workspace binding is no longer available")
+        if ctx is None:
+            return default_workspace_operation(proxy, operation, *args)
+        return context_workspace_operation(ctx, operation, *args)
+
+    return operate
+
+
 class WorkspaceProxy:
     """Context-local, scope-enforcing public workspace facade."""
 
@@ -430,13 +458,11 @@ class WorkspaceProxy:
         if context is None:
             _bind_default_workspace(self)
 
-    def __operate(self, operation, *args):
-        ctx = self.__context_ref() if self.__context_ref is not None else get_current_context()
-        if self.__context_ref is not None and ctx is None:
-            raise RuntimeError("Agent context workspace binding is no longer available")
-        if ctx is None:
-            return _default_workspace_operation(self, operation, *args)
-        return _operate_context_workspace(ctx, operation, *args)
+    __operate = _create_workspace_proxy_operation(
+        get_current_context,
+        _default_workspace_operation,
+        _operate_context_workspace,
+    )
 
     def _scope(self):
         return self.__operate("scope")
@@ -536,4 +562,5 @@ class WorkspaceProxy:
 
 
 # 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。
+del _create_workspace_proxy_operation
 workspace = WorkspaceProxy()

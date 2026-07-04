@@ -29,6 +29,7 @@ TOOL_SUMMARY_THRESHOLD = 3000  # chars: auto-persist tool output exceeding this
 from data_agent.agent.context import (
     AgentContext,
     _claim_authoritative_scope_controller,
+    get_current_context,
     set_current_context,
     reset_current_context,
     use_agent_context,
@@ -245,7 +246,11 @@ def get_mcp_bridge():
     return _mcp_bridge
 
 
-def _create_loop_context_registry():
+def _create_loop_context_registry(
+    current_context_getter,
+    current_context_setter,
+    context_binder,
+):
     bindings = weakref.WeakKeyDictionary()
 
     def operate(loop, operation, *args):
@@ -258,15 +263,21 @@ def _create_loop_context_registry():
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
             return binding[1]()
+        if operation == "set":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return current_context_setter(binding[0])
+        if operation == "use":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return context_binder(binding[0])
         if operation == "replace":
             replacement = args[0]
             if binding is not None:
                 current = binding[0]
                 if replacement is current:
                     return None
-                from data_agent.agent.context import get_current_context
-
-                if get_current_context() is current:
+                if current_context_getter() is current:
                     scope = current.workspace_scope
                     if scope is None:
                         scope = current.refresh_workspace_scope()
@@ -283,7 +294,11 @@ def _create_loop_context_registry():
     return operate
 
 
-_loop_context_operation = _create_loop_context_registry()
+_loop_context_operation = _create_loop_context_registry(
+    get_current_context,
+    set_current_context,
+    use_agent_context,
+)
 del _create_loop_context_registry
 
 
@@ -331,12 +346,11 @@ class AgentLoop:
 
         # 对象绑定
         if active_project:
-            token = set_current_context(self.context)
-            workspace.set_project(active_project)
-            from data_agent.tools.knowledge_tools import set_active_object, set_active_session
-            set_active_object(active_project)
-            set_active_session(self.session_id)
-            reset_current_context(token)
+            with _loop_context_operation(self, "use"):
+                workspace.set_project(active_project)
+                from data_agent.tools.knowledge_tools import set_active_object, set_active_session
+                set_active_object(active_project)
+                set_active_session(self.session_id)
 
         # 初始化 SkillLoader（支持全局 + 项目级目录）
         if _skill_loader is None:
@@ -384,7 +398,7 @@ class AgentLoop:
         has_legacy_object_name = "object_name" in data
         obj_name = data["project_name"] if has_project_name else data.get("object_name")
         if has_project_name or has_legacy_object_name:
-            with use_agent_context(self.context):
+            with _loop_context_operation(self, "use"):
                 if obj_name in (None, ""):
                     workspace.clear_project()
                 else:
@@ -688,7 +702,7 @@ class AgentLoop:
 
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             scope = _loop_context_operation(self, "refresh")
             bundle_fingerprint = ""
             state = getattr(self.context, "analysis_state", None)
@@ -1105,7 +1119,7 @@ class AgentLoop:
         if not user_input:
             return
         self._prompt_cache_dirty = True
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             self._prepare_analysis_turn(user_input)
 
     def _turn_tool_error_count(self) -> int:
@@ -1489,7 +1503,7 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         # 根据用户输入激活相关工具分组
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             new_groups = self._prepare_analysis_turn(user_input)
             required_question = self._maybe_auto_suspend_for_required_question()
         if new_groups:
@@ -1538,7 +1552,7 @@ class AgentLoop:
         self._reset_turn_tracking()
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             self._prepare_analysis_turn(user_input)
             required_question = self._maybe_auto_suspend_for_required_question()
         if required_question is not None:
@@ -1563,7 +1577,7 @@ class AgentLoop:
 
     def _auto_save(self) -> None:
         """自动保存会话状态。增量推送新消息到 JSONL + 全量保存。"""
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             if self.context.analysis_state is not None:
                 try:
                     self.context.analysis_state.save()
@@ -1701,7 +1715,7 @@ class AgentLoop:
                 return loop_result.content if hasattr(loop_result, "content") else "达到最大轮次限制。"
 
     def _register_confirmation(self, susp: SuspendedForConfirmation) -> None:
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             try:
                 from data_agent.agent.analysis_state import current_analysis_state
                 state = current_analysis_state()
@@ -1724,7 +1738,7 @@ class AgentLoop:
                 logger.warning("Failed to register confirmation", extra={"extra_data": {"error": str(e)}})
 
     def _resolve_confirmation(self, susp: SuspendedForConfirmation, answer: str) -> None:
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             try:
                 from data_agent.agent.analysis_state import current_analysis_state
                 state = current_analysis_state()
@@ -1854,7 +1868,7 @@ class AgentLoop:
 
             t0 = time.monotonic()
             try:
-                with use_agent_context(self.context):
+                with _loop_context_operation(self, "use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
                 _loop_context_operation(self, "refresh")
             except UserConfirmationRequired as ucc:
@@ -1915,7 +1929,7 @@ class AgentLoop:
     def stream_turn(self, user_input: str):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
         import time
-        set_current_context(self.context)
+        _loop_context_operation(self, "set")
 
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
@@ -2087,7 +2101,7 @@ class AgentLoop:
         idempotency_key: str = "",
     ):
         """Generator variant of resume_turn for SSE streaming."""
-        set_current_context(self.context)
+        _loop_context_operation(self, "set")
 
         susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
@@ -2237,7 +2251,7 @@ class AgentLoop:
 
     def _loop(self, user_input: str = "") -> LoopResult:
         """Run the agent loop inside this session's AgentContext."""
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             return self._loop_impl(user_input)
 
     def _execute_tools_sequential(self, tool_calls, final_text: str) -> LoopResult | None:
@@ -2302,7 +2316,7 @@ class AgentLoop:
             return None
 
         try:
-            with use_agent_context(self.context):
+            with _loop_context_operation(self, "use"):
                 tool_result = registry.execute(tc.name, tc.arguments)
             _loop_context_operation(self, "refresh")
         except UserConfirmationRequired as ucc:
@@ -2372,7 +2386,7 @@ class AgentLoop:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error)
                 t0 = time.monotonic()
-                with use_agent_context(self.context):
+                with _loop_context_operation(self, "use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
                 _loop_context_operation(self, "refresh")
                 duration_ms = int((time.monotonic() - t0) * 1000)
@@ -2548,7 +2562,7 @@ class AgentLoop:
 
     def _maybe_archive(self, user_input: str, reply: str) -> None:
         """当有实质性分析结果时自动归档。"""
-        with use_agent_context(self.context):
+        with _loop_context_operation(self, "use"):
             return self._maybe_archive_impl(user_input, reply)
 
     def _maybe_archive_impl(self, user_input: str, reply: str) -> None:
