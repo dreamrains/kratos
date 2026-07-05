@@ -605,9 +605,9 @@ def _create_scope_enforcement_chain(
 del _create_scope_enforcement_chain
 
 
-# Capture the original resolver and snapshot type in context.py's closure-local
-# registry during trusted module initialization.  Importing either module first
-# completes this handshake before control returns to application or tool code.
+# Capture the original resolver, snapshot type, and scope guard in context.py's
+# closure-local registry during trusted module initialization. Importing either
+# module first completes this handshake before control returns to tool code.
 import data_agent.agent.context as _context_module
 
 _resolver_installer = getattr(
@@ -616,6 +616,10 @@ _resolver_installer = getattr(
     None,
 )
 if _resolver_installer is not None:
-    _resolver_installer(resolve_workspace_scope, WorkspaceScopeSnapshot)
+    _resolver_installer(
+        resolve_workspace_scope,
+        WorkspaceScopeSnapshot,
+        ensure_tool_allowed_for_current_task,
+    )
     delattr(_context_module, "_install_context_authoritative_resolver")
 del _resolver_installer, _context_module

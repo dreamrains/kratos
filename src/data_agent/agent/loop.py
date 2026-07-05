@@ -39,7 +39,6 @@ from data_agent.agent.execution_control import (
     ToolExecutionBudget,
     TurnExecutionState,
 )
-from data_agent.agent.execution_scope import ensure_tool_allowed_for_current_task
 from data_agent.session.workspace import Workspace, workspace
 
 logger = get_logger("loop")
@@ -265,6 +264,10 @@ def _create_loop_context_registry(
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
             return binding[1]()
+        if operation == "guard":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return binding[2](*args)
         if operation == "set":
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
@@ -288,8 +291,8 @@ def _create_loop_context_registry(
                             "workspace_context_mutation: cannot replace the active "
                             f"agent context while scope phase is {scope.phase}"
                         )
-            refresh = scope_controller_claimant(replacement)
-            bindings[loop] = (replacement, refresh)
+            refresh, guard = scope_controller_claimant(replacement)
+            bindings[loop] = (replacement, refresh, guard)
             return None
         raise ValueError(f"Unsupported agent loop context operation: {operation}")
 
@@ -324,24 +327,55 @@ def _create_loop_context_dispatch_descriptor(loop_context_operation):
     return LoopContextDispatch()
 
 
-def _create_scope_guard_descriptor(scope_guard):
+def _create_scope_guard_descriptor(loop_context_operation, tool_registry, json_dumps):
+    def scope_guard(loop, tool_name, arguments):
+        try:
+            result = loop_context_operation(
+                loop,
+                "guard",
+                tool_registry,
+                tool_name,
+                arguments,
+            )
+        except Exception:
+            return ""
+        if result.allowed:
+            return ""
+        return json_dumps(
+            {"error": result.message, "error_type": result.error_type},
+            ensure_ascii=False,
+        )
+
     class ScopeGuardDispatch:
         __slots__ = ()
 
         def __get__(self, instance, owner=None):
-            return scope_guard
+            if instance is None:
+                return scope_guard
+
+            def dispatch(tool_name, arguments):
+                return scope_guard(instance, tool_name, arguments)
+
+            return dispatch
 
         def __set__(self, instance, value):
             raise AttributeError("Scope guard dispatch is read-only")
 
-    return ScopeGuardDispatch()
+    return scope_guard, ScopeGuardDispatch()
+
+
+_protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
+    _loop_context_operation,
+    registry,
+    json.dumps,
+)
 
 
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
     __context_operation = _create_loop_context_dispatch_descriptor(_loop_context_operation)
-    __scope_guard = _create_scope_guard_descriptor(ensure_tool_allowed_for_current_task)
+    _current_task_scope_guard = _scope_guard_dispatch
 
     @property
     def context(self) -> AgentContext:
@@ -1046,28 +1080,6 @@ class AgentLoop:
                 task_manager.update(legacy_in_progress[0]["id"], status="completed")
         except Exception:
             pass
-
-    def _current_task_scope_guard(self, tool_name: str, arguments: dict) -> str:
-        """Return a compact JSON error when a dataset-read call crosses task scope."""
-        try:
-            from data_agent.session.task_manager import task_manager
-
-            result = self.__scope_guard(
-                registry,
-                task_manager,
-                self.session_id,
-                self.context.project_name,
-                tool_name,
-                arguments,
-            )
-        except Exception:
-            return ""
-        if result.allowed:
-            return ""
-        return json.dumps(
-            {"error": result.message, "error_type": result.error_type},
-            ensure_ascii=False,
-        )
 
     def _repair_broken_tool_sequence(self) -> None:
         """Scan messages for assistant tool_calls missing corresponding tool responses and fill them in."""
@@ -1846,7 +1858,12 @@ class AgentLoop:
         # Internal event — caller uses this to continue the loop
         yield {"type": "_response", "response": response, "streamed_text": streamed_text}
 
-    def _process_tool_calls(self, response, round_num: int):
+    def _process_tool_calls(
+        self,
+        response,
+        round_num: int,
+        _scope_guard=_protected_scope_guard,
+    ):
         """Process tool calls from an LLM response. Yields SSE event dicts."""
         import time
 
@@ -1890,7 +1907,7 @@ class AgentLoop:
                 "round": round_num,
             }
 
-            scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+            scope_error = _scope_guard(self, tc.name, tc.arguments)
             if scope_error:
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
@@ -2327,7 +2344,13 @@ class AgentLoop:
                 return result
         return None
 
-    def _execute_single_tool(self, tc, tool_calls, index: int) -> LoopResult | None:
+    def _execute_single_tool(
+        self,
+        tc,
+        tool_calls,
+        index: int,
+        _scope_guard=_protected_scope_guard,
+    ) -> LoopResult | None:
         """Execute a single tool call and append result message.
 
         Returns LoopResult if the loop should exit (suspension), None to continue.
@@ -2337,7 +2360,7 @@ class AgentLoop:
         self.__context_operation("refresh")
         turn_state = getattr(self.context, "turn_state", None)
 
-        scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+        scope_error = _scope_guard(self, tc.name, tc.arguments)
         if scope_error:
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
@@ -2399,7 +2422,11 @@ class AgentLoop:
         })
         return None
 
-    def _execute_tools_parallel(self, tool_calls) -> list[tuple]:
+    def _execute_tools_parallel(
+        self,
+        tool_calls,
+        _scope_guard=_protected_scope_guard,
+    ) -> list[tuple]:
         """Execute read-only tool calls in parallel. Returns [(tc, tool_msg_content), ...]."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from contextvars import copy_context
@@ -2414,7 +2441,7 @@ class AgentLoop:
         def _run_tool(tc):
             try:
                 self.__context_operation("refresh")
-                scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
+                scope_error = _scope_guard(self, tc.name, tc.arguments)
                 if scope_error:
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
@@ -2684,4 +2711,5 @@ AgentLoop.stream_turn, AgentLoop.resume_turn_streaming = _create_streaming_conte
     AgentLoop._resume_turn_streaming_impl,
 )
 del _create_scope_guard_descriptor
+del _protected_scope_guard, _scope_guard_dispatch
 del _create_loop_context_dispatch_descriptor, _create_streaming_context_methods

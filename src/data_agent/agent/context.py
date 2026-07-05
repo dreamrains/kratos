@@ -27,23 +27,28 @@ def _create_context_state_registry():
     workspace_tokens = weakref.WeakKeyDictionary()
     workspace_facades = weakref.WeakKeyDictionary()
     identities = weakref.WeakKeyDictionary()
+    authoritative_managers = weakref.WeakKeyDictionary()
     available_authorities = weakref.WeakKeyDictionary()
     claimed_authorities = weakref.WeakKeyDictionary()
     identity_ready_tokens = weakref.WeakSet()
     current_context = ContextVar("data_agent_current_context", default=None)
     workspace_binding = None
     authoritative_resolver = None
+    authoritative_scope_guard = None
     workspace_scope_snapshot_type = None
 
     class ResolverAuthority:
         pass
 
     def bind_owner(owner):
+        from data_agent.session.task_manager import task_manager
+
         token = ScopeToken()
         scope_vars[token] = ContextVar("data_agent_workspace_scope", default=None)
         preview_vars[token] = ContextVar("data_agent_planning_preview_rows", default=5)
         owners[token] = weakref.ref(owner)
         available_authorities[token] = ResolverAuthority()
+        authoritative_managers[token] = task_manager
         context_tokens[owner] = token
 
     def operate_identity(owner, operation, *args):
@@ -185,29 +190,44 @@ def _create_context_state_registry():
         raise ValueError(f"Unsupported agent context scope operation: {operation}")
 
     def resolve_authoritative(owner):
-        from data_agent.session.task_manager import task_manager
-
         if authoritative_resolver is None:
             raise RuntimeError("Authoritative workspace scope resolver is not initialized")
+        manager = authoritative_managers.get(scope_token(owner))
+        if manager is None:
+            raise RuntimeError("Authoritative task manager binding is no longer available")
         return authoritative_resolver(
-            task_manager,
+            manager,
             owner.session_id,
             owner.project_name or "",
         )
 
-    def install_authoritative_resolver(resolver, snapshot_type):
-        nonlocal authoritative_resolver, workspace_scope_snapshot_type
-        if not callable(resolver) or not isinstance(snapshot_type, type):
+    def install_authoritative_resolver(resolver, snapshot_type, scope_guard):
+        nonlocal authoritative_resolver
+        nonlocal authoritative_scope_guard
+        nonlocal workspace_scope_snapshot_type
+        if (
+            not callable(resolver)
+            or not isinstance(snapshot_type, type)
+            or not callable(scope_guard)
+        ):
             raise TypeError("Invalid authoritative workspace scope resolver binding")
-        binding = (resolver, snapshot_type)
-        current = (authoritative_resolver, workspace_scope_snapshot_type)
+        binding = (resolver, snapshot_type, scope_guard)
+        current = (
+            authoritative_resolver,
+            workspace_scope_snapshot_type,
+            authoritative_scope_guard,
+        )
         if authoritative_resolver is not None:
             if current != binding:
                 raise RuntimeError(
                     "Authoritative workspace scope resolver is already initialized"
                 )
             return None
-        authoritative_resolver, workspace_scope_snapshot_type = binding
+        (
+            authoritative_resolver,
+            workspace_scope_snapshot_type,
+            authoritative_scope_guard,
+        ) = binding
 
     def claim_authoritative_controller(owner):
         token = scope_token(owner)
@@ -219,7 +239,22 @@ def _create_context_state_registry():
         def refresh_from_resolver():
             return operate_scope(owner, "refresh_authoritative", authority)
 
-        return refresh_from_resolver
+        def guard_tool(tool_registry, tool_name, arguments):
+            if authoritative_scope_guard is None:
+                raise RuntimeError("Authoritative workspace scope guard is not initialized")
+            manager = authoritative_managers.get(token)
+            if manager is None:
+                raise RuntimeError("Authoritative task manager binding is no longer available")
+            return authoritative_scope_guard(
+                tool_registry,
+                manager,
+                owner.session_id,
+                owner.project_name or "",
+                tool_name,
+                arguments,
+            )
+
+        return refresh_from_resolver, guard_tool
 
     def bind_workspace(owner, storage):
         if workspace_binding is None:

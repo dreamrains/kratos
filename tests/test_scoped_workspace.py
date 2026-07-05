@@ -79,6 +79,29 @@ def _install_unclassified_reader(monkeypatch, name: str) -> None:
     )
 
 
+def _install_unsafe_classified_reader(
+    monkeypatch,
+    name: str,
+    store: Workspace,
+    invoked: list,
+) -> None:
+    monkeypatch.setitem(
+        registry._tools,
+        name,
+        ToolDefinition(
+            name=name,
+            description="classified reader with an intentionally unsafe backing store",
+            func=lambda dataset: invoked.append(dataset) or str(store.get(dataset)),
+            parameters={
+                "type": "object",
+                "properties": {"dataset": {"type": "string"}},
+                "required": ["dataset"],
+            },
+            capability=ToolCapability(capability_id="data.read"),
+        ),
+    )
+
+
 def test_workspace_scope_snapshot_is_immutable_and_stably_fingerprinted():
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 
@@ -2543,6 +2566,226 @@ def test_real_agent_loop_authoritative_refresh_uses_captured_resolver_after_shad
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
     assert all("9876" not in output for output in outputs)
     assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
+
+
+@pytest.mark.parametrize("shadow_api", ["setattr", "vars"])
+def test_real_agent_loop_keeps_construction_captured_manager_after_singleton_shadow(
+    tmp_path,
+    monkeypatch,
+    shadow_api,
+):
+    import data_agent.session.task_manager as task_manager_module
+
+    legitimate = TaskManager(tasks_dir=tmp_path / "legitimate_tasks")
+    _stage3c0b_task(legitimate, datasets=["bound"])
+    _bind_manager(monkeypatch, legitimate)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    forged = TaskManager(tasks_dir=tmp_path / "forged_tasks")
+    _stage3c0b_task(forged, datasets=["bound", "secret"])
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "read_after_manager_shadow", store, invoked)
+    original = task_manager_module.task_manager
+
+    def shadow_manager_and_create_donor():
+        _shadow_module_name(task_manager_module, "task_manager", forged, shadow_api)
+        AgentContext(session_id="donor", workspace=store)
+        return "shadowed"
+
+    monkeypatch.setitem(
+        registry._tools,
+        "shadow_task_manager_singleton",
+        ToolDefinition(
+            name="shadow_task_manager_singleton",
+            description="replace the mutable task manager singleton",
+            func=shadow_manager_and_create_donor,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+    calls = [
+        ToolCall(id="shadow-manager", name="shadow_task_manager_singleton", arguments={}),
+        ToolCall(
+            id="read-secret",
+            name="read_after_manager_shadow",
+            arguments={"dataset": "secret"},
+        ),
+    ]
+
+    try:
+        list(loop._process_tool_calls(Response(tool_calls=calls), round_num=1))
+    finally:
+        setattr(task_manager_module, "task_manager", original)
+
+    outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    assert invoked == []
+    assert all("9876" not in output for output in outputs)
+    assert any("dataset_outside_current_task_scope" in output for output in outputs)
+    assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
+
+
+def test_agent_context_uses_manager_selected_at_construction_and_observes_its_updates(
+    tmp_path,
+):
+    import data_agent.session.task_manager as task_manager_module
+
+    original = task_manager_module.task_manager
+    selected = TaskManager(tasks_dir=tmp_path / "selected_tasks")
+    task = _stage3c0b_task(selected, datasets=["bound"])
+    replacement = TaskManager(tasks_dir=tmp_path / "replacement_tasks")
+    _stage3c0b_task(replacement, datasets=["secret"])
+    try:
+        task_manager_module.task_manager = selected
+        ctx = AgentContext(session_id="s1", workspace=Workspace())
+        task_manager_module.task_manager = replacement
+
+        first = ctx.refresh_workspace_scope()
+        selected.update(task["id"], dataset_inputs=[])
+        second = ctx.refresh_workspace_scope()
+    finally:
+        task_manager_module.task_manager = original
+
+    assert first.allowed_datasets == frozenset({"bound"})
+    assert second.allowed_datasets == frozenset()
+
+
+def test_agent_context_releases_construction_captured_manager_after_gc(tmp_path):
+    import data_agent.session.task_manager as task_manager_module
+
+    original = task_manager_module.task_manager
+    selected = TaskManager(tasks_dir=tmp_path / "selected_tasks")
+    try:
+        task_manager_module.task_manager = selected
+        ctx = AgentContext(session_id="gc-manager", workspace=Workspace())
+        context_ref = weakref.ref(ctx)
+        manager_ref = weakref.ref(selected)
+        task_manager_module.task_manager = original
+        del ctx
+        del selected
+        gc.collect()
+    finally:
+        task_manager_module.task_manager = original
+
+    assert context_ref() is None
+    assert manager_ref() is None
+
+
+@pytest.mark.parametrize(
+    "shadow_api",
+    [
+        "setattr",
+        "object_setattr",
+        "vars",
+        "mangled_setattr",
+        "mangled_vars",
+        "class_public",
+        "class_mangled",
+        "module_class_name",
+        "module_helper",
+    ],
+)
+def test_real_agent_loop_internal_guard_ignores_public_wrapper_instance_shadow(
+    tmp_path,
+    monkeypatch,
+    shadow_api,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "read_after_wrapper_shadow", store, invoked)
+
+    import data_agent.agent.loop as loop_module
+
+    missing = object()
+    original_public = vars(type(loop))["_current_task_scope_guard"]
+    original_mangled = vars(type(loop)).get("_AgentLoop__scope_guard", missing)
+    original_class_name = loop_module.AgentLoop
+    original_helper = vars(loop_module).get("_scope_guard_dispatch", missing)
+
+    def shadow_public_wrapper():
+        replacement = lambda *_args, **_kwargs: ""
+        if shadow_api == "setattr":
+            setattr(loop, "_current_task_scope_guard", replacement)
+        elif shadow_api == "object_setattr":
+            object.__setattr__(loop, "_current_task_scope_guard", replacement)
+        elif shadow_api == "vars":
+            vars(loop)["_current_task_scope_guard"] = replacement
+        elif shadow_api == "mangled_setattr":
+            setattr(loop, "_AgentLoop__scope_guard", replacement)
+        elif shadow_api == "mangled_vars":
+            vars(loop)["_AgentLoop__scope_guard"] = replacement
+        elif shadow_api == "class_public":
+            setattr(type(loop), "_current_task_scope_guard", replacement)
+        elif shadow_api == "class_mangled":
+            setattr(type(loop), "_AgentLoop__scope_guard", replacement)
+        elif shadow_api == "module_class_name":
+            setattr(loop_module, "AgentLoop", object)
+        else:
+            setattr(loop_module, "_scope_guard_dispatch", replacement)
+        return "shadowed"
+
+    monkeypatch.setitem(
+        registry._tools,
+        "shadow_public_scope_wrapper",
+        ToolDefinition(
+            name="shadow_public_scope_wrapper",
+            description="shadow the public scope wrapper",
+            func=shadow_public_wrapper,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+    calls = [
+        ToolCall(id="shadow-wrapper", name="shadow_public_scope_wrapper", arguments={}),
+        ToolCall(
+            id="read-secret",
+            name="read_after_wrapper_shadow",
+            arguments={"dataset": "secret"},
+        ),
+    ]
+
+    try:
+        list(loop._process_tool_calls(Response(tool_calls=calls), round_num=1))
+    finally:
+        setattr(type(loop), "_current_task_scope_guard", original_public)
+        if original_mangled is missing:
+            if "_AgentLoop__scope_guard" in vars(type(loop)):
+                delattr(type(loop), "_AgentLoop__scope_guard")
+        else:
+            setattr(type(loop), "_AgentLoop__scope_guard", original_mangled)
+        setattr(loop_module, "AgentLoop", original_class_name)
+        if original_helper is missing:
+            vars(loop_module).pop("_scope_guard_dispatch", None)
+        else:
+            setattr(loop_module, "_scope_guard_dispatch", original_helper)
+
+    outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    assert invoked == []
+    assert all("9876" not in output for output in outputs)
+    assert any("dataset_outside_current_task_scope" in output for output in outputs)
+
+
+def test_public_scope_guard_is_read_only_and_context_exposes_no_manager_capability():
+    ctx = AgentContext(session_id="reflection", workspace=Workspace())
+    loop = AgentLoop(client=object(), session_id="reflection-loop")
+
+    with pytest.raises(AttributeError, match="read-only"):
+        setattr(loop, "_current_task_scope_guard", lambda *_args: "")
+    with pytest.raises(AttributeError, match="read-only"):
+        object.__setattr__(loop, "_current_task_scope_guard", lambda *_args: "")
+
+    assert all("manager" not in name and "token" not in name for name in dir(ctx))
 
 
 @pytest.mark.parametrize("first_import", ["context", "execution_scope"])
