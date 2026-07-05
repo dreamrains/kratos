@@ -338,7 +338,13 @@ def _create_scope_guard_descriptor(loop_context_operation, tool_registry, json_d
                 arguments,
             )
         except Exception:
-            return ""
+            return json_dumps(
+                {
+                    "error": "Workspace scope guard failed.",
+                    "error_type": "workspace_scope_guard_error",
+                },
+                ensure_ascii=False,
+            )
         if result.allowed:
             return ""
         return json_dumps(

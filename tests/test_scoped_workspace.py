@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+import copy
 from dataclasses import FrozenInstanceError
 import gc
 import json
 from pathlib import Path
+import pickle
 import subprocess
 import sys
 import textwrap
@@ -3069,3 +3071,239 @@ def test_error_scope_prompt_exposes_control_error_without_workspace_details(tmp_
     assert "stage3c0b_current_task_missing" in prompt
     assert "secret_dataset" not in prompt
     assert "secret_column" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("shadow_owner", "shadow_api", "method_name"),
+    [
+        ("instance", "setattr", "get_active_plan_id"),
+        ("instance", "vars", "list_all"),
+        ("class", "setattr", "get_active_plan_id"),
+        ("class", "setattr", "list_all"),
+    ],
+)
+def test_real_loop_manager_method_shadows_cannot_downgrade_or_expand_scope(
+    tmp_path,
+    monkeypatch,
+    shadow_owner,
+    shadow_api,
+    method_name,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    task = _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "read_after_manager_method_shadow", store, invoked)
+
+    forged_task = dict(task, status="in_progress", dataset_inputs=["bound", "secret"])
+    owner = manager if shadow_owner == "instance" else type(manager)
+    replacement = (
+        (lambda *_args, **_kwargs: "")
+        if method_name == "get_active_plan_id"
+        else (lambda *_args, **_kwargs: [forged_task])
+    )
+    missing = object()
+    original = vars(owner).get(method_name, missing)
+
+    def shadow_manager_method():
+        if shadow_api == "vars":
+            vars(owner)[method_name] = replacement
+        else:
+            setattr(owner, method_name, replacement)
+        return "shadowed"
+
+    monkeypatch.setitem(
+        registry._tools,
+        "shadow_manager_method",
+        ToolDefinition(
+            name="shadow_manager_method",
+            description="shadow a manager method after loop construction",
+            func=shadow_manager_method,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+    calls = [
+        ToolCall(id="shadow-manager-method", name="shadow_manager_method", arguments={}),
+        ToolCall(
+            id="read-secret",
+            name="read_after_manager_method_shadow",
+            arguments={"dataset": "secret"},
+        ),
+    ]
+
+    try:
+        list(loop._process_tool_calls(Response(tool_calls=calls), round_num=1))
+    finally:
+        if original is missing:
+            vars(owner).pop(method_name, None)
+        else:
+            setattr(owner, method_name, original)
+
+    outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    assert invoked == []
+    assert all("9876" not in output for output in outputs)
+    assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
+
+
+def test_authoritative_post_tool_refresh_converts_legacy_downgrade_to_error(
+    tmp_path,
+    monkeypatch,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "read_after_plan_disappears", store, invoked)
+
+    def remove_active_plan():
+        manager._set_active_plan_id("", "s1", "")
+        return "removed"
+
+    monkeypatch.setitem(
+        registry._tools,
+        "remove_active_plan",
+        ToolDefinition(
+            name="remove_active_plan",
+            description="simulate an authoritative plan transition race",
+            func=remove_active_plan,
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+    calls = [
+        ToolCall(id="remove-plan", name="remove_active_plan", arguments={}),
+        ToolCall(
+            id="read-secret",
+            name="read_after_plan_disappears",
+            arguments={"dataset": "secret"},
+        ),
+    ]
+
+    list(loop._process_tool_calls(Response(tool_calls=calls), round_num=1))
+
+    outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    assert invoked == []
+    assert all("9876" not in output for output in outputs)
+    assert loop.context.workspace_scope.phase == "error"
+    assert loop.context.workspace_scope.error_type == "workspace_scope_authoritative_downgrade"
+
+
+def test_agent_context_init_metadata_and_copy_protocols_are_explicit():
+    ctx = AgentContext(session_id="copy-rejected", workspace=Workspace())
+
+    assert AgentContext.__init__.__name__ == "__init__"
+    assert AgentContext.__init__.__qualname__ == "AgentContext.__init__"
+    for operation in (
+        lambda: copy.copy(ctx),
+        lambda: copy.deepcopy(ctx),
+        lambda: pickle.dumps(ctx),
+    ):
+        with pytest.raises(TypeError, match="AgentContext.*cannot be copied or pickled"):
+            operation()
+
+
+class _TransientManagerFailure:
+    def __init__(self, manager, *, method_name, fail_on):
+        self.manager = manager
+        self.method_name = method_name
+        self.fail_on = fail_on
+        self.calls = 0
+
+    def get_active_plan_id(self, *args, **kwargs):
+        if self.method_name == "get_active_plan_id":
+            self.calls += 1
+            if self.calls == self.fail_on:
+                raise RuntimeError("sensitive transient detail 9876")
+        return self.manager.get_active_plan_id(*args, **kwargs)
+
+    def list_all(self, *args, **kwargs):
+        if self.method_name == "list_all":
+            self.calls += 1
+            if self.calls == self.fail_on:
+                raise RuntimeError("sensitive transient detail 9876")
+        return self.manager.list_all(*args, **kwargs)
+
+
+@pytest.mark.parametrize("path", ["single", "parallel"])
+def test_scope_guard_manager_or_resolver_failure_is_closed_and_recovers(
+    tmp_path,
+    monkeypatch,
+    path,
+):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    flaky = _TransientManagerFailure(
+        manager,
+        method_name="get_active_plan_id" if path == "single" else "list_all",
+        fail_on=2,
+    )
+    _bind_manager(monkeypatch, flaky)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "transient_guard_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id="transient-read", name="transient_guard_reader", arguments={"dataset": "bound"})
+
+    if path == "single":
+        loop._execute_single_tool(call, [call], 0)
+        loop._execute_single_tool(call, [call], 0)
+        outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    else:
+        outputs = [content for _tc, content in loop._execute_tools_parallel([call])]
+        outputs += [content for _tc, content in loop._execute_tools_parallel([call])]
+
+    assert invoked == ["bound"]
+    assert "workspace_scope_guard_error" in outputs[0]
+    assert "9876" not in outputs[0]
+
+
+def test_streaming_scope_guard_registry_failure_is_closed_and_recovers(tmp_path, monkeypatch):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _stage3c0b_task(manager, datasets=["bound"])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "stream_guard_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    original_get = registry.get
+    calls = 0
+
+    def flaky_get(name):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("sensitive registry detail 9876")
+        return original_get(name)
+
+    monkeypatch.setattr(registry, "get", flaky_get)
+    tool_calls = [
+        ToolCall(id="stream-one", name="stream_guard_reader", arguments={"dataset": "bound"}),
+        ToolCall(id="stream-two", name="stream_guard_reader", arguments={"dataset": "bound"}),
+    ]
+
+    events = list(loop._process_tool_calls(Response(tool_calls=tool_calls), round_num=1))
+    outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+
+    assert invoked == ["bound"]
+    assert "workspace_scope_guard_error" in outputs[0]
+    assert "9876" not in outputs[0]
+    assert any(event.get("type") == "error" for event in events)

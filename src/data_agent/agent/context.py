@@ -40,6 +40,24 @@ def _create_context_state_registry():
     class ResolverAuthority:
         pass
 
+    class ManagerCapabilities:
+        """Immutable, closure-private view of the manager operations we trust."""
+
+        __slots__ = ("_get_active_plan_id", "_list_all")
+
+        def __init__(self, manager):
+            object.__setattr__(self, "_get_active_plan_id", manager.get_active_plan_id)
+            object.__setattr__(self, "_list_all", manager.list_all)
+
+        def __setattr__(self, name, value):
+            raise AttributeError("Manager capabilities are immutable")
+
+        def get_active_plan_id(self, *args, **kwargs):
+            return self._get_active_plan_id(*args, **kwargs)
+
+        def list_all(self, *args, **kwargs):
+            return self._list_all(*args, **kwargs)
+
     def bind_owner(owner):
         from data_agent.session.task_manager import task_manager
 
@@ -48,7 +66,7 @@ def _create_context_state_registry():
         preview_vars[token] = ContextVar("data_agent_planning_preview_rows", default=5)
         owners[token] = weakref.ref(owner)
         available_authorities[token] = ResolverAuthority()
-        authoritative_managers[token] = task_manager
+        authoritative_managers[token] = ManagerCapabilities(task_manager)
         context_tokens[owner] = token
 
     def operate_identity(owner, operation, *args):
@@ -129,6 +147,20 @@ def _create_context_state_registry():
         if access_rank[target.phase] > access_rank[current.phase]:
             reject_escalation(f"unsafe phase transition: {current.phase} -> {target.phase}")
 
+    def validate_authoritative_transition(current, target):
+        if current is None or current.phase == "legacy" or target.phase != "legacy":
+            return target
+        return workspace_scope_snapshot_type(
+            phase="error",
+            session_id=current.session_id,
+            project_name=current.project_name,
+            plan_id=current.plan_id,
+            task_id=current.task_id,
+            step_id=current.step_id,
+            error_type="workspace_scope_authoritative_downgrade",
+            message="The authoritative workspace scope disappeared during an active scoped session.",
+        )
+
     def ensure_authoritative(owner, scope_var):
         current = scope_var.get()
         if current is None:
@@ -163,7 +195,11 @@ def _create_context_state_registry():
             authority = claimed_authorities.get(token)
             if authority is None or not args or args[0] is not authority:
                 raise PermissionError("workspace_scope_authority_required")
-            snapshot = resolve_authoritative(owner)
+            current = scope_var.get()
+            snapshot = validate_authoritative_transition(
+                current,
+                resolve_authoritative(owner),
+            )
             scope_var.set(snapshot)
             return snapshot
         if operation == "bind":
@@ -245,7 +281,7 @@ def _create_context_state_registry():
             manager = authoritative_managers.get(token)
             if manager is None:
                 raise RuntimeError("Authoritative task manager binding is no longer available")
-            return authoritative_scope_guard(
+            result = authoritative_scope_guard(
                 tool_registry,
                 manager,
                 owner.session_id,
@@ -253,6 +289,10 @@ def _create_context_state_registry():
                 tool_name,
                 arguments,
             )
+            current = operate_scope(owner, "get")
+            if current is not None and current.phase == "error":
+                return type(result)(False, current.error_type, current.message)
+            return result
 
         return refresh_from_resolver, guard_tool
 
@@ -474,6 +514,18 @@ def _create_agent_context_type(
         finally:
             scope_operation(self, "preview_reset", rows_token)
 
+    def reject_copy(self):
+        raise TypeError("AgentContext instances cannot be copied or pickled")
+
+    def reject_deepcopy(self, memo):
+        raise TypeError("AgentContext instances cannot be copied or pickled")
+
+    def reject_pickle(self, protocol):
+        raise TypeError("AgentContext instances cannot be copied or pickled")
+
+    initialize.__name__ = "__init__"
+    initialize.__qualname__ = f"{cls.__qualname__}.__init__"
+
     cls.__init__ = initialize
     cls.session_id = property(get_session_id, set_session_id)
     cls.project_name = property(get_project_name, set_project_name)
@@ -483,6 +535,9 @@ def _create_agent_context_type(
     cls.bind_workspace_scope = bind_workspace_scope
     cls.planning_workspace_scope = planning_workspace_scope
     cls.workspace = property(get_workspace, bind_workspace)
+    cls.__copy__ = reject_copy
+    cls.__deepcopy__ = reject_deepcopy
+    cls.__reduce_ex__ = reject_pickle
     return cls
 
 
