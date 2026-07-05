@@ -32,6 +32,8 @@ def _create_context_state_registry():
     identity_ready_tokens = weakref.WeakSet()
     current_context = ContextVar("data_agent_current_context", default=None)
     workspace_binding = None
+    authoritative_resolver = None
+    workspace_scope_snapshot_type = None
 
     class ResolverAuthority:
         pass
@@ -90,9 +92,10 @@ def _create_context_state_registry():
         raise PermissionError(f"workspace_scope_escalation: {message}")
 
     def validate_transition(current, target):
-        from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
-
-        if not isinstance(target, WorkspaceScopeSnapshot):
+        if (
+            workspace_scope_snapshot_type is None
+            or not isinstance(target, workspace_scope_snapshot_type)
+        ):
             reject_escalation("scope bindings require an immutable snapshot")
         if current is None or current.phase == "legacy":
             return
@@ -182,14 +185,29 @@ def _create_context_state_registry():
         raise ValueError(f"Unsupported agent context scope operation: {operation}")
 
     def resolve_authoritative(owner):
-        from data_agent.agent.execution_scope import resolve_workspace_scope
         from data_agent.session.task_manager import task_manager
 
-        return resolve_workspace_scope(
+        if authoritative_resolver is None:
+            raise RuntimeError("Authoritative workspace scope resolver is not initialized")
+        return authoritative_resolver(
             task_manager,
             owner.session_id,
             owner.project_name or "",
         )
+
+    def install_authoritative_resolver(resolver, snapshot_type):
+        nonlocal authoritative_resolver, workspace_scope_snapshot_type
+        if not callable(resolver) or not isinstance(snapshot_type, type):
+            raise TypeError("Invalid authoritative workspace scope resolver binding")
+        binding = (resolver, snapshot_type)
+        current = (authoritative_resolver, workspace_scope_snapshot_type)
+        if authoritative_resolver is not None:
+            if current != binding:
+                raise RuntimeError(
+                    "Authoritative workspace scope resolver is already initialized"
+                )
+            return None
+        authoritative_resolver, workspace_scope_snapshot_type = binding
 
     def claim_authoritative_controller(owner):
         token = scope_token(owner)
@@ -281,6 +299,7 @@ def _create_context_state_registry():
         bind_current,
         reset_current,
         install_workspace_binding,
+        install_authoritative_resolver,
     )
 
 
@@ -298,8 +317,14 @@ def _create_context_state_registry():
     _bind_current_context,
     _reset_current_context,
     _install_context_workspace_binding,
+    _install_context_authoritative_resolver,
 ) = _create_context_state_registry()
 del _create_context_state_registry
+
+# Trigger the execution-scope side of the trusted one-shot resolver handshake.
+# This remains safe whether context.py or execution_scope.py is imported first.
+import data_agent.agent.execution_scope as _execution_scope_bootstrap
+del _execution_scope_bootstrap
 
 
 @dataclass(slots=True, weakref_slot=True, eq=False, init=False)

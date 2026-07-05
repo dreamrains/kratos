@@ -388,7 +388,7 @@ def test_parallel_guard_validates_every_dataset_argument(tmp_path, monkeypatch):
     assert results[1][1] == "executed"
 
 
-def test_tool_guard_checks_all_references_even_when_first_is_blocked(monkeypatch):
+def test_tool_guard_checks_all_references_even_when_first_is_blocked(tmp_path, monkeypatch):
     import data_agent.agent.execution_scope as execution_scope
 
     capability = ToolCapability("analysis.test_compare", category="relationship")
@@ -405,21 +405,26 @@ def test_tool_guard_checks_all_references_even_when_first_is_blocked(monkeypatch
         },
         capability,
     )
-    checked = []
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    _scoped_task(manager, datasets=["banner"])
 
-    def fake_guard(*args, dataset, **kwargs):
-        checked.append(dataset)
-        return execution_scope.ScopeGuardResult(
-            dataset == "banner",
-            "dataset_outside_current_task_scope",
-            "blocked",
-        )
+    class TrackingManager:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+            self.list_calls = 0
 
-    monkeypatch.setattr(execution_scope, "ensure_dataset_allowed_for_current_task", fake_guard)
+        def get_active_plan_id(self, *args, **kwargs):
+            return self.wrapped.get_active_plan_id(*args, **kwargs)
+
+        def list_all(self, *args, **kwargs):
+            self.list_calls += 1
+            return self.wrapped.list_all(*args, **kwargs)
+
+    tracking_manager = TrackingManager(manager)
 
     result = execution_scope.ensure_tool_allowed_for_current_task(
         registry,
-        object(),
+        tracking_manager,
         "s1",
         "",
         "scope_test_all_references",
@@ -427,7 +432,8 @@ def test_tool_guard_checks_all_references_even_when_first_is_blocked(monkeypatch
     )
 
     assert result.allowed is False
-    assert checked == ["iap", "banner"]
+    assert result.error_type == "dataset_outside_current_task_scope"
+    assert tracking_manager.list_calls == 2
 
 
 def test_legacy_native_dataset_reader_is_classified_without_capability(monkeypatch):

@@ -39,6 +39,7 @@ from data_agent.agent.execution_control import (
     ToolExecutionBudget,
     TurnExecutionState,
 )
+from data_agent.agent.execution_scope import ensure_tool_allowed_for_current_task
 from data_agent.session.workspace import Workspace, workspace
 
 logger = get_logger("loop")
@@ -323,10 +324,24 @@ def _create_loop_context_dispatch_descriptor(loop_context_operation):
     return LoopContextDispatch()
 
 
+def _create_scope_guard_descriptor(scope_guard):
+    class ScopeGuardDispatch:
+        __slots__ = ()
+
+        def __get__(self, instance, owner=None):
+            return scope_guard
+
+        def __set__(self, instance, value):
+            raise AttributeError("Scope guard dispatch is read-only")
+
+    return ScopeGuardDispatch()
+
+
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
     __context_operation = _create_loop_context_dispatch_descriptor(_loop_context_operation)
+    __scope_guard = _create_scope_guard_descriptor(ensure_tool_allowed_for_current_task)
 
     @property
     def context(self) -> AgentContext:
@@ -1035,10 +1050,9 @@ class AgentLoop:
     def _current_task_scope_guard(self, tool_name: str, arguments: dict) -> str:
         """Return a compact JSON error when a dataset-read call crosses task scope."""
         try:
-            from data_agent.agent.execution_scope import ensure_tool_allowed_for_current_task
             from data_agent.session.task_manager import task_manager
 
-            result = ensure_tool_allowed_for_current_task(
+            result = self.__scope_guard(
                 registry,
                 task_manager,
                 self.session_id,
@@ -2669,4 +2683,5 @@ AgentLoop.stream_turn, AgentLoop.resume_turn_streaming = _create_streaming_conte
     AgentLoop._stream_turn_impl,
     AgentLoop._resume_turn_streaming_impl,
 )
+del _create_scope_guard_descriptor
 del _create_loop_context_dispatch_descriptor, _create_streaming_context_methods

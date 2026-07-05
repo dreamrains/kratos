@@ -391,3 +391,231 @@ def ensure_tool_allowed_for_current_task(
         if not result.allowed and first_error is None:
             first_error = result
     return first_error or ScopeGuardResult(True)
+
+
+def _create_scope_enforcement_chain(
+    normalize_text,
+    normalize_identity,
+    normalize_text_set,
+    is_stage_task,
+    snapshot_type,
+    execution_type,
+    guard_result_type,
+    dataset_argument_names,
+    legacy_dataset_arguments,
+):
+    """Capture every callable link used by authoritative scope enforcement."""
+
+    def resolve_scope(manager, session_id: str, project_name: str = ""):
+        session = normalize_identity(session_id)
+        project = normalize_identity(project_name)
+        plan_id = normalize_identity(manager.get_active_plan_id(session, project))
+        if not plan_id:
+            return snapshot_type(session_id=session, project_name=project)
+
+        tasks = [
+            task
+            for task in manager.list_all(include_stale=True)
+            if normalize_identity(task.get("session_id")) == session
+            and normalize_identity(task.get("project_name")) == project
+            and normalize_identity(task.get("plan_id")) == plan_id
+            and task.get("status") not in {"deleted", "archived", "superseded"}
+        ]
+        stage_tasks = [task for task in tasks if is_stage_task(task)]
+        if not stage_tasks and tasks:
+            return snapshot_type(session_id=session, project_name=project)
+
+        in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+        if len(in_progress) != 1:
+            multiple = len(in_progress) > 1
+            return snapshot_type(
+                phase="error",
+                session_id=session,
+                project_name=project,
+                plan_id=plan_id,
+                error_type=(
+                    "multiple_in_progress_tasks"
+                    if multiple
+                    else "stage3c0b_current_task_missing"
+                ),
+                message=(
+                    "Stage 3C0B allows only one in-progress task per session and project."
+                    if multiple
+                    else "The active Stage 3C0B plan has no unique in-progress task."
+                ),
+            )
+
+        task = in_progress[0]
+        mode = normalize_text(task.get("combination_mode")).casefold()
+        return snapshot_type(
+            phase="synthesis" if mode == "synthesis" else "execution",
+            session_id=session,
+            project_name=project,
+            plan_id=plan_id,
+            task_id=int(task.get("id") or 0),
+            step_id=normalize_text(task.get("step_id")),
+            allowed_datasets=frozenset(normalize_text_set(task.get("dataset_inputs"))),
+            dataset_contract_ids=frozenset(
+                normalize_text_set(task.get("dataset_contract_ids"))
+            ),
+            combination_mode=mode,
+        )
+
+    def current_scope(manager, session_id: str, project_name: str = ""):
+        snapshot = resolve_scope(manager, session_id, project_name)
+        return execution_type(
+            active=snapshot.active,
+            task_id=snapshot.task_id,
+            step_id=snapshot.step_id,
+            combination_mode=snapshot.combination_mode,
+            allowed_datasets=set(snapshot.allowed_datasets),
+            dataset_contract_ids=set(snapshot.dataset_contract_ids),
+            error_type=snapshot.error_type,
+            message=snapshot.message,
+        )
+
+    def ensure_dataset(manager, session_id: str, project_name: str = "", *, dataset: str):
+        scope = current_scope(manager, session_id, project_name)
+        if scope.error_type:
+            return guard_result_type(False, scope.error_type, scope.message)
+        if not scope.active:
+            return guard_result_type(True)
+        if scope.combination_mode == "synthesis":
+            return guard_result_type(
+                False,
+                "synthesis_cannot_read_raw_dataset",
+                "Synthesis tasks consume verified evidence and cannot read raw datasets.",
+            )
+        normalized_dataset = normalize_text(dataset)
+        if normalized_dataset not in scope.allowed_datasets:
+            return guard_result_type(
+                False,
+                "dataset_outside_current_task_scope",
+                f"Dataset '{normalized_dataset}' is outside the current task scope.",
+            )
+        return guard_result_type(True)
+
+    def dataset_arguments(registry, tool_name: str, arguments: dict[str, Any]):
+        if (
+            tool_name == "export_output"
+            and normalize_text(arguments.get("output_type")).casefold() != "data"
+        ):
+            return []
+        tool = registry.get(tool_name)
+        capability = getattr(tool, "capability", None) if tool is not None else None
+        capability_id = normalize_text(getattr(capability, "capability_id", ""))
+        explicit_arguments = legacy_dataset_arguments.get(tool_name)
+        if not explicit_arguments and not capability_id.startswith(("data.", "analysis.")):
+            return []
+        parameters = getattr(tool, "parameters", {}) or {}
+        properties = parameters.get("properties") if isinstance(parameters, dict) else {}
+        if not isinstance(properties, dict):
+            return []
+        datasets = []
+        argument_names = explicit_arguments or dataset_argument_names
+        for argument_name in properties:
+            if argument_name not in argument_names or argument_name not in arguments:
+                continue
+            value = arguments.get(argument_name)
+            values = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+            datasets.extend(
+                text for item in values if (text := normalize_text(item))
+            )
+        return datasets
+
+    def prepare_chart(manager, session_id, project_name, arguments):
+        dataset = normalize_text(arguments.get("data"))
+        if not dataset and normalize_text(arguments.get("data_json")):
+            return None
+        scope = current_scope(manager, session_id, project_name)
+        if scope.error_type:
+            return guard_result_type(False, scope.error_type, scope.message)
+        if not scope.active:
+            return None
+        if scope.combination_mode == "synthesis":
+            return guard_result_type(
+                False,
+                "synthesis_cannot_read_raw_dataset",
+                "Synthesis tasks consume verified evidence and cannot read raw datasets.",
+            )
+        if not dataset:
+            if len(scope.allowed_datasets) != 1:
+                return guard_result_type(
+                    False,
+                    "dataset_scope_requires_unique_dataset",
+                    "create_chart requires one explicit dataset when the current task does not bind exactly one dataset.",
+                )
+            dataset = next(iter(scope.allowed_datasets))
+            arguments["data"] = dataset
+        if dataset in scope.allowed_datasets:
+            from data_agent.session.workspace import workspace
+
+            if dataset not in workspace.list_datasets():
+                return guard_result_type(
+                    False,
+                    "current_task_dataset_unavailable",
+                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                )
+        return None
+
+    def ensure_tool(registry, manager, session_id, project_name, tool_name, arguments):
+        if tool_name == "create_chart":
+            preparation_error = prepare_chart(
+                manager, session_id, project_name, arguments
+            )
+            if preparation_error is not None:
+                return preparation_error
+        first_error = None
+        for dataset in dataset_arguments(registry, tool_name, arguments):
+            result = ensure_dataset(
+                manager, session_id, project_name, dataset=dataset
+            )
+            if not result.allowed and first_error is None:
+                first_error = result
+        return first_error or guard_result_type(True)
+
+    return (
+        resolve_scope,
+        current_scope,
+        ensure_dataset,
+        dataset_arguments,
+        prepare_chart,
+        ensure_tool,
+    )
+
+
+(
+    resolve_workspace_scope,
+    current_execution_scope,
+    ensure_dataset_allowed_for_current_task,
+    dataset_arguments_for_tool,
+    _prepare_create_chart_dataset,
+    ensure_tool_allowed_for_current_task,
+) = _create_scope_enforcement_chain(
+    _text,
+    _identity,
+    _text_set,
+    _is_stage3c0b_task,
+    WorkspaceScopeSnapshot,
+    ExecutionScope,
+    ScopeGuardResult,
+    _DATASET_ARGUMENT_NAMES,
+    _LEGACY_DATASET_ARGUMENTS,
+)
+del _create_scope_enforcement_chain
+
+
+# Capture the original resolver and snapshot type in context.py's closure-local
+# registry during trusted module initialization.  Importing either module first
+# completes this handshake before control returns to application or tool code.
+import data_agent.agent.context as _context_module
+
+_resolver_installer = getattr(
+    _context_module,
+    "_install_context_authoritative_resolver",
+    None,
+)
+if _resolver_installer is not None:
+    _resolver_installer(resolve_workspace_scope, WorkspaceScopeSnapshot)
+    delattr(_context_module, "_install_context_authoritative_resolver")
+del _resolver_installer, _context_module
