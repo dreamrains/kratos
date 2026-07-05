@@ -250,6 +250,7 @@ def _create_loop_context_registry(
     current_context_getter,
     current_context_setter,
     context_binder,
+    scope_controller_claimant,
 ):
     bindings = weakref.WeakKeyDictionary()
 
@@ -286,7 +287,7 @@ def _create_loop_context_registry(
                             "workspace_context_mutation: cannot replace the active "
                             f"agent context while scope phase is {scope.phase}"
                         )
-            refresh = _claim_authoritative_scope_controller(replacement)
+            refresh = scope_controller_claimant(replacement)
             bindings[loop] = (replacement, refresh)
             return None
         raise ValueError(f"Unsupported agent loop context operation: {operation}")
@@ -298,20 +299,42 @@ _loop_context_operation = _create_loop_context_registry(
     get_current_context,
     set_current_context,
     use_agent_context,
+    _claim_authoritative_scope_controller,
 )
 del _create_loop_context_registry
+
+
+def _create_loop_context_dispatch_descriptor(loop_context_operation):
+    class LoopContextDispatch:
+        __slots__ = ()
+
+        def __get__(self, instance, owner=None):
+            if instance is None:
+                return loop_context_operation
+
+            def dispatch(operation, *args):
+                return loop_context_operation(instance, operation, *args)
+
+            return dispatch
+
+        def __set__(self, instance, value):
+            raise AttributeError("Loop context dispatch is read-only")
+
+    return LoopContextDispatch()
 
 
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
+    __context_operation = _create_loop_context_dispatch_descriptor(_loop_context_operation)
+
     @property
     def context(self) -> AgentContext:
-        return _loop_context_operation(self, "get")
+        return self.__context_operation("get")
 
     @context.setter
     def context(self, context: AgentContext) -> None:
-        _loop_context_operation(self, "replace", context)
+        self.__context_operation("replace", context)
 
     def __init__(
         self,
@@ -346,7 +369,7 @@ class AgentLoop:
 
         # 对象绑定
         if active_project:
-            with _loop_context_operation(self, "use"):
+            with self.__context_operation("use"):
                 workspace.set_project(active_project)
                 from data_agent.tools.knowledge_tools import set_active_object, set_active_session
                 set_active_object(active_project)
@@ -398,7 +421,7 @@ class AgentLoop:
         has_legacy_object_name = "object_name" in data
         obj_name = data["project_name"] if has_project_name else data.get("object_name")
         if has_project_name or has_legacy_object_name:
-            with _loop_context_operation(self, "use"):
+            with self.__context_operation("use"):
                 if obj_name in (None, ""):
                     workspace.clear_project()
                 else:
@@ -620,7 +643,7 @@ class AgentLoop:
 
         try:
             from data_agent.agent.analysis_state import analysis_state_summary
-            scope = self.context.workspace_scope or _loop_context_operation(self, "refresh")
+            scope = self.context.workspace_scope or self.__context_operation("refresh")
             if scope.phase in {"synthesis", "error"}:
                 state = self.context.analysis_state
                 analysis_ctx = "\n".join([
@@ -702,8 +725,8 @@ class AgentLoop:
 
     def _get_system_prompt(self) -> str:
         """获取系统提示词（带缓存）。"""
-        with _loop_context_operation(self, "use"):
-            scope = _loop_context_operation(self, "refresh")
+        with self.__context_operation("use"):
+            scope = self.__context_operation("refresh")
             bundle_fingerprint = ""
             state = getattr(self.context, "analysis_state", None)
             from data_agent.agent.data_understanding import validate_data_understanding_bundle
@@ -918,7 +941,7 @@ class AgentLoop:
         logger.info("Quality reminder injected", extra={"extra_data": {"session_id": self.session_id}})
 
     def _execution_prompt_hint(self) -> str:
-        scope = self.context.workspace_scope or _loop_context_operation(self, "refresh")
+        scope = self.context.workspace_scope or self.__context_operation("refresh")
         if scope.phase == "error":
             return f"{scope.error_type}: {scope.message}"
         turn_state = getattr(self.context, "turn_state", None)
@@ -1119,7 +1142,7 @@ class AgentLoop:
         if not user_input:
             return
         self._prompt_cache_dirty = True
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             self._prepare_analysis_turn(user_input)
 
     def _turn_tool_error_count(self) -> int:
@@ -1503,7 +1526,7 @@ class AgentLoop:
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
         # 根据用户输入激活相关工具分组
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             new_groups = self._prepare_analysis_turn(user_input)
             required_question = self._maybe_auto_suspend_for_required_question()
         if new_groups:
@@ -1552,7 +1575,7 @@ class AgentLoop:
         self._reset_turn_tracking()
         self.messages.append({"role": "user", "content": user_input})
         self._prompt_cache_dirty = True
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             self._prepare_analysis_turn(user_input)
             required_question = self._maybe_auto_suspend_for_required_question()
         if required_question is not None:
@@ -1577,7 +1600,7 @@ class AgentLoop:
 
     def _auto_save(self) -> None:
         """自动保存会话状态。增量推送新消息到 JSONL + 全量保存。"""
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             if self.context.analysis_state is not None:
                 try:
                     self.context.analysis_state.save()
@@ -1715,7 +1738,7 @@ class AgentLoop:
                 return loop_result.content if hasattr(loop_result, "content") else "达到最大轮次限制。"
 
     def _register_confirmation(self, susp: SuspendedForConfirmation) -> None:
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             try:
                 from data_agent.agent.analysis_state import current_analysis_state
                 state = current_analysis_state()
@@ -1738,7 +1761,7 @@ class AgentLoop:
                 logger.warning("Failed to register confirmation", extra={"extra_data": {"error": str(e)}})
 
     def _resolve_confirmation(self, susp: SuspendedForConfirmation, answer: str) -> None:
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             try:
                 from data_agent.agent.analysis_state import current_analysis_state
                 state = current_analysis_state()
@@ -1814,7 +1837,7 @@ class AgentLoop:
         import time
 
         for i, tc in enumerate(response.tool_calls):
-            _loop_context_operation(self, "refresh")
+            self.__context_operation("refresh")
             # Check interrupt between tool calls
             if self._interrupt_event.is_set():
                 self._fill_remaining_tool_responses(response.tool_calls, i, "Turn interrupted by user")
@@ -1868,9 +1891,9 @@ class AgentLoop:
 
             t0 = time.monotonic()
             try:
-                with _loop_context_operation(self, "use"):
+                with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                _loop_context_operation(self, "refresh")
+                self.__context_operation("refresh")
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -1926,10 +1949,9 @@ class AgentLoop:
                 "duration_ms": duration_ms,
             }
 
-    def stream_turn(self, user_input: str):
+    def _stream_turn_impl(self, user_input: str):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
         import time
-        _loop_context_operation(self, "set")
 
         logger.info("Stream turn started", extra={"extra_data": {"session": self.session_id}})
         self._interrupt_event.clear()
@@ -2092,7 +2114,7 @@ class AgentLoop:
                 self._auto_save()
                 return
 
-    def resume_turn_streaming(
+    def _resume_turn_streaming_impl(
         self,
         suspension_id: str,
         user_response: str,
@@ -2101,8 +2123,6 @@ class AgentLoop:
         idempotency_key: str = "",
     ):
         """Generator variant of resume_turn for SSE streaming."""
-        _loop_context_operation(self, "set")
-
         susp = self._load_confirmation_for_resume(suspension_id)
         if not susp:
             yield {"type": "error", "message": f"runtime confirmation {suspension_id} not found"}
@@ -2251,7 +2271,7 @@ class AgentLoop:
 
     def _loop(self, user_input: str = "") -> LoopResult:
         """Run the agent loop inside this session's AgentContext."""
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             return self._loop_impl(user_input)
 
     def _execute_tools_sequential(self, tool_calls, final_text: str) -> LoopResult | None:
@@ -2300,7 +2320,7 @@ class AgentLoop:
         """
         import time
 
-        _loop_context_operation(self, "refresh")
+        self.__context_operation("refresh")
         turn_state = getattr(self.context, "turn_state", None)
 
         scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
@@ -2316,9 +2336,9 @@ class AgentLoop:
             return None
 
         try:
-            with _loop_context_operation(self, "use"):
+            with self.__context_operation("use"):
                 tool_result = registry.execute(tc.name, tc.arguments)
-            _loop_context_operation(self, "refresh")
+            self.__context_operation("refresh")
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -2379,16 +2399,16 @@ class AgentLoop:
 
         def _run_tool(tc):
             try:
-                _loop_context_operation(self, "refresh")
+                self.__context_operation("refresh")
                 scope_error = self._current_task_scope_guard(tc.name, tc.arguments)
                 if scope_error:
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error)
                 t0 = time.monotonic()
-                with _loop_context_operation(self, "use"):
+                with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                _loop_context_operation(self, "refresh")
+                self.__context_operation("refresh")
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -2562,7 +2582,7 @@ class AgentLoop:
 
     def _maybe_archive(self, user_input: str, reply: str) -> None:
         """当有实质性分析结果时自动归档。"""
-        with _loop_context_operation(self, "use"):
+        with self.__context_operation("use"):
             return self._maybe_archive_impl(user_input, reply)
 
     def _maybe_archive_impl(self, user_input: str, reply: str) -> None:
@@ -2615,3 +2635,38 @@ class AgentLoop:
                 m["content"] = str(content)[:5000]
             serialized.append(m)
         return serialized
+
+
+def _create_streaming_context_methods(loop_context_operation, stream_impl, resume_impl):
+    """Bind a loop context for exactly the lifetime of each streaming generator."""
+
+    def stream_turn(self, user_input: str):
+        with loop_context_operation(self, "use"):
+            yield from stream_impl(self, user_input)
+
+    def resume_turn_streaming(
+        self,
+        suspension_id: str,
+        user_response: str,
+        *,
+        expected_version: int | None = None,
+        idempotency_key: str = "",
+    ):
+        with loop_context_operation(self, "use"):
+            yield from resume_impl(
+                self,
+                suspension_id,
+                user_response,
+                expected_version=expected_version,
+                idempotency_key=idempotency_key,
+            )
+
+    return stream_turn, resume_turn_streaming
+
+
+AgentLoop.stream_turn, AgentLoop.resume_turn_streaming = _create_streaming_context_methods(
+    _loop_context_operation,
+    AgentLoop._stream_turn_impl,
+    AgentLoop._resume_turn_streaming_impl,
+)
+del _create_loop_context_dispatch_descriptor, _create_streaming_context_methods

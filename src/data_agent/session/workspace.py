@@ -13,6 +13,7 @@ import pandas as pd
 
 from data_agent.agent.context import (
     _ensure_context_workspace_scope,
+    _install_context_workspace_binding,
     _is_context_workspace_token,
     _operate_context_workspace,
     get_current_context,
@@ -216,7 +217,12 @@ class Workspace:
         return f"数据集 '{name}' 不存在"
 
 
-def _create_workspace_registry(current_context_getter):
+def _create_workspace_registry(
+    current_context_getter,
+    ensure_context_scope,
+    is_context_workspace_token,
+    operate_context_workspace,
+):
     """Return opaque bindings and policy-enforcing operations over closure-local stores."""
 
     class BindingToken:
@@ -263,7 +269,7 @@ def _create_workspace_registry(current_context_getter):
 
         scope = WorkspaceScopeSnapshot() if owner is None else owner.workspace_scope
         if owner is not None and scope is None:
-            scope = _ensure_context_workspace_scope(owner)
+            scope = ensure_context_scope(owner)
         return storage, owner, scope
 
     def readable(scope, name):
@@ -283,9 +289,9 @@ def _create_workspace_registry(current_context_getter):
         active_owner = current_context_getter()
         if (
             active_owner is not None
-            and not _is_context_workspace_token(active_owner, token)
+            and not is_context_workspace_token(active_owner, token)
         ):
-            return _operate_context_workspace(active_owner, operation, *args)
+            return operate_context_workspace(active_owner, operation, *args)
         storage, owner, scope = resolve(token)
         if operation in {"set_project", "clear_project"} and scope.phase == "execution":
             return "Error: execution_cannot_change_project_identity"
@@ -419,16 +425,29 @@ def _create_workspace_registry(current_context_getter):
     _workspace_operation,
     _bind_default_workspace,
     _default_workspace_operation,
-) = _create_workspace_registry(get_current_context)
+) = _create_workspace_registry(
+    get_current_context,
+    _ensure_context_workspace_scope,
+    _is_context_workspace_token,
+    _operate_context_workspace,
+)
 del _create_workspace_registry
 
 
-def _workspace_get_operation(token, name):
-    return _workspace_operation(token, "get", name)
+def _create_workspace_token_facades(workspace_operation):
+    def get_operation(token, name):
+        return workspace_operation(token, "get", name)
+
+    def add_operation(token, name, frame):
+        return workspace_operation(token, "add", name, frame)
+
+    return get_operation, add_operation
 
 
-def _workspace_add_operation(token, name, frame):
-    return _workspace_operation(token, "add", name, frame)
+_workspace_get_operation, _workspace_add_operation = _create_workspace_token_facades(
+    _workspace_operation,
+)
+del _create_workspace_token_facades
 
 
 def _create_workspace_proxy_operation(
@@ -563,4 +582,12 @@ class WorkspaceProxy:
 
 # 全局 facade；无 AgentContext 时使用默认工作空间，保持旧测试和 CLI 兼容。
 del _create_workspace_proxy_operation
+_install_context_workspace_binding(
+    _bind_workspace_store,
+    WorkspaceProxy,
+    _workspace_operation,
+)
+import data_agent.agent.context as _context_module
+delattr(_context_module, "_install_context_workspace_binding")
+del _context_module, _install_context_workspace_binding
 workspace = WorkspaceProxy()

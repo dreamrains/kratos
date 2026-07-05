@@ -10,7 +10,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Optional
 import weakref
 
 
@@ -31,6 +31,7 @@ def _create_context_state_registry():
     claimed_authorities = weakref.WeakKeyDictionary()
     identity_ready_tokens = weakref.WeakSet()
     current_context = ContextVar("data_agent_current_context", default=None)
+    workspace_binding = None
 
     class ResolverAuthority:
         pass
@@ -203,8 +204,8 @@ def _create_context_state_registry():
         return refresh_from_resolver
 
     def bind_workspace(owner, storage):
-        from data_agent.session.workspace import WorkspaceProxy, _bind_workspace_store
-
+        if workspace_binding is None:
+            raise RuntimeError("Context workspace dispatch is not initialized")
         if workspace_tokens.get(owner) is not None and get_current() is owner:
             current = operate_scope(owner, "get")
             if current is None:
@@ -214,8 +215,9 @@ def _create_context_state_registry():
                     "workspace_binding_mutation: cannot replace the active workspace "
                     f"while scope phase is {current.phase}"
                 )
-        workspace_tokens[owner] = _bind_workspace_store(owner, storage)
-        workspace_facades[owner] = WorkspaceProxy(owner)
+        bind_store, create_facade, _dispatch = workspace_binding
+        workspace_tokens[owner] = bind_store(owner, storage)
+        workspace_facades[owner] = create_facade(owner)
 
     def get_workspace(owner):
         facade = workspace_facades.get(owner)
@@ -224,12 +226,21 @@ def _create_context_state_registry():
         return facade
 
     def operate_workspace(owner, operation, *args):
-        from data_agent.session.workspace import _workspace_operation
-
+        if workspace_binding is None:
+            raise RuntimeError("Context workspace dispatch is not initialized")
         token = workspace_tokens.get(owner)
         if token is None:
             raise RuntimeError("Agent context workspace binding is no longer available")
-        return _workspace_operation(token, operation, *args)
+        return workspace_binding[2](token, operation, *args)
+
+    def install_workspace_binding(bind_store, create_facade, dispatch):
+        nonlocal workspace_binding
+        binding = (bind_store, create_facade, dispatch)
+        if workspace_binding is not None:
+            if workspace_binding != binding:
+                raise RuntimeError("Context workspace dispatch is already initialized")
+            return None
+        workspace_binding = binding
 
     def is_workspace_token(owner, token):
         return workspace_tokens.get(owner) is token
@@ -269,6 +280,7 @@ def _create_context_state_registry():
         get_current,
         bind_current,
         reset_current,
+        install_workspace_binding,
     )
 
 
@@ -285,6 +297,7 @@ def _create_context_state_registry():
     _get_current_context,
     _bind_current_context,
     _reset_current_context,
+    _install_context_workspace_binding,
 ) = _create_context_state_registry()
 del _create_context_state_registry
 
@@ -301,55 +314,6 @@ class AgentContext:
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
     turn_intent: object | None = None
 
-    def __init__(
-        self,
-        session_id: str,
-        project_name: Optional[str] = None,
-        workspace: object | None = None,
-        active_tool_groups: set[str] | None = None,
-        executed_tools: set[str] | None = None,
-        loaded_skills: list[str] | None = None,
-        mcp_visible: bool = True,
-        analysis_state: object | None = None,
-        turn_state: object | None = None,
-        user_proficiency: str = "auto",
-        user_quality_requirements: str = "",
-        turn_intent: object | None = None,
-    ) -> None:
-        _context_identity_operation(self, "initialize", session_id, project_name)
-        object.__setattr__(
-            self,
-            "active_tool_groups",
-            {"core"} if active_tool_groups is None else active_tool_groups,
-        )
-        object.__setattr__(self, "executed_tools", set() if executed_tools is None else executed_tools)
-        object.__setattr__(self, "loaded_skills", [] if loaded_skills is None else loaded_skills)
-        object.__setattr__(self, "mcp_visible", mcp_visible)
-        object.__setattr__(self, "analysis_state", analysis_state)
-        object.__setattr__(self, "turn_state", turn_state)
-        object.__setattr__(self, "turn_intent", turn_intent)
-        object.__setattr__(self, "user_proficiency", user_proficiency)
-        object.__setattr__(self, "user_quality_requirements", user_quality_requirements)
-        _bind_context_scope(self)
-        _context_scope_operation(self, "mark_identity_ready")
-        _bind_context_workspace(self, workspace)
-
-    @property
-    def session_id(self) -> str:
-        return _context_identity_operation(self, "get", "session_id")
-
-    @session_id.setter
-    def session_id(self, value: str) -> None:
-        _context_identity_operation(self, "set", "session_id", value)
-
-    @property
-    def project_name(self) -> Optional[str]:
-        return _context_identity_operation(self, "get", "project_name")
-
-    @project_name.setter
-    def project_name(self, value: Optional[str]) -> None:
-        _context_identity_operation(self, "set", "project_name", value)
-
     @property
     def object_name(self) -> Optional[str]:
         """Backward-compatible alias for legacy object terminology."""
@@ -365,69 +329,123 @@ class AgentContext:
         self.executed_tools.clear()
         self.turn_state = None
 
-    @property
-    def workspace_scope(self):
-        return _context_scope_operation(self, "get")
+def _create_agent_context_type(
+    cls,
+    identity_operation,
+    bind_scope,
+    scope_operation,
+    bind_workspace,
+    get_workspace,
+):
+    """Install enforcement methods whose trusted callables are closure-captured."""
 
-    @property
-    def planning_preview_rows(self) -> int:
-        return _context_scope_operation(self, "preview_get")
+    def initialize(
+        self,
+        session_id: str,
+        project_name: Optional[str] = None,
+        workspace: object | None = None,
+        active_tool_groups: set[str] | None = None,
+        executed_tools: set[str] | None = None,
+        loaded_skills: list[str] | None = None,
+        mcp_visible: bool = True,
+        analysis_state: object | None = None,
+        turn_state: object | None = None,
+        user_proficiency: str = "auto",
+        user_quality_requirements: str = "",
+        turn_intent: object | None = None,
+    ) -> None:
+        identity_operation(self, "initialize", session_id, project_name)
+        object.__setattr__(self, "active_tool_groups", {"core"} if active_tool_groups is None else active_tool_groups)
+        object.__setattr__(self, "executed_tools", set() if executed_tools is None else executed_tools)
+        object.__setattr__(self, "loaded_skills", [] if loaded_skills is None else loaded_skills)
+        object.__setattr__(self, "mcp_visible", mcp_visible)
+        object.__setattr__(self, "analysis_state", analysis_state)
+        object.__setattr__(self, "turn_state", turn_state)
+        object.__setattr__(self, "turn_intent", turn_intent)
+        object.__setattr__(self, "user_proficiency", user_proficiency)
+        object.__setattr__(self, "user_quality_requirements", user_quality_requirements)
+        bind_scope(self)
+        scope_operation(self, "mark_identity_ready")
+        bind_workspace(self, workspace)
+
+    def get_session_id(self):
+        return identity_operation(self, "get", "session_id")
+
+    def set_session_id(self, value):
+        identity_operation(self, "set", "session_id", value)
+
+    def get_project_name(self):
+        return identity_operation(self, "get", "project_name")
+
+    def set_project_name(self, value):
+        identity_operation(self, "set", "project_name", value)
+
+    def get_workspace_scope(self):
+        return scope_operation(self, "get")
+
+    def get_planning_preview_rows(self):
+        return scope_operation(self, "preview_get")
 
     def refresh_workspace_scope(self):
-        """Atomically refresh this context's exact task-bound workspace scope."""
-        return _context_scope_operation(self, "refresh")
+        return scope_operation(self, "refresh")
 
     @contextmanager
     def bind_workspace_scope(self, snapshot):
-        token = _context_scope_operation(self, "bind", snapshot)
+        token = scope_operation(self, "bind", snapshot)
         try:
             yield snapshot
         finally:
-            _context_scope_operation(self, "reset", token)
+            scope_operation(self, "reset", token)
 
     @contextmanager
-    def planning_workspace_scope(
-        self,
-        datasets: Iterable[str],
-        *,
-        preview_rows: int = 5,
-        plan_id: str = "",
-    ):
-        """Bind a planning-only scope which never grants unrestricted frames."""
+    def planning_workspace_scope(self, datasets, *, preview_rows=5, plan_id=""):
         from data_agent.agent.execution_scope import planning_workspace_scope_snapshot
 
         snapshot = planning_workspace_scope_snapshot(
-            self.session_id,
-            self.project_name or "",
+            get_session_id(self),
+            get_project_name(self) or "",
             allowed_datasets=list(datasets),
             plan_id=plan_id,
         )
-        rows_token = _context_scope_operation(
-            self,
-            "preview_bind",
-            preview_rows,
-        )
+        rows_token = scope_operation(self, "preview_bind", preview_rows)
         try:
-            with self.bind_workspace_scope(snapshot):
+            with bind_workspace_scope(self, snapshot):
                 yield snapshot
         finally:
-            _context_scope_operation(self, "preview_reset", rows_token)
+            scope_operation(self, "preview_reset", rows_token)
+
+    cls.__init__ = initialize
+    cls.session_id = property(get_session_id, set_session_id)
+    cls.project_name = property(get_project_name, set_project_name)
+    cls.workspace_scope = property(get_workspace_scope)
+    cls.planning_preview_rows = property(get_planning_preview_rows)
+    cls.refresh_workspace_scope = refresh_workspace_scope
+    cls.bind_workspace_scope = bind_workspace_scope
+    cls.planning_workspace_scope = planning_workspace_scope
+    cls.workspace = property(get_workspace, bind_workspace)
+    return cls
 
 
-def _get_scoped_workspace(ctx: AgentContext):
-    return _get_context_workspace(ctx)
+AgentContext = _create_agent_context_type(
+    AgentContext,
+    _context_identity_operation,
+    _bind_context_scope,
+    _context_scope_operation,
+    _bind_context_workspace,
+    _get_context_workspace,
+)
+del _create_agent_context_type
 
 
-def _set_workspace_store(ctx: AgentContext, value: object | None) -> None:
-    _bind_context_workspace(ctx, value)
+def _create_context_scope_ensure(scope_operation):
+    def ensure(ctx: AgentContext):
+        return scope_operation(ctx, "ensure")
+
+    return ensure
 
 
-# Keep the historical constructor/setter name while exposing only a scoped facade.
-AgentContext.workspace = property(_get_scoped_workspace, _set_workspace_store)
-
-
-def _ensure_context_workspace_scope(ctx: AgentContext):
-    return _context_scope_operation(ctx, "ensure")
+_ensure_context_workspace_scope = _create_context_scope_ensure(_context_scope_operation)
+del _create_context_scope_ensure
 
 
 def _create_current_context_facades(getter, binder, resetter):
@@ -469,3 +487,9 @@ def _create_current_context_facades(getter, binder, resetter):
     _reset_current_context,
 )
 del _create_current_context_facades
+
+# Complete the circular dispatch handshake during trusted module initialization.
+# Importing ``context`` directly therefore initializes and hides the one-shot
+# workspace installer before callers can construct their first AgentContext.
+import data_agent.session.workspace as _workspace_module
+del _workspace_module
