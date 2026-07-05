@@ -278,21 +278,40 @@ def _create_context_state_registry():
         def guard_tool(tool_registry, tool_name, arguments):
             if authoritative_scope_guard is None:
                 raise RuntimeError("Authoritative workspace scope guard is not initialized")
-            manager = authoritative_managers.get(token)
-            if manager is None:
-                raise RuntimeError("Authoritative task manager binding is no longer available")
-            result = authoritative_scope_guard(
+            current = operate_scope(owner, "get")
+            try:
+                snapshot = validate_authoritative_transition(
+                    current,
+                    resolve_authoritative(owner),
+                )
+            except Exception:
+                basis = current
+                snapshot = workspace_scope_snapshot_type(
+                    phase="error",
+                    session_id=(basis.session_id if basis is not None else owner.session_id),
+                    project_name=(
+                        basis.project_name
+                        if basis is not None
+                        else (owner.project_name or "")
+                    ),
+                    plan_id=(basis.plan_id if basis is not None else ""),
+                    task_id=(basis.task_id if basis is not None else 0),
+                    step_id=(basis.step_id if basis is not None else ""),
+                    error_type="workspace_scope_guard_error",
+                    message="Workspace scope guard failed.",
+                )
+            scope_var = scope_vars.get(token)
+            if scope_var is None:
+                raise RuntimeError("Agent context scope binding is no longer available")
+            scope_var.set(snapshot)
+            visible_datasets = operate_workspace(owner, "list")
+            return authoritative_scope_guard(
                 tool_registry,
-                manager,
-                owner.session_id,
-                owner.project_name or "",
+                snapshot,
                 tool_name,
                 arguments,
+                frozenset(visible_datasets),
             )
-            current = operate_scope(owner, "get")
-            if current is not None and current.phase == "error":
-                return type(result)(False, current.error_type, current.message)
-            return result
 
         return refresh_from_resolver, guard_tool
 

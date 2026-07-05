@@ -433,7 +433,7 @@ def test_tool_guard_checks_all_references_even_when_first_is_blocked(tmp_path, m
 
     assert result.allowed is False
     assert result.error_type == "dataset_outside_current_task_scope"
-    assert tracking_manager.list_calls == 2
+    assert tracking_manager.list_calls == 1
 
 
 def test_legacy_native_dataset_reader_is_classified_without_capability(monkeypatch):
@@ -684,3 +684,37 @@ def test_generic_legacy_completion_does_not_cross_project_scope(tmp_path, monkey
     loop._auto_track_task_progress("describe_dataset", True)
 
     assert manager.get(legacy["id"])["status"] == "in_progress"
+
+
+def test_snapshot_tool_guard_is_pure_and_does_not_resolve_manager_or_workspace(monkeypatch):
+    import data_agent.agent.execution_scope as execution_scope
+    import data_agent.session.workspace as workspace_module
+
+    snapshot = execution_scope.WorkspaceScopeSnapshot(
+        phase="execution",
+        session_id="s1",
+        plan_id="plan_1",
+        task_id=1,
+        step_id="step_1",
+        allowed_datasets=frozenset({"bound"}),
+        dataset_contract_ids=frozenset({"contract_1"}),
+    )
+    monkeypatch.setattr(
+        execution_scope,
+        "resolve_workspace_scope",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("manager accessed")),
+    )
+    monkeypatch.setattr(
+        workspace_module.workspace,
+        "list_datasets",
+        lambda: (_ for _ in ()).throw(AssertionError("workspace accessed")),
+    )
+
+    result = execution_scope.ensure_tool_allowed_for_scope(
+        registry,
+        snapshot,
+        "create_chart",
+        {"data": "bound"},
+    )
+
+    assert result.allowed is True

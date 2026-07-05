@@ -3307,3 +3307,163 @@ def test_streaming_scope_guard_registry_failure_is_closed_and_recovers(tmp_path,
     assert "workspace_scope_guard_error" in outputs[0]
     assert "9876" not in outputs[0]
     assert any(event.get("type") == "error" for event in events)
+
+
+class _SequencedScopeManager:
+    def __init__(self, states):
+        self.states = list(states)
+        self.calls = 0
+        self.current = None
+
+    def get_active_plan_id(self, _session_id, _project_name=""):
+        state = self.states[min(self.calls, len(self.states) - 1)]
+        self.calls += 1
+        self.current = state
+        if isinstance(state, Exception):
+            raise state
+        return state["plan_id"]
+
+    def list_all(self, *, include_stale=False):
+        assert include_stale is True
+        return list(self.current["tasks"])
+
+
+def _sequenced_scope_state(
+    datasets,
+    *,
+    plan_id="plan_1",
+    task_id=1,
+    step_id="step_1",
+    mode="single",
+):
+    if not plan_id:
+        return {"plan_id": "", "tasks": []}
+    return {
+        "plan_id": plan_id,
+        "tasks": [{
+            "id": task_id,
+            "session_id": "s1",
+            "project_name": "",
+            "plan_id": plan_id,
+            "analysis_plan_id": "analysis_plan_1",
+            "step_id": step_id,
+            "dataset_inputs": list(datasets),
+            "dataset_contract_ids": [f"contract_{task_id}"],
+            "combination_mode": mode,
+            "status": "in_progress",
+        }],
+    }
+
+
+@pytest.mark.parametrize("path", ["single", "streaming", "parallel"])
+def test_guard_checkpoint_closes_active_to_missing_race_once_per_guard(
+    tmp_path,
+    monkeypatch,
+    path,
+):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager([active, _sequenced_scope_state([], plan_id="")])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "race_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id=f"race-{path}", name="race_reader", arguments={"dataset": "secret"})
+
+    if path == "single":
+        loop._execute_single_tool(call, [call], 0)
+        output = loop.messages[-1]["content"]
+    elif path == "streaming":
+        list(loop._process_tool_calls(Response(tool_calls=[call]), round_num=1))
+        output = loop.messages[-1]["content"]
+    else:
+        output = loop._execute_tools_parallel([call])[0][1]
+
+    assert invoked == []
+    assert "9876" not in output
+    assert "workspace_scope_authoritative_downgrade" in output
+    assert loop.context.workspace_scope.phase == "error"
+    assert manager.calls == 2
+
+
+def test_guard_checkpoint_uses_guard_time_task_and_narrowed_dataset(tmp_path, monkeypatch):
+    first = _sequenced_scope_state(["bound", "secret"])
+    second = _sequenced_scope_state(["bound"], task_id=2, step_id="step_2")
+    manager = _SequencedScopeManager([first, second])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "task_switch_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id="task-switch", name="task_switch_reader", arguments={"dataset": "secret"})
+
+    loop._execute_single_tool(call, [call], 0)
+
+    assert invoked == []
+    assert "dataset_outside_current_task_scope" in loop.messages[-1]["content"]
+    assert loop.context.workspace_scope.task_id == 2
+    assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
+    assert manager.calls == 2
+
+
+def test_guard_checkpoint_accepts_authoritative_dataset_expansion(tmp_path, monkeypatch):
+    first = _sequenced_scope_state(["bound"])
+    expanded = _sequenced_scope_state(["bound", "secret"])
+    manager = _SequencedScopeManager([first, expanded, expanded])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    store.add("secret", pd.DataFrame({"token": [9876]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "expanded_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id="expanded", name="expanded_reader", arguments={"dataset": "secret"})
+
+    loop._execute_single_tool(call, [call], 0)
+
+    assert invoked == ["secret"]
+    assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound", "secret"})
+    assert manager.calls == 3
+
+
+def test_guard_checkpoint_stores_transient_error_and_recovers(tmp_path, monkeypatch):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager([
+        active,
+        RuntimeError("sensitive transient detail 9876"),
+        active,
+        active,
+        active,
+    ])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "recovering_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id="recovering", name="recovering_reader", arguments={"dataset": "bound"})
+
+    loop._execute_single_tool(call, [call], 0)
+    first_output = loop.messages[-1]["content"]
+    first_scope = loop.context.workspace_scope
+    loop._execute_single_tool(call, [call], 0)
+
+    assert invoked == ["bound"]
+    assert "workspace_scope_guard_error" in first_output
+    assert "9876" not in first_output
+    assert first_scope.phase == "error"
+    assert first_scope.error_type == "workspace_scope_guard_error"
+    assert loop.context.workspace_scope.phase == "execution"
+    assert manager.calls == 5

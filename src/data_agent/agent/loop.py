@@ -2438,19 +2438,25 @@ class AgentLoop:
         from contextvars import copy_context
 
         turn_state = getattr(self.context, "turn_state", None)
+        guarded_contexts = {}
+        guard_errors = {}
 
         # Record all tool calls for budget tracking
         for tc in tool_calls:
             if turn_state is not None:
                 turn_state.record_tool_call(tc.name, tc.arguments)
+            self.__context_operation("refresh")
+            scope_error = _scope_guard(self, tc.name, tc.arguments)
+            if scope_error:
+                if turn_state is not None:
+                    turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+                guard_errors[tc.id] = scope_error
+            guarded_contexts[tc.id] = copy_context()
 
         def _run_tool(tc):
             try:
-                self.__context_operation("refresh")
-                scope_error = _scope_guard(self, tc.name, tc.arguments)
+                scope_error = guard_errors.get(tc.id, "")
                 if scope_error:
-                    if turn_state is not None:
-                        turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error)
                 t0 = time.monotonic()
                 with self.__context_operation("use"):
@@ -2481,7 +2487,7 @@ class AgentLoop:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {}
             for tc in tool_calls:
-                ctx = copy_context()
+                ctx = guarded_contexts[tc.id]
                 future = pool.submit(lambda t=tc: ctx.run(_run_tool, t))
                 futures[future] = tc.id
 

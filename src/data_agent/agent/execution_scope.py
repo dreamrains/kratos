@@ -495,6 +495,26 @@ def _create_scope_enforcement_chain(
             )
         return guard_result_type(True)
 
+    def ensure_dataset_for_snapshot(scope, dataset: str):
+        if scope.error_type:
+            return guard_result_type(False, scope.error_type, scope.message)
+        if not scope.active:
+            return guard_result_type(True)
+        if scope.combination_mode == "synthesis":
+            return guard_result_type(
+                False,
+                "synthesis_cannot_read_raw_dataset",
+                "Synthesis tasks consume verified evidence and cannot read raw datasets.",
+            )
+        normalized_dataset = normalize_text(dataset)
+        if normalized_dataset not in scope.allowed_datasets:
+            return guard_result_type(
+                False,
+                "dataset_outside_current_task_scope",
+                f"Dataset '{normalized_dataset}' is outside the current task scope.",
+            )
+        return guard_result_type(True)
+
     def dataset_arguments(registry, tool_name: str, arguments: dict[str, Any]):
         if (
             tool_name == "export_output"
@@ -558,21 +578,86 @@ def _create_scope_enforcement_chain(
                 )
         return None
 
-    def ensure_tool(registry, manager, session_id, project_name, tool_name, arguments):
-        if tool_name == "create_chart":
-            preparation_error = prepare_chart(
-                manager, session_id, project_name, arguments
+    def prepare_chart_for_snapshot(scope, arguments):
+        dataset = normalize_text(arguments.get("data"))
+        if not dataset and normalize_text(arguments.get("data_json")):
+            return None
+        if scope.error_type:
+            return guard_result_type(False, scope.error_type, scope.message)
+        if not scope.active:
+            return None
+        if scope.combination_mode == "synthesis":
+            return guard_result_type(
+                False,
+                "synthesis_cannot_read_raw_dataset",
+                "Synthesis tasks consume verified evidence and cannot read raw datasets.",
             )
+        if not dataset:
+            if len(scope.allowed_datasets) != 1:
+                return guard_result_type(
+                    False,
+                    "dataset_scope_requires_unique_dataset",
+                    "create_chart requires one explicit dataset when the current task does not bind exactly one dataset.",
+                )
+            arguments["data"] = next(iter(scope.allowed_datasets))
+        return None
+
+    def ensure_tool_for_snapshot(
+        registry,
+        scope,
+        tool_name,
+        arguments,
+        available_datasets=None,
+    ):
+        """Validate a tool call against one supplied immutable scope snapshot."""
+        if tool_name == "create_chart":
+            preparation_error = prepare_chart_for_snapshot(scope, arguments)
             if preparation_error is not None:
                 return preparation_error
         first_error = None
         for dataset in dataset_arguments(registry, tool_name, arguments):
-            result = ensure_dataset(
-                manager, session_id, project_name, dataset=dataset
-            )
+            result = ensure_dataset_for_snapshot(scope, dataset)
             if not result.allowed and first_error is None:
                 first_error = result
-        return first_error or guard_result_type(True)
+        if first_error is not None:
+            return first_error
+        if tool_name == "create_chart":
+            dataset = normalize_text(arguments.get("data"))
+            tool = registry.get(tool_name)
+            parameters = getattr(tool, "parameters", {}) or {}
+            properties = parameters.get("properties") if isinstance(parameters, dict) else {}
+            if (
+                dataset
+                and scope.active
+                and (
+                    (available_datasets is not None and dataset not in available_datasets)
+                    or not isinstance(properties, dict)
+                    or "data" not in properties
+                )
+            ):
+                return guard_result_type(
+                    False,
+                    "current_task_dataset_unavailable",
+                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                )
+        return guard_result_type(True)
+
+    def ensure_tool(registry, manager, session_id, project_name, tool_name, arguments):
+        scope = resolve_scope(manager, session_id, project_name)
+        result = ensure_tool_for_snapshot(registry, scope, tool_name, arguments)
+        if not result.allowed or tool_name != "create_chart":
+            return result
+        dataset = normalize_text(arguments.get("data"))
+        if dataset in scope.allowed_datasets:
+            from data_agent.session.workspace import workspace
+
+            if dataset not in workspace.list_datasets():
+                return guard_result_type(
+                    False,
+                    "current_task_dataset_unavailable",
+                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                )
+        return result
 
     return (
         resolve_scope,
@@ -581,6 +666,7 @@ def _create_scope_enforcement_chain(
         dataset_arguments,
         prepare_chart,
         ensure_tool,
+        ensure_tool_for_snapshot,
     )
 
 
@@ -591,6 +677,7 @@ def _create_scope_enforcement_chain(
     dataset_arguments_for_tool,
     _prepare_create_chart_dataset,
     ensure_tool_allowed_for_current_task,
+    ensure_tool_allowed_for_scope,
 ) = _create_scope_enforcement_chain(
     _text,
     _identity,
@@ -619,7 +706,7 @@ if _resolver_installer is not None:
     _resolver_installer(
         resolve_workspace_scope,
         WorkspaceScopeSnapshot,
-        ensure_tool_allowed_for_current_task,
+        ensure_tool_allowed_for_scope,
     )
     delattr(_context_module, "_install_context_authoritative_resolver")
 del _resolver_installer, _context_module
