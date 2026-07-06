@@ -3467,3 +3467,115 @@ def test_guard_checkpoint_stores_transient_error_and_recovers(tmp_path, monkeypa
     assert first_scope.error_type == "workspace_scope_guard_error"
     assert loop.context.workspace_scope.phase == "execution"
     assert manager.calls == 5
+
+
+def test_authoritative_refresh_sanitizes_resolver_failure_and_recovers(monkeypatch):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager([
+        RuntimeError("sensitive direct refresh detail 9876"),
+        active,
+    ])
+    _bind_manager(monkeypatch, manager)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+
+    failed = loop._AgentLoop__context_operation("refresh")
+    recovered = loop._AgentLoop__context_operation("refresh")
+
+    assert failed.phase == "error"
+    assert failed.error_type == "workspace_scope_guard_error"
+    assert failed.message == "Workspace scope guard failed."
+    assert "9876" not in repr(failed)
+    assert recovered.phase == "execution"
+    assert recovered.allowed_datasets == frozenset({"bound"})
+
+
+@pytest.mark.parametrize("path", ["single", "streaming", "parallel"])
+def test_pre_refresh_failure_is_sanitized_blocks_tool_and_recovers(monkeypatch, path):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager([
+        RuntimeError("sensitive pre refresh detail 9876"),
+        active,
+        active,
+        active,
+    ])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "pre_refresh_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id=f"pre-refresh-{path}", name="pre_refresh_reader", arguments={"dataset": "bound"})
+
+    if path == "single":
+        loop._execute_single_tool(call, [call], 0)
+        first_output = loop.messages[-1]["content"]
+        loop._execute_single_tool(call, [call], 0)
+        second_output = loop.messages[-1]["content"]
+        serialized_events = ""
+    elif path == "streaming":
+        first_events = list(loop._process_tool_calls(Response(tool_calls=[call]), round_num=1))
+        first_output = loop.messages[-1]["content"]
+        second_events = list(loop._process_tool_calls(Response(tool_calls=[call]), round_num=2))
+        second_output = loop.messages[-1]["content"]
+        serialized_events = json.dumps(first_events + second_events, ensure_ascii=False, default=str)
+    else:
+        first_output = loop._execute_tools_parallel([call])[0][1]
+        second_output = loop._execute_tools_parallel([call])[0][1]
+        serialized_events = ""
+
+    assert invoked == ["bound"]
+    assert "workspace_scope_guard_error" in first_output
+    assert "9876" not in first_output + second_output + serialized_events
+    assert loop.context.workspace_scope.phase == "execution"
+
+
+@pytest.mark.parametrize("path", ["single", "streaming", "parallel"])
+def test_post_tool_refresh_failure_is_sanitized_recorded_and_recovers(monkeypatch, path):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager([
+        active,
+        active,
+        RuntimeError("sensitive post refresh detail 9876"),
+        active,
+        active,
+        active,
+    ])
+    _bind_manager(monkeypatch, manager)
+    store = Workspace()
+    store.add("bound", pd.DataFrame({"value": [1]}))
+    invoked = []
+    _install_unsafe_classified_reader(monkeypatch, "post_refresh_reader", store, invoked)
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    loop.context.workspace = store
+    call = ToolCall(id=f"post-refresh-{path}", name="post_refresh_reader", arguments={"dataset": "bound"})
+
+    if path == "single":
+        loop._execute_single_tool(call, [call], 0)
+        first_output = loop.messages[-1]["content"]
+        first_scope = loop.context.workspace_scope
+        loop._execute_single_tool(call, [call], 0)
+        second_output = loop.messages[-1]["content"]
+        serialized_events = ""
+    elif path == "streaming":
+        first_events = list(loop._process_tool_calls(Response(tool_calls=[call]), round_num=1))
+        first_output = loop.messages[-1]["content"]
+        first_scope = loop.context.workspace_scope
+        second_events = list(loop._process_tool_calls(Response(tool_calls=[call]), round_num=2))
+        second_output = loop.messages[-1]["content"]
+        serialized_events = json.dumps(first_events + second_events, ensure_ascii=False, default=str)
+    else:
+        first_output = loop._execute_tools_parallel([call])[0][1]
+        first_scope = loop.context.workspace_scope
+        second_output = loop._execute_tools_parallel([call])[0][1]
+        serialized_events = ""
+
+    assert invoked == ["bound", "bound"]
+    assert first_scope.phase == "error"
+    assert first_scope.error_type == "workspace_scope_guard_error"
+    assert "workspace_scope_guard_error" in first_output
+    assert "9876" not in first_output + second_output + serialized_events
+    assert loop.context.workspace_scope.phase == "execution"

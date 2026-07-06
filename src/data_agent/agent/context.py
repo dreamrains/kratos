@@ -161,6 +161,21 @@ def _create_context_state_registry():
             message="The authoritative workspace scope disappeared during an active scoped session.",
         )
 
+    def authoritative_refresh_error(owner, current):
+        basis = current
+        return workspace_scope_snapshot_type(
+            phase="error",
+            session_id=(basis.session_id if basis is not None else owner.session_id),
+            project_name=(
+                basis.project_name if basis is not None else (owner.project_name or "")
+            ),
+            plan_id=(basis.plan_id if basis is not None else ""),
+            task_id=(basis.task_id if basis is not None else 0),
+            step_id=(basis.step_id if basis is not None else ""),
+            error_type="workspace_scope_guard_error",
+            message="Workspace scope guard failed.",
+        )
+
     def ensure_authoritative(owner, scope_var):
         current = scope_var.get()
         if current is None:
@@ -196,10 +211,13 @@ def _create_context_state_registry():
             if authority is None or not args or args[0] is not authority:
                 raise PermissionError("workspace_scope_authority_required")
             current = scope_var.get()
-            snapshot = validate_authoritative_transition(
-                current,
-                resolve_authoritative(owner),
-            )
+            try:
+                snapshot = validate_authoritative_transition(
+                    current,
+                    resolve_authoritative(owner),
+                )
+            except Exception:
+                snapshot = authoritative_refresh_error(owner, current)
             scope_var.set(snapshot)
             return snapshot
         if operation == "bind":
@@ -279,31 +297,11 @@ def _create_context_state_registry():
             if authoritative_scope_guard is None:
                 raise RuntimeError("Authoritative workspace scope guard is not initialized")
             current = operate_scope(owner, "get")
-            try:
-                snapshot = validate_authoritative_transition(
-                    current,
-                    resolve_authoritative(owner),
-                )
-            except Exception:
-                basis = current
-                snapshot = workspace_scope_snapshot_type(
-                    phase="error",
-                    session_id=(basis.session_id if basis is not None else owner.session_id),
-                    project_name=(
-                        basis.project_name
-                        if basis is not None
-                        else (owner.project_name or "")
-                    ),
-                    plan_id=(basis.plan_id if basis is not None else ""),
-                    task_id=(basis.task_id if basis is not None else 0),
-                    step_id=(basis.step_id if basis is not None else ""),
-                    error_type="workspace_scope_guard_error",
-                    message="Workspace scope guard failed.",
-                )
-            scope_var = scope_vars.get(token)
-            if scope_var is None:
-                raise RuntimeError("Agent context scope binding is no longer available")
-            scope_var.set(snapshot)
+            snapshot = (
+                current
+                if current is not None and current.phase == "error"
+                else operate_scope(owner, "refresh_authoritative", authority)
+            )
             visible_datasets = operate_workspace(owner, "list")
             return authoritative_scope_guard(
                 tool_registry,
@@ -313,7 +311,19 @@ def _create_context_state_registry():
                 frozenset(visible_datasets),
             )
 
-        return refresh_from_resolver, guard_tool
+        def record_worker_refresh_error(snapshot):
+            if (
+                workspace_scope_snapshot_type is None
+                or not isinstance(snapshot, workspace_scope_snapshot_type)
+                or snapshot.phase != "error"
+            ):
+                raise TypeError("Only an immutable authoritative error snapshot can be recorded")
+            scope_var = scope_vars.get(token)
+            if scope_var is None:
+                raise RuntimeError("Agent context scope binding is no longer available")
+            scope_var.set(snapshot)
+
+        return refresh_from_resolver, guard_tool, record_worker_refresh_error
 
     def bind_workspace(owner, storage):
         if workspace_binding is None:

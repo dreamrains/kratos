@@ -268,6 +268,10 @@ def _create_loop_context_registry(
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
             return binding[2](*args)
+        if operation == "record_worker_refresh_error":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return binding[3](*args)
         if operation == "set":
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
@@ -291,8 +295,8 @@ def _create_loop_context_registry(
                             "workspace_context_mutation: cannot replace the active "
                             f"agent context while scope phase is {scope.phase}"
                         )
-            refresh, guard = scope_controller_claimant(replacement)
-            bindings[loop] = (replacement, refresh, guard)
+            refresh, guard, record_worker_refresh_error = scope_controller_claimant(replacement)
+            bindings[loop] = (replacement, refresh, guard, record_worker_refresh_error)
             return None
         raise ValueError(f"Unsupported agent loop context operation: {operation}")
 
@@ -1930,7 +1934,7 @@ class AgentLoop:
             try:
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.__context_operation("refresh")
+                post_scope = self.__context_operation("refresh")
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -1944,6 +1948,22 @@ class AgentLoop:
                 self._fill_remaining_tool_responses(response.tool_calls, i + 1, "Suspended for user confirmation")
                 yield self._suspended_event(susp)
                 return  # stop processing further tool calls
+
+            if post_scope.phase == "error":
+                scope_error = json.dumps(
+                    {"error": post_scope.message, "error_type": post_scope.error_type},
+                    ensure_ascii=False,
+                )
+                if turn_state is not None:
+                    turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error)
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": scope_error,
+                })
+                yield {"type": "error", "message": scope_error}
+                continue
 
             duration_ms = int((time.monotonic() - t0) * 1000)
             tool_msg_content = self._compact_tool_output(tool_result, tc)
@@ -2381,7 +2401,7 @@ class AgentLoop:
         try:
             with self.__context_operation("use"):
                 tool_result = registry.execute(tc.name, tc.arguments)
-            self.__context_operation("refresh")
+            post_scope = self.__context_operation("refresh")
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -2394,6 +2414,21 @@ class AgentLoop:
             })
             self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
             return susp
+
+        if post_scope.phase == "error":
+            scope_error = json.dumps(
+                {"error": post_scope.message, "error_type": post_scope.error_type},
+                ensure_ascii=False,
+            )
+            if turn_state is not None:
+                turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error)
+            self.messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": scope_error,
+            })
+            return None
 
         tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -2457,11 +2492,19 @@ class AgentLoop:
             try:
                 scope_error = guard_errors.get(tc.id, "")
                 if scope_error:
-                    return (tc, scope_error)
+                    return (tc, scope_error, None)
                 t0 = time.monotonic()
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
-                self.__context_operation("refresh")
+                post_scope = self.__context_operation("refresh")
+                if post_scope.phase == "error":
+                    scope_error = json.dumps(
+                        {"error": post_scope.message, "error_type": post_scope.error_type},
+                        ensure_ascii=False,
+                    )
+                    if turn_state is not None:
+                        turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
+                    return (tc, scope_error, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -2472,12 +2515,12 @@ class AgentLoop:
                 elif turn_state is not None:
                     turn_state.record_tool_success()
 
-                return (tc, tool_msg_content)
+                return (tc, tool_msg_content, None)
             except Exception as e:
                 error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, error_content)
-                return (tc, error_content)
+                return (tc, error_content, None)
 
         import time
 
@@ -2492,7 +2535,9 @@ class AgentLoop:
                 futures[future] = tc.id
 
             for future in as_completed(futures):
-                tc_obj, content = future.result()
+                tc_obj, content, refresh_error = future.result()
+                if refresh_error is not None:
+                    self.__context_operation("record_worker_refresh_error", refresh_error)
                 results[tc_obj.id] = (tc_obj, content)
 
         # Return in original order
