@@ -321,7 +321,11 @@ def record_evidence_record(record_json: str) -> str:
     if state is not None and isinstance(getattr(state, "analysis_plan", None), dict):
         current_plan_id = str(state.analysis_plan.get("id") or "")
 
-    is_stage3c0b_evidence = any(key in payload for key in ("plan_id", "step_id", "measurements"))
+    is_stage3c0b_evidence = (
+        "plan_id" in payload
+        or "step_id" in payload
+        or payload.get("measurements") is not None
+    )
     if is_stage3c0b_evidence:
         from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
 

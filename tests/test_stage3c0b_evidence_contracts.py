@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.session.workspace import Workspace
 from data_agent.session.task_manager import TaskManager
 
 
@@ -182,6 +184,60 @@ def test_record_evidence_record_rejects_stage3c0b_evidence_without_current_plan(
     result = json.loads(record_evidence_record(json.dumps(_canonical_evidence())))
 
     assert result["error_type"] == "evidence_outside_current_plan"
+
+
+def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
+    from data_agent.tools.analysis_flow import record_evidence_record
+
+    ctx = AgentContext(
+        session_id="stage3c0b_null_measurements_legacy",
+        project_name=None,
+        workspace=Workspace(),
+    )
+    legacy_evidence = {
+        "claim": "Legacy evidence can carry an explicit null measurements field.",
+        "dataset": "banner",
+        "method": "legacy summary",
+        "tool_calls": [],
+        "result_summary": "legacy result",
+        "limitations": ["legacy limitation"],
+        "confidence": "medium",
+        "measurements": None,
+    }
+
+    with use_agent_context(ctx):
+        result = json.loads(record_evidence_record(json.dumps(legacy_evidence)))
+
+    assert "error" not in result
+    assert result["type"] == "evidence_record"
+    assert result["statistical_detail_status"] == "missing"
+
+
+def test_record_evidence_record_upserts_canonical_evidence_and_skips_legacy_stat_status():
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.tools.analysis_flow import record_evidence_record
+
+    ctx = AgentContext(
+        session_id="stage3c0b_canonical_upsert",
+        project_name=None,
+        workspace=Workspace(),
+    )
+    ctx.analysis_state = AnalysisSessionState(session_id=ctx.session_id, project_name=ctx.project_name)
+    ctx.analysis_state.set_analysis_plan({"id": "plan_abc", "goal": "Analyze banner"})
+    first = _canonical_evidence(evidence_requirement="click_rate")
+    second = _canonical_evidence(evidence_requirement="click_rate")
+    second["result_summary"] = "click_rate=0.150 after rerun"
+
+    with use_agent_context(ctx):
+        first_result = json.loads(record_evidence_record(json.dumps(first)))
+        second_result = json.loads(record_evidence_record(json.dumps(second)))
+
+    assert first_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
+    assert second_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
+    assert "statistical_detail_status" not in first_result
+    assert "statistical_detail_status" not in second_result
+    assert len(ctx.analysis_state.evidence_records) == 1
+    assert ctx.analysis_state.evidence_records[0]["result_summary"] == "click_rate=0.150 after rerun"
 
 
 def test_task_manager_requires_all_evidence_requirements_before_completion(tmp_path):
