@@ -472,7 +472,7 @@ Required sections:
 - `analysis_directions`;
 - `answer_coverage`.
 
-- [ ] **Step 1: Write failing read-model tests**
+- [x] **Step 1: Write failing read-model tests**
 
 Create tests that assert:
 
@@ -483,7 +483,7 @@ assert "artifact_path" not in json.dumps(view, ensure_ascii=False)
 assert "scheduler" not in json.dumps(view, ensure_ascii=False).lower()
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -492,7 +492,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: fails because `workbench_view.py` is absent.
 
-- [ ] **Step 3: Implement `build_multifile_workbench_view(state)`**
+- [x] **Step 3: Implement `build_multifile_workbench_view(state)`**
 
 Create `src/data_agent/agent/workbench_view.py`.
 
@@ -506,7 +506,7 @@ Implementation must reuse:
 
 It must not create `AnalysisOpportunity`, `StrategyRecord`, or new execution state.
 
-- [ ] **Step 4: Embed read model in Trust view**
+- [x] **Step 4: Embed read model in Trust view**
 
 Add to `build_trust_view()`:
 
@@ -516,7 +516,7 @@ workbench["multifile_analysis"] = build_multifile_workbench_view(state)
 
 The builder must be read-only and must not mutate state.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -528,7 +528,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/data_agent/agent/workbench_view.py src/data_agent/agent/trust_view.py tests/test_multifile_workbench_view.py tests/test_trust_view.py

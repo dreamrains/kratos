@@ -9,6 +9,7 @@ from typing import Any
 from data_agent.agent.data_understanding import build_user_data_brief
 from data_agent.agent.multi_file_scope import build_analysis_scope_plan
 from data_agent.agent.route_capabilities import build_route_capabilities
+from data_agent.agent.workbench_view import build_multifile_workbench_view
 
 
 def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any]:
@@ -57,6 +58,7 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
     user_data_brief = _latest_user_data_brief(state)
     if user_data_brief:
         workbench["user_data_brief"] = user_data_brief
+    workbench["multifile_analysis"] = build_multifile_workbench_view(state)
 
     if active_scope["active_mode"] == "consulting":
         datasets = all_datasets

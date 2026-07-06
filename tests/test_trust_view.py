@@ -14,8 +14,35 @@ def _clear_confirmation_gate():
     }
 
 
-def _empty_workbench(goal="", scope_status="ready"):
+def _empty_multifile_analysis():
     return {
+        "data_understanding": {
+            "bundle_id": "",
+            "fingerprint": "",
+            "datasets": [],
+            "relationships": [],
+            "quality_findings": [],
+            "answerable_questions": [],
+            "unanswerable_questions": [],
+            "recommended_paths": [],
+            "needed_confirmations": [],
+            "analysis_constraints": [],
+        },
+        "relationships": [],
+        "analysis_directions": [],
+        "answer_coverage": {
+            "evidence_count": 0,
+            "verified_claim_count": 0,
+            "failed_claim_count": 0,
+            "status": "not_started",
+            "covered_claims": [],
+            "limitations": [],
+        },
+    }
+
+
+def _empty_workbench(goal="", scope_status="ready", include_multifile=False):
+    workbench = {
         "current_context": {
             "goal": goal,
             "scope_status": scope_status,
@@ -41,6 +68,9 @@ def _empty_workbench(goal="", scope_status="ready"):
         },
         "relationship_diagnostics": [],
     }
+    if include_multifile:
+        workbench["multifile_analysis"] = _empty_multifile_analysis()
+    return workbench
 
 
 def test_none_state_returns_empty_view_for_requested_session():
@@ -137,6 +167,7 @@ def test_trust_view_provides_workbench_context_not_route_selection_surface():
         "confirmations",
         "trust_evidence",
         "relationship_diagnostics",
+        "multifile_analysis",
     }
     assert view["workbench"]["current_context"]["goal"] == "评估省钱卡是否值得继续运营"
     assert "routes" not in view["workbench"]
@@ -1091,7 +1122,7 @@ def test_malformed_refs_are_ignored_and_loaded_state_is_ready():
             },
         },
         "active_bundle": None,
-        "workbench": _empty_workbench(scope_status="ready"),
+        "workbench": _empty_workbench(scope_status="ready", include_multifile=True),
         "file_relationships": [],
         "history": {"datasets": [], "routes": [], "risks": [], "hypotheses": []},
     }

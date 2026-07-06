@@ -48,8 +48,41 @@ def _empty_current_context(scope_status="ready"):
     }
 
 
-def _empty_workbench(scope_status="ready", trust_evidence=None):
+def _empty_multifile_analysis(status="not_started", verified_claim_count=0):
     return {
+        "data_understanding": {
+            "bundle_id": "",
+            "fingerprint": "",
+            "datasets": [],
+            "relationships": [],
+            "quality_findings": [],
+            "answerable_questions": [],
+            "unanswerable_questions": [],
+            "recommended_paths": [],
+            "needed_confirmations": [],
+            "analysis_constraints": [],
+        },
+        "relationships": [],
+        "analysis_directions": [],
+        "answer_coverage": {
+            "evidence_count": 0,
+            "verified_claim_count": verified_claim_count,
+            "failed_claim_count": 0,
+            "status": status,
+            "covered_claims": [],
+            "limitations": [],
+        },
+    }
+
+
+def _empty_workbench(
+    scope_status="ready",
+    trust_evidence=None,
+    include_multifile=False,
+    multifile_status="not_started",
+    verified_claim_count=0,
+):
+    workbench = {
         "current_context": _empty_current_context(scope_status),
         "confirmations": {
             "status": "clear",
@@ -64,6 +97,12 @@ def _empty_workbench(scope_status="ready", trust_evidence=None):
         },
         "relationship_diagnostics": [],
     }
+    if include_multifile:
+        workbench["multifile_analysis"] = _empty_multifile_analysis(
+            multifile_status,
+            verified_claim_count,
+        )
+    return workbench
 
 
 def _empty_scope_plan():
@@ -256,18 +295,21 @@ def test_trust_view_endpoint_returns_populated_view_and_does_not_mutate_state(tm
                 "confirmation_gate": _clear_confirmation_gate(),
             },
             "analysis_scope_plan": _empty_scope_plan(),
-            "workbench": _empty_workbench(
-                scope_status="ready",
-                trust_evidence={
+                "workbench": _empty_workbench(
+                    scope_status="ready",
+                    trust_evidence={
                     "id": "verify_1",
                     "status": "pass",
                     "claim_count": 3,
                     "failed_count": 0,
                     "downgraded_count": 1,
                     "evidence_signature": "sig-123",
-                    "created_at": "2026-06-07 12:35:00",
-                },
-            ),
+                        "created_at": "2026-06-07 12:35:00",
+                    },
+                    include_multifile=True,
+                    multifile_status="pass",
+                    verified_claim_count=3,
+                ),
             "active_bundle": None,
             "file_relationships": [],
             "history": {
