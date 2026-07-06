@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
+import pytest
+
 from data_agent.agent.evidence_compatibility import compare_measurements
 from data_agent.agent.verification import verify_analysis_claims
 
@@ -52,6 +56,13 @@ def test_compare_measurements_accepts_identical_canonical_fields():
     assert result.compatible is True
     assert result.reason_code == "compatible"
     assert result.fields == []
+
+
+def test_compare_measurements_returns_frozen_result():
+    result = compare_measurements(_measurement(value=0.18), _measurement(value=0.21))
+
+    with pytest.raises(FrozenInstanceError):
+        result.compatible = False
 
 
 def test_compare_measurements_rejects_population_scope_mismatch():

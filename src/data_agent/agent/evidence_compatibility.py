@@ -16,7 +16,7 @@ COMPATIBILITY_FIELDS = (
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class MeasurementCompatibility:
     compatible: bool
     reason_code: str
