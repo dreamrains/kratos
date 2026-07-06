@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## 1. 目的与范围
 
-本设计定义 Stage 3C0B 的瘦身续作方向：**在不引入任何新确定性契约或门的前提下**，闭合多文件分析的 user-value 回路——用户加载多文件后，能看到①结构化数据理解 ②关系价值与风险 ③建议分析方向 ④结论覆盖，并用真实数据回归门证明单文件分析质量不下滑。
+本设计定义 Stage 3C0B 的瘦身续作方向：**在不引入任何新执行期硬契约或硬门的前提下**，闭合多文件分析的 user-value 回路——用户加载多文件后，能看到①结构化数据理解 ②关系价值与风险 ③建议分析方向 ④结论覆盖，并用真实数据回归门证明单文件分析质量不下滑。
 
 本设计**取代** `docs/superpowers/plans/2026-07-06-stage3c0b-realigned-continuation-plan.md`（以下简称"原 realigned plan"）的设计前提。后续 implementation plan 将基于本设计重写，并替换原 realigned plan 文件。
 
@@ -17,7 +17,7 @@ Date: 2026-07-06
 **分析质量下滑的 4 个具体机制：**
 
 1. **4 角色硬切分**（Interpreter/Planner/Executor/Synthesizer 各看不同上下文）：当前 `loop.py` 的 `_loop_impl` 是单 LLM 单 plan-act loop，跨阶段推理（执行时发现规划假设错误可立即调整）是其核心优势。硬切分会在每次角色切换时丢失上下文。
-2. **synthesis 硬性禁止读原始数据**：真实分析在综合阶段经常需要回读数据核对数字、拉佐证样例。硬禁会砍掉 LLM 最强的核实能力。
+2. **synthesis 禁读原始数据且无补证据回路**：`execution_scope.py` 已对 `combination_mode=="synthesis"` 返回 `synthesis_cannot_read_raw_dataset`（L274-278、L335-339、L483-507、L555-593 等）——这本身是 delta 既有的正确安全约束，不是过度设计。真正的质量风险是"硬禁且没有 bounded evidence replenishment 回路"：LLM 缺证据时既不能读 raw、又无补证据途径，只能强凑结论。本设计 §5.4 的补证据回路是其配套（不是替代该约束）。
 3. **魔法权重排序公式** `score = goal_match*0.30 + business_value*0.25 + feasibility*0.20 + relationship_confidence*0.15 + evidence_strength*0.10 − risk_penalty`：五个无经验依据的手调系数，会默默塑造每一次机会排序且无法调参。
 4. **sufficiency 门用预注册 question_id 覆盖**：对探索性洞察有敌意——LLM 发现未预注册的有价值结论时，gate 仍报 `needs_more_analysis`。
 
@@ -34,8 +34,10 @@ Date: 2026-07-06
 
 1. **复用优先**：已实现的确定性层（bundle / 关系验证 / evidence / verification / route_capabilities / multi_file_scope / synthesis_policy / execution_scope）不重写，只接线。
 2. **LLM 主导**：机会排序、策略、重规划、充分性判断交给 LLM 对话轮次 + 现有轻量 guard，不建状态机或硬门。
-3. **不引入新确定性契约或门**：新增工作限于接线、UI 重构、回归门、prompt 编排；不新增 AnalysisOpportunity / StrategyRecord / DataOperationRecord / 硬 sufficiency 评分等契约。
+3. **不引入新执行期硬契约或硬门**：新增工作限于接线、UI 重构、回归门、prompt 编排。`workbench_view.py`（读模型）与 `analysis_quality_rubric.py`（评估结构）是只读投影/评估，不约束执行期行为，不计为硬契约。不新增 AnalysisOpportunity / StrategyRecord / DataOperationRecord / 硬 sufficiency 评分等执行期硬契约。
 4. **与 delta 边界对齐**：只执行 `independent` / `synthesis`；`joint` / `aggregate_then_join` / DerivedDataset 留给 3C1A。
+5. **多文件价值的来源（核心锚点）**：Stage 3C0B 的多文件价值**不是 join**，而是 scope selection + relationship understanding + independent evidence + synthesis。关系验证的价值通过 Workbench"关系"象限展示，不需要 `joint` plan 模式。
+6. **synthesis 与证据（核心锚点）**：synthesis 不直接读原始数据（`execution_scope` 既有约束），但**必须能在缺证据时触发 bounded evidence task 补证据**（§5.4），而不是强行总结。
 
 ## 4. 复用清单（已实现，不重写）
 
@@ -52,21 +54,21 @@ Date: 2026-07-06
 | 轻量质量 guard | `loop.py` `_is_analysis_quality_guard_candidate` | **取消硬 sufficiency 门** |
 | 计划投影 | `agent/workflow_projection.py` | 复用，投影 independent/synthesis step |
 
-## 5. 新增工作（4 块，0 新契约）
+## 5. 新增工作（4 块，0 新执行期硬契约/硬门）
 
 ### 5.1 load-time bundle + User Data Brief 接线
 
 **改动：** `tools/data_io.py` 的 `load_data` 成功路径。
 
 **行为：**
-- 加载数据后刷新或创建 `DataUnderstandingBundle`，写入 `AnalysisSessionState.dataset_bundles`。
+- 加载数据后刷新或创建 `DataUnderstandingBundle`，经现有 `AnalysisSessionState.add_data_understanding_bundle_ref()` 写入 `data_understanding_bundles`（注意：不是 `dataset_bundles`——后者是不同语义的旧字段）。
 - 派生面向用户的 **User Data Brief**：文件含义、时间范围、粒度、总体可用性、可能关系及可信度、可答与不可答问题、主要质量风险、推荐分析路径、需补充或确认的信息。
 - User Data Brief **不暴露**原始行、内部 artifact ID（作为主内容）、工具日志或大段字段类型；样例值敏感时脱敏。
 - LLM 规划上下文增补：加载多文件后注入 bundle 摘要 + route_capabilities 方向卡片，由 LLM 据此规划（替代独立的 planner 角色）。
 
 **复用：** `data_understanding.build_data_understanding_bundle`（已实现）、`route_capabilities`、`multi_file_scope`。User Data Brief 的派生函数若 `data_understanding.py` 尚未提供，在 5.1 内补一个面向用户的只读展示派生函数（bundle 的投影，非新契约）。
 
-**不引入：** 新契约。bundle 已是 `data_understanding.v1`。
+**不引入：** 新执行期硬契约。bundle 已是 `data_understanding.v1`。
 
 ### 5.2 Workbench 四象限重构（替换主视图）
 
@@ -84,23 +86,25 @@ Date: 2026-07-06
 
 **约束：** 不创建与 chat 冲突的第二路由选择界面（delta）。
 
-### 5.3 真实数据回归门 + 软质量 rubric
+### 5.3 真实数据回归门 + 质量 rubric
 
 **改动：** 新建 `agent/analysis_quality_rubric.py`；新建 `tests/real_data/test_multifile_real_data_scenarios.py`、`tests/real_data/test_multifile_analysis_quality.py`、`tests/real_data/scenario_manifest.json`、`scripts/run_multifile_quality_scenarios.py`。
 
 **真实数据场景（`reference/test_doc`）：**
 - 游戏 A banner / 内购 / 激励视频：独立分析、指标兼容、证据综合。
-- 省钱卡用户流水 + 订单：候选键、基数、覆盖率、聚合后连接（仅验证，不执行 join）、联合分析。
+- 省钱卡用户流水 + 订单：候选键、基数、覆盖率、时间/粒度兼容验证；**不执行 join**；输出关系价值、风险、是否建议进入 3C1A。
 - 无可靠关系的文件组合：避免因同名字段或偶然重叠错误 join。
 - 故障注入：重复键、缺失键、时间错位、M:N 膨胀触发降级或 partial 答案。
 
 **质量 rubric 维度：** 用户问题覆盖率、证据引用率、指标口径完整性、不支持结论数、关系验证正确性、单文件分析质量回归、洞察深度与专业 usefulness、可行动性、Workbench 决策价值。
 
-**软评估（用户决策）：** rubric 记录 before/after 对比、产出评分，但**不阻塞发布**。`unsupported_claim` / `invalid_join` 作为记录项与告警，不作为发布硬门——避免软性的合理 hedged 结论被误杀。
+**评估硬度（用户决策，两层）：**
+- **不阻塞开发合并**：rubric 记录 before/after 对比与评分，软性的合理 hedged 结论不被误杀。
+- **阻塞"宣称可交付/验证通过"**：`unsupported_claim` / `invalid_join` 一旦出现，该批次不得宣称可交付，必须先修正或降级为 partial 答案 + 缺数据说明——避免对用户输出不可信结论。
 
 ### 5.4 综合前证据补齐回路（bounded evidence replenishment）
 
-**目标：** 保留 synthesis 通过规范化 evidence 综合的安全属性，同时给 LLM"回读数据补证据"的有界能力——替代原 plan"synthesis 硬禁读原始数据"与"硬 sufficiency 门"两个极端。
+**目标：** synthesis 不读原始数据是 `execution_scope` 既有的正确安全约束（见 §2 第 2 条）。本回路**不替代该约束**，而是补上它缺失的配套——让 LLM 在缺证据时发起有界 `independent` task 采集规范化 evidence 再综合。这样既保留"evidence 是综合唯一合法输入"的安全属性，又给 LLM"回读数据补证据"的有界能力；同时取代原 plan 的"硬 sufficiency 门"极端。
 
 **机制：**
 - **触发主体**：LLM 主导。综合前由 `synthesis_policy.py` 注入的 prompt 指令让 LLM 自检"当前结论是否有规范化 EvidenceRecord 支撑"。**不是确定性 gate**，无 question_id 覆盖检查、无魔法阈值。
@@ -111,7 +115,7 @@ Date: 2026-07-06
   - 单个补证据 task 失败只影响依赖该证据的 claim，不阻塞无关结论（delta 失败隔离原则）。
 - **synthesis 本身仍不直接读原始数据**：evidence 仍是综合的唯一合法输入，安全/可追溯不丢。
 
-**复用，不引入新契约：** `workflow_projection.project_plan_to_workflow_tasks` / `execution_scope` / `evidence_contracts` / `record_evidence_record` / `task_manager.complete_matching_tasks_from_evidence` 全部现成。改动仅在 `synthesis_policy.py` 的 prompt 注入增加"综合前证据自检 + 缺则发起 bounded independent task"指令，以及在 `loop.py` 综合前点允许 LLM 通过现有工具发起该 task。
+**复用，不引入新执行期硬契约：** `workflow_projection.project_plan_to_workflow_tasks` / `execution_scope` / `evidence_contracts` / `record_evidence_record` / `task_manager.complete_matching_tasks_from_evidence` 全部现成。改动仅在 `synthesis_policy.py` 的 prompt 注入增加"综合前证据自检 + 缺则发起 bounded independent task"指令，以及在 `loop.py` 综合前点允许 LLM 通过现有工具发起该 task。
 
 **这是 delta 里 `needs_more_analysis` 路径的轻量、LLM 主导实现。** 要砍掉的是"基于 question_id 覆盖的硬评分门 + 魔法阈值"，不是这个回路本身。
 
@@ -126,7 +130,8 @@ Date: 2026-07-06
 | DAG 拓扑执行器（Task 2D） | 砍 | `blocks`/`blockedBy` 元数据（现状） |
 | 重规划状态机（Task 2E） | 砍 | LLM 对话轮次 + 现有 `_maybe_replan_after_data_load` |
 | 硬 sufficiency 评分门（Task 2F） | 砍 | 5.4 bounded evidence replenishment + 现有轻量 guard |
-| synthesis 硬禁读原始数据 | 软化 | 5.4 机制（不直接读，但可补证据） |
+
+> 注：synthesis 不读原始数据是 `execution_scope` 既有的正确安全约束，**保留不动**（不在砍掉清单）；§5.4 是它缺失的配套回路，不是对该约束的软化。
 
 ## 7. 推迟到 Stage 3C1A（单独计划，不得在本续作实现）
 
@@ -140,9 +145,9 @@ Date: 2026-07-06
 ## 8. 关键设计决策（已确认）
 
 1. **Workbench 主视图替换**（非叠加）：与 delta"不堆叠技术状态"一致。
-2. **回归门软评估**：记录 before/after、不阻塞发布。
+2. **回归门两层硬度**：rubric 不阻塞开发合并；但 `unsupported_claim` / `invalid_join` 阻塞"宣称可交付/验证通过"。
 3. **综合前证据补齐回路**：synthesis 不直接读原始数据；缺证据时由 LLM 主导发起 bounded `independent` task 补证据再综合；补完仍不足则 partial 答案 + 缺数据说明。
-4. **不引入新确定性契约或门**：核心瘦身约束。
+4. **不引入新执行期硬契约或硬门**：核心瘦身约束（`workbench_view` / `quality_rubric` 等读模型/评估结构不计为硬契约）。
 
 ## 9. 验收门
 
@@ -151,7 +156,7 @@ Date: 2026-07-06
 - **Workbench 可追溯**：四象限每条建议指向 route_capabilities / 关系验证 / EvidenceRecord，或显式标注为下一步建议。
 - **证据补齐回路**：演示一个"综合前缺证据 → 发起 bounded independent task → 补 EvidenceRecord → 综合"的端到端用例，且单 task 失败隔离生效。
 - **非越界自检**：`rg "AnalysisOpportunity|StrategyRecord|DataOperationRecord|safe_to_execute|join preflight|operation_id"` 在新增 src 中无命中（关系验证、derived lineage 等已实现部分除外）。
-- **不引入新契约自检**：新增工作未创建上述被砍契约的任何新模块。
+- **非越界自检（执行期硬契约）**：新增工作未创建上述被砍契约（AnalysisOpportunity / StrategyRecord / DataOperationRecord / 硬 sufficiency 门）的任何新执行期模块；`workbench_view` / `quality_rubric` 作为读模型/评估结构存在，但不约束执行期行为。
 
 ## 10. 非目标
 
