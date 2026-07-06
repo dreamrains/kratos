@@ -200,6 +200,85 @@ def _unique_values(values: list[Any]) -> list[str]:
     return result
 
 
+def _bundle_json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value, ensure_ascii=False)
+        return value
+    except TypeError:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _record_data_understanding_bundle(
+    *,
+    state: Any,
+    session_id: str,
+    dataset: str,
+    df: pd.DataFrame,
+    contract: dict[str, Any],
+    quality: dict[str, Any],
+) -> None:
+    from data_agent.agent.data_understanding import build_data_understanding_bundle
+
+    roles = contract.get("field_roles") if isinstance(contract.get("field_roles"), dict) else {}
+    quality_summary = contract.get("quality") if isinstance(contract.get("quality"), dict) else {}
+    quality_findings: list[Any] = []
+    if quality_summary.get("status"):
+        quality_findings.append({
+            "dataset": dataset,
+            "finding": f"quality status: {quality_summary.get('status')}",
+        })
+    for warning in quality_summary.get("warnings") or quality.get("warnings") or []:
+        quality_findings.append({
+            "dataset": dataset,
+            "finding": _bundle_json_safe(warning),
+        })
+    for issue in quality_summary.get("block_issues") or quality.get("block_issues") or []:
+        quality_findings.append({
+            "dataset": dataset,
+            "finding": _bundle_json_safe(issue),
+        })
+
+    supported_questions = [
+        f"Can support {analysis} analysis."
+        for analysis in contract.get("supported_analyses") or []
+    ]
+    unsupported_questions = [
+        item.get("reason") if isinstance(item, dict) else str(item)
+        for item in contract.get("unsupported_analyses") or []
+        if item
+    ]
+    analysis_constraints = []
+    if not contract.get("id"):
+        analysis_constraints.append("Dataset contract was unavailable; bundle was built from dataframe shape and columns.")
+
+    bundle = build_data_understanding_bundle(
+        datasets=[{
+            "dataset": dataset,
+            "dataset_contract_id": str(contract.get("id") or f"duc_{dataset}_minimal"),
+            "grain": str(contract.get("grain") or "unknown"),
+            "rows": int(len(df)),
+            "columns": [
+                {"name": str(column), "type": str(df[column].dtype)}
+                for column in df.columns
+            ],
+        }],
+        entities=list(roles.get("ids") or []),
+        metrics=list(roles.get("metrics") or []),
+        dimensions=list(roles.get("dimensions") or []),
+        time_ranges=[contract.get("time_range")] if isinstance(contract.get("time_range"), dict) and contract.get("time_range") else [],
+        grain={dataset: str(contract.get("grain") or "unknown")},
+        quality_findings=quality_findings,
+        relationship_candidates=[],
+        supported_questions=supported_questions,
+        unsupported_questions=unsupported_questions,
+        analysis_constraints=analysis_constraints,
+    )
+    bundle_ref = dict(bundle)
+    bundle_ref["dataset"] = dataset
+    state.add_data_understanding_bundle_ref(bundle_ref)
+    _save_trust_state(state, session_id)
+
+
 def _register_loaded_data_bundle(
     *,
     state: Any,
@@ -500,6 +579,20 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         except Exception as bundle_error:
             summary_parts.append(
                 f"[bundle_workflow_warning] skipped: {type(bundle_error).__name__} [/bundle_workflow_warning]"
+            )
+        try:
+            if ctx is not None and state is not None:
+                _record_data_understanding_bundle(
+                    state=state,
+                    session_id=ctx.session_id,
+                    dataset=name,
+                    df=df,
+                    contract=contract_for_bundle,
+                    quality=quality_data,
+                )
+        except Exception as understanding_error:
+            summary_parts.append(
+                f"[data_understanding_warning] skipped: {type(understanding_error).__name__} [/data_understanding_warning]"
             )
 
         if applied:

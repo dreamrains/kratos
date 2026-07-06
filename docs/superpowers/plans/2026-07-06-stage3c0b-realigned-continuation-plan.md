@@ -371,7 +371,7 @@ Required behavior:
 - legacy `dataset_bundles` remains only for active file-bundle diagnostics;
 - User Data Brief hides raw rows, artifact paths, internal IDs as primary content, tool logs, and large schemas.
 
-- [ ] **Step 1: Add failing tests for bundle ref storage and brief compactness**
+- [x] **Step 1: Add failing tests for bundle ref storage and brief compactness**
 
 Create `tests/test_stage3c0b_load_data_brief.py` with tests that assert:
 
@@ -382,7 +382,7 @@ assert "artifact_path" not in json.dumps(brief, ensure_ascii=False)
 assert "sample_rows" not in json.dumps(brief, ensure_ascii=False)
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -391,7 +391,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: fails because the brief helper and load-time ref wiring are absent.
 
-- [ ] **Step 3: Implement `build_user_data_brief()` as a projection helper**
+- [x] **Step 3: Implement `build_user_data_brief()` as a projection helper**
 
 Add to `src/data_agent/agent/data_understanding.py`:
 
@@ -415,7 +415,7 @@ The helper must return:
 
 It must not return raw rows, artifact paths, or unbounded schema dumps.
 
-- [ ] **Step 4: Wire `load_data` to call `add_data_understanding_bundle_ref()`**
+- [x] **Step 4: Wire `load_data` to call `add_data_understanding_bundle_ref()`**
 
 Add a helper in `src/data_agent/tools/data_io.py` that builds a bundle with `build_data_understanding_bundle()` and calls:
 
@@ -425,7 +425,7 @@ state.add_data_understanding_bundle_ref(bundle)
 
 Call it after trust workflow records are available. If trust workflow fails, still produce a minimal bundle from dataframe shape and columns.
 
-- [ ] **Step 5: Expose the latest brief through Trust view**
+- [x] **Step 5: Expose the latest brief through Trust view**
 
 In `src/data_agent/agent/trust_view.py`, add the latest valid User Data Brief to `workbench` under:
 
@@ -433,7 +433,7 @@ In `src/data_agent/agent/trust_view.py`, add the latest valid User Data Brief to
 workbench["user_data_brief"]
 ```
 
-- [ ] **Step 6: Run regression tests**
+- [x] **Step 6: Run regression tests**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -446,7 +446,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/data_agent/tools/data_io.py src/data_agent/agent/data_understanding.py src/data_agent/agent/trust_view.py tests/test_stage3c0b_load_data_brief.py

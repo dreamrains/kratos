@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data_agent.agent.data_understanding import build_user_data_brief
 from data_agent.agent.multi_file_scope import build_analysis_scope_plan
 from data_agent.agent.route_capabilities import build_route_capabilities
 
@@ -53,6 +54,9 @@ def build_trust_view(state: Any, session_id: str | None = None) -> dict[str, Any
         confirmation_gate,
         verification,
     )
+    user_data_brief = _latest_user_data_brief(state)
+    if user_data_brief:
+        workbench["user_data_brief"] = user_data_brief
 
     if active_scope["active_mode"] == "consulting":
         datasets = all_datasets
@@ -186,6 +190,17 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _latest_user_data_brief(state: Any) -> dict[str, Any] | None:
+    for bundle in reversed(_list_attr(state, "data_understanding_bundles")):
+        try:
+            brief = build_user_data_brief(bundle)
+        except Exception:
+            continue
+        if brief.get("bundle_id"):
+            return brief
+    return None
 
 
 def _hydrate_refs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -447,3 +447,91 @@ def build_data_understanding_bundle(
     if not result.ok:
         raise ValueError(f"{result.error_type}: {result.message}")
     return result.thaw_bundle()
+
+
+def _brief_text_list(value: Any, limit: int = 8) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = " ".join(item.split())
+        elif isinstance(item, dict):
+            text = " ".join(
+                str(item.get(key) or "").strip()
+                for key in ("question", "type", "reason", "finding", "constraint", "name")
+                if item.get(key)
+            )
+        else:
+            text = str(item or "").strip()
+        if text:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _brief_columns(columns: Any, limit: int = 12) -> list[dict[str, str]]:
+    if not isinstance(columns, list):
+        return []
+    result: list[dict[str, str]] = []
+    for column in columns:
+        if isinstance(column, str):
+            result.append({"name": column, "type": ""})
+        elif isinstance(column, dict):
+            name = str(column.get("name") or "").strip()
+            if name:
+                result.append({
+                    "name": name,
+                    "type": str(column.get("type") or column.get("dtype") or "").strip(),
+                })
+        if len(result) >= limit:
+            break
+    return result
+
+
+def build_user_data_brief(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Project DataUnderstandingBundle into compact user-facing content."""
+
+    datasets = []
+    for dataset in bundle.get("datasets") or []:
+        if not isinstance(dataset, dict):
+            continue
+        columns = _brief_columns(dataset.get("columns") or dataset.get("schema"))
+        datasets.append({
+            "dataset": str(dataset.get("dataset") or "").strip(),
+            "rows": dataset.get("rows", 0),
+            "column_count": len(dataset.get("columns") or dataset.get("schema") or []),
+            "columns": columns,
+            "remaining_column_count": max(
+                len(dataset.get("columns") or dataset.get("schema") or []) - len(columns),
+                0,
+            ),
+            "grain": str(dataset.get("grain") or "").strip(),
+        })
+
+    relationships = []
+    for relationship in bundle.get("relationship_candidates") or []:
+        if not isinstance(relationship, dict):
+            continue
+        relationships.append({
+            "status": str(relationship.get("status") or "").strip(),
+            "left_dataset": str(relationship.get("left_dataset") or "").strip(),
+            "right_dataset": str(relationship.get("right_dataset") or "").strip(),
+            "left_key": relationship.get("left_key") or relationship.get("normalized_left_key") or "",
+            "right_key": relationship.get("right_key") or relationship.get("normalized_right_key") or "",
+            "risk": relationship.get("risk") or relationship.get("reason") or "",
+        })
+
+    return {
+        "bundle_id": str(bundle.get("id") or "").strip(),
+        "fingerprint": str(bundle.get("data_fingerprint") or "").strip(),
+        "datasets": datasets,
+        "relationships": relationships[:8],
+        "quality_findings": _brief_text_list(bundle.get("quality_findings"), limit=8),
+        "answerable_questions": _brief_text_list(bundle.get("supported_questions"), limit=8),
+        "unanswerable_questions": _brief_text_list(bundle.get("unsupported_questions"), limit=8),
+        "recommended_paths": _brief_text_list(bundle.get("recommended_paths"), limit=8),
+        "needed_confirmations": _brief_text_list(bundle.get("needed_confirmations"), limit=8),
+        "analysis_constraints": _brief_text_list(bundle.get("analysis_constraints"), limit=8),
+    }
