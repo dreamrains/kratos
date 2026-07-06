@@ -541,8 +541,17 @@ class TestCausalInferenceAwareness:
         ctx, tmp_path = analysis_env
 
         from data_agent.tools.analysis_flow import record_analysis_plan
+        from data_agent.agent.analysis_state import AnalysisSessionState
+
+        ctx.analysis_state = AnalysisSessionState(session_id=ctx.session_id)
+        ctx.analysis_state.dataset_contracts.append({
+            "id": "contract_savings_card_orders",
+            "dataset": "savings_card_orders",
+            "quality_status": "ready",
+        })
 
         plan = json.dumps({
+            "contract_version": "stage3c0b.v1",
             "goal": "省钱卡效果分析",
             "question_type": "evaluation",
             "metrics": ["收益", "复购率", "付费频次"],
@@ -550,8 +559,14 @@ class TestCausalInferenceAwareness:
             "time_scope": "购卡前后30天",
             "required_data": ["购卡前后订单"],
             "method_plan": [
-                {"step": "计算指标", "tool": "transform_data"},
-                {"step": "统计检验", "tool": "ab_test"},
+                {
+                    "step_id": "step_savings_card_effect",
+                    "goal": "计算省钱卡效果指标并说明统计与因果限制",
+                    "dataset_inputs": ["savings_card_orders"],
+                    "combination_mode": "independent",
+                    "expected_output": "带有局限性说明的省钱卡效果证据",
+                    "evidence_requirements": ["收益", "复购率", "付费频次", "局限性"],
+                },
             ],
             "visualization_strategy": "对比柱状图+留存曲线",
             "limitations": [

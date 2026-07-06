@@ -758,6 +758,7 @@ git commit -m "feat: guide bounded evidence replenishment before synthesis"
 - Create: `tests/real_data/test_multifile_analysis_quality.py`
 - Create: `scripts/run_multifile_quality_scenarios.py`
 - Create: `docs/superpowers/validation/2026-07-06-analysis-quality-rubric.md`
+- Modify: `tests/test_analysis_quality.py`
 
 Purpose: prevent quality regressions and protect professional usefulness with real data and scenario-level checks.
 
@@ -768,7 +769,7 @@ Scenarios:
 - Unrelated files: false join prevention.
 - Fault injection: duplicate keys, missing keys, time mismatch, many-to-many risk.
 
-- [ ] **Step 1: Add scenario manifest**
+- [x] **Step 1: Add scenario manifest**
 
 Create `tests/real_data/scenario_manifest.json` with the scenarios above and explicit `forbidden_modes`:
 
@@ -776,7 +777,7 @@ Create `tests/real_data/scenario_manifest.json` with the scenarios above and exp
 ["joint", "aggregate_then_join"]
 ```
 
-- [ ] **Step 2: Add tests that all manifest files exist**
+- [x] **Step 2: Add tests that all manifest files exist**
 
 Tests must check `reference/test_doc` contains:
 
@@ -789,7 +790,7 @@ Tests must check `reference/test_doc` contains:
 省钱卡订单_20260507.xlsx
 ```
 
-- [ ] **Step 3: Add soft rubric tests**
+- [x] **Step 3: Add soft rubric tests**
 
 Tests must assert:
 
@@ -798,7 +799,7 @@ Tests must assert:
 - rubric returns `global_publish_gate=False`;
 - no single `total` magic score controls readiness.
 
-- [ ] **Step 4: Implement `score_analysis_quality()`**
+- [x] **Step 4: Implement `score_analysis_quality()`**
 
 Create `src/data_agent/agent/analysis_quality_rubric.py`.
 
@@ -812,7 +813,7 @@ The function must return:
 
 Do not make this helper part of runtime synthesis yet. It is for scenario validation and regression reporting.
 
-- [ ] **Step 5: Add scenario runner**
+- [x] **Step 5: Add scenario runner**
 
 Create `scripts/run_multifile_quality_scenarios.py`.
 
@@ -824,7 +825,7 @@ The script must:
 - never modify source spreadsheets;
 - exit nonzero only for missing required files or malformed manifest.
 
-- [ ] **Step 6: Run regression tests and scenario script**
+- [x] **Step 6: Run regression tests and scenario script**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -838,7 +839,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: all tests pass and script prints the results path.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add src/data_agent/agent/analysis_quality_rubric.py tests/real_data/test_multifile_real_data_scenarios.py tests/real_data/test_multifile_analysis_quality.py tests/real_data/scenario_manifest.json scripts/run_multifile_quality_scenarios.py docs/superpowers/validation/2026-07-06-analysis-quality-rubric.md

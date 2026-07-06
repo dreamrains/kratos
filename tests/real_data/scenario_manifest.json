@@ -1,0 +1,66 @@
+{
+  "schema_version": "multifile_quality_scenarios.v1",
+  "forbidden_modes": [
+    "joint",
+    "aggregate_then_join"
+  ],
+  "scenarios": [
+    {
+      "id": "game_a_independent_channels",
+      "description": "Analyze banner, IAP, and rewarded-video evidence independently before synthesis.",
+      "required_files": [
+        "游戏Abanner汇总数据.xlsx",
+        "游戏A内购数据.xlsx",
+        "游戏A激励视频汇总数据报表.xlsx"
+      ],
+      "analysis_mode": "independent_then_synthesis",
+      "executed_join": false
+    },
+    {
+      "id": "savings_card_relationship_diagnostic",
+      "description": "Inspect relationship value and risk without materializing a join.",
+      "required_files": [
+        "省钱卡用户最近流水_20260511.xlsx",
+        "省钱卡订单_20260507.xlsx"
+      ],
+      "analysis_mode": "relationship_diagnostic_only",
+      "executed_join": false,
+      "relationship_check": {
+        "left_key": "user_id",
+        "right_key": "user_id",
+        "required_outputs": [
+          "cardinality",
+          "row_coverage",
+          "distinct_key_coverage",
+          "null_rate",
+          "row_multiplier",
+          "time_scope"
+        ]
+      }
+    },
+    {
+      "id": "unrelated_files_false_join_prevention",
+      "description": "Do not infer a join between unrelated business datasets.",
+      "required_files": [
+        "游戏B留存.xlsx",
+        "省钱卡订单_20260507.xlsx"
+      ],
+      "analysis_mode": "independent",
+      "executed_join": false,
+      "relationship_use": "forbidden_without_explicit_business_key"
+    },
+    {
+      "id": "relationship_fault_injection",
+      "description": "Exercise duplicate keys, missing keys, time mismatch, and many-to-many risk.",
+      "required_files": [],
+      "analysis_mode": "synthetic_validation",
+      "executed_join": false,
+      "faults": [
+        "duplicate_keys",
+        "missing_keys",
+        "time_scope_mismatch",
+        "many_to_many"
+      ]
+    }
+  ]
+}
