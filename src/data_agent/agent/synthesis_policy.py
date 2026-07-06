@@ -167,6 +167,15 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         f"<suppressed_moves>{suppressed}</suppressed_moves>"
         f"<reason>{reason}</reason>"
         "</synthesis_policy>"
+        "<bounded_evidence_replenishment>"
+        "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
+        "Do not read raw datasets during synthesis. "
+        "If a material claim lacks evidence and a relevant dataset is available, call record_analysis_plan "
+        "with contract_version stage3c0b.v1, the current analysis plan id, and one bounded independent step "
+        "for that dataset. "
+        "After the step runs, record the result with record_evidence_record and synthesize from EvidenceRecords. "
+        "If evidence cannot be produced within the bounded plan, return a partial answer with missing-evidence limitations."
+        "</bounded_evidence_replenishment>"
     )
 
 

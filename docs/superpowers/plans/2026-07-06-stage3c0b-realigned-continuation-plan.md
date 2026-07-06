@@ -644,7 +644,7 @@ Required behavior:
 - if evidence remains insufficient, answer partially with limitations.
 - deterministic integration coverage proves the substrate loop works without relying on live LLM behavior.
 
-- [ ] **Step 1: Add failing instruction tests**
+- [x] **Step 1: Add failing instruction tests**
 
 Create tests asserting `build_synthesis_instruction()` contains:
 
@@ -663,7 +663,7 @@ magic threshold
 score =
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -672,7 +672,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: fails because the replenishment instruction is absent.
 
-- [ ] **Step 3: Add replenishment instruction block**
+- [x] **Step 3: Add replenishment instruction block**
 
 In `src/data_agent/agent/synthesis_policy.py`, append a compact XML-like block to `build_synthesis_instruction()`:
 
@@ -686,7 +686,7 @@ If evidence cannot be produced within the bounded plan, return a partial answer 
 </bounded_evidence_replenishment>
 ```
 
-- [ ] **Step 4: Add deterministic replenishment flow integration tests**
+- [x] **Step 4: Add deterministic replenishment flow integration tests**
 
 Create `tests/test_stage3c0b_evidence_replenishment_flow.py`.
 
@@ -726,7 +726,7 @@ data_agent.agent.workflow_projection
 data_agent.agent.execution_scope
 ```
 
-- [ ] **Step 5: Run synthesis, scope, and replenishment flow regressions**
+- [x] **Step 5: Run synthesis, scope, and replenishment flow regressions**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -740,7 +740,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: all tests pass and synthesis raw dataset blocking remains intact.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/data_agent/agent/synthesis_policy.py src/data_agent/agent/loop.py tests/test_synthesis_policy.py tests/test_execution_control.py tests/test_stage3c0b_evidence_replenishment.py tests/test_stage3c0b_evidence_replenishment_flow.py

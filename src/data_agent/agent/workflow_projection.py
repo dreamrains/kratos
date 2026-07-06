@@ -152,6 +152,27 @@ def project_plan_to_workflow_tasks(
                 analysis_spec_id=analysis_spec_id,
             )
         if duplicate:
+            updated = manager.update(
+                duplicate["id"],
+                description=_text(step.get("expected_output")),
+                workflow_id=workflow_id,
+                project_name=project_name,
+                stage="execute",
+                node_type=_text(step.get("node_type")) or "analysis",
+                analysis_spec_id=analysis_spec_id,
+                analysis_plan_id=plan_id,
+                step_id=step_id,
+                dataset_inputs=list(step.get("dataset_inputs") or []),
+                dataset_contract_ids=list(step.get("dataset_contract_ids") or []),
+                combination_mode=_text(step.get("combination_mode")),
+                required_evidence_step_ids=list(step.get("required_evidence_step_ids") or []),
+                required_data=list(step.get("dataset_inputs") or []),
+                expected_output=_text(step.get("expected_output")),
+                required_capability=_text(step.get("required_capability")),
+                evidence_requirements=list(step.get("evidence_requirements") or []),
+                confirmation_policy=step.get("confirmation_policy") or {},
+            )
+            duplicate = updated or duplicate
             reused.append(duplicate)
             by_step_id[step_id] = duplicate
             continue
