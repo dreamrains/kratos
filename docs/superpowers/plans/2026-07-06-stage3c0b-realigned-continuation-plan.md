@@ -549,7 +549,7 @@ git commit -m "feat: build multifile workbench read model"
 
 Purpose: replace the old Trust Inspector front panel with the new Workbench as the primary user-facing analysis surface. This project has no production compatibility burden; do not keep old panels, helpers, or tests unless they still serve current evidence quality, analysis trust, or debugging needs.
 
-- [ ] **Step 1: Add failing UI contract tests**
+- [x] **Step 1: Add failing UI contract tests**
 
 Tests must assert the template includes:
 
@@ -573,7 +573,7 @@ multifileAnalysisDirections()
 multifileAnswerCoverage()
 ```
 
-- [ ] **Step 2: Run focused UI tests and verify RED**
+- [x] **Step 2: Run focused UI tests and verify RED**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -582,7 +582,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: new UI contract tests fail.
 
-- [ ] **Step 3: Replace Alpine helpers**
+- [x] **Step 3: Replace Alpine helpers**
 
 Add helper methods to `src/data_agent/web/static/js/app.js` that read from:
 
@@ -592,7 +592,7 @@ this.trustView?.workbench?.multifile_analysis
 
 Remove old primary-panel helpers when their only purpose is to render the previous Trust Inspector surface. Keep a helper only if the new Workbench or a clearly labeled debug/details region still uses it.
 
-- [ ] **Step 4: Replace the primary panel with four sections**
+- [x] **Step 4: Replace the primary panel with four sections**
 
 Replace the previous Trust Inspector primary content in `src/data_agent/web/templates/index.html` with four compact Workbench sections:
 
@@ -603,7 +603,7 @@ Replace the previous Trust Inspector primary content in `src/data_agent/web/temp
 
 Do not add route auto-submit controls. Direction cards are explanatory unless existing route-prefill behavior already handles them.
 
-- [ ] **Step 5: Run UI checks**
+- [x] **Step 5: Run UI checks**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -613,7 +613,7 @@ node -c src\data_agent\web\static\js\app.js
 
 Expected: pytest passes and JavaScript syntax check exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/data_agent/web/templates/index.html src/data_agent/web/static/js/app.js src/data_agent/web/static/css/app.css tests/test_trust_inspector_ui.py tests/test_web_workbench_replacement.py

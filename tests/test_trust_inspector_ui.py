@@ -241,35 +241,34 @@ def test_trust_inspector_panel_markup_contract():
     assert "trust-inspector-panel" in html
     assert "session-side-tabs" in html
     assert "sessionSidePanelTab" in html
-    assert "workbench.current_context" in html
-    assert "workbench.confirmations" in html
-    assert "workbench.trust_evidence" in html
+    assert "multifile-data-understanding" in html
+    assert "multifile-relationships" in html
+    assert "multifile-analysis-directions" in html
+    assert "multifile-answer-coverage" in html
+    assert "trustView.workbench.multifile_analysis" in html
     assert "trustView.history.routes" in html
-    assert "trustView.risks" in html
-    assert "workbenchTrustEvidence()" in html
-    assert '@click="selectTrustRoute(route)"' in html
     assert "trustInspectorCollapsed" in html
 
 
-def test_workbench_uses_context_confirmation_trust_sections():
+def test_workbench_uses_four_multifile_sections():
     html = _index_html()
 
-    assert "workbench.current_context" in html
-    assert "workbench.confirmations" in html
-    assert "workbench.trust_evidence" in html
-    assert "当前上下文" in html
-    assert "待确认事项" in html
-    assert "可信证据" in html
+    assert "multifileDataUnderstanding()" in html
+    assert "multifileRelationships()" in html
+    assert "multifileAnalysisDirections()" in html
+    assert "multifileAnswerCoverage()" in html
+    assert "Data Understanding" in html
+    assert "Relationships" in html
+    assert "Analysis Directions" in html
+    assert "Answer Coverage" in html
 
 
-def test_trust_inspector_contains_hypothesis_section():
+def test_trust_inspector_no_longer_contains_primary_hypothesis_section():
     html = _index_html()
     js = _app_js()
 
-    assert 'data-testid="trust-hypotheses"' in html
-    assert "trustView.hypotheses" in html
-    assert "top_claims" in html
-    assert "formatHypothesisSummary(set)" in html
+    assert 'data-testid="trust-hypotheses"' not in html
+    assert "trustView.hypotheses" not in html
     assert "formatHypothesisSummary(set)" in js
 
 
@@ -308,19 +307,17 @@ def test_session_side_panel_tabs_preserve_export_controls():
     assert "sessionArtifacts" in outputs_body
 
 
-def test_session_side_panel_uses_chinese_trust_labels_and_help():
+def test_session_side_panel_uses_workbench_labels_and_helpers():
     html = _index_html()
     js = _app_js()
 
     assert "Session Side Panel" not in html
     assert "trustHelpText" in js
-    assert "当前上下文" in html
-    assert "待确认事项" in html
-    assert "可信证据" in html
-    assert "风险边界" in html
-    assert "假设检验" in html
-    assert "产出与导出" in html
-    assert "这是什么" in js
+    assert "Data Understanding" in html
+    assert "Relationships" in html
+    assert "Analysis Directions" in html
+    assert "Answer Coverage" in html
+    assert "multifileWorkbench()" in js
 
 
 def test_trust_routes_explain_items_and_budget_labels():
@@ -343,16 +340,15 @@ def test_trust_routes_explain_items_and_budget_labels():
     assert "适合回答" in js
 
 
-def test_trust_routes_show_confirmation_gate_instead_of_candidate_routes():
+def test_current_workbench_directions_do_not_auto_submit_routes():
     html = _index_html()
     js = _app_js()
 
-    assert "trustConfirmationGate()" in js
-    assert "需要先确认信息" in html
-    assert "workbenchConfirmations()" in html
-    assert "return this.workbenchConfirmations();" in js
-    assert "trustConfirmationPending()" in html
+    assert "multifileAnalysisDirections()" in html
+    assert "multifileAnalysisDirections()" in js
     assert "trustConfirmationPending()" in js
+    current_panel = html.split('x-show="sessionSidePanelTab === \'history\'"', 1)[0]
+    assert '@click="selectTrustRoute(route)"' not in current_panel
 
 
 def test_trust_long_lists_use_reusable_show_more_controls():
@@ -372,16 +368,15 @@ def test_trust_long_lists_use_reusable_show_more_controls():
     assert "收起" in html
 
 
-def test_current_data_and_verification_have_help_text():
+def test_current_workbench_uses_multifile_helpers():
     html = _index_html()
     js = _app_js()
 
-    assert "trustHelpText('currentContext')" in html
-    assert "trustHelpText('confirmations')" in html
-    assert "trustHelpText('trustEvidence')" in html
-    assert "当前分析目标" in js
-    assert "继续分析前需要用户确认" in js
-    assert "当前会话中的验证状态" in js
+    assert "multifileDataUnderstanding()" in html
+    assert "multifileRelationships()" in html
+    assert "multifileAnalysisDirections()" in html
+    assert "multifileAnswerCoverage()" in html
+    assert "this.trustView?.workbench?.multifile_analysis" in js
 
 
 def test_history_routes_share_route_explanations():
@@ -393,28 +388,26 @@ def test_history_routes_share_route_explanations():
     assert "formatRouteLimitations(route)" in html
 
 
-def test_current_data_uses_unified_file_decisions_and_folded_relationship_diagnostics():
+def test_current_workbench_uses_new_multifile_read_model_not_legacy_bundle_surface():
     html = _index_html()
     js = _app_js()
 
-    assert 'x-for="(file, index) in workbenchContext().file_decisions"' in html
-    assert ':key="(file.file_id || file.dataset || file.filename || \'file\') + \':\' + index"' in html
-    assert "workbenchContext().file_decisions.length" in html
-    assert "formatWorkbenchAssignmentLabel(file)" in html
-    assert "formatWorkbenchFileReason(file)" in html
-    assert "workbenchDecisionStatus(file)" in html
-    assert "<details" in html
-    assert "技术关系说明" in html
-    assert "workbenchRelationshipDiagnostics()" in html
+    assert 'x-for="(dataset, di) in (multifileDataUnderstanding().datasets || [])"' in html
+    assert 'x-for="(relationship, ri) in multifileRelationships()"' in html
+    assert 'x-for="(direction, ai) in multifileAnalysisDirections()"' in html
+    assert "multifileAnswerCoverage().covered_claims" in html
+    assert "workbenchDecisionStatus(file)" not in html
     assert "trustView.active_bundle" not in html
     assert "formatActiveBundleSummary(trustView.active_bundle)" not in html
     assert "active_bundle.files" not in html
     assert "formatBundleFileSummary(file)" not in html
     assert "relationship_status" not in html
 
-    assert "formatWorkbenchAssignmentLabel(file)" in js
-    assert "formatWorkbenchFileReason(file)" in js
-    assert "workbenchDecisionStatus(file)" in js
+    assert "multifileWorkbench()" in js
+    assert "multifileDataUnderstanding()" in js
+    assert "multifileRelationships()" in js
+    assert "multifileAnalysisDirections()" in js
+    assert "multifileAnswerCoverage()" in js
     assert "formatActiveBundleSummary(bundle)" not in js
     assert "formatBundleFileSummary(file)" not in js
     assert "formatWorkbenchFiles(files)" not in js
@@ -422,18 +415,6 @@ def test_current_data_uses_unified_file_decisions_and_folded_relationship_diagno
     assert "formatFileRelationshipMeta(relationship)" not in js
     assert "formatFileRelationshipEvidence(relationship)" not in js
     assert "formatFileRelationshipUncertainty(relationship)" not in js
-    assert "formatRelationshipMode(mode)" in js
-    for label in ("文件可用", "本次使用", "本次不需要", "需要你选择", "暂不可用"):
-        assert label in js
-    assert "暂无说明" in js
-    assert "${taskCount} 个分析任务" in js
-    assert "confirmed: '已确认'" in js
-    assert "linked: '已关联'" in js
-    assert "possibly_linked: '可能关联'" in js
-    assert "available: '可用'" in js
-    assert "excluded: '已排除'" in js
-    assert "confirmed: 'trust-pill-ok'" in js
-    assert "possibly_linked: 'trust-pill-warn'" in js
 
 
 def test_workbench_file_helpers_map_contract_states_without_green_unknown_fallbacks():
@@ -552,38 +533,32 @@ def test_relationship_diagnostic_meta_formats_known_mode_without_empty_separator
     assert all(" /  / " not in item for item in formatted)
 
 
-def test_file_decision_keys_are_unique_when_identity_fields_are_missing():
-    files = [
-        {"reason_code": "missing_file_identity"},
-        {"reason_code": "missing_file_identity"},
-    ]
+def test_multifile_workbench_loops_use_stable_fallback_keys():
+    html = _index_html()
 
-    keys = _run_file_decision_keys(files)
-
-    assert keys == ["file:0", "file:1"]
-    assert len(keys) == len(set(keys))
-    assert all(keys)
+    assert ':key="dataset.dataset || di"' in html
+    assert ':key="relationship.id || ri"' in html
+    assert ':key="direction.id || ai"' in html
+    assert ':key="claim.claim || ci"' in html
 
 
-def test_trust_risk_messages_are_localized_in_ui():
+def test_legacy_risk_primary_section_is_removed_from_current_workbench():
     html = _index_html()
     js = _app_js()
 
-    assert "formatRiskMessage(risk.message)" in html
+    current_panel = html.split('x-show="sessionSidePanelTab === \'history\'"', 1)[0]
+    assert "formatRiskMessage(risk.message)" not in current_panel
     assert "formatRiskMessage(message)" in js
-    assert "相关性不代表因果关系" in js
-    assert "未识别到可用于分组拆解的维度字段" in js
-    assert "当前数据粒度偏汇总" in js
+    assert "multifileRelationships()" in html
 
 
-def test_trust_inspector_empty_states_hide_during_loading_or_error():
+def test_workbench_empty_states_hide_during_loading_or_error():
     html = _index_html()
 
     empty_state_labels = [
-        "暂无数据画像。",
-        "暂无待确认事项。",
-        "暂无假设集合。",
-        "暂无风险边界。",
+        "No data understanding brief yet.",
+        "No relationship signal yet.",
+        "No analysis direction yet.",
     ]
     for label in empty_state_labels:
         match = re.search(rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>', html)
@@ -593,13 +568,12 @@ def test_trust_inspector_empty_states_hide_during_loading_or_error():
         assert "!trustError" in condition
 
 
-def test_not_run_trust_evidence_shows_explanation_and_hides_counts():
+def test_not_started_answer_coverage_shows_explanation():
     html = _index_html()
 
-    assert "尚未产生可验证的分析声明" in html
-    assert 'workbenchTrustEvidence().status === \'not_run\'' in html
-    assert 'workbenchTrustEvidence().status !== \'not_run\'' in html
-    assert "暂无可信证据。" not in html
+    assert "No supported claims yet." in html
+    assert "multifileAnswerCoverage().status || 'not_run'" in html
+    assert "multifileAnswerCoverage().evidence_count" in html
 
 
 def test_trust_inspector_panel_css_contract():

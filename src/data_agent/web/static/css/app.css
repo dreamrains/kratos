@@ -370,6 +370,20 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .dark .trust-section {
     border-bottom-color: #292524;
 }
+.workbench-primary-section {
+    scroll-margin-top: 0.75rem;
+}
+.workbench-item {
+    border: 1px solid #e7e5e4;
+    border-radius: 0.375rem;
+    background: rgba(255, 255, 255, 0.5);
+    overflow-wrap: anywhere;
+    padding: 0.5rem 0.625rem;
+}
+.dark .workbench-item {
+    border-color: #292524;
+    background: rgba(12, 10, 9, 0.24);
+}
 .trust-data-item,
 .trust-risk-item {
     border: 1px solid #e7e5e4;

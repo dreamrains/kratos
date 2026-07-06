@@ -1280,6 +1280,26 @@ function chatApp() {
             return this.trustView?.workbench?.relationship_diagnostics || [];
         },
 
+        multifileWorkbench() {
+            return this.trustView?.workbench?.multifile_analysis || {};
+        },
+
+        multifileDataUnderstanding() {
+            return this.multifileWorkbench().data_understanding || {};
+        },
+
+        multifileRelationships() {
+            return this.multifileWorkbench().relationships || [];
+        },
+
+        multifileAnalysisDirections() {
+            return this.multifileWorkbench().analysis_directions || [];
+        },
+
+        multifileAnswerCoverage() {
+            return this.multifileWorkbench().answer_coverage || {};
+        },
+
         formatRelationshipDiagnosticMeta(diagnostic) {
             if (!diagnostic) return '技术关系说明：暂无记录';
             const fileIds = Array.isArray(diagnostic.file_ids) && diagnostic.file_ids.length
