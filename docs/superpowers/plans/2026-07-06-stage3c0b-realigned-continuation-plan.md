@@ -941,7 +941,7 @@ git commit -m "refactor: simplify workbench trust surface"
 
 Purpose: decide whether more claim extraction, independent audit, or synthesis verification is needed after Phase 1-3 evidence.
 
-- [ ] **Step 1: Review quality failures**
+- [x] **Step 1: Review quality failures**
 
 Read outputs from:
 
@@ -949,7 +949,7 @@ Read outputs from:
 - latest `artifacts/multifile-quality/*/results.json`;
 - failed or downgraded verification reports in real-data scenarios.
 
-- [ ] **Step 2: Classify failure type**
+- [x] **Step 2: Classify failure type**
 
 Write a decision table:
 
@@ -960,7 +960,7 @@ Write a decision table:
 | shallow synthesis | yes/no | synthesis policy, golden question, or no change |
 | over-rigid synthesis | yes/no | loosen prompt, remove hard gate, or no change |
 
-- [ ] **Step 3: Write hardening decision spec**
+- [x] **Step 3: Write hardening decision spec**
 
 Create `docs/superpowers/specs/2026-07-06-evidence-synthesis-hardening-decision.md`.
 
@@ -974,7 +974,7 @@ The decision must choose one of:
 
 If the decision is anything other than prompt-only or no-op, write a separate implementation plan before touching code.
 
-- [ ] **Step 4: Commit decision**
+- [x] **Step 4: Commit decision**
 
 ```powershell
 git add docs/superpowers/specs/2026-07-06-evidence-synthesis-hardening-decision.md
