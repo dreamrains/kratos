@@ -25,7 +25,7 @@ class AgentConfig(BaseSettings):
 
     # Agent
     significance_level: float = Field(alias="SIGNIFICANCE_LEVEL", default=0.05)
-    token_threshold: int = Field(alias="TOKEN_THRESHOLD", default=100_000)
+    token_threshold: int = Field(alias="TOKEN_THRESHOLD", default=200_000)
 
     # Logging
     log_level: str = Field(alias="LOG_LEVEL", default="INFO")
