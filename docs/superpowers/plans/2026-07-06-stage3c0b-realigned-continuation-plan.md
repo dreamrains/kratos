@@ -1060,7 +1060,7 @@ git commit -m "docs: decide data operation readiness"
 
 Purpose: prove the continuation plan improved the project without quality regression or unnecessary complexity.
 
-- [ ] **Step 1: Run final suite**
+- [x] **Step 1: Run final suite**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -1091,7 +1091,7 @@ $env:PYTHONPATH=(Resolve-Path 'src').Path
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run real-data scenario script**
+- [x] **Step 2: Run real-data scenario script**
 
 ```powershell
 & 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' scripts/run_multifile_quality_scenarios.py --data-dir 'D:\Project\Daily\data-agent\reference\test_doc'
@@ -1099,7 +1099,7 @@ Expected: all tests pass.
 
 Expected: script exits 0 and prints the result JSON path.
 
-- [ ] **Step 3: Run frontend and whitespace checks**
+- [x] **Step 3: Run frontend and whitespace checks**
 
 ```powershell
 node -c src\data_agent\web\static\js\app.js
@@ -1108,7 +1108,7 @@ git diff --check
 
 Expected: both commands exit 0.
 
-- [ ] **Step 4: Run non-slippage checks**
+- [x] **Step 4: Run non-slippage checks**
 
 ```powershell
 rg -n "AnalysisOpportunity|StrategyRecord|DataOperationRecord|safe_to_execute|join preflight|operation_id|aggregate_then_join|DerivedDataset" src tests
@@ -1117,7 +1117,7 @@ rg -n "SUPPORTED_STAGE3C0B_MODES\s*=\s*\{[^}]*joint|SUPPORTED_STAGE3C0B_MODES\s*
 
 Expected: no matches in `src tests`. Future decision docs may mention these terms, but current executable code must not.
 
-- [ ] **Step 5: Write final report**
+- [x] **Step 5: Write final report**
 
 Create `docs/superpowers/validation/2026-07-06-data-agent-continuation-validation-report.md` with:
 
@@ -1130,7 +1130,7 @@ Create `docs/superpowers/validation/2026-07-06-data-agent-continuation-validatio
 - Stage 3C1A decision status;
 - known caveats and next recommended task.
 
-- [ ] **Step 6: Commit report**
+- [x] **Step 6: Commit report**
 
 ```powershell
 git add docs/superpowers/validation/2026-07-06-data-agent-continuation-validation-report.md
