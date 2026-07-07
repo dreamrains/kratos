@@ -991,7 +991,7 @@ git commit -m "docs: decide evidence synthesis hardening path"
 
 Purpose: decide whether Stage 3C1A data operations are justified. This task is a decision gate, not an implementation.
 
-- [ ] **Step 1: Gather evidence for operation need**
+- [x] **Step 1: Gather evidence for operation need**
 
 Review real scenarios and user requests for repeated cases where independent evidence plus synthesis cannot answer the question.
 
@@ -1008,7 +1008,7 @@ Examples that do not justify operations:
 - relationship risk is high or scope is unclear;
 - independent analyses plus synthesis answer the question well enough.
 
-- [ ] **Step 2: Write the decision spec**
+- [x] **Step 2: Write the decision spec**
 
 Create `docs/superpowers/specs/2026-07-06-data-operation-readiness-decision.md` with:
 
@@ -1044,7 +1044,7 @@ Stage 3C1A must include:
 - derived trust artifact registration.
 ```
 
-- [ ] **Step 3: Commit decision**
+- [x] **Step 3: Commit decision**
 
 ```powershell
 git add docs/superpowers/specs/2026-07-06-data-operation-readiness-decision.md
