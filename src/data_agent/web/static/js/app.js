@@ -1222,66 +1222,24 @@ function chatApp() {
             }
         },
 
-        selectTrustRoute(route) {
-            if (!route || !route.prompt) return;
-            this.inputText = route.prompt;
-        },
-
-        formatHypothesisSummary(set) {
-            const summary = set?.status_summary || {};
-            const parts = Object.entries(summary)
-                .filter(([, value]) => Number(value) > 0)
-                .map(([key, value]) => `${key}: ${value}`);
-            if (parts.length) return parts.join(' | ');
-            const count = Number(set?.count || 0);
-            return count ? `${count} 个假设` : '暂无评估假设';
-        },
-
-        formatActiveScope(scope) {
-            if (!scope) return '范围：咨询模式';
-            const dataset = scope.active_dataset || '未选择数据';
-            const route = scope.active_route || '未选择路线';
-            const mode = scope.active_mode || 'consulting';
-            return `范围：${dataset} / ${route} / ${mode}`;
-        },
-
-        formatRelationshipMode(mode) {
-            const labels = {
-                include_in_active_bundle: '合并分析',
-                separate_bundle: '分开分析',
-                latest_only: '只看最新文件',
-                exclude_from_active_bundle: '暂不纳入',
-            };
-            return labels[String(mode || '').trim()] || '';
-        },
-
-        formatRouteBudgetLabel(level) {
-            const labels = {
-                light: '轻量',
-                standard: '标准',
-                deep: '深入',
-            };
-            return labels[level || ''] || level || '未分级';
-        },
-
-        workbenchContext() {
-            return this.trustView?.workbench?.current_context || {};
-        },
-
-        workbenchConfirmations() {
-            return this.trustView?.workbench?.confirmations || {};
-        },
-
-        workbenchTrustEvidence() {
-            return this.trustView?.workbench?.trust_evidence || {};
-        },
-
-        workbenchRelationshipDiagnostics() {
-            return this.trustView?.workbench?.relationship_diagnostics || [];
-        },
-
         multifileWorkbench() {
             return this.trustView?.workbench?.multifile_analysis || {};
+        },
+
+        workbenchDetails() {
+            return this.trustView?.workbench?.details || {};
+        },
+
+        workbenchScope() {
+            return this.workbenchDetails().scope || {};
+        },
+
+        workbenchConfirmation() {
+            return this.workbenchDetails().confirmation || {};
+        },
+
+        workbenchVerification() {
+            return this.workbenchDetails().verification || {};
         },
 
         multifileDataUnderstanding() {
@@ -1298,102 +1256,6 @@ function chatApp() {
 
         multifileAnswerCoverage() {
             return this.multifileWorkbench().answer_coverage || {};
-        },
-
-        formatRelationshipDiagnosticMeta(diagnostic) {
-            if (!diagnostic) return '技术关系说明：暂无记录';
-            const fileIds = Array.isArray(diagnostic.file_ids) && diagnostic.file_ids.length
-                ? diagnostic.file_ids.join('、')
-                : '未标注文件';
-            const mode = this.formatRelationshipMode(diagnostic.relationship_mode);
-            return [
-                fileIds,
-                mode,
-                '仅供参考',
-                '可用于后续合并、关联或映射时的技术判断。',
-            ].filter(Boolean).join(' / ');
-        },
-
-        formatRelationshipDiagnosticEvidence(diagnostic) {
-            if (!diagnostic || !Array.isArray(diagnostic.evidence) || !diagnostic.evidence.length) return '';
-            return `依据：${diagnostic.evidence.join('、')}`;
-        },
-
-        formatRelationshipDiagnosticUncertainty(diagnostic) {
-            if (!diagnostic || !Array.isArray(diagnostic.uncertainties) || !diagnostic.uncertainties.length) return '';
-            return `不确定性：${diagnostic.uncertainties.join('、')}`;
-        },
-
-        formatWorkbenchAssignmentLabel(file) {
-            if (file?.eligibility === 'unavailable') return '暂不可用';
-            const labels = {
-                used: '本次使用',
-                available: '文件可用',
-                not_needed: '本次不需要',
-                needs_decision: '需要你选择',
-            };
-            return labels[file?.assignment] || '状态未知';
-        },
-
-        workbenchDecisionStatus(file) {
-            if (file?.eligibility === 'unavailable') return 'unavailable';
-            const assignment = file?.assignment;
-            return ['used', 'available', 'not_needed', 'needs_decision'].includes(assignment)
-                ? assignment
-                : 'unknown';
-        },
-
-        formatWorkbenchFileReason(file) {
-            const reason = String(file?.reason || '').trim() || '暂无说明';
-            const taskCount = Array.isArray(file?.task_refs) ? file.task_refs.length : 0;
-            return taskCount ? `${reason} / ${taskCount} 个分析任务` : reason;
-        },
-
-        trustConfirmationGate() {
-            return this.workbenchConfirmations();
-        },
-
-        trustConfirmationPending() {
-            return this.trustConfirmationGate().status === 'needs_confirmation';
-        },
-
-        formatRouteReason(route) {
-            if (!route) return '可填入输入框后继续确认。';
-            if (route.reason) return route.reason;
-            const dataset = route.dataset ? `基于当前数据集：${route.dataset}` : '';
-            return dataset || '基于当前数据可直接开始，发送前仍可修改问题。';
-        },
-
-        formatRouteLimitations(route) {
-            const limitations = Array.isArray(route?.limitations) ? route.limitations : [];
-            if (!limitations.length) return '';
-            return limitations.map((item) => this.formatRiskMessage(item)).join('；');
-        },
-
-        trustRouteHelpText(route) {
-            const direction = route?.route || route?.direction || route?.label || 'analysis';
-            const routeLabels = {
-                trend: '趋势分析',
-                period_compare: '周期/前后对比',
-                correlation: '相关性分析',
-                cohort: '群组分析',
-                funnel: '漏斗分析',
-                dimension_decomposition: '维度拆解',
-                metric_analysis: '指标分析',
-            };
-            const purpose = {
-                trend: '观察指标随时间的变化，适合先判断是否存在波动、拐点或持续趋势。',
-                period_compare: '比较两个时间段或结构周期，适合回答上线前后、购卡前后、周末/工作日差异等问题。',
-                correlation: '检查两个变量是否同步变化，适合发现候选关系，但不能直接证明因果。',
-                cohort: '按用户或事件起点分组观察后续表现，适合分析留存、复购或生命周期变化。',
-                funnel: '按步骤查看转化损耗，适合定位流程中掉队最多的位置。',
-                dimension_decomposition: '按维度拆解指标变化来源，适合判断哪些人群、商品或渠道贡献最大。',
-                metric_analysis: '围绕单个核心指标做现状、波动和口径检查。',
-            };
-            const label = routeLabels[direction] || direction;
-            const budget = this.formatRouteBudgetLabel(route?.budget_level);
-            const limits = this.formatRouteLimitations(route) || '当前未发现额外限制，但结论仍需要和证据一起解读。';
-            return `为什么推荐：当前数据结构支持「${label}」。适合回答：${purpose[direction] || '围绕当前数据提出一个可执行的分析问题。'} 分析成本：${budget}。限制条件：${limits}`;
         },
 
         visibleListItems(key, items, defaultLimit = 6) {
@@ -1482,22 +1344,10 @@ function chatApp() {
         },
 
         trustHelpText(topic) {
-            if (topic === 'confirmations') {
-                return 'Workflow notes record historical risks or unclear context. Active confirmations are answerable cards in chat and must come from the confirmation runtime.';
+            if (topic === 'outputs') {
+                return '本会话可导出的对话和已生成产出物，可用于复核、归档和分享。';
             }
-            const help = {
-                currentContext: '这是什么：当前分析目标、纳入文件、排除文件和仍待确认的上下文。为什么重要：它让侧栏先说明系统正在依据什么判断，而不是直接催促选择路线。你可以怎么做：核对目标和文件范围是否符合预期。',
-                confirmations: '这是什么：继续分析前需要用户确认的问题或阻塞原因。为什么重要：它把不确定性显式放在执行前，避免把候选方向包装成确定建议。你可以怎么做：先回答确认问题，再推进分析。',
-                trustEvidence: '这是什么：当前会话中的验证状态、声明数量、失败和降级情况。为什么重要：它展示结论可信度证据，而不是重复路线选择。你可以怎么做：看到失败或降级时回到证据、口径或数据质量重新确认。',
-                routes: '这是什么：历史或详情中的路线支持信息。为什么重要：它用于回看曾经生成的分析入口，不代表当前侧栏的主推荐动作。你可以怎么做：只在需要复用历史问题时点击路线。',
-                risks: '这是什么：当前分析可能遇到的数据质量、口径或覆盖范围边界。为什么重要：它提醒你哪些结论需要保留条件。你可以怎么做：先补充数据、缩小问题，或在结论中注明风险。',
-                hypotheses: '这是什么：围绕当前问题生成并被数据支持度标记的假设。为什么重要：它把探索方向和证据状态放在一起。你可以怎么做：优先推进支持或不确定的假设，并复核数据不支持的说法。',
-                currentData: '这是什么：当前用于推荐和分析的数据。为什么重要：当会话里有多个文件时，它说明系统此刻依据哪份数据判断路线、风险和验证状态。你可以怎么做：确认数据集、质量状态和关键字段是否符合你的分析目标。',
-                verification: '这是什么：系统对已记录声明和证据做的一致性检查。为什么重要：它会提示结论是否通过、是否被降级或是否失败。你可以怎么做：看到降级或失败时，回到证据、口径或数据质量重新确认。',
-                historyRoutes: '这是什么：本会话中过去生成过的分析路线。为什么重要：历史路线不代表当前推荐，只用于回看或复用旧数据集的分析入口。你可以怎么做：优先查看当前分析；只有需要回到旧数据或旧问题时再使用历史路线。',
-                outputs: '这是什么：本会话可导出的对话和已生成产出物。为什么重要：它让分析结果可以复用、归档和分享。你可以怎么做：导出 HTML/Markdown，或打开产出物继续检查。',
-            };
-            return help[topic] || '这是什么：当前侧栏信息。为什么重要：帮助你判断下一步。你可以怎么做：查看状态后继续分析。';
+            return '';
         },
 
         trustStatusClass(status) {

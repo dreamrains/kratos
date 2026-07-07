@@ -369,7 +369,12 @@ def test_analysis_state_records_requirement_and_spec(tmp_path):
             spec_result = json.loads(record_analysis_spec(json.dumps(spec)))
             assert spec_result["type"] == "analysis_spec"
             assert spec_result["analysis_spec_id"]
-            assert spec_result["workflow"]["created"] == 2
+            assert spec_result["workflow"] == {
+                "created": 0,
+                "task_ids": [],
+                "display_only": True,
+                "reason": "legacy_analysis_spec_display_only",
+            }
 
         state = load_analysis_state("analysis_state_test", "savings_card")
         assert len(state.data_requirements) == 1

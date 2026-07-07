@@ -825,12 +825,17 @@ class TestFullPipelineComparison:
         from data_agent.config import AgentConfig
         from data_agent.session.workspace import Workspace
         from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
+        from data_agent.session.task_manager import task_manager
 
         old_cfg = config._config
+        old_task_dir = task_manager._dir
+        old_next_id = task_manager._next_id_val
         config._config = AgentConfig(
             PROJECT_DIR=tmp_path / "project",
             SESSIONS_DIR=tmp_path / "sessions",
         )
+        task_manager._dir = tmp_path / "tasks"
+        task_manager.reset_for_testing()
 
         ctx = AgentContext(session_id="pipeline_test", workspace=Workspace())
         token = set_current_context(ctx)
@@ -838,6 +843,8 @@ class TestFullPipelineComparison:
 
         reset_current_context(token)
         config._config = old_cfg
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
 
     def test_full_4_dataset_load(self, pipeline_env):
         """加载4个真实数据文件，测量完整指标。"""

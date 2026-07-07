@@ -1,7 +1,7 @@
 from data_agent.knowledge.library import KnowledgeLibrary
 from data_agent.knowledge.retrieval import KnowledgeRetrievalService
+from data_agent.agent.context import AgentContext
 from data_agent.agent.loop import AgentLoop
-from types import SimpleNamespace
 
 
 def test_retrieval_prefers_requested_domain(tmp_path):
@@ -44,9 +44,9 @@ def test_query_normalization_keeps_chinese_metric_terms(tmp_path):
 
 def test_agent_loop_infers_retrieval_domain_from_project_and_question():
     loop = AgentLoop.__new__(AgentLoop)
-    loop.context = SimpleNamespace(project_name="游戏分析")
+    loop.context = AgentContext(session_id="game_retrieval", project_name="游戏分析")
 
     assert loop._infer_retrieval_domain("请分析留存率和付费率") == "game"
 
-    loop.context = SimpleNamespace(project_name="")
+    loop.context = AgentContext(session_id="ecommerce_retrieval", project_name="")
     assert loop._infer_retrieval_domain("GMV 需要排除退款吗") == "ecommerce"

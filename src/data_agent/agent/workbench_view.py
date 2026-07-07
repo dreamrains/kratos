@@ -5,16 +5,44 @@ from __future__ import annotations
 from typing import Any
 
 from data_agent.agent.data_understanding import build_user_data_brief
+from data_agent.agent.multi_file_scope import build_analysis_scope_plan
 from data_agent.agent.route_capabilities import build_route_capabilities
 
 
-def build_multifile_workbench_view(state: Any) -> dict[str, Any]:
+def build_workbench_view(state: Any) -> dict[str, Any]:
+    """Build the complete Workbench contract: four primary areas and details."""
+    if state is None:
+        return {
+            "multifile_analysis": build_multifile_workbench_view(None, capabilities={}),
+            "details": _details_section(None, {}, {}),
+        }
+
+    capabilities = build_route_capabilities(state)
+    goal = _text(getattr(state, "goal", ""))
+    scope_plan = build_analysis_scope_plan(state, user_goal=goal)
+    confirmation = capabilities.get("confirmation_gate")
+    if not isinstance(confirmation, dict):
+        confirmation = {}
+    return {
+        "multifile_analysis": build_multifile_workbench_view(
+            state,
+            capabilities=capabilities,
+        ),
+        "details": _details_section(state, scope_plan, confirmation),
+    }
+
+
+def build_multifile_workbench_view(
+    state: Any,
+    *,
+    capabilities: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a read-only four-section Workbench model from existing state."""
 
     return {
         "data_understanding": _data_understanding_section(state),
         "relationships": _relationship_section(state),
-        "analysis_directions": _analysis_direction_section(state),
+        "analysis_directions": _analysis_direction_section(state, capabilities),
         "answer_coverage": _answer_coverage_section(state),
     }
 
@@ -53,12 +81,19 @@ def _relationship_section(state: Any) -> list[dict[str, Any]]:
             "confirmation_type": _text(item.get("confirmation_type")),
             "value": _text(item.get("value") or item.get("reason")),
             "risk": _text(item.get("risk") or item.get("risk_level")),
+            "evidence": _text_list(item.get("evidence"))[:4],
+            "uncertainties": _text_list(item.get("uncertainties"))[:4],
+            "diagnostic_only": True,
         })
     return relationships
 
 
-def _analysis_direction_section(state: Any) -> list[dict[str, Any]]:
-    capabilities = build_route_capabilities(state)
+def _analysis_direction_section(
+    state: Any,
+    capabilities: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if capabilities is None:
+        capabilities = build_route_capabilities(state)
     directions = []
     for item in _list_items(capabilities.get("executable")) + _list_items(capabilities.get("exploratory")):
         direction = _text(item.get("direction") or item.get("route"))
@@ -105,6 +140,52 @@ def _answer_coverage_section(state: Any) -> dict[str, Any]:
             if _text(item.get("claim"))
         ],
         "limitations": _flatten_limitations(evidence),
+    }
+
+
+def _details_section(
+    state: Any,
+    scope_plan: dict[str, Any],
+    confirmation: dict[str, Any],
+) -> dict[str, Any]:
+    file_decisions = _list_items(scope_plan.get("file_decisions"))
+    verification_reports = _list_attr(state, "verification_reports")
+    latest_verification = verification_reports[-1] if verification_reports else {}
+    return {
+        "scope": {
+            "goal": _text(scope_plan.get("goal")) or _text(getattr(state, "goal", "")),
+            "status": _text(scope_plan.get("scope_status")) or "ready",
+            "files": [
+                {
+                    "file_id": _text(item.get("file_id")),
+                    "dataset": _text(item.get("dataset")),
+                    "filename": _text(item.get("filename")),
+                    "assignment": _text(item.get("assignment")),
+                    "eligibility": _text(item.get("eligibility")),
+                    "reason": _text(item.get("reason")),
+                    "task_count": len(item.get("task_refs") or [])
+                    if isinstance(item.get("task_refs"), list)
+                    else 0,
+                }
+                for item in file_decisions
+            ],
+            "notes": _text_list(scope_plan.get("notes")),
+        },
+        "confirmation": {
+            "status": _text(confirmation.get("status")) or "clear",
+            "question": _text(confirmation.get("question")),
+            "blocking_reason": _text(confirmation.get("blocking_reason")),
+        },
+        "verification": {
+            "status": _text(
+                latest_verification.get("overall_status")
+                or latest_verification.get("status")
+            ) or "not_run",
+            "claim_count": _int_value(latest_verification.get("claim_count")),
+            "failed_count": _int_value(latest_verification.get("failed_count")),
+            "downgraded_count": _int_value(latest_verification.get("downgraded_count")),
+            "created_at": _text(latest_verification.get("created_at")),
+        },
     }
 
 

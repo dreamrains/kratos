@@ -387,7 +387,7 @@ def get_analysis_state(session_id: str):
 
 @sessions_bp.get("/sessions/<session_id>/trust")
 def get_session_trust_view(session_id: str):
-    """Return the read-only Trust Inspector view for a session."""
+    """Return the bounded, read-only Workbench view for a session."""
     from data_agent.agent.analysis_state import load_analysis_state
     from data_agent.agent.trust_view import build_trust_view
     from data_agent.config import get_config

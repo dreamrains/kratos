@@ -370,7 +370,7 @@ def test_english_business_requests_are_direct_analysis():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_controller_creates_workflow_tasks_for_direct_analysis(tmp_path):
+def test_controller_keeps_generated_legacy_spec_display_only(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -388,18 +388,17 @@ def test_controller_creates_workflow_tasks_for_direct_analysis(tmp_path):
         second_tasks = task_manager.list_for_scope(session_id="controller_workflow")
 
         assert state.analysis_spec is not None
-        assert state.analysis_spec.get("workflow_id")
-        assert len(first_tasks) == len(state.analysis_spec["method_plan"])
-        assert len(second_tasks) == len(first_tasks)
-        assert {t.get("analysis_spec_id") for t in first_tasks} == {state.analysis_spec["id"]}
-        assert "analysis.dimension_decomposition" in {t.get("required_capability") for t in first_tasks}
+        assert state.analysis_spec.get("contract_version") is None
+        assert state.analysis_spec.get("workflow_id") is None
+        assert first_tasks == []
+        assert second_tasks == []
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_playbook_analysis_spec_creates_workflow_tasks_with_capability(tmp_path):
+def test_playbook_legacy_analysis_spec_is_display_only(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -415,12 +414,13 @@ def test_playbook_analysis_spec_creates_workflow_tasks_with_capability(tmp_path)
         with use_agent_context(ctx):
             result = json.loads(record_analysis_spec(json.dumps(selection.analysis_spec)))
 
-        assert result["workflow"]["created"] >= 2
-        tasks = task_manager.list_for_scope(session_id="playbook_tasks")
-        capabilities = {t.get("required_capability") for t in tasks}
-        assert "analysis.forecast" in capabilities
-        assert "fallback.python" in capabilities
-        assert any(t.get("confirmation_policy", {}).get("requires_confirmation") for t in tasks)
+        assert result["workflow"] == {
+            "created": 0,
+            "task_ids": [],
+            "display_only": True,
+            "reason": "legacy_analysis_spec_display_only",
+        }
+        assert task_manager.list_for_scope(session_id="playbook_tasks") == []
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id

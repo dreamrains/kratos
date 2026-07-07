@@ -851,18 +851,29 @@ git commit -m "test: add analysis quality regression scenarios"
 ## Task 6: Phase 3 Workbench And Trust UX Simplification Review
 
 **Files:**
+- Create: `src/data_agent/agent/artifact_refs.py`
+- Modify: `src/data_agent/agent/analysis_entry.py`
+- Modify: `src/data_agent/agent/hypotheses.py`
+- Modify: `src/data_agent/agent/route_capabilities.py`
 - Modify: `src/data_agent/agent/trust_view.py`
 - Modify: `src/data_agent/agent/workbench_view.py`
 - Modify: `src/data_agent/web/templates/index.html`
+- Modify: `src/data_agent/web/static/css/app.css`
 - Modify: `src/data_agent/web/static/js/app.js`
+- Modify: `src/data_agent/web/blueprints/sessions.py`
 - Modify: `tests/test_trust_view.py`
+- Modify: `tests/test_trust_inspector_api.py`
 - Modify: `tests/test_trust_inspector_ui.py`
 - Modify: `tests/test_web_workbench_replacement.py`
+- Modify: `tests/test_web_overhaul.py`
+- Modify: `tests/test_multifile_regressions.py`
+- Modify: `tests/test_multifile_workbench_view.py`
+- Modify: `tests/test_stage3c0b_load_data_brief.py`
 - Create: `docs/superpowers/validation/2026-07-06-workbench-ux-review.md`
 
 Purpose: after Phase 1 and Phase 2 pass, simplify the clean Workbench replacement and remove any old Trust Inspector residue that does not improve analysis trust, verification, or debugging.
 
-- [ ] **Step 1: Audit Workbench fields**
+- [x] **Step 1: Audit Workbench fields**
 
 Run:
 
@@ -877,7 +888,7 @@ Categorize each field as:
 - current debugging or verification support;
 - removable duplicate.
 
-- [ ] **Step 2: Add tests for primary sections and drill-down**
+- [x] **Step 2: Add tests for primary sections and drill-down**
 
 Tests must assert:
 
@@ -886,11 +897,11 @@ Tests must assert:
 - route suggestions do not auto-submit;
 - Workbench does not expose raw artifact paths as primary text.
 
-- [ ] **Step 3: Simplify UI and view model**
+- [x] **Step 3: Simplify UI and view model**
 
 Remove duplicate front-panel sections and stale helper fields. Do not keep old UI just to preserve history; keep only current-value technical detail under an explicit secondary debug/details region.
 
-- [ ] **Step 4: Write UX review**
+- [x] **Step 4: Write UX review**
 
 Create `docs/superpowers/validation/2026-07-06-workbench-ux-review.md` recording:
 
@@ -900,7 +911,7 @@ Create `docs/superpowers/validation/2026-07-06-workbench-ux-review.md` recording
 - user tasks supported;
 - remaining caveats.
 
-- [ ] **Step 5: Run UI and API tests**
+- [x] **Step 5: Run UI and API tests**
 
 ```powershell
 $env:PYTHONPATH=(Resolve-Path 'src').Path
@@ -910,7 +921,7 @@ node -c src\data_agent\web\static\js\app.js
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/data_agent/agent/trust_view.py src/data_agent/agent/workbench_view.py src/data_agent/web/templates/index.html src/data_agent/web/static/js/app.js tests/test_trust_view.py tests/test_trust_inspector_ui.py tests/test_web_workbench_replacement.py docs/superpowers/validation/2026-07-06-workbench-ux-review.md

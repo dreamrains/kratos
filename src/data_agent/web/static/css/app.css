@@ -310,16 +310,11 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .workbench-panel {
     background: #fafaf9;
     border-left: 1px solid rgba(13, 148, 136, 0.08);
+    color: #44403c;
 }
 .dark .workbench-panel {
     background: #1c1917;
     border-left-color: rgba(45, 212, 191, 0.06);
-}
-
-.trust-inspector-panel {
-    color: #44403c;
-}
-.dark .trust-inspector-panel {
     color: #d6d3d1;
 }
 .session-side-tabs {
@@ -383,49 +378,6 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .dark .workbench-item {
     border-color: #292524;
     background: rgba(12, 10, 9, 0.24);
-}
-.trust-data-item,
-.trust-risk-item {
-    border: 1px solid #e7e5e4;
-    border-radius: 0.375rem;
-    background: rgba(255, 255, 255, 0.45);
-    overflow-wrap: anywhere;
-    padding: 0.5rem 0.625rem;
-}
-.dark .trust-data-item,
-.dark .trust-risk-item {
-    border-color: #292524;
-    background: rgba(12, 10, 9, 0.24);
-}
-.trust-route-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    overflow-wrap: anywhere;
-    border: 1px solid #e7e5e4;
-    border-radius: 0.375rem;
-    background: rgba(255, 255, 255, 0.5);
-    padding: 0.5rem 0.625rem;
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.trust-route-item:hover {
-    border-color: rgba(13, 148, 136, 0.45);
-    background: #f0fdfa;
-    box-shadow: inset 2px 0 0 #0d9488;
-}
-.trust-route-item:focus-visible {
-    outline: 2px solid rgba(20, 184, 166, 0.45);
-    outline-offset: 2px;
-}
-.dark .trust-route-item {
-    border-color: #292524;
-    background: rgba(12, 10, 9, 0.28);
-}
-.dark .trust-route-item:hover {
-    border-color: rgba(45, 212, 191, 0.45);
-    background: rgba(19, 78, 74, 0.3);
-    box-shadow: inset 2px 0 0 #2dd4bf;
 }
 .trust-help-btn {
     display: inline-flex;

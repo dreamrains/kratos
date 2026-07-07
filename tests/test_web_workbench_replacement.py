@@ -19,7 +19,7 @@ def test_current_panel_uses_multifile_workbench_as_primary_surface():
     assert "multifile-relationships" in html
     assert "multifile-analysis-directions" in html
     assert "multifile-answer-coverage" in html
-    assert "trustView.workbench.multifile_analysis" in html
+    assert html.count("workbench-primary-section") == 4
 
 
 def test_old_trust_technical_sections_are_not_primary_current_panel():
@@ -41,3 +41,26 @@ def test_multifile_workbench_helpers_read_new_view_model():
     assert "multifileAnalysisDirections()" in js
     assert "multifileAnswerCoverage()" in js
     assert "this.trustView?.workbench?.multifile_analysis" in js
+
+
+def test_secondary_details_support_validation_without_legacy_history_routes():
+    html = _index_html()
+    js = _app_js()
+
+    assert "data-testid=\"workbench-details\"" in html
+    assert "sessionSidePanelTab === 'details'" in html
+    assert "workbenchDetails()" in js
+    assert "workbenchScope()" in js
+    assert "workbenchVerification()" in js
+    assert "trustView.history" not in html
+    assert "selectTrustRoute" not in js
+    assert "historyRoutes" not in html
+
+
+def test_workbench_removes_trust_inspector_residue_and_raw_artifact_text():
+    html = _index_html()
+
+    assert "trust-inspector-panel" not in html
+    assert "Trust Inspector" not in html
+    assert 'x-text="art.path"' not in html
+    assert "art.description || art.type || '产出物'" in html

@@ -66,16 +66,11 @@ def test_method_confirmation_surfaces_an_answerable_question_across_trust_view()
 
     view = build_trust_view(state)
 
-    gate = view["recommendations"]["confirmation_gate"]
-    confirmations = view["workbench"]["confirmations"]
-    assert gate["status"] == "needs_confirmation"
-    assert gate["confirmation_type"] == "method_confirmation"
-    assert gate["question"] == "是否按未来 90 天收入与优惠成本评估省钱卡 ROI？"
-    assert gate["blocking_reason"] == "需要先确认评估周期和 ROI 口径。"
+    confirmations = view["workbench"]["details"]["confirmation"]
     assert confirmations == {
         "status": "needs_confirmation",
-        "question": gate["question"],
-        "blocking_reason": gate["blocking_reason"],
+        "question": "是否按未来 90 天收入与优惠成本评估省钱卡 ROI？",
+        "blocking_reason": "需要先确认评估周期和 ROI 口径。",
     }
     assert confirmations["question"].strip()
 
@@ -124,24 +119,14 @@ def test_orphan_relationship_flag_does_not_create_an_actionable_confirmation_gat
 
     view = build_trust_view(state)
 
-    assert view["file_relationships"][0]["requires_confirmation"] is True
-    assert view["recommendations"]["confirmation_gate"]["status"] == "clear"
-    assert view["workbench"]["confirmations"] == {
+    assert view["workbench"]["details"]["confirmation"] == {
         "status": "clear",
         "question": "",
         "blocking_reason": "",
     }
-    context = view["workbench"]["current_context"]
-    assert context["decision_files"] == []
-    assert not {
-        "included_files",
-        "unused_files",
-        "excluded_files",
-        "pending_files",
-        "assumptions",
-    }.intersection(context)
-    assert view["workbench"]["relationship_diagnostics"][0]["actionable"] is False
-    assert "active confirmation" in view["workbench"]["relationship_diagnostics"][0]["note"]
+    assert view["workbench"]["details"]["scope"]["files"] == []
+    relationship = view["workbench"]["multifile_analysis"]["relationships"][0]
+    assert relationship["diagnostic_only"] is True
 
 
 def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
@@ -149,24 +134,17 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
 
     view = build_trust_view(state)
 
-    assert view["active_scope"]["active_mode"] == "consulting"
-    assert view["recommendations"]["active_mode"] == "consulting"
-    assert view["recommendations"]["executable"] == []
-    assert view["workbench"]["current_context"] == {
+    assert view["status"] == "empty"
+    assert view["workbench"]["details"]["scope"] == {
         "goal": "",
-        "scope_status": "ready",
-        "file_decisions": [],
-        "eligible_files": [],
-        "used_files": [],
-        "available_files": [],
-        "not_needed_files": [],
-        "decision_files": [],
-        "unavailable_files": [],
+        "status": "ready",
+        "files": [],
         "notes": [],
     }
-    assert view["workbench"]["trust_evidence"] == {
+    assert view["workbench"]["details"]["verification"] == {
         "status": "not_run",
         "claim_count": 0,
         "failed_count": 0,
         "downgraded_count": 0,
+        "created_at": "",
     }

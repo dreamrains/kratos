@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
+from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import (
     empty_confirmation_gate,
     pending_confirmation_gate,
@@ -107,9 +106,9 @@ def build_route_capabilities(state: Any, limit: int = 4) -> dict[str, Any]:
     active_route = _text(scope.get("active_route"))
     active_mode = _active_mode(state, scope, active_dataset)
 
-    contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
-    routes = _hydrate_refs(_list_attr(state, "route_proposals"))
-    cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
+    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"))
+    routes = hydrate_refs(_list_attr(state, "route_proposals"))
+    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"))
     confirmation_gate = pending_confirmation_gate(state) or empty_confirmation_gate()
 
     if limit <= 0:
@@ -476,33 +475,6 @@ def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
-
-
-def _hydrate_refs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_hydrate_ref(item) for item in items]
-
-
-def _hydrate_ref(item: dict[str, Any]) -> dict[str, Any]:
-    artifact_path = _text(item.get("artifact_path"))
-    if not artifact_path:
-        return item
-    artifact = _read_json_artifact(artifact_path)
-    if not isinstance(artifact, dict):
-        return item
-    merged = dict(item)
-    merged.update(artifact)
-    return merged
-
-
-def _read_json_artifact(artifact_path: str) -> dict[str, Any] | None:
-    try:
-        path = Path(artifact_path)
-        if path.suffix.lower() != ".json" or not path.is_file():
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
 
 
 def _cleaning_decisions(log: dict[str, Any]) -> list[dict[str, Any]]:

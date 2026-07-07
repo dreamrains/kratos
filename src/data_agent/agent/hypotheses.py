@@ -7,14 +7,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-from data_agent.agent.trust_view import _hydrate_refs
+from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.config import get_config
 
 
 def build_hypothesis_set(user_input: str, entry_decision: Any, state: Any) -> dict[str, Any]:
     """Build a deterministic hypothesis set from entry routing and trust state."""
     decision = entry_decision if isinstance(entry_decision, dict) else {}
-    contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
+    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"))
     dataset = _text(decision.get("dataset")) or _first_dataset(contracts)
     route = _text(decision.get("route"))
     if not route and _text(decision.get("decision")) == "request_data":
@@ -59,7 +59,7 @@ def persist_hypothesis_set(session_id: str, hypothesis_set: dict[str, Any]) -> d
 
 def hydrate_hypothesis_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Hydrate compact hypothesis refs from their JSON artifacts."""
-    return _hydrate_refs(refs)
+    return hydrate_refs(refs)
 
 
 def update_hypotheses_from_evidence(

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
 from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
-from data_agent.agent.trust_view import _hydrate_refs
 
 
 _RETENTION_KEYWORDS = ("retention", "cohort", "\u7559\u5b58")
@@ -30,8 +30,8 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             confirmation_gate=gate,
         )
 
-    contracts = _hydrate_refs(_list_attr(state, "dataset_contracts"))
-    raw_routes = _hydrate_refs(_list_attr(state, "route_proposals"))
+    contracts = hydrate_refs(_list_attr(state, "dataset_contracts"))
+    raw_routes = hydrate_refs(_list_attr(state, "route_proposals"))
     active_dataset = _active_dataset(state)
     scoped_contracts = _filter_by_dataset(contracts, active_dataset)
     capability_model = _route_capabilities(state)
@@ -50,7 +50,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             routes = raw_routes
         else:
             routes = capability_routes
-    cleaning_logs = _hydrate_refs(_list_attr(state, "cleaning_logs"))
+    cleaning_logs = hydrate_refs(_list_attr(state, "cleaning_logs"))
 
     blocked = _blocked_contract(scoped_contracts)
     if blocked:

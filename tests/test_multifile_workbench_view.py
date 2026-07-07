@@ -48,6 +48,8 @@ def _state_with_multifile_context() -> AnalysisSessionState:
         "status": "proposed",
         "relationship_status": "diagnostic_only",
         "requires_confirmation": False,
+        "evidence": ["shared user_id"],
+        "uncertainties": ["different time windows"],
     }]
     state.evidence_records = [{
         "id": "ev_gmv",
@@ -78,6 +80,9 @@ def test_multifile_workbench_view_has_four_user_value_sections():
     }
     assert view["analysis_directions"][0]["source"] == "route_capabilities"
     assert view["answer_coverage"]["evidence_count"] == 1
+    assert view["relationships"][0]["evidence"] == ["shared user_id"]
+    assert view["relationships"][0]["uncertainties"] == ["different time windows"]
+    assert view["relationships"][0]["diagnostic_only"] is True
     rendered = json.dumps(view, ensure_ascii=False)
     assert "artifact_path" not in rendered
     assert "scheduler" not in rendered.lower()
@@ -89,3 +94,21 @@ def test_trust_view_embeds_multifile_workbench_read_model():
     view = build_trust_view(_state_with_multifile_context())
 
     assert view["workbench"]["multifile_analysis"]["data_understanding"]["datasets"][0]["dataset"] == "orders"
+
+
+def test_trust_view_exposes_only_workbench_and_bounded_validation_details():
+    from data_agent.agent.trust_view import build_trust_view
+
+    view = build_trust_view(_state_with_multifile_context())
+
+    assert set(view) == {"status", "session_id", "updated_at", "workbench"}
+    assert set(view["workbench"]) == {"multifile_analysis", "details"}
+    assert set(view["workbench"]["details"]) == {
+        "scope",
+        "confirmation",
+        "verification",
+    }
+    rendered = json.dumps(view, ensure_ascii=False)
+    assert "artifact_path" not in rendered
+    assert "evidence_signature" not in rendered
+    assert "task_refs" not in rendered

@@ -115,6 +115,6 @@ def test_trust_view_exposes_latest_user_data_brief():
 
     view = build_trust_view(state)
 
-    brief = view["workbench"]["user_data_brief"]
+    brief = view["workbench"]["multifile_analysis"]["data_understanding"]
     assert brief["bundle_id"] == bundle["id"]
     assert brief["datasets"][0]["dataset"] == "orders"

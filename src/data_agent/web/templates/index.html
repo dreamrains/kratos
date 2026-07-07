@@ -497,11 +497,11 @@
     </main>
 
     <!-- Workbench Panel -->
-    <aside class="hidden xl:flex shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel trust-inspector-panel flex-col transition-all duration-200"
+    <aside class="hidden xl:flex shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col transition-all duration-200"
            :class="trustInspectorCollapsed ? 'w-14' : 'w-[22rem]'">
         <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
             <div x-show="!trustInspectorCollapsed" x-transition.opacity>
-                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">会话侧栏</p>
+                <p class="text-sm font-medium text-stone-800 dark:text-stone-200">分析工作台</p>
                 <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
@@ -519,7 +519,7 @@
                 <button x-show="!trustInspectorCollapsed" @click="loadAnalysisState(); loadTrustView(); loadSessionArtifacts(); loadTasks()" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" title="Refresh">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6M20 20v-6h-6M5 19a9 9 0 0014-3M19 5A9 9 0 005 8"/></svg>
                 </button>
-                <button @click="trustInspectorCollapsed = !trustInspectorCollapsed" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" :title="trustInspectorCollapsed ? 'Expand Trust Inspector' : 'Collapse Trust Inspector'">
+                <button @click="trustInspectorCollapsed = !trustInspectorCollapsed" class="p-1.5 rounded-lg hover:bg-stone-200/60 dark:hover:bg-stone-800 text-stone-400 transition-colors" :title="trustInspectorCollapsed ? '展开工作台' : '收起工作台'">
                     <svg x-show="!trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
                     <svg x-show="trustInspectorCollapsed" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
                 </button>
@@ -529,28 +529,16 @@
         <div class="flex-1 overflow-y-auto p-4 space-y-5" x-show="!trustInspectorCollapsed" x-transition.opacity>
             <div class="session-side-tabs">
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'current' }" @click="sessionSidePanelTab = 'current'">当前分析</button>
-                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'history' }" @click="sessionSidePanelTab = 'history'">数据与历史</button>
+                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'details' }" @click="sessionSidePanelTab = 'details'">验证详情</button>
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'outputs' }" @click="sessionSidePanelTab = 'outputs'">产出与导出</button>
             </div>
-
-            <!-- Workbench primary view -->
-            <section class="trust-section workbench-primary-section" x-show="sessionSidePanelTab === 'current'">
-                <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Workbench</h3>
-                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? 'Loading' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
-                </div>
-                <p x-show="trustLoading" class="text-xs text-stone-400">Loading session context...</p>
-                <p x-show="trustError" class="text-xs text-red-500" x-text="trustError"></p>
-                <p x-show="!trustLoading && !trustError && (!trustView || trustView.status === 'empty')" class="text-xs text-stone-400">No workbench context yet.</p>
-                <p x-show="trustView && trustView.updated_at" class="text-[10px] text-stone-400 truncate" x-text="'Updated ' + trustView.updated_at"></p>
-                <span class="hidden" x-text="trustView.workbench.multifile_analysis"></span>
-            </section>
 
             <section class="trust-section workbench-primary-section" data-testid="multifile-data-understanding" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
                     <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Data Understanding</h3>
-                    <span class="text-[10px] text-stone-400" x-text="(multifileDataUnderstanding().datasets || []).length"></span>
+                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? 'Loading' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
                 </div>
+                <p x-show="trustError" class="text-xs text-red-500 mb-2" x-text="trustError"></p>
                 <div class="space-y-1.5">
                     <template x-for="(dataset, di) in (multifileDataUnderstanding().datasets || [])" :key="dataset.dataset || di">
                         <div class="workbench-item">
@@ -561,6 +549,12 @@
                             <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="dataset.grain || 'Grain not identified'"></p>
                             <p x-show="dataset.columns && dataset.columns.length" class="text-[10px] text-stone-400 truncate mt-1" x-text="dataset.columns.map((column) => column.name || column).join(', ')"></p>
                         </div>
+                    </template>
+                    <template x-for="(quality, qi) in (multifileDataUnderstanding().quality_findings || [])" :key="quality.id || quality.finding || qi">
+                        <p class="text-[10px] text-amber-700 dark:text-amber-300" x-text="quality.finding || quality.message || quality"></p>
+                    </template>
+                    <template x-for="(constraint, ci) in (multifileDataUnderstanding().analysis_constraints || [])" :key="constraint.id || constraint.constraint || ci">
+                        <p class="text-[10px] text-stone-500 dark:text-stone-400" x-text="constraint.constraint || constraint.message || constraint"></p>
                     </template>
                     <p x-show="!trustLoading && !trustError && (!multifileDataUnderstanding().datasets || multifileDataUnderstanding().datasets.length === 0)" class="text-xs text-stone-400 py-1">No data understanding brief yet.</p>
                 </div>
@@ -618,73 +612,62 @@
                     <template x-for="(claim, ci) in (multifileAnswerCoverage().covered_claims || [])" :key="claim.claim || ci">
                         <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="claim.claim"></p>
                     </template>
+                    <template x-for="(limitation, li) in (multifileAnswerCoverage().limitations || [])" :key="limitation.id || limitation.limitation || li">
+                        <p class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="limitation.limitation || limitation.message || limitation"></p>
+                    </template>
                     <p x-show="!multifileAnswerCoverage().covered_claims || multifileAnswerCoverage().covered_claims.length === 0" class="text-[10px] text-stone-400 mt-1">No supported claims yet.</p>
                 </div>
             </section>
 
-            <!-- Trust Inspector -->
-
-            <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
-                <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史数据</h3>
-                    <span x-show="trustView && trustView.history && trustView.history.datasets && trustView.history.datasets.length" class="text-[10px] text-stone-400" x-text="trustView.history.datasets.length"></span>
-                </div>
-                <div class="space-y-1.5">
-                    <template x-for="(dataset, hdi) in ((trustView && trustView.history && trustView.history.datasets) || [])" :key="dataset.dataset || hdi">
-                        <div class="trust-data-item">
-                            <div class="flex items-center justify-between gap-2">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="dataset.dataset"></p>
-                                <span class="trust-pill" :class="trustStatusClass(dataset.quality_status || 'unknown')" x-text="trustStatusLabel(dataset.quality_status || 'unknown')"></span>
-                            </div>
-                            <p class="text-[10px] text-stone-400 mt-1">
-                                <span x-text="dataset.rows"></span> 行 - <span x-text="dataset.columns"></span> 列
-                            </p>
-                        </div>
-                    </template>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.history || !trustView.history.datasets || trustView.history.datasets.length === 0)" class="text-xs text-stone-400 py-1">暂无历史数据。</p>
-                </div>
-            </section>
-
-            <section class="trust-section" x-show="sessionSidePanelTab === 'history'">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-1.5">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">历史路线</h3>
-                        <button type="button" class="trust-help-btn" @click="trustHelpOpen = trustHelpOpen === 'historyRoutes' ? '' : 'historyRoutes'">?</button>
+            <div data-testid="workbench-details" x-show="sessionSidePanelTab === 'details'" class="space-y-5">
+                <section class="trust-section">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">分析范围</h3>
+                        <span class="trust-pill" :class="trustStatusClass(workbenchScope().status || 'ready')" x-text="trustStatusLabel(workbenchScope().status || 'ready')"></span>
                     </div>
-                    <span x-show="trustView && trustView.history && trustView.history.routes && trustView.history.routes.length" class="text-[10px] text-stone-400" x-text="trustView.history.routes.length"></span>
-                </div>
-                <p x-show="trustHelpOpen === 'historyRoutes'" class="trust-help-popover" x-text="trustHelpText('historyRoutes')"></p>
-                <div class="space-y-1.5">
-                    <template x-for="(route, hri) in visibleListItems('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6)" :key="route.id || hri">
-                        <div class="trust-route-item">
-                            <div class="flex items-start gap-2">
-                                <button type="button" class="min-w-0 flex-1 text-left" @click="selectTrustRoute(route)">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="route.label || route.direction"></span>
-                                        <span class="text-[10px] text-stone-400 shrink-0" x-text="formatRouteBudgetLabel(route.budget_level)"></span>
-                                    </div>
-                                    <p class="text-[10px] text-stone-500 dark:text-stone-400 truncate mt-1" x-text="formatRouteReason(route)"></p>
-                                    <p x-show="formatRouteLimitations(route)" class="text-[10px] text-stone-400 truncate mt-1" x-text="formatRouteLimitations(route)"></p>
-                                </button>
-                                <button type="button" class="trust-help-btn shrink-0" @click.stop="trustHelpOpen = trustHelpOpen === ('history-route-help-' + (route.id || hri)) ? '' : ('history-route-help-' + (route.id || hri))">?</button>
+                    <p x-show="workbenchScope().goal" class="text-xs text-stone-600 dark:text-stone-300 mb-2" x-text="workbenchScope().goal"></p>
+                    <div class="space-y-1.5">
+                        <template x-for="(file, fi) in (workbenchScope().files || [])" :key="file.file_id || fi">
+                            <div class="workbench-item">
+                                <div class="flex items-center justify-between gap-2">
+                                    <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.dataset || file.filename || file.file_id"></p>
+                                    <span class="text-[10px] text-stone-400" x-text="trustStatusLabel(file.assignment || file.eligibility || 'unknown')"></span>
+                                </div>
+                                <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="file.reason || 'No scope note.'"></p>
                             </div>
-                            <p x-show="trustHelpOpen === ('history-route-help-' + (route.id || hri))" class="trust-help-popover trust-route-detail mt-2" x-text="trustRouteHelpText(route)"></p>
-                        </div>
-                    </template>
-                    <div x-show="trustView && trustView.history && trustView.history.routes && trustView.history.routes.length > 6" class="flex items-center justify-between gap-2 pt-1">
-                        <button type="button"
-                                x-show="hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6) > 0"
-                                class="text-[10px] text-brand-600 dark:text-brand-300 hover:underline"
-                                @click="showMoreListItems('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6, 6)"
-                                x-text="'再展示 ' + Math.min(6, hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6)) + ' 个'"></button>
-                        <button type="button"
-                                x-show="hiddenListCount('historyRoutes', ((trustView && trustView.history && trustView.history.routes) || []), 6) === 0"
-                                class="text-[10px] text-stone-500 dark:text-stone-400 hover:underline"
-                                @click="collapseListItems('historyRoutes')">收起</button>
+                        </template>
+                        <p x-show="!workbenchScope().files || workbenchScope().files.length === 0" class="text-xs text-stone-400 py-1">暂无文件范围决策。</p>
                     </div>
-                    <p x-show="!trustLoading && !trustError && (!trustView || !trustView.history || !trustView.history.routes || trustView.history.routes.length === 0)" class="text-xs text-stone-400 py-1">暂无历史路线。</p>
-                </div>
-            </section>
+                </section>
+
+                <section class="trust-section">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">确认与验证</h3>
+                        <span class="trust-pill" :class="trustStatusClass(workbenchVerification().status || 'not_run')" x-text="trustStatusLabel(workbenchVerification().status || 'not_run')"></span>
+                    </div>
+                    <div class="workbench-item">
+                        <p class="text-xs text-stone-600 dark:text-stone-300">
+                            <span x-text="workbenchVerification().claim_count || 0"></span> claims /
+                            <span x-text="workbenchVerification().failed_count || 0"></span> failed /
+                            <span x-text="workbenchVerification().downgraded_count || 0"></span> downgraded
+                        </p>
+                        <p x-show="workbenchConfirmation().status === 'needs_confirmation'" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="workbenchConfirmation().question || workbenchConfirmation().blocking_reason"></p>
+                    </div>
+                </section>
+
+                <section class="trust-section" x-show="multifileRelationships().length">
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">关系依据</h3>
+                    <div class="space-y-1.5">
+                        <template x-for="(relationship, rdi) in multifileRelationships()" :key="relationship.id || rdi">
+                            <div class="workbench-item">
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="(relationship.file_ids || []).join(' / ') || relationship.id"></p>
+                                <p x-show="relationship.evidence && relationship.evidence.length" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'依据：' + relationship.evidence.join('；')"></p>
+                                <p x-show="relationship.uncertainties && relationship.uncertainties.length" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="'不确定性：' + relationship.uncertainties.join('；')"></p>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+            </div>
 
             <!-- Conversation Export -->
             <div x-show="sessionSidePanelTab === 'outputs'">
@@ -709,10 +692,9 @@
                     <template x-for="(art, ai) in sessionArtifacts" :key="ai">
                         <a :href="artifactUrl(art.path)" target="_blank" class="block rounded-md px-2.5 py-2 hover:bg-stone-100 dark:hover:bg-stone-800 group/art transition-colors">
                             <div class="flex items-center justify-between">
-                                <p class="text-xs text-stone-700 dark:text-stone-300 truncate flex-1" x-text="art.description || art.type || art.path"></p>
+                                <p class="text-xs text-stone-700 dark:text-stone-300 truncate flex-1" x-text="art.description || art.type || '产出物'"></p>
                                 <svg class="w-3 h-3 text-stone-300 group-hover/art:text-brand-500 shrink-0 ml-1 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                             </div>
-                            <p class="text-[10px] text-stone-400 truncate mt-0.5" x-text="art.path"></p>
                         </a>
                     </template>
                     <p x-show="sessionArtifacts.length === 0" class="text-xs text-stone-400 py-4 text-center">暂无产出物</p>

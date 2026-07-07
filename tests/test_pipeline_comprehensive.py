@@ -39,18 +39,25 @@ def env(tmp_path):
     from data_agent.config import AgentConfig
     from data_agent.session.workspace import Workspace
     from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
+    from data_agent.session.task_manager import task_manager
 
     old = config._config
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
     config._config = AgentConfig(
         PROJECT_DIR=tmp_path / "project",
         SESSIONS_DIR=tmp_path / "sessions",
     )
+    task_manager._dir = tmp_path / "tasks"
+    task_manager.reset_for_testing()
     ws = Workspace()
     ctx = AgentContext(session_id="pipeline_test", workspace=ws)
     token = set_current_context(ctx)
     yield ws, ctx, tmp_path
     reset_current_context(token)
     config._config = old
+    task_manager._dir = old_task_dir
+    task_manager._next_id_val = old_next_id
 
 
 def _game_df(rows=200, seed=42):
@@ -685,24 +692,56 @@ class TestAnalysisFlowTools:
         assert "saved" in r2 or "error" not in r2.lower()
 
         # 3. Plan
+        _, ctx, _ = env
+        ctx.analysis_state.dataset_contracts.append({
+            "id": "duc_main",
+            "dataset": "main",
+            "quality_status": "ready",
+        })
         plan = json.dumps({
+            "contract_version": "stage3c0b.v1",
             "goal": "省钱卡效果评估",
-            "method_plan": [{"step": "计算ARPU"}, {"step": "统计检验"}],
+            "method_plan": [{
+                "step_id": "step_arpu",
+                "goal": "计算并检验省钱卡 ARPU 变化",
+                "dataset_inputs": ["main"],
+                "combination_mode": "independent",
+                "expected_output": "ARPU 变化 EvidenceRecord",
+                "evidence_requirements": ["ARPU change", "sample size", "limitations"],
+            }],
             "visualization_strategy": "对比图",
         })
         r3 = record_analysis_plan(plan)
         assert "saved" in r3 or "error" not in r3.lower()
+        plan_id = json.loads(r3)["analysis_plan_id"]
 
         # 4. Evidence (with auto-limitations)
         evidence = json.dumps({
+            "plan_id": plan_id,
+            "step_id": "step_arpu",
+            "claim_key": "arpu_change",
             "claim": "省钱卡使用户付费增加10%",
             "dataset": "main",
+            "dataset_contract_id": "duc_main",
             "method": "compare_periods before_after",
             "tool_calls": ["compare_periods"],
             "result_summary": "ARPU变化+10%",
             "limitations": ["仅对比30天"],
             "confidence": "medium",
             "sample_size": 63,
+            "evidence_requirement": "ARPU change with sample and limitations",
+            "measurements": [{
+                "metric": "ARPU change",
+                "definition": "post-period ARPU versus pre-period ARPU",
+                "value": 0.1,
+                "unit": "ratio",
+                "grain": "user-period",
+                "population_scope": "savings-card users",
+                "time_scope": "30 days before and after purchase",
+                "method": "descriptive period comparison",
+                "denominator": "eligible savings-card users",
+                "limitations": ["no comparable control group"],
+            }],
         })
         r4 = record_evidence_record(evidence)
         parsed = json.loads(r4)

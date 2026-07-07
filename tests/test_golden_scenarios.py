@@ -176,6 +176,13 @@ def assert_task_workflow(result: ScenarioResult, *, min_tasks: int, node_types: 
         assert node_types <= present
 
 
+def assert_legacy_spec_is_display_only(result: ScenarioResult):
+    assert result.state.analysis_spec is not None
+    assert result.state.analysis_spec.get("contract_version") is None
+    workflow_tasks = [t for t in result.tasks if t.get("workflow_id") or t.get("node_type")]
+    assert workflow_tasks == []
+
+
 def assert_tool_trace(result: ScenarioResult, *, includes: set[str]):
     names = {trace.name for trace in result.traces}
     assert includes <= names
@@ -384,11 +391,10 @@ def test_golden_revenue_decline_attribution(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_task_workflow(result, min_tasks=3, node_types={"analysis"})
-    assert any(t.get("required_capability") == "analysis.dimension_decomposition" for t in result.tasks)
+    assert_legacy_spec_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["paid channel", "descriptive attribution"], confidence="medium")
-    task_text = json.dumps(result.tasks, ensure_ascii=False).lower()
+    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
     for term in ("compare", "decompose", "exclude"):
         assert term in task_text
     assert_final_boundary(result, ["limitation", "confidence"])
@@ -400,10 +406,9 @@ def test_golden_funnel_conversion_analysis(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_task_workflow(result, min_tasks=2, node_types={"analysis", "evidence"})
-    assert any(t.get("required_capability") == "analysis.funnel" for t in result.tasks)
+    assert_legacy_spec_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["signup to trial", "aggregate"], confidence="medium")
-    task_text = json.dumps(result.tasks, ensure_ascii=False).lower()
-    assert "funnel_analysis" in task_text
+    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
+    assert "analysis.funnel" in task_text
     assert_final_boundary(result, ["limitation", "confidence"])
