@@ -97,6 +97,7 @@ class SuspendedForConfirmation:
     confirmation_id: str = ""
     version: int = 1
     multi_select: bool = False
+    allow_free_text: bool = True
     confirmation_type: str = ""
     blocking_reason: str = ""
     state_updates: str = ""
@@ -125,6 +126,7 @@ class SuspensionManager:
             "context": suspension.context,
             "snapshot": suspension.snapshot,
             "multi_select": suspension.multi_select,
+            "allow_free_text": suspension.allow_free_text,
             "confirmation_type": suspension.confirmation_type,
             "blocking_reason": suspension.blocking_reason,
             "state_updates": suspension.state_updates,
@@ -147,6 +149,7 @@ class SuspensionManager:
             confirmation_id=data.get("confirmation_id", data["suspension_id"]),
             version=int(data.get("version") or 1),
             multi_select=bool(data.get("multi_select", False)),
+            allow_free_text=bool(data.get("allow_free_text", True)),
             confirmation_type=data.get("confirmation_type", ""),
             blocking_reason=data.get("blocking_reason", ""),
             state_updates=data.get("state_updates", ""),
@@ -1432,6 +1435,7 @@ class AgentLoop:
             "options": susp.options,
             "context": susp.context,
             "multi_select": susp.multi_select,
+            "allow_free_text": susp.allow_free_text,
             "confirmation_type": susp.confirmation_type,
             "blocking_reason": susp.blocking_reason,
             "related_task_id": susp.related_task_id,
@@ -2026,12 +2030,17 @@ class AgentLoop:
             yield {
                 "type": "suspended",
                 "suspension_id": required_question.suspension_id,
+                "confirmation_id": required_question.confirmation_id or required_question.suspension_id,
+                "version": required_question.version,
                 "question": required_question.question,
                 "options": required_question.options,
                 "context": required_question.context,
                 "multi_select": required_question.multi_select,
+                "allow_free_text": required_question.allow_free_text,
                 "confirmation_type": required_question.confirmation_type,
                 "blocking_reason": required_question.blocking_reason,
+                "related_task_id": required_question.related_task_id,
+                "related_spec_id": required_question.related_spec_id,
             }
             return
 

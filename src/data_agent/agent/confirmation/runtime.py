@@ -11,6 +11,7 @@ from data_agent.agent.confirmation.models import (
     ConfirmationContractError,
     ConfirmationOption,
     ConfirmationRecord,
+    FREE_TEXT_ANSWER_ACTIONS,
     QuestionCandidate,
 )
 from data_agent.agent.confirmation_policy import (
@@ -137,11 +138,28 @@ def confirmation_record_to_suspended_event(record: ConfirmationRecord) -> dict[s
         "options": [option.to_dict() for option in record.options],
         "context": str(params.get("context") or ""),
         "multi_select": record.answer_mode == AnswerMode.MULTI_SELECT,
+        "allow_free_text": _allows_free_text(record),
         "confirmation_type": str(params.get("confirmation_type") or ""),
         "blocking_reason": record.decision_impact,
         "related_task_id": int(params.get("related_task_id") or 0),
         "related_spec_id": str(params.get("related_spec_id") or ""),
     }
+
+
+def _allows_free_text(record: ConfirmationRecord) -> bool:
+    """Whether the UI may offer a free-text answer for this confirmation.
+
+    True for FREE_TEXT questions and for SINGLE_SELECT / MULTI_SELECT questions
+    whose answer is only recorded (e.g. ask_user_question). False for
+    state-driving selects (set_analysis_stage / confirm_method / ...), whose
+    action needs specific option values. Kept consistent with
+    service._validate_answer via the shared FREE_TEXT_ANSWER_ACTIONS set.
+    """
+    if record.answer_mode == AnswerMode.FREE_TEXT:
+        return True
+    if record.resolution_action in FREE_TEXT_ANSWER_ACTIONS:
+        return record.answer_mode in (AnswerMode.SINGLE_SELECT, AnswerMode.MULTI_SELECT)
+    return False
 
 
 def confirmation_record_to_session_payload(record: ConfirmationRecord) -> dict[str, Any]:
@@ -196,6 +214,7 @@ def confirmation_record_to_loop_result(
             ensure_ascii=False,
         ),
         multi_select=event["multi_select"],
+        allow_free_text=event["allow_free_text"],
         confirmation_type=event["confirmation_type"],
         blocking_reason=event["blocking_reason"],
         related_task_id=event["related_task_id"],

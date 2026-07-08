@@ -173,6 +173,95 @@ def test_invalid_option_keeps_question_suspended(tmp_path):
     assert calls == []
 
 
+def test_record_only_single_select_accepts_free_text_answer(tmp_path):
+    """ask_user_question-style confirmations accept a custom free-text answer,
+    mirroring the CLI "或直接输入回答" affordance. Regression for the web error
+    "answer must match one available option" when a user types instead of picking
+    an option. Only record-only actions allow this; state-driving actions stay strict.
+    """
+    from data_agent.agent.confirmation.runtime import build_action_registry
+
+    sequence = iter(range(1, 1000))
+    service = ConfirmationService(
+        tmp_path,
+        action_registry=build_action_registry(),
+        clock=lambda: "2026-06-21T00:00:00Z",
+        id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
+    )
+    service.request(
+        _candidate(resolution_action="record_confirmation_answer", skippable=True)
+    )
+    active = service.checkpoint("session_1")
+
+    resolved = service.respond(
+        "session_1",
+        active.confirmation_id,
+        answer="我直接把链接发给你",  # free text, not a predefined option value
+        expected_version=active.version,
+        idempotency_key="answer_1",
+    )
+
+    assert resolved.status == ConfirmationStatus.RESOLVED
+    assert resolved.response == "我直接把链接发给你"
+
+
+def test_record_only_multi_select_accepts_free_text_answer(tmp_path):
+    """MULTI_SELECT record-only confirmations accept custom free-text answers
+    (parity with single-select and the CLI). State-driving multi-select must
+    keep requiring exact option values."""
+    from data_agent.agent.confirmation.runtime import build_action_registry
+
+    sequence = iter(range(1, 1000))
+    service = ConfirmationService(
+        tmp_path,
+        action_registry=build_action_registry(),
+        clock=lambda: "2026-06-21T00:00:00Z",
+        id_factory=lambda prefix: f"{prefix}_{next(sequence)}",
+    )
+    service.request(
+        _candidate(
+            answer_mode=AnswerMode.MULTI_SELECT,
+            resolution_action="record_confirmation_answer",
+            skippable=True,
+        )
+    )
+    active = service.checkpoint("session_1")
+
+    resolved = service.respond(
+        "session_1",
+        active.confirmation_id,
+        answer=["我直接发链接", "另外补充一条说明"],  # not predefined option values
+        expected_version=active.version,
+        idempotency_key="answer_1",
+    )
+
+    assert resolved.status == ConfirmationStatus.RESOLVED
+    assert resolved.response == ["我直接发链接", "另外补充一条说明"]
+
+
+def test_state_driving_multi_select_rejects_free_text_answer(tmp_path):
+    """State-driving MULTI_SELECT confirmations stay strict: an answer with a
+    non-option value is rejected (no silent no-op on the state update)."""
+    service, _, _ = _service(tmp_path)
+    service.request(
+        _candidate(
+            answer_mode=AnswerMode.MULTI_SELECT,
+            resolution_action="choose_metric",
+            skippable=True,
+        )
+    )
+    active = service.checkpoint("session_1")
+
+    with pytest.raises(ConfirmationAnswerError):
+        service.respond(
+            "session_1",
+            active.confirmation_id,
+            answer=["revenue", "anything not an option"],
+            expected_version=active.version,
+            idempotency_key="answer_1",
+        )
+
+
 def test_skip_requires_explicit_permission(tmp_path):
     service, _, _ = _service(tmp_path)
     service.request(_candidate())

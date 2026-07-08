@@ -139,6 +139,109 @@ def test_free_text_candidate_uses_free_text_mode_without_options():
     assert candidate.options == ()
 
 
+def _suspended_event_for(request, *, source, operation):
+    from data_agent.agent.confirmation.models import (
+        ConfirmationRecord,
+        ConfirmationRequest,
+    )
+    from data_agent.agent.confirmation.runtime import (
+        build_required_question_candidate,
+        confirmation_record_to_suspended_event,
+    )
+
+    candidate = build_required_question_candidate(
+        session_id="session_1",
+        turn_id="turn_1",
+        message_version=1,
+        request=request,
+        source=source,
+        operation=operation,
+    )
+    record = ConfirmationRecord.from_request(
+        ConfirmationRequest.from_candidate(candidate),
+        now="2026-07-08T00:00:00Z",
+    )
+    return confirmation_record_to_suspended_event(record)
+
+
+def test_suspended_event_reports_free_text_availability():
+    """allow_free_text must mirror service._validate_answer: True for
+    ask_user_question (record-only) and FREE_TEXT questions, False for
+    state-driving single selects so the web UI hides the free-text box there."""
+    from data_agent.agent.confirmation.models import (
+        ConfirmationRecord,
+        ConfirmationRequest,
+    )
+    from data_agent.agent.confirmation.runtime import (
+        build_direct_question_candidate,
+        confirmation_record_to_suspended_event,
+    )
+
+    def event_for_direct(request):
+        candidate = build_direct_question_candidate(
+            session_id="session_1",
+            turn_id="turn_1",
+            message_version=1,
+            request=request,
+        )
+        record = ConfirmationRecord.from_request(
+            ConfirmationRequest.from_candidate(candidate),
+            now="2026-07-08T00:00:00Z",
+        )
+        return confirmation_record_to_suspended_event(record)
+
+    # ask_user_question with options → record-only → free text allowed
+    direct_event = event_for_direct(
+        UserConfirmationRequired(
+            question="你手头的数据是什么格式？",
+            options=[{"label": "CSV", "value": "csv"}, {"label": "聊聊", "value": "chat"}],
+        )
+    )
+    assert direct_event["allow_free_text"] is True
+    assert direct_event["multi_select"] is False
+
+    # ask_user_question multi_select → record-only → free text allowed
+    multi_event = event_for_direct(
+        UserConfirmationRequired(
+            question="想关注哪些维度？",
+            options=[{"label": "收入", "value": "revenue"}, {"label": "留存", "value": "retention"}],
+            multi_select=True,
+        )
+    )
+    assert multi_event["allow_free_text"] is True
+    assert multi_event["multi_select"] is True
+
+    # FREE_TEXT question (no options) → free text allowed
+    free_text_event = event_for_direct(
+        UserConfirmationRequired(question="描述业务规则", options=[])
+    )
+    assert free_text_event["allow_free_text"] is True
+
+    # state-driving single select (stage) → free text NOT allowed
+    stage_event = _suspended_event_for(
+        UserConfirmationRequired(
+            question="确认分析阶段？",
+            options=[{"label": "范围", "value": "scope"}],
+            state_updates='{"stage": "scope"}',
+        ),
+        source="analysis_plan",
+        operation="scope_confirmation",
+    )
+    assert stage_event["allow_free_text"] is False
+
+    # state-driving single select (method) → free text NOT allowed
+    method_event = _suspended_event_for(
+        UserConfirmationRequired(
+            question="确认方法？",
+            options=[{"label": "确认方法", "value": "confirm_method"}],
+            state_updates='{"method_confirmation": {"analysis_spec_id": "spec_1"}}',
+        ),
+        source="method_playbook",
+        operation="method_confirmation",
+    )
+    assert method_event["allow_free_text"] is False
+
+
 def test_free_text_candidate_rejects_missing_question():
     from data_agent.agent.confirmation.runtime import build_direct_question_candidate
 

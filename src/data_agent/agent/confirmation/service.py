@@ -21,6 +21,7 @@ from data_agent.agent.confirmation.models import (
     ConfirmationRecord,
     ConfirmationRequest,
     ConfirmationStatus,
+    FREE_TEXT_ANSWER_ACTIONS,
     QuestionCandidate,
 )
 from data_agent.agent.confirmation.policy import (
@@ -443,18 +444,35 @@ class ConfirmationService:
     def _validate_answer(record: ConfirmationRecord, answer: Any) -> Any:
         values = {option.value for option in record.options}
         if record.answer_mode == AnswerMode.SINGLE_SELECT:
-            if not isinstance(answer, str) or answer not in values:
-                raise ConfirmationAnswerError("answer must match one available option")
-            return answer
+            if isinstance(answer, str) and answer in values:
+                return answer
+            # Record-only confirmations (e.g. ask_user_question) accept a custom
+            # free-text answer, matching the CLI / web "type your own answer"
+            # affordance. State-driving actions stay strict (see
+            # FREE_TEXT_ANSWER_ACTIONS).
+            if (
+                record.resolution_action in FREE_TEXT_ANSWER_ACTIONS
+                and isinstance(answer, str)
+                and answer.strip()
+            ):
+                return answer.strip()
+            raise ConfirmationAnswerError("answer must match one available option")
         if record.answer_mode == AnswerMode.MULTI_SELECT:
             if not isinstance(answer, (list, tuple)) or not answer:
                 raise ConfirmationAnswerError("answer must select one or more options")
-            normalized = list(answer)
+            normalized = [str(value).strip() for value in answer if str(value).strip()]
+            if not normalized:
+                raise ConfirmationAnswerError("answer must select one or more options")
+            if len(set(normalized)) != len(normalized):
+                raise ConfirmationAnswerError("answer contains duplicate options")
+            # Record-only confirmations accept free-text entries alongside
+            # option values (parity with single-select + CLI). State-driving
+            # actions stay strict because they key off specific option values.
             if (
-                any(not isinstance(value, str) or value not in values for value in normalized)
-                or len(set(normalized)) != len(normalized)
+                record.resolution_action not in FREE_TEXT_ANSWER_ACTIONS
+                and any(value not in values for value in normalized)
             ):
-                raise ConfirmationAnswerError("answer contains invalid or duplicate options")
+                raise ConfirmationAnswerError("answer contains invalid options")
             return normalized
         if not isinstance(answer, str) or not answer.strip():
             raise ConfirmationAnswerError("answer must contain text")

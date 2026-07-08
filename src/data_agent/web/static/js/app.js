@@ -169,6 +169,7 @@ function chatApp() {
                 options: payload.options || [],
                 context: payload.context || '',
                 multi_select: !!payload.multi_select,
+                allow_free_text: payload.allow_free_text !== false,
                 confirmation_type: payload.confirmation_type || '',
                 blocking_reason: payload.blocking_reason || '',
                 related_task_id: payload.related_task_id || '',

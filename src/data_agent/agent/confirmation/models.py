@@ -30,6 +30,16 @@ class AnswerMode(str, Enum):
     FREE_TEXT = "free_text"
 
 
+# Resolution actions whose answer is only recorded (not used to drive agent
+# state). These accept a custom free-text answer even in SINGLE_SELECT mode,
+# mirroring the CLI ask_user_question "或直接输入回答" affordance and the web
+# card's "或输入你的回答..." input. State-driving actions
+# (set_analysis_stage / confirm_method / ...) must stay strict because their
+# action keys off a specific option value. Safe by default: any action not
+# listed here keeps requiring an exact option match.
+FREE_TEXT_ANSWER_ACTIONS = frozenset({"record_confirmation_answer"})
+
+
 def _required_text(value: Any, field_name: str) -> str:
     text = str(value or "").strip()
     if not text:
