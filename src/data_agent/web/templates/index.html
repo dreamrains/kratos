@@ -319,17 +319,16 @@
                                                                 <div class="space-y-2 mb-3">
                                                                     <template x-for="(opt, oi) in _parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].options" :key="oi">
                                                                         <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
-                                                                               :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'"
-                                                                               @click="!_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select && ($event.preventDefault(), _toggleSingleOption(turn.confirmation._state, opt.value || opt.label))">
+                                                                               :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'">
                                                                             <template x-if="_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
-                                                                                <input type="checkbox" class="mt-0.5 rounded border-stone-300 text-brand-600 focus:ring-brand-500"
+                                                                                <input type="checkbox" class="mt-1.5 rounded border-stone-300 text-brand-600 focus:ring-brand-500"
                                                                                        :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
                                                                                        @change="_toggleMultiSelect(turn.confirmation._state, opt.value || opt.label)">
                                                                             </template>
                                                                             <template x-if="!_parseMultiQuestions(turn.confirmation)[turn.confirmation._state.currentStep].multi_select">
-                                                                                <input type="radio" class="mt-0.5 border-stone-300 text-brand-600 focus:ring-brand-500"
+                                                                                <input type="radio" class="mt-1.5 border-stone-300 text-brand-600 focus:ring-brand-500"
                                                                                        :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
-                                                                                       tabindex="-1">
+                                                                                       @click="_toggleSingleOption(turn.confirmation._state, opt.value || opt.label)">
                                                                             </template>
                                                                             <div class="flex-1 min-w-0">
                                                                                 <span class="text-sm text-stone-800 dark:text-stone-200" x-text="opt.label"></span>
@@ -339,8 +338,8 @@
                                                                     </template>
                                                                 </div>
                                                             </template>
-                                                            <!-- Free text input -->
-                                                            <div class="mt-2">
+                                                            <!-- Free text input (only when the question allows a custom answer) -->
+                                                            <div class="mt-2" x-show="turn.confirmation.allow_free_text">
                                                                 <input type="text" x-model="turn.confirmation._state.freeText"
                                                                        @input="turn.confirmation._state.selectedOptions = []"
                                                                        placeholder="或输入你的回答..."
@@ -382,11 +381,17 @@
                                                     <div class="space-y-2 mt-3">
                                                         <template x-for="(opt, oi) in turn.confirmation.options" :key="oi">
                                                             <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-all"
-                                                                   :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'"
-                                                                   @click.prevent="_toggleSingleOption(turn.confirmation._state, opt.value || opt.label)">
-                                                                <input type="radio" class="mt-0.5 border-stone-300 text-brand-600 focus:ring-brand-500"
-                                                                       :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
-                                                                       tabindex="-1">
+                                                                   :class="_isOptionSelected(turn.confirmation._state, opt.value || opt.label) ? 'border-brand-400 bg-brand-50 dark:bg-brand-500/10 dark:border-brand-500' : 'border-stone-200 dark:border-stone-700 hover:border-stone-300 dark:hover:border-stone-600'">
+                                                                <template x-if="turn.confirmation.multi_select">
+                                                                    <input type="checkbox" class="mt-1.5 rounded border-stone-300 text-brand-600 focus:ring-brand-500"
+                                                                           :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
+                                                                           @change="_toggleMultiSelect(turn.confirmation._state, opt.value || opt.label)">
+                                                                </template>
+                                                                <template x-if="!turn.confirmation.multi_select">
+                                                                    <input type="radio" class="mt-1.5 border-stone-300 text-brand-600 focus:ring-brand-500"
+                                                                           :checked="_isOptionSelected(turn.confirmation._state, opt.value || opt.label)"
+                                                                           @click="_toggleSingleOption(turn.confirmation._state, opt.value || opt.label)">
+                                                                </template>
                                                                 <div class="flex-1 min-w-0">
                                                                     <span class="text-sm text-stone-800 dark:text-stone-200" x-text="opt.label"></span>
                                                                     <p x-show="opt.description" class="text-xs text-stone-400 mt-0.5" x-text="opt.description"></p>
@@ -395,8 +400,8 @@
                                                         </template>
                                                     </div>
                                                 </template>
-                                                <!-- Free text input -->
-                                                <div class="mt-3">
+                                                <!-- Free text input (only when the question allows a custom answer) -->
+                                                <div class="mt-3" x-show="turn.confirmation.allow_free_text">
                                                     <input type="text" x-model="turn.confirmation._state.freeText"
                                                            @input="turn.confirmation._state.selectedOptions = []"
                                                            placeholder="或输入你的回答..."
@@ -413,7 +418,7 @@
                                                                 :disabled="turn.confirmation._resuming"
                                                                 class="px-3 py-1.5 text-xs text-stone-500 hover:text-red-500 dark:hover:text-red-400 rounded-lg hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50">取消</button>
                                                         <button @click="_submitConfirmation(turn)"
-                                                                :disabled="turn.confirmation._resuming"
+                                                                :disabled="turn.confirmation._resuming || (!turn.confirmation.allow_free_text && turn.confirmation._state.selectedOptions.length === 0)"
                                                                 class="px-4 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed">提交</button>
                                                     </div>
                                                 </div>
@@ -457,8 +462,8 @@
                 <div class="max-w-3xl mx-auto">
                     <div class="relative input-box">
                         <textarea x-ref="inputBox" x-model="inputText" @keydown.enter="if(!$event.shiftKey) { $event.preventDefault(); sendMessage() }"
-                                  placeholder="描述你的数据分析任务..." rows="1"
-                                  class="composer-input w-full resize-none bg-transparent px-4 pr-24 text-sm focus:outline-none" :disabled="isLoading"></textarea>
+                                  :placeholder="hasActiveConfirmation ? '请先回答上方问题，或点击「取消」结束当前提问…' : '描述你的数据分析任务...'" rows="1"
+                                  class="composer-input w-full resize-none bg-transparent px-4 pr-24 text-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" :disabled="isLoading || hasActiveConfirmation"></textarea>
                         <div class="composer-actions absolute right-2 flex items-center gap-1">
                             <label class="composer-icon-btn hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
                                 <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
