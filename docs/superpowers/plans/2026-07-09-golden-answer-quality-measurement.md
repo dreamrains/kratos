@@ -479,7 +479,7 @@ def test_extract_material_claims_marks_numeric_sentences():
     material = [c for c in claims if c["material"]]
     non_material = [c for c in claims if not c["material"]]
     assert any("20%" in c["text"] for c in material)
-    assert any("数据范围" in c["text"] for c in non_material) or len(non_material) >= 0
+    assert any("数据范围" in c["text"] for c in non_material)
     assert all("claim_key" in c and "text" in c for c in claims)
 
 
