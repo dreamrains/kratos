@@ -1,0 +1,62 @@
+{
+  "schema_version": "golden_answer_scenarios.v1",
+  "forbidden_auto_join_by": ["user_id"],
+  "scenarios": [
+    {
+      "id": "savings_card_business_overview",
+      "description": "Multi-file savings-card business overview; tests insight depth vs number description without joining.",
+      "required_files": [
+        "省钱卡订单.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
+        "省钱卡代金券明细订单.xlsx",
+        "省钱卡购卡前后订单.xlsx"
+      ],
+      "business_question": "省钱卡业务整体表现如何？购卡用户买卡前后消费有什么变化？代金券有没有拉动消费？整体是赚还是亏、值不值得继续推广？",
+      "analysis_mode": "independent_then_synthesis",
+      "soft_dimension_focus": ["rigor", "insight_depth", "guidance", "data_explanation", "direction_expansion", "synthesis"],
+      "fatal_expectations": {
+        "no_unsupported_material_claim": true,
+        "no_invalid_relationship_use": true,
+        "before_after_grain_must_match": true
+      }
+    },
+    {
+      "id": "game_a_multimetric_synthesis",
+      "description": "Same-game different-metric synthesis across banner, IAP, rewarded video.",
+      "required_files": [
+        "游戏Abanner汇总数据.xlsx",
+        "游戏A内购数据.xlsx",
+        "游戏A激励视频汇总数据报表.xlsx"
+      ],
+      "business_question": "综合判断游戏A的banner、内购、激励视频这几种方式里，哪种推广/付费方式效果最好？依据是什么？",
+      "analysis_mode": "independent_then_synthesis",
+      "soft_dimension_focus": ["rigor", "insight_depth", "guidance", "data_explanation", "direction_expansion", "synthesis"],
+      "fatal_expectations": {
+        "no_unsupported_material_claim": true,
+        "no_invalid_relationship_use": true
+      }
+    },
+    {
+      "id": "game_b_retention_depth",
+      "description": "Single-file retention curve depth.",
+      "required_files": ["游戏B留存.xlsx"],
+      "business_question": "游戏B的留存曲线有什么特征和拐点？意味着什么？如果想改善留存，应该关注什么？",
+      "analysis_mode": "independent",
+      "soft_dimension_focus": ["rigor", "insight_depth", "guidance", "data_explanation", "direction_expansion"],
+      "fatal_expectations": {
+        "no_unsupported_material_claim": true
+      }
+    },
+    {
+      "id": "unrelated_files_false_join_prevention",
+      "description": "Must not infer a join between unrelated datasets.",
+      "required_files": ["游戏B留存.xlsx", "省钱卡订单.xlsx"],
+      "business_question": "这两个文件能合起来一起分析吗？如果能，怎么结合；如果不能，为什么？",
+      "analysis_mode": "independent",
+      "soft_dimension_focus": ["rigor", "insight_depth"],
+      "fatal_expectations": {
+        "no_invalid_relationship_use": true
+      }
+    }
+  ]
+}
