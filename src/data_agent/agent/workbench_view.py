@@ -47,6 +47,110 @@ def build_multifile_workbench_view(
     }
 
 
+_ACTION_CONFIDENCE_ORDER = {"high": 0, "medium": 1}
+
+
+def build_action_board(state: Any, *, capabilities: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Conclusion-first primary view: 已确认 / 仍不确定 / 建议下一步 / 为什么可以信任.
+
+    Read-only projection from existing state. No total score, never blocks.
+    """
+    if state is None:
+        return _empty_action_board()
+
+    if capabilities is None:
+        capabilities = build_route_capabilities(state)
+    brief = _data_understanding_section(state)
+    evidence = _list_attr(state, "evidence_records")
+    verification_reports = _list_attr(state, "verification_reports")
+    latest_verification = verification_reports[-1] if verification_reports else {}
+
+    confirmed: list[dict[str, Any]] = []
+    uncertain: list[dict[str, Any]] = []
+    for item in evidence:
+        claim = _text(item.get("claim"))
+        if not claim:
+            continue
+        confidence = _text(item.get("confidence")) or "medium"
+        if confidence in {"high", "medium"}:
+            confirmed.append({
+                "claim": claim,
+                "confidence": confidence,
+                "dataset": _text(item.get("dataset")),
+                "summary": _text(item.get("result_summary")),
+            })
+        else:
+            uncertain.append({
+                "label": claim,
+                "reason": "low_confidence",
+                "detail": _text(item.get("result_summary")),
+            })
+    confirmed.sort(key=lambda e: _ACTION_CONFIDENCE_ORDER.get(e["confidence"], 2))
+    confirmed = confirmed[:6]
+
+    for limitation in _flatten_limitations(evidence):
+        uncertain.append({"label": limitation, "reason": "limitation", "detail": limitation})
+    for question in _text_list(brief.get("unanswerable_questions")):
+        uncertain.append({"label": question, "reason": "data_gap", "detail": question})
+    uncertain = uncertain[:6]
+
+    next_steps: list[dict[str, Any]] = []
+    for item in _list_items(capabilities.get("executable")) + _list_items(capabilities.get("exploratory")):
+        direction = _text(item.get("direction") or item.get("route"))
+        if not direction:
+            continue
+        next_steps.append({
+            "direction": direction,
+            "reason": _text(item.get("reason")) or "; ".join(_text_list(item.get("support_reasons"))),
+            "kind": "route",
+            "auto_submit": False,
+        })
+    for confirmation in _text_list(brief.get("needed_confirmations")):
+        next_steps.append({"direction": confirmation, "reason": confirmation, "kind": "confirmation"})
+    next_steps = next_steps[:6]
+
+    trust_basis = {
+        "evidence_count": len(evidence),
+        "verified_claim_count": _int_value(
+            latest_verification.get("claim_count"), fallback=len(evidence)
+        ),
+        "failed_count": _int_value(latest_verification.get("failed_count")),
+        "downgraded_count": _int_value(latest_verification.get("downgraded_count")),
+        "verification_status": _text(
+            latest_verification.get("overall_status")
+            or latest_verification.get("status")
+            or "not_run"
+        ),
+        "datasets_used": [
+            _text(d.get("dataset"))
+            for d in _list_items(brief.get("datasets"))
+            if _text(d.get("dataset"))
+        ],
+    }
+    return {
+        "confirmed": confirmed,
+        "uncertain": uncertain,
+        "next_steps": next_steps,
+        "trust_basis": trust_basis,
+    }
+
+
+def _empty_action_board() -> dict[str, Any]:
+    return {
+        "confirmed": [],
+        "uncertain": [],
+        "next_steps": [],
+        "trust_basis": {
+            "evidence_count": 0,
+            "verified_claim_count": 0,
+            "failed_count": 0,
+            "downgraded_count": 0,
+            "verification_status": "not_run",
+            "datasets_used": [],
+        },
+    }
+
+
 def _data_understanding_section(state: Any) -> dict[str, Any]:
     for bundle in reversed(_list_attr(state, "data_understanding_bundles")):
         try:

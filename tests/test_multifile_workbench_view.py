@@ -112,3 +112,70 @@ def test_trust_view_exposes_only_workbench_and_bounded_validation_details():
     assert "artifact_path" not in rendered
     assert "evidence_signature" not in rendered
     assert "task_refs" not in rendered
+
+
+from types import SimpleNamespace
+
+from data_agent.agent.workbench_view import build_action_board
+
+
+def _ab_state(evidence, verification=None, route_proposals=None, bundles=None):
+    return SimpleNamespace(
+        evidence_records=evidence,
+        verification_reports=verification or [],
+        route_proposals=route_proposals or [],
+        data_understanding_bundles=bundles or [],
+        file_relationships=[],
+        goal="评估省钱卡业务",
+        data_state="data_loaded",
+    )
+
+
+def test_action_board_confirmed_and_uncertain_by_confidence():
+    state = _ab_state(
+        [
+            {"claim": "购卡后消费下降30%", "confidence": "high", "dataset": "orders",
+             "result_summary": "-30%", "limitations": []},
+            {"claim": "复购意愿弱", "confidence": "medium", "dataset": "orders",
+             "result_summary": "复购低", "limitations": ["样本仅1月"]},
+            {"claim": "优惠券驱动复购", "confidence": "speculative", "dataset": "vouchers",
+             "result_summary": "不确定", "limitations": []},
+        ],
+        verification=[{"overall_status": "pass_with_downgrades", "claim_count": 3,
+                       "failed_count": 0, "downgraded_count": 1}],
+    )
+    ab = build_action_board(state)
+    confirmed_claims = [c["claim"] for c in ab["confirmed"]]
+    assert confirmed_claims == ["购卡后消费下降30%", "复购意愿弱"]  # high before medium
+    assert ab["confirmed"][0]["confidence"] == "high"
+    uncertain_labels = [u["label"] for u in ab["uncertain"]]
+    assert "优惠券驱动复购" in uncertain_labels          # low/speculative claim
+    assert any(u["reason"] == "limitation" for u in ab["uncertain"])  # limitation surfaced
+    assert ab["uncertain"][-1]["label"] == "样本仅1月"
+    tb = ab["trust_basis"]
+    assert tb["evidence_count"] == 3
+    assert tb["verification_status"] == "pass_with_downgrades"
+    assert tb["downgraded_count"] == 1
+    assert tb["failed_count"] == 0
+
+
+def test_action_board_next_steps_from_routes_and_confirmations():
+    state = _ab_state(
+        [{"claim": "x", "confidence": "high", "dataset": "d", "result_summary": "", "limitations": []}],
+        bundles=[{"id": "b1", "data_fingerprint": "f", "datasets": [{"dataset": "d"}],
+                  "supported_questions": [], "unsupported_questions": ["还需渠道成本"],
+                  "needed_confirmations": ["确认对比口径"]}],
+        route_proposals=[],  # build_route_capabilities returns empty without real route shape
+    )
+    ab = build_action_board(state)
+    # datasets_used derived from the brief; confirmations surface as next_steps
+    assert "d" in ab["trust_basis"]["datasets_used"]
+    kinds = {n["kind"] for n in ab["next_steps"]}
+    assert "confirmation" in kinds
+
+
+def test_action_board_empty_when_state_none():
+    ab = build_action_board(None)
+    assert ab["confirmed"] == [] and ab["uncertain"] == [] and ab["next_steps"] == []
+    assert ab["trust_basis"]["verification_status"] == "not_run"
+    assert ab["trust_basis"]["evidence_count"] == 0
