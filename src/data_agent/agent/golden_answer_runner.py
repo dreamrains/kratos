@@ -58,3 +58,118 @@ def load_golden_manifest(path: Path) -> dict[str, Any]:
                 f"scenario {scenario['id']} has invalid soft_dimension_focus"
             )
     return manifest
+
+
+import uuid
+from datetime import datetime, timezone
+
+from data_agent.agent.answer_quality import evaluate_fatal, build_judge_context
+from data_agent.agent.quality_judge import judge_absolute, judge_pairwise
+
+
+def evaluate_answer(
+    answer_text: str,
+    state,
+    question: str,
+    dimensions: list[str],
+    *,
+    baseline_answer: str | None = None,
+    judge_client=None,
+) -> dict[str, Any]:
+    fatal = evaluate_fatal(answer_text, state)
+    context = build_judge_context(state, question)
+    data_brief = context["data_brief"]
+    soft: dict[str, Any] = {
+        "absolute": judge_absolute(answer_text, question, data_brief, dimensions, client=judge_client),
+        "pairwise": None,
+    }
+    if baseline_answer is not None:
+        soft["pairwise"] = judge_pairwise(
+            baseline_answer, answer_text, question, data_brief, dimensions, client=judge_client
+        )
+    return {"fatal": fatal, "soft": soft}
+
+
+def read_baseline(baseline_dir: Path, scenario_id: str) -> str | None:
+    path = baseline_dir / f"{scenario_id}.txt"
+    return path.read_text(encoding="utf-8") if path.is_file() else None
+
+
+def write_baseline(baseline_dir: Path, scenario_id: str, answer_text: str) -> None:
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    (baseline_dir / f"{scenario_id}.txt").write_text(answer_text, encoding="utf-8")
+
+
+def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client=None) -> tuple[str, Any]:
+    from data_agent.tools import discover_tools  # ensure tools registered
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.analysis_state import load_analysis_state
+    from data_agent.session.workspace import workspace
+    from data_agent.tools.data_io import load_data
+
+    discover_tools()
+    project_name = f"golden_{scenario['id']}"
+    session_id = uuid.uuid4().hex[:12]
+    loop = AgentLoop(client=client, session_id=session_id, project_name=project_name)
+    with use_agent_context(loop.context):
+        for index, name in enumerate(scenario["required_files"]):
+            load_data(str((data_dir / name).resolve()), name=f"{project_name}_ds{index}")
+        final_text = loop.run_turn(scenario["business_question"])
+    state = load_analysis_state(session_id, project_name)
+    return final_text, state
+
+
+def run_golden_manifest(
+    manifest_path: Path,
+    data_dir: Path,
+    output_root: Path,
+    *,
+    mode: str = "generate",
+    baseline_dir: Path | None = None,
+    judge_client=None,
+    agent_client=None,
+) -> Path:
+    manifest = load_golden_manifest(manifest_path)
+    generated_at = datetime.now(timezone.utc)
+    scenario_results: list[dict[str, Any]] = []
+    for scenario in manifest["scenarios"]:
+        missing = [n for n in scenario["required_files"] if not (data_dir / n).is_file()]
+        if missing:
+            scenario_results.append({"id": scenario["id"], "status": "missing_required_files", "missing_files": missing})
+            continue
+        if mode == "generate":
+            answer_text, state = drive_agent_for_scenario(scenario, data_dir, client=agent_client)
+        else:
+            raise GoldenManifestError("evaluate mode requires stored answers; use the CLI evaluator")
+        baseline = read_baseline(baseline_dir, scenario["id"]) if baseline_dir else None
+        evaluation = evaluate_answer(
+            answer_text,
+            state,
+            scenario["business_question"],
+            scenario.get("soft_dimension_focus", []),
+            baseline_answer=baseline,
+            judge_client=judge_client,
+        )
+        scenario_results.append(
+            {
+                "id": scenario["id"],
+                "status": "evaluated",
+                "question": scenario["business_question"],
+                "answer_text": answer_text,
+                "evaluation": evaluation,
+            }
+        )
+    result = {
+        "schema_version": "golden_quality_results.v1",
+        "generated_at": generated_at.isoformat(),
+        "mode": mode,
+        "manifest": str(manifest_path.resolve()),
+        "data_dir": str(data_dir.resolve()),
+        "scenarios": scenario_results,
+    }
+    result_dir = output_root / generated_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    result_dir.mkdir(parents=True, exist_ok=False)
+    result_path = result_dir / "results.json"
+    result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return result_path

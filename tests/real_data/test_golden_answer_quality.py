@@ -165,3 +165,41 @@ def test_judge_pairwise_parses_verdicts():
         client=_StubClient(payload),
     )
     assert out["insight_depth"]["verdict"] == "worse"
+
+
+from data_agent.agent import golden_answer_runner as gar
+
+
+def test_evaluate_answer_composes_fatal_and_soft():
+    state = _FakeState(evidence=[{"claim": "买卡后消费提升50%", "result_summary": "前后对比 +50%"}])
+    payload = '{"insight_depth": {"score": 2, "rationale": "基本是数值描述"}}'
+    out = gar.evaluate_answer(
+        answer_text="买卡后消费提升了50%。",
+        state=state,
+        question="省钱卡表现？",
+        dimensions=["insight_depth"],
+        judge_client=_StubClient(payload),
+    )
+    assert out["fatal"]["claim_delivery_ready"] is True
+    assert out["soft"]["absolute"]["insight_depth"]["score"] == 2
+    assert out["soft"]["pairwise"] is None
+
+
+def test_evaluate_answer_pairwise_when_baseline_given():
+    state = _FakeState(evidence=[{"claim": "x", "result_summary": "x"}])
+    payload = '{"insight_depth": {"verdict": "worse", "rationale": "更浅"}}'
+    out = gar.evaluate_answer(
+        answer_text="新答案",
+        state=state,
+        question="q",
+        dimensions=["insight_depth"],
+        baseline_answer="旧答案",
+        judge_client=_StubClient(payload),
+    )
+    assert out["soft"]["pairwise"]["insight_depth"]["verdict"] == "worse"
+
+
+def test_baseline_roundtrip(tmp_path):
+    assert gar.read_baseline(tmp_path, "s1") is None
+    gar.write_baseline(tmp_path, "s1", "旧答案")
+    assert gar.read_baseline(tmp_path, "s1") == "旧答案"
