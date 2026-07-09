@@ -134,7 +134,6 @@ def test_loaded_state_is_ready_even_before_evidence_exists() -> None:
     assert view["workbench"]["multifile_analysis"]["answer_coverage"]["status"] == "not_started"
 
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 

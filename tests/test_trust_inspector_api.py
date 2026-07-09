@@ -41,7 +41,7 @@ def test_workbench_endpoint_returns_bounded_empty_contract(tmp_path):
         assert set(payload) == {"status", "session_id", "updated_at", "workbench"}
         assert payload["status"] == "empty"
         assert payload["session_id"] == "missing_session"
-        assert set(payload["workbench"]) == {"multifile_analysis", "details"}
+        assert set(payload["workbench"]) == {"action_board", "multifile_analysis", "details", "full_answer"}
     finally:
         _restore_state(cfg, old_sessions, old_tasks_dir, old_next_id)
 
