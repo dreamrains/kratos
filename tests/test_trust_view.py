@@ -153,17 +153,24 @@ def test_full_answer_is_last_assistant_message(tmp_path, monkeypatch):
     from data_agent.config import AgentConfig
     from data_agent.agent.trust_view import build_trust_view
 
+    seeded_answer = "## 最新结论\n收入下降"
     monkeypatch.setattr(config, "_config", AgentConfig(SESSIONS_DIR=tmp_path / "sessions"))
     _write_session(tmp_path, "s1", [
         {"role": "user", "content": "问"},
         {"role": "assistant", "content": "旧答案"},
         {"role": "user", "content": "再问"},
-        {"role": "assistant", "content": "## 最新结论\n收入下降"},
+        {"role": "assistant", "content": seeded_answer},
     ])
     state = SimpleNamespace(evidence_records=[], verification_reports=[],
                             data_understanding_bundles=[], route_proposals=[],
                             file_relationships=[], goal="", data_state="data_loaded")
     view = build_trust_view(state, session_id="s1")
+    # Exact equality guards the regression: a previous version routed the
+    # content through _text() which collapses all newlines to single spaces,
+    # breaking the frontend's markdown rendering. The raw multi-line string
+    # must round-trip byte-for-byte.
+    assert view["workbench"]["full_answer"] == seeded_answer
+    assert "\n" in view["workbench"]["full_answer"]
     assert view["workbench"]["full_answer"].startswith("## 最新结论")
     assert "收入下降" in view["workbench"]["full_answer"]
 

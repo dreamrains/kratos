@@ -45,8 +45,11 @@ def _latest_full_answer(session_id: str | None) -> str | None:
         return None
     for message in reversed(session.get("messages") or []):
         if message.get("role") == "assistant":
-            content = _text(message.get("content"))
-            if content:
+            content = message.get("content")
+            # Return the RAW markdown string -- do NOT collapse whitespace via
+            # _text(); that flattens newlines/indentation and breaks the
+            # frontend's markdown rendering (headings/lists/code fences).
+            if isinstance(content, str) and content.strip():
                 return content
     return None
 

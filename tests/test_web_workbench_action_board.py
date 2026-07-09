@@ -33,9 +33,10 @@ def test_trust_endpoint_returns_action_board_and_full_answer(tmp_path, monkeypat
     from data_agent.config import AgentConfig
 
     monkeypatch.setattr(config, "_config", AgentConfig(SESSIONS_DIR=tmp_path / "sessions"))
+    seeded_answer = "## 结论\n\n收入下降\n- 复购减弱"
     _seed_session(tmp_path, "s1", [
         {"role": "user", "content": "问"},
-        {"role": "assistant", "content": "## 结论\n收入下降"},
+        {"role": "assistant", "content": seeded_answer},
     ])
 
     client = create_app().test_client()
@@ -45,4 +46,9 @@ def test_trust_endpoint_returns_action_board_and_full_answer(tmp_path, monkeypat
     workbench = data["workbench"]
     assert set(["action_board", "full_answer", "multifile_analysis", "details"]).issubset(workbench.keys())
     assert workbench["action_board"]["confirmed"][0]["claim"] == "收入下降"
+    # Newlines must survive the round-trip so marked.js can parse the
+    # heading/paragraph/list structure. A previous _text() collapse flattened
+    # this to a single run-on line.
+    assert workbench["full_answer"] == seeded_answer
+    assert "\n" in workbench["full_answer"]
     assert workbench["full_answer"].startswith("## 结论")
