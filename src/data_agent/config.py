@@ -17,6 +17,7 @@ class AgentConfig(BaseSettings):
     api_base: Optional[str] = Field(alias="API_BASE", default=None)
     api_key: Optional[str] = Field(alias="API_KEY", default=None)
     max_tokens: int = Field(alias="MAX_TOKENS", default=8000)
+    quality_judge_model: Optional[str] = Field(alias="QUALITY_JUDGE_MODEL", default=None)
 
     # Paths
     workspace_dir: Path = Field(alias="WORKSPACE_DIR", default=Path("./workspace"))

@@ -111,6 +111,7 @@ class LLMClient:
         api_key: Optional[str] = None,
         max_tokens: Optional[int] = None,
         timeout: Optional[int] = None,
+        temperature: Optional[float] = None,
     ):
         cfg = get_config()
         self.model_id = model_id or cfg.model_id
@@ -118,6 +119,7 @@ class LLMClient:
         self.api_key = api_key or cfg.api_key
         self.max_tokens = max_tokens or cfg.max_tokens
         self.timeout = timeout or self._DEFAULT_TIMEOUT
+        self.temperature = temperature
 
     def _base_kwargs(self, messages, tools=None, system=None) -> dict:
         kwargs: dict[str, Any] = {
@@ -130,6 +132,8 @@ class LLMClient:
             kwargs["api_base"] = self.api_base
         if self.api_key:
             kwargs["api_key"] = self.api_key
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         if system:
             kwargs["messages"] = [{"role": "system", "content": system}] + list(kwargs["messages"])
         if tools:
