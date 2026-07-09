@@ -115,3 +115,53 @@ def test_evaluate_fatal_folds_in_failed_agent_verification():
     result = aq.evaluate_fatal("x。", state)
     assert result["claim_delivery_ready"] is False
     assert "agent_verification_failed" in result["blockers"]
+
+
+from data_agent.agent import quality_judge as qj
+
+
+class _StubClient:
+    def __init__(self, payload: str):
+        self._payload = payload
+
+    def chat(self, messages, tools=None, system=None):
+        from data_agent.llm.client import Response
+
+        return Response(text=self._payload)
+
+
+def test_judge_absolute_parses_scores(monkeypatch):
+    payload = '{"insight_depth": {"score": 4, "rationale": "解读到位"}, "rigor": {"score": 3, "rationale": "口径略缺"}}'
+    out = qj.judge_absolute(
+        answer_text="买卡后消费+50%，主要来自复购。",
+        question="省钱卡表现如何？",
+        data_brief={"datasets": [], "relationships": []},
+        dimensions=["insight_depth", "rigor"],
+        client=_StubClient(payload),
+    )
+    assert out["insight_depth"]["score"] == 4
+    assert out["rigor"]["score"] == 3
+
+
+def test_judge_absolute_returns_empty_on_garbage():
+    out = qj.judge_absolute(
+        answer_text="x",
+        question="q",
+        data_brief={"datasets": []},
+        dimensions=["insight_depth"],
+        client=_StubClient("not json at all"),
+    )
+    assert out == {}
+
+
+def test_judge_pairwise_parses_verdicts():
+    payload = '{"insight_depth": {"verdict": "worse", "rationale": "新答案更浅"}}'
+    out = qj.judge_pairwise(
+        baseline_answer="深答案",
+        new_answer="浅答案",
+        question="q",
+        data_brief={"datasets": []},
+        dimensions=["insight_depth"],
+        client=_StubClient(payload),
+    )
+    assert out["insight_depth"]["verdict"] == "worse"
