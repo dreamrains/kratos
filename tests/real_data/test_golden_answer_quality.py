@@ -48,6 +48,23 @@ def test_load_golden_manifest_rejects_missing_schema(tmp_path):
         load_golden_manifest(bad)
 
 
+def test_load_golden_manifest_rejects_empty_required_files(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "schema_version": "golden_answer_scenarios.v1",
+                "scenarios": [
+                    {"id": "s1", "required_files": [], "business_question": "q?"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(GoldenManifestError):
+        load_golden_manifest(bad)
+
+
 @pytest.mark.skipif(DATA_DIR is None, reason="reference/test_doc not found")
 def test_golden_manifest_files_exist():
     manifest = load_golden_manifest(MANIFEST)
@@ -168,6 +185,34 @@ def test_judge_pairwise_parses_verdicts():
     assert out["insight_depth"]["verdict"] == "worse"
 
 
+def test_judge_normalizes_verdict_casing_and_clamps_score():
+    # Live judges sometimes return "Better" / out-of-range scores (e.g. 9).
+    payload = '{"insight_depth": {"verdict": "Better", "score": 9, "rationale": "x"}}'
+    out = qj.judge_absolute(
+        answer_text="ans",
+        question="q",
+        data_brief={"datasets": []},
+        dimensions=["insight_depth"],
+        client=_StubClient(payload),
+    )
+    assert out["insight_depth"]["verdict"] == "better"
+    assert out["insight_depth"]["score"] == 5
+    assert out["insight_depth"]["rationale"] == "x"
+
+
+def test_judge_normalizes_worsen_variant_to_worse():
+    payload = '{"insight_depth": {"verdict": "Worsen", "rationale": "更浅"}}'
+    out = qj.judge_pairwise(
+        baseline_answer="深",
+        new_answer="浅",
+        question="q",
+        data_brief={"datasets": []},
+        dimensions=["insight_depth"],
+        client=_StubClient(payload),
+    )
+    assert out["insight_depth"]["verdict"] == "worse"
+
+
 from data_agent.agent import golden_answer_runner as gar
 
 
@@ -270,7 +315,7 @@ def test_live_smoke_single_scenario():
     """Live LLM smoke: drives the real agent on one scenario. Opt-in only."""
     manifest = load_golden_manifest(MANIFEST)
     scenario = manifest["scenarios"][2]  # game_b_retention_depth (single file, cheapest)
-    answer_text, state = gar.drive_agent_for_scenario(scenario, DATA_DIR)
+    answer_text, state, _model_id = gar.drive_agent_for_scenario(scenario, DATA_DIR)
     assert answer_text
     out = gar.evaluate_answer(
         answer_text, state, scenario["business_question"], scenario["soft_dimension_focus"]

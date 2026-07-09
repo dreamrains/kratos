@@ -144,5 +144,7 @@ def build_judge_context(state, question: str) -> dict[str, Any]:
     bundles = getattr(state, "data_understanding_bundles", []) or []
     from data_agent.agent.data_understanding import build_user_data_brief
 
+    # bundles[-1] is the latest understanding bundle; mirrors the runtime's
+    # latest-bundle convention (loop.py:796 iterates bundles in reverse).
     brief = build_user_data_brief(bundles[-1]) if bundles else {"datasets": [], "relationships": []}
     return {"question": question, "data_brief": brief}

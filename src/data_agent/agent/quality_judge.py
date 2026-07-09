@@ -70,6 +70,50 @@ _SYSTEM = (
     "评估的是面向业务决策的中文数据分析最终答案的质量。"
 )
 
+_VALID_VERDICTS = {"better", "same", "worse"}
+# Canonicalize common judge phrasings to the {better,same,worse} contract.
+_VERDICT_ALIASES = {
+    "worsen": "worse",
+    "worse than": "worse",
+    "inferior": "worse",
+    "weaker": "worse",
+    "regressed": "worse",
+    "improved": "better",
+    "improve": "better",
+    "better than": "better",
+    "superior": "better",
+    "good": "better",
+    "stronger": "better",
+    "equal": "same",
+    "same as": "same",
+    "neutral": "same",
+    "unchanged": "same",
+    "tie": "same",
+}
+
+
+def _normalize_dimension(dim: dict) -> dict:
+    """Coerce a per-dimension judge dict to the canonical contract.
+
+    verdict -> one of {better, same, worse} (unknown variants -> "same").
+    score  -> integer clamped to [1, 5].
+    rationale and any other keys are preserved unchanged.
+    """
+    out = dict(dim)
+    if "verdict" in out:
+        raw = str(out.get("verdict", "")).strip().lower()
+        out["verdict"] = raw if raw in _VALID_VERDICTS else _VERDICT_ALIASES.get(raw, "same")
+    if "score" in out:
+        try:
+            score = int(out["score"])
+        except (TypeError, ValueError):
+            try:
+                score = int(round(float(out["score"])))
+            except (TypeError, ValueError):
+                score = 3
+        out["score"] = max(1, min(5, score))
+    return out
+
 
 def _absolute_user_prompt(answer_text, question, data_brief, dimensions) -> str:
     return (
@@ -103,7 +147,7 @@ def _judge(user_prompt: str, client) -> dict[str, dict]:
     parsed = _extract_json(getattr(resp, "text", "") or "")
     if not isinstance(parsed, dict):
         return {}
-    return {str(k): v for k, v in parsed.items() if isinstance(v, dict)}
+    return {str(k): _normalize_dimension(v) for k, v in parsed.items() if isinstance(v, dict)}
 
 
 def judge_absolute(answer_text, question, data_brief, dimensions, client=None) -> dict[str, dict]:

@@ -42,8 +42,10 @@ def load_golden_manifest(path: Path) -> dict[str, Any]:
         if not isinstance(scenario, dict) or not isinstance(scenario.get("id"), str):
             raise GoldenManifestError(f"scenario {index} requires a string id")
         required_files = scenario.get("required_files")
-        if not isinstance(required_files, list) or not all(
-            isinstance(name, str) and name for name in required_files
+        if (
+            not isinstance(required_files, list)
+            or not required_files
+            or not all(isinstance(name, str) and name for name in required_files)
         ):
             raise GoldenManifestError(
                 f"scenario {scenario['id']} has invalid required_files"
@@ -100,7 +102,7 @@ def write_baseline(baseline_dir: Path, scenario_id: str, answer_text: str) -> No
     (baseline_dir / f"{scenario_id}.txt").write_text(answer_text, encoding="utf-8")
 
 
-def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client=None) -> tuple[str, Any]:
+def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client=None) -> tuple[str, Any, str | None]:
     from data_agent.tools import discover_tools  # ensure tools registered
     from data_agent.agent.loop import AgentLoop, FinalResponse, SuspendedForConfirmation
     from data_agent.agent.context import use_agent_context
@@ -111,6 +113,9 @@ def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client
     project_name = f"golden_{scenario['id']}"
     session_id = uuid.uuid4().hex[:12]
     loop = AgentLoop(client=client, session_id=session_id, project_name=project_name)
+    # loop.client is the effective client used (passed-in or a default LLMClient),
+    # so read the model id from it for traceability.
+    agent_model_id = getattr(loop.client, "model_id", None)
     resume_answer = "按你的最佳判断继续分析"
     max_resumes = 5
     with use_agent_context(loop.context):
@@ -148,7 +153,7 @@ def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client
             # result is None: _loop exhausted max rounds without a final answer
             final_text = "达到最大轮次限制。"
     state = load_analysis_state(session_id, project_name)
-    return final_text, state
+    return final_text, state, agent_model_id
 
 
 def run_golden_manifest(
@@ -164,13 +169,14 @@ def run_golden_manifest(
     manifest = load_golden_manifest(manifest_path)
     generated_at = datetime.now(timezone.utc)
     scenario_results: list[dict[str, Any]] = []
+    agent_model_id: str | None = None
     for scenario in manifest["scenarios"]:
         missing = [n for n in scenario["required_files"] if not (data_dir / n).is_file()]
         if missing:
             scenario_results.append({"id": scenario["id"], "status": "missing_required_files", "missing_files": missing})
             continue
         if mode == "generate":
-            answer_text, state = drive_agent_for_scenario(scenario, data_dir, client=agent_client)
+            answer_text, state, agent_model_id = drive_agent_for_scenario(scenario, data_dir, client=agent_client)
         else:
             raise GoldenManifestError("evaluate mode requires stored answers; use the CLI evaluator")
         baseline = read_baseline(baseline_dir, scenario["id"]) if baseline_dir else None
@@ -191,12 +197,26 @@ def run_golden_manifest(
                 "evaluation": evaluation,
             }
         )
+    if judge_client is not None:
+        judge_model_id = getattr(judge_client, "model_id", None)
+    else:
+        # Lazy import keeps the measurement-only boundary; resolves the same
+        # default judge client used downstream by evaluate_answer/_judge.
+        from data_agent.agent.quality_judge import _get_judge_client
+
+        judge_model_id = getattr(_get_judge_client(), "model_id", None)
     result = {
         "schema_version": "golden_quality_results.v1",
         "generated_at": generated_at.isoformat(),
         "mode": mode,
         "manifest": str(manifest_path.resolve()),
         "data_dir": str(data_dir.resolve()),
+        "run": {
+            "mode": mode,
+            "model": agent_model_id,
+            "judge_model": judge_model_id,
+            "baseline_ref": str(baseline_dir.resolve()) if baseline_dir else None,
+        },
         "scenarios": scenario_results,
     }
     result_dir = output_root / generated_at.strftime("%Y%m%dT%H%M%S.%fZ")
