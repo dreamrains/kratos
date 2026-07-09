@@ -79,6 +79,7 @@ function chatApp() {
         trustView: null,
         trustLoading: false,
         trustError: '',
+        expandedFullAnswer: false,
 
         // Bind-to-project modal
         _bindModal: { show: false, sessionId: '' },
@@ -1226,6 +1227,9 @@ function chatApp() {
         multifileWorkbench() {
             return this.trustView?.workbench?.multifile_analysis || {};
         },
+
+        actionBoard()   { return this.trustView?.workbench?.action_board || {}; },
+        fullAnswer()    { return this.trustView?.workbench?.full_answer || ''; },
 
         workbenchDetails() {
             return this.trustView?.workbench?.details || {};

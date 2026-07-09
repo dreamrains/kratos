@@ -19,7 +19,7 @@ def test_current_panel_uses_multifile_workbench_as_primary_surface():
     assert "multifile-relationships" in html
     assert "multifile-analysis-directions" in html
     assert "multifile-answer-coverage" in html
-    assert html.count("workbench-primary-section") == 4
+    assert html.count("workbench-primary-section") == 5
 
 
 def test_old_trust_technical_sections_are_not_primary_current_panel():
@@ -64,3 +64,34 @@ def test_workbench_removes_trust_inspector_residue_and_raw_artifact_text():
     assert "Trust Inspector" not in html
     assert 'x-text="art.path"' not in html
     assert "art.description || art.type || '产出物'" in html
+
+
+def test_action_board_is_primary_surface_with_helpers():
+    html = _index_html()
+    js = _app_js()
+    assert 'data-testid="action-board"' in html
+    assert 'data-testid="action-board-confirmed"' in html
+    assert 'data-testid="action-board-uncertain"' in html
+    assert 'data-testid="action-board-next-steps"' in html
+    assert "actionBoard()" in js and "workbench?.action_board" in js
+
+
+def test_full_answer_block_uses_markdown_render():
+    html = _index_html()
+    js = _app_js()
+    assert 'data-testid="workbench-full-answer"' in html
+    assert "fullAnswer()" in js and "workbench?.full_answer" in js
+    assert "renderMarkdown(fullAnswer()" in html
+
+
+def test_four_sections_demoted_to_drill_down():
+    html = _index_html()
+    assert 'data-testid="workbench-breakdown"' in html
+    # the 4 primary sections still exist, now inside the breakdown <details>
+    for testid in (
+        "multifile-data-understanding",
+        "multifile-relationships",
+        "multifile-analysis-directions",
+        "multifile-answer-coverage",
+    ):
+        assert f'data-testid="{testid}"' in html

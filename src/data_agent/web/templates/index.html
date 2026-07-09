@@ -538,6 +538,69 @@
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'outputs' }" @click="sessionSidePanelTab = 'outputs'">产出与导出</button>
             </div>
 
+            <!-- 行动看板（结论先行主视图） -->
+            <section class="trust-section workbench-primary-section" data-testid="action-board"
+                     x-show="sessionSidePanelTab === 'current'">
+              <h4 class="text-sm font-semibold text-stone-700 dark:text-stone-300">结论与下一步</h4>
+
+              <div class="grid grid-cols-1 gap-3 mt-2">
+                <div data-testid="action-board-confirmed">
+                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">已确认</div>
+                  <template x-for="(c, i) in actionBoard().confirmed" :key="'conf-'+i">
+                    <div class="workbench-item">
+                      <div class="text-sm font-medium text-stone-700 dark:text-stone-300" x-text="c.claim"></div>
+                      <div class="text-xs text-stone-400 mt-0.5"><span x-text="c.confidence"></span><span x-show="c.dataset"> · </span><span x-text="c.dataset"></span></div>
+                    </div>
+                  </template>
+                  <div x-show="!actionBoard().confirmed.length" class="text-xs text-stone-400 mt-1">暂无已确认结论</div>
+                </div>
+
+                <div data-testid="action-board-uncertain">
+                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">仍不确定</div>
+                  <template x-for="(u, i) in actionBoard().uncertain" :key="'unc-'+i">
+                    <div class="workbench-item">
+                      <div class="text-sm text-stone-700 dark:text-stone-300" x-text="u.label"></div>
+                      <div class="text-xs text-stone-400 mt-0.5" x-text="u.reason"></div>
+                    </div>
+                  </template>
+                  <div x-show="!actionBoard().uncertain.length" class="text-xs text-stone-400 mt-1">暂无不确定项</div>
+                </div>
+
+                <div data-testid="action-board-next-steps">
+                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">建议下一步</div>
+                  <template x-for="(n, i) in actionBoard().next_steps" :key="'ns-'+i">
+                    <div class="workbench-item">
+                      <div class="text-sm text-stone-700 dark:text-stone-300" x-text="n.direction"></div>
+                      <div class="text-xs text-stone-400 mt-0.5" x-text="n.kind"></div>
+                    </div>
+                  </template>
+                  <div x-show="!actionBoard().next_steps.length" class="text-xs text-stone-400 mt-1">暂无建议</div>
+                </div>
+
+                <div data-testid="action-board-trust" class="text-xs text-stone-400">
+                  <span x-text="`${actionBoard().trust_basis.evidence_count||0} 条证据`"></span>
+                  · 验证
+                  <span x-text="actionBoard().trust_basis.verification_status || '未运行'"></span>
+                </div>
+              </div>
+            </section>
+
+            <!-- 完整分析（可展开） -->
+            <section class="trust-section" data-testid="workbench-full-answer"
+                     x-show="sessionSidePanelTab === 'current'">
+              <button type="button" class="text-sm font-semibold text-stone-700 dark:text-stone-300" @click="expandedFullAnswer = !expandedFullAnswer">
+                <span x-text="expandedFullAnswer ? '收起完整分析' : '查看完整分析'"></span>
+              </button>
+              <div x-show="expandedFullAnswer" x-cloak
+                   class="prose prose-sm dark:prose-invert max-w-none leading-7 mt-2"
+                   x-html="renderMarkdown(fullAnswer(), null)"></div>
+              <div x-show="!fullAnswer()" class="text-xs text-stone-400 mt-1">暂无完整分析</div>
+            </section>
+
+            <!-- 数据明细下钻（4 个诊断区块） -->
+            <details class="trust-section" data-testid="workbench-breakdown" x-show="sessionSidePanelTab === 'current'">
+              <summary class="text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer">数据明细（下钻）</summary>
+              <div class="space-y-4 mt-2">
             <section class="trust-section workbench-primary-section" data-testid="multifile-data-understanding" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
                     <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Data Understanding</h3>
@@ -623,6 +686,8 @@
                     <p x-show="!multifileAnswerCoverage().covered_claims || multifileAnswerCoverage().covered_claims.length === 0" class="text-[10px] text-stone-400 mt-1">No supported claims yet.</p>
                 </div>
             </section>
+              </div>
+            </details>
 
             <div data-testid="workbench-details" x-show="sessionSidePanelTab === 'details'" class="space-y-5">
                 <section class="trust-section">

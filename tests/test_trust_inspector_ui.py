@@ -17,10 +17,10 @@ def _app_css() -> str:
     return (ROOT / "src/data_agent/web/static/css/app.css").read_text(encoding="utf-8")
 
 
-def test_workbench_has_exactly_four_primary_sections() -> None:
+def test_workbench_has_exactly_five_primary_sections() -> None:
     html = _index_html()
 
-    assert html.count("workbench-primary-section") == 4
+    assert html.count("workbench-primary-section") == 5
     assert 'data-testid="multifile-data-understanding"' in html
     assert 'data-testid="multifile-relationships"' in html
     assert 'data-testid="multifile-analysis-directions"' in html
