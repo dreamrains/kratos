@@ -18,10 +18,10 @@
     },
     {
       "id": "savings_card_relationship_diagnostic",
-      "description": "Inspect relationship value and risk without materializing a join.",
+      "description": "Inspect savings-card relationship value and risk without materializing a join.",
       "required_files": [
-        "省钱卡用户最近流水_20260511.xlsx",
-        "省钱卡订单_20260507.xlsx"
+        "省钱卡订单.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx"
       ],
       "analysis_mode": "relationship_diagnostic_only",
       "executed_join": false,
@@ -43,7 +43,7 @@
       "description": "Do not infer a join between unrelated business datasets.",
       "required_files": [
         "游戏B留存.xlsx",
-        "省钱卡订单_20260507.xlsx"
+        "省钱卡订单.xlsx"
       ],
       "analysis_mode": "independent",
       "executed_join": false,

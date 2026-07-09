@@ -35,8 +35,8 @@ def test_manifest_declares_safe_multifile_modes_and_existing_files() -> None:
         "游戏A内购数据.xlsx",
         "游戏A激励视频汇总数据报表.xlsx",
         "游戏B留存.xlsx",
-        "省钱卡用户最近流水_20260511.xlsx",
-        "省钱卡订单_20260507.xlsx",
+        "省钱卡订单.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
     }
     declared_names = {
         name
@@ -52,8 +52,8 @@ def test_manifest_declares_safe_multifile_modes_and_existing_files() -> None:
 
 def test_real_savings_card_relationship_is_diagnostic_not_join_authority() -> None:
     data_dir = _data_dir()
-    orders = pd.read_excel(data_dir / "省钱卡订单_20260507.xlsx")
-    flow = pd.read_excel(data_dir / "省钱卡用户最近流水_20260511.xlsx")
+    orders = pd.read_excel(data_dir / "省钱卡订单.xlsx")
+    flow = pd.read_excel(data_dir / "省钱卡0201到0510购卡用户付费数据.xlsx")
 
     relationship = validate_relationship(
         orders,
