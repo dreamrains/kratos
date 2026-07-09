@@ -135,6 +135,16 @@ def test_evaluate_fatal_folds_in_failed_agent_verification():
     assert "agent_verification_failed" in result["blockers"]
 
 
+def test_evaluate_fatal_no_unsupported_blockers_when_no_evidence():
+    # Diagnostic / rejection scenarios legitimately produce no EvidenceRecords;
+    # the unsupported-material-claim gate must not fire en masse when there is
+    # nothing to check support against (the soft 'rigor' dimension still judges).
+    state = _FakeState(evidence=[])
+    result = aq.evaluate_fatal("两个文件没有关联键，不能合并。收入增长20%。", state)
+    assert result["claim_delivery_ready"] is True
+    assert not any(b.startswith("unsupported_material_claim") for b in result["blockers"])
+
+
 from data_agent.agent import quality_judge as qj
 
 

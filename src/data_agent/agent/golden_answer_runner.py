@@ -110,6 +110,17 @@ def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client
     from data_agent.tools.data_io import load_data
 
     discover_tools()
+    # Force sequential tool execution for the measurement run. The runtime's
+    # parallel read-only path (_execute_tools_parallel) has an intermittent
+    # contextvars race ("cannot enter context: already entered") under this
+    # driver's context setup, triggered when the agent issues multiple read-only
+    # tool calls (common for rich multi-file scenarios). Neutralising
+    # get_read_only_tools makes the loop take the sequential branch and avoids
+    # the race entirely; measurement needs no parallel speedup. The runtime
+    # race itself is tracked as a separate follow-up.
+    from data_agent.tools import registry as _tool_registry
+
+    _tool_registry.get_read_only_tools = lambda reg: set()
     project_name = f"golden_{scenario['id']}"
     session_id = uuid.uuid4().hex[:12]
     loop = AgentLoop(client=client, session_id=session_id, project_name=project_name)
@@ -146,7 +157,11 @@ def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client
                     answer = first.get("value") or first.get("label") or str(first)
             else:
                 answer = resume_answer
-            result = loop.resume_turn(result.suspension_id, answer)
+            result = loop.resume_turn(
+                result.suspension_id,
+                answer,
+                idempotency_key=f"{session_id}:resume:{resumes}",
+            )
         if isinstance(result, FinalResponse):
             final_text = result.content
         else:

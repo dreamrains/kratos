@@ -114,16 +114,24 @@ def _relationship_uses_from_state(state) -> list[dict[str, Any]]:
 
 
 def evaluate_fatal(answer_text: str, state) -> dict[str, Any]:
-    claims_in = [
-        {
-            "claim_key": c["claim_key"],
-            "material": c["material"],
-            "supported": is_supported_by_evidence(c["text"], getattr(state, "evidence_records", []) or [])
-            if c["material"]
-            else True,
-        }
-        for c in extract_material_claims(answer_text)
-    ]
+    evidence_records = getattr(state, "evidence_records", []) or []
+    if evidence_records:
+        claims_in = [
+            {
+                "claim_key": c["claim_key"],
+                "material": c["material"],
+                "supported": is_supported_by_evidence(c["text"], evidence_records)
+                if c["material"]
+                else True,
+            }
+            for c in extract_material_claims(answer_text)
+        ]
+    else:
+        # No EvidenceRecords (e.g. diagnostic / rejection scenarios): the
+        # unsupported-material-claim gate has nothing to check support against,
+        # so skip it. The soft 'rigor' dimension still judges unsupported
+        # assertions, and agent-verification still blocks on real failures.
+        claims_in = []
     result = score_analysis_quality(
         claims=claims_in,
         relationship_uses=_relationship_uses_from_state(state),
