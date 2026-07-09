@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,59 @@ def test_cli_help_exits_zero():
     assert proc.returncode == 0
     assert "--manifest" in proc.stdout
     assert "--update-baseline" in proc.stdout
+
+
+# --- Task 8: deterministic regression meta-tests (no live LLM) ---
+
+
+def test_shallow_answer_scores_low_on_insight_depth():
+    state = _FakeState(evidence=[{"claim": "消费提升50%", "result_summary": "+50%"}])
+    shallow = "买卡后消费提升了50%。代金券使用1075次。订单71单。"
+    payload = '{"insight_depth": {"score": 1, "rationale": "纯数值描述"}}'
+    out = gar.evaluate_answer(
+        shallow, state, "省钱卡表现？", ["insight_depth"], judge_client=_StubClient(payload)
+    )
+    assert out["soft"]["absolute"]["insight_depth"]["score"] == 1
+
+
+def test_unsupported_causal_claim_is_fatal():
+    state = _FakeState(evidence=[{"claim": "留存", "result_summary": "留存下降"}])
+    out = gar.evaluate_answer(
+        "省钱卡直接导致了复购提升30%。", state, "q", ["insight_depth"],
+        judge_client=_StubClient('{"insight_depth": {"score": 5, "rationale": "x"}}'),
+    )
+    assert out["fatal"]["claim_delivery_ready"] is False
+
+
+def test_pairwise_detects_regression():
+    state = _FakeState(evidence=[{"claim": "x", "result_summary": "x"}])
+    out = gar.evaluate_answer(
+        "浅答案", state, "q", ["insight_depth"],
+        baseline_answer="深答案",
+        judge_client=_StubClient('{"insight_depth": {"verdict": "worse", "rationale": "新答案更浅"}}'),
+    )
+    assert out["soft"]["pairwise"]["insight_depth"]["verdict"] == "worse"
+
+
+# --- Task 8: live smoke (OPT-IN, deviations from brief per controller) ---
+# Brief gated on DATA_DIR + config.api_key, but this repo's .env ships a real
+# API_KEY, so that gate would fire a live multi-minute full-agent turn inside
+# the default pytest run. Gate on an explicit env var instead so the smoke
+# only runs when a developer opts in.
+
+
+@pytest.mark.skipif(
+    os.environ.get("GOLDEN_LIVE_SMOKE") != "1",
+    reason="live agent smoke; set GOLDEN_LIVE_SMOKE=1 to run",
+)
+def test_live_smoke_single_scenario():
+    """Live LLM smoke: drives the real agent on one scenario. Opt-in only."""
+    manifest = load_golden_manifest(MANIFEST)
+    scenario = manifest["scenarios"][2]  # game_b_retention_depth (single file, cheapest)
+    answer_text, state = gar.drive_agent_for_scenario(scenario, DATA_DIR)
+    assert answer_text
+    out = gar.evaluate_answer(
+        answer_text, state, scenario["business_question"], scenario["soft_dimension_focus"]
+    )
+    assert "fatal" in out and "soft" in out
+    assert isinstance(out["soft"]["absolute"], dict)

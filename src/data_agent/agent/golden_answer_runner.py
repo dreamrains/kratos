@@ -129,7 +129,19 @@ def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client
                     f"(last question: {result.question!r})"
                 )
             resumes += 1
-            result = loop.resume_turn(result.suspension_id, resume_answer)
+            # Structured state-driving selects (allow_free_text=False) reject
+            # free text via _validate_answer; answer with the first option's
+            # value so resume resolves cleanly instead of surfacing an
+            # "Error: ..." FinalResponse as the scenario's answer.
+            if not getattr(result, "allow_free_text", True) and getattr(result, "options", None):
+                first = result.options[0]
+                if isinstance(first, str):
+                    answer = first
+                else:
+                    answer = first.get("value") or first.get("label") or str(first)
+            else:
+                answer = resume_answer
+            result = loop.resume_turn(result.suspension_id, answer)
         if isinstance(result, FinalResponse):
             final_text = result.content
         else:
