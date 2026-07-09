@@ -13,6 +13,7 @@ def build_workbench_view(state: Any) -> dict[str, Any]:
     """Build the complete Workbench contract: four primary areas and details."""
     if state is None:
         return {
+            "action_board": build_action_board(None),
             "multifile_analysis": build_multifile_workbench_view(None, capabilities={}),
             "details": _details_section(None, {}, {}),
         }
@@ -24,6 +25,7 @@ def build_workbench_view(state: Any) -> dict[str, Any]:
     if not isinstance(confirmation, dict):
         confirmation = {}
     return {
+        "action_board": build_action_board(state, capabilities=capabilities),
         "multifile_analysis": build_multifile_workbench_view(
             state,
             capabilities=capabilities,

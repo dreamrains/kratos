@@ -102,7 +102,8 @@ def test_trust_view_exposes_only_workbench_and_bounded_validation_details():
     view = build_trust_view(_state_with_multifile_context())
 
     assert set(view) == {"status", "session_id", "updated_at", "workbench"}
-    assert set(view["workbench"]) == {"multifile_analysis", "details"}
+    assert set(view["workbench"]) == {"action_board", "multifile_analysis", "details", "full_answer"}
+    assert set(view["workbench"]["action_board"]) == {"confirmed", "uncertain", "next_steps", "trust_basis"}
     assert set(view["workbench"]["details"]) == {
         "scope",
         "confirmation",

@@ -10,7 +10,8 @@ def test_empty_trust_view_is_only_an_empty_workbench_contract() -> None:
     assert set(view) == {"status", "session_id", "updated_at", "workbench"}
     assert view["status"] == "empty"
     assert view["session_id"] == "missing"
-    assert set(view["workbench"]) == {"multifile_analysis", "details"}
+    assert set(view["workbench"]) == {"action_board", "multifile_analysis", "details", "full_answer"}
+    assert set(view["workbench"]["action_board"]) == {"confirmed", "uncertain", "next_steps", "trust_basis"}
     assert set(view["workbench"]["multifile_analysis"]) == {
         "data_understanding",
         "relationships",
@@ -131,3 +132,51 @@ def test_loaded_state_is_ready_even_before_evidence_exists() -> None:
 
     assert view["status"] == "ready"
     assert view["workbench"]["multifile_analysis"]["answer_coverage"]["status"] == "not_started"
+
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+
+def _write_session(tmp_path, session_id, messages):
+    sdir = tmp_path / "sessions" / session_id
+    sdir.mkdir(parents=True, exist_ok=True)
+    (sdir / "meta.json").write_text(json.dumps({"project_name": "p"}, ensure_ascii=False), encoding="utf-8")
+    (sdir / "conversation.jsonl").write_text(
+        "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages),
+        encoding="utf-8",
+    )
+
+
+def test_full_answer_is_last_assistant_message(tmp_path, monkeypatch):
+    from data_agent import config
+    from data_agent.config import AgentConfig
+    from data_agent.agent.trust_view import build_trust_view
+
+    monkeypatch.setattr(config, "_config", AgentConfig(SESSIONS_DIR=tmp_path / "sessions"))
+    _write_session(tmp_path, "s1", [
+        {"role": "user", "content": "问"},
+        {"role": "assistant", "content": "旧答案"},
+        {"role": "user", "content": "再问"},
+        {"role": "assistant", "content": "## 最新结论\n收入下降"},
+    ])
+    state = SimpleNamespace(evidence_records=[], verification_reports=[],
+                            data_understanding_bundles=[], route_proposals=[],
+                            file_relationships=[], goal="", data_state="data_loaded")
+    view = build_trust_view(state, session_id="s1")
+    assert view["workbench"]["full_answer"].startswith("## 最新结论")
+    assert "收入下降" in view["workbench"]["full_answer"]
+
+
+def test_full_answer_none_when_no_session_or_empty(tmp_path, monkeypatch):
+    from data_agent import config
+    from data_agent.config import AgentConfig
+    from data_agent.agent.trust_view import build_trust_view
+
+    monkeypatch.setattr(config, "_config", AgentConfig(SESSIONS_DIR=tmp_path / "sessions"))
+    state = SimpleNamespace(evidence_records=[], verification_reports=[],
+                            data_understanding_bundles=[], route_proposals=[],
+                            file_relationships=[], goal="", data_state="data_loaded")
+    assert build_trust_view(state, session_id="missing")["workbench"]["full_answer"] is None
+    assert build_trust_view(state, session_id="")["workbench"]["full_answer"] is None
