@@ -102,20 +102,39 @@ def write_baseline(baseline_dir: Path, scenario_id: str, answer_text: str) -> No
 
 def drive_agent_for_scenario(scenario: dict[str, Any], data_dir: Path, *, client=None) -> tuple[str, Any]:
     from data_agent.tools import discover_tools  # ensure tools registered
-    from data_agent.agent.loop import AgentLoop
+    from data_agent.agent.loop import AgentLoop, FinalResponse, SuspendedForConfirmation
     from data_agent.agent.context import use_agent_context
     from data_agent.agent.analysis_state import load_analysis_state
-    from data_agent.session.workspace import workspace
     from data_agent.tools.data_io import load_data
 
     discover_tools()
     project_name = f"golden_{scenario['id']}"
     session_id = uuid.uuid4().hex[:12]
     loop = AgentLoop(client=client, session_id=session_id, project_name=project_name)
+    resume_answer = "按你的最佳判断继续分析"
+    max_resumes = 5
     with use_agent_context(loop.context):
         for index, name in enumerate(scenario["required_files"]):
             load_data(str((data_dir / name).resolve()), name=f"{project_name}_ds{index}")
-        final_text = loop.run_turn(scenario["business_question"])
+        # Drive fully non-interactively: never touch stdin. Use the web-mode
+        # structured + resume path instead of run_turn (CLI path), which blocks
+        # reading stdin via _handle_cli_suspension -> _ask_single/_ask_multiple.
+        result = loop.run_turn_structured(scenario["business_question"])
+        resumes = 0
+        while isinstance(result, SuspendedForConfirmation):
+            if resumes >= max_resumes:
+                raise GoldenManifestError(
+                    f"scenario {scenario['id']}: agent did not produce a final answer "
+                    f"after {max_resumes} confirmation resumptions "
+                    f"(last question: {result.question!r})"
+                )
+            resumes += 1
+            result = loop.resume_turn(result.suspension_id, resume_answer)
+        if isinstance(result, FinalResponse):
+            final_text = result.content
+        else:
+            # result is None: _loop exhausted max rounds without a final answer
+            final_text = "达到最大轮次限制。"
     state = load_analysis_state(session_id, project_name)
     return final_text, state
 
