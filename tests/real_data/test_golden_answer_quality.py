@@ -203,3 +203,20 @@ def test_baseline_roundtrip(tmp_path):
     assert gar.read_baseline(tmp_path, "s1") is None
     gar.write_baseline(tmp_path, "s1", "旧答案")
     assert gar.read_baseline(tmp_path, "s1") == "旧答案"
+
+
+import subprocess
+import sys
+
+
+@pytest.mark.skipif(DATA_DIR is None, reason="reference/test_doc not found")
+def test_cli_help_exits_zero():
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.run_golden_answer_quality", "--help"],
+        cwd=WORKTREE_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "--manifest" in proc.stdout
+    assert "--update-baseline" in proc.stdout
