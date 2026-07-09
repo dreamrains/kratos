@@ -53,3 +53,65 @@ def test_golden_manifest_files_exist():
     for scenario in manifest["scenarios"]:
         for name in scenario["required_files"]:
             assert (DATA_DIR / name).is_file(), f"missing {name} for {scenario['id']}"
+
+
+from data_agent.agent import answer_quality as aq
+
+
+def test_soft_dimensions_complete():
+    keys = set(aq.SOFT_DIMENSIONS)
+    assert keys == {"rigor", "insight_depth", "guidance", "data_explanation", "direction_expansion"}
+    for spec in aq.SOFT_DIMENSIONS.values():
+        assert all(k in spec for k in ("name", "what", "anchor_1", "anchor_3", "anchor_5"))
+
+
+def test_extract_material_claims_marks_numeric_sentences():
+    text = "整体收入增长了20%。其中复购贡献最大。请注意数据范围。"
+    claims = aq.extract_material_claims(text)
+    material = [c for c in claims if c["material"]]
+    non_material = [c for c in claims if not c["material"]]
+    assert any("20%" in c["text"] for c in material)
+    assert any("数据范围" in c["text"] for c in non_material)
+    assert all("claim_key" in c and "text" in c for c in claims)
+
+
+def test_is_supported_by_evidence():
+    evidence = [{"claim": "复购贡献最大", "result_summary": "老客收入+18%"}]
+    assert aq.is_supported_by_evidence("复购贡献最大", evidence) is True
+    assert aq.is_supported_by_evidence("优惠券导致复购提升", evidence) is False
+
+
+class _FakeState:
+    def __init__(self, evidence, verification_reports=None):
+        self.evidence_records = evidence
+        self.verification_reports = verification_reports or []
+        self.route_proposals = []
+        self.cleaning_logs = []
+        self.file_relationships = []
+        self.data_understanding_bundles = []
+
+
+def test_evaluate_fatal_blocks_unsupported_material_claim():
+    state = _FakeState(evidence=[{"claim": "留存下降", "result_summary": "D7 较低"}])
+    result = aq.evaluate_fatal(
+        "买卡后消费提升了50%，是省钱卡直接导致的。", state
+    )
+    assert result["claim_delivery_ready"] is False
+    assert any(b.startswith("unsupported_material_claim") for b in result["blockers"])
+
+
+def test_evaluate_fatal_passes_when_claim_supported():
+    state = _FakeState(evidence=[{"claim": "买卡后消费提升50%", "result_summary": "前后对比 +50%"}])
+    result = aq.evaluate_fatal("买卡后消费提升了50%。", state)
+    assert result["claim_delivery_ready"] is True
+    assert result["blockers"] == []
+
+
+def test_evaluate_fatal_folds_in_failed_agent_verification():
+    state = _FakeState(
+        evidence=[{"claim": "x", "result_summary": "x"}],
+        verification_reports=[{"overall_status": "fail", "failed_count": 1, "downgraded_count": 0}],
+    )
+    result = aq.evaluate_fatal("x。", state)
+    assert result["claim_delivery_ready"] is False
+    assert "agent_verification_failed" in result["blockers"]
