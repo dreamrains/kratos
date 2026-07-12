@@ -542,44 +542,44 @@
                      x-show="sessionSidePanelTab === 'current'">
               <h4 class="text-sm font-semibold text-stone-700 dark:text-stone-300">结论与下一步</h4>
 
-              <div class="grid grid-cols-1 gap-3 mt-2">
-                <div data-testid="action-board-confirmed">
+              <div class="space-y-4 mt-2">
+                <div data-testid="action-board-confirmed" class="space-y-1.5">
                   <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">已确认</div>
                   <template x-for="(c, i) in actionBoard().confirmed" :key="'conf-'+i">
                     <div class="workbench-item">
-                      <div class="text-sm font-medium text-stone-700 dark:text-stone-300" x-text="c.claim"></div>
-                      <div class="text-xs text-stone-400 mt-0.5"><span x-text="c.confidence"></span><span x-show="c.dataset"> · </span><span x-text="c.dataset"></span></div>
+                      <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="c.claim"></div>
+                      <div class="text-[10px] text-stone-500 dark:text-stone-400 mt-1"><span x-text="formatWorkbenchText(c.confidence, 'confidence')"></span><span x-show="c.dataset"> · </span><span x-text="c.dataset"></span></div>
                     </div>
                   </template>
                   <div x-show="!actionBoard().confirmed.length" class="text-xs text-stone-400 mt-1">暂无已确认结论</div>
                 </div>
 
-                <div data-testid="action-board-uncertain">
+                <div data-testid="action-board-uncertain" class="space-y-1.5">
                   <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">仍不确定</div>
                   <template x-for="(u, i) in actionBoard().uncertain" :key="'unc-'+i">
                     <div class="workbench-item">
-                      <div class="text-sm text-stone-700 dark:text-stone-300" x-text="u.label"></div>
-                      <div class="text-xs text-stone-400 mt-0.5" x-text="u.reason"></div>
+                      <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatWorkbenchText(u.label, 'risk')"></div>
+                      <div class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatWorkbenchText(u.reason, 'kind')"></div>
                     </div>
                   </template>
                   <div x-show="!actionBoard().uncertain.length" class="text-xs text-stone-400 mt-1">暂无不确定项</div>
                 </div>
 
-                <div data-testid="action-board-next-steps">
+                <div data-testid="action-board-next-steps" class="space-y-1.5">
                   <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">建议下一步</div>
                   <template x-for="(n, i) in actionBoard().next_steps" :key="'ns-'+i">
                     <div class="workbench-item">
-                      <div class="text-sm text-stone-700 dark:text-stone-300" x-text="n.direction"></div>
-                      <div class="text-xs text-stone-400 mt-0.5" x-text="n.kind"></div>
+                      <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="formatWorkbenchText(n.direction, 'route')"></div>
+                      <div class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatWorkbenchText(n.kind, 'kind')"></div>
                     </div>
                   </template>
                   <div x-show="!actionBoard().next_steps.length" class="text-xs text-stone-400 mt-1">暂无建议</div>
                 </div>
 
-                <div data-testid="action-board-trust" class="text-xs text-stone-400">
+                <div data-testid="action-board-trust" class="text-[10px] text-stone-400">
                   <span x-text="`${actionBoard().trust_basis.evidence_count||0} 条证据`"></span>
                   · 验证
-                  <span x-text="actionBoard().trust_basis.verification_status || '未运行'"></span>
+                  <span x-text="formatWorkbenchText(actionBoard().trust_basis.verification_status || 'not_run', 'verification')"></span>
                 </div>
               </div>
             </section>
@@ -606,7 +606,7 @@
                       <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.dataset || file.filename || file.file_id"></p>
                       <span class="text-[10px] text-stone-400" x-text="trustStatusLabel(file.assignment || file.eligibility || 'unknown')"></span>
                     </div>
-                    <p x-show="file.reason" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="file.reason"></p>
+                    <p x-show="file.reason" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatWorkbenchText(file.reason, 'risk')"></p>
                   </div>
                 </template>
               </div>
@@ -630,49 +630,49 @@
               <div class="space-y-4 mt-2">
             <section class="trust-section workbench-primary-section" data-testid="multifile-data-understanding" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Data Understanding</h3>
-                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? 'Loading' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">数据理解</h3>
+                    <span class="trust-pill" :class="trustStatusClass(trustView ? trustView.status : 'empty')" x-text="trustLoading ? '加载中' : trustStatusLabel(trustView ? trustView.status : 'empty')"></span>
                 </div>
                 <p x-show="trustError" class="text-xs text-red-500 mb-2" x-text="trustError"></p>
                 <div class="space-y-1.5">
                     <template x-for="(dataset, di) in (multifileDataUnderstanding().datasets || [])" :key="dataset.dataset || di">
                         <div class="workbench-item">
                             <div class="flex items-center justify-between gap-2">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="dataset.dataset || 'Dataset'"></p>
-                                <span class="text-[10px] text-stone-400" x-text="(dataset.rows || 0) + ' rows'"></span>
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="dataset.dataset || '数据集'"></p>
+                                <span class="text-[10px] text-stone-400" x-text="(dataset.rows || 0) + ' 行'"></span>
                             </div>
-                            <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="dataset.grain || 'Grain not identified'"></p>
+                            <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="formatWorkbenchText(dataset.grain || 'Grain not identified', 'data')"></p>
                             <p x-show="dataset.columns && dataset.columns.length" class="text-[10px] text-stone-400 truncate mt-1" x-text="dataset.columns.map((column) => column.name || column).join(', ')"></p>
                         </div>
                     </template>
                     <template x-for="(quality, qi) in (multifileDataUnderstanding().quality_findings || [])" :key="quality.id || quality.finding || qi">
-                        <p class="text-[10px] text-amber-700 dark:text-amber-300" x-text="quality.finding || quality.message || quality"></p>
+                        <p class="text-[10px] text-amber-700 dark:text-amber-300" x-text="formatWorkbenchText(quality.finding || quality.message || quality, 'risk')"></p>
                     </template>
                     <template x-for="(constraint, ci) in (multifileDataUnderstanding().analysis_constraints || [])" :key="constraint.id || constraint.constraint || ci">
-                        <p class="text-[10px] text-stone-500 dark:text-stone-400" x-text="constraint.constraint || constraint.message || constraint"></p>
+                        <p class="text-[10px] text-stone-500 dark:text-stone-400" x-text="formatWorkbenchText(constraint.constraint || constraint.message || constraint, 'risk')"></p>
                     </template>
-                    <p x-show="!trustLoading && !trustError && (!multifileDataUnderstanding().datasets || multifileDataUnderstanding().datasets.length === 0)" class="text-xs text-stone-400 py-1">No data understanding brief yet.</p>
+                    <p x-show="!trustLoading && !trustError && (!multifileDataUnderstanding().datasets || multifileDataUnderstanding().datasets.length === 0)" class="text-xs text-stone-400 py-1">暂无数据理解摘要。</p>
                 </div>
             </section>
 
             <section class="trust-section workbench-primary-section" data-testid="multifile-relationships" x-show="sessionSidePanelTab === 'current'">
                 <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Relationships</h3>
+                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">数据关系</h3>
                     <span class="text-[10px] text-stone-400" x-text="multifileRelationships().length"></span>
                 </div>
                 <div class="space-y-1.5">
                     <template x-for="(relationship, ri) in multifileRelationships()" :key="relationship.id || ri">
                         <div class="workbench-item">
                             <div class="flex items-center justify-between gap-2">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="(relationship.file_ids || []).join(' / ') || relationship.id || 'Relationship'"></p>
+                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="(relationship.file_ids || []).join(' / ') || relationship.id || '数据关系'"></p>
                                 <span class="trust-pill" :class="trustStatusClass(relationship.status || 'unknown')" x-text="trustStatusLabel(relationship.status || 'unknown')"></span>
                             </div>
-                            <p x-show="relationship.value || relationship.risk" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="[relationship.value, relationship.risk].filter(Boolean).join(' / ')"></p>
-                            <p x-show="relationship.evidence && relationship.evidence.length" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'依据：' + relationship.evidence.join('；')"></p>
-                            <p x-show="relationship.uncertainties && relationship.uncertainties.length" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="'不确定性：' + relationship.uncertainties.join('；')"></p>
+                            <p x-show="relationship.value || relationship.risk" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="[relationship.value, relationship.risk].filter(Boolean).map((item) => formatWorkbenchText(item, 'risk')).join(' / ')"></p>
+                            <p x-show="relationship.evidence && relationship.evidence.length" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'依据：' + relationship.evidence.map((item) => formatWorkbenchText(item, 'risk')).join('；')"></p>
+                            <p x-show="relationship.uncertainties && relationship.uncertainties.length" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="'不确定性：' + relationship.uncertainties.map((item) => formatWorkbenchText(item, 'risk')).join('；')"></p>
                         </div>
                     </template>
-                    <p x-show="!trustLoading && !trustError && multifileRelationships().length === 0" class="text-xs text-stone-400 py-1">No relationship signal yet.</p>
+                    <p x-show="!trustLoading && !trustError && multifileRelationships().length === 0" class="text-xs text-stone-400 py-1">暂无数据关系信息。</p>
                 </div>
             </section>
               </div>

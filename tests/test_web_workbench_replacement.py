@@ -12,6 +12,31 @@ def _app_js() -> str:
     return (ROOT / "src/data_agent/web/static/js/app.js").read_text(encoding="utf-8")
 
 
+def _app_css() -> str:
+    return (ROOT / "src/data_agent/web/static/css/app.css").read_text(encoding="utf-8")
+
+
+def test_current_analysis_uses_two_equal_tabs_unified_cards_and_chinese_system_labels():
+    html = _index_html()
+    js = _app_js()
+    css = _app_css()
+
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
+    assert "formatWorkbenchText(c.confidence, 'confidence')" in html
+    assert "formatWorkbenchText(u.label, 'risk')" in html
+    assert "formatWorkbenchText(u.reason, 'kind')" in html
+    assert "formatWorkbenchText(n.direction, 'route')" in html
+    assert "formatWorkbenchText(n.kind, 'kind')" in html
+    assert "formatWorkbenchText(actionBoard().trust_basis.verification_status || 'not_run', 'verification')" in html
+    assert ">数据理解<" in html
+    assert ">数据关系<" in html
+    assert "暂无数据理解摘要。" in html
+    assert "暂无数据关系信息。" in html
+    assert "formatWorkbenchText(value, category = '')" in js
+    for translation in ("高置信度", "中等置信度", "趋势分析", "周期对比", "相关性分析", "比率分析", "数据缺口", "尚未验证"):
+        assert translation in js
+
+
 def test_current_panel_uses_multifile_workbench_as_primary_surface():
     html = _index_html()
 

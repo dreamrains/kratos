@@ -80,8 +80,8 @@ def test_artifact_links_do_not_render_raw_paths_as_text() -> None:
 def test_workbench_empty_states_hide_during_loading_or_error() -> None:
     html = _index_html()
     for label in (
-        "No data understanding brief yet.",
-        "No relationship signal yet.",
+        "暂无数据理解摘要。",
+        "暂无数据关系信息。",
     ):
         match = re.search(
             rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>',

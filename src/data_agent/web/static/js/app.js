@@ -1314,6 +1314,27 @@ function chatApp() {
             return text;
         },
 
+        formatWorkbenchText(value, category = '') {
+            const text = String(value || '');
+            const labels = {
+                confidence: { high: '高置信度', medium: '中等置信度', low: '低置信度' },
+                route: {
+                    trend: '趋势分析',
+                    period_compare: '周期对比',
+                    correlation: '相关性分析',
+                    rate_analysis: '比率分析',
+                },
+                kind: { route: '推荐分析方向', data_gap: '数据缺口' },
+                verification: { not_run: '尚未验证' },
+                data: { 'Grain not identified': '未识别数据粒度' },
+            };
+            const translated = labels[category]?.[text];
+            if (translated) return translated;
+            return category === 'risk' || category === 'data'
+                ? this.formatRiskMessage(text)
+                : text;
+        },
+
         trustStatusLabel(status) {
             const labels = {
                 empty: '空',
