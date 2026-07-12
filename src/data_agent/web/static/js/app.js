@@ -1231,20 +1231,12 @@ function chatApp() {
         actionBoard()   { return this.trustView?.workbench?.action_board || {}; },
         fullAnswer()    { return this.trustView?.workbench?.full_answer || ''; },
 
-        workbenchDetails() {
-            return this.trustView?.workbench?.details || {};
-        },
-
         workbenchScope() {
-            return this.workbenchDetails().scope || {};
+            return this.trustView?.workbench?.details?.scope || {};
         },
 
         workbenchConfirmation() {
-            return this.workbenchDetails().confirmation || {};
-        },
-
-        workbenchVerification() {
-            return this.workbenchDetails().verification || {};
+            return this.trustView?.workbench?.details?.confirmation || {};
         },
 
         multifileDataUnderstanding() {
@@ -1253,14 +1245,6 @@ function chatApp() {
 
         multifileRelationships() {
             return this.multifileWorkbench().relationships || [];
-        },
-
-        multifileAnalysisDirections() {
-            return this.multifileWorkbench().analysis_directions || [];
-        },
-
-        multifileAnswerCoverage() {
-            return this.multifileWorkbench().answer_coverage || {};
         },
 
         visibleListItems(key, items, defaultLimit = 6) {

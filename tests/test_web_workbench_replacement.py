@@ -17,9 +17,7 @@ def test_current_panel_uses_multifile_workbench_as_primary_surface():
 
     assert "multifile-data-understanding" in html
     assert "multifile-relationships" in html
-    assert "multifile-analysis-directions" in html
-    assert "multifile-answer-coverage" in html
-    assert html.count("workbench-primary-section") == 5
+    assert html.count("workbench-primary-section") == 4
 
 
 def test_old_trust_technical_sections_are_not_primary_current_panel():
@@ -38,20 +36,18 @@ def test_multifile_workbench_helpers_read_new_view_model():
     assert "multifileWorkbench()" in js
     assert "multifileDataUnderstanding()" in js
     assert "multifileRelationships()" in js
-    assert "multifileAnalysisDirections()" in js
-    assert "multifileAnswerCoverage()" in js
     assert "this.trustView?.workbench?.multifile_analysis" in js
 
 
-def test_secondary_details_support_validation_without_legacy_history_routes():
+def test_workbench_keeps_validation_helpers_without_legacy_history_routes():
     html = _index_html()
     js = _app_js()
 
-    assert "data-testid=\"workbench-details\"" in html
-    assert "sessionSidePanelTab === 'details'" in html
-    assert "workbenchDetails()" in js
     assert "workbenchScope()" in js
-    assert "workbenchVerification()" in js
+    assert "workbenchConfirmation()" in js
+    assert "sessionSidePanelTab === 'details'" not in html
+    assert "workbenchDetails()" not in js
+    assert "workbenchVerification()" not in js
     assert "trustView.history" not in html
     assert "selectTrustRoute" not in js
     assert "historyRoutes" not in html
@@ -84,14 +80,10 @@ def test_full_answer_block_uses_markdown_render():
     assert "renderMarkdown(fullAnswer()" in html
 
 
-def test_four_sections_demoted_to_drill_down():
+def test_two_sections_in_drill_down():
     html = _index_html()
     assert 'data-testid="workbench-breakdown"' in html
-    # the 4 primary sections still exist, now inside the breakdown <details>
-    for testid in (
-        "multifile-data-understanding",
-        "multifile-relationships",
-        "multifile-analysis-directions",
-        "multifile-answer-coverage",
-    ):
+    for testid in ("multifile-data-understanding", "multifile-relationships"):
         assert f'data-testid="{testid}"' in html
+    assert 'data-testid="multifile-analysis-directions"' not in html
+    assert 'data-testid="multifile-answer-coverage"' not in html

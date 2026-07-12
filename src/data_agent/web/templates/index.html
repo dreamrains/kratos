@@ -534,7 +534,6 @@
         <div class="flex-1 overflow-y-auto p-4 space-y-5" x-show="!trustInspectorCollapsed" x-transition.opacity>
             <div class="session-side-tabs">
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'current' }" @click="sessionSidePanelTab = 'current'">当前分析</button>
-                <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'details' }" @click="sessionSidePanelTab = 'details'">验证详情</button>
                 <button type="button" class="session-side-tab" :class="{ 'is-active': sessionSidePanelTab === 'outputs' }" @click="sessionSidePanelTab = 'outputs'">产出与导出</button>
             </div>
 
@@ -545,7 +544,7 @@
 
               <div class="grid grid-cols-1 gap-3 mt-2">
                 <div data-testid="action-board-confirmed">
-                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">已确认</div>
+                  <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">已确认</div>
                   <template x-for="(c, i) in actionBoard().confirmed" :key="'conf-'+i">
                     <div class="workbench-item">
                       <div class="text-sm font-medium text-stone-700 dark:text-stone-300" x-text="c.claim"></div>
@@ -556,7 +555,7 @@
                 </div>
 
                 <div data-testid="action-board-uncertain">
-                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">仍不确定</div>
+                  <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">仍不确定</div>
                   <template x-for="(u, i) in actionBoard().uncertain" :key="'unc-'+i">
                     <div class="workbench-item">
                       <div class="text-sm text-stone-700 dark:text-stone-300" x-text="u.label"></div>
@@ -567,7 +566,7 @@
                 </div>
 
                 <div data-testid="action-board-next-steps">
-                  <div class="text-xs font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">建议下一步</div>
+                  <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">建议下一步</div>
                   <template x-for="(n, i) in actionBoard().next_steps" :key="'ns-'+i">
                     <div class="workbench-item">
                       <div class="text-sm text-stone-700 dark:text-stone-300" x-text="n.direction"></div>
@@ -585,11 +584,39 @@
               </div>
             </section>
 
+            <!-- 确认门（仅当 agent 阻塞、需用户确认时显示） -->
+            <section class="trust-section" data-testid="workbench-confirmation-banner"
+                     x-show="sessionSidePanelTab === 'current' && workbenchConfirmation().status === 'needs_confirmation'">
+              <div class="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-3 py-2">
+                <div class="text-[11px] font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wider mb-1">需确认</div>
+                <p class="text-xs text-amber-800 dark:text-amber-200"
+                   x-text="workbenchConfirmation().question || workbenchConfirmation().blocking_reason"></p>
+              </div>
+            </section>
+
+            <!-- 分析范围 -->
+            <section class="trust-section workbench-primary-section" data-testid="workbench-scope"
+                     x-show="sessionSidePanelTab === 'current' && (workbenchScope().goal || (workbenchScope().files && workbenchScope().files.length))">
+              <h4 class="text-sm font-semibold text-stone-700 dark:text-stone-300">分析范围</h4>
+              <p x-show="workbenchScope().goal" class="text-xs text-stone-600 dark:text-stone-300 mt-1 mb-1.5" x-text="workbenchScope().goal"></p>
+              <div class="space-y-1.5 mt-1">
+                <template x-for="(file, fi) in (workbenchScope().files || [])" :key="file.file_id || fi">
+                  <div class="workbench-item">
+                    <div class="flex items-center justify-between gap-2">
+                      <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.dataset || file.filename || file.file_id"></p>
+                      <span class="text-[10px] text-stone-400" x-text="trustStatusLabel(file.assignment || file.eligibility || 'unknown')"></span>
+                    </div>
+                    <p x-show="file.reason" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="file.reason"></p>
+                  </div>
+                </template>
+              </div>
+            </section>
+
             <!-- 完整分析（可展开） -->
             <section class="trust-section" data-testid="workbench-full-answer"
                      x-show="sessionSidePanelTab === 'current'">
               <button type="button" class="text-sm font-semibold text-stone-700 dark:text-stone-300" @click="expandedFullAnswer = !expandedFullAnswer">
-                <span x-text="expandedFullAnswer ? '收起完整分析' : '查看完整分析'"></span>
+                <span x-text="expandedFullAnswer ? '收起完整叙述' : '完整叙述（AI 原文）'"></span>
               </button>
               <div x-show="expandedFullAnswer" x-cloak
                    class="prose prose-sm dark:prose-invert max-w-none leading-7 mt-2"
@@ -597,7 +624,7 @@
               <div x-show="!fullAnswer()" class="text-xs text-stone-400 mt-1">暂无完整分析</div>
             </section>
 
-            <!-- 数据明细下钻（4 个诊断区块） -->
+            <!-- 数据明细下钻（Data Understanding + Relationships） -->
             <details class="trust-section" data-testid="workbench-breakdown" x-show="sessionSidePanelTab === 'current'">
               <summary class="text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer">数据明细（下钻）</summary>
               <div class="space-y-4 mt-2">
@@ -641,103 +668,15 @@
                                 <span class="trust-pill" :class="trustStatusClass(relationship.status || 'unknown')" x-text="trustStatusLabel(relationship.status || 'unknown')"></span>
                             </div>
                             <p x-show="relationship.value || relationship.risk" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="[relationship.value, relationship.risk].filter(Boolean).join(' / ')"></p>
+                            <p x-show="relationship.evidence && relationship.evidence.length" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'依据：' + relationship.evidence.join('；')"></p>
+                            <p x-show="relationship.uncertainties && relationship.uncertainties.length" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="'不确定性：' + relationship.uncertainties.join('；')"></p>
                         </div>
                     </template>
                     <p x-show="!trustLoading && !trustError && multifileRelationships().length === 0" class="text-xs text-stone-400 py-1">No relationship signal yet.</p>
                 </div>
             </section>
-
-            <section class="trust-section workbench-primary-section" data-testid="multifile-analysis-directions" x-show="sessionSidePanelTab === 'current'">
-                <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Analysis Directions</h3>
-                    <span class="text-[10px] text-stone-400" x-text="multifileAnalysisDirections().length"></span>
-                </div>
-                <div class="space-y-1.5">
-                    <template x-for="(direction, ai) in multifileAnalysisDirections()" :key="direction.id || ai">
-                        <div class="workbench-item">
-                            <div class="flex items-center justify-between gap-2">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="direction.label || direction.direction"></p>
-                                <span class="trust-pill" :class="trustStatusClass(direction.support_status || 'unknown')" x-text="trustStatusLabel(direction.support_status || 'unknown')"></span>
-                            </div>
-                            <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="direction.reason || direction.dataset || ''"></p>
-                        </div>
-                    </template>
-                    <p x-show="!trustLoading && !trustError && multifileAnalysisDirections().length === 0" class="text-xs text-stone-400 py-1">No analysis direction yet.</p>
-                </div>
-            </section>
-
-            <section class="trust-section workbench-primary-section" data-testid="multifile-answer-coverage" x-show="sessionSidePanelTab === 'current'">
-                <div class="flex items-center justify-between mb-2">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Answer Coverage</h3>
-                    <span class="trust-pill" :class="trustStatusClass(multifileAnswerCoverage().status || 'not_run')" x-text="trustStatusLabel(multifileAnswerCoverage().status || 'not_run')"></span>
-                </div>
-                <div class="workbench-item">
-                    <p class="text-xs text-stone-600 dark:text-stone-300">
-                        <span x-text="multifileAnswerCoverage().evidence_count || 0"></span> evidence records /
-                        <span x-text="multifileAnswerCoverage().verified_claim_count || 0"></span> verified claims /
-                        <span x-text="multifileAnswerCoverage().failed_claim_count || 0"></span> failed
-                    </p>
-                    <template x-for="(claim, ci) in (multifileAnswerCoverage().covered_claims || [])" :key="claim.claim || ci">
-                        <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="claim.claim"></p>
-                    </template>
-                    <template x-for="(limitation, li) in (multifileAnswerCoverage().limitations || [])" :key="limitation.id || limitation.limitation || li">
-                        <p class="text-[10px] text-amber-700 dark:text-amber-300 mt-1" x-text="limitation.limitation || limitation.message || limitation"></p>
-                    </template>
-                    <p x-show="!multifileAnswerCoverage().covered_claims || multifileAnswerCoverage().covered_claims.length === 0" class="text-[10px] text-stone-400 mt-1">No supported claims yet.</p>
-                </div>
-            </section>
               </div>
             </details>
-
-            <div data-testid="workbench-details" x-show="sessionSidePanelTab === 'details'" class="space-y-5">
-                <section class="trust-section">
-                    <div class="flex items-center justify-between mb-2">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">分析范围</h3>
-                        <span class="trust-pill" :class="trustStatusClass(workbenchScope().status || 'ready')" x-text="trustStatusLabel(workbenchScope().status || 'ready')"></span>
-                    </div>
-                    <p x-show="workbenchScope().goal" class="text-xs text-stone-600 dark:text-stone-300 mb-2" x-text="workbenchScope().goal"></p>
-                    <div class="space-y-1.5">
-                        <template x-for="(file, fi) in (workbenchScope().files || [])" :key="file.file_id || fi">
-                            <div class="workbench-item">
-                                <div class="flex items-center justify-between gap-2">
-                                    <p class="text-xs font-medium text-stone-700 dark:text-stone-300 truncate" x-text="file.dataset || file.filename || file.file_id"></p>
-                                    <span class="text-[10px] text-stone-400" x-text="trustStatusLabel(file.assignment || file.eligibility || 'unknown')"></span>
-                                </div>
-                                <p class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="file.reason || 'No scope note.'"></p>
-                            </div>
-                        </template>
-                        <p x-show="!workbenchScope().files || workbenchScope().files.length === 0" class="text-xs text-stone-400 py-1">暂无文件范围决策。</p>
-                    </div>
-                </section>
-
-                <section class="trust-section">
-                    <div class="flex items-center justify-between mb-2">
-                        <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">确认与验证</h3>
-                        <span class="trust-pill" :class="trustStatusClass(workbenchVerification().status || 'not_run')" x-text="trustStatusLabel(workbenchVerification().status || 'not_run')"></span>
-                    </div>
-                    <div class="workbench-item">
-                        <p class="text-xs text-stone-600 dark:text-stone-300">
-                            <span x-text="workbenchVerification().claim_count || 0"></span> claims /
-                            <span x-text="workbenchVerification().failed_count || 0"></span> failed /
-                            <span x-text="workbenchVerification().downgraded_count || 0"></span> downgraded
-                        </p>
-                        <p x-show="workbenchConfirmation().status === 'needs_confirmation'" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="workbenchConfirmation().question || workbenchConfirmation().blocking_reason"></p>
-                    </div>
-                </section>
-
-                <section class="trust-section" x-show="multifileRelationships().length">
-                    <h3 class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">关系依据</h3>
-                    <div class="space-y-1.5">
-                        <template x-for="(relationship, rdi) in multifileRelationships()" :key="relationship.id || rdi">
-                            <div class="workbench-item">
-                                <p class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="(relationship.file_ids || []).join(' / ') || relationship.id"></p>
-                                <p x-show="relationship.evidence && relationship.evidence.length" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="'依据：' + relationship.evidence.join('；')"></p>
-                                <p x-show="relationship.uncertainties && relationship.uncertainties.length" class="text-[10px] text-amber-600 dark:text-amber-300 mt-1" x-text="'不确定性：' + relationship.uncertainties.join('；')"></p>
-                            </div>
-                        </template>
-                    </div>
-                </section>
-            </div>
 
             <!-- Conversation Export -->
             <div x-show="sessionSidePanelTab === 'outputs'">

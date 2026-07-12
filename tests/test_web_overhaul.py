@@ -652,8 +652,7 @@ class TestConfirmationWorkbenchWording:
 
     def test_sidebar_uses_assignment_scope_and_nonblocking_relationship_diagnostics(self, html, js):
         assert "workbenchScope().files" in html
-        assert "workbenchDetails()" in js
-        assert "关系依据" in html
+        assert "multifile-relationships" in html
         assert "relationship.evidence" in html
         assert "relationship.uncertainties" in html
         assert "diagnostic_only" not in html

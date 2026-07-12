@@ -17,51 +17,39 @@ def _app_css() -> str:
     return (ROOT / "src/data_agent/web/static/css/app.css").read_text(encoding="utf-8")
 
 
-def test_workbench_has_exactly_five_primary_sections() -> None:
+def test_workbench_has_expected_primary_sections() -> None:
     html = _index_html()
 
-    assert html.count("workbench-primary-section") == 5
+    # action-board + workbench-scope + data-understanding + relationships
+    assert html.count("workbench-primary-section") == 4
+    assert 'data-testid="action-board"' in html
+    assert 'data-testid="workbench-scope"' in html
     assert 'data-testid="multifile-data-understanding"' in html
     assert 'data-testid="multifile-relationships"' in html
-    assert 'data-testid="multifile-analysis-directions"' in html
-    assert 'data-testid="multifile-answer-coverage"' in html
+    assert 'data-testid="multifile-analysis-directions"' not in html
+    assert 'data-testid="multifile-answer-coverage"' not in html
 
 
-def test_primary_sections_surface_quality_constraints_and_answer_limits() -> None:
+def test_primary_sections_surface_quality_constraints_and_limitations() -> None:
     html = _index_html()
 
     assert "multifileDataUnderstanding().quality_findings" in html
     assert "multifileDataUnderstanding().analysis_constraints" in html
-    assert "multifileAnswerCoverage().limitations" in html
+    # limitations now surface inside the action board's uncertain block
+    assert 'data-testid="action-board-uncertain"' in html
 
 
-def test_validation_details_are_secondary_and_bounded() -> None:
+def test_workbench_does_not_leak_internal_ids_or_dead_helpers() -> None:
     html = _index_html()
     js = _app_js()
 
-    current_panel = html.split('data-testid="workbench-details"', 1)[0]
-    assert "workbenchScope()" not in current_panel
-    assert "workbenchVerification()" not in current_panel
-    assert "sessionSidePanelTab === 'details'" in html
-    assert "workbenchDetails()" in js
-    assert "workbenchScope()" in js
-    assert "workbenchConfirmation()" in js
-    assert "workbenchVerification()" in js
     assert "task_refs" not in html
     assert "evidence_signature" not in html
-
-
-def test_analysis_directions_are_read_only_suggestions() -> None:
-    html = _index_html()
-    current_panel = html.split('data-testid="workbench-details"', 1)[0]
-
-    assert "multifileAnalysisDirections()" in current_panel
-    assert "selectTrustRoute" not in html
-    assert "@click" not in re.search(
-        r'<section[^>]+data-testid="multifile-analysis-directions"(?P<body>.*?)</section>',
-        current_panel,
-        re.S,
-    ).group("body")
+    assert "sessionSidePanelTab === 'details'" not in html
+    assert "workbenchDetails()" not in js
+    assert "workbenchVerification()" not in js
+    assert "multifileAnalysisDirections()" not in js
+    assert "multifileAnswerCoverage()" not in js
 
 
 def test_legacy_trust_and_history_surfaces_are_removed() -> None:
@@ -94,7 +82,6 @@ def test_workbench_empty_states_hide_during_loading_or_error() -> None:
     for label in (
         "No data understanding brief yet.",
         "No relationship signal yet.",
-        "No analysis direction yet.",
     ):
         match = re.search(
             rf'<p x-show="(?P<condition>[^"]+)"[^>]*>{re.escape(label)}</p>',
