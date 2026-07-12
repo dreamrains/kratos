@@ -141,10 +141,3 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
         "files": [],
         "notes": [],
     }
-    assert view["workbench"]["details"]["verification"] == {
-        "status": "not_run",
-        "claim_count": 0,
-        "failed_count": 0,
-        "downgraded_count": 0,
-        "created_at": "",
-    }

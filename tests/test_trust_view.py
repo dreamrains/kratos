@@ -15,8 +15,6 @@ def test_empty_trust_view_is_only_an_empty_workbench_contract() -> None:
     assert set(view["workbench"]["multifile_analysis"]) == {
         "data_understanding",
         "relationships",
-        "analysis_directions",
-        "answer_coverage",
     }
 
 
@@ -62,13 +60,6 @@ def test_workbench_projects_scope_confirmation_and_verification_without_internal
     assert details["scope"]["files"][0]["assignment"] == "used"
     assert details["scope"]["files"][0]["task_count"] == 1
     assert details["confirmation"]["status"] == "needs_confirmation"
-    assert details["verification"] == {
-        "status": "pass_with_downgrades",
-        "claim_count": 3,
-        "failed_count": 0,
-        "downgraded_count": 1,
-        "created_at": "",
-    }
     rendered = json.dumps(view, ensure_ascii=False)
     assert "task_refs" not in rendered
     assert "evidence_signature" not in rendered
@@ -101,7 +92,7 @@ def test_relationships_remain_diagnostic_and_keep_bounded_supporting_detail() ->
     assert relationship["uncertainties"] == ["different time windows"]
 
 
-def test_analysis_directions_are_suggestions_and_never_auto_submit() -> None:
+def test_action_board_next_steps_are_suggestions_and_never_auto_submit() -> None:
     state = AnalysisSessionState(session_id="directions", data_state="data_loaded")
     state.active_scope.update({"active_dataset": "orders", "active_mode": "data_loaded"})
     state.dataset_contracts = [{
@@ -119,10 +110,12 @@ def test_analysis_directions_are_suggestions_and_never_auto_submit() -> None:
         "evidence_requirements": ["daily GMV"],
     }]
 
-    directions = build_trust_view(state)["workbench"]["multifile_analysis"]["analysis_directions"]
+    next_steps = build_trust_view(state)["workbench"]["action_board"]["next_steps"]
 
-    assert directions
-    assert all(item["auto_submit"] is False for item in directions)
+    assert next_steps
+    route_steps = [n for n in next_steps if n.get("kind") == "route"]
+    assert route_steps
+    assert all(n.get("auto_submit") is False for n in route_steps)
 
 
 def test_loaded_state_is_ready_even_before_evidence_exists() -> None:
@@ -131,7 +124,6 @@ def test_loaded_state_is_ready_even_before_evidence_exists() -> None:
     view = build_trust_view(state)
 
     assert view["status"] == "ready"
-    assert view["workbench"]["multifile_analysis"]["answer_coverage"]["status"] == "not_started"
 
 
 from pathlib import Path

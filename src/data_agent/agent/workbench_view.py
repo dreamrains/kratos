@@ -39,13 +39,15 @@ def build_multifile_workbench_view(
     *,
     capabilities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a read-only four-section Workbench model from existing state."""
+    """Build a read-only Workbench model from existing state.
 
+    Sections: data understanding + relationships. Analysis directions live in
+    the action board (next_steps); answer coverage lives in the action board
+    (confirmed / uncertain / trust_basis).
+    """
     return {
         "data_understanding": _data_understanding_section(state),
         "relationships": _relationship_section(state),
-        "analysis_directions": _analysis_direction_section(state, capabilities),
-        "answer_coverage": _answer_coverage_section(state),
     }
 
 
@@ -194,69 +196,12 @@ def _relationship_section(state: Any) -> list[dict[str, Any]]:
     return relationships
 
 
-def _analysis_direction_section(
-    state: Any,
-    capabilities: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    if capabilities is None:
-        capabilities = build_route_capabilities(state)
-    directions = []
-    for item in _list_items(capabilities.get("executable")) + _list_items(capabilities.get("exploratory")):
-        direction = _text(item.get("direction") or item.get("route"))
-        if not direction:
-            continue
-        directions.append({
-            "source": "route_capabilities",
-            "id": _text(item.get("id")),
-            "dataset": _text(item.get("dataset")),
-            "direction": direction,
-            "label": _text(item.get("label")) or direction,
-            "reason": _text(item.get("reason")) or "; ".join(_text_list(item.get("support_reasons"))),
-            "support_status": _text(item.get("support_status")),
-            "evidence_requirements": _text_list(item.get("evidence_requirements")),
-            "risk_fields": _text_list(item.get("risk_fields")),
-            "auto_submit": False,
-        })
-    return directions
-
-
-def _answer_coverage_section(state: Any) -> dict[str, Any]:
-    evidence = _list_attr(state, "evidence_records")
-    verification_reports = _list_attr(state, "verification_reports")
-    latest_verification = verification_reports[-1] if verification_reports else {}
-    return {
-        "evidence_count": len(evidence),
-        "verified_claim_count": _int_value(
-            latest_verification.get("claim_count"),
-            fallback=len(evidence),
-        ),
-        "failed_claim_count": _int_value(latest_verification.get("failed_count")),
-        "status": _text(
-            latest_verification.get("overall_status")
-            or latest_verification.get("status")
-            or ("has_evidence" if evidence else "not_started")
-        ),
-        "covered_claims": [
-            {
-                "claim": _text(item.get("claim")),
-                "confidence": _text(item.get("confidence")),
-                "summary": _text(item.get("result_summary")),
-            }
-            for item in evidence[:6]
-            if _text(item.get("claim"))
-        ],
-        "limitations": _flatten_limitations(evidence),
-    }
-
-
 def _details_section(
     state: Any,
     scope_plan: dict[str, Any],
     confirmation: dict[str, Any],
 ) -> dict[str, Any]:
     file_decisions = _list_items(scope_plan.get("file_decisions"))
-    verification_reports = _list_attr(state, "verification_reports")
-    latest_verification = verification_reports[-1] if verification_reports else {}
     return {
         "scope": {
             "goal": _text(scope_plan.get("goal")) or _text(getattr(state, "goal", "")),
@@ -281,16 +226,6 @@ def _details_section(
             "status": _text(confirmation.get("status")) or "clear",
             "question": _text(confirmation.get("question")),
             "blocking_reason": _text(confirmation.get("blocking_reason")),
-        },
-        "verification": {
-            "status": _text(
-                latest_verification.get("overall_status")
-                or latest_verification.get("status")
-            ) or "not_run",
-            "claim_count": _int_value(latest_verification.get("claim_count")),
-            "failed_count": _int_value(latest_verification.get("failed_count")),
-            "downgraded_count": _int_value(latest_verification.get("downgraded_count")),
-            "created_at": _text(latest_verification.get("created_at")),
         },
     }
 

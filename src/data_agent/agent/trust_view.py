@@ -74,7 +74,6 @@ def _has_workbench_content(state: Any, workbench: dict[str, Any]) -> bool:
         return True
     primary = workbench["multifile_analysis"]
     understanding = primary["data_understanding"]
-    coverage = primary["answer_coverage"]
     details = workbench["details"]
     action = workbench.get("action_board") or {}
     if action.get("confirmed") or action.get("uncertain") or action.get("next_steps"):
@@ -83,11 +82,8 @@ def _has_workbench_content(state: Any, workbench: dict[str, Any]) -> bool:
         understanding.get("datasets")
         or understanding.get("quality_findings")
         or primary.get("relationships")
-        or primary.get("analysis_directions")
-        or coverage.get("evidence_count")
         or details["scope"].get("files")
         or details["confirmation"].get("status") == "needs_confirmation"
-        or details["verification"].get("status") != "not_run"
     )
 
 

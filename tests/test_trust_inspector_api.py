@@ -85,8 +85,10 @@ def test_workbench_endpoint_returns_current_analysis_without_mutating_state(tmp_
         assert response.status_code == 200
         assert set(payload) == {"status", "session_id", "updated_at", "workbench"}
         assert payload["status"] == "ready"
-        assert payload["workbench"]["multifile_analysis"]["analysis_directions"][0]["auto_submit"] is False
-        assert payload["workbench"]["details"]["verification"]["claim_count"] == 2
+        next_steps = payload["workbench"]["action_board"]["next_steps"]
+        assert next_steps
+        assert all(n.get("auto_submit") is False for n in next_steps if n.get("kind") == "route")
+        assert payload["workbench"]["action_board"]["trust_basis"]["verified_claim_count"] == 2
         rendered = json.dumps(payload, ensure_ascii=False)
         assert "artifact_path" not in rendered
         assert "evidence_signature" not in rendered
