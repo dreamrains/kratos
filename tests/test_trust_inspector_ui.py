@@ -102,6 +102,19 @@ def test_workbench_helpers_read_only_the_current_contract() -> None:
     assert "this.trustView?.workbench?.relationship_diagnostics" not in js
 
 
+def test_action_board_accessor_returns_safe_default_before_load() -> None:
+    js = _app_js()
+    # Regression: before /trust resolves (no session, or mid-load),
+    # actionBoard() must fall back to a full empty shape — not a bare {} —
+    # so the action-board x-show/x-text/x-for don't throw Uncaught TypeError
+    # reading .length / .evidence_count / .verification_status off undefined.
+    block = re.search(r"actionBoard\(\)\s*\{(?P<body>.*?);", js, re.S)
+    assert block, "actionBoard() accessor not found in app.js"
+    body = block.group("body")
+    for key in ("confirmed:", "uncertain:", "next_steps:", "trust_basis"):
+        assert key in body, f"actionBoard() default shape missing {key}"
+
+
 def test_workbench_css_contract_remains_responsive_and_readable() -> None:
     css = _app_css()
 
