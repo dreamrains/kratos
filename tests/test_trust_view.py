@@ -124,6 +124,11 @@ def test_loaded_state_is_ready_even_before_evidence_exists() -> None:
     view = build_trust_view(state)
 
     assert view["status"] == "ready"
+    # Loaded, so "ready" — but no evidence exists yet, so the trust basis
+    # reflects an unverified state (the canonical home for these values now).
+    trust_basis = view["workbench"]["action_board"]["trust_basis"]
+    assert trust_basis["evidence_count"] == 0
+    assert trust_basis["verification_status"] == "not_run"
 
 
 from pathlib import Path

@@ -10,7 +10,7 @@ from data_agent.agent.route_capabilities import build_route_capabilities
 
 
 def build_workbench_view(state: Any) -> dict[str, Any]:
-    """Build the complete Workbench contract: four primary areas and details."""
+    """Build the Workbench contract: action board, multifile analysis, and details."""
     if state is None:
         return {
             "action_board": build_action_board(None),
