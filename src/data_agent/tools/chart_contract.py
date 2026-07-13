@@ -31,6 +31,9 @@ class ChartContractResult:
     semantic_roles: dict[str, str] = field(default_factory=dict)
     transformations: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    source_row_count: int = 0
+    dropped_row_count: int = 0
+    dropped_missing_fields: list[str] = field(default_factory=list)
     error: str = ""
     error_code: str = ""
     recovery_options: list[dict[str, str]] = field(default_factory=list)
@@ -83,7 +86,10 @@ def validate_chart_request(
 ) -> ChartContractResult:
     """Validate semantic chart inputs and apply safe, recorded transforms."""
 
-    result = ChartContractResult(dataframe=df.copy())
+    result = ChartContractResult(
+        dataframe=df.copy(),
+        source_row_count=int(len(df)),
+    )
     referenced = [name for name in [x_col, *y_cols, color_col] if name]
     result.semantic_roles = {
         name: infer_semantic_role(name, result.dataframe[name])
@@ -132,6 +138,46 @@ def validate_chart_request(
     ):
         result.error = "Scatter axes must be numeric measures."
         result.error_code = "invalid_scatter_measure"
+        return result
+
+    if chart_type == "scatter" and x_col:
+        numeric_x = pd.to_numeric(result.dataframe[x_col], errors="coerce")
+        finite_x = numeric_x.notna() & np.isfinite(numeric_x)
+        if not len(numeric_x) or float(finite_x.mean()) < 0.5:
+            result.error = "Scatter x axis must contain sufficiently finite numeric values."
+            result.error_code = "invalid_scatter_measure"
+            return result
+        result.dataframe[x_col] = numeric_x.where(finite_x)
+        _drop_missing_required_fields(result, [x_col, *y_cols])
+        if result.dataframe.empty:
+            result.error = "Scatter chart has no complete x/y pairs."
+            result.error_code = "no_complete_scatter_pairs"
+            return result
+
+    if (
+        chart_type in {"bar", "stacked_bar"}
+        and x_col
+        and result.semantic_roles.get(x_col) == "measure"
+    ):
+        result.error = (
+            "Bar charts require a categorical or time-bucket x axis; "
+            f"'{x_col}' is a continuous numeric measure."
+        )
+        result.error_code = "invalid_bar_axis"
+        result.recovery_options = [
+            {
+                "chart_type": "scatter",
+                "description": "Use a scatter chart to show the relationship between two numeric measures.",
+            },
+            {
+                "chart_type": "histogram",
+                "description": "Use a histogram to show the distribution of one numeric measure.",
+            },
+            {
+                "chart_type": "bar",
+                "description": "Aggregate or transform the x measure into documented categories before using bars.",
+            },
+        ]
         return result
 
     histogram_col = y_cols[0] if y_cols else x_col
@@ -258,6 +304,30 @@ def _set_aggregation_required(result: ChartContractResult) -> None:
         }
         for aggregation in ("sum", "mean", "median", "count")
     ]
+
+
+def _drop_missing_required_fields(
+    result: ChartContractResult,
+    required_fields: list[str],
+) -> None:
+    fields = list(dict.fromkeys(
+        field for field in required_fields if field in result.dataframe.columns
+    ))
+    if not fields:
+        return
+
+    missing_fields = [
+        field for field in fields if result.dataframe[field].isna().any()
+    ]
+    if not missing_fields:
+        return
+
+    before = len(result.dataframe)
+    result.dataframe = result.dataframe.dropna(subset=fields).copy()
+    result.dropped_row_count = before - len(result.dataframe)
+    result.dropped_missing_fields = missing_fields
+    if result.dropped_row_count:
+        result.transformations.append("drop_missing_required_fields")
 
 
 def _has_divergent_scales(df: pd.DataFrame, y_cols: list[str]) -> bool:

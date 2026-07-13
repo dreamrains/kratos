@@ -529,6 +529,9 @@ def create_chart(
         if metadata is not None:
             metadata["semantic_roles"] = contract.semantic_roles
             metadata["transformations"] = contract.transformations
+            metadata["source_row_count"] = contract.source_row_count
+            metadata["dropped_row_count"] = contract.dropped_row_count
+            metadata["dropped_missing_fields"] = contract.dropped_missing_fields
             metadata["category_count"] = (
                 int(df[x_col].nunique(dropna=True))
                 if x_col and x_col in df.columns
@@ -543,6 +546,8 @@ def create_chart(
             metadata,
             aggregation,
         )
+        if metadata is not None:
+            metadata["plotted_row_count"] = int(len(df))
 
         if chart_type == "line":
             if x_col and y_col:

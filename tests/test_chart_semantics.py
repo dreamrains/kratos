@@ -125,6 +125,61 @@ def test_low_cardinality_numeric_identifier_bar_uses_category_axis(tmp_path):
     assert "identifier_to_category" in metadata["transformations"]
 
 
+def test_measure_vs_measure_bar_is_rejected_without_artifacts(tmp_path):
+    rows = [
+        {"bounce_count": value, "confirm_per_person": 0.5 + value / 10_000}
+        for value in range(172, 4271, 137)
+    ]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "continuous_measure_bar",
+        chart_type="bar",
+        data_json=json.dumps(rows),
+        x_col="bounce_count",
+        y_col="confirm_per_person",
+        title="Bounce count vs confirmation",
+    )
+
+    payload = json.loads(result)
+    assert payload["error_code"] == "invalid_bar_axis"
+    assert {item["chart_type"] for item in payload["recovery_options"]} >= {
+        "scatter",
+        "histogram",
+    }
+    assert not chart_dir.exists()
+
+
+def test_scatter_drops_incomplete_pairs_and_records_plot_counts(tmp_path):
+    rows = [
+        {"bounce_count": value, "confirm_per_person": 0.5 + value / 10_000}
+        for value in range(172, 4271, 137)
+    ] + [{"bounce_count": None, "confirm_per_person": None}]
+
+    result, chart_dir = _create_chart_in_session(
+        tmp_path,
+        "scatter_complete_pairs",
+        chart_type="scatter",
+        data_json=json.dumps(rows),
+        x_col="bounce_count",
+        y_col="confirm_per_person",
+        title="Bounce count vs confirmation",
+    )
+
+    assert "Chart saved:" in result
+    metadata = json.loads(
+        next(chart_dir.glob("*.json")).read_text(encoding="utf-8")
+    )
+    assert metadata["source_row_count"] == len(rows)
+    assert metadata["plotted_row_count"] == len(rows) - 1
+    assert metadata["dropped_row_count"] == 1
+    assert metadata["dropped_missing_fields"] == [
+        "bounce_count",
+        "confirm_per_person",
+    ]
+    assert "drop_missing_required_fields" in metadata["transformations"]
+
+
 def test_mostly_non_numeric_measure_is_rejected(tmp_path):
     rows = [
         {"segment": "A", "value": "bad"},

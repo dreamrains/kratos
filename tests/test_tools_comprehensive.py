@@ -1002,7 +1002,7 @@ def test_chart_no_data():
 
 def test_chart_data_json():
     from data_agent.tools.visualization import create_chart
-    result = create_chart(chart_type="bar", data_json='[{"x":1,"y":10},{"x":2,"y":20}]',
+    result = create_chart(chart_type="scatter", data_json='[{"x":1,"y":10},{"x":2,"y":20}]',
                          x_col="x", y_col="y", title="JSON Data")
     if "Error" in result:
         return f"JSON data chart failed: {result}"
