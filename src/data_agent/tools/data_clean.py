@@ -602,12 +602,7 @@ def _material_proposal(
     from data_agent.agent.data_lineage import build_transformation_proposal
     from data_agent.agent.data_lineage import frame_fingerprint
 
-    return build_transformation_proposal(
-        logical_dataset=name,
-        active_dataset=active_info,
-        operation=operation,
-        parameters=parameters,
-        candidate_fingerprint=frame_fingerprint(candidate),
+    impact = _proposal_impact(
         impact={
             "row_count_before": len(before),
             "row_count_after": len(candidate),
@@ -616,6 +611,19 @@ def _material_proposal(
             "information_loss": bool(information_loss),
         },
     )
+    return build_transformation_proposal(
+        logical_dataset=name,
+        active_dataset=active_info,
+        operation=operation,
+        parameters=parameters,
+        candidate_fingerprint=frame_fingerprint(candidate),
+        impact=impact,
+    )
+
+
+def _proposal_impact(*, impact: dict[str, Any]) -> dict[str, Any]:
+    """Keep proposal impact canonical and independently fingerprintable."""
+    return dict(impact)
 
 
 def _load_transformation_proposal(path: str) -> dict[str, Any]:
@@ -676,6 +684,7 @@ def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = ""
             _approved_confirmation_id=confirmation_id,
             _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
             _expected_candidate_fingerprint=str(proposal["candidate_fingerprint"]),
+            _expected_proposal_id=str(proposal["proposal_id"]),
         )
     elif proposal.get("operation") == "apply_type_conversion":
         result = _apply_type_conversion_impl(
@@ -685,6 +694,7 @@ def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = ""
             _approved_confirmation_id=confirmation_id,
             _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
             _expected_candidate_fingerprint=str(proposal["candidate_fingerprint"]),
+            _expected_proposal_id=str(proposal["proposal_id"]),
         )
     else:
         raise ValueError("unsupported transformation proposal operation")
@@ -760,6 +770,7 @@ def _apply_type_conversion_impl(
     _approved_confirmation_id: str = "",
     _expected_transformation_fingerprint: str = "",
     _expected_candidate_fingerprint: str = "",
+    _expected_proposal_id: str = "",
 ) -> str:
     auto = _coerce_bool_flag(auto)
     confirmed = _coerce_bool_flag(confirmed)
@@ -857,7 +868,7 @@ def _apply_type_conversion_impl(
             ),
         })
 
-    if not operations:
+    if not operations and not _approved_confirmation_id:
         payload: dict[str, Any] = {
             "status": "no_changes",
             "dataset": name,
@@ -908,7 +919,7 @@ def _apply_type_conversion_impl(
         confirmation_status=confirmation_status,
     )
     proposal = None
-    if requires_confirmation:
+    if requires_confirmation or approved:
         proposal = _material_proposal(
             name=name,
             active_info=active_info,
@@ -924,6 +935,8 @@ def _apply_type_conversion_impl(
             return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
         if approved and proposal["candidate_fingerprint"] != _expected_candidate_fingerprint:
             return json.dumps({"error": "candidate fingerprint changed during recomputation"}, ensure_ascii=False)
+        if approved and proposal["proposal_id"] != _expected_proposal_id:
+            return json.dumps({"error": "proposal identity changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
         "status": "confirmation_required" if requires_confirmation and not approved else "applied",
         "dataset": name,
@@ -1012,6 +1025,7 @@ def _clean_data_impl(
     _approved_confirmation_id: str = "",
     _expected_transformation_fingerprint: str = "",
     _expected_candidate_fingerprint: str = "",
+    _expected_proposal_id: str = "",
 ) -> str:
     confirmed = _coerce_bool_flag(confirmed)
     current = workspace.get(name)
@@ -1210,7 +1224,7 @@ def _clean_data_impl(
         confirmation_status=confirmation_status,
     )
     proposal = None
-    if material:
+    if material or approved:
         proposal = _material_proposal(
             name=name,
             active_info=active_info,
@@ -1231,6 +1245,8 @@ def _clean_data_impl(
             return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
         if approved and proposal["candidate_fingerprint"] != _expected_candidate_fingerprint:
             return json.dumps({"error": "candidate fingerprint changed during recomputation"}, ensure_ascii=False)
+        if approved and proposal["proposal_id"] != _expected_proposal_id:
+            return json.dumps({"error": "proposal identity changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
         "status": "confirmation_required" if material and not approved else "applied",
         "dataset": name,
@@ -1318,5 +1334,5 @@ for _tool_name, _public in {
 }.items():
     _definition = registry._tools[_tool_name]
     _definition.func = _public
-    for _private_name in ("session_id", "_approved_confirmation_id", "_expected_transformation_fingerprint", "_expected_candidate_fingerprint"):
+    for _private_name in ("session_id", "_approved_confirmation_id", "_expected_transformation_fingerprint", "_expected_candidate_fingerprint", "_expected_proposal_id"):
         _definition.parameters["properties"].pop(_private_name, None)

@@ -122,3 +122,66 @@ def test_approved_proposal_rejects_a_recomputed_candidate_with_a_new_fingerprint
 
     with pytest.raises(ValueError, match="candidate fingerprint changed"):
         data_clean.apply_confirmed_transformation(record.confirmation_id, session_id="s1")
+
+
+def test_approved_receipt_rejects_classification_drift_before_promotion(monkeypatch, tmp_path):
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+    from data_agent.tools import data_clean
+
+    store = Workspace()
+    raw = pd.DataFrame({"amount": ["1", "2"]})
+    raw_info = store.register_raw_snapshot("orders", raw, frame_fingerprint(raw))
+    store.promote_analysis_copy("orders", raw.copy(), raw_info["dataset_id"], {"id": "prepare"})
+    monkeypatch.setattr(data_clean, "workspace", store)
+    monkeypatch.setattr(data_clean, "_proposal_sessions_root", lambda: tmp_path)
+    monkeypatch.setattr(data_clean, "_data_clean_session_id", lambda _value="": "s1")
+    monkeypatch.setattr(
+        data_clean,
+        "infer_column_type",
+        lambda _series: {"confidence": "medium", "suggested_type": "numeric", "reason": "initial review"},
+    )
+    pending = json.loads(data_clean.apply_type_conversion("orders", column="amount", target_type="numeric"))
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    record = service.get("s1", pending["confirmation_id"])
+    service.respond("s1", record.confirmation_id, "approve", record.version, "answer_1")
+    monkeypatch.setattr(
+        data_clean,
+        "infer_column_type",
+        lambda _series: {"confidence": "high", "suggested_type": "numeric", "reason": "drifted review"},
+    )
+    monkeypatch.setattr(
+        data_clean,
+        "apply_conversion",
+        lambda series, _target: pd.Series([999.0, 1000.0], index=series.index),
+    )
+
+    with pytest.raises(ValueError, match="candidate fingerprint changed"):
+        data_clean.apply_confirmed_transformation(record.confirmation_id, session_id="s1")
+
+
+def test_approved_receipt_rejects_recomputed_proposal_identity_drift(monkeypatch, tmp_path):
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+    from data_agent.tools import data_clean
+
+    store = Workspace()
+    raw = pd.DataFrame({"amount": ["10K", "20K"]})
+    raw_info = store.register_raw_snapshot("orders", raw, frame_fingerprint(raw))
+    store.promote_analysis_copy("orders", raw.copy(), raw_info["dataset_id"], {"id": "prepare"})
+    monkeypatch.setattr(data_clean, "workspace", store)
+    monkeypatch.setattr(data_clean, "_proposal_sessions_root", lambda: tmp_path)
+    monkeypatch.setattr(data_clean, "_data_clean_session_id", lambda _value="": "s1")
+    pending = json.loads(data_clean.apply_type_conversion("orders", column="amount", target_type="numeric_with_suffix"))
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    record = service.get("s1", pending["confirmation_id"])
+    service.respond("s1", record.confirmation_id, "approve", record.version, "answer_1")
+    monkeypatch.setattr(
+        data_clean,
+        "_proposal_impact",
+        lambda **values: {**values["impact"], "affected_row_count": values["impact"]["affected_row_count"] + 1},
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="proposal identity changed"):
+        data_clean.apply_confirmed_transformation(record.confirmation_id, session_id="s1")
