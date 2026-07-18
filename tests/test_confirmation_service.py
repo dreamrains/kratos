@@ -140,6 +140,7 @@ def test_dataset_transformation_approval_records_only_compact_identity(tmp_path)
             "artifact_path": "sessions/session_1/tool_outputs/proposal_1_detail.json",
             "data_version": "dataset:orders_v1:source",
             "spec_version": "transformation:one",
+            "candidate_fingerprint": "sha256:candidate",
         },
         data_version="dataset:orders_v1:source",
         spec_version="transformation:one",
@@ -150,6 +151,7 @@ def test_dataset_transformation_approval_records_only_compact_identity(tmp_path)
 
     assert resolved.response == "reject"
     assert resolved.resolution_params["proposal_id"] == "proposal_1"
+    assert resolved.resolution_params["candidate_fingerprint"] == "sha256:candidate"
     assert "DataFrame" not in repr(resolved.resolution_params)
 
 

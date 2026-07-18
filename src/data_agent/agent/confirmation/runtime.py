@@ -76,11 +76,12 @@ def build_dataset_transformation_candidate(
     proposal_id = str(proposal_ref.get("proposal_id") or "").strip()
     data_version = str(proposal_ref.get("data_version") or "").strip()
     spec_version = str(proposal_ref.get("spec_version") or "").strip()
-    if not proposal_id or not data_version or not spec_version:
+    candidate_fingerprint = str(proposal_ref.get("candidate_fingerprint") or "").strip()
+    if not proposal_id or not data_version or not spec_version or not candidate_fingerprint:
         raise ConfirmationContractError("dataset transformation proposal reference is incomplete")
     identity = hashlib.sha256(
         json.dumps(
-            {"session_id": session_id, "turn_id": turn_id, "proposal_id": proposal_id, "data_version": data_version, "spec_version": spec_version},
+            {"session_id": session_id, "turn_id": turn_id, "proposal_id": proposal_id, "data_version": data_version, "spec_version": spec_version, "candidate_fingerprint": candidate_fingerprint},
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -104,6 +105,7 @@ def build_dataset_transformation_candidate(
             "artifact_path": str(proposal_ref.get("artifact_path") or ""),
             "data_version": data_version,
             "spec_version": spec_version,
+            "candidate_fingerprint": candidate_fingerprint,
         },
         data_version=data_version,
         spec_version=spec_version,
@@ -297,6 +299,7 @@ def _record_dataset_transformation_approval(
         "proposal_id": str(context.parameters.get("proposal_id") or ""),
         "data_version": str(context.parameters.get("data_version") or ""),
         "spec_version": str(context.parameters.get("spec_version") or ""),
+        "candidate_fingerprint": str(context.parameters.get("candidate_fingerprint") or ""),
         "approved": answer == "approve",
     }
 

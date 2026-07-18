@@ -556,6 +556,7 @@ def _proposal_ref(proposal: dict[str, Any], *, session_id: str) -> dict[str, Any
             f"dataset:{proposal['dataset_version_id']}:{proposal['source_fingerprint']}"
         ),
         "spec_version": f"transformation:{proposal['transformation_fingerprint']}",
+        "candidate_fingerprint": proposal["candidate_fingerprint"],
     }
 
 
@@ -599,12 +600,14 @@ def _material_proposal(
     information_loss: bool,
 ) -> dict[str, Any]:
     from data_agent.agent.data_lineage import build_transformation_proposal
+    from data_agent.agent.data_lineage import frame_fingerprint
 
     return build_transformation_proposal(
         logical_dataset=name,
         active_dataset=active_info,
         operation=operation,
         parameters=parameters,
+        candidate_fingerprint=frame_fingerprint(candidate),
         impact={
             "row_count_before": len(before),
             "row_count_after": len(candidate),
@@ -643,7 +646,13 @@ def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = ""
     proposal = _load_transformation_proposal(str(record.resolution_params.get("artifact_path") or ""))
     expected_data_version = f"dataset:{proposal['dataset_version_id']}:{proposal['source_fingerprint']}"
     expected_spec_version = f"transformation:{proposal['transformation_fingerprint']}"
-    if record.data_version != expected_data_version or record.spec_version != expected_spec_version:
+    if record.resolution_params.get("proposal_id") != proposal.get("proposal_id"):
+        raise ValueError("confirmation receipt does not match the proposal")
+    if (
+        record.data_version != expected_data_version
+        or record.spec_version != expected_spec_version
+        or record.resolution_params.get("candidate_fingerprint") != proposal.get("candidate_fingerprint")
+    ):
         raise ValueError("confirmation receipt does not match the proposal")
     for version in workspace.list_dataset_versions(str(proposal["logical_dataset"])):
         applied_record = dict(version.get("transformation_record") or {})
@@ -666,6 +675,7 @@ def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = ""
             session_id=sid,
             _approved_confirmation_id=confirmation_id,
             _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
+            _expected_candidate_fingerprint=str(proposal["candidate_fingerprint"]),
         )
     elif proposal.get("operation") == "apply_type_conversion":
         result = _apply_type_conversion_impl(
@@ -674,6 +684,7 @@ def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = ""
             session_id=sid,
             _approved_confirmation_id=confirmation_id,
             _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
+            _expected_candidate_fingerprint=str(proposal["candidate_fingerprint"]),
         )
     else:
         raise ValueError("unsupported transformation proposal operation")
@@ -748,6 +759,7 @@ def _apply_type_conversion_impl(
     session_id: str = "",
     _approved_confirmation_id: str = "",
     _expected_transformation_fingerprint: str = "",
+    _expected_candidate_fingerprint: str = "",
 ) -> str:
     auto = _coerce_bool_flag(auto)
     confirmed = _coerce_bool_flag(confirmed)
@@ -910,6 +922,8 @@ def _apply_type_conversion_impl(
         )
         if approved and proposal["transformation_fingerprint"] != _expected_transformation_fingerprint:
             return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
+        if approved and proposal["candidate_fingerprint"] != _expected_candidate_fingerprint:
+            return json.dumps({"error": "candidate fingerprint changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
         "status": "confirmation_required" if requires_confirmation and not approved else "applied",
         "dataset": name,
@@ -997,6 +1011,7 @@ def _clean_data_impl(
     session_id: str = "",
     _approved_confirmation_id: str = "",
     _expected_transformation_fingerprint: str = "",
+    _expected_candidate_fingerprint: str = "",
 ) -> str:
     confirmed = _coerce_bool_flag(confirmed)
     current = workspace.get(name)
@@ -1214,6 +1229,8 @@ def _clean_data_impl(
         )
         if approved and proposal["transformation_fingerprint"] != _expected_transformation_fingerprint:
             return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
+        if approved and proposal["candidate_fingerprint"] != _expected_candidate_fingerprint:
+            return json.dumps({"error": "candidate fingerprint changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
         "status": "confirmation_required" if material and not approved else "applied",
         "dataset": name,
@@ -1301,5 +1318,5 @@ for _tool_name, _public in {
 }.items():
     _definition = registry._tools[_tool_name]
     _definition.func = _public
-    for _private_name in ("session_id", "_approved_confirmation_id", "_expected_transformation_fingerprint"):
+    for _private_name in ("session_id", "_approved_confirmation_id", "_expected_transformation_fingerprint", "_expected_candidate_fingerprint"):
         _definition.parameters["properties"].pop(_private_name, None)

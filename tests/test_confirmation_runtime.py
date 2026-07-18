@@ -114,6 +114,7 @@ def test_dataset_transformation_candidate_binds_the_proposal_versions():
             "artifact_path": "sessions/session_1/tool_outputs/proposal_123_detail.json",
             "data_version": "dataset:dataset_orders_v2:sha256:source",
             "spec_version": "transformation:proposal_fingerprint",
+            "candidate_fingerprint": "sha256:candidate",
         },
     )
 
@@ -121,6 +122,7 @@ def test_dataset_transformation_candidate_binds_the_proposal_versions():
     assert candidate.data_version == "dataset:dataset_orders_v2:sha256:source"
     assert candidate.spec_version == "transformation:proposal_fingerprint"
     assert candidate.resolution_params["proposal_id"] == "proposal_123"
+    assert candidate.resolution_params["candidate_fingerprint"] == "sha256:candidate"
 
 
 def test_multi_select_candidate_uses_multi_select_answer_mode():

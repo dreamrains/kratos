@@ -66,6 +66,7 @@ def build_transformation_proposal(
     operation: str,
     parameters: dict[str, Any],
     impact: dict[str, Any],
+    candidate_fingerprint: str,
 ) -> dict[str, Any]:
     """Build the deterministic, DataFrame-free approval subject for a change."""
     normalized_parameters = json.loads(json.dumps(parameters, ensure_ascii=False, sort_keys=True, default=str))
@@ -79,13 +80,22 @@ def build_transformation_proposal(
         "parameters_fingerprint": parameters_fingerprint,
     }
     transformation_fingerprint = _identity_fingerprint(transformation_identity)
-    proposal_identity = {**transformation_identity, "impact": impact, "transformation_fingerprint": transformation_fingerprint}
+    candidate_fingerprint = str(candidate_fingerprint or "").strip()
+    if not candidate_fingerprint:
+        raise ValueError("candidate_fingerprint is required")
+    proposal_identity = {
+        **transformation_identity,
+        "impact": impact,
+        "transformation_fingerprint": transformation_fingerprint,
+        "candidate_fingerprint": candidate_fingerprint,
+    }
     return {
         "contract_version": "transformation_proposal.v1",
         "proposal_id": "proposal_" + _identity_fingerprint(proposal_identity)[:24],
         **transformation_identity,
         "parameters": normalized_parameters,
         "transformation_fingerprint": transformation_fingerprint,
+        "candidate_fingerprint": candidate_fingerprint,
         "impact": json.loads(json.dumps(impact, ensure_ascii=False, sort_keys=True, default=str)),
     }
 
