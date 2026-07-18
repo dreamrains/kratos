@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping
 
+from data_agent.agent.analysis_requirements import (
+    compile_analysis_requirements,
+    requirement_ids_for_route,
+)
+
 
 ANALYSIS_PLAN_CONTRACT_VERSION = "analysis_plan.v1"
 LEGACY_ANALYSIS_PLAN_CONTRACT_VERSIONS = {"stage3c0b.v1"}
@@ -80,11 +85,15 @@ def normalize_analysis_plan_contract(
     *,
     dataset_contracts: list[dict[str, Any]] | None = None,
     require_executable: bool = False,
+    route: dict[str, Any] | str | None = None,
+    playbook: Any = None,
+    user_intent: Any = None,
 ) -> ContractValidationResult:
     if not isinstance(plan, dict):
         return _error("invalid_plan", "AnalysisPlan must be a JSON object.")
 
     normalized = dict(plan)
+    incoming_analysis_requirements = normalized.get("analysis_requirements")
     incoming_version = _text(normalized.get("contract_version"))
     if incoming_version in LEGACY_ANALYSIS_PLAN_CONTRACT_VERSIONS:
         normalized["migrated_from_contract_version"] = incoming_version
@@ -97,6 +106,97 @@ def normalize_analysis_plan_contract(
     normalized["contract_version"] = ANALYSIS_PLAN_CONTRACT_VERSION
     normalized.setdefault("id", f"plan_{uuid.uuid4().hex[:10]}")
     normalized.setdefault("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+    raw_method_plan = normalized.get("method_plan")
+    if isinstance(raw_method_plan, list):
+        compatibility_steps: list[Any] = []
+        for raw_step in raw_method_plan:
+            if not isinstance(raw_step, dict):
+                compatibility_steps.append(raw_step)
+                continue
+            step = dict(raw_step)
+            if isinstance(step.get("evidence_requirements"), list) or isinstance(step.get("expected_evidence"), list):
+                step["evidence_requirements"] = requirement_ids_for_route(step)
+                step.pop("expected_evidence", None)
+            compatibility_steps.append(step)
+        normalized["method_plan"] = compatibility_steps
+
+    route_input = route if route is not None else normalized.get("route")
+    if isinstance(route_input, str):
+        route_input = {"direction": route_input}
+    try:
+        compiled_requirements = compile_analysis_requirements(
+            plan=normalized,
+            route=route_input,
+            playbook=playbook if playbook is not None else normalized,
+            dataset_contracts=dataset_contracts or [],
+            user_intent=user_intent if user_intent is not None else normalized.get("goal"),
+        )
+    except ValueError as exc:
+        return _error("invalid_analysis_requirements", str(exc))
+    grouped_requirements: dict[str, list[dict[str, Any]]] = {}
+    for requirement in compiled_requirements:
+        grouped_requirements.setdefault(requirement["step_id"], []).append(requirement)
+    if require_executable and incoming_analysis_requirements is not None:
+        incoming_by_id = {
+            _text(requirement.get("id")): requirement
+            for group in incoming_analysis_requirements.values()
+            for requirement in group
+            if isinstance(requirement, dict) and _text(requirement.get("id"))
+        }
+        missing_requirement_ids = [
+            requirement["id"]
+            for requirement in compiled_requirements
+            if requirement["necessity"] == "required" and requirement["id"] not in incoming_by_id
+        ]
+        if missing_requirement_ids:
+            return _error(
+                "missing_compiled_hard_requirement",
+                "Executable AnalysisPlan cannot remove compiler-required hard requirements.",
+                missing_requirement_ids=missing_requirement_ids,
+            )
+        compiler_owned_fields = (
+            "contract_version",
+            "id",
+            "step_id",
+            "category",
+            "name",
+            "necessity",
+            "trigger",
+            "required_evidence_fields",
+            "assumption_checks",
+            "unmet_action",
+        )
+        conflicting_requirement_ids = [
+            requirement["id"]
+            for requirement in compiled_requirements
+            if requirement["id"] in incoming_by_id
+            and any(
+                incoming_by_id[requirement["id"]].get(field) != requirement.get(field)
+                for field in compiler_owned_fields
+            )
+        ]
+        if conflicting_requirement_ids:
+            return _error(
+                "conflicting_compiled_requirement",
+                "Executable AnalysisPlan cannot override compiler-owned requirement definitions.",
+                conflicting_requirement_ids=conflicting_requirement_ids,
+            )
+    normalized["analysis_requirements"] = grouped_requirements
+    projected_steps: list[Any] = []
+    for index, raw_step in enumerate(normalized.get("method_plan") or [], 1):
+        if not isinstance(raw_step, dict):
+            projected_steps.append(raw_step)
+            continue
+        step = dict(raw_step)
+        step_id = _text(step.get("step_id")) or f"step_{index}"
+        if step_id in grouped_requirements or "evidence_requirements" in step:
+            step["evidence_requirements"] = [
+                requirement["name"]
+                for requirement in grouped_requirements.get(step_id, [])
+            ]
+        projected_steps.append(step)
+    normalized["method_plan"] = projected_steps
 
     if not require_executable:
         normalized.setdefault("review_status", "display_only")

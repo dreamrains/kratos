@@ -204,6 +204,31 @@ class TestRecordAnalysisPlan:
                 result = json.loads(record_analysis_plan(json.dumps(plan)))
             assert "error" not in result
 
+    def test_executable_record_uses_active_route_compiler_inputs(self):
+        from data_agent.tools.analysis_flow import record_analysis_plan
+
+        ctx = _add_banner_contract(_make_ctx("plan_route_requirements"))
+        ctx.analysis_state.active_scope["active_route"] = "trend"
+        ctx.analysis_state.route_proposals = [{
+            "id": "route_trend",
+            "direction": "trend",
+            "evidence_requirements": ["time_scope"],
+        }]
+        plan = _stage3c0b_plan()
+        plan["method_plan"][0]["evidence_requirements"] = ["sample_size"]
+        compiled = ctx.analysis_state.set_analysis_plan(plan)
+        compiled["analysis_requirements"]["step_banner"] = [
+            item
+            for item in compiled["analysis_requirements"]["step_banner"]
+            if item["name"] != "time_scope"
+        ]
+
+        with use_agent_context(ctx):
+            result = json.loads(record_analysis_plan(json.dumps(compiled)))
+
+        assert result["error_type"] == "missing_compiled_hard_requirement"
+        assert result["details"]["missing_requirement_ids"] == ["req_step_banner_time_scope"]
+
 
 class TestAnalysisFlowControllerLegacyCutover:
     def test_controller_keeps_legacy_spec_display_only(self):

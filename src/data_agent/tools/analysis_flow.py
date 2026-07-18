@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from data_agent.tools.registry import registry
 
@@ -247,13 +248,13 @@ def record_analysis_plan(plan_json: str) -> str:
     state = _current_state()
     from data_agent.agent.analysis_plan_contracts import normalize_analysis_plan_contract
 
-    dataset_contracts = None
+    requirement_inputs: dict[str, Any] = {"dataset_contracts": None}
     if state is not None:
-        dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
+        requirement_inputs = state.analysis_requirement_inputs(payload)
     validation = normalize_analysis_plan_contract(
         payload,
-        dataset_contracts=dataset_contracts,
         require_executable=True,
+        **requirement_inputs,
     )
     if not validation.ok:
         return json.dumps({

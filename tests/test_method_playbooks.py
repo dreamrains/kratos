@@ -300,6 +300,7 @@ def test_selector_maps_common_questions_to_playbooks():
             assert capabilities
 
 
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
 def test_business_playbook_analysis_plan_contains_visualization_strategy_and_stats():
     ctx = _loaded_context("user_id, revenue, pay_time, feature_type, period")
     intent = plan_turn_intent("分析功能效果和收益", ctx)
@@ -312,7 +313,29 @@ def test_business_playbook_analysis_plan_contains_visualization_strategy_and_sta
     assert "required_charts" not in plan
     assert "statistical_requirements" in plan
     assert "effect_size" in plan["statistical_requirements"]
+    compiled_names = {
+        requirement["name"]
+        for group in plan["analysis_requirements"].values()
+        for requirement in group
+    }
+    assert set(plan["statistical_requirements"]) <= compiled_names
     assert any(item.get("chart_name") == "before_after_comparison" for item in plan["visualization_strategy"])
+
+
+def test_playbook_requirement_strings_remain_compiler_inputs():
+    playbook = PLAYBOOKS["effect_evaluation"]
+
+    assert playbook.output_policy["statistical_requirements"] == [
+        "sample_size",
+        "effect_size",
+        "significance",
+        "confidence_interval",
+    ]
+    assert playbook.method_plan_template[1]["evidence_requirements"] == [
+        "effect_size",
+        "significance",
+        "sample_size",
+    ]
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)

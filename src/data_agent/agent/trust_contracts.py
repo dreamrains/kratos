@@ -9,6 +9,8 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from data_agent.agent.analysis_requirements import requirement_ids_for_route
+
 
 def _json_safe(value: Any) -> Any:
     if value is None:
@@ -301,62 +303,51 @@ def build_dataset_understanding_contract(
 
 
 def route_evidence_requirements(route: Mapping[str, Any]) -> list[str]:
-    """Read canonical route requirements with legacy proposal compatibility."""
+    """Read-only compatibility alias for the canonical route projection."""
 
-    value = route.get("evidence_requirements")
-    if not isinstance(value, list):
-        value = route.get("expected_evidence")
-    return [str(item).strip() for item in (value or []) if str(item).strip()]
+    return requirement_ids_for_route(dict(route))
 
 
 def _route_template(direction: str) -> dict[str, Any]:
     templates = {
         "trend": {
             "tool_chain": ["analyze_time_series", "record_evidence_record"],
-            "evidence_requirements": ["time_scope", "sample_size", "trend_statistics", "limitations"],
             "limitations": ["Descriptive trend only unless supported by experimental evidence"],
             "budget_level": "light",
         },
         "period_compare": {
             "tool_chain": ["compare_periods", "record_evidence_record"],
-            "evidence_requirements": ["period_definition", "period_comparability", "metric_delta", "limitations"],
             "limitations": ["Comparison quality depends on period comparability and seasonality"],
             "budget_level": "standard",
         },
         "dimension_decomposition": {
             "tool_chain": ["contribute_decomposition", "record_evidence_record"],
-            "evidence_requirements": ["dimension_scope", "contribution_table", "metric_delta", "limitations"],
             "limitations": ["Contribution is descriptive and does not prove causality"],
             "budget_level": "standard",
         },
         "rate_analysis": {
             "tool_chain": ["calculate_metrics", "record_evidence_record"],
-            "evidence_requirements": ["rate_definition", "denominator", "sample_size", "limitations"],
             "limitations": ["Rate interpretation depends on stable numerator and denominator definitions"],
             "budget_level": "standard",
         },
         "correlation": {
             "tool_chain": ["correlation_analysis", "record_evidence_record"],
-            "evidence_requirements": ["variables", "correlation_method", "sample_size", "limitations"],
             "limitations": ["Correlation does not imply causation"],
             "budget_level": "standard",
         },
         "cohort": {
             "tool_chain": ["cohort_analysis", "record_evidence_record"],
-            "evidence_requirements": ["id_scope", "cohort_definition", "retention_metric", "limitations"],
             "limitations": ["Requires stable user IDs and event history"],
             "budget_level": "deep",
         },
         "funnel": {
             "tool_chain": ["funnel_analysis", "record_evidence_record"],
-            "evidence_requirements": ["step_definition", "denominator", "conversion_rates", "limitations"],
             "limitations": ["Requires valid event steps or aggregate funnel columns"],
             "budget_level": "deep",
         },
     }
     return templates.get(direction, {
         "tool_chain": ["record_evidence_record"],
-        "evidence_requirements": ["method", "sample_size", "limitations"],
         "limitations": ["Analysis route requires additional scoping"],
         "budget_level": "standard",
     })
@@ -378,7 +369,7 @@ def build_route_proposals(contract: dict[str, Any]) -> list[dict[str, Any]]:
             "direction": str(direction),
             "field_roles": _json_safe(roles),
             "tool_chain": list(template["tool_chain"]),
-            "evidence_requirements": list(template["evidence_requirements"]),
+            "evidence_requirements": requirement_ids_for_route({"direction": str(direction)}),
             "limitations": list(template["limitations"]),
             "budget_level": str(template["budget_level"]),
         }

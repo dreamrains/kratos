@@ -112,6 +112,40 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
+def _analysis_requirement_inputs(
+    plan: Any,
+    *,
+    dataset_contracts: list[dict[str, Any]],
+    route_proposals: list[dict[str, Any]],
+    active_scope: dict[str, Any],
+    goal: str,
+) -> dict[str, Any]:
+    plan_value = plan if isinstance(plan, dict) else {}
+    route_name = _text(plan_value.get("route")) or _text(active_scope.get("active_route"))
+    route: dict[str, Any] | str | None = route_name or None
+    for proposal in route_proposals:
+        if not isinstance(proposal, dict):
+            continue
+        direction = _text(proposal.get("direction") or proposal.get("route"))
+        proposal_id = _text(proposal.get("id"))
+        if route_name and route_name in {direction, proposal_id}:
+            route = proposal
+            break
+
+    playbook = None
+    playbook_id = _text(plan_value.get("playbook_id"))
+    if playbook_id:
+        from data_agent.agent.method_playbooks import get_playbook
+
+        playbook = get_playbook(playbook_id)
+    return {
+        "dataset_contracts": list(dataset_contracts or []),
+        "route": route,
+        "playbook": playbook,
+        "user_intent": plan_value.get("goal") or goal,
+    }
+
+
 def _state_path(session_id: str) -> Path:
     return get_config().sessions_resolved / session_id / "analysis_state.json"
 
@@ -155,9 +189,20 @@ class AnalysisSessionState:
     def from_dict(cls, data: dict[str, Any], session_id: str) -> "AnalysisSessionState":
         stage = data.get("stage") if data.get("stage") in STAGES else "discover"
         data_state = data.get("data_state") if data.get("data_state") in DATA_STATES else "unknown"
+        dataset_contracts = list(data.get("dataset_contracts") or [])
+        route_proposals = list(data.get("route_proposals") or [])
+        active_scope = _normalize_active_scope(data.get("active_scope"))
+        raw_plan = data.get("analysis_plan") or data.get("analysis_spec")
         plan_result = normalize_analysis_plan_contract(
-            data.get("analysis_plan") or data.get("analysis_spec"),
+            raw_plan,
             require_executable=False,
+            **_analysis_requirement_inputs(
+                raw_plan,
+                dataset_contracts=dataset_contracts,
+                route_proposals=route_proposals,
+                active_scope=active_scope,
+                goal=data.get("goal", ""),
+            ),
         )
         analysis_plan = plan_result.plan if plan_result.ok else None
         return cls(
@@ -174,17 +219,17 @@ class AnalysisSessionState:
             analysis_plan=analysis_plan,
             evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
-            dataset_contracts=list(data.get("dataset_contracts") or []),
+            dataset_contracts=dataset_contracts,
             data_understanding_bundles=_dict_list_or_empty(data.get("data_understanding_bundles")),
             cleaning_logs=list(data.get("cleaning_logs") or []),
             preview_digests=list(data.get("preview_digests") or []),
-            route_proposals=list(data.get("route_proposals") or []),
+            route_proposals=route_proposals,
             verification_reports=list(data.get("verification_reports") or []),
             hypothesis_sets=list(data.get("hypothesis_sets") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             regression_history=list(data.get("regression_history") or []),
-            active_scope=_normalize_active_scope(data.get("active_scope")),
+            active_scope=active_scope,
             updated_at=data.get("updated_at") or _now(),
         )
 
@@ -287,7 +332,11 @@ class AnalysisSessionState:
         return self.set_analysis_plan(spec)
 
     def set_analysis_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
-        result = normalize_analysis_plan_contract(plan, require_executable=False)
+        result = normalize_analysis_plan_contract(
+            plan,
+            require_executable=False,
+            **self.analysis_requirement_inputs(plan),
+        )
         if not result.ok:
             raise ValueError(result.message)
         item = result.plan
@@ -295,6 +344,17 @@ class AnalysisSessionState:
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
         return item
+
+    def analysis_requirement_inputs(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """Resolve state artifacts that are inputs to the canonical compiler."""
+
+        return _analysis_requirement_inputs(
+            plan,
+            dataset_contracts=self.dataset_contracts,
+            route_proposals=self.route_proposals,
+            active_scope=self.active_scope,
+            goal=self.goal,
+        )
 
     def add_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
         item = dict(record)

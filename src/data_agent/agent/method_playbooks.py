@@ -12,7 +12,10 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
+from data_agent.agent.analysis_plan_contracts import (
+    ANALYSIS_PLAN_CONTRACT_VERSION,
+    normalize_analysis_plan_contract,
+)
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 
@@ -725,7 +728,10 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
         "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
     plan["id"] = _analysis_plan_id(plan)
-    return plan
+    validation = normalize_analysis_plan_contract(plan, require_executable=False)
+    if not validation.ok:
+        raise ValueError(validation.message)
+    return validation.plan
 
 
 def _analysis_plan_id(plan: dict[str, Any]) -> str:
