@@ -359,7 +359,9 @@ def transform_data(
     except Exception as e:
         return json.dumps({"error": f"变换失败: {e}"}, ensure_ascii=False)
 
-    workspace.add(target_name, result)
+    add_result = workspace.add(target_name, result)
+    if str(add_result).startswith("Error:"):
+        return json.dumps({"error": str(add_result)}, ensure_ascii=False)
     # 记录变换血缘
     workspace.log_transform(name, operation, target_name, json.dumps({k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")}, ensure_ascii=False) if p else "")
     return json.dumps({

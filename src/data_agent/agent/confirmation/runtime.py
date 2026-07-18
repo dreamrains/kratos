@@ -300,7 +300,11 @@ def _validate_stage_action(context: ResolutionContext, answer: Any) -> bool:
 def _validate_method_action(context: ResolutionContext, answer: Any) -> bool:
     updates = context.parameters.get("state_updates")
     confirmation = updates.get("method_confirmation") if isinstance(updates, dict) else None
-    return isinstance(confirmation, dict) and bool(confirmation.get("analysis_spec_id"))
+    if not isinstance(confirmation, dict):
+        return False
+    from data_agent.agent.analysis_plan_contracts import analysis_plan_id_from_mapping
+
+    return bool(analysis_plan_id_from_mapping(confirmation))
 
 
 def _question_identity(

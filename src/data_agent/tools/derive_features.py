@@ -43,7 +43,8 @@ def derive_features(
         available = list(workspace.list_datasets().keys())
         return json.dumps({"error": f"数据集 '{name}' 不存在。可用: {available}"}, ensure_ascii=False)
 
-    df = df.copy()
+    source_frame = df.copy(deep=True)
+    df = df.copy(deep=True)
 
     try:
         p = json.loads(params) if params else {}
@@ -58,17 +59,20 @@ def derive_features(
             for col in target_cols:
                 if col not in df.columns:
                     continue
-                if not pd.api.types.is_datetime64_any_dtype(df[col]):
+                date_values = df[col]
+                if not pd.api.types.is_datetime64_any_dtype(date_values):
                     try:
-                        df[col] = pd.to_datetime(df[col])
+                        date_values = pd.to_datetime(date_values)
                     except Exception:
                         continue
-                df[f"{col}_year"] = df[col].dt.year
-                df[f"{col}_month"] = df[col].dt.month
-                df[f"{col}_day"] = df[col].dt.day
-                df[f"{col}_dayofweek"] = df[col].dt.dayofweek
-                df[f"{col}_quarter"] = df[col].dt.quarter
-                df[f"{col}_is_weekend"] = df[col].dt.dayofweek.isin([5, 6]).astype(int)
+                # Keep the source field unchanged; parsed values are used only
+                # to create additive companion features.
+                df[f"{col}_year"] = date_values.dt.year
+                df[f"{col}_month"] = date_values.dt.month
+                df[f"{col}_day"] = date_values.dt.day
+                df[f"{col}_dayofweek"] = date_values.dt.dayofweek
+                df[f"{col}_quarter"] = date_values.dt.quarter
+                df[f"{col}_is_weekend"] = date_values.dt.dayofweek.isin([5, 6]).astype(int)
                 new_cols.extend([f"{col}_year", f"{col}_month", f"{col}_day",
                                  f"{col}_dayofweek", f"{col}_quarter", f"{col}_is_weekend"])
 
@@ -141,12 +145,86 @@ def derive_features(
         return json.dumps({"error": f"特征派生失败: {e}"}, ensure_ascii=False)
 
     target_name = save_as or name
-    workspace.add(target_name, df)
+    if not new_cols:
+        return json.dumps({
+            "status": "no_changes",
+            "dataset": name,
+            "feature_type": feature_type,
+            "new_columns": [],
+            "total_columns": len(source_frame.columns),
+            "rows": len(source_frame),
+        }, ensure_ascii=False, indent=2)
+    promoted_info = None
+    if target_name == name:
+        active_info = workspace.get_active_version_info(name)
+        if active_info is None:
+            from data_agent.agent.data_lineage import frame_fingerprint
 
-    return json.dumps({
+            source_fingerprint = frame_fingerprint(source_frame)
+            raw_info = workspace.register_raw_snapshot(
+                name, source_frame, source_fingerprint
+            )
+            if not isinstance(raw_info, dict):
+                return json.dumps({"error": str(raw_info)}, ensure_ascii=False)
+            active_info = workspace.promote_analysis_copy(
+                name,
+                source_frame,
+                raw_info["dataset_id"],
+                {
+                    "parent_dataset_id": raw_info["dataset_id"],
+                    "raw_dataset_id": raw_info["dataset_id"],
+                    "source_fingerprint": source_fingerprint,
+                    "logical_name": name,
+                    "operations": [],
+                    "information_loss": False,
+                    "decision_policy": "none",
+                    "confirmation_status": "not_required",
+                },
+            )
+            if not isinstance(active_info, dict):
+                return json.dumps({"error": str(active_info)}, ensure_ascii=False)
+
+        from data_agent.agent.data_lineage import TransformationRecord
+
+        record = TransformationRecord(
+            parent_dataset_id=active_info["dataset_id"],
+            raw_dataset_id=active_info["raw_dataset_id"],
+            source_fingerprint=active_info.get("source_fingerprint", ""),
+            logical_name=name,
+            operations=({
+                "action": "derive_features",
+                "feature_type": feature_type,
+                "new_columns": list(new_cols),
+                "decision_policy": "auto_safe",
+            },),
+            affected_columns=tuple(str(item) for item in new_cols),
+            affected_row_count=len(df) if new_cols else 0,
+            before_after_metrics={
+                "columns": {"before": len(source_frame.columns), "after": len(df.columns)},
+                "rows": {"before": len(source_frame), "after": len(df)},
+            },
+            information_loss=False,
+            decision_policy="auto_safe",
+            confirmation_status="not_required",
+        ).to_dict()
+        promoted_info = workspace.promote_analysis_copy(
+            name, df, active_info["raw_dataset_id"], record
+        )
+        if not isinstance(promoted_info, dict):
+            return json.dumps({"error": str(promoted_info)}, ensure_ascii=False)
+    else:
+        add_result = workspace.add(target_name, df)
+        if str(add_result).startswith("Error:"):
+            return json.dumps({"error": str(add_result)}, ensure_ascii=False)
+
+    response = {
         "dataset": target_name,
         "feature_type": feature_type,
         "new_columns": new_cols,
         "total_columns": len(df.columns),
         "rows": len(df),
-    }, ensure_ascii=False, indent=2)
+    }
+    if promoted_info is not None:
+        response["dataset_id"] = promoted_info["dataset_id"]
+        response["parent_dataset_id"] = active_info["dataset_id"]
+    return json.dumps(response, ensure_ascii=False, indent=2)

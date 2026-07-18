@@ -8,6 +8,7 @@ from data_agent.agent.trust_contracts import (
     build_dataset_understanding_contract,
     build_preview_digest,
     build_route_proposals,
+    route_evidence_requirements,
 )
 
 
@@ -110,7 +111,7 @@ def test_build_dataset_understanding_contract_maps_supported_and_unsupported_ana
     json.dumps(contract)
 
 
-def test_build_route_proposals_adds_expected_evidence():
+def test_build_route_proposals_adds_evidence_requirements():
     contract = {
         "id": "duc_main_001",
         "dataset": "main",
@@ -137,9 +138,16 @@ def test_build_route_proposals_adds_expected_evidence():
     first = proposals[0]
     assert first["dataset_contract_id"] == "duc_main_001"
     assert "record_evidence_record" in first["tool_chain"]
-    assert "limitations" in first["expected_evidence"]
+    assert "limitations" in first["evidence_requirements"]
+    assert "expected_evidence" not in first
     assert first["budget_level"] in {"light", "standard", "deep"}
     json.dumps(proposals)
+
+
+def test_route_evidence_requirements_reads_legacy_expected_evidence():
+    legacy_route = {"expected_evidence": [" sample_size ", "limitations"]}
+
+    assert route_evidence_requirements(legacy_route) == ["sample_size", "limitations"]
 
 
 def test_builders_accept_pandas_and_numpy_containers_as_json_safe_values():

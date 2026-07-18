@@ -124,7 +124,7 @@ def test_migrate_legacy_completed_plan_archives_pending_duplicates(tmp_path):
     assert {t["status"] for t in history} == {"superseded"}
 
 
-def test_llm_batch_plan_supersedes_analysis_spec_candidate_tasks(tmp_path):
+def test_llm_batch_plan_supersedes_analysis_plan_candidate_tasks(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -133,25 +133,27 @@ def test_llm_batch_plan_supersedes_analysis_spec_candidate_tasks(tmp_path):
     candidate_plan = task_manager.create_plan(
         session_id="s1",
         goal="Candidate retention plan",
-        source="analysis_spec",
-        analysis_spec_id="spec_1",
+        source="analysis_plan",
+        analysis_spec_id="plan_1",
         workflow_id="wf_1",
     )
     candidate = task_manager.create(
         "build cohorts and calculate retention curve",
         session_id="s1",
         workflow_id="wf_1",
-        analysis_spec_id="spec_1",
+        analysis_spec_id="plan_1",
+        analysis_plan_id="plan_1",
         plan_id=candidate_plan["id"],
         plan_version=candidate_plan["version"],
         plan_status="active",
-        source="analysis_spec",
+        source="analysis_plan",
     )
     confirmation = task_manager.create(
         "Confirm analysis method and metric scope",
         session_id="s1",
         workflow_id="wf_1",
-        analysis_spec_id="spec_1",
+        analysis_spec_id="plan_1",
+        analysis_plan_id="plan_1",
         plan_id=candidate_plan["id"],
         plan_version=candidate_plan["version"],
         plan_status="active",
@@ -161,8 +163,8 @@ def test_llm_batch_plan_supersedes_analysis_spec_candidate_tasks(tmp_path):
     ctx = AgentContext(session_id="s1", workspace=Workspace())
     ctx.analysis_state = AnalysisSessionState(
         session_id="s1",
-        analysis_spec={
-            "id": "spec_1",
+        analysis_plan={
+            "id": "plan_1",
             "workflow_id": "wf_1",
             "goal": "Fit retention formula",
             "confirmation_policy": {"requires_confirmation": True},

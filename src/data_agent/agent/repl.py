@@ -594,12 +594,12 @@ def run_repl() -> None:
             console.print(analysis_state_summary(state) or "No analysis state.")
         elif action == "requirements":
             console.print_json(data=state.data_requirements)
-        elif action == "spec":
-            console.print_json(data=state.analysis_spec or {})
+        elif action in ("plan", "spec"):
+            console.print_json(data=state.analysis_plan or {})
         elif action == "evidence":
             console.print_json(data=state.evidence_records)
         else:
-            console.print("[yellow]Usage: /analysis status|requirements|spec|evidence|reset[/yellow]")
+            console.print("[yellow]Usage: /analysis status|requirements|plan|evidence|reset[/yellow]")
         return None
 
     def cmd_save(args: str):

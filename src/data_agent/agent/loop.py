@@ -501,13 +501,19 @@ class AgentLoop:
         self._prompt_cache_dirty = True
 
     def _restore_workspace(self) -> None:
+        """Restore datasets while the loop-owned context is authoritative."""
+        with self.__context_operation("use"):
+            self._restore_workspace_in_context()
+
+    def _restore_workspace_in_context(self) -> None:
         """Restore workspace datasets from persisted metadata.
 
         Strategy A: reload from original file path.
         Strategy B: fall back to parquet backup in session directory.
         """
         from data_agent.session.history import _session_dir
-        from data_agent.session.workspace import workspace
+
+        workspace = self.context.workspace
 
         sdir = _session_dir(self.session_id)
         meta_path = sdir / "workspace_meta.json"
@@ -524,7 +530,28 @@ class AgentLoop:
 
         restored = 0
         for name, info in meta.items():
-            df = None
+            raw_df = None
+            source_df = None
+            persisted_raw = None
+            active_backup = None
+            migrated_from_legacy_backup = False
+            source_changed_since_save = False
+            raw_matches_saved = False
+
+            def _read_backup(stem: str):
+                parquet_path = sdir / "data" / f"{stem}.parquet"
+                if parquet_path.exists():
+                    try:
+                        return pd.read_parquet(parquet_path)
+                    except Exception:
+                        pass
+                pickle_path = sdir / "data" / f"{stem}.pkl"
+                if pickle_path.exists():
+                    try:
+                        return pd.read_pickle(pickle_path)
+                    except Exception:
+                        pass
+                return None
 
             # Strategy A: try original file path
             source_path = info.get("source_path", "")
@@ -536,41 +563,132 @@ class AgentLoop:
                         fmt = info.get("source_fmt", "")
                         if fmt == "csv":
                             try:
-                                df = pd.read_csv(sp, encoding="utf-8-sig")
+                                source_df = pd.read_csv(sp, encoding="utf-8-sig")
                             except UnicodeDecodeError:
-                                df = pd.read_csv(sp, encoding="gbk")
+                                source_df = pd.read_csv(sp, encoding="gbk")
                         elif fmt == "excel":
-                            df = pd.read_excel(sp)
+                            source_df = pd.read_excel(sp)
                         elif fmt == "json":
-                            df = pd.read_json(sp)
-                        if df is not None:
-                            from data_agent.tools.data_clean import auto_clean
-                            df, _, _ = auto_clean(df)
+                            source_df = pd.read_json(sp)
                     except Exception:
-                        df = None
+                        source_df = None
 
-            # Strategy B: fall back to local dataset backup
-            if df is None:
-                parquet_path = sdir / "data" / f"{name}.parquet"
-                if parquet_path.exists():
+            # Always inspect the separately persisted immutable raw snapshot;
+            # it is authoritative when the original source has drifted.
+            persisted_raw = _read_backup(f"{name}__raw")
+
+            # The active backup may contain confirmed material cleaning.  A
+            # legacy session has only this file, so migrate it once as raw.
+            active_backup = _read_backup(name)
+
+            from data_agent.agent.data_lineage import frame_fingerprint
+
+            saved_source_fingerprint = str(info.get("source_fingerprint") or "")
+            source_fingerprint = (
+                frame_fingerprint(source_df) if source_df is not None else ""
+            )
+            persisted_fingerprint = (
+                frame_fingerprint(persisted_raw)
+                if persisted_raw is not None
+                else ""
+            )
+            if saved_source_fingerprint:
+                if source_df is not None and source_fingerprint == saved_source_fingerprint:
+                    raw_df = source_df
+                    raw_matches_saved = True
+                elif (
+                    persisted_raw is not None
+                    and persisted_fingerprint == saved_source_fingerprint
+                ):
+                    raw_df = persisted_raw
+                    raw_matches_saved = True
+                elif source_df is not None:
+                    raw_df = source_df
+                elif persisted_raw is not None:
+                    raw_df = persisted_raw
+
+                source_changed_since_save = bool(
+                    (
+                        source_df is not None
+                        and source_fingerprint != saved_source_fingerprint
+                    )
+                    or (
+                        source_df is None
+                        and persisted_raw is not None
+                        and persisted_fingerprint != saved_source_fingerprint
+                    )
+                )
+            else:
+                raw_df = source_df if source_df is not None else persisted_raw
+
+            if raw_df is None and active_backup is not None:
+                raw_df = active_backup.copy(deep=True)
+                migrated_from_legacy_backup = True
+
+            if raw_df is not None:
+                from data_agent.tools.data_clean import prepare_analysis_copy
+
+                source_fingerprint = frame_fingerprint(raw_df)
+                raw_info = workspace.register_raw_snapshot(
+                    name, raw_df, source_fingerprint
+                )
+                if not isinstance(raw_info, dict):
+                    continue
+                prepared, record, _, _ = prepare_analysis_copy(
+                    raw_df,
+                    logical_name=name,
+                    raw_dataset_id=raw_info["dataset_id"],
+                    source_fingerprint=source_fingerprint,
+                )
+
+                saved_versions = info.get("versions") or []
+                saved_active = next(
+                    (
+                        item
+                        for item in saved_versions
+                        if item.get("dataset_id") == info.get("active_dataset_id")
+                    ),
+                    {},
+                )
+                active_matches_saved = False
+                if active_backup is not None and saved_active and raw_matches_saved:
+                    saved_fingerprint = saved_active.get("frame_fingerprint", "")
+                    active_matches_saved = (
+                        saved_fingerprint == frame_fingerprint(active_backup)
+                    )
+
+                active_info = None
+                if active_matches_saved:
                     try:
-                        df = pd.read_parquet(parquet_path)
-                    except Exception:
-                        pass
-                if df is None:
-                    pickle_path = sdir / "data" / f"{name}.pkl"
-                    if pickle_path.exists():
-                        try:
-                            df = pd.read_pickle(pickle_path)
-                        except Exception:
-                            pass
-
-            if df is not None:
-                workspace.add(name, df)
+                        active_info = workspace.restore_analysis_version(
+                            name,
+                            active_backup,
+                            raw_info["dataset_id"],
+                            saved_active,
+                        )
+                    except (KeyError, TypeError, ValueError, RuntimeError):
+                        active_info = None
+                if not isinstance(active_info, dict):
+                    active_info = workspace.promote_analysis_copy(
+                        name,
+                        prepared,
+                        raw_info["dataset_id"],
+                        record,
+                    )
+                if not isinstance(active_info, dict):
+                    continue
                 if info.get("context"):
                     workspace.set_metadata(name, "context", info["context"])
                 workspace.set_metadata(name, "_source_path", source_path)
                 workspace.set_metadata(name, "_source_fmt", info.get("source_fmt", ""))
+                if migrated_from_legacy_backup:
+                    workspace.set_metadata(
+                        name, "migrated_from_legacy_backup", True
+                    )
+                if source_changed_since_save:
+                    workspace.set_metadata(
+                        name, "source_changed_since_save", True
+                    )
                 restored += 1
 
         if restored:

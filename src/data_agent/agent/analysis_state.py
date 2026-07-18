@@ -14,6 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from data_agent.agent.analysis_plan_contracts import (
+    analysis_plan_id_from_mapping,
+    normalize_analysis_plan_contract,
+)
 from data_agent.config import get_config
 
 
@@ -127,7 +131,6 @@ class AnalysisSessionState:
     file_relationships: list[dict[str, Any]] = field(default_factory=list)
     active_bundle_id: str = ""
     analysis_plan: dict[str, Any] | None = None
-    analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
@@ -143,10 +146,20 @@ class AnalysisSessionState:
     active_scope: dict[str, Any] = field(default_factory=lambda: _normalize_active_scope(None))
     updated_at: str = field(default_factory=_now)
 
+    @property
+    def analysis_spec(self) -> dict[str, Any] | None:
+        """Deprecated read-only projection of the canonical analysis plan."""
+        return self.analysis_plan
+
     @classmethod
     def from_dict(cls, data: dict[str, Any], session_id: str) -> "AnalysisSessionState":
         stage = data.get("stage") if data.get("stage") in STAGES else "discover"
         data_state = data.get("data_state") if data.get("data_state") in DATA_STATES else "unknown"
+        plan_result = normalize_analysis_plan_contract(
+            data.get("analysis_plan") or data.get("analysis_spec"),
+            require_executable=False,
+        )
+        analysis_plan = plan_result.plan if plan_result.ok else None
         return cls(
             session_id=data.get("session_id") or session_id,
             project_name=data.get("project_name"),
@@ -158,8 +171,7 @@ class AnalysisSessionState:
             dataset_bundles=list(data.get("dataset_bundles") or []),
             file_relationships=list(data.get("file_relationships") or []),
             active_bundle_id=data.get("active_bundle_id") or "",
-            analysis_plan=data.get("analysis_plan") or data.get("analysis_spec"),
-            analysis_spec=data.get("analysis_spec"),
+            analysis_plan=analysis_plan,
             evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
             dataset_contracts=list(data.get("dataset_contracts") or []),
@@ -189,7 +201,6 @@ class AnalysisSessionState:
             "file_relationships": self.file_relationships,
             "active_bundle_id": self.active_bundle_id,
             "analysis_plan": self.analysis_plan,
-            "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
             "insight_records": self.insight_records,
             "dataset_contracts": self.dataset_contracts,
@@ -272,21 +283,15 @@ class AnalysisSessionState:
         return item
 
     def set_analysis_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
-        item = dict(spec)
-        item.setdefault("id", uuid.uuid4().hex[:10])
-        item.setdefault("created_at", _now())
-        self.analysis_spec = item
-        self.analysis_plan = item
-        self.goal = item.get("goal") or self.goal
-        self.stage = "plan"
-        return item
+        """Deprecated callable adapter; new code must call set_analysis_plan."""
+        return self.set_analysis_plan(spec)
 
     def set_analysis_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
-        item = dict(plan)
-        item.setdefault("id", uuid.uuid4().hex[:10])
-        item.setdefault("created_at", _now())
+        result = normalize_analysis_plan_contract(plan, require_executable=False)
+        if not result.ok:
+            raise ValueError(result.message)
+        item = result.plan
         self.analysis_plan = item
-        self.analysis_spec = item
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
         return item
@@ -548,22 +553,31 @@ class AnalysisSessionState:
                 if key == "data_state" and value not in DATA_STATES:
                     continue
                 setattr(self, key, value)
-        if "analysis_spec" in updates and isinstance(updates["analysis_spec"], dict):
-            self.analysis_spec = updates["analysis_spec"]
+        plan_update = updates.get("analysis_plan")
+        if not isinstance(plan_update, dict):
+            plan_update = updates.get("analysis_spec")
+        if isinstance(plan_update, dict):
+            resolved_stage = self.stage
+            try:
+                self.set_analysis_plan(plan_update)
+            except ValueError:
+                pass
+            else:
+                self.stage = resolved_stage
         if isinstance(updates.get("method_confirmation"), dict):
             self._apply_method_confirmation(updates["method_confirmation"], _text(answer))
 
     def _apply_method_confirmation(self, confirmation: dict[str, Any], action: str) -> None:
-        spec = self.analysis_spec if isinstance(self.analysis_spec, dict) else {}
-        spec_id = _text(confirmation.get("analysis_spec_id"))
+        plan = dict(self.analysis_plan) if isinstance(self.analysis_plan, dict) else {}
+        analysis_plan_id = analysis_plan_id_from_mapping(confirmation)
         playbook_id = _text(confirmation.get("playbook_id"))
-        if not spec_id or spec_id != _text(spec.get("id")):
+        if not analysis_plan_id or analysis_plan_id != _text(plan.get("id")):
             return
 
         resolution = {
-            "analysis_spec_id": spec_id,
+            "analysis_plan_id": analysis_plan_id,
             "playbook_id": playbook_id,
-            "request_identity": _material_request_identity(spec.get("goal")),
+            "request_identity": _material_request_identity(plan.get("goal")),
         }
         if action == "confirm_method":
             resolution["status"] = "approved"
@@ -571,7 +585,7 @@ class AnalysisSessionState:
         elif action == "clarify_method_scope":
             resolution["status"] = "clarification_required"
             self.stage = "scope"
-            clarification_id = f"method_scope_{playbook_id}_{spec_id}"
+            clarification_id = f"method_scope_{playbook_id}_{analysis_plan_id}"
             if not any(
                 item.get("id") == clarification_id and item.get("status", "pending") == "pending"
                 for item in self.pending_confirmations
@@ -593,14 +607,18 @@ class AnalysisSessionState:
                         },
                     ],
                     "blocking_reason": "method scope requires clarification before high-risk analysis",
-                    "related_spec_id": spec_id,
+                    "related_plan_id": analysis_plan_id,
+                    # Compatibility for the existing suspension persistence schema.
+                    "related_spec_id": analysis_plan_id,
                     "state_updates": {"method_confirmation": dict(confirmation)},
                     "source": "method_scope_clarification",
                 })
         else:
             return
-        spec["method_confirmation"] = resolution
-        self.analysis_spec = spec
+        plan["method_confirmation"] = resolution
+        resolved_stage = self.stage
+        self.set_analysis_plan(plan)
+        self.stage = resolved_stage
 
 def load_analysis_state(session_id: str, project_name: Optional[str] = None) -> AnalysisSessionState:
     path = _state_path(session_id)
@@ -688,7 +706,6 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         ),
         f"- data_requirements: {len(state.data_requirements)}",
         f"- has_analysis_plan: {bool(state.analysis_plan)}",
-        f"- has_analysis_spec: {bool(state.analysis_spec)}",
         f"- evidence_records: {len(state.evidence_records)}",
         f"- insight_records: {len(state.insight_records)}",
         f"- dataset_contracts: {len(state.dataset_contracts)}",
@@ -788,7 +805,7 @@ def analysis_quality_summary(state: AnalysisSessionState | None) -> dict[str, An
         return {"status": "incomplete_can_continue", "missing": ["analysis_state"], "counts": {}}
 
     missing: list[str] = []
-    plan = state.analysis_plan or state.analysis_spec or {}
+    plan = state.analysis_plan or {}
     evidence = list(state.evidence_records or [])
 
     if not evidence:

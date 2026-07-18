@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
+from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.agent.execution_scope import ensure_dataset_allowed_for_current_task
@@ -26,7 +26,7 @@ def _state(session_id: str, project_name: str = "p1") -> AnalysisSessionState:
 
 def _synthesis_plan(plan_id: str = "plan_current") -> dict:
     return {
-        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Synthesize current evidence.",
         "method_plan": [
@@ -45,7 +45,7 @@ def _synthesis_plan(plan_id: str = "plan_current") -> dict:
 
 def _replenishment_plan(plan_id: str = "plan_current") -> dict:
     return {
-        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Replenish missing revenue evidence.",
         "method_plan": [
@@ -64,7 +64,7 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
 
 def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
     return {
-        "contract_version": STAGE3C0B_CONTRACT_VERSION,
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
         "id": plan_id,
         "goal": "Replenish two missing material claims.",
         "method_plan": [
@@ -176,8 +176,7 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     project_name = "p1"
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     state = _state(session_id, project_name)
-    state.analysis_plan = _synthesis_plan()
-    state.analysis_spec = _synthesis_plan()
+    state.set_analysis_plan(_synthesis_plan())
     _install_task_manager(monkeypatch, manager)
     _install_artifact_stubs(monkeypatch, state)
     synthesis = _start_synthesis(manager, session_id=session_id, project_name=project_name)

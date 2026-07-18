@@ -5,7 +5,10 @@ import json
 import pytest
 from unittest.mock import patch, MagicMock
 
-from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
+from data_agent.agent.analysis_plan_contracts import (
+    ANALYSIS_PLAN_CONTRACT_VERSION,
+    STAGE3C0B_CONTRACT_VERSION,
+)
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
 
@@ -114,6 +117,9 @@ class TestRecordAnalysisSpec:
 
         assert result["type"] == "analysis_spec"
         assert result["analysis_spec_id"]
+        assert result["analysis_plan_id"] == result["analysis_spec_id"]
+        assert result["deprecated_adapter"] == "record_analysis_spec"
+        assert ctx.analysis_state.analysis_plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
 
     def test_legacy_spec_is_display_only_and_does_not_create_workflow(self, monkeypatch):
         from data_agent.tools.analysis_flow import record_analysis_spec
@@ -145,7 +151,7 @@ class TestRecordAnalysisSpec:
             "created": 0,
             "task_ids": [],
             "display_only": True,
-            "reason": "legacy_analysis_spec_display_only",
+            "reason": "deprecated_analysis_spec_adapter_display_only",
         }
 
     def test_missing_fields(self):
@@ -170,6 +176,8 @@ class TestRecordAnalysisPlan:
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
+        assert ctx.analysis_state.analysis_plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
+        assert ctx.analysis_state.analysis_plan["migrated_from_contract_version"] == STAGE3C0B_CONTRACT_VERSION
 
     def test_missing_fields(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
@@ -203,10 +211,10 @@ class TestAnalysisFlowControllerLegacyCutover:
         from data_agent.agent.analysis_state import AnalysisSessionState
 
         state = AnalysisSessionState(session_id="controller_legacy_cutover")
-        state.analysis_spec = {
+        state.set_analysis_plan({
             "goal": "legacy trend analysis",
             "method_plan": [{"step": "trend analysis"}],
-        }
+        })
 
         result = AnalysisFlowController("controller_legacy_cutover").ensure_workflow_tasks(state)
 
@@ -214,7 +222,8 @@ class TestAnalysisFlowControllerLegacyCutover:
             "created": 0,
             "task_ids": [],
             "display_only": True,
-            "reason": "legacy_analysis_spec_display_only",
+            "reason": "analysis_plan_not_executable",
+            "error_type": "invalid_independent_binding",
         }
 
 

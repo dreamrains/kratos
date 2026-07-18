@@ -3,7 +3,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
+from data_agent.agent.analysis_plan_contracts import (
+    ANALYSIS_PLAN_CONTRACT_VERSION,
+    analysis_plan_id_from_mapping,
+    validate_analysis_plan_contract,
+)
 from data_agent.session.task_manager import TaskManager
 
 
@@ -27,12 +31,12 @@ def _step_subject(step: dict[str, Any], index: int) -> str:
     )
 
 
-def _matches_existing_projection(task: dict[str, Any], *, analysis_plan_id: str, workflow_id: str, analysis_spec_id: str) -> bool:
-    if analysis_plan_id and task.get("analysis_plan_id") == analysis_plan_id:
+def _matches_existing_projection(task: dict[str, Any], *, analysis_plan_id: str, workflow_id: str) -> bool:
+    if analysis_plan_id and analysis_plan_id_from_mapping(task) == analysis_plan_id:
         return True
     if workflow_id and task.get("workflow_id") == workflow_id:
         return True
-    return bool(analysis_spec_id and task.get("analysis_spec_id") == analysis_spec_id)
+    return False
 
 
 def _find_step_duplicate(
@@ -65,12 +69,20 @@ def project_plan_to_workflow_tasks(
     project_name: str = "",
     source: str = "analysis_plan",
 ) -> dict[str, Any]:
-    if plan.get("contract_version") != STAGE3C0B_CONTRACT_VERSION:
+    if plan.get("contract_version") != ANALYSIS_PLAN_CONTRACT_VERSION:
         return {
             "created": 0,
             "reused": 0,
             "task_ids": [],
-            "error": "legacy_plan_display_only",
+            "error": "unsupported_contract_version",
+        }
+    validation = validate_analysis_plan_contract(plan)
+    if not validation.ok:
+        return {
+            "created": 0,
+            "reused": 0,
+            "task_ids": [],
+            "error": validation.error_type,
         }
 
     method_plan = plan.get("method_plan")
@@ -91,7 +103,6 @@ def project_plan_to_workflow_tasks(
 
     plan_id = _text(plan.get("id")) or f"plan_{uuid.uuid4().hex[:10]}"
     workflow_id = _text(plan.get("workflow_id")) or f"wf_{uuid.uuid4().hex[:8]}"
-    analysis_spec_id = _text(plan.get("id"))
 
     active_tasks = manager.list_active_for_scope(
         session_id=session_id,
@@ -105,7 +116,6 @@ def project_plan_to_workflow_tasks(
             task,
             analysis_plan_id=plan_id,
             workflow_id=_text(plan.get("workflow_id")),
-            analysis_spec_id=analysis_spec_id,
         )
     ]
     if matching_active:
@@ -122,7 +132,7 @@ def project_plan_to_workflow_tasks(
             project_name=project_name,
             goal=_text(plan.get("goal")),
             source=source,
-            analysis_spec_id=analysis_spec_id,
+            analysis_spec_id=plan_id,
             workflow_id=workflow_id,
         )
 
@@ -149,7 +159,7 @@ def project_plan_to_workflow_tasks(
                 session_id=session_id,
                 plan_id=plan_record["id"],
                 subject=_step_subject(step, index),
-                analysis_spec_id=analysis_spec_id,
+                analysis_spec_id=plan_id,
             )
         if duplicate:
             updated = manager.update(
@@ -159,7 +169,7 @@ def project_plan_to_workflow_tasks(
                 project_name=project_name,
                 stage="execute",
                 node_type=_text(step.get("node_type")) or "analysis",
-                analysis_spec_id=analysis_spec_id,
+                analysis_spec_id=plan_id,
                 analysis_plan_id=plan_id,
                 step_id=step_id,
                 dataset_inputs=list(step.get("dataset_inputs") or []),
@@ -184,7 +194,7 @@ def project_plan_to_workflow_tasks(
             project_name=project_name,
             stage="execute",
             node_type=_text(step.get("node_type")) or "analysis",
-            analysis_spec_id=analysis_spec_id,
+            analysis_spec_id=plan_id,
             analysis_plan_id=plan_id,
             step_id=step_id,
             dataset_inputs=list(step.get("dataset_inputs") or []),

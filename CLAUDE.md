@@ -115,6 +115,9 @@ Flask app with SSE-based real-time updates. `EventQueue` bridges sync AgentLoop 
 - **Decorator-based registration**: Tools use `@registry.register(name=..., description=..., capability=...)`
 - **Unified retrieval with conflict detection**: RetrievalEngine composes context from KnowledgeLibrary + MemoryStore + EvidenceStore, auto-detecting conflicts between knowledge and memory
 - **Context management**: `AgentContext` (agent/context.py) tracks per-turn state (active groups, executed tools). `project_name` is primary field; `object_name` is a backward-compatible alias
+- **Canonical analysis planning**: Analysis planning has one writable `AnalysisPlan` contract. Legacy `AnalysisSpec` payloads are normalized only at tool/session boundaries and remain read-only compatibility inputs.
+- **Non-destructive data preparation**: `load_data` retains an immutable raw snapshot and exposes a versioned analysis-ready copy under the user's logical dataset name. Safe parsing runs only on the copy.
+- **Material cleaning confirmation**: Destructive or meaning-changing cleaning creates a candidate and requires confirmation before promotion. Raw data and prior analysis-copy versions remain available for audit.
 - **Windows compatibility**: UTF-8 reconfiguration on win32, `ThreadPoolExecutor`-based timeouts instead of `signal`
 - **LLM provider**: Uses litellm for multi-provider support. `LITELLM_LOCAL_MODEL_COST_MAP=true` avoids network calls at init
 

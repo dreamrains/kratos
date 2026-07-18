@@ -225,10 +225,11 @@ def test_runtime_verifies_only_current_plan_claims_and_evidence():
     assert ref["claim_count"] == 1
 
 
-def test_runtime_falls_back_to_analysis_spec_when_analysis_plan_id_is_blank():
-    state = AnalysisSessionState(session_id="runtime_verify_analysis_spec_fallback")
-    state.analysis_plan = {"id": "   "}
-    state.analysis_spec = {"id": "plan_current"}
+def test_runtime_uses_legacy_plan_after_state_boundary_normalization():
+    state = AnalysisSessionState.from_dict({
+        "session_id": "runtime_verify_legacy_plan",
+        "analysis_spec": {"id": "plan_current"},
+    }, "runtime_verify_legacy_plan")
     state.evidence_records = [
         _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
     ]

@@ -164,7 +164,7 @@ def assert_state(result: ScenarioResult, *, has_requirement=False, has_spec=Fals
     if has_requirement:
         assert result.state.data_requirements, "expected at least one DataRequirement"
     if has_spec:
-        assert result.state.analysis_spec is not None, "expected AnalysisSpec"
+        assert result.state.analysis_plan is not None, "expected AnalysisPlan"
     assert len(result.state.evidence_records) >= min_evidence
 
 
@@ -176,9 +176,10 @@ def assert_task_workflow(result: ScenarioResult, *, min_tasks: int, node_types: 
         assert node_types <= present
 
 
-def assert_legacy_spec_is_display_only(result: ScenarioResult):
-    assert result.state.analysis_spec is not None
-    assert result.state.analysis_spec.get("contract_version") is None
+def assert_adapter_plan_is_display_only(result: ScenarioResult):
+    assert result.state.analysis_plan is not None
+    assert result.state.analysis_plan["contract_version"] == "analysis_plan.v1"
+    assert result.state.analysis_plan["review_status"] == "display_only"
     workflow_tasks = [t for t in result.tasks if t.get("workflow_id") or t.get("node_type")]
     assert workflow_tasks == []
 
@@ -391,10 +392,10 @@ def test_golden_revenue_decline_attribution(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_legacy_spec_is_display_only(result)
+    assert_adapter_plan_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["paid channel", "descriptive attribution"], confidence="medium")
-    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
+    task_text = json.dumps(result.state.analysis_plan, ensure_ascii=False).lower()
     for term in ("compare", "decompose", "exclude"):
         assert term in task_text
     assert_final_boundary(result, ["limitation", "confidence"])
@@ -406,9 +407,9 @@ def test_golden_funnel_conversion_analysis(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_legacy_spec_is_display_only(result)
+    assert_adapter_plan_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["signup to trial", "aggregate"], confidence="medium")
-    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
+    task_text = json.dumps(result.state.analysis_plan, ensure_ascii=False).lower()
     assert "analysis.funnel" in task_text
     assert_final_boundary(result, ["limitation", "confidence"])

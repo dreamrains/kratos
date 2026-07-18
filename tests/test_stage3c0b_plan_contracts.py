@@ -1,6 +1,7 @@
 import json
 
 from data_agent.agent.analysis_plan_contracts import (
+    ANALYSIS_PLAN_CONTRACT_VERSION,
     STAGE3C0B_CONTRACT_VERSION,
     validate_analysis_plan_contract,
 )
@@ -48,15 +49,24 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
     assert result.plan["method_plan"][0]["combination_mode"] == "independent"
 
 
-def test_rejects_legacy_or_missing_contract_version_for_execution():
+def test_unversioned_plan_is_normalized_before_execution_validation():
     result = validate_analysis_plan_contract(
-        {"goal": "legacy", "method_plan": [{"step_id": "s1"}]},
-        dataset_contracts=[],
+        {
+            "goal": "Analyze orders.",
+            "method_plan": [{
+                "step_id": "s1",
+                "goal": "Describe order volume.",
+                "dataset_inputs": ["orders"],
+                "combination_mode": "independent",
+                "expected_output": "Order summary",
+                "evidence_requirements": ["sample_size"],
+            }],
+        },
+        dataset_contracts=[_contract("orders", "contract_orders")],
     )
 
-    assert result.ok is False
-    assert result.error_type == "legacy_plan_display_only"
-    assert "contract_version" in result.message
+    assert result.ok is True
+    assert result.plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
 
 
 def test_rejects_join_hidden_as_executable_stage3c0b_mode():
@@ -163,7 +173,7 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
     assert result.error_type == "too_many_required_evidence_dependencies"
 
 
-def test_record_analysis_plan_rejects_legacy_stage3c0b_execution(monkeypatch):
+def test_record_analysis_plan_normalizes_unversioned_executable_plan(monkeypatch):
     monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
     monkeypatch.setattr(
         "data_agent.tools.analysis_flow._write_analysis_artifact",
@@ -172,11 +182,19 @@ def test_record_analysis_plan_rejects_legacy_stage3c0b_execution(monkeypatch):
 
     result = json.loads(record_analysis_plan(json.dumps({
         "goal": "Analyze files",
-        "method_plan": [{"step_id": "s1"}],
+        "method_plan": [{
+            "step_id": "s1",
+            "goal": "Analyze orders.",
+            "dataset_inputs": ["orders"],
+            "combination_mode": "independent",
+            "expected_output": "Order summary",
+            "evidence_requirements": ["sample_size"],
+        }],
         "visualization_strategy": "none",
     })))
 
-    assert result["error_type"] == "legacy_plan_display_only"
+    assert "error" not in result
+    assert result["analysis_plan_id"]
 
 
 def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):

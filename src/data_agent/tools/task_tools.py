@@ -10,6 +10,10 @@ import json
 import uuid
 from typing import Optional
 
+from data_agent.agent.analysis_plan_contracts import (
+    analysis_plan_id_from_mapping,
+    normalize_analysis_plan_contract,
+)
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
 
@@ -43,11 +47,11 @@ def _project_name() -> str:
     return ""
 
 
-def _current_analysis_spec() -> dict:
+def _current_analysis_plan() -> dict:
     ctx = _context()
     state = getattr(ctx, "analysis_state", None) if ctx is not None else None
-    spec = getattr(state, "analysis_spec", None)
-    return spec if isinstance(spec, dict) else {}
+    plan = getattr(state, "analysis_plan", None)
+    return plan if isinstance(plan, dict) else {}
 
 
 def _json_or_value(value, default=None):
@@ -127,10 +131,10 @@ def _step_description(step) -> str:
     return str(step)
 
 
-def _ensure_active_plan_for_spec(spec: dict) -> dict:
-    workflow_id = spec.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
-    spec["workflow_id"] = workflow_id
-    spec_id = spec.get("id", "")
+def _ensure_active_task_plan(analysis_plan: dict) -> dict:
+    workflow_id = analysis_plan.get("workflow_id") or f"wf_{uuid.uuid4().hex[:8]}"
+    analysis_plan["workflow_id"] = workflow_id
+    analysis_plan_id = analysis_plan.get("id", "")
     session_id = _session_id()
     project_name = _project_name()
     active_plan_id = task_manager.get_active_plan_id(session_id, project_name)
@@ -140,21 +144,23 @@ def _ensure_active_plan_for_spec(spec: dict) -> dict:
             project_name=project_name,
         )
         if any(
-            t.get("analysis_spec_id") == spec_id or t.get("workflow_id") == workflow_id
+            analysis_plan_id_from_mapping(t) == analysis_plan_id
+            or t.get("workflow_id") == workflow_id
             for t in active_tasks
         ):
             return {
                 "id": active_plan_id,
                 "version": max([int(t.get("plan_version") or 1) for t in active_tasks], default=1),
                 "workflow_id": workflow_id,
-                "analysis_spec_id": spec_id,
+                "analysis_plan_id": analysis_plan_id,
+                "analysis_spec_id": analysis_plan_id,
             }
     return task_manager.create_plan(
         session_id=session_id,
         project_name=project_name,
-        goal=spec.get("goal", ""),
-        source="analysis_spec",
-        analysis_spec_id=spec_id,
+        goal=analysis_plan.get("goal", ""),
+        source="analysis_plan",
+        analysis_spec_id=analysis_plan_id,
         workflow_id=workflow_id,
     )
 
@@ -167,7 +173,7 @@ def _incoming_has_explicit_plan(task_list_data: list) -> bool:
     )
 
 
-def _ensure_llm_plan_for_batch(task_list_data: list, current_spec: dict, active_plan_id: str, active_tasks: list[dict]) -> dict:
+def _ensure_llm_plan_for_batch(task_list_data: list, current_plan: dict, active_plan_id: str, active_tasks: list[dict]) -> dict:
     """Keep LLM-authored execution plans separate from system candidate plans."""
     if _incoming_has_explicit_plan(task_list_data):
         return {
@@ -190,34 +196,48 @@ def _ensure_llm_plan_for_batch(task_list_data: list, current_spec: dict, active_
     return task_manager.create_plan(
         session_id=_session_id(),
         project_name=_project_name(),
-        goal=current_spec.get("goal") or first_subject or "LLM analysis plan",
+        goal=current_plan.get("goal") or first_subject or "LLM analysis plan",
         source="llm_plan",
-        analysis_spec_id=current_spec.get("id", ""),
-        workflow_id=current_spec.get("workflow_id", ""),
+        analysis_spec_id=current_plan.get("id", ""),
+        workflow_id=current_plan.get("workflow_id", ""),
     )
 
 
-def create_workflow_tasks_from_spec(spec: dict) -> dict:
+def create_workflow_tasks_from_plan(plan: dict) -> dict:
     from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
     return project_plan_to_workflow_tasks(
         task_manager,
-        spec,
+        plan,
         session_id=_session_id(),
         project_name=_project_name(),
         source="analysis_plan",
     )
 
 
+def create_workflow_tasks_from_spec(spec: dict) -> dict:
+    """Deprecated adapter for callers migrating to create_workflow_tasks_from_plan."""
+    validation = normalize_analysis_plan_contract(spec, require_executable=True)
+    if not validation.ok:
+        return {
+            "created": 0,
+            "reused": 0,
+            "task_ids": [],
+            "error": validation.error_type,
+        }
+    return create_workflow_tasks_from_plan(validation.plan)
+
+
 @registry.register(
     name="task_create",
     description=(
-        "创建分析任务。支持单个任务、批量 tasks JSON，以及从 AnalysisSpec 创建 workflow task。"
-        "复杂分析应先形成 AnalysisSpec，再用任务节点执行 method_plan。"
+        "创建分析任务。支持单个任务、批量 tasks JSON，以及从 AnalysisPlan 创建 workflow task。"
+        "复杂分析应先形成 AnalysisPlan，再用任务节点执行 method_plan。"
     ),
     schema_overrides={
         "tasks": {"description": '批量创建模式：JSON 数组 [{"subject": "...", "description": "..."}]'},
-        "analysis_spec_json": {"description": "可选：AnalysisSpec JSON，用于从 method_plan 批量创建 workflow task"},
+        "analysis_plan_json": {"description": "Optional canonical AnalysisPlan JSON used to create workflow tasks."},
+        "analysis_spec_json": {"description": "Deprecated AnalysisSpec JSON compatibility input."},
     },
 )
 def task_create(
@@ -237,15 +257,25 @@ def task_create(
     required_capability: str = "",
     evidence_requirements: str = "",
     confirmation_policy: str = "",
+    analysis_plan_json: str = "",
+    analysis_plan_id: str = "",
 ) -> str:
-    if analysis_spec_json:
+    incoming_plan_json = analysis_plan_json or analysis_spec_json
+    if incoming_plan_json:
         try:
-            spec = json.loads(analysis_spec_json)
+            plan = json.loads(incoming_plan_json)
         except json.JSONDecodeError:
-            return json.dumps({"error": "analysis_spec_json 必须是有效 JSON"}, ensure_ascii=False)
-        return json.dumps(create_workflow_tasks_from_spec(spec), ensure_ascii=False, indent=2)
+            return json.dumps({"error": "analysis_plan_json must be valid JSON"}, ensure_ascii=False)
+        validation = normalize_analysis_plan_contract(plan, require_executable=True)
+        if not validation.ok:
+            return json.dumps({
+                "error": validation.message,
+                "error_type": validation.error_type,
+                "details": validation.details,
+            }, ensure_ascii=False)
+        return json.dumps(create_workflow_tasks_from_plan(validation.plan), ensure_ascii=False, indent=2)
 
-    current_spec = _current_analysis_spec()
+    current_plan = _current_analysis_plan()
     active_plan_id = task_manager.get_active_plan_id(_session_id(), _project_name())
     active_tasks = (
         task_manager.list_active_for_scope(session_id=_session_id(), project_name=_project_name())
@@ -253,18 +283,20 @@ def task_create(
     )
     active_plan_version = max([int(t.get("plan_version") or 1) for t in active_tasks], default=1)
     common_fields = {
-        "workflow_id": workflow_id or current_spec.get("workflow_id", ""),
+        "workflow_id": workflow_id or current_plan.get("workflow_id", ""),
         "project_name": project_name or _project_name(),
-        "stage": stage or ("execute" if current_spec else ""),
+        "stage": stage or ("execute" if current_plan else ""),
         "node_type": node_type,
-        "analysis_spec_id": analysis_spec_id or current_spec.get("id", ""),
+        "analysis_plan_id": analysis_plan_id or analysis_spec_id or current_plan.get("id", ""),
+        # TaskManager retains this persisted field during schema migration.
+        "analysis_spec_id": analysis_spec_id or analysis_plan_id or current_plan.get("id", ""),
         "required_data": _json_or_value(required_data, []),
         "expected_output": expected_output,
         "evidence_ids": _json_or_value(evidence_ids, []),
         "confirmation_ids": _json_or_value(confirmation_ids, []),
         "required_capability": required_capability,
         "evidence_requirements": _json_or_value(evidence_requirements, []),
-        "confirmation_policy": _json_or_value(confirmation_policy, current_spec.get("confirmation_policy", {})),
+        "confirmation_policy": _json_or_value(confirmation_policy, current_plan.get("confirmation_policy", {})),
         "plan_id": active_plan_id,
         "plan_version": active_plan_version,
         "plan_status": "active" if active_plan_id else "",
@@ -280,7 +312,7 @@ def task_create(
         if not isinstance(task_list_data, list):
             return json.dumps({"error": "tasks 必须是 JSON 数组"}, ensure_ascii=False)
 
-        llm_plan = _ensure_llm_plan_for_batch(task_list_data, current_spec, active_plan_id, active_tasks)
+        llm_plan = _ensure_llm_plan_for_batch(task_list_data, current_plan, active_plan_id, active_tasks)
         if llm_plan.get("id"):
             common_fields["plan_id"] = llm_plan["id"]
             common_fields["plan_version"] = llm_plan.get("version", 1)

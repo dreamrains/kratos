@@ -10,6 +10,7 @@ from data_agent.agent.confirmation_policy import (
     pending_confirmation_gate,
     route_confirmation_gate,
 )
+from data_agent.agent.trust_contracts import route_evidence_requirements
 
 
 _ACTIVE_MODES = {"consulting", "data_loaded", "analysis", "artifact_review"}
@@ -180,7 +181,7 @@ def _executable_routes(
             "category": "ready",
             "reason": _text(route.get("reason")),
             "limitations": _text_list(route.get("limitations")),
-            "evidence_requirements": _text_list(route.get("evidence_requirements")),
+            "evidence_requirements": route_evidence_requirements(route),
             "risk_fields": risk_fields,
             "budget_level": _text(route.get("budget_level")),
             "prompt": _route_prompt(route, risk_fields),
@@ -319,7 +320,7 @@ def _demoted_route_item(
         "reason": _text(route.get("reason")),
         "data_requirements": missing,
         "value_if_available": "",
-        "evidence_requirements": _text_list(route.get("evidence_requirements")),
+        "evidence_requirements": route_evidence_requirements(route),
         "limitations": _text_list(route.get("limitations")),
         "prompt": (
             f'I want to explore "{direction}". Please tell me what data is missing, '
@@ -430,7 +431,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
-    required = _text_list(route.get("evidence_requirements"))
+    required = route_evidence_requirements(route)
     required.extend(_route_field_role_requirements(route))
     return _dedupe(required)
 

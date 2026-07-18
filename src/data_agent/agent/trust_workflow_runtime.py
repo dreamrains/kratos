@@ -195,12 +195,11 @@ def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) ->
 
 
 def _current_analysis_plan_id(state: Any) -> str:
-    for attr_name in ("analysis_plan", "analysis_spec"):
-        plan = getattr(state, attr_name, None)
-        if isinstance(plan, dict):
-            plan_id = str(plan.get("id") or "").strip()
-            if plan_id:
-                return plan_id
+    plan = getattr(state, "analysis_plan", None)
+    if isinstance(plan, dict):
+        plan_id = str(plan.get("id") or "").strip()
+        if plan_id:
+            return plan_id
     return ""
 
 

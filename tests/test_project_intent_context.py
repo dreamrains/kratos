@@ -373,12 +373,12 @@ def test_analysis_state_records_requirement_and_spec(tmp_path):
                 "created": 0,
                 "task_ids": [],
                 "display_only": True,
-                "reason": "legacy_analysis_spec_display_only",
+                "reason": "deprecated_analysis_spec_adapter_display_only",
             }
 
         state = load_analysis_state("analysis_state_test", "savings_card")
         assert len(state.data_requirements) == 1
-        assert state.analysis_spec is not None
+        assert state.analysis_plan is not None
         assert state.stage == "plan"
     finally:
         config._config = old_cfg

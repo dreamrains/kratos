@@ -551,7 +551,7 @@ class TestCausalInferenceAwareness:
         })
 
         plan = json.dumps({
-            "contract_version": "stage3c0b.v1",
+            "contract_version": "analysis_plan.v1",
             "goal": "省钱卡效果分析",
             "question_type": "evaluation",
             "metrics": ["收益", "复购率", "付费频次"],

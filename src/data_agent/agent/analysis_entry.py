@@ -7,6 +7,7 @@ from typing import Any
 from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
 from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
+from data_agent.agent.trust_contracts import route_evidence_requirements
 
 
 _RETENTION_KEYWORDS = ("retention", "cohort", "\u7559\u5b58")
@@ -102,7 +103,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             reason="The requested analysis route needs data that is not available in the current scope.",
             required_user_action="provide_required_data",
             limitations=missing_requirements,
-            evidence_requirements=_text_list(missing_route.get("evidence_requirements")),
+            evidence_requirements=route_evidence_requirements(missing_route),
         )
 
     route = _infer_requested_route(user_input, routes)
@@ -127,7 +128,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
                 required_user_action="confirm_cleaning_decision",
                 risk_fields=risk_fields,
                 limitations=_text_list(route.get("limitations")),
-                evidence_requirements=_text_list(route.get("evidence_requirements")),
+                evidence_requirements=route_evidence_requirements(route),
             )
         return _decision(
             "direct_analysis",
@@ -136,7 +137,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             reason="The request matches a supported data route.",
             confidence="medium",
             limitations=_text_list(route.get("limitations")),
-            evidence_requirements=_text_list(route.get("evidence_requirements")),
+            evidence_requirements=route_evidence_requirements(route),
         )
 
     return _decision(
@@ -298,7 +299,7 @@ def _route_options(routes: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
-    requirements = set(_text_list(route.get("evidence_requirements")))
+    requirements = set(route_evidence_requirements(route))
     risky_fields = []
     for log in cleaning_logs:
         route_dataset = _text(route.get("dataset"))
@@ -318,7 +319,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _route_requires_field_kind(route: dict[str, Any], column: str) -> bool:
-    requirements = set(_text_list(route.get("evidence_requirements")))
+    requirements = set(route_evidence_requirements(route))
     direction = _route_direction(route)
     if column.lower() == "date" and ("date" in requirements or direction in {"trend", "period_compare"}):
         return True

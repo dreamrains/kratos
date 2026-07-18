@@ -263,11 +263,17 @@ class TestTopNEdge:
         assert "Error" not in r
 
     def test_real_data_top_channels(self, env):
-        if not HAS_TEST_DATA:
+        source = TEST_DATA_DIR / "游戏互推.xlsx"
+        if not source.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
+        from data_agent.tools.data_clean import apply_type_conversion
         from data_agent.tools.eda import top_n
-        load_data(str(TEST_DATA_DIR / "游戏互推.xlsx"), name="cross")
+        load_data(str(source), name="cross")
+        conversion = json.loads(apply_type_conversion(
+            "cross", column="卖量收入", target_type="numeric", confirmed=True
+        ))
+        assert conversion["status"] == "applied"
         r = top_n("cross", sort_by="卖量收入", n=5)
         assert "Error" not in r
 
@@ -314,11 +320,12 @@ class TestABTestEdge:
 
     def test_real_data_ab(self, env):
         """用真实数据验证 ab_test。"""
-        if not HAS_REAL_DATA:
+        source = Path("D:/Project/Daily/备用/20260512测试/购卡前后订单.xlsx")
+        if not source.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.statistics import ab_test
-        load_data(str(Path("D:/Project/Daily/备用/20260512测试/购卡前后订单.xlsx")), name="ba")
+        load_data(str(source), name="ba")
         r = ab_test("ba", group_col="用户类型（1是购卡前30天内，2是购卡后30天内）", metric_col="实收金额")
         parsed = json.loads(r)
         assert "test" in parsed
@@ -589,12 +596,17 @@ class TestRealDataPipeline:
         if not (TEST_DATA_DIR / "游戏互推.xlsx").exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
+        from data_agent.tools.data_clean import apply_type_conversion
         from data_agent.tools.eda import top_n
         from data_agent.session.workspace import workspace
 
         load_data(str(TEST_DATA_DIR / "游戏互推.xlsx"), name="cross")
         df = workspace.get("cross")
         assert df.shape[0] == 1985
+        conversion = json.loads(apply_type_conversion(
+            "cross", column="卖量收入", target_type="numeric", confirmed=True
+        ))
+        assert conversion["status"] == "applied"
 
         # Top 推广游戏
         r = top_n("cross", sort_by="卖量收入", n=5)
@@ -699,7 +711,7 @@ class TestAnalysisFlowTools:
             "quality_status": "ready",
         })
         plan = json.dumps({
-            "contract_version": "stage3c0b.v1",
+            "contract_version": "analysis_plan.v1",
             "goal": "省钱卡效果评估",
             "method_plan": [{
                 "step_id": "step_arpu",
@@ -905,11 +917,12 @@ class TestFunnelAnalysis:
 
     def test_real_data_funnel(self, env):
         """真实游戏数据构造漏斗。"""
-        if not HAS_TEST_DATA:
+        source = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
+        if not source.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import funnel_analysis
-        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
+        load_data(str(source), name="card")
 
         from data_agent.session.workspace import workspace
         df = workspace.get("card")

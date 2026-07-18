@@ -382,15 +382,35 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         else:
             return f"Error: Unsupported format '{detected_fmt}'. Supported: csv, excel, json"
 
-        # 自动类型清洗
-        from data_agent.tools.data_clean import auto_clean
-        df, applied, needs_confirm = auto_clean(df)
+        # Preserve the uploaded values as an immutable raw snapshot.  Parsing
+        # and analysis preparation happen only on a versioned working copy.
+        from data_agent.agent.data_lineage import frame_fingerprint
+        from data_agent.tools.data_clean import prepare_analysis_copy
+
+        raw_df = df.copy(deep=True)
+        source_fingerprint = frame_fingerprint(raw_df)
+        raw_info = workspace.register_raw_snapshot(name, raw_df, source_fingerprint)
+        if not isinstance(raw_info, dict):
+            return str(raw_info)
+        df, transformation_record, applied, needs_confirm = prepare_analysis_copy(
+            raw_df,
+            logical_name=name,
+            raw_dataset_id=raw_info["dataset_id"],
+            source_fingerprint=source_fingerprint,
+        )
+        active_info = workspace.promote_analysis_copy(
+            name,
+            df,
+            raw_info["dataset_id"],
+            transformation_record,
+        )
+        if not isinstance(active_info, dict):
+            return str(active_info)
 
         # 间接提示词注入检测
-        injection_warnings = _detect_injection_patterns(df)
+        injection_warnings = _detect_injection_patterns(raw_df)
 
-        # 注册到工作空间
-        load_msg = workspace.add(name, df)
+        load_msg = f"数据集 '{name}' 已加载: {df.shape[0]} 行 x {df.shape[1]} 列"
 
         # 保存用户提供的上下文信息到数据集元数据
         if context:
@@ -401,7 +421,15 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         workspace.set_metadata(name, "_source_fmt", detected_fmt)
 
         # === 阶段化输出：紧凑摘要入上下文，完整分析持久化到磁盘 ===
-        summary_parts = [load_msg]
+        summary_parts = [
+            load_msg,
+            (
+                "[analysis_copy] "
+                f"raw={raw_info['dataset_id']}; active={active_info['dataset_id']}; "
+                f"version={active_info['version']}; safe_changes={len(applied)}; "
+                f"proposals={len(needs_confirm)} [/analysis_copy]"
+            ),
+        ]
         detail_sections = {}
         interpretation_data: dict[str, Any] = {}
         quality_data: dict[str, Any] = {}
@@ -451,8 +479,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 build_data_characteristics_card,
                 set_cached_features,
             )
-            quality_data = scan_data_quality(df)
-            card = build_data_characteristics_card(name, df, quality_data)
+            quality_data = scan_data_quality(raw_df)
+            card = build_data_characteristics_card(name, raw_df, quality_data)
             set_cached_features(name, card)
             detail_sections["quality_card"] = card
             summary_parts.append(card)
@@ -601,18 +629,30 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 if "error" in item:
                     summary_parts.append(f"  - {item['column']}: 转换失败 ({item['error']})")
                 else:
-                    summary_parts.append(f"  - {item['column']}: {item['from']} → {item['to']} ({item['reason']})")
+                    conversion = item.get("action", "safe_parse")
+                    before_after = ""
+                    if item.get("from") or item.get("to"):
+                        before_after = f"{item.get('from', '')} → {item.get('to', '')}; "
+                    summary_parts.append(
+                        f"  - {item['column']}: {before_after}{conversion} ({item.get('reason', '')})"
+                    )
 
         if needs_confirm:
             confirm_lines = []
             for item in needs_confirm:
                 confirm_lines.append(
-                    f"  列 '{item['column']}' (当前: {item['current_dtype']})\n"
-                    f"  建议: {item['reason']}\n"
-                    f"  样本: {', '.join(item['sample'][:5])}"
+                    f"  列 '{item['column']}'"
+                    + (f" (当前: {item['current_dtype']})" if item.get("current_dtype") else "")
+                    + f"\n  建议: {item.get('reason', '')}"
+                    + (
+                        f"\n  样本: {', '.join(str(value) for value in item.get('sample', [])[:5])}"
+                        if item.get("sample")
+                        else ""
+                    )
                 )
             summary_parts.append(
-                "\n以下列类型需要确认，请使用 ask_user_question 工具向用户确认:\n"
+                "\n以下类型转换提案尚未应用。仅当后续分析依赖这些列时再请求用户确认；"
+                "当前分析副本仍保留原值，可继续处理其他问题:\n"
                 + "\n\n".join(confirm_lines)
             )
 

@@ -18,6 +18,7 @@ def test_synthesis_instruction_allows_bounded_evidence_replenishment_without_raw
 
     assert "bounded_evidence_replenishment" in instruction
     assert "record_analysis_plan" in instruction
+    assert "contract_version analysis_plan.v1" in instruction
     assert "independent" in instruction
     assert "do not read raw datasets during synthesis" in instruction.lower()
 

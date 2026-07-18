@@ -194,6 +194,16 @@ def record_analysis_spec(spec_json: str) -> str:
         payload = json.loads(spec_json)
     except json.JSONDecodeError:
         return json.dumps({"error": "spec_json 必须是有效 JSON"}, ensure_ascii=False)
+    from data_agent.agent.analysis_plan_contracts import normalize_analysis_plan_contract
+
+    validation = normalize_analysis_plan_contract(payload, require_executable=False)
+    if not validation.ok:
+        return json.dumps({
+            "error": validation.message,
+            "error_type": validation.error_type,
+            "details": validation.details,
+        }, ensure_ascii=False)
+    payload = validation.plan
     required = ["goal", "question_type", "metrics", "dimensions", "required_data", "method_plan", "limitations"]
     missing = [k for k in required if k not in payload]
     if missing:
@@ -209,22 +219,14 @@ def record_analysis_spec(spec_json: str) -> str:
     if state is not None:
         result["state_stage"] = state.stage
         result["analysis_spec_id"] = payload.get("id")
-
-    from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
-
-    if payload.get("contract_version") == STAGE3C0B_CONTRACT_VERSION:
-        try:
-            from data_agent.tools.task_tools import create_workflow_tasks_from_spec
-            result["workflow"] = create_workflow_tasks_from_spec(payload)
-        except Exception as e:
-            result["workflow_error"] = str(e)
-    else:
-        result["workflow"] = {
-            "created": 0,
-            "task_ids": [],
-            "display_only": True,
-            "reason": "legacy_analysis_spec_display_only",
-        }
+    result["analysis_plan_id"] = payload.get("id")
+    result["deprecated_adapter"] = "record_analysis_spec"
+    result["workflow"] = {
+        "created": 0,
+        "task_ids": [],
+        "display_only": True,
+        "reason": "deprecated_analysis_spec_adapter_display_only",
+    }
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -243,27 +245,23 @@ def record_analysis_plan(plan_json: str) -> str:
         return json.dumps({"error": f"AnalysisPlan missing fields: {missing}"}, ensure_ascii=False)
 
     state = _current_state()
-    if payload.get("contract_version"):
-        from data_agent.agent.analysis_plan_contracts import validate_analysis_plan_contract
+    from data_agent.agent.analysis_plan_contracts import normalize_analysis_plan_contract
 
-        dataset_contracts = None
-        if state is not None:
-            dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
-        validation = validate_analysis_plan_contract(payload, dataset_contracts=dataset_contracts)
-        if not validation.ok:
-            return json.dumps({
-                "error": validation.message,
-                "error_type": validation.error_type,
-                "details": validation.details,
-            }, ensure_ascii=False)
-        payload = validation.plan
-    else:
-        from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
-
+    dataset_contracts = None
+    if state is not None:
+        dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
+    validation = normalize_analysis_plan_contract(
+        payload,
+        dataset_contracts=dataset_contracts,
+        require_executable=True,
+    )
+    if not validation.ok:
         return json.dumps({
-            "error": f"AnalysisPlan missing executable contract_version={STAGE3C0B_CONTRACT_VERSION}; legacy plans are display-only.",
-            "error_type": "legacy_plan_display_only",
+            "error": validation.message,
+            "error_type": validation.error_type,
+            "details": validation.details,
         }, ensure_ascii=False)
+    payload = validation.plan
 
     # Optional fields - pass through if present
     _valid_depths = {"lightweight", "standard", "comprehensive"}
@@ -289,8 +287,8 @@ def record_analysis_plan(plan_json: str) -> str:
         result["state_stage"] = state.stage
 
     try:
-        from data_agent.tools.task_tools import create_workflow_tasks_from_spec
-        result["workflow"] = create_workflow_tasks_from_spec(payload)
+        from data_agent.tools.task_tools import create_workflow_tasks_from_plan
+        result["workflow"] = create_workflow_tasks_from_plan(payload)
     except Exception as e:
         result["workflow_error"] = str(e)
     return json.dumps(result, ensure_ascii=False)
@@ -409,11 +407,12 @@ def record_evidence_record(record_json: str) -> str:
         result["evidence_id"] = payload.get("id")
         try:
             from data_agent.session.task_manager import task_manager
-            spec = state.analysis_spec if state is not None else {}
+            plan = state.analysis_plan if state is not None else {}
             completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
                 session_id=state.session_id,
                 evidence=payload,
-                analysis_spec_id=(spec or {}).get("id", ""),
+                # TaskManager retains this persisted field during schema migration.
+                analysis_spec_id=(plan or {}).get("id", ""),
             )
             if completed_task_ids:
                 result["completed_task_ids"] = completed_task_ids

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
+from data_agent.agent.trust_contracts import route_evidence_requirements
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
@@ -107,7 +108,7 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 affected_routes=[_route_direction(route)],
             )
 
-    if _is_high_risk_request(text) and not _has_confirmed_high_risk_spec(text, state):
+    if _is_high_risk_request(text) and not _has_confirmed_high_risk_plan(text, state):
         return _hard_gate(
             "method_confirmation",
             "High-risk analysis requires method, assumption, and evidence confirmation.",
@@ -395,7 +396,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
-    fields = _text_list(route.get("evidence_requirements"))
+    fields = route_evidence_requirements(route)
     roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
     direction = _route_direction(route)
     if direction in {"trend", "period_compare", "cohort"}:
@@ -428,16 +429,18 @@ def _is_high_risk_request(text: str) -> bool:
     return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
 
 
-def _has_confirmed_high_risk_spec(text: str, state: Any) -> bool:
-    spec = getattr(state, "analysis_spec", None)
-    if not isinstance(spec, dict):
+def _has_confirmed_high_risk_plan(text: str, state: Any) -> bool:
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict):
         return False
-    confirmation = spec.get("method_confirmation")
+    confirmation = plan.get("method_confirmation")
     if not isinstance(confirmation, dict) or confirmation.get("status") != "approved":
         return False
+    from data_agent.agent.analysis_plan_contracts import analysis_plan_id_from_mapping
+
     return (
-        _text(confirmation.get("analysis_spec_id")) == _text(spec.get("id"))
-        and _text(confirmation.get("playbook_id")) == _text(spec.get("playbook_id"))
+        analysis_plan_id_from_mapping(confirmation) == _text(plan.get("id"))
+        and _text(confirmation.get("playbook_id")) == _text(plan.get("playbook_id"))
         and _material_request_identity(text) == _text(confirmation.get("request_identity"))
     )
 

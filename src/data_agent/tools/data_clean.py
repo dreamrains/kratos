@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Optional
+from numbers import Number
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -32,6 +33,7 @@ _BOOL_MAP = {
     "1": True, "0": False,
 }
 _INT_SUFFIXES = ("人", "个", "次", "天", "元", "万", "件", "台", "笔", "条")
+_SCALED_NUMERIC_SUFFIXES = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
 
 
 def _sample_values(series: pd.Series, n: int = 20) -> list:
@@ -106,13 +108,19 @@ def _has_numeric_suffix(values: list) -> bool:
     """检测 '123元' '1.5万' 这类带单位后缀的数值。"""
     if not values:
         return False
-    count = sum(1 for v in values if any(str(v).strip().endswith(s) for s in _INT_SUFFIXES))
+    count = sum(_parse_number_with_suffix(str(value)) is not None for value in values)
     return count / len(values) >= 0.8
 
 
 def _parse_number_with_suffix(s: str) -> Optional[float]:
     """解析带中文单位的数值，如 '1.5万' -> 15000。"""
     s = str(s).strip()
+    scaled_suffix = s[-1:].lower()
+    if scaled_suffix in _SCALED_NUMERIC_SUFFIXES:
+        try:
+            return float(s[:-1]) * _SCALED_NUMERIC_SUFFIXES[scaled_suffix]
+        except ValueError:
+            return None
     if s.endswith("万"):
         try:
             return float(s[:-1]) * 10000
@@ -262,6 +270,9 @@ def apply_conversion(series: pd.Series, suggested_type: str) -> pd.Series:
     if suggested_type == "bool":
         return series.apply(lambda x: _BOOL_MAP.get(str(x).strip().lower(), x) if pd.notna(x) else x)
 
+    if suggested_type == "category":
+        return series.astype("category")
+
     return series
 
 
@@ -272,6 +283,57 @@ _AUTO_CONVERT_TYPES = {"datetime", "percentage_to_float", "date_int_to_datetime"
 
 # 中置信度：自动执行但需告知用户
 _NOTIFY_CONVERT_TYPES = {"numeric_with_suffix", "numeric"}
+
+
+def prepare_analysis_copy(
+    frame: pd.DataFrame,
+    *,
+    logical_name: str,
+    raw_dataset_id: str,
+    source_fingerprint: str,
+) -> tuple[pd.DataFrame, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Prepare a non-mutating analysis copy and describe every proposed change."""
+    from data_agent.agent.data_lineage import TransformationRecord
+
+    prepared = frame.copy(deep=True)
+    applied: list[dict[str, Any]] = []
+    proposals: list[dict[str, Any]] = []
+
+    for column in prepared.columns:
+        info = infer_column_type(prepared[column])
+        suggested = info["suggested_type"]
+        if suggested == "keep":
+            continue
+        if suggested in _AUTO_CONVERT_TYPES and info["confidence"] == "high":
+            candidate = apply_conversion(prepared[column].copy(), suggested)
+            new_nulls = int(candidate.isna().sum() - prepared[column].isna().sum())
+            if new_nulls <= 0:
+                prepared[column] = candidate
+                applied.append({
+                    "column": column,
+                    "action": suggested,
+                    "reason": info["reason"],
+                    "decision_policy": "auto_safe",
+                })
+                continue
+        proposals.append({
+            "column": column,
+            "suggested_type": suggested,
+            "reason": info["reason"],
+            "decision_policy": "confirmation_required",
+        })
+
+    record = TransformationRecord(
+        parent_dataset_id=raw_dataset_id,
+        raw_dataset_id=raw_dataset_id,
+        source_fingerprint=source_fingerprint,
+        logical_name=logical_name,
+        operations=tuple(applied),
+        affected_columns=tuple(item["column"] for item in applied),
+        information_loss=False,
+        decision_policy="auto_safe" if applied else "none",
+    ).to_dict()
+    return prepared, record, applied, proposals
 
 
 def auto_clean(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
@@ -375,6 +437,116 @@ def _try_coerce_object_to_numeric(df: pd.DataFrame) -> tuple[pd.DataFrame, list[
     return df, conversions
 
 
+def _require_workspace_mapping(value: Any, operation: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Workspace {operation} failed: {value}")
+    return value
+
+
+def _coerce_bool_flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _ensure_versioned_dataset(
+    name: str,
+    frame: pd.DataFrame,
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    """Return the active version, initializing a legacy dataset when needed."""
+    active_info = workspace.get_active_version_info(name)
+    if active_info is not None:
+        version = workspace.get_dataset_version(active_info["dataset_id"])
+        return active_info, (version if version is not None else frame).copy(deep=True)
+
+    from data_agent.agent.data_lineage import frame_fingerprint
+
+    source_fingerprint = frame_fingerprint(frame)
+    raw_info = _require_workspace_mapping(
+        workspace.register_raw_snapshot(name, frame, source_fingerprint),
+        "raw registration",
+    )
+    prepared, preparation_record, _, _ = prepare_analysis_copy(
+        frame,
+        logical_name=name,
+        raw_dataset_id=raw_info["dataset_id"],
+        source_fingerprint=source_fingerprint,
+    )
+    active_info = _require_workspace_mapping(
+        workspace.promote_analysis_copy(
+            name,
+            prepared,
+            raw_info["dataset_id"],
+            preparation_record,
+        ),
+        "analysis-copy promotion",
+    )
+    return active_info, prepared.copy(deep=True)
+
+
+def _make_transformation_record(
+    *,
+    active_info: dict[str, Any],
+    logical_name: str,
+    operations: list[dict[str, Any]],
+    affected_columns: list[str],
+    affected_row_count: int,
+    before_after_metrics: dict[str, Any],
+    information_loss: bool,
+    decision_policy: str,
+    confirmation_status: str,
+) -> dict[str, Any]:
+    from data_agent.agent.data_lineage import TransformationRecord
+
+    return TransformationRecord(
+        parent_dataset_id=active_info["dataset_id"],
+        raw_dataset_id=active_info["raw_dataset_id"],
+        source_fingerprint=active_info.get("source_fingerprint", ""),
+        logical_name=logical_name,
+        operations=tuple(operations),
+        affected_columns=tuple(dict.fromkeys(affected_columns)),
+        affected_row_count=int(affected_row_count),
+        before_after_metrics=before_after_metrics,
+        information_loss=information_loss,
+        decision_policy=decision_policy,
+        confirmation_status=confirmation_status,
+    ).to_dict()
+
+
+def _promote_candidate(
+    name: str,
+    candidate: pd.DataFrame,
+    active_info: dict[str, Any],
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    return _require_workspace_mapping(
+        workspace.promote_analysis_copy(
+            name,
+            candidate,
+            active_info["raw_dataset_id"],
+            record,
+        ),
+        "analysis-copy promotion",
+    )
+
+
+def _conversion_is_partial(
+    original: pd.Series,
+    converted: pd.Series,
+    target_type: str,
+) -> bool:
+    non_null = converted[original.notna()]
+    if target_type in {"numeric", "numeric_with_suffix", "percentage_to_float"}:
+        return not all(isinstance(value, Number) and not isinstance(value, (bool, np.bool_)) for value in non_null)
+    if target_type in {"datetime", "date_int_to_datetime"}:
+        return not pd.api.types.is_datetime64_any_dtype(converted)
+    if target_type == "bool":
+        return not all(isinstance(value, (bool, np.bool_)) for value in non_null)
+    if target_type == "category":
+        return not isinstance(converted.dtype, pd.CategoricalDtype)
+    return True
+
+
 # ── 工具接口 ──────────────────────────────────────────────
 
 @registry.register(
@@ -402,12 +574,16 @@ def suggest_column_types(name: str) -> str:
 
 @registry.register(
     name="apply_type_conversion",
-    description="对指定列执行类型转换。column 为列名，target_type 为: datetime/numeric/percentage_to_float/bool/category/date_int_to_datetime/numeric_with_suffix。也可以传 auto=true 自动应用所有建议转换。",
+    description=(
+        "在分析副本上执行类型转换。安全且无损的高置信度单列转换可直接应用；"
+        "自动、带单位、部分成功或有信息损失的转换需 confirmed=true 后提升为新版本。"
+    ),
     schema_overrides={
         "name": {"description": "数据集名称"},
         "column": {"description": "目标列名"},
         "target_type": {"description": "目标类型", "enum": ["datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
-        "auto": {"description": "是否自动应用所有建议转换"},
+        "auto": {"type": "boolean", "description": "是否自动应用所有建议转换"},
+        "confirmed": {"type": "boolean", "description": "是否已确认需要人工批准的转换"},
     },
 )
 def apply_type_conversion(
@@ -415,50 +591,181 @@ def apply_type_conversion(
     column: str = "",
     target_type: str = "",
     auto: bool = False,
+    confirmed: bool = False,
 ) -> str:
-    df = workspace.get(name)
-    if df is None:
+    auto = _coerce_bool_flag(auto)
+    confirmed = _coerce_bool_flag(confirmed)
+    current = workspace.get(name)
+    if current is None:
         return json.dumps({"error": f"数据集 '{name}' 不存在"}, ensure_ascii=False)
 
-    df = df.copy()
-
-    if auto:
-        applied = []
-        for col in df.columns:
-            info = infer_column_type(df[col])
-            st = info["suggested_type"]
-            if st in ("keep",) or info["confidence"] == "low":
-                continue
-            if st == "category_maybe":
-                continue
-            try:
-                df[col] = apply_conversion(df[col], st)
-                applied.append({"column": col, "converted_to": st})
-            except Exception as e:
-                applied.append({"column": col, "error": str(e)})
-
-        workspace.add(name, df)
-        return json.dumps({
-            "dataset": name,
-            "auto_applied": applied,
-        }, ensure_ascii=False, indent=2)
-
-    # 手动转换单列
-    if not column or not target_type:
+    supported_types = {
+        "datetime",
+        "numeric",
+        "percentage_to_float",
+        "bool",
+        "category",
+        "date_int_to_datetime",
+        "numeric_with_suffix",
+    }
+    if not auto and (not column or not target_type):
         return json.dumps({"error": "手动模式需指定 column 和 target_type"}, ensure_ascii=False)
-
-    if column not in df.columns:
-        return json.dumps({"error": f"列 '{column}' 不存在。可用: {list(df.columns)}"}, ensure_ascii=False)
+    if not auto and target_type not in supported_types:
+        return json.dumps({"error": f"不支持的目标类型: {target_type}"}, ensure_ascii=False)
+    if not auto and column not in current.columns:
+        return json.dumps({"error": f"列 '{column}' 不存在。可用: {list(current.columns)}"}, ensure_ascii=False)
 
     try:
-        df[column] = apply_conversion(df[column], target_type)
-        workspace.add(name, df)
-        return json.dumps({
+        active_info, before = _ensure_versioned_dataset(name, current)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+    candidate = before.copy(deep=True)
+    operations: list[dict[str, Any]] = []
+    affected_columns: list[str] = []
+    affected_row_count = 0
+    information_loss = False
+    conversion_errors: list[dict[str, str]] = []
+    requires_confirmation = bool(auto)
+
+    columns_and_targets: list[tuple[str, str, dict[str, Any]]] = []
+    if auto:
+        for candidate_column in candidate.columns:
+            info = infer_column_type(candidate[candidate_column])
+            suggested = info["suggested_type"]
+            if suggested == "keep" or info["confidence"] == "low" or suggested == "category_maybe":
+                continue
+            columns_and_targets.append((candidate_column, suggested, info))
+    else:
+        info = infer_column_type(candidate[column])
+        columns_and_targets.append((column, target_type, info))
+
+    for candidate_column, suggested, info in columns_and_targets:
+        original = candidate[candidate_column].copy(deep=True)
+        try:
+            converted = apply_conversion(original.copy(deep=True), suggested)
+        except Exception as exc:
+            conversion_errors.append({"column": candidate_column, "error": str(exc)})
+            requires_confirmation = True
+            continue
+
+        new_nulls = max(0, int(converted.isna().sum() - original.isna().sum()))
+        cardinality_loss = max(
+            0,
+            int(original.nunique(dropna=True) - converted.nunique(dropna=True)),
+        )
+        partial = _conversion_is_partial(original, converted, suggested)
+        changed_rows = int((original.astype(str) != converted.astype(str)).sum())
+        changed = not original.equals(converted)
+        if not changed:
+            continue
+
+        candidate[candidate_column] = converted
+        operation_requires_confirmation = (
+            auto
+            or suggested == "numeric_with_suffix"
+            or partial
+            or new_nulls > 0
+            or cardinality_loss > 0
+            or info["confidence"] != "high"
+            or info["suggested_type"] != suggested
+        )
+        requires_confirmation = requires_confirmation or operation_requires_confirmation
+        operation_loss = new_nulls > 0 or cardinality_loss > 0 or partial
+        information_loss = information_loss or operation_loss
+        affected_columns.append(candidate_column)
+        affected_row_count += changed_rows
+        operations.append({
+            "column": candidate_column,
+            "action": suggested,
+            "from": str(original.dtype),
+            "to": str(converted.dtype),
+            "new_nulls": new_nulls,
+            "cardinality_loss": cardinality_loss,
+            "partial_conversion": partial,
+            "reason": info["reason"],
+            "decision_policy": (
+                "confirmation_required" if operation_requires_confirmation else "auto_safe"
+            ),
+        })
+
+    if not operations:
+        payload: dict[str, Any] = {
+            "status": "no_changes",
             "dataset": name,
-            "converted": {"column": column, "to": target_type, "new_dtype": str(df[column].dtype)},
-        }, ensure_ascii=False, indent=2)
-    except Exception as e:
-        return json.dumps({"error": f"转换失败: {e}"}, ensure_ascii=False)
+            "dataset_id": active_info["dataset_id"],
+            "parent_dataset_id": active_info["dataset_id"],
+        }
+        if auto:
+            payload["auto_applied"] = conversion_errors
+        else:
+            payload["converted"] = None
+        if conversion_errors:
+            payload["errors"] = conversion_errors
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    if conversion_errors:
+        requires_confirmation = True
+        information_loss = True
+
+    confirmation_status = (
+        "confirmed" if requires_confirmation and confirmed
+        else "pending" if requires_confirmation
+        else "not_required"
+    )
+    before_after_metrics = {
+        "rows": {"before": len(before), "after": len(candidate)},
+        "missing_values": {
+            "before": int(before.isna().sum().sum()),
+            "after": int(candidate.isna().sum().sum()),
+        },
+        "cardinality": {
+            item["column"]: {
+                "before": int(before[item["column"]].nunique(dropna=True)),
+                "after": int(candidate[item["column"]].nunique(dropna=True)),
+            }
+            for item in operations
+        },
+    }
+    record = _make_transformation_record(
+        active_info=active_info,
+        logical_name=name,
+        operations=operations,
+        affected_columns=affected_columns,
+        affected_row_count=affected_row_count,
+        before_after_metrics=before_after_metrics,
+        information_loss=information_loss,
+        decision_policy="confirmation_required" if requires_confirmation else "auto_safe",
+        confirmation_status=confirmation_status,
+    )
+    response: dict[str, Any] = {
+        "status": "confirmation_required" if requires_confirmation and not confirmed else "applied",
+        "dataset": name,
+        "parent_dataset_id": active_info["dataset_id"],
+        "transformation_record": record,
+    }
+    if auto:
+        response["auto_applied"] = operations + conversion_errors
+    else:
+        response["converted"] = {
+            "column": column,
+            "to": target_type,
+            "new_dtype": str(candidate[column].dtype),
+        }
+    if conversion_errors:
+        response["errors"] = conversion_errors
+
+    if requires_confirmation and not confirmed:
+        response["dataset_id"] = active_info["dataset_id"]
+        return json.dumps(response, ensure_ascii=False, indent=2)
+
+    try:
+        promoted = _promote_candidate(name, candidate, active_info, record)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    response["dataset_id"] = promoted["dataset_id"]
+    response["transformation_record"] = promoted["transformation_record"]
+    return json.dumps(response, ensure_ascii=False, indent=2)
 
 
 # ── 显式数据清洗 ────────────────────────────────────────
@@ -492,6 +799,7 @@ _OUTLIER_STRATEGIES = {
         "outlier_strategy": {"description": "异常值处理策略", "enum": ["mark", "cap", "drop"]},
         "columns": {"description": "目标列，逗号分隔，为空则处理所有列"},
         "fill_value": {"description": "fill_constant 策略的填充值"},
+        "confirmed": {"type": "boolean", "description": "是否已确认会改变数据内容的清洗操作"},
     },
 )
 def clean_data(
@@ -500,99 +808,227 @@ def clean_data(
     outlier_strategy: str = "mark",
     columns: str = "",
     fill_value: str = "",
+    confirmed: bool = False,
 ) -> str:
-    df = workspace.get(name)
-    if df is None:
+    confirmed = _coerce_bool_flag(confirmed)
+    current = workspace.get(name)
+    if current is None:
         available = list(workspace.list_datasets().keys())
         return json.dumps({"error": f"数据集 '{name}' 不存在。可用: {available}"}, ensure_ascii=False)
+    if missing_strategy not in _FILL_STRATEGIES:
+        return json.dumps({"error": f"不支持的缺失值策略: {missing_strategy}"}, ensure_ascii=False)
+    if outlier_strategy not in _OUTLIER_STRATEGIES:
+        return json.dumps({"error": f"不支持的异常值策略: {outlier_strategy}"}, ensure_ascii=False)
+    if missing_strategy == "fill_constant" and fill_value == "":
+        return json.dumps({"error": "fill_constant 策略必须指定 fill_value"}, ensure_ascii=False)
 
-    df = df.copy()
-    report = {"dataset": name, "original_rows": len(df), "actions": []}
+    requested_columns = [item.strip() for item in columns.split(",") if item.strip()]
+    target_columns = requested_columns or list(current.columns)
+    unknown_columns = [item for item in target_columns if item not in current.columns]
+    if unknown_columns:
+        return json.dumps({"error": f"列不存在: {unknown_columns}"}, ensure_ascii=False)
 
-    # 确定目标列
-    target_cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else list(df.columns)
+    try:
+        active_info, before = _ensure_versioned_dataset(name, current)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
-    # 1. 去重
-    before_dedup = len(df)
-    df = df.drop_duplicates()
-    removed_dedup = before_dedup - len(df)
-    if removed_dedup > 0:
-        report["actions"].append({
+    candidate = before.copy(deep=True)
+    operations: list[dict[str, Any]] = []
+    affected_columns: list[str] = []
+    affected_row_count = 0
+
+    duplicate_mask = candidate.duplicated(keep="first")
+    removed_duplicates = int(duplicate_mask.sum())
+    if removed_duplicates:
+        candidate = candidate.loc[~duplicate_mask].copy()
+        operations.append({
             "action": "deduplicate",
-            "removed": removed_dedup,
+            "removed_rows": removed_duplicates,
+            "decision_policy": "confirmation_required",
         })
+        affected_columns.extend(str(item) for item in candidate.columns)
+        affected_row_count += removed_duplicates
 
-    # 2. 缺失值处理
-    missing_before = df[target_cols].isnull().sum().to_dict()
-    total_missing = sum(missing_before.values())
-
-    if total_missing > 0:
+    missing_by_column = {
+        item: int(candidate[item].isna().sum())
+        for item in target_columns
+    }
+    columns_with_missing = [item for item, count in missing_by_column.items() if count > 0]
+    if columns_with_missing:
         if missing_strategy == "drop":
-            before = len(df)
-            df = df.dropna(subset=[c for c in target_cols if c in df.columns])
-            report["actions"].append({
-                "action": "missing_drop",
-                "removed_rows": before - len(df),
-                "columns_affected": {k: int(v) for k, v in missing_before.items() if v > 0},
-            })
-        elif missing_strategy == "fill_mean":
-            for col in target_cols:
-                if col in df.columns and df[col].dtype in ("float64", "int64", "float32", "int32"):
-                    df[col] = df[col].fillna(df[col].mean())
-            report["actions"].append({"action": "missing_fill_mean", "filled": total_missing})
-        elif missing_strategy == "fill_median":
-            for col in target_cols:
-                if col in df.columns and df[col].dtype in ("float64", "int64", "float32", "int32"):
-                    df[col] = df[col].fillna(df[col].median())
-            report["actions"].append({"action": "missing_fill_median", "filled": total_missing})
-        elif missing_strategy == "fill_mode":
-            for col in target_cols:
-                if col in df.columns:
-                    mode_val = df[col].mode()
-                    if len(mode_val) > 0:
-                        df[col] = df[col].fillna(mode_val.iloc[0])
-            report["actions"].append({"action": "missing_fill_mode", "filled": total_missing})
-        elif missing_strategy == "fill_constant" and fill_value:
-            for col in target_cols:
-                if col in df.columns:
-                    try:
-                        val = float(fill_value) if df[col].dtype in ("float64", "int64") else fill_value
-                    except ValueError:
-                        val = fill_value
-                    df[col] = df[col].fillna(val)
-            report["actions"].append({"action": "missing_fill_constant", "filled": total_missing, "value": fill_value})
+            missing_row_mask = candidate[target_columns].isna().any(axis=1)
+            removed_rows = int(missing_row_mask.sum())
+            if removed_rows:
+                candidate = candidate.loc[~missing_row_mask].copy()
+                operations.append({
+                    "action": "missing_drop",
+                    "removed_rows": removed_rows,
+                    "columns_affected": {
+                        item: missing_by_column[item] for item in columns_with_missing
+                    },
+                    "decision_policy": "confirmation_required",
+                })
+                affected_columns.extend(columns_with_missing)
+                affected_row_count += removed_rows
+        else:
+            filled_by_column: dict[str, int] = {}
+            for target_column in columns_with_missing:
+                series = candidate[target_column]
+                replacement: Any = None
+                has_replacement = False
+                if missing_strategy == "fill_mean" and pd.api.types.is_numeric_dtype(series):
+                    replacement = series.mean()
+                    has_replacement = pd.notna(replacement)
+                elif missing_strategy == "fill_median" and pd.api.types.is_numeric_dtype(series):
+                    replacement = series.median()
+                    has_replacement = pd.notna(replacement)
+                elif missing_strategy == "fill_mode":
+                    mode = series.mode()
+                    if not mode.empty:
+                        replacement = mode.iloc[0]
+                        has_replacement = True
+                elif missing_strategy == "fill_constant":
+                    if pd.api.types.is_numeric_dtype(series):
+                        try:
+                            replacement = float(fill_value)
+                        except ValueError:
+                            replacement = fill_value
+                    else:
+                        replacement = fill_value
+                    has_replacement = True
 
-    # 3. 异常值处理（仅数值列）
-    outlier_report = []
-    numeric_cols = [c for c in target_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+                if not has_replacement:
+                    continue
+                missing_before_fill = int(series.isna().sum())
+                candidate[target_column] = series.fillna(replacement)
+                filled = missing_before_fill - int(candidate[target_column].isna().sum())
+                if filled:
+                    filled_by_column[target_column] = filled
 
-    for col in numeric_cols:
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
+            if filled_by_column:
+                total_filled = sum(filled_by_column.values())
+                operation: dict[str, Any] = {
+                    "action": f"missing_{missing_strategy}",
+                    "filled": total_filled,
+                    "columns_affected": filled_by_column,
+                    "decision_policy": "confirmation_required",
+                }
+                if missing_strategy == "fill_constant":
+                    operation["value"] = fill_value
+                operations.append(operation)
+                affected_columns.extend(filled_by_column)
+                affected_row_count += total_filled
+
+    outlier_details: list[dict[str, Any]] = []
+    numeric_columns = [
+        item
+        for item in target_columns
+        if pd.api.types.is_numeric_dtype(candidate[item])
+    ]
+    for target_column in numeric_columns:
+        q1 = candidate[target_column].quantile(0.25)
+        q3 = candidate[target_column].quantile(0.75)
         iqr = q3 - q1
-        if iqr == 0:
+        if pd.isna(iqr) or iqr == 0:
             continue
         lower = q1 - 1.5 * iqr
         upper = q3 + 1.5 * iqr
-        outlier_mask = (df[col] < lower) | (df[col] > upper)
+        outlier_mask = (candidate[target_column] < lower) | (candidate[target_column] > upper)
         outlier_count = int(outlier_mask.sum())
+        if not outlier_count:
+            continue
 
-        if outlier_count > 0:
-            if outlier_strategy == "cap":
-                df[col] = df[col].clip(lower=lower, upper=upper)
-                outlier_report.append({"column": col, "capped": outlier_count, "range": [float(lower), float(upper)]})
-            elif outlier_strategy == "drop":
-                before = len(df)
-                df = df[~outlier_mask]
-                outlier_report.append({"column": col, "removed": before - len(df)})
-            elif outlier_strategy == "mark":
-                outlier_report.append({"column": col, "marked": outlier_count, "range": [float(lower), float(upper)]})
+        if outlier_strategy == "cap":
+            candidate[target_column] = candidate[target_column].clip(lower=lower, upper=upper)
+            outlier_details.append({
+                "column": target_column,
+                "capped": outlier_count,
+                "range": [float(lower), float(upper)],
+            })
+            affected_columns.append(target_column)
+            affected_row_count += outlier_count
+        elif outlier_strategy == "drop":
+            candidate = candidate.loc[~outlier_mask].copy()
+            outlier_details.append({"column": target_column, "removed": outlier_count})
+            affected_columns.append(target_column)
+            affected_row_count += outlier_count
+        else:
+            outlier_details.append({
+                "column": target_column,
+                "marked": outlier_count,
+                "range": [float(lower), float(upper)],
+            })
+            affected_columns.append(target_column)
+            affected_row_count += outlier_count
 
-    if outlier_report:
-        report["actions"].append({"action": f"outlier_{outlier_strategy}", "details": outlier_report})
+    if outlier_details:
+        operations.append({
+            "action": f"outlier_{outlier_strategy}",
+            "details": outlier_details,
+            "decision_policy": (
+                "not_required" if outlier_strategy == "mark" else "confirmation_required"
+            ),
+        })
 
-    report["final_rows"] = len(df)
-    report["rows_removed"] = report["original_rows"] - len(df)
+    material_actions = {
+        "deduplicate",
+        "missing_drop",
+        "missing_fill_mean",
+        "missing_fill_median",
+        "missing_fill_mode",
+        "missing_fill_constant",
+        "outlier_cap",
+        "outlier_drop",
+    }
+    material = any(item["action"] in material_actions for item in operations)
+    confirmation_status = "confirmed" if material and confirmed else "pending" if material else "not_required"
+    metrics = {
+        "rows": {"before": len(before), "after": len(candidate)},
+        "missing_values": {
+            "before": int(before.isna().sum().sum()),
+            "after": int(candidate.isna().sum().sum()),
+        },
+        "missing_by_column": {
+            "before": {item: int(value) for item, value in before.isna().sum().items()},
+            "after": {item: int(value) for item, value in candidate.isna().sum().items()},
+        },
+    }
+    record = _make_transformation_record(
+        active_info=active_info,
+        logical_name=name,
+        operations=operations,
+        affected_columns=affected_columns,
+        affected_row_count=affected_row_count,
+        before_after_metrics=metrics,
+        information_loss=material,
+        decision_policy="confirmation_required" if material else "auto_safe" if operations else "none",
+        confirmation_status=confirmation_status,
+    )
+    response: dict[str, Any] = {
+        "status": "confirmation_required" if material and not confirmed else "applied",
+        "dataset": name,
+        "dataset_id": active_info["dataset_id"],
+        "parent_dataset_id": active_info["dataset_id"],
+        "transformation_record": record,
+        "original_rows": len(before),
+        "final_rows": len(candidate),
+        "rows_removed": len(before) - len(candidate),
+        "actions": operations,
+    }
 
-    workspace.add(name, df)
-    return json.dumps(report, ensure_ascii=False, indent=2)
+    if material and not confirmed:
+        return json.dumps(response, ensure_ascii=False, indent=2)
+    if not operations:
+        response["status"] = "no_changes"
+        return json.dumps(response, ensure_ascii=False, indent=2)
+    if candidate.equals(before):
+        return json.dumps(response, ensure_ascii=False, indent=2)
+
+    try:
+        promoted = _promote_candidate(name, candidate, active_info, record)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    response["dataset_id"] = promoted["dataset_id"]
+    response["transformation_record"] = promoted["transformation_record"]
+    return json.dumps(response, ensure_ascii=False, indent=2)

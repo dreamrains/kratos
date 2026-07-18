@@ -72,7 +72,7 @@ def test_run_python_result_marks_fallback_policy_and_purpose():
     assert result["fallback_policy"]["purpose"] == "quick unsupported calculation check"
 
 
-def test_task_create_inherits_current_analysis_spec(tmp_path):
+def test_task_create_inherits_current_analysis_plan(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -80,8 +80,8 @@ def test_task_create_inherits_current_analysis_spec(tmp_path):
     ctx = AgentContext(session_id="task_inherit", workspace=Workspace())
     ctx.analysis_state = AnalysisSessionState(
         session_id="task_inherit",
-        analysis_spec={
-            "id": "spec_123",
+        analysis_plan={
+            "id": "plan_123",
             "workflow_id": "wf_123",
             "confirmation_policy": {"requires_confirmation": True},
         },
@@ -91,7 +91,8 @@ def test_task_create_inherits_current_analysis_spec(tmp_path):
         with use_agent_context(ctx):
             task = json.loads(task_create(subject="check revenue", node_type="analysis", required_capability="data.describe"))
 
-        assert task["analysis_spec_id"] == "spec_123"
+        assert task["analysis_plan_id"] == "plan_123"
+        assert task["analysis_spec_id"] == "plan_123"
         assert task["workflow_id"] == "wf_123"
         assert task["stage"] == "execute"
         assert task["confirmation_policy"]["requires_confirmation"] is True

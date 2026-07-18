@@ -1,5 +1,5 @@
 from data_agent.agent.analysis_plan_contracts import (
-    STAGE3C0B_CONTRACT_VERSION,
+    ANALYSIS_PLAN_CONTRACT_VERSION,
     validate_analysis_plan_contract,
 )
 from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
@@ -9,7 +9,7 @@ from data_agent.session.task_manager import TaskManager
 def _validated_plan():
     result = validate_analysis_plan_contract(
         {
-            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
             "goal": "Analyze independent game files.",
             "method_plan": [
                 {
@@ -63,7 +63,7 @@ def test_projector_distinguishes_same_subject_steps_by_step_id(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     result = validate_analysis_plan_contract(
         {
-            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
             "goal": "Analyze two independent files.",
             "method_plan": [
                 {
@@ -163,7 +163,7 @@ def test_projector_rejects_malformed_stage3c0b_without_superseding_active_plan(t
     malformed = project_plan_to_workflow_tasks(
         manager,
         {
-            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
             "goal": "Malformed plan",
         },
         session_id="s1",
@@ -191,7 +191,7 @@ def test_projector_rejects_non_object_steps_without_superseding_active_plan(tmp_
     malformed = project_plan_to_workflow_tasks(
         manager,
         {
-            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+                "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
             "goal": "Malformed plan",
             "method_plan": ["not an object"],
         },
@@ -203,7 +203,7 @@ def test_projector_rejects_non_object_steps_without_superseding_active_plan(tmp_
         "created": 0,
         "reused": 0,
         "task_ids": [],
-        "error": "invalid_method_plan_step",
+            "error": "invalid_step",
     }
     assert manager.get_active_plan_id("s1", "p1") == active_plan_id
     tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")

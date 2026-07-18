@@ -850,7 +850,7 @@ class TestSessionPersistence:
         workspace.set_metadata("restore_a", "_source_path", str(csv_path))
         workspace.set_metadata("restore_a", "_source_fmt", "csv")
 
-        session_id = "restore_a_test"
+        session_id = f"restore_a_{tmp_path.name}"
         sdir = _session_dir(session_id)
         sdir.mkdir(parents=True, exist_ok=True)
         workspace.save_meta(session_id)
@@ -865,9 +865,12 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        restored = workspace.get("restore_a")
+        from data_agent.agent.context import use_agent_context
+        with use_agent_context(loop.context):
+            restored = loop.context.workspace.get("restore_a")
         assert restored is not None
         assert restored.shape[0] == 40
+        assert workspace.get("restore_a") is None
 
     def test_workspace_restore_strategy_b_dataset_backup(self, tmp_path, clean_workspace):
         """恢复策略B：从数据备份恢复（原始文件不存在时）。"""
@@ -879,7 +882,7 @@ class TestSessionPersistence:
         workspace.set_metadata("restore_b", "_source_path", "/nonexistent/file.csv")
         workspace.set_metadata("restore_b", "_source_fmt", "csv")
 
-        session_id = "restore_b_test"
+        session_id = f"restore_b_{tmp_path.name}"
         sdir = _session_dir(session_id)
         sdir.mkdir(parents=True, exist_ok=True)
         workspace.save_meta(session_id)
@@ -895,9 +898,12 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        restored = workspace.get("restore_b")
+        from data_agent.agent.context import use_agent_context
+        with use_agent_context(loop.context):
+            restored = loop.context.workspace.get("restore_b")
         assert restored is not None
         assert restored.shape[0] == 25
+        assert workspace.get("restore_b") is None
 
     def test_agent_manager_auto_restore(self, tmp_path, clean_workspace):
         """AgentManager.get_or_create 自动恢复磁盘会话。"""

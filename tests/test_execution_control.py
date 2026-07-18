@@ -1,5 +1,6 @@
 import json
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -165,10 +166,10 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
 
 def test_confirmation_gate_ignores_tools_without_capability_metadata():
     state = AnalysisSessionState(session_id="gate_unknown_tool")
-    state.analysis_spec = {
+    state.set_analysis_plan({
         "confirmation_policy": {"requires_confirmation": True},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
-    }
+    })
     state.pending_confirmations = [{"id": "method_gate", "status": "pending"}]
 
     controller = AnalysisFlowController("gate_unknown_tool")
@@ -230,11 +231,11 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
     workspace_obj = Workspace()
     ctx = AgentContext(session_id="loop_gate", workspace=workspace_obj)
     state = AnalysisSessionState(session_id="loop_gate")
-    state.analysis_spec = {
+    state.set_analysis_plan({
         "id": "spec_gate",
         "confirmation_policy": {"requires_confirmation": True, "confirmation_type": "method_confirmation"},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
-    }
+    })
     state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation"}]
     ctx.analysis_state = state
     loop = AgentLoop(client=_OneToolClient("causal_analysis", {"name": "main", "target_col": "revenue"}), session_id="loop_gate")
@@ -635,12 +636,13 @@ def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(mo
         def chat(self, *args, **kwargs):
             raise AssertionError("LLM should not be called before required confirmation")
 
-    ctx = AgentContext(session_id="playbook_pending_gate", workspace=Workspace())
-    state = AnalysisSessionState(session_id="playbook_pending_gate", data_state="data_loaded")
+    session_id = f"playbook_pending_gate_{uuid.uuid4().hex}"
+    ctx = AgentContext(session_id=session_id, workspace=Workspace())
+    state = AnalysisSessionState(session_id=session_id, data_state="data_loaded")
     state.active_scope["active_dataset"] = "main"
     state.active_scope["active_mode"] = "data_loaded"
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="playbook_pending_gate")
+    loop = AgentLoop(client=FailingClient(), session_id=session_id)
     loop.context = ctx
 
     with use_agent_context(ctx):
@@ -710,12 +712,12 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     workspace_obj = Workspace()
     ctx = AgentContext(session_id="loop_synthesis_policy", workspace=workspace_obj)
     state = AnalysisSessionState(session_id="loop_synthesis_policy")
-    state.analysis_spec = {
+    state.set_analysis_plan({
         "playbook_id": "retention_lifecycle",
         "question_type": "diagnostic",
         "confirmation_policy": {"requires_confirmation": False},
         "limitations": ["aggregate retention data"],
-    }
+    })
     ctx.analysis_state = state
     client = _EvidenceThenFinalClient()
     loop = AgentLoop(client=client, session_id="loop_synthesis_policy")

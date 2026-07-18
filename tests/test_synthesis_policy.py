@@ -26,12 +26,12 @@ def _intent(intent_type="directed_analysis", clarity="clear", action="run_analys
 
 def _state_with_evidence(confidence="high"):
     state = AnalysisSessionState(session_id="synthesis_test")
-    state.analysis_spec = {
+    state.set_analysis_plan({
         "playbook_id": "retention_lifecycle",
         "question_type": "diagnostic",
         "confirmation_policy": {"requires_confirmation": False},
         "limitations": ["aggregate retention data"],
-    }
+    })
     state.evidence_records = [{
         "id": "ev_1",
         "claim": "Retention follows a power-law curve",
@@ -133,7 +133,7 @@ def test_ltv_followup_gets_standard_cautious_advisory_policy():
 
 def test_no_evidence_is_exploratory_and_does_not_advise():
     state = AnalysisSessionState(session_id="no_evidence")
-    state.analysis_spec = {"playbook_id": "retention_lifecycle", "question_type": "diagnostic"}
+    state.set_analysis_plan({"playbook_id": "retention_lifecycle", "question_type": "diagnostic"})
 
     policy = _policy(
         intent=_intent(),
@@ -216,7 +216,7 @@ def test_explicit_terse_requirement_suppresses_business_meaning():
 
 def test_retention_formula_regression_matches_expected_policy_shape():
     state = _state_with_evidence()
-    state.analysis_spec.update({
+    state.analysis_plan.update({
         "playbook_id": "retention_lifecycle",
         "question_type": "diagnostic",
         "output_sections": [],

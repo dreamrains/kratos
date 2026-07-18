@@ -46,6 +46,11 @@ class Workspace:
         self._metadata: dict[str, dict[str, Any]] = {}
         self._derived_lineage: dict[str, dict[str, Any]] = {}
         self._transform_log: list[dict[str, Any]] = []
+        self._raw_snapshots: dict[str, pd.DataFrame] = {}
+        self._raw_snapshot_info: dict[str, dict[str, Any]] = {}
+        self._dataset_versions: dict[str, pd.DataFrame] = {}
+        self._version_info: dict[str, dict[str, Any]] = {}
+        self._active_version_by_name: dict[str, str] = {}
         self._active_project: Optional[str] = None
 
     @property
@@ -95,8 +100,216 @@ class Workspace:
         return "已切回到 inbox 模式"
 
     def add(self, name: str, df: pd.DataFrame) -> str:
+        if name in self._active_version_by_name or any(
+            info.get("logical_name") == name for info in self._version_info.values()
+        ):
+            return "Error: versioned_dataset_requires_promotion"
         self._datasets[name] = df.copy()
         return f"数据集 '{name}' 已加载: {df.shape[0]} 行 x {df.shape[1]} 列"
+
+    @staticmethod
+    def _fingerprint_suffix(fingerprint: str) -> str:
+        value = str(fingerprint or "")
+        return value.split(":", 1)[-1][:12] or "unknown"
+
+    def register_raw_snapshot(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        source_fingerprint: str,
+    ) -> dict[str, Any]:
+        """Register an immutable, hidden snapshot of user-provided data."""
+        from data_agent.agent.data_lineage import frame_fingerprint
+
+        actual_fingerprint = frame_fingerprint(frame)
+        if str(source_fingerprint or "") != actual_fingerprint:
+            raise ValueError("source_fingerprint does not match the raw frame")
+        source_fingerprint = actual_fingerprint
+        dataset_id = f"raw_{name}_{self._fingerprint_suffix(source_fingerprint)}"
+        existing_frame = self._raw_snapshots.get(dataset_id)
+        existing_info = self._raw_snapshot_info.get(dataset_id)
+        if existing_frame is not None or existing_info is not None:
+            if (
+                existing_frame is None
+                or existing_info is None
+                or existing_info.get("logical_name") != name
+                or existing_info.get("source_fingerprint") != source_fingerprint
+                or frame_fingerprint(existing_frame) != source_fingerprint
+            ):
+                raise RuntimeError("raw_dataset_id_collision")
+            self.set_metadata(name, "_raw_dataset_id", dataset_id)
+            self.set_metadata(name, "_source_fingerprint", source_fingerprint)
+            return copy.deepcopy(existing_info)
+
+        info = {
+            "dataset_id": dataset_id,
+            "logical_name": name,
+            "source_fingerprint": source_fingerprint,
+            "role": "raw",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        self._raw_snapshots[dataset_id] = frame.copy(deep=True)
+        self._raw_snapshot_info[dataset_id] = info
+        self.set_metadata(name, "_raw_dataset_id", dataset_id)
+        self.set_metadata(name, "_source_fingerprint", source_fingerprint)
+        return copy.deepcopy(info)
+
+    def _activate_analysis_version(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        info: dict[str, Any],
+    ) -> dict[str, Any]:
+        stored_info = copy.deepcopy(info)
+        dataset_id = str(stored_info["dataset_id"])
+        stored = frame.copy(deep=True)
+        self._dataset_versions[dataset_id] = stored
+        self._version_info[dataset_id] = stored_info
+        self._datasets[name] = stored.copy(deep=True)
+        self._active_version_by_name[name] = dataset_id
+        self.set_metadata(name, "_raw_dataset_id", stored_info["raw_dataset_id"])
+        self.set_metadata(name, "_active_dataset_id", dataset_id)
+        self.set_metadata(
+            name,
+            "_source_fingerprint",
+            stored_info.get("source_fingerprint", ""),
+        )
+        self.set_metadata(
+            name,
+            "_transformation_record",
+            copy.deepcopy(stored_info["transformation_record"]),
+        )
+        return copy.deepcopy(stored_info)
+
+    def promote_analysis_copy(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        raw_dataset_id: str,
+        transformation_record: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Promote a copy as the next active, versioned analysis dataset."""
+        raw_info = self._raw_snapshot_info.get(raw_dataset_id)
+        if raw_info is None:
+            raise KeyError(f"Unknown raw dataset: {raw_dataset_id}")
+        if raw_info.get("logical_name") != name:
+            raise ValueError("Raw snapshot does not belong to the logical dataset")
+
+        from data_agent.agent.data_lineage import (
+            finalize_transformation_record,
+            frame_fingerprint,
+        )
+
+        previous_versions = [
+            int(item.get("version", 0))
+            for item in self._version_info.values()
+            if item.get("logical_name") == name
+        ]
+        version = max(previous_versions, default=0) + 1
+        fingerprint = frame_fingerprint(frame)
+        dataset_id = (
+            f"dataset_{name}_v{version}_{self._fingerprint_suffix(fingerprint)}"
+        )
+        finalized_record = finalize_transformation_record(
+            copy.deepcopy(transformation_record),
+            derived_dataset_id=dataset_id,
+            version=version,
+        )
+        info = {
+            "dataset_id": dataset_id,
+            "logical_name": name,
+            "raw_dataset_id": raw_dataset_id,
+            "source_fingerprint": raw_info.get("source_fingerprint", ""),
+            "frame_fingerprint": fingerprint,
+            "version": version,
+            "role": "analysis_copy",
+            "transformation_record": finalized_record,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        return self._activate_analysis_version(name, frame, info)
+
+    def restore_analysis_version(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        raw_dataset_id: str,
+        saved_info: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Restore one verified active version without minting a new identity."""
+        raw_info = self._raw_snapshot_info.get(raw_dataset_id)
+        if raw_info is None or raw_info.get("logical_name") != name:
+            raise ValueError("restore raw snapshot does not belong to the dataset")
+        if not isinstance(saved_info, dict):
+            raise TypeError("saved version info must be a mapping")
+
+        from data_agent.agent.data_lineage import (
+            finalize_transformation_record,
+            frame_fingerprint,
+        )
+
+        try:
+            version = int(saved_info.get("version", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("saved version must be a positive integer") from exc
+        if version <= 0:
+            raise ValueError("saved version must be a positive integer")
+
+        fingerprint = frame_fingerprint(frame)
+        source_fingerprint = str(raw_info.get("source_fingerprint") or "")
+        dataset_id = str(saved_info.get("dataset_id") or "")
+        expected_id = (
+            f"dataset_{name}_v{version}_{self._fingerprint_suffix(fingerprint)}"
+        )
+        if dataset_id != expected_id:
+            raise ValueError("saved dataset identity does not match frame and version")
+        if str(saved_info.get("logical_name") or name) != name:
+            raise ValueError("saved version belongs to another logical dataset")
+        if str(saved_info.get("raw_dataset_id") or "") != raw_dataset_id:
+            raise ValueError("saved version raw identity does not match restored raw")
+        if str(saved_info.get("source_fingerprint") or "") != source_fingerprint:
+            raise ValueError("saved version source fingerprint does not match restored raw")
+        if str(saved_info.get("frame_fingerprint") or "") != fingerprint:
+            raise ValueError("saved version frame fingerprint does not match backup")
+
+        record = finalize_transformation_record(
+            copy.deepcopy(saved_info.get("transformation_record") or {}),
+            derived_dataset_id=dataset_id,
+            version=version,
+        )
+        info = {
+            **copy.deepcopy(saved_info),
+            "dataset_id": dataset_id,
+            "logical_name": name,
+            "raw_dataset_id": raw_dataset_id,
+            "source_fingerprint": source_fingerprint,
+            "frame_fingerprint": fingerprint,
+            "version": version,
+            "role": "analysis_copy",
+            "transformation_record": record,
+            "created_at": str(saved_info.get("created_at") or datetime.now().isoformat(timespec="seconds")),
+        }
+        return self._activate_analysis_version(name, frame, info)
+
+    def get_raw_snapshot(self, raw_dataset_id: str) -> Optional[pd.DataFrame]:
+        frame = self._raw_snapshots.get(raw_dataset_id)
+        return frame.copy(deep=True) if frame is not None else None
+
+    def get_dataset_version(self, dataset_id: str) -> Optional[pd.DataFrame]:
+        frame = self._dataset_versions.get(dataset_id)
+        return frame.copy(deep=True) if frame is not None else None
+
+    def get_active_version_info(self, name: str) -> Optional[dict[str, Any]]:
+        dataset_id = self._active_version_by_name.get(name)
+        info = self._version_info.get(dataset_id or "")
+        return copy.deepcopy(info) if info is not None else None
+
+    def list_dataset_versions(self, name: str) -> list[dict[str, Any]]:
+        items = [
+            copy.deepcopy(info)
+            for info in self._version_info.values()
+            if info.get("logical_name") == name
+        ]
+        return sorted(items, key=lambda item: int(item.get("version", 0)))
 
     def set_metadata(self, name: str, key: str, value: Any) -> None:
         if name not in self._metadata:
@@ -127,12 +340,21 @@ class Workspace:
             if name not in self._datasets:
                 continue
             df = self._datasets[name]
+            active_info = self.get_active_version_info(name) or {}
+            raw_info = self._raw_snapshot_info.get(
+                str(active_info.get("raw_dataset_id", "")), {}
+            )
             datasets_meta[name] = {
                 "shape": list(df.shape),
                 "columns": list(df.columns),
                 "source_path": self._metadata.get(name, {}).get("_source_path", ""),
                 "source_fmt": self._metadata.get(name, {}).get("_source_fmt", ""),
                 "context": self._metadata.get(name, {}).get("context", ""),
+                "active_dataset_id": active_info.get("dataset_id", ""),
+                "raw_dataset_id": active_info.get("raw_dataset_id", ""),
+                "source_fingerprint": raw_info.get("source_fingerprint", ""),
+                "version": active_info.get("version", 0),
+                "versions": self.list_dataset_versions(name),
             }
 
         meta_path.write_text(
@@ -146,18 +368,27 @@ class Workspace:
         Parquet is preferred when an engine is installed. Pickle is a local
         fallback so session restore still works in lightweight environments.
         """
-        df = self._datasets.get(name)
-        if df is None:
+        active_frame = self._datasets.get(name)
+        if active_frame is None:
             return None
         from data_agent.session.history import _session_dir
         data_dir = _session_dir(session_id) / "data"
         data_dir.mkdir(exist_ok=True)
-        path = data_dir / f"{name}.parquet"
-        try:
-            df.to_parquet(path, index=False)
-        except ImportError:
-            path = data_dir / f"{name}.pkl"
-            df.to_pickle(path)
+
+        def persist_frame(frame: pd.DataFrame, stem: str) -> Path:
+            path = data_dir / f"{stem}.parquet"
+            try:
+                frame.to_parquet(path, index=True)
+            except ImportError:
+                path = data_dir / f"{stem}.pkl"
+                frame.to_pickle(path)
+            return path
+
+        path = persist_frame(active_frame, name)
+        active_info = self.get_active_version_info(name) or {}
+        raw_frame = self._raw_snapshots.get(str(active_info.get("raw_dataset_id", "")))
+        if raw_frame is not None:
+            persist_frame(raw_frame, f"{name}__raw")
         logger.info("Dataset persisted", extra={"extra_data": {"session_id": session_id, "dataset": name, "path": str(path)}})
         return str(path)
 
@@ -204,6 +435,14 @@ class Workspace:
                 "column_names": list(df.columns),
                 "derived_from": lineage.get("source"),
             }
+            active_info = self.get_active_version_info(name)
+            if active_info:
+                result[name].update({
+                    "dataset_id": active_info["dataset_id"],
+                    "raw_dataset_id": active_info["raw_dataset_id"],
+                    "version": active_info["version"],
+                    "role": "analysis_copy",
+                })
             if meta:
                 result[name]["metadata"] = meta
         return result
@@ -213,6 +452,23 @@ class Workspace:
             del self._datasets[name]
             self._derived_lineage.pop(name, None)
             self._metadata.pop(name, None)
+            self._active_version_by_name.pop(name, None)
+            version_ids = [
+                dataset_id
+                for dataset_id, info in self._version_info.items()
+                if info.get("logical_name") == name
+            ]
+            for dataset_id in version_ids:
+                self._dataset_versions.pop(dataset_id, None)
+                self._version_info.pop(dataset_id, None)
+            raw_ids = [
+                dataset_id
+                for dataset_id, info in self._raw_snapshot_info.items()
+                if info.get("logical_name") == name
+            ]
+            for dataset_id in raw_ids:
+                self._raw_snapshots.pop(dataset_id, None)
+                self._raw_snapshot_info.pop(dataset_id, None)
             return f"数据集 '{name}' 已删除"
         return f"数据集 '{name}' 不存在"
 
@@ -233,6 +489,9 @@ def _create_workspace_registry(
     default_bindings = weakref.WeakKeyDictionary()
     mutating_operations = frozenset({
         "add",
+        "register_raw",
+        "promote_copy",
+        "restore_version",
         "derive",
         "remove",
         "set_metadata",
@@ -308,6 +567,30 @@ def _create_workspace_registry(
                 return None
             frame = storage.get(name)
             return frame.copy(deep=True) if frame is not None else None
+        if operation == "raw_snapshot":
+            raw_dataset_id = args[0]
+            info = storage._raw_snapshot_info.get(raw_dataset_id, {})
+            name = str(info.get("logical_name", ""))
+            if scope.phase == "planning" or not readable(scope, name):
+                return None
+            return storage.get_raw_snapshot(raw_dataset_id)
+        if operation == "dataset_version":
+            dataset_id = args[0]
+            info = storage._version_info.get(dataset_id, {})
+            name = str(info.get("logical_name", ""))
+            if scope.phase == "planning" or not readable(scope, name):
+                return None
+            return storage.get_dataset_version(dataset_id)
+        if operation == "active_version":
+            name = args[0]
+            if not readable(scope, name) or scope.phase in {"planning", "synthesis", "error"}:
+                return None
+            return storage.get_active_version_info(name)
+        if operation == "dataset_versions":
+            name = args[0]
+            if not readable(scope, name) or scope.phase in {"planning", "synthesis", "error"}:
+                return []
+            return storage.list_dataset_versions(name)
         if operation == "exists":
             name = args[0]
             return readable(scope, name) and name in storage._datasets
@@ -362,6 +645,27 @@ def _create_workspace_registry(
         if operation == "add":
             name, frame = args
             return write_error(scope, name) or storage.add(name, frame)
+        if operation == "register_raw":
+            name, frame, source_fingerprint = args
+            return write_error(scope, name) or storage.register_raw_snapshot(
+                name, frame, source_fingerprint
+            )
+        if operation == "promote_copy":
+            name, frame, raw_dataset_id, transformation_record = args
+            return write_error(scope, name) or storage.promote_analysis_copy(
+                name,
+                frame,
+                raw_dataset_id,
+                copy.deepcopy(transformation_record),
+            )
+        if operation == "restore_version":
+            name, frame, raw_dataset_id, saved_info = args
+            return write_error(scope, name) or storage.restore_analysis_version(
+                name,
+                frame,
+                raw_dataset_id,
+                copy.deepcopy(saved_info),
+            )
         if operation == "derive":
             source, name, frame, expression = args
             if scope.phase == "execution" and name not in storage._datasets:
@@ -525,6 +829,56 @@ class WorkspaceProxy:
 
     def add(self, name: str, df: pd.DataFrame) -> str:
         return self.__operate("add", name, df)
+
+    def register_raw_snapshot(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        source_fingerprint: str,
+    ) -> dict[str, Any] | str:
+        return self.__operate("register_raw", name, frame, source_fingerprint)
+
+    def promote_analysis_copy(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        raw_dataset_id: str,
+        transformation_record: dict[str, Any],
+    ) -> dict[str, Any] | str:
+        return self.__operate(
+            "promote_copy",
+            name,
+            frame,
+            raw_dataset_id,
+            transformation_record,
+        )
+
+    def restore_analysis_version(
+        self,
+        name: str,
+        frame: pd.DataFrame,
+        raw_dataset_id: str,
+        saved_info: dict[str, Any],
+    ) -> dict[str, Any] | str:
+        return self.__operate(
+            "restore_version",
+            name,
+            frame,
+            raw_dataset_id,
+            saved_info,
+        )
+
+    def get_raw_snapshot(self, raw_dataset_id: str) -> Optional[pd.DataFrame]:
+        return self.__operate("raw_snapshot", raw_dataset_id)
+
+    def get_dataset_version(self, dataset_id: str) -> Optional[pd.DataFrame]:
+        return self.__operate("dataset_version", dataset_id)
+
+    def get_active_version_info(self, name: str) -> Optional[dict[str, Any]]:
+        return self.__operate("active_version", name)
+
+    def list_dataset_versions(self, name: str) -> list[dict[str, Any]]:
+        return self.__operate("dataset_versions", name)
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
         return self.__operate("derive", source, name, df, expression)

@@ -502,21 +502,21 @@ def test_high_risk_predictive_analysis_requires_method_confirmation():
     assert gate["blocking_surfaces"] == ["analysis_execution", "report_generation"]
 
 
-def test_confirmed_matching_high_risk_spec_skips_generic_gate_but_changed_request_does_not():
+def test_confirmed_matching_high_risk_plan_skips_generic_gate_but_changed_request_does_not():
     state = _state()
-    state.analysis_spec = {
+    state.set_analysis_plan({
         "id": "spec_forecast_revenue",
         "goal": "predict next month revenue",
         "playbook_id": "forecast_decision_simulation",
         "confirmation_policy": {"requires_confirmation": True},
-    }
+    })
     state.add_confirmation({
         "id": "method_forecast_revenue",
-        "related_spec_id": "spec_forecast_revenue",
+        "related_plan_id": "spec_forecast_revenue",
         "state_updates": json.dumps({
             "method_confirmation": {
                 "playbook_id": "forecast_decision_simulation",
-                "analysis_spec_id": "spec_forecast_revenue",
+                "analysis_plan_id": "spec_forecast_revenue",
                 "allowed_actions": ["confirm_method", "clarify_method_scope"],
             },
         }),

@@ -12,6 +12,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 
@@ -42,8 +43,13 @@ class PlaybookSelection:
     selection_reason: str = ""
     recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     data_requirement: dict[str, Any] | None = None
-    analysis_spec: dict[str, Any] | None = None
+    analysis_plan: dict[str, Any] | None = None
     requires_confirmation: bool = False
+
+    @property
+    def analysis_spec(self) -> dict[str, Any] | None:
+        """Deprecated read-only projection for callers migrating to analysis_plan."""
+        return self.analysis_plan
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -52,7 +58,7 @@ class PlaybookSelection:
             "selection_reason": self.selection_reason,
             "recommended_paths": self.recommended_paths,
             "data_requirement": self.data_requirement,
-            "analysis_spec": self.analysis_spec,
+            "analysis_plan": self.analysis_plan,
             "requires_confirmation": self.requires_confirmation,
         }
 
@@ -441,10 +447,10 @@ def select_playbooks(
 
     recommended_paths = _recommended_paths(primary, supporting)
     requirement = _build_data_requirement(playbook, user_input, supporting)
-    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
+    analysis_plan = _build_analysis_plan(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
 
     if not has_data or intent.intent_type == "data_requirement":
-        analysis_spec = None
+        analysis_plan = None
 
     return PlaybookSelection(
         primary_playbook_id=primary,
@@ -452,7 +458,7 @@ def select_playbooks(
         selection_reason=_selection_reason(playbook, has_data, supporting),
         recommended_paths=recommended_paths,
         data_requirement=requirement,
-        analysis_spec=analysis_spec,
+        analysis_plan=analysis_plan,
         requires_confirmation=bool(playbook.confirmation_policy.get("requires_confirmation")),
     )
 
@@ -469,34 +475,36 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.data_requirement and state.data_state in {"no_data", "insufficient_data", "unknown"}:
         if not _contains_playbook_artifact(state.data_requirements, selection.primary_playbook_id):
             state.add_data_requirement(selection.data_requirement)
-    analysis_spec = state.analysis_spec
-    if selection.analysis_spec:
-        selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
-        current_spec = state.analysis_spec or {}
-        selected_spec_id = selection.analysis_spec.get("id")
-        current_spec_id = current_spec.get("id")
-        should_replace_spec = (
-            not state.analysis_spec
-            or selected_spec_id != current_spec_id
+    analysis_plan = state.analysis_plan
+    if selection.analysis_plan:
+        selection.analysis_plan.setdefault("id", _analysis_plan_id(selection.analysis_plan))
+        current_plan = state.analysis_plan or {}
+        selected_plan_id = selection.analysis_plan.get("id")
+        current_plan_id = current_plan.get("id")
+        should_replace_plan = (
+            not state.analysis_plan
+            or selected_plan_id != current_plan_id
         )
-        analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
-    if selection.requires_confirmation and analysis_spec:
-        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_spec.get('id', '')}"
+        analysis_plan = state.set_analysis_plan(selection.analysis_plan) if should_replace_plan else state.analysis_plan
+    if selection.requires_confirmation and analysis_plan:
+        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_plan.get('id', '')}"
         if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
-            confirmation_policy = analysis_spec.get("confirmation_policy", {})
+            confirmation_policy = analysis_plan.get("confirmation_policy", {})
             state.add_confirmation({
                 "id": confirmation_id,
                 "confirmation_type": confirmation_policy.get("confirmation_type", "method_confirmation"),
                 "question": _method_confirmation_question(selection),
                 "options": _method_confirmation_options(),
                 "blocking_reason": confirmation_policy.get("blocking_reason", "method confirmation required"),
-                "related_spec_id": analysis_spec.get("id", ""),
+                "related_plan_id": analysis_plan.get("id", ""),
+                # Compatibility for the existing suspension persistence schema.
+                "related_spec_id": analysis_plan.get("id", ""),
                 "state_updates": json.dumps(
                     {
                         "stage": "plan",
                         "method_confirmation": {
                             "playbook_id": selection.primary_playbook_id,
-                            "analysis_spec_id": analysis_spec.get("id", ""),
+                            "analysis_plan_id": analysis_plan.get("id", ""),
                             "allowed_actions": ["confirm_method", "clarify_method_scope"],
                         },
                     },
@@ -650,7 +658,7 @@ def _build_data_requirement(playbook: MethodPlaybook, user_input: str, supportin
     }
 
 
-def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: list[str]) -> dict[str, Any]:
+def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: list[str]) -> dict[str, Any]:
     steps = [dict(step) for step in playbook.method_plan_template]
     for sid in supporting[:2]:
         steps.append({
@@ -685,7 +693,9 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
             if section not in output_sections:
                 output_sections.append(section)
     playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
-    spec = {
+    plan = {
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
+        "review_status": "display_only",
         "goal": user_input.strip() or playbook.name,
         "analysis_plan_version": "expert_flow_v2",
         "playbook_id": playbook.id,
@@ -714,18 +724,18 @@ def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: 
         "output_sections": output_sections,
         "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
-    spec["id"] = _analysis_spec_id(spec)
-    return spec
+    plan["id"] = _analysis_plan_id(plan)
+    return plan
 
 
-def _analysis_spec_id(spec: dict[str, Any]) -> str:
+def _analysis_plan_id(plan: dict[str, Any]) -> str:
     material = {
         key: value
-        for key, value in spec.items()
+        for key, value in plan.items()
         if key not in {"id", "created_at", "workflow_id"}
     }
     encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"spec_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:12]}"
+    return f"plan_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _next_analysis_candidates(output_policies: list[dict[str, Any]]) -> list[str]:

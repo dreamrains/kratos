@@ -254,6 +254,123 @@ def test_synthesis_hides_all_raw_details_and_blocks_writes(tmp_path, monkeypatch
         assert store.get("new") is None
 
 
+def test_execution_raw_and_version_access_follows_logical_dataset_scope():
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    from data_agent.agent.data_lineage import frame_fingerprint
+
+    store = Workspace()
+    secret_frame = pd.DataFrame({"token": [9876]})
+    secret_raw = store.register_raw_snapshot(
+        "secret", secret_frame, frame_fingerprint(secret_frame)
+    )
+    secret_version = store.promote_analysis_copy(
+        "secret",
+        secret_frame,
+        secret_raw["dataset_id"],
+        {"id": "prepare_secret"},
+    )
+    ctx = AgentContext(session_id="s1", workspace=store)
+    execution = WorkspaceScopeSnapshot(
+        phase="execution",
+        allowed_datasets=frozenset({"orders"}),
+    )
+    orders_frame = pd.DataFrame({"amount": [10, 20]})
+
+    with use_agent_context(ctx):
+        with ctx.bind_workspace_scope(execution):
+            orders_raw = workspace.register_raw_snapshot(
+                "orders",
+                orders_frame,
+                frame_fingerprint(orders_frame),
+            )
+            orders_version = workspace.promote_analysis_copy(
+                "orders",
+                orders_frame,
+                orders_raw["dataset_id"],
+                {"id": "prepare_orders"},
+            )
+
+            pd.testing.assert_frame_equal(
+                workspace.get_raw_snapshot(orders_raw["dataset_id"]),
+                orders_frame,
+            )
+            pd.testing.assert_frame_equal(
+                workspace.get_dataset_version(orders_version["dataset_id"]),
+                orders_frame,
+            )
+            assert workspace.get_raw_snapshot(secret_raw["dataset_id"]) is None
+            assert workspace.get_dataset_version(secret_version["dataset_id"]) is None
+            assert workspace.get_active_version_info("secret") is None
+            assert workspace.list_dataset_versions("secret") == []
+            denied_raw = workspace.register_raw_snapshot(
+                "secret",
+                pd.DataFrame({"token": [1111]}),
+                "sha256:blocked",
+            )
+            denied_version = workspace.promote_analysis_copy(
+                "secret",
+                pd.DataFrame({"token": [1111]}),
+                secret_raw["dataset_id"],
+                {"id": "blocked_secret"},
+            )
+
+    assert denied_raw == "Error: dataset_outside_current_task_scope"
+    assert denied_version == "Error: dataset_outside_current_task_scope"
+    assert store.get_active_version_info("secret")["dataset_id"] == secret_version["dataset_id"]
+    assert len(store.list_dataset_versions("secret")) == 1
+
+
+@pytest.mark.parametrize("phase", ["planning", "synthesis"])
+def test_non_execution_scopes_hide_version_frames_and_block_version_writes(phase):
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    from data_agent.agent.data_lineage import frame_fingerprint
+
+    store = Workspace()
+    orders_frame = pd.DataFrame({"amount": [10, 20]})
+    raw_info = store.register_raw_snapshot(
+        "orders", orders_frame, frame_fingerprint(orders_frame)
+    )
+    version_info = store.promote_analysis_copy(
+        "orders",
+        orders_frame,
+        raw_info["dataset_id"],
+        {"id": "prepare_orders"},
+    )
+    ctx = AgentContext(session_id="s1", workspace=store)
+    snapshot = WorkspaceScopeSnapshot(
+        phase=phase,
+        allowed_datasets=frozenset({"orders"}),
+    )
+
+    with use_agent_context(ctx):
+        with ctx.bind_workspace_scope(snapshot):
+            raw_frame = workspace.get_raw_snapshot(raw_info["dataset_id"])
+            version_frame = workspace.get_dataset_version(version_info["dataset_id"])
+            active_info = workspace.get_active_version_info("orders")
+            versions = workspace.list_dataset_versions("orders")
+            datasets_view = workspace._datasets
+            denied_raw = workspace.register_raw_snapshot(
+                "orders",
+                pd.DataFrame({"amount": [30]}),
+                "sha256:blocked",
+            )
+            denied_version = workspace.promote_analysis_copy(
+                "orders",
+                pd.DataFrame({"amount": [30]}),
+                raw_info["dataset_id"],
+                {"id": "blocked_orders"},
+            )
+
+    assert raw_frame is None
+    assert version_frame is None
+    assert active_info is None
+    assert versions == []
+    assert datasets_view == ({"orders": None} if phase == "planning" else {})
+    assert denied_raw == f"Error: {phase}_cannot_mutate_raw_data"
+    assert denied_version == f"Error: {phase}_cannot_mutate_raw_data"
+    assert len(store.list_dataset_versions("orders")) == 1
+
+
 @pytest.mark.parametrize(
     ("mode", "status", "write_error"),
     [

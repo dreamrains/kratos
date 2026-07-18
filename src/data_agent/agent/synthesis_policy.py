@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, replace
 from html import escape as html_escape
 from typing import Any
 
+from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
+
 
 @dataclass(frozen=True)
 class SynthesisPolicy:
@@ -36,6 +38,7 @@ def derive_synthesis_policy(
     user_requirements: Any = None,
     proficiency: str | None = None,
     analysis_spec: dict[str, Any] | None = None,
+    analysis_plan: dict[str, Any] | None = None,
     evidence_records: list[dict[str, Any]] | None = None,
     **_: Any,
 ) -> SynthesisPolicy:
@@ -49,7 +52,12 @@ def derive_synthesis_policy(
     profile_text = _text(data_profile)
     intent_type = _get(intent, "intent_type", "")
     action = _get(intent, "recommended_action", "")
-    spec = analysis_spec if analysis_spec is not None else (_get(state, "analysis_spec", None) or {})
+    plan = analysis_plan
+    if plan is None:
+        # Deprecated call-boundary compatibility for older pipeline callers.
+        plan = analysis_spec
+    if plan is None:
+        plan = _get(state, "analysis_plan", None) or {}
     evidence = evidence_records if evidence_records is not None else (_get(state, "evidence_records", None) or [])
     evidence = list(evidence or [])
     verification_status = _latest_verification_status(state)
@@ -86,7 +94,7 @@ def derive_synthesis_policy(
         )
 
     advisory = _is_advisory_request(text, profile_text, intent_type)
-    uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, spec)
+    uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, plan)
     reasons: list[str] = []
     if advisory:
         reasons.append("advisory or predictive request")
@@ -171,7 +179,7 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
         "Do not read raw datasets during synthesis. "
         "If a material claim lacks evidence and a relevant dataset is available, call record_analysis_plan "
-        "with contract_version stage3c0b.v1, the current analysis plan id, and one bounded independent step "
+        f"with contract_version {ANALYSIS_PLAN_CONTRACT_VERSION}, the current analysis plan id, and one bounded independent step "
         "for that dataset. "
         "After the step runs, record the result with record_evidence_record and synthesize from EvidenceRecords. "
         "If evidence cannot be produced within the bounded plan, return a partial answer with missing-evidence limitations."
