@@ -530,6 +530,159 @@ def _promote_candidate(
     )
 
 
+def _proposal_sessions_root():
+    from data_agent.config import get_config
+
+    return get_config().sessions_resolved
+
+
+def _data_clean_session_id(value: str = "") -> str:
+    if str(value or "").strip():
+        return str(value).strip()
+    from data_agent.tools.visualization import current_session_id
+
+    return current_session_id() or "local"
+
+
+def _proposal_ref(proposal: dict[str, Any], *, session_id: str) -> dict[str, Any]:
+    """Persist a complete proposal while returning only its bounded identity."""
+    from data_agent.tools._utils import persist_detail
+
+    path = persist_detail(session_id, proposal["proposal_id"], proposal)
+    return {
+        "proposal_id": proposal["proposal_id"],
+        "artifact_path": str(path),
+        "data_version": (
+            f"dataset:{proposal['dataset_version_id']}:{proposal['source_fingerprint']}"
+        ),
+        "spec_version": f"transformation:{proposal['transformation_fingerprint']}",
+    }
+
+
+def _request_transformation_confirmation(
+    proposal: dict[str, Any],
+    *,
+    session_id: str,
+    turn_id: str,
+) -> tuple[dict[str, Any], str]:
+    from data_agent.agent.confirmation.runtime import (
+        build_action_registry,
+        build_dataset_transformation_candidate,
+    )
+    from data_agent.agent.confirmation.service import ConfirmationService
+
+    ref = _proposal_ref(proposal, session_id=session_id)
+    candidate = build_dataset_transformation_candidate(
+        session_id=session_id,
+        turn_id=turn_id,
+        proposal_ref=ref,
+    )
+    service = ConfirmationService(_proposal_sessions_root(), action_registry=build_action_registry())
+    result = service.request(candidate)
+    record = result.record or service.get(session_id, result.reused_confirmation_id or candidate.confirmation_id)
+    checkpoint = service.checkpoint(session_id)
+    if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
+        record = checkpoint
+    return ref, record.confirmation_id
+
+
+def _material_proposal(
+    *,
+    name: str,
+    active_info: dict[str, Any],
+    operation: str,
+    parameters: dict[str, Any],
+    before: pd.DataFrame,
+    candidate: pd.DataFrame,
+    affected_columns: list[str],
+    affected_row_count: int,
+    information_loss: bool,
+) -> dict[str, Any]:
+    from data_agent.agent.data_lineage import build_transformation_proposal
+
+    return build_transformation_proposal(
+        logical_dataset=name,
+        active_dataset=active_info,
+        operation=operation,
+        parameters=parameters,
+        impact={
+            "row_count_before": len(before),
+            "row_count_after": len(candidate),
+            "affected_columns": list(dict.fromkeys(affected_columns)),
+            "affected_row_count": int(affected_row_count),
+            "information_loss": bool(information_loss),
+        },
+    )
+
+
+def _load_transformation_proposal(path: str) -> dict[str, Any]:
+    from pathlib import Path
+
+    try:
+        proposal = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("transformation proposal artifact is unavailable") from exc
+    if not isinstance(proposal, dict) or proposal.get("contract_version") != "transformation_proposal.v1":
+        raise ValueError("transformation proposal artifact is invalid")
+    return proposal
+
+
+def apply_confirmed_transformation(confirmation_id: str, *, session_id: str = "") -> dict[str, Any]:
+    """Recompute and promote a proposal only after its canonical receipt resolves."""
+    from data_agent.agent.confirmation.models import ConfirmationStatus
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+
+    sid = _data_clean_session_id(session_id)
+    service = ConfirmationService(_proposal_sessions_root(), action_registry=build_action_registry())
+    record = service.get(sid, confirmation_id)
+    if record.resolution_action != "approve_dataset_transformation":
+        raise ValueError("confirmation is not a dataset transformation receipt")
+    if record.status != ConfirmationStatus.RESOLVED or record.response != "approve":
+        raise ValueError("dataset transformation was not approved")
+    proposal = _load_transformation_proposal(str(record.resolution_params.get("artifact_path") or ""))
+    expected_data_version = f"dataset:{proposal['dataset_version_id']}:{proposal['source_fingerprint']}"
+    expected_spec_version = f"transformation:{proposal['transformation_fingerprint']}"
+    if record.data_version != expected_data_version or record.spec_version != expected_spec_version:
+        raise ValueError("confirmation receipt does not match the proposal")
+    for version in workspace.list_dataset_versions(str(proposal["logical_dataset"])):
+        applied_record = dict(version.get("transformation_record") or {})
+        if applied_record.get("approval_confirmation_id") == confirmation_id:
+            return {
+                "status": "applied",
+                "dataset": proposal["logical_dataset"],
+                "dataset_id": version["dataset_id"],
+                "parent_dataset_id": proposal["dataset_version_id"],
+                "transformation_record": applied_record,
+            }
+    active = workspace.get_active_version_info(str(proposal["logical_dataset"]))
+    if active is None or active.get("dataset_id") != proposal["dataset_version_id"]:
+        raise ValueError("stale active dataset version")
+    params = dict(proposal.get("parameters") or {})
+    if proposal.get("operation") == "clean_data":
+        result = _clean_data_impl(
+            str(proposal["logical_dataset"]),
+            **params,
+            session_id=sid,
+            _approved_confirmation_id=confirmation_id,
+            _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
+        )
+    elif proposal.get("operation") == "apply_type_conversion":
+        result = _apply_type_conversion_impl(
+            str(proposal["logical_dataset"]),
+            **params,
+            session_id=sid,
+            _approved_confirmation_id=confirmation_id,
+            _expected_transformation_fingerprint=str(proposal["transformation_fingerprint"]),
+        )
+    else:
+        raise ValueError("unsupported transformation proposal operation")
+    payload = json.loads(result)
+    if payload.get("error"):
+        raise ValueError(str(payload["error"]))
+    return payload
+
+
 def _conversion_is_partial(
     original: pd.Series,
     converted: pd.Series,
@@ -586,12 +739,15 @@ def suggest_column_types(name: str) -> str:
         "confirmed": {"type": "boolean", "description": "是否已确认需要人工批准的转换"},
     },
 )
-def apply_type_conversion(
+def _apply_type_conversion_impl(
     name: str,
     column: str = "",
     target_type: str = "",
     auto: bool = False,
     confirmed: bool = False,
+    session_id: str = "",
+    _approved_confirmation_id: str = "",
+    _expected_transformation_fingerprint: str = "",
 ) -> str:
     auto = _coerce_bool_flag(auto)
     confirmed = _coerce_bool_flag(confirmed)
@@ -708,8 +864,9 @@ def apply_type_conversion(
         requires_confirmation = True
         information_loss = True
 
+    approved = bool(_approved_confirmation_id)
     confirmation_status = (
-        "confirmed" if requires_confirmation and confirmed
+        "confirmed" if requires_confirmation and approved
         else "pending" if requires_confirmation
         else "not_required"
     )
@@ -738,8 +895,23 @@ def apply_type_conversion(
         decision_policy="confirmation_required" if requires_confirmation else "auto_safe",
         confirmation_status=confirmation_status,
     )
+    proposal = None
+    if requires_confirmation:
+        proposal = _material_proposal(
+            name=name,
+            active_info=active_info,
+            operation="apply_type_conversion",
+            parameters={"column": column, "target_type": target_type, "auto": auto},
+            before=before,
+            candidate=candidate,
+            affected_columns=affected_columns,
+            affected_row_count=affected_row_count,
+            information_loss=information_loss,
+        )
+        if approved and proposal["transformation_fingerprint"] != _expected_transformation_fingerprint:
+            return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
-        "status": "confirmation_required" if requires_confirmation and not confirmed else "applied",
+        "status": "confirmation_required" if requires_confirmation and not approved else "applied",
         "dataset": name,
         "parent_dataset_id": active_info["dataset_id"],
         "transformation_record": record,
@@ -755,10 +927,23 @@ def apply_type_conversion(
     if conversion_errors:
         response["errors"] = conversion_errors
 
-    if requires_confirmation and not confirmed:
+    if requires_confirmation and not approved:
         response["dataset_id"] = active_info["dataset_id"]
+        ref, confirmation_id = _request_transformation_confirmation(
+            proposal,
+            session_id=_data_clean_session_id(session_id),
+            turn_id=f"data_clean:{proposal['proposal_id']}",
+        )
+        response.pop("transformation_record", None)
+        response["proposal_ref"] = ref
+        response["confirmation_id"] = confirmation_id
+        if confirmed:
+            response["error_type"] = "confirmation_receipt_required"
+            response["error"] = "confirmed is deprecated; resolve the confirmation receipt instead"
         return json.dumps(response, ensure_ascii=False, indent=2)
 
+    if _approved_confirmation_id:
+        record["approval_confirmation_id"] = _approved_confirmation_id
     try:
         promoted = _promote_candidate(name, candidate, active_info, record)
     except Exception as exc:
@@ -802,13 +987,16 @@ _OUTLIER_STRATEGIES = {
         "confirmed": {"type": "boolean", "description": "是否已确认会改变数据内容的清洗操作"},
     },
 )
-def clean_data(
+def _clean_data_impl(
     name: str,
     missing_strategy: str = "drop",
     outlier_strategy: str = "mark",
     columns: str = "",
     fill_value: str = "",
     confirmed: bool = False,
+    session_id: str = "",
+    _approved_confirmation_id: str = "",
+    _expected_transformation_fingerprint: str = "",
 ) -> str:
     confirmed = _coerce_bool_flag(confirmed)
     current = workspace.get(name)
@@ -982,7 +1170,8 @@ def clean_data(
         "outlier_drop",
     }
     material = any(item["action"] in material_actions for item in operations)
-    confirmation_status = "confirmed" if material and confirmed else "pending" if material else "not_required"
+    approved = bool(_approved_confirmation_id)
+    confirmation_status = "confirmed" if material and approved else "pending" if material else "not_required"
     metrics = {
         "rows": {"before": len(before), "after": len(candidate)},
         "missing_values": {
@@ -1005,8 +1194,28 @@ def clean_data(
         decision_policy="confirmation_required" if material else "auto_safe" if operations else "none",
         confirmation_status=confirmation_status,
     )
+    proposal = None
+    if material:
+        proposal = _material_proposal(
+            name=name,
+            active_info=active_info,
+            operation="clean_data",
+            parameters={
+                "missing_strategy": missing_strategy,
+                "outlier_strategy": outlier_strategy,
+                "columns": columns,
+                "fill_value": fill_value,
+            },
+            before=before,
+            candidate=candidate,
+            affected_columns=affected_columns,
+            affected_row_count=affected_row_count,
+            information_loss=True,
+        )
+        if approved and proposal["transformation_fingerprint"] != _expected_transformation_fingerprint:
+            return json.dumps({"error": "transformation proposal changed during recomputation"}, ensure_ascii=False)
     response: dict[str, Any] = {
-        "status": "confirmation_required" if material and not confirmed else "applied",
+        "status": "confirmation_required" if material and not approved else "applied",
         "dataset": name,
         "dataset_id": active_info["dataset_id"],
         "parent_dataset_id": active_info["dataset_id"],
@@ -1017,7 +1226,18 @@ def clean_data(
         "actions": operations,
     }
 
-    if material and not confirmed:
+    if material and not approved:
+        ref, confirmation_id = _request_transformation_confirmation(
+            proposal,
+            session_id=_data_clean_session_id(session_id),
+            turn_id=f"data_clean:{proposal['proposal_id']}",
+        )
+        response.pop("transformation_record", None)
+        response["proposal_ref"] = ref
+        response["confirmation_id"] = confirmation_id
+        if confirmed:
+            response["error_type"] = "confirmation_receipt_required"
+            response["error"] = "confirmed is deprecated; resolve the confirmation receipt instead"
         return json.dumps(response, ensure_ascii=False, indent=2)
     if not operations:
         response["status"] = "no_changes"
@@ -1025,6 +1245,8 @@ def clean_data(
     if candidate.equals(before):
         return json.dumps(response, ensure_ascii=False, indent=2)
 
+    if _approved_confirmation_id:
+        record["approval_confirmation_id"] = _approved_confirmation_id
     try:
         promoted = _promote_candidate(name, candidate, active_info, record)
     except Exception as exc:
@@ -1032,3 +1254,52 @@ def clean_data(
     response["dataset_id"] = promoted["dataset_id"]
     response["transformation_record"] = promoted["transformation_record"]
     return json.dumps(response, ensure_ascii=False, indent=2)
+
+
+def apply_type_conversion(
+    name: str,
+    column: str = "",
+    target_type: str = "",
+    auto: bool = False,
+    confirmed: bool = False,
+) -> str:
+    """Public tool entry point; a Boolean can never carry approval authority."""
+    return _apply_type_conversion_impl(
+        name,
+        column=column,
+        target_type=target_type,
+        auto=auto,
+        confirmed=confirmed,
+    )
+
+
+def clean_data(
+    name: str,
+    missing_strategy: str = "drop",
+    outlier_strategy: str = "mark",
+    columns: str = "",
+    fill_value: str = "",
+    confirmed: bool = False,
+) -> str:
+    """Public tool entry point; apply receipt-bound proposals separately."""
+    return _clean_data_impl(
+        name,
+        missing_strategy=missing_strategy,
+        outlier_strategy=outlier_strategy,
+        columns=columns,
+        fill_value=fill_value,
+        confirmed=confirmed,
+    )
+
+
+# The decorators above register the implementations during module import. Keep
+# their public schemas and callable surfaces narrow even though the internal
+# recomputation functions accept receipt-only arguments.
+for _tool_name, _public in {
+    "apply_type_conversion": apply_type_conversion,
+    "clean_data": clean_data,
+}.items():
+    _definition = registry._tools[_tool_name]
+    _definition.func = _public
+    for _private_name in ("session_id", "_approved_confirmation_id", "_expected_transformation_fingerprint"):
+        _definition.parameters["properties"].pop(_private_name, None)

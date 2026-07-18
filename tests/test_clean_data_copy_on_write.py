@@ -28,13 +28,13 @@ def test_unconfirmed_imputation_does_not_promote_candidate(monkeypatch):
     repeated = json.loads(data_clean.clean_data("orders", missing_strategy="fill_median"))
 
     assert result["status"] == "confirmation_required"
-    assert result["transformation_record"]["id"] == repeated["transformation_record"]["id"]
+    assert result["proposal_ref"] == repeated["proposal_ref"]
     assert store.get_active_version_info("orders")["dataset_id"] == active_info["dataset_id"]
     assert store.get("orders")["x"].isna().sum() == 1
     assert store.get_raw_snapshot(raw_info["dataset_id"])["x"].isna().sum() == 1
 
 
-def test_confirmed_imputation_promotes_new_version_and_preserves_parent(monkeypatch):
+def test_boolean_confirmed_cannot_promote_material_change(monkeypatch):
     from data_agent.tools import data_clean
 
     store, _, first = _versioned_store()
@@ -45,15 +45,9 @@ def test_confirmed_imputation_promotes_new_version_and_preserves_parent(monkeypa
     )
     second = store.get_active_version_info("orders")
 
-    assert result["status"] == "applied"
-    assert result["parent_dataset_id"] == first["dataset_id"]
-    assert second["dataset_id"] != first["dataset_id"]
-    assert store.get_dataset_version(first["dataset_id"])["x"].isna().sum() == 1
-    assert store.get("orders")["x"].isna().sum() == 0
-    metadata = store.get_metadata("orders")
-    assert metadata["_active_dataset_id"] == second["dataset_id"]
-    assert metadata["_raw_dataset_id"] == second["raw_dataset_id"]
-    assert metadata["_transformation_record"] == second["transformation_record"]
+    assert result["error_type"] == "confirmation_receipt_required"
+    assert second["dataset_id"] == first["dataset_id"]
+    assert store.get("orders")["x"].isna().sum() == 1
 
 
 def test_legacy_dataset_is_initialized_before_unconfirmed_cleaning(monkeypatch):
@@ -92,7 +86,7 @@ def test_high_confidence_lossless_type_conversion_promotes_without_confirmation(
     assert store.get_dataset_version(first["dataset_id"])["rate"].tolist() == ["10%", "20%"]
 
 
-def test_unit_bearing_conversion_requires_confirmation_then_promotes(monkeypatch):
+def test_unit_bearing_conversion_rejects_boolean_confirmation(monkeypatch):
     from data_agent.tools import data_clean
 
     store, raw_info, first = _versioned_store(
@@ -120,9 +114,9 @@ def test_unit_bearing_conversion_requires_confirmation_then_promotes(monkeypatch
         )
     )
 
-    assert applied["status"] == "applied"
-    assert applied["parent_dataset_id"] == first["dataset_id"]
-    assert store.get("orders")["amount"].tolist() == [10_000.0, 20_000.0, 30_000.0]
+    assert applied["error_type"] == "confirmation_receipt_required"
+    assert store.get_active_version_info("orders")["dataset_id"] == first["dataset_id"]
+    assert store.get("orders")["amount"].tolist() == ["10K", "20K", "30K"]
     assert store.get_dataset_version(first["dataset_id"])["amount"].tolist() == ["10K", "20K", "30K"]
 
 
@@ -138,13 +132,13 @@ def test_cardinality_collapse_and_auto_conversion_are_confirmation_gated(monkeyp
     automatic = json.loads(data_clean.apply_type_conversion("orders", auto=True))
 
     assert collapsed["status"] == "confirmation_required"
-    assert collapsed["transformation_record"]["information_loss"] is True
+    assert collapsed["proposal_ref"]["spec_version"].startswith("transformation:")
     assert automatic["status"] == "confirmation_required"
     assert store.get_active_version_info("orders")["dataset_id"] == first["dataset_id"]
     assert store.get("orders")["code"].tolist() == ["1", "01", "2"]
 
 
-def test_category_conversion_is_not_a_silent_noop(monkeypatch):
+def test_category_conversion_requires_a_confirmation_receipt(monkeypatch):
     from data_agent.tools import data_clean
 
     store, _, first = _versioned_store(pd.DataFrame({"segment": [1, 1, 2]}))
@@ -163,9 +157,9 @@ def test_category_conversion_is_not_a_silent_noop(monkeypatch):
 
     assert pending["status"] == "confirmation_required"
     assert pending["converted"]["new_dtype"] == "category"
-    assert applied["status"] == "applied"
-    assert applied["parent_dataset_id"] == first["dataset_id"]
-    assert isinstance(store.get("orders")["segment"].dtype, pd.CategoricalDtype)
+    assert applied["error_type"] == "confirmation_receipt_required"
+    assert store.get_active_version_info("orders")["dataset_id"] == first["dataset_id"]
+    assert not isinstance(store.get("orders")["segment"].dtype, pd.CategoricalDtype)
 
 
 def test_outlier_mark_records_audit_without_creating_empty_version(monkeypatch):

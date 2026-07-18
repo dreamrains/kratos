@@ -47,6 +47,49 @@ def frame_fingerprint(frame: pd.DataFrame) -> str:
     return f"sha256:{digest}"
 
 
+def _identity_fingerprint(value: Any) -> str:
+    """Return a stable digest for a compact, JSON-compatible identity."""
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def build_transformation_proposal(
+    *,
+    logical_dataset: str,
+    active_dataset: dict[str, Any],
+    operation: str,
+    parameters: dict[str, Any],
+    impact: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the deterministic, DataFrame-free approval subject for a change."""
+    normalized_parameters = json.loads(json.dumps(parameters, ensure_ascii=False, sort_keys=True, default=str))
+    parameters_fingerprint = _identity_fingerprint(normalized_parameters)
+    transformation_identity = {
+        "logical_dataset": str(logical_dataset),
+        "dataset_version_id": str(active_dataset["dataset_id"]),
+        "raw_dataset_id": str(active_dataset["raw_dataset_id"]),
+        "source_fingerprint": str(active_dataset.get("source_fingerprint", "")),
+        "operation": str(operation),
+        "parameters_fingerprint": parameters_fingerprint,
+    }
+    transformation_fingerprint = _identity_fingerprint(transformation_identity)
+    proposal_identity = {**transformation_identity, "impact": impact, "transformation_fingerprint": transformation_fingerprint}
+    return {
+        "contract_version": "transformation_proposal.v1",
+        "proposal_id": "proposal_" + _identity_fingerprint(proposal_identity)[:24],
+        **transformation_identity,
+        "parameters": normalized_parameters,
+        "transformation_fingerprint": transformation_fingerprint,
+        "impact": json.loads(json.dumps(impact, ensure_ascii=False, sort_keys=True, default=str)),
+    }
+
+
 @dataclass(frozen=True)
 class TransformationRecord:
     parent_dataset_id: str

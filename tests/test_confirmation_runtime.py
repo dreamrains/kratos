@@ -103,6 +103,26 @@ def test_direct_question_candidate_uses_stable_identity():
     assert first.resolution_params["related_spec_id"] == "spec_1"
 
 
+def test_dataset_transformation_candidate_binds_the_proposal_versions():
+    from data_agent.agent.confirmation.runtime import build_dataset_transformation_candidate
+
+    candidate = build_dataset_transformation_candidate(
+        session_id="session_1",
+        turn_id="turn_1",
+        proposal_ref={
+            "proposal_id": "proposal_123",
+            "artifact_path": "sessions/session_1/tool_outputs/proposal_123_detail.json",
+            "data_version": "dataset:dataset_orders_v2:sha256:source",
+            "spec_version": "transformation:proposal_fingerprint",
+        },
+    )
+
+    assert candidate.resolution_action == "approve_dataset_transformation"
+    assert candidate.data_version == "dataset:dataset_orders_v2:sha256:source"
+    assert candidate.spec_version == "transformation:proposal_fingerprint"
+    assert candidate.resolution_params["proposal_id"] == "proposal_123"
+
+
 def test_multi_select_candidate_uses_multi_select_answer_mode():
     from data_agent.agent.confirmation.runtime import build_direct_question_candidate
 
