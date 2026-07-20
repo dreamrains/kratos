@@ -53,6 +53,12 @@ def _step_id_text(value: Any) -> str:
     return value.strip()
 
 
+def _step_id_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_step_id_text(item) for item in value if _step_id_text(item)]
+
+
 def _required_claim_keys(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise ValueError("AnalysisPlan required_claim_keys must be a list of strings.")
@@ -291,7 +297,11 @@ def _validate_executable_plan(
                 "AnalysisPlan synthesis steps consume evidence, not raw datasets.",
                 step_id=step_id,
             )
-        resolved_contract_ids = _resolve_contract_ids(dataset_inputs, by_dataset, by_id)
+        resolved_contract_ids = (
+            _resolve_contract_ids(dataset_inputs, by_dataset, by_id)
+            if enforce_dataset_contracts
+            else _text_list(step.get("dataset_contract_ids"))
+        )
         if mode == "independent" and enforce_dataset_contracts and len(resolved_contract_ids) != 1:
             return _error(
                 "missing_dataset_contract",
@@ -300,7 +310,7 @@ def _validate_executable_plan(
                 dataset_inputs=dataset_inputs,
                 dataset_contract_ids=resolved_contract_ids,
             )
-        required_evidence = _text_list(step.get("required_evidence_step_ids"))
+        required_evidence = _step_id_list(step.get("required_evidence_step_ids"))
         if mode == "synthesis" and len(required_evidence) > MAX_SYNTHESIS_REQUIRED_EVIDENCE:
             return _error(
                 "too_many_required_evidence_dependencies",

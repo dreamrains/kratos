@@ -171,6 +171,101 @@ def test_projector_uses_requirement_ids_compiled_during_its_validation(tmp_path)
     assert task["analysis_requirement_ids"] == ["req_step_banner_metric"]
 
 
+def test_projector_uses_exact_validated_unsafe_step_identity_for_requirement_enforcement(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    raw_plan = {
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
+        "id": "plan_exact_spaced_step",
+        "goal": "Analyze an exact custom step identity.",
+        "method_plan": [{
+            "step_id": "Revenue  Trend",
+            "goal": "Analyze revenue per user.",
+            "dataset_inputs": ["orders"],
+            "dataset_contract_ids": ["contract_orders"],
+            "combination_mode": "independent",
+            "expected_output": "Revenue per user evidence",
+            "evidence_requirements": ["metric"],
+            "required_claim_keys": ["  revenue_per_user  "],
+        }],
+    }
+
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        raw_plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    task = manager.get(projected["task_ids"][0])
+    assert task["step_id"] == "Revenue  Trend"
+    assert task["dataset_contract_ids"] == ["contract_orders"]
+    assert task["required_claim_keys"] == ["revenue_per_user"]
+    assert len(task["analysis_requirement_ids"]) == 1
+    assert task["analysis_requirement_ids"][0].startswith("req_unsafe_")
+    assert task["analysis_requirement_ids"][0].endswith("_metric")
+
+    completed = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={
+            "id": "ev_missing_requirement_id",
+            "plan_id": raw_plan["id"],
+            "step_id": "Revenue  Trend",
+            "dataset_contract_id": "contract_orders",
+            "claim_key": "revenue_per_user",
+            "result_summary": "revenue_per_user=12.5",
+        },
+    )
+
+    assert completed == []
+    assert manager.get(task["id"])["evidence_ids"] == []
+
+
+def test_projector_preserves_exact_spaced_step_identity_in_dependencies(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = validate_analysis_plan_contract(
+        {
+            "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
+            "id": "plan_spaced_dependency",
+            "goal": "Analyze then synthesize exact custom steps.",
+            "method_plan": [
+                {
+                    "step_id": "Revenue  Trend",
+                    "goal": "Analyze revenue.",
+                    "dataset_inputs": ["orders"],
+                    "combination_mode": "independent",
+                    "expected_output": "Revenue evidence",
+                    "evidence_requirements": ["metric"],
+                    "required_claim_keys": ["revenue_per_user"],
+                },
+                {
+                    "step_id": "step_synthesis",
+                    "goal": "Synthesize revenue evidence.",
+                    "dataset_inputs": [],
+                    "combination_mode": "synthesis",
+                    "expected_output": "Synthesis",
+                    "evidence_requirements": ["limitations"],
+                    "required_claim_keys": ["summary"],
+                    "required_evidence_step_ids": ["Revenue  Trend"],
+                },
+            ],
+        },
+        dataset_contracts=[{"dataset": "orders", "id": "contract_orders"}],
+    ).plan
+
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    tasks = [manager.get(task_id) for task_id in projected["task_ids"]]
+    revenue = next(task for task in tasks if task["step_id"] == "Revenue  Trend")
+    synthesis = next(task for task in tasks if task["step_id"] == "step_synthesis")
+    assert synthesis["required_evidence_step_ids"] == ["Revenue  Trend"]
+    assert synthesis["blockedBy"] == [revenue["id"]]
+
+
 def test_projector_distinguishes_same_subject_steps_by_step_id(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     result = validate_analysis_plan_contract(

@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from data_agent.config import get_config
 
@@ -37,12 +37,26 @@ WORKFLOW_FIELDS = {
     "required_capability": "",
     "evidence_requirements": [],
     "satisfied_evidence_requirements": [],
-    "required_claim_keys": None,
     "satisfied_claim_keys": [],
     "analysis_requirement_ids": [],
     "satisfied_analysis_requirement_ids": [],
     "confirmation_policy": {},
 }
+
+
+def normalize_required_claim_keys(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("required_claim_keys must be a list of non-empty strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("required_claim_keys must be a list of non-empty strings")
+        claim_key = " ".join(item.split())
+        if not claim_key:
+            raise ValueError("required_claim_keys must be a list of non-empty strings")
+        if claim_key not in result:
+            result.append(claim_key)
+    return result
 
 
 PLAN_FIELDS = {
@@ -104,6 +118,15 @@ class TaskManager:
         )
 
     def _normalize(self, task: dict) -> dict:
+        if "required_claim_keys" in task:
+            try:
+                task["required_claim_keys"] = normalize_required_claim_keys(
+                    task["required_claim_keys"]
+                )
+            except ValueError:
+                # Malformed-present data stays on the canonical path and can
+                # never opt into persisted legacy matching semantics.
+                task["required_claim_keys"] = []
         for key, value in WORKFLOW_FIELDS.items():
             if key not in task:
                 task[key] = list(value) if isinstance(value, list) else value
@@ -135,6 +158,9 @@ class TaskManager:
         **workflow_fields,
     ) -> dict:
         """创建新任务。"""
+        required_claim_keys = normalize_required_claim_keys(
+            workflow_fields.get("required_claim_keys", [])
+        )
         task = {
             "id": self._alloc_id(),
             "subject": subject,
@@ -144,7 +170,7 @@ class TaskManager:
             "blocks": [],
             "owner": "",
             "session_id": session_id,
-            "required_claim_keys": [],
+            "required_claim_keys": required_claim_keys,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         for key in WORKFLOW_FIELDS:
@@ -172,10 +198,17 @@ class TaskManager:
         **workflow_fields,
     ) -> Optional[dict]:
         """更新任务。status 可选值：pending / in_progress / completed / deleted。"""
+        if "required_claim_keys" in workflow_fields:
+            workflow_fields["required_claim_keys"] = normalize_required_claim_keys(
+                workflow_fields["required_claim_keys"]
+            )
         try:
             task = self._load(tid)
         except ValueError:
             return None
+
+        if "required_claim_keys" in workflow_fields:
+            task["required_claim_keys"] = workflow_fields["required_claim_keys"]
 
         if status is not None:
             allowed = ("pending", "blocked", "in_progress", "completed", "failed", "superseded", "archived", "deleted")
@@ -540,11 +573,14 @@ class TaskManager:
     def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
         return str(evidence.get("evidence_requirement") or "")
 
-    def _stage3c0b_required_claim_keys(self, task: dict) -> list[str] | None:
-        value = task.get("required_claim_keys")
-        if not isinstance(value, list):
-            return None
-        return [str(item) for item in value if str(item)]
+    def _uses_legacy_claim_key_compat(self, task: dict) -> bool:
+        return "required_claim_keys" not in task
+
+    def _stage3c0b_required_claim_keys(self, task: dict) -> list[str]:
+        try:
+            return normalize_required_claim_keys(task.get("required_claim_keys"))
+        except ValueError:
+            return []
 
     def _stage3c0b_analysis_requirement_ids(self, task: dict) -> list[str]:
         return [str(item) for item in task.get("analysis_requirement_ids") or [] if str(item)]
@@ -576,7 +612,7 @@ class TaskManager:
                 return False
 
         required_claim_keys = self._stage3c0b_required_claim_keys(task)
-        if required_claim_keys is not None:
+        if not self._uses_legacy_claim_key_compat(task):
             claim_key = str(evidence.get("claim_key") or "")
             if not required_claim_keys or claim_key not in required_claim_keys:
                 return False
@@ -604,7 +640,7 @@ class TaskManager:
             evidence_ids.append(evidence_id)
 
         required_claim_keys = self._stage3c0b_required_claim_keys(task)
-        if required_claim_keys is not None:
+        if not self._uses_legacy_claim_key_compat(task):
             claim_key = str(evidence.get("claim_key") or "")
             satisfied_claim_keys = list(task.get("satisfied_claim_keys") or [])
             if claim_key and claim_key not in satisfied_claim_keys:

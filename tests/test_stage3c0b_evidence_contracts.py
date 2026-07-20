@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
 from data_agent.session.task_manager import TaskManager
@@ -366,6 +368,78 @@ def test_new_scoped_task_does_not_write_legacy_evidence_requirement_authority(tm
     assert completed == []
     updated = mgr.get(task["id"])
     assert updated["required_claim_keys"] == []
+    assert updated["evidence_ids"] == []
+    assert updated["satisfied_evidence_requirements"] == []
+
+
+@pytest.mark.parametrize("required_claim_keys", ["click_rate", ["click_rate", 7]])
+def test_new_scoped_task_rejects_malformed_required_claim_keys(tmp_path, required_claim_keys):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+
+    with pytest.raises(ValueError, match="required_claim_keys"):
+        mgr.create(
+            "Analyze banner metrics",
+            session_id="s1",
+            analysis_plan_id="plan_abc",
+            step_id="step_banner",
+            evidence_requirements=["click_rate"],
+            required_claim_keys=required_claim_keys,
+        )
+
+    assert mgr.list_all(include_stale=True) == []
+
+
+def test_persisted_field_absent_task_uses_explicit_legacy_compatibility(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    task = mgr.create(
+        "Analyze legacy banner metrics",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["click_rate"],
+    )
+    task = _persist_as_legacy_task(mgr, task)
+
+    assert "required_claim_keys" not in task
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence=_canonical_evidence(evidence_requirement="click_rate"),
+    )
+
+    assert completed == [task["id"]]
+
+
+def test_persisted_malformed_present_claim_field_never_uses_legacy_authority(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    task = mgr.create(
+        "Analyze malformed banner metrics",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["click_rate"],
+        required_claim_keys=["click_rate"],
+    )
+    path = mgr._path(task["id"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["required_claim_keys"] = "click_rate"
+    path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence=_canonical_evidence(evidence_requirement="click_rate"),
+    )
+
+    assert completed == []
+    updated = mgr.get(task["id"])
+    assert updated["status"] == "pending"
     assert updated["evidence_ids"] == []
     assert updated["satisfied_evidence_requirements"] == []
 

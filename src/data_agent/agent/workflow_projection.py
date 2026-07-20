@@ -21,6 +21,12 @@ def _text(value: Any) -> str:
     return ""
 
 
+def _step_id_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
 def _step_subject(step: dict[str, Any], index: int) -> str:
     return (
         _text(step.get("task"))
@@ -99,6 +105,7 @@ def project_plan_to_workflow_tasks(
             "error": validation.error_type,
         }
 
+    plan = validation.plan
     method_plan = plan.get("method_plan")
     if not isinstance(method_plan, list) or not method_plan:
         return {
@@ -157,7 +164,7 @@ def project_plan_to_workflow_tasks(
     for index, step in enumerate(method_plan, 1):
         if not isinstance(step, dict):
             continue
-        explicit_step_id = _text(step.get("step_id"))
+        explicit_step_id = _step_id_text(step.get("step_id"))
         step_id = explicit_step_id or f"step_{index}"
         if explicit_step_id:
             duplicate = _find_step_duplicate(

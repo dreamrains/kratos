@@ -14,7 +14,7 @@ from data_agent.agent.analysis_plan_contracts import (
     analysis_plan_id_from_mapping,
     normalize_analysis_plan_contract,
 )
-from data_agent.session.task_manager import task_manager
+from data_agent.session.task_manager import normalize_required_claim_keys, task_manager
 from data_agent.tools.registry import registry
 
 _current_session_id: str = ""
@@ -91,6 +91,7 @@ def _workflow_fields_from_dict(data: dict) -> dict:
         "required_capability",
         "evidence_requirements",
         "satisfied_evidence_requirements",
+        "required_claim_keys",
         "confirmation_policy",
         "plan_id",
         "plan_version",
@@ -256,6 +257,7 @@ def task_create(
     confirmation_ids: str = "",
     required_capability: str = "",
     evidence_requirements: str = "",
+    required_claim_keys: str = "",
     confirmation_policy: str = "",
     analysis_plan_json: str = "",
     analysis_plan_id: str = "",
@@ -282,6 +284,15 @@ def task_create(
         if active_plan_id else []
     )
     active_plan_version = max([int(t.get("plan_version") or 1) for t in active_tasks], default=1)
+    try:
+        canonical_required_claim_keys = normalize_required_claim_keys(
+            _json_or_value(required_claim_keys, [])
+        )
+    except ValueError as exc:
+        return json.dumps({
+            "error": str(exc),
+            "error_type": "invalid_required_claim_keys",
+        }, ensure_ascii=False)
     common_fields = {
         "workflow_id": workflow_id or current_plan.get("workflow_id", ""),
         "project_name": project_name or _project_name(),
@@ -296,6 +307,7 @@ def task_create(
         "confirmation_ids": _json_or_value(confirmation_ids, []),
         "required_capability": required_capability,
         "evidence_requirements": _json_or_value(evidence_requirements, []),
+        "required_claim_keys": canonical_required_claim_keys,
         "confirmation_policy": _json_or_value(confirmation_policy, current_plan.get("confirmation_policy", {})),
         "plan_id": active_plan_id,
         "plan_version": active_plan_version,
@@ -311,6 +323,20 @@ def task_create(
             return json.dumps({"error": "tasks 必须是有效的 JSON 数组"}, ensure_ascii=False)
         if not isinstance(task_list_data, list):
             return json.dumps({"error": "tasks 必须是 JSON 数组"}, ensure_ascii=False)
+
+        for index, task_data in enumerate(task_list_data):
+            if not isinstance(task_data, dict) or "required_claim_keys" not in task_data:
+                continue
+            try:
+                task_data["required_claim_keys"] = normalize_required_claim_keys(
+                    task_data["required_claim_keys"]
+                )
+            except ValueError as exc:
+                return json.dumps({
+                    "error": str(exc),
+                    "error_type": "invalid_required_claim_keys",
+                    "index": index,
+                }, ensure_ascii=False)
 
         llm_plan = _ensure_llm_plan_for_batch(task_list_data, current_plan, active_plan_id, active_tasks)
         if llm_plan.get("id"):
@@ -393,6 +419,16 @@ def task_update(
             tid = u.get("task_id")
             if not tid:
                 continue
+            if "required_claim_keys" in u:
+                try:
+                    u["required_claim_keys"] = normalize_required_claim_keys(
+                        u["required_claim_keys"]
+                    )
+                except ValueError as exc:
+                    return json.dumps({
+                        "error": str(exc),
+                        "error_type": "invalid_required_claim_keys",
+                    }, ensure_ascii=False)
             task = task_manager.update(
                 tid,
                 status=u.get("status"),

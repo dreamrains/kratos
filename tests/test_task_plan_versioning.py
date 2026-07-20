@@ -7,6 +7,28 @@ from data_agent.session.workspace import Workspace
 from data_agent.tools.task_tools import task_create
 
 
+def test_task_create_rejects_malformed_required_claim_keys_before_writing(tmp_path):
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+
+    try:
+        result = json.loads(task_create(tasks=json.dumps([{
+            "subject": "Analyze banner click rate",
+            "analysis_plan_id": "plan_abc",
+            "step_id": "step_banner",
+            "evidence_requirements": ["metric"],
+            "required_claim_keys": "click_rate",
+        }])))
+
+        assert result["error_type"] == "invalid_required_claim_keys"
+        assert task_manager.list_all(include_stale=True) == []
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
 def test_completed_execution_plan_hides_superseded_legacy_duplicates(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
 
