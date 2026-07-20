@@ -166,30 +166,15 @@ def test_every_current_playbook_requirement_input_has_one_compiler_definition():
         assert expected_names <= compiled_names, playbook.id
 
 
-def test_unknown_saved_requirement_string_is_preserved_as_bounded_compatibility_input():
-    compiled = compile_analysis_requirements(
-        plan=_plan("custom metric coverage"),
-        route=None,
-        playbook=None,
-        dataset_contracts=[],
-        user_intent="load a saved plan",
-    )
-
-    assert compiled == [{
-        "contract_version": ANALYSIS_REQUIREMENT_CONTRACT_VERSION,
-        "id": "req_step_1_custom_metric_coverage",
-        "step_id": "step_1",
-        "category": "output",
-        "name": "custom_metric_coverage",
-        "necessity": "required",
-        "trigger": "explicit compiler input: custom_metric_coverage",
-        "status": "pending",
-        "required_evidence_fields": ["custom_metric_coverage"],
-        "assumption_checks": [],
-        "unmet_action": "disclose",
-        "evidence_ids": [],
-        "reason": "Compatibility requirement compiled from an unregistered saved input.",
-    }]
+def test_unknown_live_requirement_input_is_rejected():
+    with pytest.raises(ValueError, match="Unknown live AnalysisRequirement input"):
+        compile_analysis_requirements(
+            plan=_plan("custom metric coverage"),
+            route=None,
+            playbook=None,
+            dataset_contracts=[],
+            user_intent="run a current plan",
+        )
 
 
 def test_requirement_group_preserves_plan_step_id_while_id_uses_stable_slug():
@@ -206,3 +191,126 @@ def test_requirement_group_preserves_plan_step_id_while_id_uses_stable_slug():
 
     assert compiled[0]["step_id"] == "Revenue Trend"
     assert compiled[0]["id"] == "req_revenue_trend_sample_size"
+
+
+def test_requirement_ids_are_collision_safe_for_distinct_step_ids_with_same_slug():
+    plan = {
+        "id": "plan_colliding_step_slugs",
+        "goal": "compare revenue trends",
+        "method_plan": [
+            {
+                "step_id": "Revenue-Trend",
+                "goal": "analyze first revenue trend",
+                "evidence_requirements": ["sample_size"],
+            },
+            {
+                "step_id": "Revenue Trend",
+                "goal": "analyze second revenue trend",
+                "evidence_requirements": ["sample_size"],
+            },
+        ],
+    }
+
+    first = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="compare revenue trends",
+    )
+    second = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="compare revenue trends",
+    )
+
+    ids = [item["id"] for item in first]
+    assert first == second
+    assert len(ids) == len(set(ids)) == 2
+    assert all(identifier.startswith("req_revenue_trend_") for identifier in ids)
+
+
+def test_satisfaction_requires_explicit_successful_assumption_checks():
+    requirement = compile_analysis_requirements(
+        plan=_plan("significance"),
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="evaluate statistical support",
+    )[0]
+    base_record = {
+        "id": "evidence_significance",
+        "requirement_ids": [requirement["id"]],
+        "significance": {"p_value": 0.03},
+    }
+
+    missing = requirement_module.evaluate_requirement_satisfaction(
+        [requirement],
+        [base_record],
+    )[0]
+    failed = requirement_module.evaluate_requirement_satisfaction(
+        [requirement],
+        [{
+            **base_record,
+            "assumption_checks": [{
+                "name": "method_appropriate_for_design",
+                "status": "failed",
+                "evidence": "design mismatch",
+            }],
+        }],
+    )[0]
+    passed = requirement_module.evaluate_requirement_satisfaction(
+        [requirement],
+        [{
+            **base_record,
+            "assumption_checks": [{
+                "name": "method_appropriate_for_design",
+                "status": "passed",
+                "evidence": "method matches the randomized design",
+            }],
+        }],
+    )[0]
+
+    assert missing["status"] == "unmet"
+    assert "method_appropriate_for_design" in missing["reason"]
+    assert failed["status"] == "unmet"
+    assert passed["status"] == "satisfied"
+
+
+def test_multi_step_playbook_binds_global_requirements_to_semantic_method_step():
+    playbook = PLAYBOOKS["user_behavior_analysis"]
+    plan = {
+        "id": "plan_user_behavior",
+        "goal": "analyze user behavior",
+        "method_plan": playbook.method_plan_template,
+        "statistical_requirements": playbook.output_policy["statistical_requirements"],
+    }
+
+    first = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=playbook,
+        dataset_contracts=[],
+        user_intent="analyze user behavior",
+    )
+    second = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=playbook,
+        dataset_contracts=[],
+        user_intent="analyze user behavior",
+    )
+
+    assert first == second
+    by_step = {
+        step_id: [item["name"] for item in first if item["step_id"] == step_id]
+        for step_id in ("step_1", "step_2", "step_3")
+    }
+    assert "distribution" in by_step["step_1"]
+    assert "correlation" not in by_step["step_1"]
+    assert "significance" not in by_step["step_1"]
+    assert "correlation" in by_step["step_3"]
+    assert "significance" in by_step["step_3"]
+    assert by_step["step_3"] == sorted(by_step["step_3"])

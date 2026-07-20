@@ -196,6 +196,7 @@ class AnalysisSessionState:
         plan_result = normalize_analysis_plan_contract(
             raw_plan,
             require_executable=False,
+            _legacy_saved_plan_loading=True,
             **_analysis_requirement_inputs(
                 raw_plan,
                 dataset_contracts=dataset_contracts,

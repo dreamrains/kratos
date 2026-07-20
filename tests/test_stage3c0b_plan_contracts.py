@@ -23,7 +23,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
-                "evidence_requirements": ["impressions", "click_rate"],
+                "evidence_requirements": ["metric", "sample_size"],
             },
             {
                 "step_id": "step_synthesis",
@@ -31,7 +31,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "dataset_inputs": [],
                 "combination_mode": "synthesis",
                 "expected_output": "Cross-file synthesis",
-                "evidence_requirements": ["comparative_summary"],
+                "evidence_requirements": ["limitations"],
                 "required_evidence_step_ids": ["step_banner"],
             },
         ],
@@ -80,7 +80,7 @@ def test_rejects_join_hidden_as_executable_stage3c0b_mode():
                 "dataset_inputs": ["orders", "users"],
                 "combination_mode": "join",
                 "expected_output": "Joined table",
-                "evidence_requirements": ["joined_rows"],
+                "evidence_requirements": ["metric"],
             }
         ],
     }
@@ -161,7 +161,7 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
                     "dataset_inputs": [],
                     "combination_mode": "synthesis",
                     "expected_output": "Synthesis",
-                    "evidence_requirements": ["summary"],
+                    "evidence_requirements": ["limitations"],
                     "required_evidence_step_ids": [f"step_{i}" for i in range(9)],
                 }
             ],
@@ -214,7 +214,7 @@ def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
-                "evidence_requirements": ["click_rate"],
+                "evidence_requirements": ["metric"],
             }
         ],
         "visualization_strategy": "none",

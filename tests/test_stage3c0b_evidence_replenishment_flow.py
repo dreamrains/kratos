@@ -36,7 +36,7 @@ def _synthesis_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": [],
                 "combination_mode": "synthesis",
                 "expected_output": "Evidence-backed answer with limitations.",
-                "evidence_requirements": ["answer_coverage"],
+                "evidence_requirements": ["limitations"],
             },
         ],
         "visualization_strategy": [],
@@ -55,7 +55,7 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["orders"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
-                "evidence_requirements": ["revenue_per_user"],
+                "evidence_requirements": ["revenue"],
             },
         ],
         "visualization_strategy": [],
@@ -74,7 +74,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["orders"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
-                "evidence_requirements": ["revenue_per_user"],
+                "evidence_requirements": ["revenue"],
             },
             {
                 "step_id": "step_retention_d7",
@@ -82,7 +82,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["retention"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for day7_retention.",
-                "evidence_requirements": ["day7_retention"],
+                "evidence_requirements": ["retention_rate"],
             },
             {
                 "step_id": "step_synthesis",
@@ -91,7 +91,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "synthesis",
                 "required_evidence_step_ids": ["step_orders_revenue", "step_retention_d7"],
                 "expected_output": "Evidence-backed answer with limitations.",
-                "evidence_requirements": ["answer_coverage"],
+                "evidence_requirements": ["limitations"],
             },
         ],
         "visualization_strategy": [],
@@ -104,7 +104,7 @@ def _evidence(
     step_id: str = "step_orders_revenue",
     dataset: str = "orders",
     contract_id: str = "contract_orders",
-    requirement: str = "revenue_per_user",
+    requirement: str = "revenue",
 ) -> dict:
     return {
         "plan_id": plan_id,
@@ -228,7 +228,7 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
         )
 
     assert evidence_result["completed_task_ids"] == [independent["id"]]
-    assert state.evidence_records[0]["evidence_requirement"] == "revenue_per_user"
+    assert state.evidence_records[0]["evidence_requirement"] == "revenue"
     completed = manager.get(independent["id"])
     assert completed["status"] == "completed"
     assert completed["completed_by"] == "evidence"

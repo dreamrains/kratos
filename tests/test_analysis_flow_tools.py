@@ -28,7 +28,7 @@ def _stage3c0b_plan(depth=None):
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
-                "evidence_requirements": ["click_rate"],
+                "evidence_requirements": ["metric"],
             },
         ],
         "visualization_strategy": [],

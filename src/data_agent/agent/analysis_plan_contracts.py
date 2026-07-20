@@ -88,6 +88,7 @@ def normalize_analysis_plan_contract(
     route: dict[str, Any] | str | None = None,
     playbook: Any = None,
     user_intent: Any = None,
+    _legacy_saved_plan_loading: bool = False,
 ) -> ContractValidationResult:
     if not isinstance(plan, dict):
         return _error("invalid_plan", "AnalysisPlan must be a JSON object.")
@@ -131,6 +132,7 @@ def normalize_analysis_plan_contract(
             playbook=playbook if playbook is not None else normalized,
             dataset_contracts=dataset_contracts or [],
             user_intent=user_intent if user_intent is not None else normalized.get("goal"),
+            _allow_legacy_unknown=_legacy_saved_plan_loading,
         )
     except ValueError as exc:
         return _error("invalid_analysis_requirements", str(exc))

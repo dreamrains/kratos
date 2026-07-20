@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 
@@ -30,6 +31,22 @@ _ROUTE_REQUIREMENT_INPUTS = {
     "funnel": ("step_definition", "denominator", "conversion_rates", "limitations"),
 }
 _DEFAULT_ROUTE_REQUIREMENT_INPUTS = ("method", "sample_size", "limitations")
+_CAPABILITY_REQUIREMENT_INPUTS = {
+    "analysis.experiment": ("effect_size",),
+}
+_REQUIREMENT_CAPABILITY_HINTS = {
+    "confidence_interval": ("analysis.experiment", "analysis.causal", "analysis.forecast"),
+    "correlation": ("analysis.correlation",),
+    "correlation_method": ("analysis.correlation",),
+    "distribution": ("data.describe",),
+    "effect": ("analysis.experiment", "analysis.causal"),
+    "effect_estimate": ("analysis.experiment", "analysis.causal"),
+    "effect_size": ("analysis.experiment", "analysis.causal"),
+    "metric_delta": ("analysis.period_compare",),
+    "period_comparability": ("analysis.period_compare",),
+    "period_definition": ("analysis.period_compare",),
+    "significance": ("analysis.experiment", "analysis.correlation"),
+}
 
 
 _REQUIREMENT_DEFINITIONS = {
@@ -208,6 +225,40 @@ def _name_list(value: Any) -> list[str]:
     return [_name(item) for item in value if _name(item)]
 
 
+def _step_for_external_input(
+    name: str,
+    steps: list[tuple[str, dict[str, Any]]],
+    inputs_by_step: dict[str, dict[str, set[str]]],
+) -> str:
+    explicit_matches = [step_id for step_id, _ in steps if name in inputs_by_step[step_id]]
+    if explicit_matches:
+        return explicit_matches[0]
+
+    capability_hints = _REQUIREMENT_CAPABILITY_HINTS.get(name, ())
+    for capability in capability_hints:
+        for step_id, step in steps:
+            if _text(step.get("required_capability")) == capability:
+                return step_id
+
+    definition = _REQUIREMENT_DEFINITIONS.get(name) or {}
+    category = definition.get("category")
+    preferred_node_types = {
+        "assumption": ("analysis", "evidence"),
+        "data": ("data_check", "method", "analysis"),
+        "inference": ("analysis",),
+        "limitation": ("evidence", "analysis"),
+        "measurement": ("analysis", "data_check"),
+        "method": ("method", "analysis", "data_check"),
+        "output": ("evidence", "analysis"),
+        "provenance": ("evidence", "analysis"),
+    }.get(category, ("analysis",))
+    for node_type in preferred_node_types:
+        for step_id, step in steps:
+            if _name(step.get("node_type")) == node_type:
+                return step_id
+    return steps[0][0]
+
+
 def _validate_requirement(requirement: Any) -> None:
     if not isinstance(requirement, dict):
         raise ValueError("AnalysisRequirement must be an object.")
@@ -263,6 +314,27 @@ def _matching_records(requirement: dict[str, Any], evidence_records: Any) -> lis
     return result
 
 
+def _assumption_check_succeeded(record: dict[str, Any], check_name: str) -> bool:
+    checks = record.get("assumption_checks")
+    if isinstance(checks, dict):
+        value = checks.get(check_name)
+        status = value.get("status") if isinstance(value, dict) else value
+        return _name(status) in {"passed", "satisfied", "success", "successful"}
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            name = _text(item.get("name") or item.get("check") or item.get("id"))
+            if name == check_name and _name(item.get("status")) in {
+                "passed",
+                "satisfied",
+                "success",
+                "successful",
+            }:
+                return True
+    return False
+
+
 def evaluate_requirement_satisfaction(
     requirements: Any,
     evidence_records: Any,
@@ -282,10 +354,12 @@ def evaluate_requirement_satisfaction(
             continue
         matches = _matching_records(requirement, evidence_records)
         required_fields = requirement["required_evidence_fields"]
+        assumption_checks = requirement["assumption_checks"]
         satisfying = [
             record
             for record in matches
             if all(_has_field(record, field) for field in required_fields)
+            and all(_assumption_check_succeeded(record, check) for check in assumption_checks)
         ]
         requirement["evidence_ids"] = [
             _text(record.get("id"))
@@ -297,7 +371,8 @@ def evaluate_requirement_satisfaction(
             requirement["reason"] = ""
         else:
             requirement["status"] = "unmet"
-            missing = ", ".join(required_fields) or "matching evidence"
+            missing_items = list(required_fields) + list(assumption_checks)
+            missing = ", ".join(missing_items) or "matching evidence"
             requirement["reason"] = f"Missing required evidence: {missing}."
         evaluated.append(requirement)
     return evaluated
@@ -310,9 +385,11 @@ def compile_analysis_requirements(
     playbook: Any,
     dataset_contracts: Any,
     user_intent: Any,
+    _allow_legacy_unknown: bool = False,
 ) -> list[dict[str, Any]]:
     plan_value = plan if isinstance(plan, dict) else {}
     provided = plan_value.get("analysis_requirements")
+    provided_by_step_name: dict[str, dict[str, dict[str, Any]]] = {}
     if provided is not None:
         if not isinstance(provided, dict):
             raise ValueError("AnalysisPlan analysis_requirements must be grouped by step_id.")
@@ -324,6 +401,7 @@ def compile_analysis_requirements(
                 _validate_requirement(requirement)
                 if requirement["step_id"] != step_id:
                     raise ValueError("AnalysisRequirement step_id must match its plan group.")
+                provided_by_step_name.setdefault(step_id, {})[requirement["name"]] = requirement
     method_plan = plan_value.get("method_plan")
     if not isinstance(method_plan, list):
         return []
@@ -338,18 +416,19 @@ def compile_analysis_requirements(
         return []
 
     inputs_by_step: dict[str, dict[str, set[str]]] = {step_id: {} for step_id, _ in steps}
+    has_canonical_records = any(provided_by_step_name.values())
     for step_id, raw_step in steps:
-        for name in _name_list(raw_step.get("evidence_requirements")):
-            inputs_by_step[step_id].setdefault(name, set()).add("plan.method_plan.evidence_requirements")
+        for name in provided_by_step_name.get(step_id, {}):
+            inputs_by_step[step_id].setdefault(name, set()).add("plan.analysis_requirements")
+        if not has_canonical_records:
+            for name in _name_list(raw_step.get("evidence_requirements")):
+                inputs_by_step[step_id].setdefault(name, set()).add(
+                    "plan.method_plan.evidence_requirements"
+                )
+        capability = _text(raw_step.get("required_capability"))
+        for name in _CAPABILITY_REQUIREMENT_INPUTS.get(capability, ()):
+            inputs_by_step[step_id].setdefault(name, set()).add("plan.method_plan.required_capability")
 
-    target_step_id = next(
-        (
-            step_id
-            for step_id, raw_step in steps
-            if _name(raw_step.get("node_type")) == "analysis"
-        ),
-        steps[0][0],
-    )
     external_inputs: list[tuple[str, str]] = []
     external_inputs.extend(
         (name, "plan.statistical_requirements")
@@ -371,38 +450,55 @@ def compile_analysis_requirements(
         for name in _name_list(output_policy.get("statistical_requirements"))
     )
     for name, origin in external_inputs:
-        inputs_by_step[target_step_id].setdefault(name, set()).add(origin)
+        step_id = _step_for_external_input(name, steps, inputs_by_step)
+        inputs_by_step[step_id].setdefault(name, set()).add(origin)
+
+    slug_counts: dict[str, int] = {}
+    for step_id, _ in steps:
+        step_slug = _name(step_id)
+        slug_counts[step_slug] = slug_counts.get(step_slug, 0) + 1
 
     compiled: list[dict[str, Any]] = []
     for step_id, _ in steps:
+        step_slug = _name(step_id)
+        if slug_counts[step_slug] > 1:
+            encoded_step_id = base64.urlsafe_b64encode(
+                step_id.encode("utf-8")
+            ).decode("ascii").rstrip("=")
+            step_id_component = f"{step_slug}_{len(encoded_step_id)}_{encoded_step_id}"
+        else:
+            step_id_component = step_slug
         names = sorted(inputs_by_step[step_id])
         for name in names:
             definition = _REQUIREMENT_DEFINITIONS.get(name)
             compatibility_definition = definition is None
             if definition is None:
+                if not _allow_legacy_unknown:
+                    raise ValueError(f"Unknown live AnalysisRequirement input: {name}")
                 definition = {
                     "category": "output",
                     "required_evidence_fields": [name],
                     "assumption_checks": [],
                     "unmet_action": "disclose",
                 }
+            provided_requirement = provided_by_step_name.get(step_id, {}).get(name, {})
             compiled.append({
                 "contract_version": ANALYSIS_REQUIREMENT_CONTRACT_VERSION,
-                "id": f"req_{_name(step_id)}_{name}",
+                "id": f"req_{step_id_component}_{name}",
                 "step_id": step_id,
                 "category": definition["category"],
                 "name": name,
                 "necessity": "required",
                 "trigger": f"explicit compiler input: {name}",
-                "status": "pending",
+                "status": provided_requirement.get("status", "pending"),
                 "required_evidence_fields": list(definition["required_evidence_fields"]),
                 "assumption_checks": list(definition["assumption_checks"]),
                 "unmet_action": definition["unmet_action"],
-                "evidence_ids": [],
+                "evidence_ids": list(provided_requirement.get("evidence_ids") or []),
                 "reason": (
                     "Compatibility requirement compiled from an unregistered saved input."
                     if compatibility_definition
-                    else ""
+                    else str(provided_requirement.get("reason") or "")
                 ),
             })
     return compiled

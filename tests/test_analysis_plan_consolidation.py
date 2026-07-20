@@ -91,6 +91,7 @@ def test_executable_plan_cannot_delete_compiler_required_hard_requirement():
             "step_id": "step_1",
             "goal": "estimate revenue effect",
             "node_type": "analysis",
+            "required_capability": "analysis.experiment",
             "combination_mode": "independent",
             "dataset_inputs": ["orders"],
             "expected_output": "effect estimate",
@@ -231,3 +232,114 @@ def test_saved_state_compiles_legacy_plan_with_saved_active_route_input():
 
     names = [item["name"] for item in state.analysis_plan["analysis_requirements"]["step_1"]]
     assert names == ["sample_size", "time_scope"]
+
+
+def test_canonical_only_saved_plan_loads_and_rebuilds_compatibility_projection():
+    compiled = normalize_analysis_plan_contract({
+        "id": "plan_canonical_only",
+        "goal": "estimate effect",
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "estimate effect",
+            "node_type": "analysis",
+            "evidence_requirements": ["effect_size", "sample_size"],
+        }],
+    }, require_executable=False).plan
+    compiled["analysis_requirements"]["step_1"][0]["status"] = "satisfied"
+    compiled["analysis_requirements"]["step_1"][0]["evidence_ids"] = ["evidence_effect"]
+    compiled["method_plan"][0].pop("evidence_requirements")
+
+    state = AnalysisSessionState.from_dict({
+        "session_id": "canonical-only",
+        "analysis_plan": compiled,
+    }, "canonical-only")
+
+    requirements = state.analysis_plan["analysis_requirements"]["step_1"]
+    assert [item["name"] for item in requirements] == ["effect_size", "sample_size"]
+    assert requirements[0]["status"] == "satisfied"
+    assert requirements[0]["evidence_ids"] == ["evidence_effect"]
+    assert state.analysis_plan["method_plan"][0]["evidence_requirements"] == [
+        "effect_size",
+        "sample_size",
+    ]
+
+
+def test_canonical_requirements_override_stale_compatibility_projection_on_load():
+    compiled = normalize_analysis_plan_contract({
+        "id": "plan_stale_projection",
+        "goal": "estimate effect",
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "estimate effect",
+            "node_type": "analysis",
+            "evidence_requirements": ["effect_size", "sample_size"],
+        }],
+    }, require_executable=False).plan
+    compiled["method_plan"][0]["evidence_requirements"] = [
+        "effect_size",
+        "sample_size",
+        "time_scope",
+    ]
+
+    state = AnalysisSessionState.from_dict({
+        "session_id": "stale-projection",
+        "analysis_plan": compiled,
+    }, "stale-projection")
+
+    names = [
+        item["name"]
+        for item in state.analysis_plan["analysis_requirements"]["step_1"]
+    ]
+    assert names == ["effect_size", "sample_size"]
+    assert state.analysis_plan["method_plan"][0]["evidence_requirements"] == names
+
+
+def test_executable_plan_rejects_deletion_from_canonical_and_compatibility_projection():
+    compiled = normalize_analysis_plan_contract({
+        "id": "plan_double_delete",
+        "goal": "estimate experiment effect",
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "estimate experiment effect",
+            "node_type": "analysis",
+            "required_capability": "analysis.experiment",
+            "combination_mode": "independent",
+            "dataset_inputs": ["orders"],
+            "expected_output": "effect estimate",
+            "evidence_requirements": ["effect_size", "sample_size"],
+        }],
+    }, require_executable=False).plan
+    compiled["analysis_requirements"]["step_1"] = [
+        item
+        for item in compiled["analysis_requirements"]["step_1"]
+        if item["name"] != "effect_size"
+    ]
+    compiled["method_plan"][0]["evidence_requirements"] = ["sample_size"]
+
+    result = normalize_analysis_plan_contract(compiled, require_executable=True)
+
+    assert result.ok is False
+    assert result.error_type == "missing_compiled_hard_requirement"
+    assert "req_step_1_effect_size" in result.details["missing_requirement_ids"]
+
+
+def test_legacy_saved_plan_accepts_unknown_requirement_only_at_load_boundary():
+    state = AnalysisSessionState.from_dict({
+        "session_id": "legacy-unknown",
+        "analysis_plan": {
+            "id": "plan_legacy_unknown",
+            "goal": "load old custom analysis",
+            "method_plan": [{
+                "step_id": "step_1",
+                "goal": "load old custom analysis",
+                "evidence_requirements": ["custom metric coverage"],
+            }],
+        },
+    }, "legacy-unknown")
+
+    requirement = state.analysis_plan["analysis_requirements"]["step_1"][0]
+    assert requirement["name"] == "custom_metric_coverage"
+    assert requirement["unmet_action"] == "disclose"
+    assert requirement["reason"] == (
+        "Compatibility requirement compiled from an unregistered saved input."
+    )

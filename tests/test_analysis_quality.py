@@ -565,7 +565,12 @@ class TestCausalInferenceAwareness:
                     "dataset_inputs": ["savings_card_orders"],
                     "combination_mode": "independent",
                     "expected_output": "带有局限性说明的省钱卡效果证据",
-                    "evidence_requirements": ["收益", "复购率", "付费频次", "局限性"],
+                    "evidence_requirements": [
+                        "revenue",
+                        "retention_rate",
+                        "frequency",
+                        "limitations",
+                    ],
                 },
             ],
             "visualization_strategy": "对比柱状图+留存曲线",
