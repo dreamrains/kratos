@@ -60,6 +60,32 @@ def env(tmp_path):
     task_manager._next_id_val = old_next_id
 
 
+def _approve_transformation(pending: dict, *, session_id: str) -> dict:
+    """Resolve and apply a transformation through its canonical receipt."""
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+    from data_agent.config import get_config
+    from data_agent.tools.data_clean import apply_confirmed_transformation
+
+    assert pending["status"] == "confirmation_required"
+    service = ConfirmationService(
+        get_config().sessions_resolved,
+        action_registry=build_action_registry(),
+    )
+    record = service.get(session_id, pending["confirmation_id"])
+    resolved = service.respond(
+        session_id,
+        record.confirmation_id,
+        "approve",
+        record.version,
+        f"approve_{record.confirmation_id}",
+    )
+    return apply_confirmed_transformation(
+        resolved.confirmation_id,
+        session_id=session_id,
+    )
+
+
 def _game_df(rows=200, seed=42):
     np.random.seed(seed)
     return pd.DataFrame({
@@ -263,6 +289,7 @@ class TestTopNEdge:
         assert "Error" not in r
 
     def test_real_data_top_channels(self, env):
+        _, ctx, _ = env
         source = TEST_DATA_DIR / "游戏互推.xlsx"
         if not source.exists():
             pytest.skip()
@@ -270,9 +297,10 @@ class TestTopNEdge:
         from data_agent.tools.data_clean import apply_type_conversion
         from data_agent.tools.eda import top_n
         load_data(str(source), name="cross")
-        conversion = json.loads(apply_type_conversion(
-            "cross", column="卖量收入", target_type="numeric", confirmed=True
+        pending = json.loads(apply_type_conversion(
+            "cross", column="卖量收入", target_type="numeric"
         ))
+        conversion = _approve_transformation(pending, session_id=ctx.session_id)
         assert conversion["status"] == "applied"
         r = top_n("cross", sort_by="卖量收入", n=5)
         assert "Error" not in r
@@ -593,6 +621,7 @@ class TestRealDataPipeline:
 
     def test_game_cross_promotion_analysis(self, env):
         """游戏互推数据完整分析流程。"""
+        _, ctx, _ = env
         if not (TEST_DATA_DIR / "游戏互推.xlsx").exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
@@ -603,9 +632,10 @@ class TestRealDataPipeline:
         load_data(str(TEST_DATA_DIR / "游戏互推.xlsx"), name="cross")
         df = workspace.get("cross")
         assert df.shape[0] == 1985
-        conversion = json.loads(apply_type_conversion(
-            "cross", column="卖量收入", target_type="numeric", confirmed=True
+        pending = json.loads(apply_type_conversion(
+            "cross", column="卖量收入", target_type="numeric"
         ))
+        conversion = _approve_transformation(pending, session_id=ctx.session_id)
         assert conversion["status"] == "applied"
 
         # Top 推广游戏
@@ -719,7 +749,8 @@ class TestAnalysisFlowTools:
                 "dataset_inputs": ["main"],
                 "combination_mode": "independent",
                 "expected_output": "ARPU 变化 EvidenceRecord",
-                "evidence_requirements": ["ARPU change", "sample size", "limitations"],
+                "evidence_requirements": ["metric_delta", "sample_size", "limitations"],
+                "required_claim_keys": ["arpu_change"],
             }],
             "visualization_strategy": "对比图",
         })
