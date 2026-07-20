@@ -177,7 +177,7 @@ def test_unknown_live_requirement_input_is_rejected():
         )
 
 
-def test_requirement_group_preserves_plan_step_id_while_id_uses_stable_slug():
+def test_requirement_group_preserves_plan_step_id_while_unsafe_id_uses_reserved_namespace():
     plan = _plan("sample_size")
     plan["method_plan"][0]["step_id"] = "Revenue Trend"
 
@@ -190,7 +190,8 @@ def test_requirement_group_preserves_plan_step_id_while_id_uses_stable_slug():
     )
 
     assert compiled[0]["step_id"] == "Revenue Trend"
-    assert compiled[0]["id"] == "req_revenue_trend_sample_size"
+    assert compiled[0]["id"].startswith("req_unsafe_")
+    assert compiled[0]["id"].endswith("_sample_size")
 
 
 def test_requirement_ids_are_collision_safe_for_distinct_step_ids_with_same_slug():
@@ -229,7 +230,97 @@ def test_requirement_ids_are_collision_safe_for_distinct_step_ids_with_same_slug
     ids = [item["id"] for item in first]
     assert first == second
     assert len(ids) == len(set(ids)) == 2
-    assert all(identifier.startswith("req_revenue_trend_") for identifier in ids)
+    assert all(identifier.startswith("req_unsafe_") for identifier in ids)
+
+
+def test_unsafe_requirement_id_is_stable_when_colliding_peer_is_added():
+    original = {
+        "id": "plan_original",
+        "goal": "analyze unicode step",
+        "method_plan": [{
+            "step_id": "é",
+            "goal": "analyze the first unicode step",
+            "evidence_requirements": ["sample_size"],
+        }],
+    }
+    evolved = {
+        **original,
+        "id": "plan_evolved",
+        "method_plan": [
+            *original["method_plan"],
+            {
+                "step_id": "É",
+                "goal": "analyze the case-distinct unicode step",
+                "evidence_requirements": ["sample_size"],
+            },
+        ],
+    }
+
+    original_id = compile_analysis_requirements(
+        plan=original,
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="analyze unicode step",
+    )[0]["id"]
+    evolved_id = next(
+        item["id"]
+        for item in compile_analysis_requirements(
+            plan=evolved,
+            route=None,
+            playbook=None,
+            dataset_contracts=[],
+            user_intent="analyze unicode steps",
+        )
+        if item["step_id"] == "é"
+    )
+
+    assert original_id == evolved_id
+    assert original_id.startswith("req_unsafe_")
+
+
+def test_requirement_ids_are_unique_for_adversarial_unicode_case_and_spacing_steps():
+    step_ids = [
+        "é",
+        "É",
+        "é 3 w6k",
+        "Revenue Trend",
+        "revenue trend",
+        "revenue  trend",
+        "step_1",
+        "step_unsafe_probe",
+    ]
+    plan = {
+        "id": "plan_adversarial_step_ids",
+        "goal": "analyze adversarial step identities",
+        "method_plan": [
+            {
+                "step_id": step_id,
+                "goal": f"analyze {step_id}",
+                "evidence_requirements": ["sample_size"],
+            }
+            for step_id in step_ids
+        ],
+    }
+
+    compiled = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="analyze adversarial step identities",
+    )
+
+    ids_by_step = {item["step_id"]: item["id"] for item in compiled}
+    assert set(ids_by_step) == set(step_ids)
+    assert len(set(ids_by_step.values())) == len(step_ids)
+    assert ids_by_step["step_1"] == "req_step_1_sample_size"
+    assert ids_by_step["step_unsafe_probe"] == "req_step_unsafe_probe_sample_size"
+    assert all(
+        identifier.startswith("req_unsafe_")
+        for step_id, identifier in ids_by_step.items()
+        if not step_id.startswith("step_")
+    )
 
 
 def test_satisfaction_requires_explicit_successful_assumption_checks():

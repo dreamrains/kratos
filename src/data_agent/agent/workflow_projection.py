@@ -61,6 +61,20 @@ def _find_step_duplicate(
     return None
 
 
+def _analysis_requirement_ids_for_step(plan: dict[str, Any], step_id: str) -> list[str]:
+    grouped = plan.get("analysis_requirements")
+    if not isinstance(grouped, dict):
+        return []
+    group = grouped.get(step_id)
+    if not isinstance(group, list):
+        return []
+    return [
+        _text(requirement.get("id"))
+        for requirement in group
+        if isinstance(requirement, dict) and _text(requirement.get("id"))
+    ]
+
+
 def project_plan_to_workflow_tasks(
     manager: TaskManager,
     plan: dict[str, Any],
@@ -180,6 +194,8 @@ def project_plan_to_workflow_tasks(
                 expected_output=_text(step.get("expected_output")),
                 required_capability=_text(step.get("required_capability")),
                 evidence_requirements=list(step.get("evidence_requirements") or []),
+                required_claim_keys=list(step.get("required_claim_keys") or []),
+                analysis_requirement_ids=_analysis_requirement_ids_for_step(validation.plan, step_id),
                 confirmation_policy=step.get("confirmation_policy") or {},
             )
             duplicate = updated or duplicate
@@ -205,6 +221,8 @@ def project_plan_to_workflow_tasks(
             expected_output=_text(step.get("expected_output")),
             required_capability=_text(step.get("required_capability")),
             evidence_requirements=list(step.get("evidence_requirements") or []),
+            required_claim_keys=list(step.get("required_claim_keys") or []),
+            analysis_requirement_ids=_analysis_requirement_ids_for_step(validation.plan, step_id),
             confirmation_policy=step.get("confirmation_policy") or {},
             plan_id=plan_record["id"],
             plan_version=plan_record.get("version", 1),

@@ -24,6 +24,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
                 "evidence_requirements": ["metric", "sample_size"],
+                "required_claim_keys": ["impressions", "click_rate"],
             },
             {
                 "step_id": "step_synthesis",
@@ -32,6 +33,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "combination_mode": "synthesis",
                 "expected_output": "Cross-file synthesis",
                 "evidence_requirements": ["limitations"],
+                "required_claim_keys": ["comparative_summary"],
                 "required_evidence_step_ids": ["step_banner"],
             },
         ],
@@ -47,6 +49,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
     assert result.plan["method_plan"][0]["plan_id"] == result.plan["id"]
     assert result.plan["method_plan"][0]["dataset_contract_ids"] == ["contract_banner"]
     assert result.plan["method_plan"][0]["combination_mode"] == "independent"
+    assert result.plan["method_plan"][0]["required_claim_keys"] == ["impressions", "click_rate"]
 
 
 def test_unversioned_plan_is_normalized_before_execution_validation():
@@ -81,6 +84,7 @@ def test_rejects_join_hidden_as_executable_stage3c0b_mode():
                 "combination_mode": "join",
                 "expected_output": "Joined table",
                 "evidence_requirements": ["metric"],
+                "required_claim_keys": ["joined_rows"],
             }
         ],
     }
@@ -162,6 +166,7 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
                     "combination_mode": "synthesis",
                     "expected_output": "Synthesis",
                     "evidence_requirements": ["limitations"],
+                    "required_claim_keys": ["summary"],
                     "required_evidence_step_ids": [f"step_{i}" for i in range(9)],
                 }
             ],
@@ -215,6 +220,7 @@ def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
                 "evidence_requirements": ["metric"],
+                "required_claim_keys": ["click_rate"],
             }
         ],
         "visualization_strategy": "none",

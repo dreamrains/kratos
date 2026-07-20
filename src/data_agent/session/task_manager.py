@@ -37,6 +37,10 @@ WORKFLOW_FIELDS = {
     "required_capability": "",
     "evidence_requirements": [],
     "satisfied_evidence_requirements": [],
+    "required_claim_keys": None,
+    "satisfied_claim_keys": [],
+    "analysis_requirement_ids": [],
+    "satisfied_analysis_requirement_ids": [],
     "confirmation_policy": {},
 }
 
@@ -140,6 +144,7 @@ class TaskManager:
             "blocks": [],
             "owner": "",
             "session_id": session_id,
+            "required_claim_keys": [],
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         for key in WORKFLOW_FIELDS:
@@ -535,6 +540,21 @@ class TaskManager:
     def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
         return str(evidence.get("evidence_requirement") or "")
 
+    def _stage3c0b_required_claim_keys(self, task: dict) -> list[str] | None:
+        value = task.get("required_claim_keys")
+        if not isinstance(value, list):
+            return None
+        return [str(item) for item in value if str(item)]
+
+    def _stage3c0b_analysis_requirement_ids(self, task: dict) -> list[str]:
+        return [str(item) for item in task.get("analysis_requirement_ids") or [] if str(item)]
+
+    def _stage3c0b_evidence_requirement_ids(self, evidence: dict) -> list[str]:
+        value = evidence.get("requirement_ids")
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if str(item)]
+
     def _stage3c0b_task_matches_evidence(self, task: dict, evidence: dict) -> bool:
         task_plan_id = str(task.get("analysis_plan_id") or "")
         if task_plan_id and str(evidence.get("plan_id") or "") != task_plan_id:
@@ -555,10 +575,22 @@ class TaskManager:
             if not set(task_contract_ids).intersection(evidence_contract_ids):
                 return False
 
-        task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-        if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
-            return False
+        required_claim_keys = self._stage3c0b_required_claim_keys(task)
+        if required_claim_keys is not None:
+            claim_key = str(evidence.get("claim_key") or "")
+            if not required_claim_keys or claim_key not in required_claim_keys:
+                return False
+            analysis_requirement_ids = self._stage3c0b_analysis_requirement_ids(task)
+            if analysis_requirement_ids:
+                evidence_requirement_ids = self._stage3c0b_evidence_requirement_ids(evidence)
+                if not set(analysis_requirement_ids).intersection(evidence_requirement_ids):
+                    return False
+        else:
+            # Read-only compatibility for tasks persisted before required_claim_keys.
+            task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+            evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+            if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
+                return False
 
         return True
 
@@ -571,20 +603,50 @@ class TaskManager:
         if evidence_id and evidence_id not in evidence_ids:
             evidence_ids.append(evidence_id)
 
-        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-        satisfied = list(task.get("satisfied_evidence_requirements") or [])
-        if evidence_requirement and evidence_requirement not in satisfied:
-            satisfied.append(evidence_requirement)
-
-        required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-        all_satisfied = bool(required) and all(item in satisfied for item in required)
+        required_claim_keys = self._stage3c0b_required_claim_keys(task)
+        if required_claim_keys is not None:
+            claim_key = str(evidence.get("claim_key") or "")
+            satisfied_claim_keys = list(task.get("satisfied_claim_keys") or [])
+            if claim_key and claim_key not in satisfied_claim_keys:
+                satisfied_claim_keys.append(claim_key)
+            analysis_requirement_ids = self._stage3c0b_analysis_requirement_ids(task)
+            evidence_requirement_ids = self._stage3c0b_evidence_requirement_ids(evidence)
+            satisfied_analysis_requirement_ids = list(
+                task.get("satisfied_analysis_requirement_ids") or []
+            )
+            for requirement_id in analysis_requirement_ids:
+                if (
+                    requirement_id in evidence_requirement_ids
+                    and requirement_id not in satisfied_analysis_requirement_ids
+                ):
+                    satisfied_analysis_requirement_ids.append(requirement_id)
+            all_satisfied = (
+                bool(required_claim_keys)
+                and all(item in satisfied_claim_keys for item in required_claim_keys)
+                and all(
+                    item in satisfied_analysis_requirement_ids
+                    for item in analysis_requirement_ids
+                )
+            )
+            satisfaction_fields = {
+                "satisfied_claim_keys": satisfied_claim_keys,
+                "satisfied_analysis_requirement_ids": satisfied_analysis_requirement_ids,
+            }
+        else:
+            evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+            satisfied = list(task.get("satisfied_evidence_requirements") or [])
+            if evidence_requirement and evidence_requirement not in satisfied:
+                satisfied.append(evidence_requirement)
+            required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+            all_satisfied = bool(required) and all(item in satisfied for item in required)
+            satisfaction_fields = {"satisfied_evidence_requirements": satisfied}
         was_completed = task.get("status") == "completed"
 
         update_fields = {
             "evidence_ids": evidence_ids,
             "result_summary": evidence.get("result_summary", "") or evidence.get("claim", ""),
             "confidence": evidence.get("confidence", ""),
-            "satisfied_evidence_requirements": satisfied,
+            **satisfaction_fields,
         }
         if all_satisfied:
             self.update(

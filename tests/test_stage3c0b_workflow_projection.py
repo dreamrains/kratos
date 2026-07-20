@@ -18,7 +18,8 @@ def _validated_plan():
                     "dataset_inputs": ["banner"],
                     "combination_mode": "independent",
                     "expected_output": "Banner evidence",
-                    "evidence_requirements": ["click_rate"],
+                    "evidence_requirements": ["metric", "sample_size"],
+                    "required_claim_keys": ["impressions", "click_rate"],
                 },
                 {
                     "step_id": "step_synthesis",
@@ -26,7 +27,8 @@ def _validated_plan():
                     "dataset_inputs": [],
                     "combination_mode": "synthesis",
                     "expected_output": "Synthesis",
-                    "evidence_requirements": ["summary"],
+                    "evidence_requirements": ["limitations"],
+                    "required_claim_keys": ["comparative_summary"],
                     "required_evidence_step_ids": ["step_banner"],
                 },
             ],
@@ -56,7 +58,117 @@ def test_projector_carries_stage3c0b_bindings(tmp_path):
     assert banner["dataset_inputs"] == ["banner"]
     assert banner["dataset_contract_ids"] == ["contract_banner"]
     assert banner["combination_mode"] == "independent"
-    assert banner["evidence_requirements"] == ["click_rate"]
+    assert banner["evidence_requirements"] == ["metric", "sample_size"]
+    assert banner["required_claim_keys"] == ["impressions", "click_rate"]
+    assert banner["analysis_requirement_ids"] == [
+        "req_step_banner_metric",
+        "req_step_banner_sample_size",
+    ]
+
+
+def test_projected_task_requires_each_exact_claim_key_before_completion(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    banner = manager.get(projected["task_ids"][0])
+    base_evidence = {
+        "plan_id": plan["id"],
+        "step_id": "step_banner",
+        "dataset_contract_id": "contract_banner",
+        "requirement_ids": list(banner["analysis_requirement_ids"]),
+        "result_summary": "business output calculated",
+    }
+
+    first = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={**base_evidence, "id": "ev_impressions", "claim_key": "impressions"},
+    )
+    masquerading = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={
+            **base_evidence,
+            "id": "ev_wrong_claim",
+            "claim_key": "impressions",
+            "evidence_requirement": "click_rate",
+        },
+    )
+
+    assert first == []
+    assert masquerading == []
+    assert manager.get(banner["id"])["status"] == "pending"
+    assert manager.get(banner["id"])["satisfied_claim_keys"] == ["impressions"]
+
+    completed = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={**base_evidence, "id": "ev_click_rate", "claim_key": "click_rate"},
+    )
+
+    assert completed == [banner["id"]]
+    assert manager.get(banner["id"])["satisfied_claim_keys"] == ["impressions", "click_rate"]
+
+
+def test_projected_task_requires_canonical_requirement_ids_when_present(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    banner = manager.get(projected["task_ids"][0])
+    evidence = {
+        "plan_id": plan["id"],
+        "step_id": "step_banner",
+        "dataset_contract_id": "contract_banner",
+        "claim_key": "impressions",
+        "result_summary": "impressions calculated",
+    }
+
+    missing = manager.complete_matching_tasks_from_evidence(session_id="s1", evidence=evidence)
+    wrong = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence={**evidence, "requirement_ids": ["req_step_banner_limitations"]},
+    )
+
+    assert missing == []
+    assert wrong == []
+    assert manager.get(banner["id"])["evidence_ids"] == []
+
+
+def test_projector_uses_requirement_ids_compiled_during_its_validation(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    raw_plan = {
+        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
+        "id": "plan_raw_projection",
+        "goal": "Analyze banner metrics.",
+        "method_plan": [{
+            "step_id": "step_banner",
+            "goal": "Analyze banner metrics.",
+            "dataset_inputs": ["banner"],
+            "dataset_contract_ids": ["contract_banner"],
+            "combination_mode": "independent",
+            "expected_output": "Banner evidence",
+            "evidence_requirements": ["metric"],
+            "required_claim_keys": ["click_rate"],
+        }],
+    }
+
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        raw_plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    task = manager.get(projected["task_ids"][0])
+    assert task["dataset_contract_ids"] == ["contract_banner"]
+    assert task["analysis_requirement_ids"] == ["req_step_banner_metric"]
 
 
 def test_projector_distinguishes_same_subject_steps_by_step_id(tmp_path):

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import base64
+import hashlib
+import re
 from typing import Any
 
 
@@ -20,6 +21,8 @@ ALLOWED_REQUIREMENT_CATEGORIES = frozenset({
 ALLOWED_REQUIREMENT_NECESSITY = frozenset({"required", "conditional", "not_applicable"})
 ALLOWED_REQUIREMENT_STATUSES = frozenset({"pending", "satisfied", "unmet", "not_applicable"})
 ALLOWED_UNMET_ACTIONS = frozenset({"block_analysis", "block_claim", "downgrade_claim", "disclose"})
+
+_SAFE_CANONICAL_STEP_ID = re.compile(r"step_[a-z0-9]+(?:_[a-z0-9]+)*\Z")
 
 _ROUTE_REQUIREMENT_INPUTS = {
     "trend": ("time_scope", "sample_size", "trend_statistics", "limitations"),
@@ -180,6 +183,19 @@ def _text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.split())
+
+
+def _step_id_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _step_id_component(step_id: str) -> str:
+    if _SAFE_CANONICAL_STEP_ID.fullmatch(step_id):
+        return step_id
+    digest = hashlib.sha256(step_id.encode("utf-8")).hexdigest()
+    return f"unsafe_{digest}"
 
 
 def _name(value: Any) -> str:
@@ -394,7 +410,7 @@ def compile_analysis_requirements(
         if not isinstance(provided, dict):
             raise ValueError("AnalysisPlan analysis_requirements must be grouped by step_id.")
         for raw_step_id, group in provided.items():
-            step_id = _text(raw_step_id)
+            step_id = _step_id_text(raw_step_id)
             if not step_id or not isinstance(group, list):
                 raise ValueError("AnalysisPlan analysis_requirements must be grouped by step_id.")
             for requirement in group:
@@ -410,7 +426,7 @@ def compile_analysis_requirements(
     for index, raw_step in enumerate(method_plan, 1):
         if not isinstance(raw_step, dict):
             continue
-        step_id = _text(raw_step.get("step_id")) or f"step_{index}"
+        step_id = _step_id_text(raw_step.get("step_id")) or f"step_{index}"
         steps.append((step_id, raw_step))
     if not steps:
         return []
@@ -453,21 +469,9 @@ def compile_analysis_requirements(
         step_id = _step_for_external_input(name, steps, inputs_by_step)
         inputs_by_step[step_id].setdefault(name, set()).add(origin)
 
-    slug_counts: dict[str, int] = {}
-    for step_id, _ in steps:
-        step_slug = _name(step_id)
-        slug_counts[step_slug] = slug_counts.get(step_slug, 0) + 1
-
     compiled: list[dict[str, Any]] = []
     for step_id, _ in steps:
-        step_slug = _name(step_id)
-        if slug_counts[step_slug] > 1:
-            encoded_step_id = base64.urlsafe_b64encode(
-                step_id.encode("utf-8")
-            ).decode("ascii").rstrip("=")
-            step_id_component = f"{step_slug}_{len(encoded_step_id)}_{encoded_step_id}"
-        else:
-            step_id_component = step_slug
+        step_id_component = _step_id_component(step_id)
         names = sorted(inputs_by_step[step_id])
         for name in names:
             definition = _REQUIREMENT_DEFINITIONS.get(name)

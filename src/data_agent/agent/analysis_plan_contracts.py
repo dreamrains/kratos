@@ -47,6 +47,25 @@ def _text_list(value: Any) -> list[str]:
     return [_text(item) for item in value if _text(item)]
 
 
+def _step_id_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _required_claim_keys(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("AnalysisPlan required_claim_keys must be a list of strings.")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _text(item):
+            raise ValueError("AnalysisPlan required_claim_keys must be a list of non-empty strings.")
+        claim_key = _text(item)
+        if claim_key not in result:
+            result.append(claim_key)
+    return result
+
+
 def analysis_plan_id_from_mapping(value: Mapping[str, Any] | Any) -> str:
     """Read the canonical plan id with one legacy persisted-field fallback."""
     if not isinstance(value, Mapping):
@@ -116,6 +135,15 @@ def normalize_analysis_plan_contract(
                 compatibility_steps.append(raw_step)
                 continue
             step = dict(raw_step)
+            if "required_claim_keys" in step:
+                try:
+                    step["required_claim_keys"] = _required_claim_keys(step["required_claim_keys"])
+                except ValueError as exc:
+                    return _error(
+                        "invalid_required_claim_keys",
+                        str(exc),
+                        step_id=_step_id_text(step.get("step_id")) or f"step_{len(compatibility_steps) + 1}",
+                    )
             if isinstance(step.get("evidence_requirements"), list) or isinstance(step.get("expected_evidence"), list):
                 step["evidence_requirements"] = requirement_ids_for_route(step)
                 step.pop("expected_evidence", None)
@@ -191,7 +219,7 @@ def normalize_analysis_plan_contract(
             projected_steps.append(raw_step)
             continue
         step = dict(raw_step)
-        step_id = _text(step.get("step_id")) or f"step_{index}"
+        step_id = _step_id_text(step.get("step_id")) or f"step_{index}"
         if step_id in grouped_requirements or "evidence_requirements" in step:
             step["evidence_requirements"] = [
                 requirement["name"]
@@ -237,7 +265,7 @@ def _validate_executable_plan(
         if not isinstance(raw_step, dict):
             return _error("invalid_step", f"method_plan step {index} must be an object.")
         step = dict(raw_step)
-        step_id = _text(step.get("step_id")) or f"step_{index}"
+        step_id = _step_id_text(step.get("step_id")) or f"step_{index}"
         if step_id in seen_step_ids:
             return _error("duplicate_step_id", f"Duplicate step_id: {step_id}", step_id=step_id)
         seen_step_ids.add(step_id)
@@ -298,6 +326,15 @@ def _validate_executable_plan(
         step["dataset_inputs"] = dataset_inputs
         step["dataset_contract_ids"] = resolved_contract_ids
         step["required_evidence_step_ids"] = required_evidence
+        if "required_claim_keys" in step:
+            try:
+                step["required_claim_keys"] = _required_claim_keys(step["required_claim_keys"])
+            except ValueError as exc:
+                return _error(
+                    "invalid_required_claim_keys",
+                    str(exc),
+                    step_id=step_id,
+                )
         normalized_steps.append(step)
 
     normalized["method_plan"] = normalized_steps

@@ -49,6 +49,20 @@ def _canonical_evidence(
     return record
 
 
+def _persist_as_legacy_task(mgr: TaskManager, task: dict) -> dict:
+    path = mgr._path(task["id"])
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    for field in (
+        "required_claim_keys",
+        "satisfied_claim_keys",
+        "analysis_requirement_ids",
+        "satisfied_analysis_requirement_ids",
+    ):
+        stored.pop(field, None)
+    path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
+    return mgr.get(task["id"])
+
+
 def test_evidence_id_for_slugs_stable_id():
     from data_agent.agent.evidence_contracts import evidence_id_for
 
@@ -107,6 +121,7 @@ def test_whitespace_identity_fields_validate_normalize_and_complete_scoped_task(
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate"],
     )
+    task = _persist_as_legacy_task(mgr, task)
 
     completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -253,6 +268,7 @@ def test_task_manager_requires_all_evidence_requirements_before_completion(tmp_p
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate", "conversion_rate"],
     )
+    task = _persist_as_legacy_task(mgr, task)
 
     completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -279,6 +295,7 @@ def test_task_manager_completes_when_all_requirements_have_evidence_and_stores_i
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate", "conversion_rate"],
     )
+    task = _persist_as_legacy_task(mgr, task)
 
     first_completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -314,6 +331,7 @@ def test_scoped_task_ignores_claim_key_without_evidence_requirement(tmp_path):
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate"],
     )
+    task = _persist_as_legacy_task(mgr, task)
     evidence = _canonical_evidence(evidence_requirement="click_rate")
     evidence.pop("evidence_requirement")
 
@@ -322,6 +340,32 @@ def test_scoped_task_ignores_claim_key_without_evidence_requirement(tmp_path):
     assert completed == []
     updated = mgr.get(task["id"])
     assert updated["status"] == "pending"
+    assert updated["evidence_ids"] == []
+    assert updated["satisfied_evidence_requirements"] == []
+
+
+def test_new_scoped_task_does_not_write_legacy_evidence_requirement_authority(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
+    task = mgr.create(
+        "Analyze banner metrics",
+        session_id="s1",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="plan_abc",
+        step_id="step_banner",
+        dataset_contract_ids=["contract_banner"],
+        evidence_requirements=["click_rate"],
+    )
+
+    completed = mgr.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        evidence=_canonical_evidence(evidence_requirement="click_rate"),
+    )
+
+    assert completed == []
+    updated = mgr.get(task["id"])
+    assert updated["required_claim_keys"] == []
     assert updated["evidence_ids"] == []
     assert updated["satisfied_evidence_requirements"] == []
 

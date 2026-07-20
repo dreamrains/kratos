@@ -37,6 +37,7 @@ def _synthesis_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "synthesis",
                 "expected_output": "Evidence-backed answer with limitations.",
                 "evidence_requirements": ["limitations"],
+                "required_claim_keys": ["answer_coverage"],
             },
         ],
         "visualization_strategy": [],
@@ -56,6 +57,7 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
                 "evidence_requirements": ["revenue"],
+                "required_claim_keys": ["revenue_per_user"],
             },
         ],
         "visualization_strategy": [],
@@ -75,6 +77,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
                 "evidence_requirements": ["revenue"],
+                "required_claim_keys": ["revenue_per_user"],
             },
             {
                 "step_id": "step_retention_d7",
@@ -83,6 +86,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for day7_retention.",
                 "evidence_requirements": ["retention_rate"],
+                "required_claim_keys": ["day7_retention"],
             },
             {
                 "step_id": "step_synthesis",
@@ -92,6 +96,7 @@ def _two_claim_replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "required_evidence_step_ids": ["step_orders_revenue", "step_retention_d7"],
                 "expected_output": "Evidence-backed answer with limitations.",
                 "evidence_requirements": ["limitations"],
+                "required_claim_keys": ["answer_coverage"],
             },
         ],
         "visualization_strategy": [],
@@ -105,12 +110,14 @@ def _evidence(
     dataset: str = "orders",
     contract_id: str = "contract_orders",
     requirement: str = "revenue",
+    claim_key: str = "revenue_per_user",
+    requirement_ids: list[str] | None = None,
 ) -> dict:
     return {
         "plan_id": plan_id,
         "step_id": step_id,
-        "claim_key": requirement,
-        "claim": f"{requirement} is supported by current data.",
+        "claim_key": claim_key,
+        "claim": f"{claim_key} is supported by current data.",
         "dataset": dataset,
         "dataset_contract_id": contract_id,
         "method": "bounded aggregate calculation",
@@ -120,6 +127,7 @@ def _evidence(
         "limitations": ["descriptive evidence only"],
         "confidence": "high",
         "evidence_requirement": requirement,
+        "requirement_ids": requirement_ids or [f"req_{step_id}_{requirement}"],
         "measurements": [
             {
                 "metric": requirement,
@@ -228,6 +236,7 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
         )
 
     assert evidence_result["completed_task_ids"] == [independent["id"]]
+    assert state.evidence_records[0]["claim_key"] == "revenue_per_user"
     assert state.evidence_records[0]["evidence_requirement"] == "revenue"
     completed = manager.get(independent["id"])
     assert completed["status"] == "completed"

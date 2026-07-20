@@ -571,6 +571,7 @@ class TestCausalInferenceAwareness:
                         "frequency",
                         "limitations",
                     ],
+                    "required_claim_keys": ["收益", "复购率", "付费频次"],
                 },
             ],
             "visualization_strategy": "对比柱状图+留存曲线",

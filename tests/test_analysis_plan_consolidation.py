@@ -26,6 +26,51 @@ def test_legacy_contract_version_normalizes_to_product_version():
     assert result.plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
 
 
+def test_required_claim_keys_are_typed_exact_and_survive_state_reload():
+    plan = {
+        "id": "plan_claim_keys",
+        "goal": "calculate exact business outputs",
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "calculate revenue and retention",
+            "evidence_requirements": ["metric", "sample_size"],
+            "required_claim_keys": ["revenue_per_user", "day7_retention"],
+        }],
+    }
+
+    normalized = normalize_analysis_plan_contract(plan, require_executable=False)
+    assert normalized.ok is True
+    assert normalized.plan["method_plan"][0]["required_claim_keys"] == [
+        "revenue_per_user",
+        "day7_retention",
+    ]
+
+    reloaded = AnalysisSessionState.from_dict({
+        "session_id": "claim-key-reload",
+        "analysis_plan": normalized.plan,
+    }, "claim-key-reload")
+    assert reloaded.analysis_plan["method_plan"][0]["required_claim_keys"] == [
+        "revenue_per_user",
+        "day7_retention",
+    ]
+
+
+def test_required_claim_keys_reject_non_string_values():
+    result = normalize_analysis_plan_contract({
+        "id": "plan_invalid_claim_keys",
+        "goal": "calculate exact business outputs",
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "calculate revenue",
+            "evidence_requirements": ["metric"],
+            "required_claim_keys": ["revenue_per_user", 7],
+        }],
+    }, require_executable=False)
+
+    assert result.ok is False
+    assert result.error_type == "invalid_required_claim_keys"
+
+
 def test_legacy_analysis_spec_loads_into_single_plan_field():
     state = AnalysisSessionState.from_dict({
         "session_id": "legacy",
