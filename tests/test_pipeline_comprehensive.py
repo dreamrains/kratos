@@ -701,7 +701,7 @@ class TestRealDataPipeline:
 class TestAnalysisFlowTools:
     """analysis_flow 工具链测试。"""
 
-    def test_full_artifact_pipeline(self, env):
+    def test_full_artifact_pipeline(self, env, monkeypatch):
         """完整产物流水线：requirement → spec → plan → evidence。"""
         from data_agent.tools.analysis_flow import (
             record_data_requirement, record_analysis_spec,
@@ -734,7 +734,12 @@ class TestAnalysisFlowTools:
         assert "saved" in r2 or "error" not in r2.lower()
 
         # 3. Plan
-        _, ctx, _ = env
+        ws, ctx, _ = env
+        from data_agent.agent.data_lineage import frame_fingerprint
+
+        main = pd.DataFrame({"period": ["before", "after"], "arpu": [10.0, 11.0]})
+        raw = ws.register_raw_snapshot("main", main, frame_fingerprint(main))
+        ws.promote_analysis_copy("main", main, raw["dataset_id"], {"operation": "load_fixture"})
         ctx.analysis_state.dataset_contracts.append({
             "id": "duc_main",
             "dataset": "main",
@@ -756,23 +761,69 @@ class TestAnalysisFlowTools:
         })
         r3 = record_analysis_plan(plan)
         assert "saved" in r3 or "error" not in r3.lower()
-        plan_id = json.loads(r3)["analysis_plan_id"]
+        recorded_plan = json.loads(r3)
+        plan_id = recorded_plan["analysis_plan_id"]
+        workflow_task_id = recorded_plan["workflow"]["task_ids"][0]
+
+        from data_agent.agent.execution_control import ToolExecutionBudget, TurnExecutionState
+        from data_agent.agent.loop import AgentLoop
+        from data_agent.llm.client import ToolCall
+        from data_agent.session.task_manager import task_manager
+        from data_agent.tools.registry import ToolCapability, ToolDefinition, ToolResult, registry
+
+        task_manager.update(workflow_task_id, status="in_progress")
+        ctx.turn_state = TurnExecutionState(ToolExecutionBudget(max_tool_calls=5))
+        ctx.turn_state.turn_id = "turn_pipeline_artifact"
+        definition = ToolDefinition(
+            name="pipeline_arpu_delta",
+            description="Return a structured ARPU delta for the pipeline fixture.",
+            func=lambda name: ToolResult(
+                summary="ARPU increased by 10%.",
+                data={
+                    "effective_sample_size": {"total": 63},
+                    "effect_estimate": {"value": 0.1, "unit": "ratio", "metric": "metric_delta"},
+                },
+            ),
+            parameters={"type": "object", "properties": {"name": {"type": "string"}}},
+            capability=ToolCapability(
+                "analysis.period_compare",
+                category="analysis",
+                evidence_fields=["effective_sample_size", "effect_estimate"],
+            ),
+        )
+        monkeypatch.setitem(registry._tools, definition.name, definition)
+        monkeypatch.setitem(registry._capabilities, definition.name, definition.capability)
+        loop = AgentLoop(client=object(), session_id=ctx.session_id)
+        loop.context = ctx
+        call = ToolCall("call_pipeline_arpu", definition.name, {"name": "main"})
+        assert loop._execute_single_tool(
+            call,
+            [call],
+            0,
+            _scope_guard=lambda *_args: "",
+        ) is None
 
         # 4. Evidence (with auto-limitations)
         evidence = json.dumps({
+            "contract_version": "evidence_record.v2",
             "plan_id": plan_id,
             "step_id": "step_arpu",
             "claim_key": "arpu_change",
-            "claim": "省钱卡使用户付费增加10%",
+            "claim": "省钱卡用户付费比前期高10%",
             "dataset": "main",
             "dataset_contract_id": "duc_main",
             "method": "compare_periods before_after",
-            "tool_calls": ["compare_periods"],
+            "tool_calls": ["pipeline_arpu_delta"],
+            "source_tool_call_ids": ["call_pipeline_arpu"],
+            "requirement_ids": [
+                item["id"]
+                for item in ctx.analysis_state.analysis_plan["analysis_requirements"]["step_arpu"]
+            ],
             "result_summary": "ARPU变化+10%",
             "limitations": ["仅对比30天"],
             "confidence": "medium",
             "sample_size": 63,
-            "evidence_requirement": "ARPU change with sample and limitations",
+            "evidence_requirement": "metric_delta",
             "measurements": [{
                 "metric": "ARPU change",
                 "definition": "post-period ARPU versus pre-period ARPU",
@@ -785,10 +836,26 @@ class TestAnalysisFlowTools:
                 "denominator": "eligible savings-card users",
                 "limitations": ["no comparable control group"],
             }],
+            "statistical_support": {
+                "effective_sample_size": {"total": 63},
+                "effect_estimate": {"value": 0.1, "unit": "ratio", "metric": "metric_delta"},
+            },
         })
         r4 = record_evidence_record(evidence)
         parsed = json.loads(r4)
         assert "saved" in str(parsed)
+        assert parsed.get("completed_task_ids") == [workflow_task_id], {
+            "result": parsed,
+            "task": task_manager.get(workflow_task_id),
+            "evidence": ctx.analysis_state.evidence_records[-1],
+        }
+        completed_task = task_manager.get(workflow_task_id)
+        assert completed_task["status"] == "completed"
+        assert completed_task["satisfied_claim_keys"] == ["arpu_change"]
+        assert set(completed_task["satisfied_analysis_requirement_ids"]) == {
+            item["id"]
+            for item in ctx.analysis_state.analysis_plan["analysis_requirements"]["step_arpu"]
+        }
         # 应自动生成"无对照组"局限性
         auto_lim = parsed.get("auto_generated_limitations", [])
         assert any("对照" in l for l in auto_lim), f"应有自动局限性: {auto_lim}"

@@ -220,3 +220,58 @@ def test_risky_cleaning_decision_downgrades_related_claim():
     assert check["status"] == "downgraded"
     assert check["strength"] == "likely"
     assert any("cleaning decision" in issue.lower() for issue in check["issues"])
+
+
+def test_traceable_hash_does_not_confirm_high_confidence_inference():
+    report = verify_analysis_claims(
+        claims=["Treatment significantly increased revenue"],
+        evidence_records=[_complete_evidence(
+            claim="Treatment significantly increased revenue",
+            method="welch t-test",
+            confidence="high",
+            verification_level="traceable",
+            provenance_status="bound",
+        )],
+        route_proposals=[],
+        cleaning_logs=[],
+    )
+
+    assert report["overall_status"] == "pass_with_downgrades"
+    assert report["claim_checks"][0]["strength"] == "likely"
+    assert any("traceable" in issue for issue in report["claim_checks"][0]["issues"])
+
+
+def test_verifier_rejects_computation_ref_from_another_session(tmp_path):
+    from data_agent.agent.evidence_contracts import persist_computation_output
+
+    ref = persist_computation_output(
+        sessions_root=tmp_path / "sessions",
+        session_id="s1",
+        turn_id="turn_1",
+        plan_id="plan_1",
+        step_id="step_1",
+        tool_call_id="call_1",
+        tool_name="test_tool",
+        arguments={},
+        output={"summary": "ok"},
+        dataset_versions=[],
+        success=True,
+    )
+    evidence = _complete_evidence(
+        confidence="high",
+        computation_refs=[ref],
+        verification_level="structured_checked",
+    )
+
+    report = verify_analysis_claims(
+        claims=["Revenue increased 12% in May"],
+        evidence_records=[evidence],
+        route_proposals=[],
+        cleaning_logs=[],
+        sessions_root=tmp_path / "sessions",
+        current_session_id="s2",
+    )
+
+    assert report["overall_status"] == "fail"
+    assert report["claim_checks"][0]["strength"] == "unsupported"
+    assert any("another session" in issue for issue in report["claim_checks"][0]["issues"])

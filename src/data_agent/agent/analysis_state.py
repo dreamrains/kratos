@@ -165,6 +165,7 @@ class AnalysisSessionState:
     file_relationships: list[dict[str, Any]] = field(default_factory=list)
     active_bundle_id: str = ""
     analysis_plan: dict[str, Any] | None = None
+    computation_refs: list[dict[str, Any]] = field(default_factory=list)
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
@@ -206,6 +207,15 @@ class AnalysisSessionState:
             ),
         )
         analysis_plan = plan_result.plan if plan_result.ok else None
+        evidence_records = []
+        for raw_record in data.get("evidence_records") or []:
+            if not isinstance(raw_record, dict):
+                continue
+            record = dict(raw_record)
+            if record.get("contract_version") != "evidence_record.v2":
+                record["provenance_status"] = "legacy_unbound"
+                record["verification_level"] = "legacy_unbound"
+            evidence_records.append(record)
         return cls(
             session_id=data.get("session_id") or session_id,
             project_name=data.get("project_name"),
@@ -218,7 +228,8 @@ class AnalysisSessionState:
             file_relationships=list(data.get("file_relationships") or []),
             active_bundle_id=data.get("active_bundle_id") or "",
             analysis_plan=analysis_plan,
-            evidence_records=list(data.get("evidence_records") or []),
+            computation_refs=_dict_list_or_empty(data.get("computation_refs")),
+            evidence_records=evidence_records,
             insight_records=list(data.get("insight_records") or []),
             dataset_contracts=dataset_contracts,
             data_understanding_bundles=_dict_list_or_empty(data.get("data_understanding_bundles")),
@@ -247,6 +258,7 @@ class AnalysisSessionState:
             "file_relationships": self.file_relationships,
             "active_bundle_id": self.active_bundle_id,
             "analysis_plan": self.analysis_plan,
+            "computation_refs": self.computation_refs,
             "evidence_records": self.evidence_records,
             "insight_records": self.insight_records,
             "dataset_contracts": self.dataset_contracts,
@@ -363,6 +375,21 @@ class AnalysisSessionState:
         item.setdefault("created_at", _now())
         self.evidence_records.append(item)
         self.stage = "execute"
+        return item
+
+    def upsert_computation_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
+        """Keep one compact, server-produced reference per turn/tool call."""
+        item = dict(ref)
+        identity = (str(item.get("turn_id") or ""), str(item.get("tool_call_id") or ""))
+        for index, existing in enumerate(self.computation_refs):
+            existing_identity = (
+                str(existing.get("turn_id") or ""),
+                str(existing.get("tool_call_id") or ""),
+            )
+            if existing_identity == identity:
+                self.computation_refs[index] = item
+                return item
+        self.computation_refs.append(item)
         return item
 
     def upsert_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -767,6 +794,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         ),
         f"- data_requirements: {len(state.data_requirements)}",
         f"- has_analysis_plan: {bool(state.analysis_plan)}",
+        f"- computation_refs: {len(state.computation_refs)}",
         f"- evidence_records: {len(state.evidence_records)}",
         f"- insight_records: {len(state.insight_records)}",
         f"- dataset_contracts: {len(state.dataset_contracts)}",

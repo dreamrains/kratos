@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,6 +75,7 @@ class TurnExecutionState:
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
     estimated_tokens_used: int = 0
+    turn_id: str = field(default_factory=lambda: f"turn_{uuid.uuid4().hex}")
     _call_order: list = field(default_factory=list)
 
     @property

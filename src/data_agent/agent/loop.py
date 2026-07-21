@@ -426,6 +426,7 @@ class AgentLoop:
         self._prompt_cache_key: tuple[str, str] | None = None
         self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
+        self._computation_ref_lock = threading.Lock()
         self._compact_state = CompactState()
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
 
@@ -1158,6 +1159,84 @@ class AgentLoop:
         from data_agent.tools.registry import ToolResult
 
         summary = tool_result.to_cli()
+        success = not self._tool_content_is_error(str(summary or ""))
+
+        try:
+            from data_agent.agent.evidence_contracts import persist_computation_output
+            from data_agent.config import get_config
+
+            state = getattr(self.context, "analysis_state", None)
+            turn_state = getattr(self.context, "turn_state", None)
+            plan = getattr(state, "analysis_plan", None)
+            plan_id = str(plan.get("id") or "") if isinstance(plan, dict) else ""
+            scope = getattr(self.context, "workspace_scope", None)
+            step_id = str(getattr(scope, "step_id", "") or "")
+            from data_agent.agent.execution_scope import dataset_arguments_for_tool
+            from data_agent.agent.evidence_contracts import (
+                analysis_plan_semantic_digest,
+                analysis_step_semantic_digest,
+            )
+
+            dataset_names = dataset_arguments_for_tool(
+                registry,
+                tc.name,
+                dict(tc.arguments or {}),
+            )
+            try:
+                summary_payload = json.loads(summary)
+            except (TypeError, json.JSONDecodeError):
+                summary_payload = None
+            if tc.name == "run_python" and isinstance(summary_payload, dict):
+                dataset_names.extend(
+                    str(item)
+                    for item in (summary_payload.get("dataset_reads") or [])
+                    if str(item)
+                )
+            dataset_names = list(dict.fromkeys(dataset_names))
+            method_steps = [
+                item
+                for item in ((plan or {}).get("method_plan") or [])
+                if isinstance(item, dict) and str(item.get("step_id") or "")
+            ] if isinstance(plan, dict) else []
+            dataset_versions = []
+            for dataset_name in dataset_names:
+                info = self.context.workspace.get_active_version_info(dataset_name)
+                if isinstance(info, dict) and info.get("dataset_id"):
+                    dataset_versions.append(str(info["dataset_id"]))
+            definition = registry.get(tc.name)
+            capability = getattr(definition, "capability", None)
+            current_step = next((
+                item
+                for item in method_steps
+                if str(item.get("step_id") or "") == step_id
+            ), {})
+            with self._computation_ref_lock:
+                ref = persist_computation_output(
+                    sessions_root=get_config().sessions_resolved,
+                    session_id=self.session_id,
+                    turn_id=str(getattr(turn_state, "turn_id", "") or ""),
+                    plan_id=plan_id,
+                    step_id=step_id,
+                    tool_call_id=tc.id,
+                    tool_name=tc.name,
+                    arguments=dict(tc.arguments or {}),
+                    output=tool_result.to_web(),
+                    dataset_versions=dataset_versions,
+                    success=success,
+                    plan_digest=analysis_plan_semantic_digest(plan or {}),
+                    step_digest=analysis_step_semantic_digest(current_step),
+                    capability_id=str(getattr(capability, "capability_id", "") or ""),
+                    evidence_fields=list(getattr(capability, "evidence_fields", []) or []),
+                )
+                if state is not None:
+                    state.upsert_computation_ref(ref)
+                    state.save()
+        except Exception as exc:
+            logger.warning(
+                "Computation provenance persistence skipped: %s",
+                exc,
+                extra={"extra_data": {"tool": tc.name, "error": str(exc)}},
+            )
 
         # If ToolResult has structured data, persist it
         if tool_result.data is not None:
@@ -1278,12 +1357,14 @@ class AgentLoop:
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
-        lowered = stripped.lower()
+        payload_text = stripped.split(" [detail:", 1)[0]
+        try:
+            payload = json.loads(payload_text)
+        except (TypeError, json.JSONDecodeError):
+            payload = None
         return (
-            stripped.startswith('{"error":')
-            or stripped.startswith('{"error": ')
-            or lowered.startswith("error")
-        )
+            isinstance(payload, dict) and "error" in payload
+        ) or stripped.casefold().startswith("error")
 
     def _record_turn_tool_result(self, tool_name: str, tool_msg_content: str) -> None:
         if not hasattr(self, "_turn_tools_used"):
@@ -1328,8 +1409,6 @@ class AgentLoop:
         return "\n".join(profile_lines)
 
     def _maybe_inject_synthesis_policy(self, user_input: str) -> None:
-        if getattr(self, "_turn_synthesis_policy_injected", False):
-            return
         intent = getattr(self, "_last_turn_intent", None)
         if intent is None or intent.intent_type not in ("directed_analysis", "comprehensive_report"):
             return
@@ -1340,17 +1419,16 @@ class AgentLoop:
         if not evidence:
             return
 
-        if not getattr(self, "_turn_verification_injected", False):
-            try:
-                from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
+        try:
+            from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
 
-                self._turn_verification_injected = True
-                maybe_verify_turn_claims(user_input, state)
-            except Exception as exc:
-                logger.warning(
-                    "Trust workflow loop verification skipped",
-                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-                )
+            self._turn_verification_injected = True
+            maybe_verify_turn_claims(user_input, state)
+        except Exception as exc:
+            logger.warning(
+                "Trust workflow loop verification skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
 
         try:
             from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
@@ -2089,8 +2167,9 @@ class AgentLoop:
 
             duration_ms = int((time.monotonic() - t0) * 1000)
             tool_msg_content = self._compact_tool_output(tool_result, tc)
+            tool_failed = self._tool_content_is_error(tool_msg_content)
 
-            if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
+            if tool_failed:
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                 tool_msg_content = registry.format_result(tc.name, tool_result)
@@ -2099,7 +2178,7 @@ class AgentLoop:
                 turn_state.record_tool_success()
 
             self._record_turn_tool_result(tc.name, tool_msg_content)
-            self._auto_track_task_progress(tc.name, True)
+            self._auto_track_task_progress(tc.name, not tool_failed)
 
             # Phase 3: check for stage regression after tool execution
             if self.context.analysis_state is not None:
@@ -2248,6 +2327,7 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2409,6 +2489,7 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2558,8 +2639,9 @@ class AgentLoop:
             return None
 
         tool_msg_content = self._compact_tool_output(tool_result, tc)
+        tool_failed = self._tool_content_is_error(tool_msg_content)
 
-        if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
+        if tool_failed:
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
             tool_msg_content = registry.format_result(tc.name, tool_result)
@@ -2568,7 +2650,7 @@ class AgentLoop:
             turn_state.record_tool_success()
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
-        self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
+        self._auto_track_task_progress(tc.name, not tool_failed)
 
         # Check for stage regression after tool execution
         if self.context.analysis_state is not None:
@@ -2634,8 +2716,9 @@ class AgentLoop:
                     return (tc, scope_error, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
+                tool_failed = self._tool_content_is_error(tool_msg_content)
 
-                if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
+                if tool_failed:
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                     tool_msg_content = registry.format_result(tc.name, tool_result)
@@ -2734,6 +2817,7 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2775,6 +2859,10 @@ class AgentLoop:
                     results = self._execute_tools_parallel(tool_calls)
                     for tc, tool_msg_content in results:
                         self._record_turn_tool_result(tc.name, tool_msg_content)
+                        self._auto_track_task_progress(
+                            tc.name,
+                            not self._tool_content_is_error(tool_msg_content),
+                        )
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 
+import pandas as pd
+
 from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.agent.data_lineage import frame_fingerprint
+from data_agent.agent.execution_control import ToolExecutionBudget, TurnExecutionState
 from data_agent.agent.execution_scope import ensure_dataset_allowed_for_current_task
 from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 from data_agent.session.task_manager import TaskManager
@@ -56,7 +60,7 @@ def _replenishment_plan(plan_id: str = "plan_current") -> dict:
                 "dataset_inputs": ["orders"],
                 "combination_mode": "independent",
                 "expected_output": "EvidenceRecord for revenue_per_user.",
-                "evidence_requirements": ["revenue"],
+                "evidence_requirements": ["metric_delta"],
                 "required_claim_keys": ["revenue_per_user"],
             },
         ],
@@ -178,6 +182,13 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     tmp_path,
     monkeypatch,
 ):
+    from data_agent import config
+    from data_agent.agent.evidence_contracts import (
+        analysis_plan_semantic_digest,
+        analysis_step_semantic_digest,
+        persist_computation_output,
+    )
+    from data_agent.config import AgentConfig
     import data_agent.tools.analysis_flow as analysis_flow
 
     session_id = "replenish_happy"
@@ -214,6 +225,22 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
 
     manager.update(synthesis["id"], status="blocked")
     manager.update(independent["id"], status="in_progress")
+    store = ctx.workspace
+    frame = pd.DataFrame({"revenue": [10.0, 15.0]})
+    raw = store.register_raw_snapshot("orders", frame, frame_fingerprint(frame))
+    active = store.promote_analysis_copy(
+        "orders",
+        frame,
+        raw["dataset_id"],
+        {"operation": "load_replenishment_fixture"},
+    )
+    monkeypatch.setattr(
+        config,
+        "_config",
+        AgentConfig(PROJECT_DIR=tmp_path / "project", SESSIONS_DIR=tmp_path / "sessions"),
+    )
+    ctx.turn_state = TurnExecutionState(ToolExecutionBudget(max_tool_calls=4))
+    ctx.turn_state.turn_id = "turn_replenish"
     allowed = ensure_dataset_allowed_for_current_task(
         manager,
         session_id,
@@ -230,14 +257,61 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     assert outside_scope.allowed is False
     assert outside_scope.error_type == "dataset_outside_current_task_scope"
 
+    current_step = state.analysis_plan["method_plan"][0]
+    ref = persist_computation_output(
+        sessions_root=tmp_path / "sessions",
+        session_id=session_id,
+        turn_id=ctx.turn_state.turn_id,
+        plan_id=state.analysis_plan["id"],
+        step_id=current_step["step_id"],
+        tool_call_id="call_revenue",
+        tool_name="aggregate_revenue",
+        arguments={"name": "orders"},
+        output={
+            "summary": "metric_delta=12.50",
+            "data": {
+                "effect_estimate": {
+                    "value": 12.5,
+                    "metric": "metric_delta",
+                    "unit": "currency",
+                },
+            },
+        },
+        dataset_versions=[active["dataset_id"]],
+        success=True,
+        plan_digest=analysis_plan_semantic_digest(state.analysis_plan),
+        step_digest=analysis_step_semantic_digest(current_step),
+        capability_id="analysis.replenishment_metric_delta",
+        evidence_fields=["effect_estimate"],
+    )
+    state.upsert_computation_ref(ref)
+    evidence = _evidence(
+        requirement="metric_delta",
+        requirement_ids=[
+            item["id"]
+            for item in state.analysis_plan["analysis_requirements"]["step_orders_revenue"]
+        ],
+    )
+    evidence["measurements"][0]["unit"] = "currency"
+    evidence.update({
+        "contract_version": "evidence_record.v2",
+        "source_tool_call_ids": [ref["tool_call_id"]],
+        "statistical_support": {
+            "effect_estimate": {
+                "value": 12.5,
+                "metric": "metric_delta",
+                "unit": "currency",
+            },
+        },
+    })
     with use_agent_context(ctx):
         evidence_result = json.loads(
-            analysis_flow.record_evidence_record(json.dumps(_evidence()))
+            analysis_flow.record_evidence_record(json.dumps(evidence))
         )
 
     assert evidence_result["completed_task_ids"] == [independent["id"]]
     assert state.evidence_records[0]["claim_key"] == "revenue_per_user"
-    assert state.evidence_records[0]["evidence_requirement"] == "revenue"
+    assert state.evidence_records[0]["evidence_requirement"] == "metric_delta"
     completed = manager.get(independent["id"])
     assert completed["status"] == "completed"
     assert completed["completed_by"] == "evidence"

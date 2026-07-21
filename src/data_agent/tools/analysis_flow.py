@@ -325,10 +325,38 @@ def record_evidence_record(record_json: str) -> str:
         or "step_id" in payload
         or payload.get("measurements") is not None
     )
-    if is_stage3c0b_evidence:
-        from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+    if (
+        is_stage3c0b_evidence
+        or payload.get("contract_version") == "evidence_record.v2"
+        or "source_tool_call_ids" in payload
+    ):
+        from data_agent.agent.context import get_current_context
+        from data_agent.agent.evidence_contracts import bind_evidence_to_computations
+        from data_agent.config import get_config
 
-        validation = validate_stage3c0b_evidence(
+        context = get_current_context()
+        turn_state = getattr(context, "turn_state", None) if context is not None else None
+        binding = bind_evidence_to_computations(
+            payload,
+            computation_refs=list(getattr(state, "computation_refs", []) or []),
+            sessions_root=get_config().sessions_resolved,
+            current_session_id=str(getattr(context, "session_id", "") or ""),
+            current_turn_id=str(getattr(turn_state, "turn_id", "") or ""),
+            current_plan=(getattr(state, "analysis_plan", None) or {}),
+            workspace=(context.workspace if context is not None else None),
+        )
+        if not binding.ok:
+            return json.dumps({
+                "error": binding.message,
+                "error_type": binding.error_type,
+                "details": binding.details,
+            }, ensure_ascii=False)
+        payload = binding.record
+
+    if is_stage3c0b_evidence:
+        from data_agent.agent.evidence_contracts import validate_evidence_record
+
+        validation = validate_evidence_record(
             payload,
             current_plan_id=current_plan_id,
         )
@@ -387,6 +415,8 @@ def record_evidence_record(record_json: str) -> str:
         payload["insight_type"] = insight_type
 
     if not is_stage3c0b_evidence:
+        payload.setdefault("provenance_status", "legacy_unbound")
+        payload.setdefault("verification_level", "legacy_unbound")
         _mark_statistical_detail_status(payload)
 
     # Auto-generate limitations based on analysis context
@@ -412,8 +442,9 @@ def record_evidence_record(record_json: str) -> str:
             completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
                 session_id=state.session_id,
                 evidence=payload,
-                # TaskManager retains this persisted field during schema migration.
-                analysis_spec_id=(plan or {}).get("id", ""),
+                # Canonical plan/step/claim/requirement identities own v2 matching.
+                # The legacy analysis_spec_id filter applies only to unscoped records.
+                analysis_spec_id=("" if is_stage3c0b_evidence else (plan or {}).get("id", "")),
             )
             if completed_task_ids:
                 result["completed_task_ids"] = completed_task_ids

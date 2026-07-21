@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from data_agent.agent.evidence_compatibility import compare_measurements
-from data_agent.agent.evidence_contracts import validate_stage3c0b_measurement
+from data_agent.agent.evidence_contracts import validate_measurement
 
 
 REQUIRED_EVIDENCE_FIELDS = (
@@ -24,6 +24,27 @@ REQUIRED_EVIDENCE_FIELDS = (
 
 CAUSAL_WORDS = ("causal", "caused", "causes", "cause", "导致", "证明", "使得")
 CAUSAL_METHODS = {"causal", "ab_test", "experiment", "did", "difference_in_differences"}
+INFERENTIAL_METHODS = CAUSAL_METHODS | {
+    "correlation",
+    "regression",
+    "ttest",
+    "welch_t",
+    "mannwhitneyu",
+    "chi2",
+}
+INFERENTIAL_METHOD_PATTERNS = (
+    "ab test",
+    "chi square",
+    "chi2",
+    "correlation",
+    "difference in differences",
+    "experiment",
+    "mann whitney",
+    "regression",
+    "t test",
+    "ttest",
+    "welch",
+)
 RISKY_CLEANING_DECISIONS = {"needs_confirmation", "blocked"}
 MATCH_STOPWORDS = {"a", "an", "and", "by", "in", "of", "the", "to"}
 
@@ -204,7 +225,7 @@ def _comparison_measurements(
     valid_measurements: list[dict[str, Any]] = []
     issues: list[str] = []
     for index, measurement in enumerate(measurements):
-        validation = validate_stage3c0b_measurement(measurement, index=index)
+        validation = validate_measurement(measurement, index=index)
         if not validation.ok:
             issues.append(
                 "Measurement compatibility failed: "
@@ -309,12 +330,48 @@ def _risky_cleaning_issues(evidence: dict[str, Any], cleaning_logs: list[dict[st
     return issues
 
 
+def _plan_revision_issues(
+    evidence: dict[str, Any],
+    *,
+    current_plan_digest: str,
+    current_step_digests: dict[str, str],
+) -> list[str]:
+    if evidence.get("contract_version") != "evidence_record.v2":
+        return []
+    refs = [
+        ref
+        for ref in _normalize_items(evidence.get("computation_refs"))
+        if isinstance(ref, dict)
+    ]
+    if not refs:
+        return ["Evidence has no computation refs for the current plan revision"]
+    step_id = str(evidence.get("step_id") or "")
+    current_step_digest = current_step_digests.get(step_id, "")
+    issues: list[str] = []
+    for ref in refs:
+        if current_plan_digest and str(ref.get("plan_digest") or "") != current_plan_digest:
+            issues.append("Evidence belongs to a different semantic revision of the current plan")
+            break
+        if current_step_digests and not current_step_digest:
+            issues.append("Evidence step is absent from the current semantic plan revision")
+            break
+        if current_step_digest and str(ref.get("step_digest") or "") != current_step_digest:
+            issues.append("Evidence belongs to a different semantic revision of the current plan step")
+            break
+    return issues
+
+
 def _check_claim(
     claim: Any,
     index: int,
     evidence_records: list[dict[str, Any]],
     cleaning_logs: list[dict[str, Any]],
     current_plan_id: str = "",
+    current_dataset_versions: set[str] | None = None,
+    sessions_root: Any = None,
+    current_session_id: str = "",
+    current_plan_digest: str = "",
+    current_step_digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     text = _claim_text(claim)
     evidence: dict[str, Any] | None = None
@@ -375,6 +432,60 @@ def _check_claim(
         check["issues"].append("No evidence record supports this claim")
         return check
 
+    revision_issues: list[str] = []
+    revision_records = comparison_records or [evidence]
+    for revision_record in revision_records:
+        revision_issues.extend(_plan_revision_issues(
+            revision_record,
+            current_plan_digest=current_plan_digest,
+            current_step_digests=current_step_digests or {},
+        ))
+    if revision_issues:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        check["issues"].extend(dict.fromkeys(revision_issues))
+        return check
+
+    if current_dataset_versions is not None:
+        evidence_versions = {
+            str(version_id)
+            for ref in _normalize_items(evidence.get("computation_refs"))
+            if isinstance(ref, dict)
+            for version_id in _normalize_items(ref.get("dataset_versions"))
+            if str(version_id or "")
+        }
+        stale_versions = evidence_versions - current_dataset_versions
+        if stale_versions:
+            check["status"] = "failed"
+            check["strength"] = "unsupported"
+            check["issues"].append(
+                "Evidence is bound to a stale dataset version: " + ", ".join(sorted(stale_versions))
+            )
+            return check
+
+    if sessions_root is not None:
+        from data_agent.agent.evidence_contracts import hydrate_computation_ref
+
+        for ref in _normalize_items(evidence.get("computation_refs")):
+            if not isinstance(ref, dict):
+                check["status"] = "failed"
+                check["strength"] = "unsupported"
+                check["issues"].append("Evidence computation artifact integrity check failed: invalid ref")
+                return check
+            try:
+                hydrate_computation_ref(
+                    ref,
+                    sessions_root=sessions_root,
+                    current_session_id=current_session_id or None,
+                )
+            except ValueError as exc:
+                check["status"] = "failed"
+                check["strength"] = "unsupported"
+                check["issues"].append(
+                    f"Evidence computation artifact integrity check failed: {exc}"
+                )
+                return check
+
     missing = [field for field in REQUIRED_EVIDENCE_FIELDS if _is_missing(evidence.get(field))]
     if missing:
         check["status"] = "downgraded"
@@ -386,6 +497,42 @@ def _check_claim(
         check["strength"] = "likely"
         check["issues"].append(
             "Claim uses causal language, but evidence method is not causal, ab_test, experiment, did, or difference_in_differences"
+        )
+
+    method = str(evidence.get("method") or "").strip().lower()
+    normalized_method = re.sub(r"[^a-z0-9]+", " ", method).strip()
+    has_inferential_support = any(
+        not _is_missing(evidence.get(field_name))
+        for field_name in (
+            "statistical_support",
+            "confidence_interval",
+            "p_value",
+            "significance",
+            "effect_size",
+            "effect_estimate",
+        )
+    )
+    is_inferential_method = (
+        method in INFERENTIAL_METHODS
+        or any(pattern in normalized_method for pattern in INFERENTIAL_METHOD_PATTERNS)
+        or has_inferential_support
+    )
+    provenance_level = str(evidence.get("verification_level") or "").strip().lower()
+    asserted_confidence = str(
+        evidence.get("original_confidence") or evidence.get("confidence") or ""
+    ).strip().lower()
+    is_high_confidence_inference = (
+        asserted_confidence == "high"
+        and (is_inferential_method or _uses_causal_language(text))
+    )
+    if is_high_confidence_inference and provenance_level not in {
+        "structured_checked",
+        "independently_recomputed",
+    }:
+        check["status"] = "downgraded"
+        check["strength"] = "likely"
+        check["issues"].append(
+            f"High-confidence inference is not supported by verified provenance: {provenance_level or 'unbound'}"
         )
 
     cleaning_issues = _risky_cleaning_issues(evidence, cleaning_logs)
@@ -433,6 +580,11 @@ def verify_analysis_claims(
     route_proposals: list[dict[str, Any]],
     cleaning_logs: list[dict[str, Any]],
     current_plan_id: str = "",
+    current_dataset_versions: list[str] | set[str] | tuple[str, ...] | None = None,
+    sessions_root: Any = None,
+    current_session_id: str = "",
+    current_plan_digest: str = "",
+    current_step_digests: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Verify claims against recorded evidence, route metadata, and cleaning risk."""
 
@@ -440,9 +592,29 @@ def verify_analysis_claims(
     safe_evidence = [record for record in _normalize_items(evidence_records) if isinstance(record, dict)]
     safe_routes = [route for route in _normalize_items(route_proposals) if isinstance(route, dict)]
     safe_cleaning_logs = [log for log in _normalize_items(cleaning_logs) if isinstance(log, dict)]
+    safe_dataset_versions = (
+        None
+        if current_dataset_versions is None
+        else {str(item) for item in _normalize_items(current_dataset_versions) if str(item or "")}
+    )
 
     claim_checks = [
-        _check_claim(claim, index, safe_evidence, safe_cleaning_logs, str(current_plan_id or ""))
+        _check_claim(
+            claim,
+            index,
+            safe_evidence,
+            safe_cleaning_logs,
+            str(current_plan_id or ""),
+            safe_dataset_versions,
+            sessions_root,
+            str(current_session_id or ""),
+            str(current_plan_digest or ""),
+            {
+                str(key): str(value)
+                for key, value in (current_step_digests or {}).items()
+                if str(key) and str(value)
+            },
+        )
         for index, claim in enumerate(safe_claims)
     ]
     route_proposal_ids = [str(route["id"]) for route in safe_routes if route.get("id")]
@@ -455,6 +627,16 @@ def verify_analysis_claims(
     }
     if current_plan_id:
         payload_for_id["current_plan_id"] = str(current_plan_id)
+    if current_plan_digest:
+        payload_for_id["current_plan_digest"] = str(current_plan_digest)
+    if current_step_digests:
+        payload_for_id["current_step_digests"] = {
+            str(key): str(value)
+            for key, value in current_step_digests.items()
+            if str(key) and str(value)
+        }
+    if safe_dataset_versions is not None:
+        payload_for_id["current_dataset_versions"] = sorted(safe_dataset_versions)
 
     return {
         "id": _stable_id(payload_for_id),

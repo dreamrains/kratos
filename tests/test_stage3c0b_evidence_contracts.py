@@ -193,14 +193,14 @@ def test_empty_measurement_compatibility_field_rejected():
     assert "denominator" in result.details["missing"]
 
 
-def test_record_evidence_record_rejects_stage3c0b_evidence_without_current_plan(monkeypatch):
+def test_record_evidence_record_rejects_unbound_live_stage3c0b_evidence(monkeypatch):
     from data_agent.tools.analysis_flow import record_evidence_record
 
     monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
 
     result = json.loads(record_evidence_record(json.dumps(_canonical_evidence())))
 
-    assert result["error_type"] == "evidence_outside_current_plan"
+    assert result["error_type"] == "missing_source_tool_call_ids"
 
 
 def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
@@ -230,9 +230,9 @@ def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
     assert result["statistical_detail_status"] == "missing"
 
 
-def test_record_evidence_record_upserts_canonical_evidence_and_skips_legacy_stat_status():
+def test_analysis_state_upserts_validated_legacy_canonical_evidence_by_identity():
     from data_agent.agent.analysis_state import AnalysisSessionState
-    from data_agent.tools.analysis_flow import record_evidence_record
+    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
 
     ctx = AgentContext(
         session_id="stage3c0b_canonical_upsert",
@@ -245,14 +245,15 @@ def test_record_evidence_record_upserts_canonical_evidence_and_skips_legacy_stat
     second = _canonical_evidence(evidence_requirement="click_rate")
     second["result_summary"] = "click_rate=0.150 after rerun"
 
-    with use_agent_context(ctx):
-        first_result = json.loads(record_evidence_record(json.dumps(first)))
-        second_result = json.loads(record_evidence_record(json.dumps(second)))
+    first_validation = validate_stage3c0b_evidence(first, current_plan_id="plan_abc")
+    second_validation = validate_stage3c0b_evidence(second, current_plan_id="plan_abc")
+    assert first_validation.ok and second_validation.ok
 
-    assert first_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
-    assert second_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
-    assert "statistical_detail_status" not in first_result
-    assert "statistical_detail_status" not in second_result
+    first_stored = ctx.analysis_state.upsert_evidence_record(first_validation.record)
+    second_stored = ctx.analysis_state.upsert_evidence_record(second_validation.record)
+
+    assert first_stored["id"] == "ev_plan_abc_step_banner_click_rate"
+    assert second_stored["id"] == "ev_plan_abc_step_banner_click_rate"
     assert len(ctx.analysis_state.evidence_records) == 1
     assert ctx.analysis_state.evidence_records[0]["result_summary"] == "click_rate=0.150 after rerun"
 

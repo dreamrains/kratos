@@ -8,13 +8,19 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from contextlib import redirect_stdout
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 
 import numpy as np
 import pandas as pd
 
 from data_agent.session.workspace import workspace
 from data_agent.tools.registry import registry
+
+
+_DATASET_READS: ContextVar[set[str] | None] = ContextVar(
+    "data_agent_sandbox_dataset_reads",
+    default=None,
+)
 
 
 def _get_dataset(name: str) -> pd.DataFrame | None:
@@ -24,6 +30,9 @@ def _get_dataset(name: str) -> pd.DataFrame | None:
     guard = ensure_dataset_allowed_in_current_context(name)
     if not guard.allowed:
         raise PermissionError(f"{guard.error_type}: {guard.message}")
+    reads = _DATASET_READS.get()
+    if reads is not None:
+        reads.add(str(name))
     return workspace.get(name)
 
 
@@ -122,6 +131,8 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
     # 风险评估
     risk = _assess_risk(code)
 
+    dataset_reads: set[str] = set()
+    reads_token = _DATASET_READS.set(dataset_reads)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             context = copy_context()
@@ -132,6 +143,16 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
     except Exception as e:
         return json.dumps({"error": f"执行失败: {e}"}, ensure_ascii=False)
 
+    finally:
+        _DATASET_READS.reset(reads_token)
+
+    if result.strip().lower().startswith("error:"):
+        return json.dumps({
+            "error": result,
+            "error_type": "sandbox_execution_error",
+            "dataset_reads": sorted(dataset_reads),
+        }, ensure_ascii=False)
+
     response = {
         "output": stdout[:20000] if stdout else "",
         "risk_level": risk,
@@ -140,6 +161,7 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
             "purpose": purpose,
             "purpose_missing": not bool((purpose or "").strip()),
         },
+        "dataset_reads": sorted(dataset_reads),
     }
     if result:
         response["result"] = result

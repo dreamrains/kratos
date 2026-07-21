@@ -303,6 +303,14 @@ class Workspace:
         info = self._version_info.get(dataset_id or "")
         return copy.deepcopy(info) if info is not None else None
 
+    def active_dataset_version_ids(self) -> list[str]:
+        """Return opaque active version identities without exposing dataset contents."""
+        return sorted({
+            str(dataset_id)
+            for dataset_id in self._active_version_by_name.values()
+            if str(dataset_id)
+        })
+
     def list_dataset_versions(self, name: str) -> list[dict[str, Any]]:
         items = [
             copy.deepcopy(info)
@@ -591,6 +599,8 @@ def _create_workspace_registry(
             if not readable(scope, name) or scope.phase in {"planning", "synthesis", "error"}:
                 return []
             return storage.list_dataset_versions(name)
+        if operation == "active_version_ids":
+            return storage.active_dataset_version_ids()
         if operation == "exists":
             name = args[0]
             return readable(scope, name) and name in storage._datasets
@@ -876,6 +886,9 @@ class WorkspaceProxy:
 
     def get_active_version_info(self, name: str) -> Optional[dict[str, Any]]:
         return self.__operate("active_version", name)
+
+    def active_dataset_version_ids(self) -> list[str]:
+        return self.__operate("active_version_ids")
 
     def list_dataset_versions(self, name: str) -> list[dict[str, Any]]:
         return self.__operate("dataset_versions", name)

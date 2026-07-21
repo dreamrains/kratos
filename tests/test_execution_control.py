@@ -20,6 +20,16 @@ from data_agent.session.task_manager import task_manager
 from data_agent.session.workspace import Workspace
 
 
+def test_turn_execution_state_mints_stable_unique_provenance_identity():
+    first = TurnExecutionState(ToolExecutionBudget())
+    second = TurnExecutionState(ToolExecutionBudget())
+
+    assert first.turn_id.startswith("turn_")
+    assert second.turn_id.startswith("turn_")
+    assert first.turn_id != second.turn_id
+    assert first.turn_id == first.turn_id
+
+
 def _loaded_context() -> str:
     return "- main: 20 rows x 4 cols, columns: date, revenue, cost, user_id"
 
@@ -708,6 +718,16 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     )
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
+    from data_agent.agent import trust_workflow_runtime as runtime
+
+    real_verify = runtime.maybe_verify_turn_claims
+    verification_calls = []
+
+    def counting_verify(user_input, state, **kwargs):
+        verification_calls.append(len(state.evidence_records))
+        return real_verify(user_input, state, **kwargs)
+
+    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", counting_verify)
 
     workspace_obj = Workspace()
     ctx = AgentContext(session_id="loop_synthesis_policy", workspace=workspace_obj)
@@ -727,6 +747,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
         result = loop.run_turn("analyze retention formula")
 
     assert result == "final answer"
+    assert verification_calls == [1, 1]
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]
@@ -809,6 +830,47 @@ def test_synthesis_policy_injection_creates_verification_report_first(monkeypatc
     assert loop._turn_verification_injected is True
     assert loop._turn_synthesis_policy_injected is True
     assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
+
+
+def test_synthesis_policy_reverifies_when_evidence_changes_in_same_turn(monkeypatch):
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+        reason="test",
+        ambiguities=[],
+    )
+    ctx = AgentContext(session_id="loop_incremental_verification", workspace=Workspace())
+    state = AnalysisSessionState(session_id="loop_incremental_verification")
+    state.evidence_records = [{"id": "ev_1", "claim": "First bound claim"}]
+    ctx.analysis_state = state
+    loop = AgentLoop(client=object(), session_id="loop_incremental_verification")
+    loop.context = ctx
+    loop._last_turn_intent = intent
+    loop._reset_turn_tracking()
+
+    verification_sizes = []
+
+    def fake_verify(_user_input, current_state):
+        verification_sizes.append(len(current_state.evidence_records))
+        return {"id": f"vr_{len(verification_sizes)}"}
+
+    from data_agent.agent import trust_workflow_runtime as runtime
+
+    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", fake_verify)
+    monkeypatch.setattr(runtime, "maybe_create_hypothesis_set", lambda *_args, **_kwargs: None)
+
+    with use_agent_context(ctx):
+        loop._maybe_inject_synthesis_policy("compare groups")
+        state.evidence_records.append({"id": "ev_2", "claim": "Second bound claim"})
+        loop._maybe_inject_synthesis_policy("compare groups")
+
+    assert verification_sizes == [1, 2]
+    assert loop._turn_verification_injected is True
+    assert loop._turn_synthesis_policy_injected is True
 
 
 def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_path):

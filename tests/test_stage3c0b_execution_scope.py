@@ -177,7 +177,8 @@ def test_run_python_get_dataset_cannot_read_unbound_dataset(tmp_path, monkeypatc
     with use_agent_context(ctx):
         payload = json.loads(sandbox.run_python("get_dataset('iap')['secret'].iloc[0]"))
 
-    assert "dataset_outside_current_task_scope" in payload.get("result", "")
+    assert payload["error_type"] == "sandbox_execution_error"
+    assert "dataset_outside_current_task_scope" in payload["error"]
     assert "9876" not in payload.get("result", "")
 
 
@@ -196,7 +197,8 @@ def test_run_python_get_dataset_blocks_raw_reads_during_synthesis(tmp_path, monk
     with use_agent_context(ctx):
         payload = json.loads(sandbox.run_python("get_dataset('banner')['secret'].iloc[0]"))
 
-    assert "synthesis_cannot_read_raw_dataset" in payload.get("result", "")
+    assert payload["error_type"] == "sandbox_execution_error"
+    assert "synthesis_cannot_read_raw_dataset" in payload["error"]
     assert "9876" not in payload.get("result", "")
 
 

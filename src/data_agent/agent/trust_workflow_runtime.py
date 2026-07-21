@@ -47,7 +47,19 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             return None
 
         signature = _evidence_signature(state, evidence_records)
-        fingerprint = _evidence_fingerprint(state, evidence_records)
+        current_dataset_versions = _active_dataset_versions()
+        sessions_root = _sessions_root()
+        current_session_id = str(getattr(state, "session_id", "") or "")
+        current_plan_digest, current_step_digests = _current_plan_semantic_identity(state)
+        fingerprint = _evidence_fingerprint(
+            state,
+            evidence_records,
+            current_dataset_versions=current_dataset_versions,
+            sessions_root=sessions_root,
+            current_session_id=current_session_id,
+            current_plan_digest=current_plan_digest,
+            current_step_digests=current_step_digests,
+        )
         if not force and _promote_verification_identity(state, signature, fingerprint):
             return None
 
@@ -57,6 +69,11 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             route_proposals=_list_attr(state, "route_proposals"),
             cleaning_logs=_list_attr(state, "cleaning_logs"),
             current_plan_id=current_plan_id,
+            current_dataset_versions=current_dataset_versions,
+            sessions_root=sessions_root,
+            current_session_id=current_session_id,
+            current_plan_digest=current_plan_digest,
+            current_step_digests=current_step_digests,
         )
         ref = _compact_verification_ref(report, signature, fingerprint)
         add_ref = getattr(state, "add_verification_report_ref", None)
@@ -76,6 +93,37 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
             "Trust workflow verification skipped",
             extra={"extra_data": {"error": str(exc), "user_input": (user_input or "")[:200]}},
         )
+        return None
+
+
+def _active_dataset_versions() -> list[str] | None:
+    try:
+        from data_agent.agent.context import get_current_context
+
+        context = get_current_context()
+        if context is None:
+            return None
+        version_ids = context.workspace.active_dataset_version_ids()
+        if isinstance(version_ids, list):
+            return sorted({str(item) for item in version_ids if str(item)})
+        datasets = context.workspace.list_datasets()
+        if not isinstance(datasets, dict):
+            return None
+        return sorted({
+            str(info.get("dataset_id"))
+            for info in datasets.values()
+            if isinstance(info, dict) and str(info.get("dataset_id") or "")
+        })
+    except Exception:
+        return None
+
+
+def _sessions_root():
+    try:
+        from data_agent.config import get_config
+
+        return get_config().sessions_resolved
+    except Exception:
         return None
 
 
@@ -183,15 +231,86 @@ def _evidence_signature(state: Any, evidence_records: list[dict[str, Any]]) -> s
     return signature
 
 
-def _evidence_fingerprint(state: Any, evidence_records: list[dict[str, Any]]) -> str:
+def _computation_integrity_identities(
+    evidence_records: list[dict[str, Any]],
+    *,
+    sessions_root: Any,
+    current_session_id: str,
+) -> list[dict[str, str]]:
+    identities: list[dict[str, str]] = []
+    try:
+        from data_agent.agent.evidence_contracts import hydrate_computation_ref
+    except Exception:
+        hydrate_computation_ref = None
+    for record in evidence_records:
+        refs = record.get("computation_refs") if isinstance(record, dict) else None
+        for ref in refs if isinstance(refs, list) else []:
+            if not isinstance(ref, dict):
+                continue
+            status = "unavailable"
+            if hydrate_computation_ref is not None and sessions_root is not None:
+                try:
+                    hydrate_computation_ref(
+                        ref,
+                        sessions_root=sessions_root,
+                        current_session_id=current_session_id,
+                    )
+                    status = "valid"
+                except Exception as exc:
+                    status = f"invalid:{type(exc).__name__}:{exc}"
+            identities.append({
+                "evidence_id": str(record.get("id") or ""),
+                "turn_id": str(ref.get("turn_id") or ""),
+                "tool_call_id": str(ref.get("tool_call_id") or ""),
+                "output_digest": str(ref.get("output_digest") or ""),
+                "integrity": status,
+            })
+    return identities
+
+
+def _evidence_fingerprint(
+    state: Any,
+    evidence_records: list[dict[str, Any]],
+    *,
+    current_dataset_versions: list[str] | None = None,
+    sessions_root: Any = None,
+    current_session_id: str = "",
+    current_plan_digest: str = "",
+    current_step_digests: dict[str, str] | None = None,
+) -> str:
     payload = {
         "evidence_records": evidence_records,
         "route_proposals": _list_attr(state, "route_proposals"),
         "cleaning_logs": _list_attr(state, "cleaning_logs"),
         "current_plan_id": _current_analysis_plan_id(state),
+        "current_plan_digest": current_plan_digest,
+        "current_step_digests": current_step_digests or {},
+        "current_dataset_versions": current_dataset_versions,
+        "computation_integrity": _computation_integrity_identities(
+            evidence_records,
+            sessions_root=sessions_root,
+            current_session_id=current_session_id,
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def _current_plan_semantic_identity(state: Any) -> tuple[str, dict[str, str]]:
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict) or not plan.get("id"):
+        return "", {}
+    from data_agent.agent.evidence_contracts import (
+        analysis_plan_semantic_digest,
+        analysis_step_semantic_digest,
+    )
+
+    step_digests = {
+        str(step.get("step_id")): analysis_step_semantic_digest(step)
+        for step in plan.get("method_plan") or []
+        if isinstance(step, dict) and str(step.get("step_id") or "")
+    }
+    return analysis_plan_semantic_digest(plan), step_digests
 
 
 def _current_analysis_plan_id(state: Any) -> str:

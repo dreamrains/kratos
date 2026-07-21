@@ -14,8 +14,20 @@ from data_agent.agent.analysis_plan_contracts import (
     analysis_plan_id_from_mapping,
     normalize_analysis_plan_contract,
 )
-from data_agent.session.task_manager import normalize_required_claim_keys, task_manager
+from data_agent.session.task_manager import normalize_required_claim_keys
 from data_agent.tools.registry import registry
+
+
+class _DynamicTaskManagerProxy:
+    """Resolve the process singleton at call time, while remaining monkeypatchable."""
+
+    def __getattr__(self, name):
+        import data_agent.session.task_manager as task_manager_module
+
+        return getattr(task_manager_module.task_manager, name)
+
+
+task_manager = _DynamicTaskManagerProxy()
 
 _current_session_id: str = ""
 
