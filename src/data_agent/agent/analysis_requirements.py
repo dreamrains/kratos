@@ -24,9 +24,36 @@ ALLOWED_UNMET_ACTIONS = frozenset({"block_analysis", "block_claim", "downgrade_c
 
 _SAFE_CANONICAL_STEP_ID = re.compile(r"step_[a-z0-9]+(?:_[a-z0-9]+)*\Z")
 
+_COMPARISON_REQUIREMENT_INPUTS = (
+    "effective_sample_size",
+    "denominator",
+    "missingness",
+    "estimand",
+    "effect_estimate",
+    "calculation_method",
+    "assumptions",
+    "sample_adequacy",
+)
+_TIME_SERIES_REQUIREMENT_INPUTS = (
+    "time_frequency",
+    "missing_intervals",
+    "window_comparability",
+    "autocorrelation_awareness",
+    "effective_sample_size",
+    "missingness",
+    "calculation_method",
+    "assumptions",
+)
 _ROUTE_REQUIREMENT_INPUTS = {
-    "trend": ("time_scope", "sample_size", "trend_statistics", "limitations"),
-    "period_compare": ("period_definition", "period_comparability", "metric_delta", "limitations"),
+    "trend": (
+        "time_scope", "sample_size", "trend_statistics", "limitations",
+        *_TIME_SERIES_REQUIREMENT_INPUTS,
+    ),
+    "period_compare": (
+        "period_definition", "period_comparability", "metric_delta", "limitations",
+        *_COMPARISON_REQUIREMENT_INPUTS,
+        "time_frequency", "missing_intervals", "window_comparability",
+    ),
     "dimension_decomposition": ("dimension_scope", "contribution_table", "metric_delta", "limitations"),
     "rate_analysis": ("rate_definition", "denominator", "sample_size", "limitations"),
     "correlation": ("variables", "correlation_method", "sample_size", "limitations"),
@@ -35,20 +62,49 @@ _ROUTE_REQUIREMENT_INPUTS = {
 }
 _DEFAULT_ROUTE_REQUIREMENT_INPUTS = ("method", "sample_size", "limitations")
 _CAPABILITY_REQUIREMENT_INPUTS = {
-    "analysis.experiment": ("effect_size",),
+    "analysis.experiment": (
+        *_COMPARISON_REQUIREMENT_INPUTS,
+        "effect_size",
+        "significance",
+    ),
+    "analysis.group_compare": _COMPARISON_REQUIREMENT_INPUTS,
+    "analysis.segment_compare": _COMPARISON_REQUIREMENT_INPUTS,
+    "analysis.period_compare": (
+        *_COMPARISON_REQUIREMENT_INPUTS,
+        "period_definition",
+        "period_comparability",
+        "time_frequency",
+        "missing_intervals",
+        "window_comparability",
+    ),
+    "analysis.time_series": _TIME_SERIES_REQUIREMENT_INPUTS,
 }
 _REQUIREMENT_CAPABILITY_HINTS = {
-    "confidence_interval": ("analysis.experiment", "analysis.causal", "analysis.forecast"),
+    "assumptions": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
+    "autocorrelation_awareness": ("analysis.time_series",),
+    "calculation_method": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
+    "confidence_interval": (
+        "analysis.group_compare", "analysis.period_compare", "analysis.experiment",
+        "analysis.causal", "analysis.forecast",
+    ),
     "correlation": ("analysis.correlation",),
     "correlation_method": ("analysis.correlation",),
     "distribution": ("data.describe",),
     "effect": ("analysis.experiment", "analysis.causal"),
     "effect_estimate": ("analysis.experiment", "analysis.causal"),
     "effect_size": ("analysis.experiment", "analysis.causal"),
+    "effective_sample_size": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
+    "estimand": ("analysis.group_compare", "analysis.period_compare"),
+    "missing_intervals": ("analysis.time_series", "analysis.period_compare"),
+    "multiplicity_handling": ("analysis.segment_compare", "analysis.group_compare"),
     "metric_delta": ("analysis.period_compare",),
     "period_comparability": ("analysis.period_compare",),
     "period_definition": ("analysis.period_compare",),
     "significance": ("analysis.experiment", "analysis.correlation"),
+    "sample_adequacy": ("analysis.group_compare", "analysis.period_compare"),
+    "seasonality_estimability": ("analysis.time_series",),
+    "time_frequency": ("analysis.time_series", "analysis.period_compare"),
+    "window_comparability": ("analysis.period_compare", "analysis.time_series"),
 }
 
 
@@ -92,6 +148,18 @@ _REQUIREMENT_DEFINITIONS = {
     "effect_size": {
         "category": "inference",
         "required_evidence_fields": ["effect_size"],
+        "assumption_checks": [],
+        "unmet_action": "block_claim",
+    },
+    "sample_adequacy": {
+        "category": "assumption",
+        "required_evidence_fields": ["sample_adequacy.status", "sample_adequacy.design"],
+        "assumption_checks": [],
+        "unmet_action": "block_claim",
+    },
+    "seasonality_estimability": {
+        "category": "assumption",
+        "required_evidence_fields": ["seasonality_estimability"],
         "assumption_checks": [],
         "unmet_action": "block_claim",
     },
@@ -148,7 +216,8 @@ def _register_definitions(
 _register_definitions(
     (
         "cohort_size", "comparison_group", "data_grain", "data_needed", "dimension",
-        "feature_exposure", "field_semantics", "forecast_window", "id_scope", "missingness",
+        "effective_sample_size", "feature_exposure", "field_semantics", "forecast_window",
+        "id_scope", "missing_intervals", "missingness",
         "outcome", "outcome_metric", "periods", "schema", "segment", "steps",
         "target_definition", "training_window", "treatment",
     ),
@@ -160,22 +229,30 @@ _register_definitions(
         "amount", "benefit", "confidence", "contribution", "contribution_table",
         "conversion_rate", "conversion_rates", "cost", "denominator", "driver_contribution",
         "dropoff", "effect", "effect_estimate", "frequency", "impact", "largest_drop_off",
-        "metric", "metric_delta", "metric_distribution", "net_value", "period_delta",
+        "estimand", "metric", "metric_delta", "metric_distribution", "net_value", "period_delta",
         "retention_metric", "retention_rate", "revenue", "segment_pattern", "step_conversion",
-        "top_dimensions", "trend", "trend_direction", "trend_statistics", "validation_metric",
+        "time_frequency", "top_dimensions", "trend", "trend_direction", "trend_statistics",
+        "validation_metric",
     ),
     category="measurement",
     unmet_action="block_claim",
 )
 _register_definitions(
     (
-        "cohort_definition", "comparison_design", "correlation_method", "cost_assumptions",
+        "autocorrelation_awareness", "cohort_definition", "comparison_design",
+        "correlation_method", "cost_assumptions",
         "dimension_scope", "drivers", "hypothesis", "method", "period_comparability",
         "period_definition", "rate_definition", "sensitivity_or_confidence", "step_definition",
-        "validation", "variables",
+        "validation", "variables", "window_comparability",
     ),
     category="method",
     unmet_action="downgrade_claim",
+)
+
+_register_definitions(
+    ("multiplicity_handling",),
+    category="inference",
+    unmet_action="block_claim",
 )
 
 
@@ -309,6 +386,68 @@ def _has_field(record: dict[str, Any], path: str) -> bool:
     return value is not None and value != ""
 
 
+def _field_value(record: dict[str, Any], path: str) -> Any:
+    value: Any = record
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _requirement_evidence_is_acceptable(
+    requirement: dict[str, Any],
+    record: dict[str, Any],
+) -> bool:
+    name = requirement.get("name")
+    if name == "sample_adequacy":
+        return _name(_field_value(record, "sample_adequacy.status")) in {
+            "adequate",
+            "adequate_with_limits",
+            "inadequate",
+            "insufficient",
+            "not_estimable",
+            "estimable_with_limits",
+            "satisfied",
+        }
+    if name == "seasonality_estimability":
+        value = _field_value(record, "seasonality_estimability")
+        status = value.get("status") if isinstance(value, dict) else value
+        required_period = _name(
+            (requirement.get("parameters") or {}).get("seasonality_period")
+        )
+        evidence_period = _name(
+            value.get("period") or value.get("seasonality_period")
+        ) if isinstance(value, dict) else ""
+        return (
+            _name(status) in {"estimable", "estimable_with_limits", "not_estimable"}
+            and (not required_period or evidence_period == required_period)
+        )
+    if name == "window_comparability":
+        value = _field_value(record, "window_comparability")
+        status = value.get("status") if isinstance(value, dict) else value
+        if isinstance(status, bool):
+            return status
+        return _name(status) in {
+            "comparable",
+            "comparable_with_adjustment",
+            "not_comparable",
+            "passed",
+            "satisfied",
+        }
+    if name == "multiplicity_handling":
+        value = _field_value(record, "multiplicity_handling")
+        strategy = value.get("strategy") if isinstance(value, dict) else value
+        return _name(strategy) in {
+            "bonferroni",
+            "holm",
+            "benjamini_hochberg",
+            "exploratory",
+            "exploratory_label",
+        }
+    return True
+
+
 def _matching_records(requirement: dict[str, Any], evidence_records: Any) -> list[dict[str, Any]]:
     records = evidence_records if isinstance(evidence_records, list) else []
     result: list[dict[str, Any]] = []
@@ -376,6 +515,7 @@ def evaluate_requirement_satisfaction(
             for record in matches
             if all(_has_field(record, field) for field in required_fields)
             and all(_assumption_check_succeeded(record, check) for check in assumption_checks)
+            and _requirement_evidence_is_acceptable(requirement, record)
         ]
         requirement["evidence_ids"] = [
             _text(record.get("id"))
@@ -392,6 +532,273 @@ def evaluate_requirement_satisfaction(
             requirement["reason"] = f"Missing required evidence: {missing}."
         evaluated.append(requirement)
     return evaluated
+
+
+_COMPARISON_CAPABILITIES = {
+    "analysis.experiment",
+    "analysis.group_compare",
+    "analysis.segment_compare",
+    "analysis.period_compare",
+}
+_INFERENTIAL_CLAIM_TYPES = {
+    "inferential",
+    "generalized_difference",
+    "population_difference",
+}
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        converted = int(value)
+    except (TypeError, ValueError):
+        return None
+    return converted if converted > 0 else None
+
+
+def _step_requirement_metadata(
+    step: dict[str, Any],
+    *,
+    user_intent: Any,
+) -> dict[str, dict[str, Any]]:
+    capability = _text(step.get("required_capability"))
+    metadata: dict[str, dict[str, Any]] = {}
+    claim_type = _name(step.get("claim_type") or step.get("inference_mode"))
+    intent_text = _text(user_intent).casefold()
+
+    if capability in _COMPARISON_CAPABILITIES:
+        sampling_structure = _name(step.get("sampling_structure"))
+        if not sampling_structure:
+            sampling_structure = (
+                "paired_or_repeated"
+                if capability == "analysis.period_compare"
+                else "independent_groups"
+            )
+        metadata["sample_adequacy"] = {
+            "parameters": {"sampling_structure": sampling_structure},
+            "trigger": f"comparison capability with {sampling_structure} sampling structure",
+        }
+        inferential = (
+            claim_type in _INFERENTIAL_CLAIM_TYPES
+            or step.get("generalize") is True
+            or any(
+                marker in intent_text
+                for marker in ("confidence interval", "generalize", "population difference", "置信区间", "总体差异")
+            )
+        )
+        if inferential:
+            metadata["confidence_interval"] = {
+                "trigger": "inferential or generalized comparison claim",
+            }
+
+        comparison_count = _positive_int(step.get("comparison_count"))
+        if comparison_count is None and isinstance(step.get("segments"), list):
+            comparison_count = max(0, len(step["segments"]) - 1)
+        if (
+            (comparison_count is not None and comparison_count > 1)
+            or step.get("multiple_comparisons") is True
+        ):
+            metadata["multiplicity_handling"] = {
+                "trigger": "multiple comparison claim",
+                "parameters": {
+                    "comparison_count": comparison_count or 2,
+                    "exploratory_label_allowed": True,
+                },
+            }
+
+    if capability == "analysis.dimension_decomposition":
+        comparison_count = _positive_int(step.get("comparison_count"))
+        if comparison_count is None and isinstance(step.get("segments"), list):
+            comparison_count = len(step["segments"])
+        if (
+            (comparison_count is not None and comparison_count > 1)
+            or step.get("multiple_comparisons") is True
+        ):
+            metadata["multiplicity_handling"] = {
+                "trigger": "multiple segment comparison",
+                "parameters": {
+                    "comparison_count": comparison_count or 2,
+                    "exploratory_label_allowed": True,
+                },
+            }
+
+    seasonality_period = _name(step.get("seasonality_period"))
+    if capability == "analysis.time_series" and claim_type in _INFERENTIAL_CLAIM_TYPES:
+        metadata["confidence_interval"] = {
+            "trigger": "inferential time-series claim",
+        }
+        metadata["sample_adequacy"] = {
+            "trigger": "inferential time-series claim",
+            "parameters": {"sampling_structure": "serially_dependent_time_series"},
+        }
+    if capability == "analysis.time_series" and (
+        claim_type == "seasonality" or seasonality_period
+    ):
+        metadata["seasonality_estimability"] = {
+            "trigger": "explicit seasonality claim",
+            "parameters": {"seasonality_period": seasonality_period or "annual"},
+        }
+    return metadata
+
+
+def _contract_for_step(
+    step: dict[str, Any],
+    dataset_contracts: Any,
+) -> dict[str, Any]:
+    if not isinstance(dataset_contracts, list):
+        return {}
+    from data_agent.agent.artifact_refs import hydrate_refs
+
+    contracts = hydrate_refs([item for item in dataset_contracts if isinstance(item, dict)])
+    raw_inputs = step.get("dataset_inputs")
+    requested = {
+        _text(item)
+        for item in raw_inputs
+        if _text(item)
+    } if isinstance(raw_inputs, list) else set()
+    if requested:
+        for contract in contracts:
+            if requested.intersection({
+                _text(contract.get("dataset")),
+                _text(contract.get("id")),
+            }):
+                return contract
+    return contracts[0] if len(contracts) == 1 else {}
+
+
+def _apply_profile_guards(
+    metadata: dict[str, dict[str, Any]],
+    *,
+    step: dict[str, Any],
+    contract: dict[str, Any],
+) -> None:
+    profiles = contract.get("analysis_profiles")
+    if not isinstance(profiles, dict):
+        return
+    comparison_profile = profiles.get("comparison")
+    sample_meta = metadata.get("sample_adequacy")
+    if isinstance(comparison_profile, dict) and sample_meta is not None:
+        group_sizes = comparison_profile.get("group_sizes")
+        if isinstance(group_sizes, dict) and group_sizes:
+            sample_meta.setdefault("parameters", {})["observed_group_sizes"] = group_sizes
+
+    if isinstance(comparison_profile, dict):
+        group_sizes = comparison_profile.get("group_sizes")
+        selected_group_column = _text(
+            step.get("group_col")
+            or step.get("group_column")
+            or step.get("segment_col")
+            or step.get("segment_column")
+            or step.get("dimension")
+        )
+        if not selected_group_column:
+            raw_dimensions = step.get("dimensions")
+            if isinstance(raw_dimensions, str):
+                selected_group_column = _text(raw_dimensions.split(",", 1)[0])
+            elif isinstance(raw_dimensions, list) and len(raw_dimensions) == 1:
+                selected_group_column = _text(raw_dimensions[0])
+        if isinstance(group_sizes, dict) and selected_group_column in group_sizes:
+            selected_profiles = [group_sizes[selected_group_column]]
+        elif isinstance(group_sizes, dict) and len(group_sizes) == 1:
+            selected_profiles = list(group_sizes.values())
+        else:
+            selected_profiles = []
+        observed_counts = [
+            _positive_int(item.get("group_count"))
+            for item in selected_profiles
+            if isinstance(item, dict)
+        ]
+        group_count = max((item for item in observed_counts if item), default=0)
+        capability = _text(step.get("required_capability"))
+        if capability == "analysis.dimension_decomposition":
+            comparison_count = group_count
+        elif capability in {"analysis.group_compare", "analysis.segment_compare"}:
+            comparison_count = max(0, group_count - 1)
+        else:
+            comparison_count = 0
+        if comparison_count > 1:
+            metadata.setdefault("multiplicity_handling", {
+                "trigger": (
+                    "observed multi-segment decomposition"
+                    if capability == "analysis.dimension_decomposition"
+                    else "observed multiple baseline comparisons"
+                ),
+                "parameters": {
+                    "comparison_count": comparison_count,
+                    "exploratory_label_allowed": True,
+                },
+            })
+
+    time_profile = profiles.get("time_series")
+    time_profiles_by_column = profiles.get("time_series_by_column")
+    selected_time_column = _text(
+        step.get("date_column")
+        or step.get("date_col")
+        or step.get("time_column")
+        or step.get("time_col")
+    )
+    if (
+        selected_time_column
+        and isinstance(time_profiles_by_column, dict)
+        and isinstance(time_profiles_by_column.get(selected_time_column), dict)
+    ):
+        time_profile = time_profiles_by_column[selected_time_column]
+    if not isinstance(time_profile, dict):
+        return
+
+    if "window_comparability" in metadata or _text(step.get("required_capability")) in {
+        "analysis.period_compare",
+        "analysis.time_series",
+    }:
+        frequency = _name(time_profile.get("frequency"))
+        missing_count = _positive_int(time_profile.get("missing_interval_count")) or 0
+        if frequency in {"irregular", "not_estimable"} or missing_count:
+            metadata.setdefault("window_comparability", {})
+            metadata["window_comparability"].update({
+                "unmet_action": "block_claim",
+                "assessment_status": "requires_adjustment",
+                "claim_guard": "ordinary_window_assumptions_unsupported",
+                "reason": (
+                    "Ordinary period-window assumptions are unsupported because the time series "
+                    f"is {frequency or 'unclassified'} with {missing_count} missing intervals."
+                ),
+                "parameters": {
+                    "frequency": frequency or "unclassified",
+                    "missing_interval_count": missing_count,
+                },
+            })
+
+    seasonality_meta = metadata.get("seasonality_estimability")
+    if seasonality_meta is None:
+        return
+    period = _name(seasonality_meta.get("parameters", {}).get("seasonality_period")) or "annual"
+    seasonality = time_profile.get("seasonality")
+    assessment = seasonality.get(period) if isinstance(seasonality, dict) else None
+    if not isinstance(assessment, dict):
+        return
+    estimability = _name(assessment.get("status"))
+    seasonality_meta["parameters"] = {
+        "seasonality_period": period,
+        "frequency": _name(time_profile.get("frequency")) or "unclassified",
+        "period_observations": int(assessment.get("period_observations") or 0),
+        "minimum_complete_cycles": int(assessment.get("minimum_complete_cycles") or 0),
+        "complete_cycles": int(assessment.get("complete_cycles") or 0),
+        "estimability": estimability or "not_estimable",
+    }
+    seasonality_meta["reason"] = _text(assessment.get("reason"))
+    if estimability == "not_estimable":
+        seasonality_meta.update({
+            "unmet_action": "block_claim",
+            "assessment_status": "not_estimable",
+            "claim_guard": "block_claim",
+        })
+    elif estimability == "estimable_with_limits":
+        seasonality_meta["unmet_action"] = "downgrade_claim"
+        seasonality_meta["assessment_status"] = "estimable_with_limits"
+        seasonality_meta["claim_guard"] = "downgrade_claim"
+    else:
+        seasonality_meta["assessment_status"] = estimability or "unknown"
 
 
 def compile_analysis_requirements(
@@ -432,6 +839,9 @@ def compile_analysis_requirements(
         return []
 
     inputs_by_step: dict[str, dict[str, set[str]]] = {step_id: {} for step_id, _ in steps}
+    metadata_by_step: dict[str, dict[str, dict[str, Any]]] = {
+        step_id: {} for step_id, _ in steps
+    }
     has_canonical_records = any(provided_by_step_name.values())
     for step_id, raw_step in steps:
         for name in provided_by_step_name.get(step_id, {}):
@@ -444,6 +854,15 @@ def compile_analysis_requirements(
         capability = _text(raw_step.get("required_capability"))
         for name in _CAPABILITY_REQUIREMENT_INPUTS.get(capability, ()):
             inputs_by_step[step_id].setdefault(name, set()).add("plan.method_plan.required_capability")
+        step_metadata = _step_requirement_metadata(raw_step, user_intent=user_intent)
+        _apply_profile_guards(
+            step_metadata,
+            step=raw_step,
+            contract=_contract_for_step(raw_step, dataset_contracts),
+        )
+        for name, metadata in step_metadata.items():
+            inputs_by_step[step_id].setdefault(name, set()).add("deterministic_requirement_rule")
+            metadata_by_step[step_id][name] = metadata
 
     external_inputs: list[tuple[str, str]] = []
     external_inputs.extend(
@@ -486,23 +905,36 @@ def compile_analysis_requirements(
                     "unmet_action": "disclose",
                 }
             provided_requirement = provided_by_step_name.get(step_id, {}).get(name, {})
-            compiled.append({
+            metadata = metadata_by_step[step_id].get(name, {})
+            status = metadata.get("status", provided_requirement.get("status", "pending"))
+            reason = metadata.get("reason")
+            if reason is None:
+                reason = (
+                    "Compatibility requirement compiled from an unregistered saved input."
+                    if compatibility_definition
+                    else str(provided_requirement.get("reason") or "")
+                )
+            requirement = {
                 "contract_version": ANALYSIS_REQUIREMENT_CONTRACT_VERSION,
                 "id": f"req_{step_id_component}_{name}",
                 "step_id": step_id,
                 "category": definition["category"],
                 "name": name,
                 "necessity": "required",
-                "trigger": f"explicit compiler input: {name}",
-                "status": provided_requirement.get("status", "pending"),
+                "trigger": str(metadata.get("trigger") or f"explicit compiler input: {name}"),
+                "status": status,
                 "required_evidence_fields": list(definition["required_evidence_fields"]),
                 "assumption_checks": list(definition["assumption_checks"]),
-                "unmet_action": definition["unmet_action"],
+                "unmet_action": metadata.get("unmet_action", definition["unmet_action"]),
                 "evidence_ids": list(provided_requirement.get("evidence_ids") or []),
-                "reason": (
-                    "Compatibility requirement compiled from an unregistered saved input."
-                    if compatibility_definition
-                    else str(provided_requirement.get("reason") or "")
-                ),
-            })
+                "reason": str(reason),
+            }
+            parameters = metadata.get("parameters", provided_requirement.get("parameters"))
+            if isinstance(parameters, dict):
+                requirement["parameters"] = dict(parameters)
+            for field_name in ("assessment_status", "claim_guard"):
+                field_value = metadata.get(field_name, provided_requirement.get(field_name))
+                if field_value:
+                    requirement[field_name] = str(field_value)
+            compiled.append(requirement)
     return compiled

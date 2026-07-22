@@ -82,6 +82,18 @@ _SAFE_MODEL_REQUIREMENT_FIELDS = frozenset({
     "time_scope",
 })
 _SUPPORT_BY_REQUIREMENT = {
+    "autocorrelation_awareness": "autocorrelation_awareness",
+    "denominator": "denominator",
+    "effective_sample_size": "effective_sample_size",
+    "estimand": "estimand",
+    "missing_intervals": "missing_intervals",
+    "missingness": "missingness",
+    "multiplicity_handling": "multiplicity_handling",
+    "period_comparability": "period_comparability",
+    "period_definition": "period_definition",
+    "periods": "periods",
+    "sample_adequacy": "sample_adequacy",
+    "seasonality_estimability": "seasonality_estimability",
     "sample_size": "effective_sample_size",
     "effect": "effect_estimate",
     "effect_estimate": "effect_estimate",
@@ -91,7 +103,28 @@ _SUPPORT_BY_REQUIREMENT = {
     "significance": "test",
     "correlation": "correlation",
     "assumptions": "assumptions",
+    "time_frequency": "time_frequency",
+    "trend": "trend",
+    "trend_statistics": "trend_statistics",
+    "window_comparability": "window_comparability",
 }
+_GENERIC_AUTHORITATIVE_SUPPORT_FIELDS = frozenset({
+    "autocorrelation_awareness",
+    "denominator",
+    "estimand",
+    "missing_intervals",
+    "missingness",
+    "multiplicity_handling",
+    "period_comparability",
+    "period_definition",
+    "periods",
+    "sample_adequacy",
+    "seasonality_estimability",
+    "time_frequency",
+    "trend",
+    "trend_statistics",
+    "window_comparability",
+})
 _MATERIAL_NUMBER_RE = re.compile(
     r"(?<![\w.])(?P<sign>[+-]?)(?P<number>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
     r"\s*(?P<unit>%|percent|pct|CNY|RMB|USD|EUR|GBP|JPY|HKD|¥|\$|元|"
@@ -987,6 +1020,107 @@ def _structured_field_valid(field_name: str, value: Any) -> bool:
             and bool(_text(item.get("reason")))
             for item in value
         )
+    if field_name == "time_frequency":
+        return _text(value) in {
+            "daily", "business_daily", "weekly", "monthly", "quarterly", "yearly",
+            "irregular", "not_estimable",
+        }
+    if field_name == "missing_intervals":
+        return (
+            isinstance(value, dict)
+            and _finite_number(value.get("count"))
+            and float(value["count"]) >= 0
+            and bool(_text(value.get("frequency")))
+        )
+    if field_name == "missingness":
+        return isinstance(value, dict) and bool(value) and all(
+            isinstance(item, dict)
+            and _finite_number(item.get("missing_count"))
+            and float(item["missing_count"]) >= 0
+            and _finite_number(item.get("missing_rate"))
+            and 0 <= float(item["missing_rate"]) <= 1
+            for item in value.values()
+        )
+    if field_name == "denominator":
+        return isinstance(value, dict) and bool(value) and all(
+            _finite_number(item) and float(item) >= 0
+            for item in value.values()
+        )
+    if field_name == "estimand":
+        return (
+            isinstance(value, dict)
+            and bool(_text(value.get("metric")))
+            and bool(_text(value.get("aggregation")))
+            and bool(_text(value.get("contrast")))
+        )
+    if field_name in {"period_definition", "periods"}:
+        return isinstance(value, dict) and all(
+            isinstance(value.get(name), list)
+            and len(value[name]) == 2
+            and all(bool(_text(item)) for item in value[name])
+            for name in ("period_a", "period_b")
+        )
+    if field_name in {"period_comparability", "window_comparability"}:
+        return (
+            isinstance(value, dict)
+            and _text(value.get("status")) in {
+                "comparable", "comparable_with_adjustment", "not_comparable",
+            }
+            and isinstance(value.get("warnings", []), list)
+        )
+    if field_name == "sample_adequacy":
+        return (
+            isinstance(value, dict)
+            and _text(value.get("status")) in {
+                "adequate", "adequate_with_limits", "inadequate",
+                "insufficient", "not_estimable",
+            }
+            and bool(_text(value.get("design")))
+            and bool(_text(value.get("reason")))
+        )
+    if field_name == "autocorrelation_awareness":
+        if not isinstance(value, dict):
+            return False
+        status = _text(value.get("status"))
+        if status == "assessed":
+            return (
+                _finite_number(value.get("lag_1"))
+                and -1 <= float(value["lag_1"]) <= 1
+                and bool(_text(value.get("effective_sample_size_method")))
+            )
+        return status == "not_estimable" and bool(_text(value.get("reason")))
+    if field_name == "seasonality_estimability":
+        return (
+            isinstance(value, dict)
+            and _text(value.get("period")).casefold() in {
+                "annual", "quarterly", "monthly", "weekly",
+            }
+            and _text(value.get("status")) in {
+                "estimable", "estimable_with_limits", "not_estimable",
+            }
+            and _finite_number(value.get("minimum_complete_cycles"))
+            and float(value["minimum_complete_cycles"]) > 0
+            and _finite_number(value.get("complete_cycles"))
+            and float(value["complete_cycles"]) >= 0
+            and bool(_text(value.get("reason")))
+        )
+    if field_name == "multiplicity_handling":
+        return (
+            isinstance(value, dict)
+            and _text(value.get("strategy")) in {
+                "bonferroni", "holm", "benjamini_hochberg", "exploratory_label",
+            }
+            and _finite_number(value.get("comparison_count"))
+            and float(value["comparison_count"]) > 1
+            and _text(value.get("status")) in {"exploratory", "adjusted"}
+        )
+    if field_name in {"trend", "trend_statistics"}:
+        return (
+            isinstance(value, dict)
+            and _finite_number(value.get("slope"))
+            and _finite_number(value.get("r_squared"))
+            and 0 <= float(value["r_squared"]) <= 1
+        )
     return False
 
 
@@ -1082,6 +1216,7 @@ def _statistical_support_matches_output(
         "test",
         "correlation",
         "assumptions",
+        *sorted(_GENERIC_AUTHORITATIVE_SUPPORT_FIELDS),
     )
     return all(
         field_name not in support
@@ -1131,15 +1266,18 @@ def _independently_recompute_native_ab_test(
         return {}
 
     from scipy import stats as sp_stats
+    import warnings
 
     method = str(output_data.get("method") or "")
     if method == "ttest":
-        _, levene_p = sp_stats.levene(left.to_numpy(), right.to_numpy())
-        statistic, p_value = sp_stats.ttest_ind(
-            left.to_numpy(),
-            right.to_numpy(),
-            equal_var=bool(levene_p > 0.05),
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            _, levene_p = sp_stats.levene(left.to_numpy(), right.to_numpy())
+            statistic, p_value = sp_stats.ttest_ind(
+                left.to_numpy(),
+                right.to_numpy(),
+                equal_var=bool(math.isfinite(float(levene_p)) and levene_p > 0.05),
+            )
     elif method == "mannwhitneyu":
         statistic, p_value = sp_stats.mannwhitneyu(
             left.to_numpy(),
@@ -1150,7 +1288,8 @@ def _independently_recompute_native_ab_test(
         return {}
 
     group_counts = {str(groups[0]): len(left), str(groups[1]): len(right)}
-    effect_value = round(float(right.mean() - left.mean()), 4)
+    difference_value = round(float(right.mean() - left.mean()), 4)
+    effect_value = round(float(right.mean() - left.mean()), 8)
     expected_test = {
         "statistic": round(float(statistic), 4),
         "p_value": round(float(p_value), 6),
@@ -1167,13 +1306,21 @@ def _independently_recompute_native_ab_test(
         output_counts != group_counts
         or not isinstance(output_difference, dict)
         or not _finite_number(output_difference.get("absolute"))
-        or abs(float(output_difference["absolute"]) - effect_value) > 1e-9
+        or abs(float(output_difference["absolute"]) - difference_value) > 1e-9
         or computation_digest(output_data.get("test")) != computation_digest(expected_test)
     ):
         return {}
 
     expected_sample = {"total": len(left) + len(right), "groups": group_counts}
-    expected_effect = {"value": effect_value, "metric": "mean_difference"}
+    if method == "mannwhitneyu":
+        effect_value = round(
+            float(1 - (2 * float(statistic) / (len(left) * len(right)))),
+            8,
+        )
+        effect_metric = "rank_biserial_correlation"
+    else:
+        effect_metric = "mean_difference"
+    expected_effect = {"value": effect_value, "metric": effect_metric}
     support_sample = statistical_support.get("effective_sample_size")
     support_effect = statistical_support.get("effect_estimate")
     support_test = statistical_support.get("test")
@@ -1183,7 +1330,7 @@ def _independently_recompute_native_ab_test(
         return {}
     if (
         abs(float(support_effect["value"]) - effect_value) > 1e-9
-        or str(support_effect.get("metric") or "") != "mean_difference"
+        or str(support_effect.get("metric") or "") != effect_metric
     ):
         return {}
     if computation_digest(support_test) != computation_digest(expected_test):
@@ -1703,6 +1850,11 @@ def bind_evidence_to_computations(
         normalized["assumptions"] = authoritative_support["assumptions"]
         normalized["assumption_checks"] = authoritative_support["assumptions"]
         authoritative_requirement_fields.update({"assumptions", "assumption_checks"})
+    for field_name in sorted(_GENERIC_AUTHORITATIVE_SUPPORT_FIELDS):
+        if field_name not in authoritative_support:
+            continue
+        normalized[field_name] = authoritative_support[field_name]
+        authoritative_requirement_fields.add(field_name)
 
     numeric_mismatch = _material_numeric_mismatch(
         record,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,124 @@ from scipy import stats as sp_stats
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import get_df
 from data_agent.tools.registry import registry
+
+
+def _mean_difference_interval(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    equal_var: bool,
+    level: float = 0.95,
+) -> dict[str, float | str]:
+    """Return a two-sided interval for right mean minus left mean."""
+
+    n_left, n_right = len(left), len(right)
+    var_left = float(np.var(left, ddof=1))
+    var_right = float(np.var(right, ddof=1))
+    difference = float(np.mean(right) - np.mean(left))
+    if equal_var:
+        degrees = n_left + n_right - 2
+        pooled = ((n_left - 1) * var_left + (n_right - 1) * var_right) / degrees
+        standard_error = float(np.sqrt(pooled * (1 / n_left + 1 / n_right)))
+        interval_method = "student_mean_difference"
+    else:
+        left_term = var_left / n_left
+        right_term = var_right / n_right
+        standard_error = float(np.sqrt(left_term + right_term))
+        denominator = (
+            (left_term**2 / (n_left - 1))
+            + (right_term**2 / (n_right - 1))
+        )
+        degrees = (
+            (left_term + right_term) ** 2 / denominator
+            if denominator > 0
+            else n_left + n_right - 2
+        )
+        interval_method = "welch_mean_difference"
+    critical = float(sp_stats.t.ppf((1 + level) / 2, degrees)) if standard_error > 0 else 0.0
+    margin = critical * standard_error
+    return {
+        "level": level,
+        "lower": round(difference - margin, 6),
+        "upper": round(difference + margin, 6),
+        "method": interval_method,
+    }
+
+
+def _rank_biserial_effect(left: np.ndarray, right: np.ndarray) -> float:
+    """Return stochastic superiority of right over left on a [-1, 1] scale."""
+
+    u_left = float(sp_stats.mannwhitneyu(left, right, alternative="two-sided").statistic)
+    return float(1 - (2 * u_left / (len(left) * len(right))))
+
+
+def _rank_biserial_interval(
+    left: np.ndarray,
+    right: np.ndarray,
+    *,
+    level: float = 0.95,
+) -> dict[str, float | str]:
+    """Return a deterministic percentile-bootstrap interval for rank-biserial correlation."""
+
+    rng = np.random.default_rng(0)
+    estimates = [
+        _rank_biserial_effect(
+            rng.choice(left, size=len(left), replace=True),
+            rng.choice(right, size=len(right), replace=True),
+        )
+        for _ in range(600)
+    ]
+    alpha = (1 - level) / 2
+    lower, upper = np.quantile(estimates, [alpha, 1 - alpha])
+    point = _rank_biserial_effect(left, right)
+    return {
+        "level": level,
+        "lower": round(float(min(lower, point)), 6),
+        "upper": round(float(max(upper, point)), 6),
+        "method": "bootstrap_rank_biserial_correlation",
+    }
+
+
+def _cramers_v(contingency: np.ndarray) -> float:
+    statistic = float(sp_stats.chi2_contingency(contingency, correction=False)[0])
+    total = float(contingency.sum())
+    scale = min(contingency.shape[0] - 1, contingency.shape[1] - 1)
+    return float(np.sqrt(statistic / (total * scale))) if total > 0 and scale > 0 else 0.0
+
+
+def _cramers_v_interval(contingency: np.ndarray) -> dict[str, float | str]:
+    """Return a deterministic parametric-bootstrap interval for Cramer's V."""
+
+    total = int(contingency.sum())
+    probabilities = contingency.reshape(-1).astype(float) / total
+    rng = np.random.default_rng(0)
+    estimates: list[float] = []
+    for sampled in rng.multinomial(total, probabilities, size=400):
+        table = sampled.reshape(contingency.shape)
+        if bool((table.sum(axis=0) == 0).any()) or bool((table.sum(axis=1) == 0).any()):
+            continue
+        estimates.append(_cramers_v(table))
+    if not estimates:
+        point = _cramers_v(contingency)
+        lower = upper = point
+    else:
+        lower, upper = np.quantile(estimates, [0.025, 0.975])
+    return {
+        "level": 0.95,
+        "lower": round(float(lower), 6),
+        "upper": round(float(upper), 6),
+        "method": "parametric_bootstrap_cramers_v",
+    }
+
+
+def _comparison_missingness(df: pd.DataFrame, *columns: str) -> dict[str, dict[str, float | int]]:
+    return {
+        column: {
+            "missing_count": int(df[column].isna().sum()),
+            "missing_rate": float(df[column].isna().mean()) if len(df) else 0.0,
+        }
+        for column in columns
+    }
 
 
 @registry.register(
@@ -37,6 +156,8 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
     groups = df[group_col].dropna().unique()
     if len(groups) < 2:
         return f"Error: 分组列只有 {len(groups)} 个唯一值，至少需要 2 个"
+    if len(groups) > 2:
+        return f"Error: A/B 比较要求恰好 2 个分组，当前有 {len(groups)} 个"
 
     g1_name, g2_name = str(groups[0]), str(groups[1])
 
@@ -46,17 +167,66 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         if contingency.size < 4:
             return "Error: chi2 检验需要每组至少 2 个类别"
         stat, p_value, dof, expected = sp_stats.chi2_contingency(contingency)
+        counts = {
+            str(group): int(contingency.loc[group].sum())
+            for group in groups
+        }
+        effect = _cramers_v(contingency.to_numpy())
+        minimum_expected = float(np.min(expected))
         result = {
             "group_col": group_col,
             "metric_col": metric_col,
             "groups": {g1_name: {"n": int(contingency.loc[groups[0]].sum())},
                        g2_name: {"n": int(contingency.loc[groups[1]].sum())}},
             "method": "chi2",
+            "effective_sample_size": {
+                "total": int(contingency.to_numpy().sum()),
+                "groups": counts,
+            },
+            "denominator": counts,
+            "missingness": _comparison_missingness(df, group_col, metric_col),
+            "estimand": {
+                "metric": metric_col,
+                "aggregation": "categorical_association",
+                "contrast": "two_group_distribution_difference",
+            },
+            "effect_estimate": {
+                "value": round(effect, 6),
+                "metric": "cramers_v",
+            },
+            "confidence_interval": _cramers_v_interval(contingency.to_numpy()),
             "test": {
                 "statistic": round(float(stat), 4),
                 "p_value": round(float(p_value), 6),
                 "dof": int(dof),
                 "significant": bool(p_value < 0.05),
+            },
+            "assumptions": [
+                {
+                    "name": "independent_observations",
+                    "status": "assumed",
+                    "reason": "Independence and sampling-unit validity must be confirmed from the study design.",
+                },
+                {
+                    "name": "method_appropriate_for_design",
+                    "status": "passed",
+                    "reason": "The chi-square calculation matches the declared independent two-group categorical design.",
+                },
+                {
+                    "name": "expected_cell_counts",
+                    "status": "passed" if minimum_expected >= 5 else "failed",
+                    "reason": f"Minimum expected cell count is {minimum_expected:.4f}.",
+                },
+            ],
+            "sample_adequacy": {
+                "status": "adequate_with_limits" if minimum_expected >= 5 else "inadequate",
+                "design": "independent_groups_categorical",
+                "reason": (
+                    "Expected cell counts support the chi-square approximation, but independence "
+                    "and population representativeness remain design assumptions."
+                    if minimum_expected >= 5
+                    else "At least one expected cell count is below 5; the chi-square approximation is unreliable."
+                ),
             },
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -75,18 +245,25 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         return "Error: 每组至少需要 2 个有效数据点"
 
     # Levene 方差齐性检验
-    levene_stat, levene_p = sp_stats.levene(g1, g2)
-    equal_var = bool(levene_p > 0.05)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        levene_stat, levene_p = sp_stats.levene(g1, g2)
+    levene_estimable = bool(np.isfinite(levene_stat) and np.isfinite(levene_p))
+    equal_var = bool(levene_estimable and levene_p > 0.05)
 
     # 自动选择检验方法
     if method == "auto":
         # 正态性检验 (Shapiro-Wilk, n < 5000)
         g1_normal = True
         g2_normal = True
-        if len(g1) < 5000:
+        if np.ptp(g1) == 0:
+            g1_normal = False
+        elif len(g1) < 5000:
             _, p1 = sp_stats.shapiro(g1[:5000] if len(g1) > 5000 else g1)
             g1_normal = p1 > 0.05
-        if len(g2) < 5000:
+        if np.ptp(g2) == 0:
+            g2_normal = False
+        elif len(g2) < 5000:
             _, p2 = sp_stats.shapiro(g2[:5000] if len(g2) > 5000 else g2)
             g2_normal = p2 > 0.05
 
@@ -103,6 +280,20 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
             g2_name: {"n": len(g2), "mean": round(float(np.mean(g2)), 4), "std": round(float(np.std(g2)), 4)},
         },
         "method": method,
+        "effective_sample_size": {
+            "total": len(g1) + len(g2),
+            "groups": {g1_name: len(g1), g2_name: len(g2)},
+        },
+        "denominator": {g1_name: len(g1), g2_name: len(g2)},
+        "missingness": _comparison_missingness(df, group_col, metric_col),
+        "sample_adequacy": {
+            "status": "adequate_with_limits",
+            "design": "independent_groups",
+            "reason": (
+                f"The test is computable with group sizes {len(g1)} and {len(g2)}, but independence, "
+                "sampling-unit validity, and population representativeness require design evidence."
+            ),
+        },
     }
 
     diff = float(np.mean(g2) - np.mean(g1))
@@ -112,21 +303,108 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         "cohens_d": round(diff / np.sqrt((np.std(g1, ddof=1)**2 + np.std(g2, ddof=1)**2) / 2), 4)
                      if (np.std(g1) + np.std(g2)) > 0 else None,
     }
+    if method == "mannwhitneyu":
+        rank_effect = _rank_biserial_effect(g1, g2)
+        result["estimand"] = {
+            "metric": metric_col,
+            "aggregation": "pairwise_probability",
+            "contrast": "group_2_stochastic_superiority_minus_reverse",
+        }
+        result["effect_estimate"] = {
+            "value": round(rank_effect, 8),
+            "metric": "rank_biserial_correlation",
+        }
+        result["confidence_interval"] = _rank_biserial_interval(g1, g2)
+    else:
+        result["estimand"] = {
+            "metric": metric_col,
+            "aggregation": "mean",
+            "contrast": "group_2_minus_group_1",
+        }
+        result["effect_estimate"] = {
+            "value": round(diff, 8),
+            "metric": "mean_difference",
+        }
+        result["confidence_interval"] = _mean_difference_interval(
+            g1,
+            g2,
+            equal_var=equal_var,
+        )
+    result["assumptions"] = [
+        {
+            "name": "independent_observations",
+            "status": "assumed",
+            "reason": "Independence and sampling-unit validity must be confirmed from the study design.",
+        },
+        {
+            "name": "method_appropriate_for_design",
+            "status": "passed",
+            "reason": (
+                "The calculation matches the declared independent two-group design; "
+                "study-level independence remains a disclosed assumption."
+            ),
+        },
+    ]
+    if method == "ttest":
+        result["assumptions"].append({
+            "name": "variance_handling",
+            "status": "passed" if levene_estimable else "disclosed",
+            "reason": (
+                "Student variance pooling is used after the Levene check."
+                if equal_var
+                else (
+                    "Welch variance handling is used because equal variance was not supported."
+                    if levene_estimable
+                    else "Levene's test was not estimable; Welch variance handling is used without pooling."
+                )
+            ),
+        })
+    else:
+        result["assumptions"].append({
+            "name": "interpretation_scope",
+            "status": "disclosed",
+            "reason": (
+                "The Mann-Whitney test, rank-biserial effect, and bootstrap interval assess "
+                "stochastic ordering rather than a difference in group means."
+            ),
+        })
 
     # 方差齐性检验
-    result["levene_test"] = {
-        "statistic": round(float(levene_stat), 4),
-        "p_value": round(float(levene_p), 6),
-        "equal_variance": equal_var,
-    }
+    if levene_estimable:
+        result["levene_test"] = {
+            "statistic": round(float(levene_stat), 4),
+            "p_value": round(float(levene_p), 6),
+            "equal_variance": equal_var,
+        }
+    else:
+        result["levene_test"] = {
+            "status": "not_estimable",
+            "reason": "Levene's variance test is undefined for the observed within-group deviations.",
+        }
 
     if method == "ttest":
-        stat, p_value = sp_stats.ttest_ind(g1, g2, equal_var=equal_var)
-        result["test"] = {
-            "statistic": round(float(stat), 4),
-            "p_value": round(float(p_value), 6),
-            "significant": bool(p_value < 0.05),
-        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            stat, p_value = sp_stats.ttest_ind(g1, g2, equal_var=equal_var)
+        if np.isfinite(stat) and np.isfinite(p_value):
+            result["test"] = {
+                "statistic": round(float(stat), 4),
+                "p_value": round(float(p_value), 6),
+                "significant": bool(p_value < 0.05),
+            }
+        else:
+            reason = "Both groups have zero within-group variance; a t-test is undefined."
+            result["test"] = {"status": "not_estimable", "reason": reason}
+            result["sample_adequacy"] = {
+                "status": "not_estimable",
+                "design": "independent_groups",
+                "reason": reason,
+            }
+            method_check = next(
+                item for item in result["assumptions"]
+                if item["name"] == "method_appropriate_for_design"
+            )
+            method_check.update({"status": "failed", "reason": reason})
     elif method == "mannwhitneyu":
         stat, p_value = sp_stats.mannwhitneyu(g1, g2, alternative="two-sided")
         result["test"] = {

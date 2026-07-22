@@ -123,6 +123,21 @@ def computation_env(tmp_path, monkeypatch):
                     "status": "passed",
                     "reason": "the fixture comparison matches the declared independent-group design",
                 }],
+                "denominator": {"group_a": 2, "group_b": 2},
+                "missingness": {
+                    "group": {"missing_count": 0, "missing_rate": 0.0},
+                    "revenue": {"missing_count": 0, "missing_rate": 0.0},
+                },
+                "estimand": {
+                    "metric": "revenue",
+                    "aggregation": "mean",
+                    "contrast": "group_a_minus_group_b",
+                },
+                "sample_adequacy": {
+                    "status": "adequate_with_limits",
+                    "design": "independent_groups",
+                    "reason": "The fixture is sufficient only for demonstrating the binding contract.",
+                },
             },
         ),
         parameters={
@@ -139,6 +154,10 @@ def computation_env(tmp_path, monkeypatch):
                 "effect_estimate",
                 "confidence_interval",
                 "assumptions",
+                "denominator",
+                "missingness",
+                "estimand",
+                "sample_adequacy",
             ],
         ),
     )
@@ -269,6 +288,47 @@ def test_loop_persists_server_owned_compact_computation_ref(computation_env):
     persisted = json.loads(artifact.read_text(encoding="utf-8"))
     assert persisted["tool_call_id"] == "call_compare"
     assert persisted["output"]["data"]["effect_estimate"]["value"] == 3.5
+
+
+def test_comparison_requirements_are_satisfied_by_bound_server_fields(computation_env):
+    current = computation_env["state"].analysis_plan
+    step = dict(current["method_plan"][0])
+    step.update({
+        "required_capability": "analysis.group_compare",
+        "claim_type": "inferential",
+        "sampling_structure": "independent_groups",
+    })
+    computation_env["state"].set_analysis_plan({
+        **current,
+        "method_plan": [step],
+    })
+    ref = _execute_computation(computation_env)
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload["statistical_support"].update({
+        "denominator": {"group_a": 2, "group_b": 2},
+        "missingness": {
+            "group": {"missing_count": 0, "missing_rate": 0.0},
+            "revenue": {"missing_count": 0, "missing_rate": 0.0},
+        },
+        "estimand": {
+            "metric": "revenue",
+            "aggregation": "mean",
+            "contrast": "group_a_minus_group_b",
+        },
+        "sample_adequacy": {
+            "status": "adequate_with_limits",
+            "design": "independent_groups",
+            "reason": "The fixture is sufficient only for demonstrating the binding contract.",
+        },
+    })
+
+    result = _record(computation_env, payload)
+
+    assert "error" not in result
+    saved = computation_env["state"].evidence_records[-1]
+    assert saved["denominator"] == {"group_a": 2, "group_b": 2}
+    assert saved["sample_adequacy"]["status"] == "adequate_with_limits"
+    assert saved["verification_level"] in {"structured_checked", "independently_recomputed"}
 
 
 def test_computation_ref_records_only_datasets_named_by_the_tool_call(computation_env, monkeypatch):
@@ -822,6 +882,7 @@ def test_native_ab_test_is_independently_recomputed_and_projects_significance(
     )
     persisted = json.loads(_artifact_path(computation_env, ref).read_text(encoding="utf-8"))
     native = persisted["output"]["data"]
+    assert {"confidence_interval", "test"} <= set(ref["structured_checked_fields"]), ref
     payload = _evidence_payload(computation_env, ref["tool_call_id"])
     payload["method"] = "welch t-test"
     payload["measurements"][0]["value"] = native["difference"]["absolute"]
@@ -848,7 +909,217 @@ def test_native_ab_test_is_independently_recomputed_and_projects_significance(
     evidence = computation_env["state"].evidence_records[-1]
     assert evidence["verification_level"] == "independently_recomputed"
     assert evidence["significance"] == native["test"]
-    assert "assumption_checks" not in evidence
+    assert evidence["assumption_checks"] == native["assumptions"]
+
+
+def test_native_mann_whitney_rank_effect_is_independently_recomputed(
+    computation_env,
+    monkeypatch,
+):
+    import data_agent.tools._utils as tool_utils
+    import data_agent.tools.statistics  # noqa: F401
+
+    computation_env["state"].set_analysis_plan({
+        "contract_version": "analysis_plan.v1",
+        "id": "plan_compare",
+        "goal": "Test whether group revenue distributions differ",
+        "method_plan": [{
+            "step_id": "step_compare",
+            "goal": "Run a two-group rank test",
+            "dataset_inputs": ["orders"],
+            "dataset_contract_ids": ["contract_orders"],
+            "combination_mode": "independent",
+            "expected_output": "Bound rank-based evidence",
+            "evidence_requirements": ["sample_size", "effect_size"],
+            "required_claim_keys": ["group_revenue_difference"],
+        }],
+        "visualization_strategy": "none",
+    })
+    monkeypatch.setattr(tool_utils, "workspace", computation_env["store"])
+    ref = _execute_tool(
+        computation_env,
+        tool_call_id="call_native_mw",
+        tool_name="ab_test",
+        arguments={
+            "name": "orders",
+            "group_col": "group",
+            "metric_col": "revenue",
+            "method": "mannwhitneyu",
+        },
+    )
+    persisted = json.loads(_artifact_path(computation_env, ref).read_text(encoding="utf-8"))
+    native = persisted["output"]["data"]
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload["method"] = "Mann-Whitney U"
+    payload["tool_calls"] = ["ab_test"]
+    payload["claim"] = f"The rank-biserial effect is {native['effect_estimate']['value']}."
+    payload["result_summary"] = payload["claim"]
+    payload["measurements"][0].update({
+        "definition": "Treatment stochastic superiority minus reverse superiority.",
+        "value": native["effect_estimate"]["value"],
+        "unit": "unitless",
+        "method": "Mann-Whitney U",
+    })
+    payload["statistical_support"] = {
+        "effective_sample_size": native["effective_sample_size"],
+        "effect_estimate": native["effect_estimate"],
+        "test": native["test"],
+    }
+
+    result = _record(computation_env, payload)
+
+    assert result.get("error") is None, result
+    saved = computation_env["state"].evidence_records[-1]
+    assert saved["effect_estimate"]["metric"] == "rank_biserial_correlation"
+    assert saved["verification_level"] == "independently_recomputed"
+
+
+def test_monthly_seasonality_requirement_rejects_annual_tool_evidence(
+    computation_env,
+    monkeypatch,
+):
+    import data_agent.tools._utils as tool_utils
+    import data_agent.tools.eda  # noqa: F401
+
+    seasonal = pd.DataFrame({
+        "date": pd.date_range("2025-01-01", periods=60, freq="D"),
+        "revenue": range(60),
+    })
+    active = computation_env["store"].promote_analysis_copy(
+        "orders",
+        seasonal,
+        computation_env["raw"]["dataset_id"],
+        {"operation": "seasonality_fixture"},
+    )
+    computation_env["active"] = active
+    computation_env["state"].set_analysis_plan({
+        "contract_version": "analysis_plan.v1",
+        "id": "plan_compare",
+        "goal": "Assess monthly seasonality",
+        "method_plan": [{
+            "step_id": "step_compare",
+            "goal": "Assess monthly seasonality",
+            "required_capability": "analysis.time_series",
+            "claim_type": "seasonality",
+            "seasonality_period": "monthly",
+            "dataset_inputs": ["orders"],
+            "dataset_contract_ids": ["contract_orders"],
+            "combination_mode": "independent",
+            "expected_output": "Monthly seasonality estimability",
+            "evidence_requirements": ["seasonality_estimability"],
+            "required_claim_keys": ["group_revenue_difference"],
+        }],
+        "visualization_strategy": "none",
+    })
+    monkeypatch.setattr(tool_utils, "workspace", computation_env["store"])
+    ref = _execute_tool(
+        computation_env,
+        tool_call_id="call_annual_for_monthly",
+        tool_name="analyze_time_series",
+        arguments={
+            "name": "orders",
+            "date_col": "date",
+            "value_col": "revenue",
+            "seasonality_period": "annual",
+        },
+    )
+    native = json.loads(_artifact_path(computation_env, ref).read_text(encoding="utf-8"))[
+        "output"
+    ]["data"]
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload.update({
+        "claim": "The requested seasonality estimability was assessed.",
+        "result_summary": "A server-bound seasonality assessment is available.",
+        "method": "time series analysis",
+        "tool_calls": ["analyze_time_series"],
+        "evidence_requirement": "seasonality_estimability",
+        "statistical_support": {
+            field: native[field]
+            for field in (
+                "time_frequency", "missing_intervals", "window_comparability",
+                "autocorrelation_awareness", "effective_sample_size", "missingness",
+                "assumptions", "seasonality_estimability",
+            )
+        },
+        "sample_size": native["effective_sample_size"]["total"],
+    })
+    payload["measurements"][0].update({
+        "definition": "Seasonality estimability status.",
+        "value": "not_estimable",
+        "unit": "status",
+        "method": "time series analysis",
+    })
+
+    result = _record(computation_env, payload)
+
+    assert result["error_type"] == "unsatisfied_analysis_requirements", result
+
+
+def test_native_ab_test_satisfies_full_comparison_contract(computation_env, monkeypatch):
+    import data_agent.tools._utils as tool_utils
+    import data_agent.tools.statistics  # noqa: F401
+
+    computation_env["state"].set_analysis_plan({
+        "contract_version": "analysis_plan.v1",
+        "id": "plan_compare",
+        "goal": "Test and quantify a two-group revenue difference",
+        "method_plan": [{
+            "step_id": "step_compare",
+            "goal": "Run a bounded two-group comparison",
+            "required_capability": "analysis.experiment",
+            "claim_type": "inferential",
+            "sampling_structure": "independent_groups",
+            "dataset_inputs": ["orders"],
+            "dataset_contract_ids": ["contract_orders"],
+            "combination_mode": "independent",
+            "expected_output": "Effect magnitude, interval, and method support",
+            "evidence_requirements": [
+                "effective_sample_size", "denominator", "missingness", "estimand",
+                "effect_estimate", "confidence_interval", "calculation_method",
+                "assumptions", "sample_adequacy", "significance",
+            ],
+            "required_claim_keys": ["group_revenue_difference"],
+        }],
+        "visualization_strategy": "none",
+    })
+    monkeypatch.setattr(tool_utils, "workspace", computation_env["store"])
+    ref = _execute_tool(
+        computation_env,
+        tool_call_id="call_native_ab_full",
+        tool_name="ab_test",
+        arguments={
+            "name": "orders",
+            "group_col": "group",
+            "metric_col": "revenue",
+            "method": "ttest",
+        },
+    )
+    persisted = json.loads(_artifact_path(computation_env, ref).read_text(encoding="utf-8"))
+    native = persisted["output"]["data"]
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload["claim"] = f"The bounded mean difference is {native['effect_estimate']['value']}."
+    payload["result_summary"] = payload["claim"]
+    payload["measurements"][0].update({
+        "value": native["effect_estimate"]["value"],
+        "unit": "unspecified",
+    })
+    payload["evidence_requirement"] = "effect_estimate"
+    payload["statistical_support"] = {
+        field: native[field]
+        for field in (
+            "effective_sample_size", "denominator", "missingness", "estimand",
+            "effect_estimate", "confidence_interval", "test", "assumptions",
+            "sample_adequacy",
+        )
+    }
+
+    result = _record(computation_env, payload)
+
+    assert result.get("error") is None, result
+    saved = computation_env["state"].evidence_records[-1]
+    assert saved["confidence_interval"] == native["confidence_interval"]
+    assert saved["sample_adequacy"] == native["sample_adequacy"]
+    assert saved["verification_level"] == "structured_checked"
 
 
 def test_model_authored_correlation_cannot_satisfy_canonical_requirement(computation_env):

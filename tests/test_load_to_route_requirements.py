@@ -55,6 +55,14 @@ def test_real_route_proposal_preserves_requirements_in_runtime_capabilities():
         "sample_size",
         "trend_statistics",
         "limitations",
+        "time_frequency",
+        "missing_intervals",
+        "window_comparability",
+        "autocorrelation_awareness",
+        "effective_sample_size",
+        "missingness",
+        "calculation_method",
+        "assumptions",
     ]
     assert "expected_evidence" not in trend
     assert item["evidence_requirements"] == trend["evidence_requirements"]

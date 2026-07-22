@@ -34,9 +34,21 @@ from data_agent.tools.registry import registry
         "date_col": {"description": "日期/时间列名，留空自动推断"},
         "value_col": {"description": "数值列名，留空自动推断"},
         "target_col": {"description": "目标列名（value_col 的别名）"},
+        "agg_func": {"description": "同一时间点多行时的聚合方式", "enum": ["sum", "mean"]},
+        "seasonality_period": {
+            "description": "要评估可估性的季节周期",
+            "enum": ["annual", "quarterly", "monthly", "weekly"],
+        },
     },
 )
-def analyze_time_series(name: str, date_col: str = "", value_col: str = "", target_col: str = "") -> str:
+def analyze_time_series(
+    name: str,
+    date_col: str = "",
+    value_col: str = "",
+    target_col: str = "",
+    agg_func: str = "",
+    seasonality_period: str = "annual",
+) -> str:
     df, err = get_df(name)
     if err:
         return err
@@ -83,13 +95,49 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
 
     if date_col not in df.columns or col not in df.columns:
         return f"Error: 列不存在。可用列: {list(df.columns)}"
+    if agg_func not in {"", "sum", "mean"}:
+        return "Error: agg_func 必须是 sum 或 mean"
+    if seasonality_period not in {"annual", "quarterly", "monthly", "weekly"}:
+        return "Error: seasonality_period 必须是 annual、quarterly、monthly 或 weekly"
 
-    ts = df[[date_col, col]].dropna().copy()
-    ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
+    from data_agent.agent.trust_contracts import build_time_series_analysis_profile
+
+    source = df[[date_col, col]].copy()
+    converted_dates = pd.to_datetime(source[date_col], errors="coerce")
+    source[date_col] = converted_dates
+    invalid_date_count = int(converted_dates.isna().sum())
+    time_profile = build_time_series_analysis_profile(source, date_col)
+    missingness = {
+        field: {
+            "missing_count": (
+                invalid_date_count
+                if field == date_col
+                else int(source[field].isna().sum())
+            ),
+            "missing_rate": (
+                invalid_date_count / len(source)
+                if field == date_col and len(source)
+                else float(source[field].isna().mean()) if len(source) else 0.0
+            ),
+        }
+        for field in (date_col, col)
+    }
+    ts = source.dropna().copy()
     ts = ts.dropna().sort_values(date_col)
 
     if ts.empty:
         return "Error: 有效数据为空"
+    duplicate_count = int(time_profile["duplicate_timestamp_count"])
+    if duplicate_count and not agg_func:
+        return json.dumps({
+            "error": "同一时间点存在多行记录，必须先确认按时间点求和或求均值",
+            "error_type": "estimand_definition_required",
+            "duplicate_timestamp_count": duplicate_count,
+            "allowed_aggregations": ["sum", "mean"],
+        }, ensure_ascii=False)
+    if agg_func:
+        ts = ts.groupby(date_col, as_index=False)[col].agg(agg_func)
+        time_profile = build_time_series_analysis_profile(ts, date_col)
 
     values = ts[col].values.astype(float)
 
@@ -105,6 +153,30 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
             "min": round(float(np.min(values)), 4),
             "max": round(float(np.max(values)), 4),
         },
+        "estimand": {
+            "metric": col,
+            "aggregation": agg_func or "observed_value",
+            "contrast": "change_over_ordered_time",
+        },
+        "time_frequency": time_profile["frequency"],
+        "missing_intervals": {
+            "count": time_profile["missing_interval_count"],
+            "frequency": time_profile["frequency"],
+        },
+        "missingness": missingness,
+        "window_comparability": {
+            "status": (
+                "comparable"
+                if time_profile["regular"]
+                else "comparable_with_adjustment"
+            ),
+            "frequency": time_profile["frequency"],
+            "missing_interval_count": time_profile["missing_interval_count"],
+        },
+        "seasonality_estimability": {
+            "period": seasonality_period,
+            **dict(time_profile["seasonality"][seasonality_period]),
+        },
     }
 
     if inferred:
@@ -113,14 +185,72 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
     # 趋势检测（线性回归）
     if len(values) >= 3:
         x = np.arange(len(values))
-        slope, intercept, r_value, p_value, std_err = sp_stats.linregress(x, values)
+        constant_series = bool(np.ptp(values) == 0)
+        if constant_series:
+            slope = 0.0
+            r_squared = 0.0
+        else:
+            slope, _intercept, r_value, _p_value, _std_err = sp_stats.linregress(x, values)
+            r_squared = float(r_value**2)
         result["trend"] = {
             "direction": "up" if slope > 0 else "down" if slope < 0 else "flat",
             "slope": round(float(slope), 4),
-            "r_squared": round(float(r_value**2), 4),
-            "p_value": round(float(p_value), 6),
-            "significant": bool(p_value < 0.05),
+            "r_squared": round(r_squared, 4),
+            "method": "descriptive_ordinary_least_squares",
+            "inference_status": "not_assessed",
         }
+        result["trend_statistics"] = dict(result["trend"])
+        lag_1 = (
+            float("nan")
+            if constant_series
+            else float(np.corrcoef(values[:-1], values[1:])[0, 1])
+        )
+        if np.isfinite(lag_1):
+            bounded_lag = max(-0.99, min(0.99, lag_1))
+            adjusted_n = len(values) * (1 - bounded_lag) / (1 + bounded_lag)
+            effective_n = max(1.0, min(float(len(values)), adjusted_n))
+            result["autocorrelation_awareness"] = {
+                "status": "assessed",
+                "lag_1": round(lag_1, 6),
+                "effective_sample_size_method": "bartlett_lag1_approximation",
+            }
+        else:
+            effective_n = float(len(values))
+            result["autocorrelation_awareness"] = {
+                "status": "not_estimable",
+                "reason": "Lag-1 autocorrelation is undefined for the observed values.",
+            }
+    else:
+        effective_n = float(len(values))
+        result["autocorrelation_awareness"] = {
+            "status": "not_estimable",
+            "reason": "At least 3 observations are required to assess serial dependence.",
+        }
+    result["effective_sample_size"] = {
+        "total": round(effective_n, 4),
+        "observed_total": int(len(values)),
+        "unique_time_points": int(time_profile["point_count"]),
+        "design": "time_series",
+    }
+    spacing_status = "passed" if time_profile["regular"] else "disclosed"
+    result["assumptions"] = [
+        {
+            "name": "time_spacing",
+            "status": spacing_status,
+            "reason": (
+                f"Observed frequency is {time_profile['frequency']} with "
+                f"{time_profile['missing_interval_count']} missing intervals."
+            ),
+        },
+        {
+            "name": "serial_dependence",
+            "status": "disclosed",
+            "reason": (
+                "Lag-1 dependence is reported for descriptive calibration; the ordinary least-squares "
+                "trend is not used for inferential significance."
+            ),
+        },
+    ]
 
     # 突变点检测（简单方法：滑动窗口均值差异）
     if len(values) >= 10:
@@ -142,7 +272,7 @@ def analyze_time_series(name: str, date_col: str = "", value_col: str = "", targ
             result["change_points"] = changes[:5]
 
     # 季节性检测（自相关）
-    if len(values) >= 14:
+    if len(values) >= 14 and bool(np.ptp(values) > 0):
         acf_values = []
         max_lag = min(len(values) // 2, 30)
         for lag in range(1, max_lag + 1):
@@ -424,42 +554,9 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
         "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
         "period_b": {"description": "时间段 B（对比期），格式同上"},
         "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
+        "agg_func": {"description": "指标聚合方式", "enum": ["sum", "mean"]},
     },
 )
-def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: dict) -> dict | None:
-    """Recommend a statistical test based on the comparison context."""
-    if n_a < 2 or n_b < 2 or not metric_cols:
-        return None
-    has_diff = False
-    metrics = result.get("metrics", {})
-    for col_data in (metrics.values() if metrics else []):
-        pct = col_data.get("change_pct")
-        if pct is not None and abs(pct) > 1:
-            has_diff = True
-            break
-    if not has_diff:
-        comparisons = result.get("comparisons", [])
-        for comp in comparisons:
-            for k, v in comp.items():
-                if isinstance(v, dict) and v.get("change_pct") is not None and abs(v["change_pct"]) > 1:
-                    has_diff = True
-                    break
-            if has_diff:
-                break
-    if not has_diff:
-        return None
-    return {
-        "recommended_tool": "ab_test",
-        "reason": f"两组样本量分别为 {n_a} 和 {n_b}，均值差异存在，建议用 ab_test 验证统计显著性",
-        "suggested_args": {
-            "name": "<数据集名>",
-            "group_col": "<分组列（需包含两组标识）>",
-            "metric_col": metric_cols[0],
-            "method": "auto",
-        },
-    }
-
-
 def compare_periods(
     name: str,
     date_col: str = "",
@@ -467,6 +564,7 @@ def compare_periods(
     period_a: str = "",
     period_b: str = "",
     dimensions: str = "",
+    agg_func: str = "",
 ) -> str:
     df, err = get_df(name)
     if err:
@@ -478,9 +576,14 @@ def compare_periods(
 
     if date_col not in df.columns:
         return f"Error: 列 '{date_col}' 不存在。可用: {list(df.columns)}"
+    if agg_func not in {"", "sum", "mean"}:
+        return "Error: agg_func 必须是 sum 或 mean"
 
     df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    source_row_count = len(df)
+    converted_dates = pd.to_datetime(df[date_col], errors="coerce")
+    invalid_date_count = int(converted_dates.isna().sum())
+    df[date_col] = converted_dates
     df = df.dropna(subset=[date_col])
 
     ref_date = df[date_col].max().normalize()
@@ -501,6 +604,22 @@ def compare_periods(
     if df_a.empty or df_b.empty:
         return json.dumps({"error": "某个时间段内没有数据", "period_a_rows": len(df_a), "period_b_rows": len(df_b)}, ensure_ascii=False)
 
+    from data_agent.agent.trust_contracts import build_time_series_analysis_profile
+
+    selected_time_profile = build_time_series_analysis_profile(
+        pd.concat([df_a[[date_col]], df_b[[date_col]]], ignore_index=True),
+        date_col,
+    )
+    duplicate_count = int(selected_time_profile["duplicate_timestamp_count"])
+    if duplicate_count and not agg_func:
+        return json.dumps({
+            "error": "同一时间点存在多行记录，必须先确认按时间点求和或求均值",
+            "error_type": "estimand_definition_required",
+            "duplicate_timestamp_count": duplicate_count,
+            "allowed_aggregations": ["sum", "mean"],
+        }, ensure_ascii=False)
+    agg_func = agg_func or "sum"
+
     # 时段结构分析
     struct_a = analyze_period_structure(pa[0], pa[1])
     struct_b = analyze_period_structure(pb[0], pb[1])
@@ -517,8 +636,22 @@ def compare_periods(
 
     dim_cols = [c.strip() for c in dimensions.split(",") if c.strip()] if dimensions else []
 
+    aggregation_keys = [date_col, *dim_cols]
+    calculation_a = df_a.groupby(
+        aggregation_keys,
+        as_index=False,
+        dropna=False,
+    )[metric_cols].agg(agg_func)
+    calculation_b = df_b.groupby(
+        aggregation_keys,
+        as_index=False,
+        dropna=False,
+    )[metric_cols].agg(agg_func)
+
     def _daily_avg_fields(va: float, vb: float):
         """计算日均值相关字段。"""
+        if agg_func != "sum":
+            return {}
         days_a = struct_a["day_count"]
         days_b = struct_b["day_count"]
         da = va / days_a if days_a > 0 else None
@@ -554,19 +687,145 @@ def compare_periods(
         "comparability": comparability,
     }
 
+    time_profile = build_time_series_analysis_profile(df[[date_col]], date_col)
+    profile_a = build_time_series_analysis_profile(df_a[[date_col]], date_col)
+    profile_b = build_time_series_analysis_profile(df_b[[date_col]], date_col)
+    window_frequencies = {
+        profile["frequency"]
+        for profile in (profile_a, profile_b)
+        if profile["frequency"] != "not_estimable"
+    }
+    if len(window_frequencies) == 1:
+        comparison_frequency = next(iter(window_frequencies))
+    else:
+        comparison_frequency = time_profile["frequency"]
+    missing_window_dates = sum(
+        int(profile["missing_interval_count"])
+        for profile in (profile_a, profile_b)
+    )
+    window_warnings = list(comparability.get("warnings") or [])
+    if missing_window_dates:
+        window_warnings.append(
+            f"comparison windows contain {missing_window_dates} missing "
+            f"{comparison_frequency} intervals"
+        )
+    if "irregular" in {
+        profile_a["frequency"],
+        profile_b["frequency"],
+        comparison_frequency,
+    }:
+        window_warnings.append("one or both comparison windows have irregular time spacing")
+    window_status = "comparable" if not window_warnings else "comparable_with_adjustment"
+    unique_a = int(df_a[date_col].dt.normalize().nunique())
+    unique_b = int(df_b[date_col].dt.normalize().nunique())
+    result.update({
+        "effective_sample_size": {
+            "total": unique_a + unique_b,
+            "groups": {"period_a": unique_a, "period_b": unique_b},
+            "observed_rows": int(len(df_a) + len(df_b)),
+            "design": "repeated_measure_time",
+        },
+        "denominator": {
+            "period_a_rows": int(len(df_a)),
+            "period_b_rows": int(len(df_b)),
+            "period_a_days": int(struct_a["day_count"]),
+            "period_b_days": int(struct_b["day_count"]),
+        },
+        "missingness": {
+            field: {
+                "missing_count": (
+                    invalid_date_count
+                    if field == date_col
+                    else int(pd.concat([df_a[field], df_b[field]]).isna().sum())
+                ),
+                "missing_rate": (
+                    invalid_date_count / source_row_count
+                    if field == date_col and source_row_count
+                    else float(pd.concat([df_a[field], df_b[field]]).isna().mean())
+                ),
+            }
+            for field in [date_col, *metric_cols]
+        },
+        "estimand": {
+            "metric": metric_cols[0],
+            "aggregation": agg_func,
+            "contrast": "period_b_minus_period_a",
+        },
+        "period_definition": {
+            "period_a": [str(pa[0].date()), str(pa[1].date())],
+            "period_b": [str(pb[0].date()), str(pb[1].date())],
+        },
+        "periods": {
+            "period_a": [str(pa[0].date()), str(pa[1].date())],
+            "period_b": [str(pb[0].date()), str(pb[1].date())],
+        },
+        "period_comparability": {
+            "status": window_status,
+            "warnings": window_warnings,
+        },
+        "time_frequency": comparison_frequency,
+        "missing_intervals": {
+            "count": int(missing_window_dates),
+            "frequency": comparison_frequency,
+        },
+        "window_comparability": {
+            "status": window_status,
+            "warnings": window_warnings,
+        },
+        "sample_adequacy": {
+            "status": "adequate_with_limits",
+            "design": "repeated_measure_time",
+            "reason": (
+                "Window coverage is comparable for description, but serial dependence remains "
+                "unassessed for inference."
+                if window_status == "comparable"
+                else "; ".join(window_warnings) + "; serial dependence remains unassessed"
+            ),
+            "claim_scope": "descriptive",
+        },
+        "assumptions": [{
+            "name": "window_comparability",
+            "status": "passed" if window_status == "comparable" else "disclosed",
+            "reason": (
+                "Both windows have matching calendar structure and observed coverage."
+                if window_status == "comparable"
+                else "; ".join(window_warnings)
+            ),
+        }],
+        "inference_guidance": {
+            "status": "descriptive_only",
+            "reason": (
+                "Period rows are ordered or repeated observations; a generic independent-group "
+                "significance test is not methodologically justified."
+            ),
+            "required_for_inference": [
+                "explicit estimand",
+                "serial-dependence-aware effective sample size",
+                "effect magnitude and confidence interval",
+                "method-specific assumptions",
+            ],
+        },
+    })
+
     if dim_cols:
         result["dimensions"] = dim_cols
         result["comparisons"] = []
-        for _, grp_a in df_a.groupby(dim_cols):
-            key = tuple(str(grp_a[dim].iloc[0]) for dim in dim_cols)
-            match_mask = pd.Series(True, index=df_b.index)
-            for dim, val in zip(dim_cols, key):
-                match_mask &= df_b[dim].astype(str) == val
-            grp_b = df_b[match_mask]
+        empty_group = calculation_a.iloc[0:0]
+        grouped_a = {
+            tuple(str(group[dim].iloc[0]) for dim in dim_cols): group
+            for _, group in calculation_a.groupby(dim_cols, dropna=False)
+        }
+        grouped_b = {
+            tuple(str(group[dim].iloc[0]) for dim in dim_cols): group
+            for _, group in calculation_b.groupby(dim_cols, dropna=False)
+        }
+        for key in sorted(set(grouped_a) | set(grouped_b)):
+            grp_a = grouped_a.get(key, empty_group)
+            grp_b = grouped_b.get(key, empty_group)
             row = {"dimension": " / ".join(key)}
             for col in metric_cols:
-                va = grp_a[col].sum() if len(grp_a) > 0 else 0
-                vb = grp_b[col].sum() if len(grp_b) > 0 else 0
+                va = getattr(grp_a[col], agg_func)() if len(grp_a) > 0 else 0
+                vb = getattr(grp_b[col], agg_func)() if len(grp_b) > 0 else 0
                 diff = float(vb) - float(va)
                 pct = (diff / abs(float(va)) * 100) if float(va) != 0 else None
                 row[col] = {
@@ -580,8 +839,8 @@ def compare_periods(
     else:
         result["metrics"] = {}
         for col in metric_cols:
-            va = float(df_a[col].sum())
-            vb = float(df_b[col].sum())
+            va = float(getattr(calculation_a[col], agg_func)())
+            vb = float(getattr(calculation_b[col], agg_func)())
             diff = vb - va
             pct = (diff / abs(va) * 100) if va != 0 else None
             result["metrics"][col] = {
@@ -592,10 +851,31 @@ def compare_periods(
                 **_daily_avg_fields(va, vb),
             }
 
-    # Statistical test recommendation
-    rec = _recommend_statistical_test(len(df_a), len(df_b), metric_cols, result)
-    if rec:
-        result["statistical_test_recommendation"] = rec
+    first_metric_result = (
+        result.get("metrics", {}).get(metric_cols[0])
+        if isinstance(result.get("metrics"), dict)
+        else None
+    )
+    if isinstance(first_metric_result, dict):
+        effect_value = first_metric_result.get("diff")
+    else:
+        effect_value = (
+            float(getattr(calculation_b[metric_cols[0]], agg_func)())
+            - float(getattr(calculation_a[metric_cols[0]], agg_func)())
+        )
+    result["effect_estimate"] = {
+        "value": round(float(effect_value), 4),
+        "metric": metric_cols[0],
+        "unit": "unspecified",
+        "aggregation": agg_func,
+    }
+    comparison_count = len(result.get("comparisons") or [])
+    if comparison_count > 1:
+        result["multiplicity_handling"] = {
+            "strategy": "exploratory_label",
+            "comparison_count": comparison_count,
+            "status": "exploratory",
+        }
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -783,6 +1063,15 @@ def contribute_decomposition(
         "metric": metric,
         "dimension": dimension,
         "agg_func": agg_func,
+        "multiplicity_handling": {
+            "strategy": "exploratory_label",
+            "status": "exploratory",
+            "comparison_count": len(decomposition),
+            "reason": (
+                "Dimension-level contributions are descriptive exploratory comparisons; "
+                "no family-wise inferential claim is made."
+            ),
+        },
         "period_a": {
             "label": period_a,
             "range": [str(pa[0].date()), str(pa[1].date())],

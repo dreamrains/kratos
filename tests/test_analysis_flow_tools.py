@@ -342,6 +342,10 @@ class TestRecordEvidenceRecord:
                 "significance": "p < 0.05",
                 "correlation": "0.8",
                 "confidence_interval": "[12%, 18%]",
+                "time_frequency": "monthly",
+                "missing_intervals": {"count": 0, "frequency": "monthly"},
+                "window_comparability": {"status": "comparable"},
+                "autocorrelation_awareness": {"status": "assessed", "lag_1": 0.2},
             }
             result = json.loads(record_evidence_record(json.dumps(evidence)))
         assert result["statistical_detail_status"] == "complete"

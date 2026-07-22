@@ -484,12 +484,25 @@ class TestPhase3RegressionHandling:
 class TestPhase3ConfidenceCalibration:
     """Phase 3.3: Confidence calibration in evidence records."""
 
-    def test_high_confidence_small_sample_downgraded(self):
+    def test_high_confidence_method_inadequate_sample_downgraded(self):
         from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {"confidence": "high", "sample_size": 10, "limitations": "some"}
+        payload = {
+            "confidence": "high",
+            "method": "clustered_group_compare",
+            "claim_type": "inferential",
+            "sample_size": 10_000,
+            "sample_adequacy": {
+                "status": "inadequate",
+                "design": "clustered",
+                "reason": "too few independent clusters",
+            },
+            "effect_estimate": 0.1,
+            "confidence_interval": [-0.2, 0.4],
+            "limitations": "some",
+        }
         warnings = _calibrate_confidence(payload)
         assert len(warnings) > 0
-        assert "不足" in warnings[0] or "30" in warnings[0]
+        assert "independent clusters" in warnings[0]
 
     def test_high_confidence_non_significant_downgraded(self):
         from data_agent.tools.analysis_flow import _calibrate_confidence
@@ -529,6 +542,11 @@ class TestPhase3ConfidenceCalibration:
                 "limitations": "some",
                 "confidence": "high",
                 "sample_size": 5,
+                "sample_adequacy": {
+                    "status": "inadequate",
+                    "design": "independent_groups",
+                    "reason": "too few independent observations for the selected method",
+                },
             })
             result = registry.execute("record_evidence_record", {"record_json": record})
             parsed = json.loads(result.to_cli())
@@ -882,7 +900,7 @@ class TestCrossPhaseIntegration:
         assert "方法论" in adv_instruction or "显著性" in adv_instruction
 
     def test_confidence_calibration_with_real_data_analysis(self):
-        """Use real data to verify confidence calibration on small samples."""
+        """Use real data to verify method-specific confidence calibration."""
         from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
         from data_agent.agent.analysis_state import AnalysisSessionState
         from data_agent.tools.registry import registry
@@ -907,10 +925,15 @@ class TestCrossPhaseIntegration:
                 "limitations": "样本量极小",
                 "confidence": "high",
                 "sample_size": 5,
+                "sample_adequacy": {
+                    "status": "inadequate",
+                    "design": "categorical_frequency",
+                    "reason": "observed categories do not support a stable popularity ranking",
+                },
             })
             result = registry.execute("record_evidence_record", {"record_json": record})
             parsed = json.loads(result.to_cli())
-            # Should auto-downgrade due to small sample
+            # The method-specific adequacy result, not a universal n cutoff, downgrades it.
             assert parsed.get("confidence_auto_downgraded") is True
         finally:
             reset_current_context(token)

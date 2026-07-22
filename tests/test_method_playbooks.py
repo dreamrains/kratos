@@ -326,15 +326,29 @@ def test_playbook_requirement_strings_remain_compiler_inputs():
     playbook = PLAYBOOKS["effect_evaluation"]
 
     assert playbook.output_policy["statistical_requirements"] == [
-        "sample_size",
+        "effective_sample_size",
+        "denominator",
+        "missingness",
+        "estimand",
+        "effect_estimate",
         "effect_size",
-        "significance",
         "confidence_interval",
+        "calculation_method",
+        "assumptions",
+        "sample_adequacy",
+        "significance",
     ]
     assert playbook.method_plan_template[1]["evidence_requirements"] == [
-        "effect_size",
+        "effective_sample_size",
+        "denominator",
+        "missingness",
+        "estimand",
+        "effect_estimate",
+        "confidence_interval",
+        "calculation_method",
+        "assumptions",
+        "sample_adequacy",
         "significance",
-        "sample_size",
     ]
 
 

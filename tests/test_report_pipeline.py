@@ -130,6 +130,8 @@ def test_formal_report_lists_statistical_detail_gaps(tmp_path):
         assert "统计说明缺口" in content
         assert "calculation_method" in content
         assert "sample_size" in content
+        assert "`effect_estimate`" in content
+        assert "`significance`" not in content
     finally:
         cfg.sessions_dir = old_sessions
 

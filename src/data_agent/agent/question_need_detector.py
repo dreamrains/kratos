@@ -67,6 +67,43 @@ _ROUTE_KEYWORDS = {
     "funnel": ("funnel", "conversion", "漏斗", "转化"),
 }
 
+# These are produced from loaded data or an analysis method. Their absence must
+# schedule evidence work; it must not be presented as a question only the user
+# can answer.
+_COMPUTABLE_EVIDENCE_REQUIREMENTS = frozenset({
+    "assumptions",
+    "autocorrelation_awareness",
+    "calculation_method",
+    "confidence_interval",
+    "denominator",
+    "effective_sample_size",
+    "effect_estimate",
+    "estimand",
+    "metric_delta",
+    "missing_intervals",
+    "missingness",
+    "multiplicity_handling",
+    "period_comparability",
+    "sample_adequacy",
+    "sample_size",
+    "seasonality_estimability",
+    "significance",
+    "time_frequency",
+    "trend_statistics",
+    "window_comparability",
+})
+
+
+def computable_route_evidence(route: dict[str, Any]) -> list[str]:
+    """Return route evidence that analysis should compute instead of asking for."""
+
+    return [
+        name
+        for name in route_evidence_requirements(route)
+        if name in _COMPUTABLE_EVIDENCE_REQUIREMENTS
+        and not (name == "estimand" and route.get("estimand_requires_confirmation") is True)
+    ]
+
 
 def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, Any]:
     """Return a compact gate describing whether the system must ask the user.
@@ -145,6 +182,21 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 {"label": metric, "value": metric, "description": "使用该字段作为本次分析的核心指标。"}
                 for metric in metrics[:4]
             ],
+            blocking_surfaces=BLOCKED_SURFACES_ALL,
+            affected_routes=[_route_direction(route)],
+        )
+
+    if route and _estimand_confirmation_required(route, text):
+        options = [
+            item
+            for item in route.get("estimand_options") or []
+            if isinstance(item, dict) and _text(item.get("value"))
+        ]
+        return _hard_gate(
+            "estimand_definition",
+            "The aggregation choice changes the target quantity for this time-based analysis.",
+            "同一时间点存在多行记录；请确认先按时间点求和还是求均值。",
+            options=options,
             blocking_surfaces=BLOCKED_SURFACES_ALL,
             affected_routes=[_route_direction(route)],
         )
@@ -396,7 +448,11 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
-    fields = route_evidence_requirements(route)
+    fields = [
+        name
+        for name in route_evidence_requirements(route)
+        if name not in _COMPUTABLE_EVIDENCE_REQUIREMENTS
+    ]
     roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
     direction = _route_direction(route)
     if direction in {"trend", "period_compare", "cohort"}:
@@ -423,6 +479,18 @@ def _metric_candidates(state: Any) -> list[str]:
 def _route_needs_metric(route: dict[str, Any]) -> bool:
     direction = _route_direction(route)
     return direction in {"trend", "period_compare", "dimension_decomposition", "funnel"}
+
+
+def _estimand_confirmation_required(route: dict[str, Any], text: str) -> bool:
+    if route.get("estimand_requires_confirmation") is not True:
+        return False
+    if _text(route.get("aggregation") or route.get("estimand")):
+        return False
+    explicit_markers = (
+        "sum", "total", "aggregate", "mean", "average",
+        "总额", "总量", "合计", "均值", "平均",
+    )
+    return not any(marker in text for marker in explicit_markers)
 
 
 def _is_high_risk_request(text: str) -> bool:

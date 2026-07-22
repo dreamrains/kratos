@@ -253,8 +253,8 @@ class TestComparePeriodsEdge:
                            period_a="invalid", period_b="also_invalid")
         assert "Error" in r
 
-    def test_recommendation_in_real_data(self, env):
-        """真实数据的 compare_periods 应推荐统计检验。"""
+    def test_period_comparison_in_real_data_stays_descriptive(self, env):
+        """Real period data must not be routed to an independent-group test by default."""
         if not HAS_TEST_DATA:
             pytest.skip()
         from data_agent.tools.data_io import load_data
@@ -264,10 +264,9 @@ class TestComparePeriodsEdge:
                            period_a="2021/11/03~2021/12/01",
                            period_b="2021/12/02~2021/12/31")
         parsed = json.loads(r)
-        # 如果有差异，应有统计检验推荐
-        if "statistical_test_recommendation" in parsed:
-            rec = parsed["statistical_test_recommendation"]
-            assert rec["recommended_tool"] == "ab_test"
+        assert "statistical_test_recommendation" not in parsed
+        if "error" not in parsed:
+            assert parsed["inference_guidance"]["status"] == "descriptive_only"
 
 
 class TestTopNEdge:

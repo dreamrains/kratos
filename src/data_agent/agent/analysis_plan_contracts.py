@@ -202,6 +202,9 @@ def normalize_analysis_plan_contract(
             "required_evidence_fields",
             "assumption_checks",
             "unmet_action",
+            "parameters",
+            "assessment_status",
+            "claim_guard",
         )
         conflicting_requirement_ids = [
             requirement["id"]

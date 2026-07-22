@@ -68,7 +68,9 @@ def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
 
     trend = _load_json_tool_result(analyze_time_series("game_purchase", date_col="日期", value_col="内购收入"))
     assert trend["data_points"] >= 200
-    assert {"direction", "slope", "r_squared", "p_value", "significant"} <= set(trend["trend"])
+    assert {"direction", "slope", "r_squared", "method", "inference_status"} <= set(trend["trend"])
+    assert "p_value" not in trend["trend"]
+    assert "significant" not in trend["trend"]
     assert trend["suggested_next"]
 
     corr = _load_json_tool_result(

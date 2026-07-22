@@ -144,6 +144,23 @@ def test_build_route_proposals_adds_evidence_requirements():
     json.dumps(proposals)
 
 
+def test_period_route_marks_duplicate_timestamp_aggregation_as_user_definitional():
+    contract = {
+        "id": "duc_transactions",
+        "dataset": "transactions",
+        "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        "supported_analyses": ["period_compare"],
+        "analysis_profiles": {
+            "time_series": {"duplicate_timestamp_count": 12},
+        },
+    }
+
+    route = build_route_proposals(contract)[0]
+
+    assert route["estimand_requires_confirmation"] is True
+    assert [item["value"] for item in route["estimand_options"]] == ["sum", "mean"]
+
+
 def test_route_evidence_requirements_reads_legacy_expected_evidence():
     legacy_route = {"expected_evidence": [" sample_size ", "limitations"]}
 

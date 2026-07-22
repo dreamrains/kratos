@@ -828,7 +828,7 @@ _reset_test_data()
 
 def test_ab_test_auto():
     from data_agent.tools.statistics import ab_test
-    result = ab_test("test", group_col="channel", metric_col="sales")
+    result = ab_test("test", group_col="region", metric_col="sales")
     r = assert_ok(result, "ab_test")
     if r is not True:
         return r

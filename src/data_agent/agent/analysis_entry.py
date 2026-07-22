@@ -6,7 +6,11 @@ from typing import Any
 
 from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
-from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
+from data_agent.agent.question_need_detector import (
+    computable_route_evidence,
+    detect_question_need,
+    to_confirmation_gate,
+)
 from data_agent.agent.trust_contracts import route_evidence_requirements
 
 
@@ -138,6 +142,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             confidence="medium",
             limitations=_text_list(route.get("limitations")),
             evidence_requirements=route_evidence_requirements(route),
+            analysis_evidence_to_compute=computable_route_evidence(route),
         )
 
     return _decision(
@@ -179,6 +184,7 @@ def _decision(decision: str, **overrides: Any) -> dict[str, Any]:
         "evidence_requirements": [],
         "route_options": [],
         "risk_fields": [],
+        "analysis_evidence_to_compute": [],
     }
     payload.update(overrides)
     return payload

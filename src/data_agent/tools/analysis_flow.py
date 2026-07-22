@@ -9,60 +9,101 @@ from typing import Any
 from data_agent.tools.registry import registry
 
 
-_STAT_DETAIL_FIELDS = [
+_BASE_STAT_DETAIL_FIELDS = [
     "metrics",
     "sample_size",
     "time_scope",
     "calculation_method",
     "method_detail",
-    "significance",
-    "correlation",
-    "confidence_interval",
 ]
 
 
+def statistical_detail_fields(payload: dict) -> list[str]:
+    """Return method-appropriate detail fields without universal significance."""
+
+    fields = list(_BASE_STAT_DETAIL_FIELDS)
+    method = str(payload.get("method") or "").strip().lower()
+    claim_type = str(payload.get("claim_type") or payload.get("inference_mode") or "").lower()
+    comparison = any(
+        marker in method
+        for marker in ("compare", "comparison", "before-after", "before_after", "paired", "cluster")
+    )
+    time_series = any(marker in method for marker in ("trend", "time_series", "time series"))
+    inferential = claim_type in {
+        "inferential", "generalized_difference", "population_difference",
+    } or any(
+        marker in method
+        for marker in ("inferential", "hypothesis", "t_test", "t-test", "ttest", "anova")
+    )
+
+    if comparison:
+        fields.extend([
+            "denominator",
+            "missingness",
+            "estimand",
+            "effect_estimate",
+            "sample_adequacy",
+        ])
+    if time_series:
+        fields.extend([
+            "time_frequency",
+            "missing_intervals",
+            "window_comparability",
+            "autocorrelation_awareness",
+        ])
+    if inferential:
+        fields.extend(["effect_estimate", "confidence_interval", "sample_adequacy"])
+    if payload.get("significance") not in (None, "", [], {}) or any(
+        marker in method for marker in ("hypothesis", "t_test", "t-test", "ttest", "anova")
+    ):
+        fields.append("significance")
+    if payload.get("correlation") not in (None, "", [], {}) or "correlation" in method:
+        fields.append("correlation")
+    return list(dict.fromkeys(fields))
+
+
 def _mark_statistical_detail_status(payload: dict) -> dict:
-    gaps = [field for field in _STAT_DETAIL_FIELDS if payload.get(field) in (None, "", [], {})]
+    gaps = [
+        field
+        for field in statistical_detail_fields(payload)
+        if payload.get(field) in (None, "", [], {})
+    ]
     payload["statistical_detail_gaps"] = gaps
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
 
 def _auto_generate_limitations(payload: dict) -> list[str]:
-    """Auto-generate common limitations based on analysis context."""
+    """Generate limitations from method-specific evidence, never raw n cutoffs."""
     auto = []
     method = str(payload.get("method", "")).lower()
-    limitations = payload.get("limitations", [])
+    raw_limitations = payload.get("limitations", [])
+    limitations = (
+        [raw_limitations]
+        if isinstance(raw_limitations, str)
+        else list(raw_limitations) if isinstance(raw_limitations, list) else []
+    )
 
     # Before/after comparison without control group
     if any(kw in method for kw in ["before_after", "前后对比", "period_compare", "compare_periods"]):
         if not any("对照" in l for l in limitations):
             auto.append("无对照组/随机化，结论为描述性关联而非因果关系")
 
-    # Small sample
-    sample_size = payload.get("sample_size")
-    if sample_size:
-        try:
-            n = int(str(sample_size).replace(",", "").split()[0])
-            if n < 30:
-                if not any("样本" in l for l in limitations):
-                    auto.append(f"样本量({n})不足30，统计功效有限")
-            elif n < 100:
-                if not any("样本" in l for l in limitations):
-                    auto.append(f"样本量({n})较小，结论泛化需谨慎")
-        except (ValueError, TypeError):
-            pass
+    adequacy = payload.get("sample_adequacy")
+    if isinstance(adequacy, dict):
+        status = str(adequacy.get("status") or "").strip().lower()
+        reason = str(adequacy.get("reason") or "").strip()
+        if status in {"inadequate", "insufficient", "not_estimable"} and reason:
+            if not any("样本" in str(item) for item in limitations):
+                auto.append(f"样本充分性检查未通过：{reason}")
+        elif status in {"marginal", "adequate_with_limits", "estimable_with_limits"} and reason:
+            if not any("样本" in str(item) for item in limitations):
+                auto.append(f"样本充分性有限：{reason}")
 
     # Short observation period
     time_scope = str(payload.get("time_scope", ""))
     if time_scope and "天" in time_scope and "月" not in time_scope:
         if not any("时间" in l or "观察" in l for l in limitations):
             auto.append("观察期较短，可能受短期波动影响")
-
-    # Missing statistical significance
-    significance = str(payload.get("significance", ""))
-    if not significance or significance in ("unknown", ""):
-        if not any("统计" in l or "显著" in l for l in limitations):
-            auto.append("未报告统计显著性，差异可能由随机波动导致")
 
     return auto
 
@@ -79,15 +120,62 @@ def _calibrate_confidence(payload: dict) -> list[str]:
 
     warnings: list[str] = []
 
-    # Check sample size
-    sample_size = payload.get("sample_size")
-    if sample_size is not None:
-        try:
-            n = int(str(sample_size).replace(",", "").split()[0])
-            if n < 30:
-                warnings.append(f"样本量({n})不足30，高置信度不适用")
-        except (ValueError, TypeError):
-            pass
+    claim_type = str(payload.get("claim_type") or payload.get("inference_mode") or "").lower()
+    method = str(payload.get("method") or "").lower()
+    inferential = claim_type in {
+        "inferential",
+        "generalized_difference",
+        "population_difference",
+    } or any(marker in method for marker in ("inferential", "experiment", "hypothesis_test"))
+    comparison = claim_type in {"generalized_difference", "population_difference"} or (
+        inferential
+        and any(
+            marker in method
+            for marker in (
+                "compare", "comparison", "difference", "paired", "cluster",
+                "t_test", "t-test", "ttest", "anova", "mann", "wilcoxon",
+            )
+        )
+    )
+    inferential_time_series = inferential and any(
+        marker in method for marker in ("trend", "time_series", "time series")
+    )
+
+    adequacy = payload.get("sample_adequacy")
+    if isinstance(adequacy, dict):
+        adequacy_status = str(adequacy.get("status") or "").strip().lower()
+        if adequacy_status in {"inadequate", "insufficient", "not_estimable"}:
+            reason = str(adequacy.get("reason") or "method-specific sample adequacy failed")
+            warnings.append(f"样本充分性不支持高置信度：{reason}")
+        elif adequacy_status in {"marginal", "adequate_with_limits", "estimable_with_limits"}:
+            reason = str(adequacy.get("reason") or "method-specific sample adequacy is marginal")
+            warnings.append(f"样本充分性仅有限支持：{reason}")
+    elif comparison:
+        warnings.append("推断性比较缺少按设计评估的有效样本充分性，不应标记高置信度")
+    elif inferential_time_series:
+        warnings.append("推断性时间趋势缺少按依赖结构评估的有效样本充分性，不应标记高置信度")
+
+    if comparison:
+        if payload.get("effect_estimate") in (None, "", [], {}):
+            warnings.append("推断性比较未报告效应量，不应标记高置信度")
+        if payload.get("confidence_interval") in (None, "", [], {}):
+            warnings.append("推断性比较未报告置信区间，不应标记高置信度")
+    elif inferential_time_series and payload.get("confidence_interval") in (None, "", [], {}):
+        warnings.append("推断性时间趋势未报告依赖结构适配的置信区间，不应标记高置信度")
+
+    seasonality = payload.get("seasonality_estimability")
+    if isinstance(seasonality, dict):
+        status = str(seasonality.get("status") or "").strip().lower()
+        if status == "not_estimable":
+            warnings.append("季节性不可估计，不应标记高置信度")
+        elif status == "estimable_with_limits":
+            warnings.append("季节性仅能有限估计，不应标记高置信度")
+
+    comparability = payload.get("window_comparability")
+    if isinstance(comparability, dict):
+        status = str(comparability.get("status") or "").strip().lower()
+        if status in {"comparable_with_adjustment", "not_comparable"}:
+            warnings.append("时间窗口不可直接比较或需要调整，不应标记高置信度")
 
     # Check significance
     significance = str(payload.get("significance", "")).lower()
