@@ -23,7 +23,11 @@ REQUIRED_EVIDENCE_FIELDS = (
 )
 
 CAUSAL_WORDS = ("causal", "caused", "causes", "cause", "导致", "证明", "使得")
-CAUSAL_METHODS = {"causal", "ab_test", "experiment", "did", "difference_in_differences"}
+CAUSAL_METHODS = {
+    "causal", "ab_test", "experiment", "randomized experiment",
+    "did", "difference_in_differences", "matching", "weighting",
+    "instrumental_variables", "regression_discontinuity",
+}
 INFERENTIAL_METHODS = CAUSAL_METHODS | {
     "correlation",
     "regression",
@@ -310,6 +314,117 @@ def _is_causal_method(method: Any) -> bool:
     return normalized in CAUSAL_METHODS
 
 
+def _identification_value(evidence: dict[str, Any], name: str) -> Any:
+    if name in evidence:
+        return evidence.get(name)
+    support = evidence.get("statistical_support")
+    if isinstance(support, dict) and name in support:
+        return support.get(name)
+    checks = evidence.get("assumption_checks")
+    if isinstance(checks, dict) and name in checks:
+        return checks.get(name)
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("name") or item.get("check") or "").strip().lower()
+            if item_name == name:
+                return item
+    return None
+
+
+def _normalized_status(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("status")
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _causal_design_type(evidence: dict[str, Any]) -> str:
+    identification = _identification_value(evidence, "identification_status")
+    if isinstance(identification, dict):
+        raw = identification.get("design_type")
+    else:
+        raw = None
+    raw = raw or evidence.get("design_type") or evidence.get("causal_design")
+    normalized = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "randomized": "randomized_experiment",
+        "rct": "randomized_experiment",
+        "did": "difference_in_differences",
+        "before_after": "pre_post",
+        "instrumental_variable": "instrumental_variables",
+        "rd": "regression_discontinuity",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _diagnostic_passed(evidence: dict[str, Any], name: str) -> bool:
+    return _normalized_status(_identification_value(evidence, name)) in {
+        "passed", "satisfied", "adequate", "supported",
+    }
+
+
+def _causal_identification_issues(evidence: dict[str, Any]) -> list[str]:
+    identification = _identification_value(evidence, "identification_status")
+    if not isinstance(identification, dict):
+        return ["Causal publication requires explicit identification_status evidence."]
+    status = _normalized_status(identification)
+    allowed_claim_class = str(
+        identification.get("allowed_claim_class") or ""
+    ).strip().lower()
+    design_type = _causal_design_type(evidence)
+    if status != "identified" or allowed_claim_class != "causal":
+        return [
+            f"The {design_type or 'declared'} design does not identify a causal effect; "
+            "the allowed claim class is association/descriptive comparison."
+        ]
+
+    required_fields = {
+        "randomized_experiment": (
+            "assignment_unit", "treatment_arms", "exposure_definition",
+            "outcome_definition", "per_arm_sample_size", "attrition",
+        ),
+        "difference_in_differences": ("comparison_group", "treatment_timing"),
+        "matching": (),
+        "weighting": (),
+        "instrumental_variables": ("instrument_definition", "exclusion_restriction"),
+        "regression_discontinuity": ("cutoff_assignment",),
+    }.get(design_type)
+    if required_fields is None:
+        return [f"Unsupported or unspecified causal design_type: {design_type or 'missing'}."]
+    missing = [
+        name for name in required_fields
+        if _is_missing(_identification_value(evidence, name))
+    ]
+    if _is_missing(_identification_value(evidence, "confidence_interval")):
+        missing.append("confidence_interval")
+    if missing:
+        return ["Causal identification evidence is missing: " + ", ".join(missing)]
+
+    diagnostic_fields = {
+        "randomized_experiment": ("randomization_integrity", "balance_diagnostics"),
+        "difference_in_differences": ("parallel_trends",),
+        "matching": ("overlap_diagnostics", "balance_diagnostics"),
+        "weighting": ("overlap_diagnostics", "balance_diagnostics"),
+        "instrumental_variables": ("instrument_relevance",),
+        "regression_discontinuity": ("discontinuity_diagnostics",),
+    }[design_type]
+    failed = [name for name in diagnostic_fields if not _diagnostic_passed(evidence, name)]
+    if failed:
+        return [
+            "Causal identification diagnostics are missing or not passed: " + ", ".join(failed)
+        ]
+
+    outcome_count = evidence.get("outcome_count")
+    try:
+        multiple_outcomes = int(outcome_count) > 1
+    except (TypeError, ValueError):
+        multiple_outcomes = False
+    if multiple_outcomes and _is_missing(_identification_value(evidence, "multiplicity_handling")):
+        return ["Causal effect with multiple outcomes requires multiplicity_handling evidence."]
+    return []
+
+
 def _risky_cleaning_issues(evidence: dict[str, Any], cleaning_logs: list[dict[str, Any]]) -> list[str]:
     evidence_dataset = str(evidence.get("dataset") or "")
     issues: list[str] = []
@@ -492,12 +607,33 @@ def _check_claim(
         check["strength"] = "likely"
         check["issues"].append(f"Evidence record is missing required fields: {', '.join(missing)}")
 
-    if _uses_causal_language(text) and not _is_causal_method(evidence.get("method")):
-        check["status"] = "downgraded"
-        check["strength"] = "likely"
-        check["issues"].append(
-            "Claim uses causal language, but evidence method is not causal, ab_test, experiment, did, or difference_in_differences"
-        )
+    if _uses_causal_language(text):
+        identification = _identification_value(evidence, "identification_status")
+        if isinstance(identification, dict) or _is_causal_method(evidence.get("method")):
+            identification_issues = _causal_identification_issues(evidence)
+            if identification_issues:
+                check["status"] = "failed"
+                check["strength"] = "unsupported"
+                check["issues"].extend(identification_issues)
+        else:
+            check["status"] = "downgraded"
+            check["strength"] = "likely"
+            check["issues"].append(
+                "Claim uses causal language, but evidence method is not causal, ab_test, experiment, did, or difference_in_differences"
+            )
+    else:
+        identification = _identification_value(evidence, "identification_status")
+        if (
+            isinstance(identification, dict)
+            and str(identification.get("allowed_claim_class") or "").strip().lower()
+            in {"association", "descriptive", "descriptive_comparison"}
+            and _is_missing(_identification_value(evidence, "alternative_explanations"))
+        ):
+            check["status"] = "downgraded"
+            check["strength"] = "likely"
+            check["issues"].append(
+                "A non-identifying observational result must disclose alternative_explanations."
+            )
 
     method = str(evidence.get("method") or "").strip().lower()
     normalized_method = re.sub(r"[^a-z0-9]+", " ", method).strip()

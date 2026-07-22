@@ -78,6 +78,14 @@ _CAPABILITY_REQUIREMENT_INPUTS = {
         "window_comparability",
     ),
     "analysis.time_series": _TIME_SERIES_REQUIREMENT_INPUTS,
+    "analysis.causal": (
+        "effect_estimate",
+        "confidence_interval",
+        "calculation_method",
+        "assumptions",
+        "sample_adequacy",
+        "identification_status",
+    ),
 }
 _REQUIREMENT_CAPABILITY_HINTS = {
     "assumptions": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
@@ -105,6 +113,14 @@ _REQUIREMENT_CAPABILITY_HINTS = {
     "seasonality_estimability": ("analysis.time_series",),
     "time_frequency": ("analysis.time_series", "analysis.period_compare"),
     "window_comparability": ("analysis.period_compare", "analysis.time_series"),
+    "assignment_unit": ("analysis.experiment",),
+    "attrition": ("analysis.experiment",),
+    "balance_diagnostics": ("analysis.experiment", "analysis.causal"),
+    "identification_status": ("analysis.experiment", "analysis.causal"),
+    "overlap_diagnostics": ("analysis.causal",),
+    "parallel_trends": ("analysis.causal",),
+    "power_mde": ("analysis.experiment",),
+    "randomization_integrity": ("analysis.experiment",),
 }
 
 
@@ -226,6 +242,15 @@ _register_definitions(
 )
 _register_definitions(
     (
+        "assignment_unit", "cutoff_assignment", "exposure_definition",
+        "instrument_definition", "outcome_definition", "per_arm_sample_size",
+        "treatment_arms", "treatment_timing",
+    ),
+    category="data",
+    unmet_action="block_claim",
+)
+_register_definitions(
+    (
         "amount", "benefit", "confidence", "contribution", "contribution_table",
         "conversion_rate", "conversion_rates", "cost", "denominator", "driver_contribution",
         "dropoff", "effect", "effect_estimate", "frequency", "impact", "largest_drop_off",
@@ -247,6 +272,22 @@ _register_definitions(
     ),
     category="method",
     unmet_action="downgrade_claim",
+)
+_register_definitions(
+    (
+        "attrition", "balance_diagnostics", "bandwidth_sensitivity",
+        "discontinuity_diagnostics", "exclusion_restriction",
+        "identification_status", "instrument_relevance", "overlap_diagnostics",
+        "parallel_trends", "power_mde", "randomization_integrity",
+    ),
+    category="assumption",
+    unmet_action="block_claim",
+)
+
+_register_definitions(
+    ("alternative_explanations",),
+    category="limitation",
+    unmet_action="disclose",
 )
 
 _register_definitions(
@@ -438,13 +479,42 @@ def _requirement_evidence_is_acceptable(
     if name == "multiplicity_handling":
         value = _field_value(record, "multiplicity_handling")
         strategy = value.get("strategy") if isinstance(value, dict) else value
-        return _name(strategy) in {
+        normalized_strategy = _name(strategy)
+        if normalized_strategy == "not_applicable":
+            return bool(
+                (requirement.get("parameters") or {}).get("not_applicable_allowed")
+            )
+        return normalized_strategy in {
             "bonferroni",
             "holm",
             "benjamini_hochberg",
             "exploratory",
             "exploratory_label",
         }
+    if name == "power_mde":
+        value = _field_value(record, "power_mde")
+        purpose = _name(value.get("purpose")) if isinstance(value, dict) else ""
+        allowed = {
+            _name(item)
+            for item in (requirement.get("parameters") or {}).get("allowed_purposes", [])
+            if _name(item)
+        }
+        return bool(purpose and purpose in allowed)
+    if name in {
+        "balance_diagnostics", "bandwidth_sensitivity", "discontinuity_diagnostics",
+        "instrument_relevance", "overlap_diagnostics", "parallel_trends",
+        "randomization_integrity",
+    }:
+        value = _field_value(record, name)
+        status = value.get("status") if isinstance(value, dict) else value
+        return _name(status) in {
+            "assessed", "passed", "satisfied", "failed", "not_estimable",
+            "adequate", "inadequate",
+        }
+    if name == "identification_status":
+        value = _field_value(record, "identification_status")
+        status = value.get("status") if isinstance(value, dict) else value
+        return _name(status) in {"identified", "partially_identified", "not_identified"}
     return True
 
 
@@ -546,6 +616,65 @@ _INFERENTIAL_CLAIM_TYPES = {
     "population_difference",
 }
 
+_CAUSAL_DESIGN_ALIASES = {
+    "randomized": "randomized_experiment",
+    "randomized_controlled_trial": "randomized_experiment",
+    "rct": "randomized_experiment",
+    "ab_test": "randomized_experiment",
+    "did": "difference_in_differences",
+    "difference_in_difference": "difference_in_differences",
+    "propensity_score_matching": "matching",
+    "inverse_probability_weighting": "weighting",
+    "iv": "instrumental_variables",
+    "instrumental_variable": "instrumental_variables",
+    "rd": "regression_discontinuity",
+    "regression_discontinuity_design": "regression_discontinuity",
+    "before_after": "pre_post",
+    "before_after_comparison": "pre_post",
+}
+
+_CAUSAL_DESIGN_DIAGNOSTICS = {
+    "randomized_experiment": (
+        "assignment_unit", "treatment_arms", "exposure_definition",
+        "outcome_definition", "per_arm_sample_size", "randomization_integrity",
+        "balance_diagnostics", "attrition",
+    ),
+    "difference_in_differences": (
+        "comparison_group", "treatment_timing", "parallel_trends",
+    ),
+    "matching": ("overlap_diagnostics", "balance_diagnostics"),
+    "weighting": ("overlap_diagnostics", "balance_diagnostics"),
+    "instrumental_variables": (
+        "instrument_definition", "instrument_relevance", "exclusion_restriction",
+    ),
+    "regression_discontinuity": (
+        "cutoff_assignment", "discontinuity_diagnostics", "bandwidth_sensitivity",
+    ),
+}
+
+
+def _causal_design_type(step: dict[str, Any]) -> str:
+    design = _name(
+        step.get("design_type")
+        or step.get("causal_design")
+        or step.get("identification_strategy")
+    )
+    return _CAUSAL_DESIGN_ALIASES.get(design, design)
+
+
+def _add_requirement_metadata(
+    metadata: dict[str, dict[str, Any]],
+    names: tuple[str, ...],
+    *,
+    trigger: str,
+    unmet_action: str = "block_claim",
+) -> None:
+    for name in names:
+        metadata.setdefault(name, {
+            "trigger": trigger,
+            "unmet_action": unmet_action,
+        })
+
 
 def _positive_int(value: Any) -> int | None:
     if isinstance(value, bool):
@@ -638,6 +767,103 @@ def _step_requirement_metadata(
         metadata["seasonality_estimability"] = {
             "trigger": "explicit seasonality claim",
             "parameters": {"seasonality_period": seasonality_period or "annual"},
+        }
+
+    design_type = _causal_design_type(step)
+    causal_claim_requested = claim_type in {"causal", "causal_effect", "causal_requested"}
+    if capability == "analysis.experiment" and design_type == "randomized_experiment":
+        _add_requirement_metadata(
+            metadata,
+            _CAUSAL_DESIGN_DIAGNOSTICS["randomized_experiment"],
+            trigger="randomized experiment design",
+        )
+        metadata.setdefault("confidence_interval", {
+            "trigger": "randomized experiment effect uncertainty",
+            "unmet_action": "block_claim",
+        })
+
+    if capability in {"analysis.experiment", "analysis.causal"} and causal_claim_requested:
+        diagnostics = _CAUSAL_DESIGN_DIAGNOSTICS.get(design_type, ())
+        _add_requirement_metadata(
+            metadata,
+            diagnostics,
+            trigger=f"{design_type or 'unspecified'} causal identification design",
+        )
+        required_diagnostics = [
+            name
+            for name in diagnostics
+            if name in {
+                "balance_diagnostics", "discontinuity_diagnostics",
+                "instrument_relevance", "overlap_diagnostics", "parallel_trends",
+                "randomization_integrity",
+            }
+        ]
+        non_identifying = (
+            not design_type
+            or design_type in {"pre_post", "observational_comparison"}
+            or (
+                design_type == "pre_post"
+                and step.get("control_group_available") is not True
+            )
+        )
+        if non_identifying:
+            reason = (
+                "A pre/post comparison without a control does not identify a causal effect."
+                if design_type == "pre_post" and step.get("control_group_available") is not True
+                else "The declared observational design does not by itself identify a causal effect."
+            )
+            metadata["identification_status"] = {
+                "trigger": "causal claim requested without an identifying design",
+                "unmet_action": "downgrade_claim",
+                "claim_guard": "downgrade_claim",
+                "parameters": {
+                    "design_type": design_type or "unspecified",
+                    "identified": False,
+                    "allowed_claim_class": "association",
+                    "reason": reason,
+                },
+                "reason": reason,
+            }
+            metadata["alternative_explanations"] = {
+                "trigger": "non-identifying design requires plausible alternative explanations",
+                "unmet_action": "disclose",
+            }
+        else:
+            metadata["identification_status"] = {
+                "trigger": f"{design_type} causal claim",
+                "unmet_action": "block_claim",
+                "parameters": {
+                    "design_type": design_type,
+                    "allowed_claim_class": "causal",
+                    "required_diagnostics": required_diagnostics,
+                },
+            }
+
+    analysis_phase = _name(step.get("analysis_phase") or step.get("decision_type"))
+    planning_text = f"{_text(step.get('goal'))} {intent_text}".casefold()
+    if capability == "analysis.experiment" and (
+        analysis_phase in {"planning", "detectability", "sample_size_planning"}
+        or claim_type in {"planning", "detectability"}
+        or any(marker in planning_text for marker in ("minimum detectable effect", " mde", "power plan"))
+    ):
+        metadata["power_mde"] = {
+            "trigger": "prospective experiment planning or detectability decision",
+            "unmet_action": "block_claim",
+            "parameters": {
+                "allowed_purposes": ["prospective_planning", "detectability_decision"],
+                "retrospective_power_proves_effect": False,
+            },
+        }
+
+    outcome_count = _positive_int(step.get("outcome_count"))
+    if capability == "analysis.experiment" and outcome_count is not None and outcome_count > 1:
+        metadata["multiplicity_handling"] = {
+            "trigger": "multiple experiment outcomes or contrasts",
+            "unmet_action": "block_claim",
+            "parameters": {
+                "comparison_count": outcome_count,
+                "exploratory_label_allowed": True,
+            },
         }
     return metadata
 

@@ -21,6 +21,7 @@ _ROUTE_KEYWORDS = {
     "dimension_decomposition": ("segment", "dimension", "breakdown", "\u5206\u7ef4", "\u5f52\u56e0"),
     "cohort": ("cohort", "retention", "\u7559\u5b58"),
     "user_level_retention": ("retention", "user retention", "\u7559\u5b58"),
+    "causal": ("causal", "experiment", "effect", "\u56e0\u679c", "\u5b9e\u9a8c", "\u6548\u679c", "\u5f52\u56e0"),
 }
 
 
@@ -143,6 +144,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
             limitations=_text_list(route.get("limitations")),
             evidence_requirements=route_evidence_requirements(route),
             analysis_evidence_to_compute=computable_route_evidence(route),
+            allowed_claim_class=_allowed_claim_class(route),
         )
 
     return _decision(
@@ -185,6 +187,7 @@ def _decision(decision: str, **overrides: Any) -> dict[str, Any]:
         "route_options": [],
         "risk_fields": [],
         "analysis_evidence_to_compute": [],
+        "allowed_claim_class": "descriptive",
     }
     payload.update(overrides)
     return payload
@@ -334,6 +337,18 @@ def _route_requires_field_kind(route: dict[str, Any], column: str) -> bool:
 
 def _route_direction(route: dict[str, Any]) -> str:
     return _text(route.get("route") or route.get("direction"))
+
+
+def _allowed_claim_class(route: dict[str, Any]) -> str:
+    declared = _text(route.get("allowed_claim_class"))
+    if declared:
+        return declared
+    design_type = _text(route.get("design_type")).casefold().replace("-", "_").replace(" ", "_")
+    if design_type in {"pre_post", "before_after", "observational_comparison"}:
+        return "association"
+    if _route_direction(route) == "causal":
+        return "causal"
+    return "descriptive"
 
 
 def _text_list(value: Any) -> list[str]:

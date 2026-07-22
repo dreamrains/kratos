@@ -65,6 +65,7 @@ _ROUTE_KEYWORDS = {
     "dimension_decomposition": ("segment", "dimension", "breakdown", "driver", "归因", "分维", "拆解"),
     "cohort": ("cohort", "retention", "留存", "复购"),
     "funnel": ("funnel", "conversion", "漏斗", "转化"),
+    "causal": ("causal", "experiment", "effect", "因果", "实验", "效果", "归因"),
 }
 
 # These are produced from loaded data or an analysis method. Their absence must
@@ -91,6 +92,17 @@ _COMPUTABLE_EVIDENCE_REQUIREMENTS = frozenset({
     "time_frequency",
     "trend_statistics",
     "window_comparability",
+    "attrition",
+    "balance_diagnostics",
+    "bandwidth_sensitivity",
+    "discontinuity_diagnostics",
+    "identification_status",
+    "instrument_relevance",
+    "overlap_diagnostics",
+    "parallel_trends",
+    "per_arm_sample_size",
+    "power_mde",
+    "randomization_integrity",
 })
 
 
@@ -146,17 +158,28 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
             )
 
     if _is_high_risk_request(text) and not _has_confirmed_high_risk_plan(text, state):
-        return _hard_gate(
-            "method_confirmation",
-            "High-risk analysis requires method, assumption, and evidence confirmation.",
-            "这类分析可能影响决策结论。请先确认分析目标、方法假设和可接受的证据标准。",
-            options=[
-                {"label": "先确认方法与假设", "value": "confirm_method", "description": "适合预测、因果、实验或 ROI 判断。"},
-                {"label": "仅做描述性探索", "value": "descriptive_only", "description": "不输出因果或预测性结论。"},
-            ],
-            blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
-            affected_routes=[_route_direction(route)] if route else [],
-        )
+        missing_design_facts = _missing_material_design_facts(state)
+        if missing_design_facts:
+            return _hard_gate(
+                "causal_design_definition",
+                "Unavailable design facts materially change the causal estimand or identification.",
+                "请补充会改变因果识别的业务设计信息：" + "、".join(missing_design_facts) + "。",
+                blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
+                risk_fields=missing_design_facts,
+                affected_routes=[_route_direction(route)] if route else [],
+            )
+        if not _has_explicit_high_risk_design(state):
+            return _hard_gate(
+                "method_confirmation",
+                "High-risk analysis requires method, assumption, and evidence confirmation.",
+                "这类分析可能影响决策结论。请先确认分析目标、方法假设和可接受的证据标准。",
+                options=[
+                    {"label": "先确认方法与假设", "value": "confirm_method", "description": "适合预测、因果、实验或 ROI 判断。"},
+                    {"label": "仅做描述性探索", "value": "descriptive_only", "description": "不输出因果或预测性结论。"},
+                ],
+                blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
+                affected_routes=[_route_direction(route)] if route else [],
+            )
 
     if route and _route_direction(route) == "period_compare" and not _has_time_window(text):
         return _hard_gate(
@@ -495,6 +518,76 @@ def _estimand_confirmation_required(route: dict[str, Any], text: str) -> bool:
 
 def _is_high_risk_request(text: str) -> bool:
     return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
+
+
+def _high_risk_design_step(state: Any) -> dict[str, Any] | None:
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict):
+        return None
+    for step in plan.get("method_plan") or []:
+        if not isinstance(step, dict):
+            continue
+        if _text(step.get("required_capability")) in {
+            "analysis.experiment", "analysis.causal",
+        }:
+            return step
+    return None
+
+
+def _missing_material_design_facts(state: Any) -> list[str]:
+    step = _high_risk_design_step(state)
+    if step is None:
+        return []
+    design = _text(
+        step.get("design_type")
+        or step.get("causal_design")
+        or step.get("identification_strategy")
+    ).casefold().replace("-", "_").replace(" ", "_")
+    if not design:
+        return ["design_type"]
+    aliases = {
+        "randomized": "randomized_experiment",
+        "rct": "randomized_experiment",
+        "did": "difference_in_differences",
+        "before_after": "pre_post",
+    }
+    design = aliases.get(design, design)
+    required_by_design = {
+        "randomized_experiment": (
+            "assignment_unit", "treatment_arms", "exposure_definition",
+            "outcome_definition", "assignment_rule",
+        ),
+        "difference_in_differences": (
+            "comparison_group", "treatment_timing", "exposure_definition",
+            "outcome_definition",
+        ),
+        "matching": ("exposure_definition", "outcome_definition"),
+        "weighting": ("exposure_definition", "outcome_definition"),
+        "instrumental_variables": (
+            "instrument_definition", "exposure_definition", "outcome_definition",
+            "exclusion_restriction",
+        ),
+        "regression_discontinuity": (
+            "cutoff_assignment", "exposure_definition", "outcome_definition",
+        ),
+        "pre_post": ("exposure_definition", "outcome_definition"),
+        "observational_comparison": ("exposure_definition", "outcome_definition"),
+    }
+    missing = []
+    for field in required_by_design.get(design, ("exposure_definition", "outcome_definition")):
+        value = step.get(field)
+        if isinstance(value, list):
+            present = any(_text(item) for item in value)
+        else:
+            present = bool(_text(value))
+        if not present:
+            missing.append(field)
+    return missing
+
+
+def _has_explicit_high_risk_design(state: Any) -> bool:
+    step = _high_risk_design_step(state)
+    return step is not None and not _missing_material_design_facts(state)
 
 
 def _has_confirmed_high_risk_plan(text: str, state: Any) -> bool:
