@@ -84,9 +84,18 @@ def _claim_external_id(claim: Any) -> str:
 
 
 def _claim_evidence_id(claim: Any) -> str:
-    if isinstance(claim, dict):
-        return str(claim.get("evidence_id") or "")
-    return ""
+    evidence_ids = _claim_evidence_ids(claim)
+    return evidence_ids[0] if evidence_ids else ""
+
+
+def _claim_evidence_ids(claim: Any) -> list[str]:
+    if not isinstance(claim, dict):
+        return []
+    values = [claim.get("evidence_id")]
+    values.extend(_normalize_items(claim.get("evidence_ids")))
+    return list(dict.fromkeys(
+        str(item).strip() for item in values if str(item or "").strip()
+    ))
 
 
 def _claim_compare_evidence_ids(claim: Any) -> list[str]:
@@ -476,6 +485,250 @@ def _plan_revision_issues(
     return issues
 
 
+def _finalize_check(check: dict[str, Any]) -> dict[str, Any]:
+    reason_codes = list(check.get("reason_codes") or [])
+    for issue in check.get("issues") or []:
+        lowered = str(issue).lower()
+        if "missing an exact evidencerecord identity" in lowered:
+            code = "missing_evidence_identity"
+        elif "missing a limitation disclosure" in lowered:
+            code = "missing_limitation"
+        elif "missing an exploratory label" in lowered:
+            code = "missing_exploratory_label"
+        elif "outside the current plan" in lowered:
+            code = "evidence_outside_current_plan"
+        elif "explicit evidence" in lowered and "not found" in lowered:
+            code = "evidence_identity_not_found"
+        elif "no evidence record" in lowered:
+            code = "unsupported_claim"
+        elif "semantic revision" in lowered or "plan step" in lowered:
+            code = "stale_plan_evidence"
+        elif "stale dataset" in lowered:
+            code = "stale_dataset_evidence"
+        elif "artifact integrity" in lowered:
+            code = "computation_integrity_failure"
+        elif "causal" in lowered or "identif" in lowered:
+            code = "causal_claim_not_identified"
+        elif "cleaning decision" in lowered:
+            code = "unresolved_cleaning_risk"
+        elif "missing required fields" in lowered:
+            code = "incomplete_evidence_record"
+        else:
+            code = "evidence_check_failed" if check.get("status") == "failed" else "claim_revision_required"
+        if code not in reason_codes:
+            reason_codes.append(code)
+    check["reason_codes"] = reason_codes
+    if check.get("status") == "failed":
+        check["safe_action"] = {
+            "action": "remove_or_downgrade_claim",
+            "target_claim_id": check.get("claim_id"),
+        }
+    elif check.get("status") == "downgraded":
+        check["safe_action"] = {
+            "action": "revise_with_limitations",
+            "target_claim_id": check.get("claim_id"),
+        }
+    else:
+        check["safe_action"] = None
+    return check
+
+
+def _mark_downgraded(check: dict[str, Any], issues: str | list[str]) -> None:
+    if check.get("status") != "failed":
+        check["status"] = "downgraded"
+        check["strength"] = "likely"
+    if isinstance(issues, list):
+        check["issues"].extend(issues)
+    else:
+        check["issues"].append(issues)
+
+
+def _claim_requires_evidence(claim: Any) -> bool:
+    if not isinstance(claim, dict):
+        return True
+    if claim.get("requires_evidence") is False:
+        return False
+    return claim.get("material") is not False
+
+
+def _measurement_items(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in _normalize_items(evidence.get("measurements"))
+        if isinstance(item, dict)
+    ]
+
+
+def _numeric_evidence_items(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    items = list(_measurement_items(evidence))
+    support = evidence.get("statistical_support")
+    support = support if isinstance(support, dict) else {}
+    effect = support.get("effect_estimate")
+    if isinstance(effect, dict) and effect.get("value") is not None:
+        items.append({"value": effect.get("value"), "unit": effect.get("unit")})
+
+    interval = support.get("confidence_interval")
+    if not isinstance(interval, dict):
+        interval = evidence.get("confidence_interval")
+    if isinstance(interval, dict):
+        interval_unit = interval.get("unit")
+        if not interval_unit and items:
+            interval_unit = items[0].get("unit")
+        for field in ("lower", "upper"):
+            if interval.get(field) is not None:
+                items.append({"value": interval.get(field), "unit": interval_unit})
+        if interval.get("level") is not None:
+            items.append({"value": interval.get("level"), "unit": "ratio"})
+
+    test = support.get("test")
+    if isinstance(test, dict) and test.get("p_value") is not None:
+        items.append({"value": test.get("p_value"), "unit": ""})
+    elif evidence.get("p_value") is not None:
+        items.append({"value": evidence.get("p_value"), "unit": ""})
+    return items
+
+
+def _unit_family(unit: Any) -> str:
+    normalized = str(unit or "").strip().lower()
+    if normalized in {"%", "percent", "percentage", "ratio", "proportion"}:
+        return "ratio"
+    if normalized in {"percentage point", "percentage points", "pp"}:
+        return "percentage_points"
+    if normalized in {"cny", "rmb", "元", "人民币"}:
+        return "cny"
+    if normalized in {"usd", "$"}:
+        return "usd"
+    return normalized
+
+
+def _normalized_numeric(value: Any, unit: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    normalized_unit = str(unit or "").strip().lower()
+    if normalized_unit in {"%", "percent", "percentage"}:
+        return number / 100.0
+    return number
+
+
+def _scope_matches(claim_scope: Any, evidence_scope: Any) -> bool:
+    claim_text = _normalize_text(claim_scope)
+    evidence_text = _normalize_text(evidence_scope)
+    return bool(
+        claim_text
+        and evidence_text
+        and (claim_text in evidence_text or evidence_text in claim_text)
+    )
+
+
+def _evidence_direction(evidence: dict[str, Any]) -> str:
+    text = " ".join(str(evidence.get(key) or "") for key in ("claim", "result_summary"))
+    if re.search(r"decrease|decreased|lower|decline|fell|drop|下降|降低|减少|低于", text, re.IGNORECASE):
+        return "decrease"
+    if re.search(r"increase|increased|higher|grew|growth|rise|rose|上升|增长|提高|提升|高于", text, re.IGNORECASE):
+        return "increase"
+    if re.search(r"no (?:material |significant )?change|unchanged|持平|无显著变化", text, re.IGNORECASE):
+        return "no_change"
+    return ""
+
+
+def _strict_semantic_issues(
+    claim: Any,
+    evidence: dict[str, Any],
+) -> list[tuple[str, str]]:
+    if not isinstance(claim, dict):
+        return []
+    issues: list[tuple[str, str]] = []
+    measurements = _measurement_items(evidence)
+    numeric_evidence = _numeric_evidence_items(evidence)
+    quantities = [item for item in _normalize_items(claim.get("quantities")) if isinstance(item, dict)]
+    if quantities:
+        if not numeric_evidence:
+            issues.append(("missing_structured_measurement", "Material numeric claim has no canonical measurement evidence"))
+        else:
+            for quantity in quantities:
+                claim_family = _unit_family(quantity.get("unit"))
+                compatible = [
+                    measurement
+                    for measurement in numeric_evidence
+                    if _unit_family(measurement.get("unit")) == claim_family
+                ]
+                if not compatible:
+                    issues.append(("unit_mismatch", f"Claim unit {quantity.get('unit') or 'unitless'} does not match evidence units"))
+                    continue
+                claim_value = _normalized_numeric(quantity.get("value"), quantity.get("unit"))
+                if claim_value is None or not any(
+                    (evidence_value := _normalized_numeric(item.get("value"), item.get("unit"))) is not None
+                    and abs(evidence_value - claim_value) <= max(1e-9, abs(evidence_value) * 1e-6)
+                    for item in compatible
+                ):
+                    issues.append(("numeric_mismatch", f"Claim quantity {quantity.get('raw')} does not match canonical evidence values"))
+
+    claim_direction = str(claim.get("direction") or "")
+    evidence_direction = _evidence_direction(evidence)
+    if claim_direction and claim_direction != evidence_direction:
+        issues.append((
+            "direction_mismatch",
+            f"Claim direction {claim_direction} conflicts with evidence direction {evidence_direction or 'unavailable'}",
+        ))
+
+    for field, code in (("time_scope", "time_scope_mismatch"), ("population_scope", "population_scope_mismatch")):
+        claim_scope = claim.get(field)
+        if not claim_scope:
+            continue
+        evidence_scopes = [item.get(field) for item in measurements if item.get(field)]
+        if not evidence_scopes and evidence.get(field):
+            evidence_scopes = [evidence.get(field)]
+        if not evidence_scopes or not any(_scope_matches(claim_scope, scope) for scope in evidence_scopes):
+            issues.append((code, f"Claim {field} {claim_scope} does not match evidence scope"))
+
+    if (
+        str(claim.get("confidence_assertion") or "") == "high"
+        and str(evidence.get("confidence") or "").strip().lower() != "high"
+    ):
+        issues.append((
+            "confidence_mismatch",
+            "High-confidence claim is not supported by high-confidence evidence",
+        ))
+
+    if claim.get("verification_overclaim") is True and str(evidence.get("verification_level") or "").strip().lower() == "traceable":
+        issues.append((
+            "verification_level_overclaim",
+            "Traceable provenance does not independently verify statistical correctness",
+        ))
+    return issues
+
+
+def _unmet_block_claim_requirements(
+    evidence_records: list[dict[str, Any]],
+    analysis_requirements: list[dict[str, Any]],
+) -> list[str]:
+    if not evidence_records:
+        return []
+    step_id = str(evidence_records[0].get("step_id") or "")
+    matching = [
+        requirement
+        for requirement in analysis_requirements
+        if isinstance(requirement, dict)
+        and str(requirement.get("step_id") or "") == step_id
+        and str(requirement.get("unmet_action") or "") == "block_claim"
+    ]
+    if not matching:
+        return []
+    from data_agent.agent.analysis_requirements import evaluate_requirement_satisfaction
+
+    try:
+        evaluated = evaluate_requirement_satisfaction(matching, evidence_records)
+    except ValueError:
+        return [str(item.get("id") or item.get("name") or "invalid_requirement") for item in matching]
+    return [
+        str(item.get("id") or item.get("name") or "requirement")
+        for item in evaluated
+        if item.get("status") == "unmet"
+    ]
+
+
 def _check_claim(
     claim: Any,
     index: int,
@@ -487,9 +740,23 @@ def _check_claim(
     current_session_id: str = "",
     current_plan_digest: str = "",
     current_step_digests: dict[str, str] | None = None,
+    analysis_requirements: list[dict[str, Any]] | None = None,
+    require_explicit_evidence_ids: bool = False,
+    strict_claim_semantics: bool = False,
 ) -> dict[str, Any]:
     text = _claim_text(claim)
     evidence: dict[str, Any] | None = None
+
+    if not _claim_requires_evidence(claim):
+        return _finalize_check({
+            "claim_id": _claim_id(claim, index),
+            "claim": text,
+            "evidence_id": None,
+            "status": "passed",
+            "strength": "diagnostic",
+            "issues": [],
+            "reason_codes": ["diagnostic_without_positive_claim"],
+        })
 
     comparison_records, comparison_issues = _comparison_issues(
         claim,
@@ -499,8 +766,23 @@ def _check_claim(
     if comparison_records:
         evidence = comparison_records[0]
 
-    explicit_evidence_id = _claim_evidence_id(claim)
-    if explicit_evidence_id:
+    explicit_evidence_ids = _claim_evidence_ids(claim)
+    if (
+        require_explicit_evidence_ids
+        and not explicit_evidence_ids
+        and not _claim_compare_evidence_ids(claim)
+    ):
+        return _finalize_check({
+            "claim_id": _claim_id(claim, index),
+            "claim": text,
+            "evidence_id": None,
+            "status": "failed",
+            "strength": "unsupported",
+            "issues": ["Material final-answer claim is missing an exact EvidenceRecord identity"],
+            "reason_codes": ["missing_evidence_identity"],
+        })
+    explicit_support_records: list[dict[str, Any]] = []
+    for explicit_evidence_id in explicit_evidence_ids:
         explicit_matches = _find_evidence_by_id(explicit_evidence_id, evidence_records)
         current_matches = [
             record
@@ -508,20 +790,21 @@ def _check_claim(
             if _record_matches_current_plan(record, current_plan_id)
         ]
         if current_matches:
-            evidence = current_matches[0]
+            explicit_support_records.append(current_matches[0])
         elif explicit_matches:
-            evidence = None
             comparison_issues.append(
                 f"Evidence {explicit_evidence_id} is outside the current plan and cannot support this claim"
             )
         else:
-            evidence = None
             if current_plan_id:
                 comparison_issues.append(
                     f"Explicit evidence {explicit_evidence_id} was not found in the current plan"
                 )
             else:
                 comparison_issues.append(f"Explicit evidence {explicit_evidence_id} was not found")
+
+    if explicit_support_records:
+        evidence = explicit_support_records[0]
 
     if evidence is None and not comparison_issues:
         evidence = _find_evidence(claim, _current_plan_evidence(evidence_records, current_plan_id))
@@ -530,6 +813,11 @@ def _check_claim(
         "claim_id": _claim_id(claim, index),
         "claim": text,
         "evidence_id": evidence.get("id") if evidence else None,
+        "evidence_ids": [
+            str(record.get("id") or "")
+            for record in (explicit_support_records or comparison_records or ([evidence] if evidence else []))
+            if str(record.get("id") or "")
+        ],
         "status": "passed",
         "strength": "confirmed" if str((evidence or {}).get("confidence") or "").lower() == "high" else "likely",
         "issues": [],
@@ -539,16 +827,16 @@ def _check_claim(
         check["status"] = "failed"
         check["strength"] = "unsupported"
         check["issues"].extend(comparison_issues)
-        return check
+        return _finalize_check(check)
 
     if evidence is None:
         check["status"] = "failed"
         check["strength"] = "unsupported"
         check["issues"].append("No evidence record supports this claim")
-        return check
+        return _finalize_check(check)
 
     revision_issues: list[str] = []
-    revision_records = comparison_records or [evidence]
+    revision_records = comparison_records or explicit_support_records or [evidence]
     for revision_record in revision_records:
         revision_issues.extend(_plan_revision_issues(
             revision_record,
@@ -559,12 +847,13 @@ def _check_claim(
         check["status"] = "failed"
         check["strength"] = "unsupported"
         check["issues"].extend(dict.fromkeys(revision_issues))
-        return check
+        return _finalize_check(check)
 
     if current_dataset_versions is not None:
         evidence_versions = {
             str(version_id)
-            for ref in _normalize_items(evidence.get("computation_refs"))
+            for record in revision_records
+            for ref in _normalize_items(record.get("computation_refs"))
             if isinstance(ref, dict)
             for version_id in _normalize_items(ref.get("dataset_versions"))
             if str(version_id or "")
@@ -576,36 +865,86 @@ def _check_claim(
             check["issues"].append(
                 "Evidence is bound to a stale dataset version: " + ", ".join(sorted(stale_versions))
             )
-            return check
+            return _finalize_check(check)
 
     if sessions_root is not None:
         from data_agent.agent.evidence_contracts import hydrate_computation_ref
 
-        for ref in _normalize_items(evidence.get("computation_refs")):
-            if not isinstance(ref, dict):
-                check["status"] = "failed"
-                check["strength"] = "unsupported"
-                check["issues"].append("Evidence computation artifact integrity check failed: invalid ref")
-                return check
-            try:
-                hydrate_computation_ref(
-                    ref,
-                    sessions_root=sessions_root,
-                    current_session_id=current_session_id or None,
-                )
-            except ValueError as exc:
-                check["status"] = "failed"
-                check["strength"] = "unsupported"
-                check["issues"].append(
-                    f"Evidence computation artifact integrity check failed: {exc}"
-                )
-                return check
+        for record in revision_records:
+            for ref in _normalize_items(record.get("computation_refs")):
+                if not isinstance(ref, dict):
+                    check["status"] = "failed"
+                    check["strength"] = "unsupported"
+                    check["issues"].append("Evidence computation artifact integrity check failed: invalid ref")
+                    return _finalize_check(check)
+                try:
+                    hydrate_computation_ref(
+                        ref,
+                        sessions_root=sessions_root,
+                        current_session_id=current_session_id or None,
+                    )
+                except ValueError as exc:
+                    check["status"] = "failed"
+                    check["strength"] = "unsupported"
+                    check["issues"].append(
+                        f"Evidence computation artifact integrity check failed: {exc}"
+                    )
+                    return _finalize_check(check)
+
+    if strict_claim_semantics:
+        semantic_issues = _strict_semantic_issues(claim, evidence)
+        if semantic_issues:
+            check["status"] = "failed"
+            check["strength"] = "unsupported"
+            for reason_code, issue in semantic_issues:
+                check.setdefault("reason_codes", []).append(reason_code)
+                check["issues"].append(issue)
+
+    unmet_requirements = _unmet_block_claim_requirements(
+        revision_records,
+        analysis_requirements or [],
+    )
+    if unmet_requirements:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        check.setdefault("reason_codes", []).append("unmet_block_claim_requirement")
+        check["issues"].append(
+            "Unmet block_claim requirements: " + ", ".join(unmet_requirements)
+        )
+
+    if (
+        not _is_missing(evidence.get("limitations"))
+        and isinstance(claim, dict)
+        and claim.get("answer_has_limitation") is False
+        and check["status"] != "failed"
+    ):
+        check["status"] = "downgraded"
+        check["strength"] = "likely"
+        check.setdefault("reason_codes", []).append("missing_limitation")
+        check["issues"].append("Final answer is missing a limitation disclosure required by its evidence")
+
+    if (
+        isinstance(claim, dict)
+        and str(claim.get("claim_type") or "") in {
+            "association", "causal", "prediction", "recommendation",
+        }
+        and str(evidence.get("confidence") or "").strip().lower() in {
+            "low", "weak", "uncertain", "medium_low",
+        }
+        and claim.get("answer_has_exploratory_label") is False
+        and check["status"] != "failed"
+    ):
+        check["status"] = "downgraded"
+        check["strength"] = "likely"
+        check.setdefault("reason_codes", []).append("missing_exploratory_label")
+        check["issues"].append("Low-confidence material claim is missing an exploratory label")
 
     missing = [field for field in REQUIRED_EVIDENCE_FIELDS if _is_missing(evidence.get(field))]
     if missing:
-        check["status"] = "downgraded"
-        check["strength"] = "likely"
-        check["issues"].append(f"Evidence record is missing required fields: {', '.join(missing)}")
+        _mark_downgraded(
+            check,
+            f"Evidence record is missing required fields: {', '.join(missing)}",
+        )
 
     if _uses_causal_language(text):
         identification = _identification_value(evidence, "identification_status")
@@ -616,9 +955,8 @@ def _check_claim(
                 check["strength"] = "unsupported"
                 check["issues"].extend(identification_issues)
         else:
-            check["status"] = "downgraded"
-            check["strength"] = "likely"
-            check["issues"].append(
+            _mark_downgraded(
+                check,
                 "Claim uses causal language, but evidence method is not causal, ab_test, experiment, did, or difference_in_differences"
             )
     else:
@@ -629,9 +967,8 @@ def _check_claim(
             in {"association", "descriptive", "descriptive_comparison"}
             and _is_missing(_identification_value(evidence, "alternative_explanations"))
         ):
-            check["status"] = "downgraded"
-            check["strength"] = "likely"
-            check["issues"].append(
+            _mark_downgraded(
+                check,
                 "A non-identifying observational result must disclose alternative_explanations."
             )
 
@@ -665,19 +1002,16 @@ def _check_claim(
         "structured_checked",
         "independently_recomputed",
     }:
-        check["status"] = "downgraded"
-        check["strength"] = "likely"
-        check["issues"].append(
+        _mark_downgraded(
+            check,
             f"High-confidence inference is not supported by verified provenance: {provenance_level or 'unbound'}"
         )
 
     cleaning_issues = _risky_cleaning_issues(evidence, cleaning_logs)
     if cleaning_issues:
-        check["status"] = "downgraded"
-        check["strength"] = "likely"
-        check["issues"].extend(cleaning_issues)
+        _mark_downgraded(check, cleaning_issues)
 
-    return check
+    return _finalize_check(check)
 
 
 def _overall_status(checks: list[dict[str, Any]]) -> str:
@@ -721,6 +1055,9 @@ def verify_analysis_claims(
     current_session_id: str = "",
     current_plan_digest: str = "",
     current_step_digests: dict[str, str] | None = None,
+    analysis_requirements: list[dict[str, Any]] | None = None,
+    require_explicit_evidence_ids: bool = False,
+    strict_claim_semantics: bool = False,
 ) -> dict[str, Any]:
     """Verify claims against recorded evidence, route metadata, and cleaning risk."""
 
@@ -750,6 +1087,13 @@ def verify_analysis_claims(
                 for key, value in (current_step_digests or {}).items()
                 if str(key) and str(value)
             },
+            [
+                item
+                for item in _normalize_items(analysis_requirements)
+                if isinstance(item, dict)
+            ],
+            bool(require_explicit_evidence_ids),
+            bool(strict_claim_semantics),
         )
         for index, claim in enumerate(safe_claims)
     ]
@@ -760,6 +1104,13 @@ def verify_analysis_claims(
         "route_proposal_ids": route_proposal_ids,
         "cleaning_logs": safe_cleaning_logs,
         "claim_checks": claim_checks,
+        "analysis_requirement_ids": [
+            str(item.get("id") or "")
+            for item in _normalize_items(analysis_requirements)
+            if isinstance(item, dict) and str(item.get("id") or "")
+        ],
+        "require_explicit_evidence_ids": bool(require_explicit_evidence_ids),
+        "strict_claim_semantics": bool(strict_claim_semantics),
     }
     if current_plan_id:
         payload_for_id["current_plan_id"] = str(current_plan_id)

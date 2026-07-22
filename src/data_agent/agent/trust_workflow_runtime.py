@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from pathlib import Path
 from typing import Any
 
+from data_agent.agent.answer_quality import build_final_answer_audit
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.intent_refinement import refine_intent_with_data
 from data_agent.agent.verification import verify_analysis_claims
@@ -13,6 +16,124 @@ from data_agent.utils.logging import get_logger
 
 
 logger = get_logger("trust_workflow_runtime")
+
+
+def audit_final_answer_draft(
+    answer_text: str,
+    state: Any,
+    *,
+    llm_critique: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist a deterministic audit of the actual synthesis draft."""
+
+    current_plan_id = _current_analysis_plan_id(state)
+    evidence_records = _current_plan_records(
+        _list_attr(state, "evidence_records"),
+        current_plan_id,
+    )
+    current_plan_digest, current_step_digests = _current_plan_semantic_identity(state)
+    sessions_root = _sessions_root()
+    current_session_id = str(getattr(state, "session_id", "") or "")
+    audit = build_final_answer_audit(
+        answer_text,
+        evidence_records=evidence_records,
+        route_proposals=_list_attr(state, "route_proposals"),
+        cleaning_logs=_list_attr(state, "cleaning_logs"),
+        current_plan_id=current_plan_id,
+        current_dataset_versions=_active_dataset_versions(),
+        sessions_root=sessions_root,
+        current_session_id=current_session_id,
+        current_plan_digest=current_plan_digest,
+        current_step_digests=current_step_digests,
+        analysis_requirements=_current_analysis_requirements(state),
+        llm_critique=llm_critique,
+    )
+    path = _persist_final_answer_audit(
+        audit,
+        sessions_root=sessions_root,
+        session_id=current_session_id,
+    )
+    checks = [
+        item for item in audit.get("claim_checks") or [] if isinstance(item, dict)
+    ]
+    status = str(audit.get("status") or "blocked")
+    ref = {
+        "contract_version": "final_answer_audit.v1",
+        "id": audit.get("id"),
+        "created_at": audit.get("created_at"),
+        "status": status,
+        "overall_status": {
+            "blocked": "fail",
+            "revise": "pass_with_downgrades",
+            "pass": "pass",
+        }.get(status, "fail"),
+        "claim_count": len(checks),
+        "blocked_count": sum(item.get("status") == "failed" for item in checks),
+        "revise_count": sum(item.get("status") == "downgraded" for item in checks),
+        "draft_digest": audit.get("draft_digest"),
+        "artifact_path": str(path),
+        "artifact_digest": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    add_ref = getattr(state, "add_verification_report_ref", None)
+    if callable(add_ref):
+        stored = add_ref(ref)
+    else:
+        reports = getattr(state, "verification_reports", None)
+        if isinstance(reports, list):
+            reports.append(ref)
+        stored = ref
+    save = getattr(state, "save", None)
+    if callable(save):
+        save()
+    return stored
+
+
+def hydrate_final_answer_audit_ref(ref: dict[str, Any]) -> dict[str, Any] | None:
+    path = Path(str(ref.get("artifact_path") or ""))
+    if ref.get("contract_version") != "final_answer_audit.v1" or not path.is_file():
+        return None
+    try:
+        artifact_bytes = path.read_bytes()
+        if hashlib.sha256(artifact_bytes).hexdigest() != str(ref.get("artifact_digest") or ""):
+            return None
+        audit = json.loads(artifact_bytes.decode("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(audit, dict) or audit.get("id") != ref.get("id"):
+        return None
+    return audit
+
+
+def _persist_final_answer_audit(
+    audit: dict[str, Any],
+    *,
+    sessions_root: Any,
+    session_id: str,
+) -> Path:
+    if sessions_root is None:
+        raise ValueError("sessions_root is required to persist final_answer_audit.v1")
+    safe_session_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id).strip("._") or "session"
+    safe_audit_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(audit.get("id") or "audit"))
+    path = Path(sessions_root) / safe_session_id / "tool_outputs" / f"{safe_audit_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _current_analysis_requirements(state: Any) -> list[dict[str, Any]]:
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict):
+        return []
+    grouped = plan.get("analysis_requirements")
+    if not isinstance(grouped, dict):
+        return []
+    return [
+        item
+        for group in grouped.values()
+        if isinstance(group, list)
+        for item in group
+        if isinstance(item, dict)
+    ]
 
 
 def refine_turn_intent_with_state(user_input: str, intent: TurnIntent, state: Any) -> TurnIntent:

@@ -8,7 +8,11 @@ import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
-from data_agent.agent.synthesis_policy import SynthesisPolicy, derive_synthesis_policy
+from data_agent.agent.synthesis_policy import (
+    SynthesisPolicy,
+    build_synthesis_instruction,
+    derive_synthesis_policy,
+)
 
 
 def _intent(intent_type="directed_analysis", clarity="clear", action="run_analysis"):
@@ -113,6 +117,23 @@ def test_formula_fitting_gets_light_cautious_business_meaning():
         "business_meaning",
         "next_step",
     ]
+
+
+def test_synthesis_instruction_requires_exact_internal_evidence_markers():
+    policy = _policy(
+        intent=_intent(),
+        state=_state_with_evidence(),
+        user_input="fit a retention curve formula from the data",
+    )
+
+    instruction = build_synthesis_instruction(policy)
+
+    assert policy.allowed_evidence_ids == ("ev_1",)
+    assert "[[evidence:<EvidenceRecord ID>]]" in instruction
+    assert "one or more exact" in instruction
+    assert "ev_1" in instruction
+    assert "Do not invent or substitute evidence IDs" in instruction
+    assert "removed before publication" in instruction
 
 
 def test_ltv_followup_gets_standard_cautious_advisory_policy():

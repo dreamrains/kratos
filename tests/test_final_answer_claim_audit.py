@@ -1,0 +1,320 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from data_agent.agent.answer_quality import (
+    build_final_answer_audit,
+    extract_material_claims,
+    strip_internal_evidence_markers,
+)
+from data_agent.agent.analysis_requirements import compile_analysis_requirements
+from data_agent.agent import trust_workflow_runtime as runtime
+
+
+def _evidence(**overrides):
+    record = {
+        "id": "ev_revenue",
+        "plan_id": "plan_current",
+        "step_id": "step_compare",
+        "claim_key": "revenue_change",
+        "claim": "Revenue increased 12% in 2026-05 for new users.",
+        "dataset": "sales",
+        "method": "period_compare",
+        "sample_size": 1200,
+        "time_scope": "2026-05-01 to 2026-05-31",
+        "calculation_method": "monthly revenue delta",
+        "method_detail": "compared May revenue against April revenue",
+        "limitations": ["descriptive comparison only"],
+        "confidence": "medium",
+        "verification_level": "structured_checked",
+        "measurements": [{
+            "metric": "revenue_change",
+            "definition": "May revenue change versus April",
+            "value": 0.12,
+            "unit": "ratio",
+            "grain": "user",
+            "population_scope": "new users",
+            "time_scope": "2026-05-01 to 2026-05-31",
+            "method": "period_compare",
+            "denominator": "April revenue",
+            "limitations": ["descriptive comparison only"],
+        }],
+    }
+    record.update(overrides)
+    return record
+
+
+def _audit(text, *, evidence=None, **kwargs):
+    return build_final_answer_audit(
+        text,
+        evidence_records=evidence if evidence is not None else [_evidence()],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+        **kwargs,
+    )
+
+
+def test_extractor_classifies_claims_and_extracts_semantics_and_markers():
+    text = (
+        "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]].\n"
+        "We recommend expanding the campaign [[evidence:ev_recommendation]]."
+    )
+
+    claims = extract_material_claims(text)
+
+    assert [claim["claim_type"] for claim in claims] == ["comparison", "recommendation"]
+    assert claims[0]["quantities"] == [{"raw": "12%", "value": 12.0, "unit": "%"}]
+    assert claims[0]["direction"] == "increase"
+    assert claims[0]["time_scope"] == "2026-05"
+    assert claims[0]["population_scope"] == "new users"
+    assert claims[0]["evidence_ids"] == ["ev_revenue"]
+    assert claims[0]["confidence_assertion"] == ""
+    assert all(claim["material"] for claim in claims)
+
+
+def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication():
+    audit = _audit("Revenue increased 12% in 2026-05 for new users.")
+
+    assert audit["contract_version"] == "final_answer_audit.v1"
+    assert audit["status"] == "blocked"
+    check = audit["claim_checks"][0]
+    assert "missing_evidence_identity" in check["reason_codes"]
+    assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
+
+
+@pytest.mark.parametrize(
+    ("draft", "reason_code"),
+    [
+        ("Revenue increased 21% in 2026-05 for new users [[evidence:ev_revenue]].", "numeric_mismatch"),
+        ("Revenue decreased 12% in 2026-05 for new users [[evidence:ev_revenue]].", "direction_mismatch"),
+        ("Revenue increased 12 CNY in 2026-05 for new users [[evidence:ev_revenue]].", "unit_mismatch"),
+        ("Revenue increased 12 percentage points in 2026-05 for new users [[evidence:ev_revenue]].", "unit_mismatch"),
+        ("Revenue increased 12% in 2026-06 for new users [[evidence:ev_revenue]].", "time_scope_mismatch"),
+        ("Revenue increased 12% in 2026-05 for existing users [[evidence:ev_revenue]].", "population_scope_mismatch"),
+        ("Revenue increased 12% with high confidence [[evidence:ev_revenue]].", "confidence_mismatch"),
+    ],
+)
+def test_material_semantic_mismatches_block(draft, reason_code):
+    audit = _audit(draft)
+
+    assert audit["status"] == "blocked"
+    assert reason_code in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_later_revision_findings_cannot_weaken_a_deterministic_block():
+    audit = _audit(
+        "Revenue increased 21% [[evidence:ev_revenue]].",
+        evidence=[_evidence(sample_size=None, method_detail="")],
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["claim_checks"][0]["status"] == "failed"
+    assert "numeric_mismatch" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_numeric_audit_accepts_effect_and_structured_confidence_interval_values():
+    audit = _audit(
+        "Revenue increased 12% (95% CI 5% to 19%) in 2026-05 for new users "
+        "[[evidence:ev_revenue]].\n"
+        "Limitation: this is a descriptive comparison only.",
+        evidence=[_evidence(statistical_support={
+            "effect_estimate": {"value": 0.12, "unit": "ratio"},
+            "confidence_interval": {
+                "level": 0.95,
+                "lower": 0.05,
+                "upper": 0.19,
+                "unit": "ratio",
+            },
+        })],
+    )
+
+    assert audit["status"] == "pass"
+
+
+def test_current_plan_identity_is_required_even_with_an_exact_marker():
+    audit = _audit(
+        "Revenue increased 12% [[evidence:ev_old]].",
+        evidence=[_evidence(id="ev_old", plan_id="plan_old")],
+    )
+
+    assert audit["status"] == "blocked"
+    assert "evidence_outside_current_plan" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_unmet_block_claim_requirement_blocks_and_supplies_safe_action():
+    requirements = compile_analysis_requirements(
+        plan={
+            "id": "plan_current",
+            "goal": "estimate a population difference",
+            "method_plan": [{
+                "step_id": "step_compare",
+                "goal": "estimate a population difference",
+                "node_type": "analysis",
+                "required_capability": "analysis.group_compare",
+                "claim_type": "inferential",
+                "sampling_structure": "independent_groups",
+                "evidence_requirements": ["confidence_interval"],
+            }],
+        },
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="estimate a population difference",
+    )
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]].",
+        analysis_requirements=requirements,
+    )
+
+    assert audit["status"] == "blocked"
+    check = audit["claim_checks"][0]
+    assert "unmet_block_claim_requirement" in check["reason_codes"]
+    assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
+
+
+def test_multiple_exact_evidence_ids_can_collectively_satisfy_claim_requirements():
+    requirements = compile_analysis_requirements(
+        plan={
+            "id": "plan_current",
+            "goal": "estimate a population difference",
+            "method_plan": [{
+                "step_id": "step_compare",
+                "goal": "estimate a population difference",
+                "node_type": "analysis",
+                "required_capability": "analysis.group_compare",
+                "claim_type": "inferential",
+                "sampling_structure": "independent_groups",
+            }],
+        },
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent="estimate a population difference",
+    )
+    confidence_interval = next(
+        item for item in requirements if item["name"] == "confidence_interval"
+    )
+    effect = _evidence(
+        id="ev_effect",
+        requirement_ids=[],
+    )
+    uncertainty = _evidence(
+        id="ev_uncertainty",
+        requirement_ids=[confidence_interval["id"]],
+        confidence_interval={"level": 0.95, "lower": 0.05, "upper": 0.19},
+        assumption_checks=[{
+            "name": "method_appropriate_for_design",
+            "status": "passed",
+            "evidence": "period comparison matches the declared design",
+        }],
+        measurements=[],
+    )
+
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        "[[evidence:ev_effect]] [[evidence:ev_uncertainty]].\n"
+        "Limitation: this is a descriptive comparison only.",
+        evidence=[effect, uncertainty],
+        analysis_requirements=[confidence_interval],
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claim_checks"][0]["evidence_ids"] == ["ev_effect", "ev_uncertainty"]
+
+
+def test_traceable_lineage_cannot_support_independent_correctness_wording():
+    audit = _audit(
+        "The 12% increase was independently verified as statistically correct "
+        "[[evidence:ev_revenue]].",
+        evidence=[_evidence(verification_level="traceable")],
+    )
+
+    assert audit["status"] == "blocked"
+    assert "verification_level_overclaim" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_diagnostic_missing_evidence_statement_may_pass_without_marker():
+    audit = _audit(
+        "The assignment unit is unavailable, so a causal effect cannot be determined.",
+        evidence=[],
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claim_checks"][0]["status"] == "passed"
+    assert audit["claim_checks"][0]["evidence_id"] is None
+
+
+def test_internal_markers_are_removed_from_public_text():
+    draft = "Revenue increased 12% [[evidence:ev_revenue]]."
+
+    assert strip_internal_evidence_markers(draft) == "Revenue increased 12%."
+    assert "evidence:" not in _audit(draft)["public_text"]
+
+
+def test_missing_limitation_requires_revision_not_publication_pass():
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]]."
+    )
+
+    assert audit["status"] == "revise"
+    assert "missing_limitation" in audit["claim_checks"][0]["reason_codes"]
+    assert audit["claim_checks"][0]["safe_action"]["action"] == "revise_with_limitations"
+
+
+def test_low_confidence_prediction_requires_exploratory_label():
+    audit = _audit(
+        "Revenue will increase [[evidence:ev_revenue]].\n"
+        "Limitation: the forecast is based on a descriptive comparison.",
+        evidence=[_evidence(confidence="low")],
+    )
+
+    assert audit["status"] == "revise"
+    assert "missing_exploratory_label" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_optional_llm_critique_cannot_override_deterministic_block():
+    audit = _audit(
+        "Revenue increased 12%.",
+        llm_critique={"status": "pass", "notes": ["Looks clear"]},
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["llm_critique"]["status"] == "pass"
+
+
+def test_runtime_persists_full_audit_and_keeps_only_compact_ref_in_state(tmp_path, monkeypatch):
+    state = SimpleNamespace(
+        session_id="audit_session",
+        analysis_plan={"id": "plan_current", "analysis_requirements": {}},
+        evidence_records=[_evidence()],
+        route_proposals=[],
+        cleaning_logs=[],
+        verification_reports=[],
+        save=lambda: None,
+    )
+    monkeypatch.setattr(runtime, "_sessions_root", lambda: tmp_path / "sessions")
+    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: None)
+
+    ref = runtime.audit_final_answer_draft(
+        "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]].\n"
+        "Limitation: this is a descriptive comparison only.",
+        state,
+    )
+
+    assert ref["contract_version"] == "final_answer_audit.v1"
+    assert ref["status"] == "pass"
+    assert "claim_checks" not in ref
+    assert len(ref["artifact_digest"]) == 64
+    assert state.verification_reports[-1] == ref
+    artifact = json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
+    assert artifact["contract_version"] == "final_answer_audit.v1"
+    assert artifact["claim_checks"][0]["evidence_id"] == "ev_revenue"
+    assert "[[evidence:" not in artifact["public_text"]
+    assert runtime.hydrate_final_answer_audit_ref(ref) == artifact
+
+    artifact["status"] = "blocked"
+    Path(ref["artifact_path"]).write_text(json.dumps(artifact), encoding="utf-8")
+    assert runtime.hydrate_final_answer_audit_ref(ref) is None

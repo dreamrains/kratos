@@ -119,10 +119,40 @@ def test_evaluate_fatal_blocks_unsupported_material_claim():
 
 
 def test_evaluate_fatal_passes_when_claim_supported():
-    state = _FakeState(evidence=[{"claim": "买卡后消费提升50%", "result_summary": "前后对比 +50%"}])
-    result = aq.evaluate_fatal("买卡后消费提升了50%。", state)
+    state = _FakeState(evidence=[{
+        "id": "ev_purchase",
+        "claim": "买卡后消费提升50%",
+        "result_summary": "前后对比 +50%",
+        "dataset": "orders",
+        "method": "period_compare",
+        "sample_size": 100,
+        "time_scope": "fixture period",
+        "calculation_method": "before-after ratio",
+        "method_detail": "compared spending before and after purchase",
+        "limitations": ["descriptive comparison only"],
+        "measurements": [{
+            "metric": "spending_change",
+            "value": 0.5,
+            "unit": "ratio",
+            "population_scope": "card buyers",
+            "time_scope": "fixture period",
+        }],
+    }])
+    result = aq.evaluate_fatal(
+        "买卡后消费提升了50% [[evidence:ev_purchase]]。局限：这只是描述性前后对比。",
+        state,
+    )
     assert result["claim_delivery_ready"] is True
     assert result["blockers"] == []
+
+
+def test_evaluate_fatal_does_not_accept_fuzzy_support_without_internal_identity():
+    state = _FakeState(evidence=[{"id": "ev_purchase", "claim": "买卡后消费提升50%", "result_summary": "前后对比 +50%"}])
+
+    result = aq.evaluate_fatal("买卡后消费提升了50%。", state)
+
+    assert result["claim_delivery_ready"] is False
+    assert any(blocker.startswith("unsupported_material_claim") for blocker in result["blockers"])
 
 
 def test_evaluate_fatal_folds_in_failed_agent_verification():
@@ -136,13 +166,12 @@ def test_evaluate_fatal_folds_in_failed_agent_verification():
 
 
 def test_evaluate_fatal_no_unsupported_blockers_when_no_evidence():
-    # Diagnostic / rejection scenarios legitimately produce no EvidenceRecords;
-    # the unsupported-material-claim gate must not fire en masse when there is
-    # nothing to check support against (the soft 'rigor' dimension still judges).
+    # The diagnostic sentence is allowed without positive evidence, but the
+    # separate +20% factual claim must still be blocked.
     state = _FakeState(evidence=[])
     result = aq.evaluate_fatal("两个文件没有关联键，不能合并。收入增长20%。", state)
-    assert result["claim_delivery_ready"] is True
-    assert not any(b.startswith("unsupported_material_claim") for b in result["blockers"])
+    assert result["claim_delivery_ready"] is False
+    assert any(b.startswith("unsupported_material_claim") for b in result["blockers"])
 
 
 from data_agent.agent import quality_judge as qj
@@ -227,10 +256,28 @@ from data_agent.agent import golden_answer_runner as gar
 
 
 def test_evaluate_answer_composes_fatal_and_soft():
-    state = _FakeState(evidence=[{"claim": "买卡后消费提升50%", "result_summary": "前后对比 +50%"}])
+    state = _FakeState(evidence=[{
+        "id": "ev_purchase",
+        "claim": "买卡后消费提升50%",
+        "result_summary": "前后对比 +50%",
+        "dataset": "orders",
+        "method": "period_compare",
+        "sample_size": 100,
+        "time_scope": "fixture period",
+        "calculation_method": "before-after ratio",
+        "method_detail": "compared spending before and after purchase",
+        "limitations": ["descriptive comparison only"],
+        "measurements": [{
+            "metric": "spending_change",
+            "value": 0.5,
+            "unit": "ratio",
+            "population_scope": "card buyers",
+            "time_scope": "fixture period",
+        }],
+    }])
     payload = '{"insight_depth": {"score": 2, "rationale": "基本是数值描述"}}'
     out = gar.evaluate_answer(
-        answer_text="买卡后消费提升了50%。",
+        answer_text="买卡后消费提升了50% [[evidence:ev_purchase]]。局限：这只是描述性前后对比。",
         state=state,
         question="省钱卡表现？",
         dimensions=["insight_depth"],

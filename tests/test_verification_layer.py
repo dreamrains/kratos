@@ -113,6 +113,19 @@ def test_punctuation_case_and_light_paraphrase_can_match_evidence():
     assert report["claim_checks"][0]["status"] == "passed"
 
 
+def test_strict_final_answer_verification_rejects_fuzzy_match_without_evidence_id():
+    report = verify_analysis_claims(
+        claims=[{"id": "claim_1", "text": "May revenue increased by 12 percent.", "material": True}],
+        evidence_records=[_complete_evidence()],
+        route_proposals=[],
+        cleaning_logs=[],
+        require_explicit_evidence_ids=True,
+    )
+
+    assert report["overall_status"] == "fail"
+    assert report["claim_checks"][0]["reason_codes"] == ["missing_evidence_identity"]
+
+
 def test_claim_dict_id_matches_evidence_claim_id_or_id():
     claim_by_claim_id = {"id": "claim_77", "claim": "Different wording"}
     claim_by_evidence_id = {"id": "ev_2", "claim": "Another wording"}

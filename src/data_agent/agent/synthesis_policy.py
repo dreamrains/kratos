@@ -24,6 +24,7 @@ class SynthesisPolicy:
     suppressed_moves: list[str]
     wording_style: str
     reason: str
+    allowed_evidence_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,6 +75,7 @@ def derive_synthesis_policy(
                 suppressed_moves=["business_meaning", "assumptions"],
                 wording_style=wording_style,
                 reason="Direct or terse request; suppressing business translation.",
+                allowed_evidence_ids=_evidence_ids(evidence),
             ),
             verification_status,
         )
@@ -89,6 +91,7 @@ def derive_synthesis_policy(
                 suppressed_moves=["business_meaning", "decision_recommendation"],
                 wording_style=wording_style,
                 reason="No evidence records are available, so synthesis stays exploratory.",
+                allowed_evidence_ids=(),
             ),
             verification_status,
         )
@@ -123,6 +126,7 @@ def derive_synthesis_policy(
                 suppressed_moves=[],
                 wording_style=wording_style,
                 reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
+                allowed_evidence_ids=_evidence_ids(evidence),
             ),
             verification_status,
         )
@@ -148,6 +152,7 @@ def derive_synthesis_policy(
             suppressed_moves=["decision_recommendation"],
             wording_style=wording_style,
             reason=_reason(reasons, "Evidence supports a light analytical synthesis."),
+            allowed_evidence_ids=_evidence_ids(evidence),
         ),
         verification_status,
     )
@@ -164,6 +169,10 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
     required = ",".join(_escape_prompt_value(move) for move in policy.required_moves)
     suppressed = ",".join(_escape_prompt_value(move) for move in policy.suppressed_moves)
     reason = _escape_prompt_value(policy.reason)
+    allowed_evidence_ids = ",".join(
+        _escape_prompt_value(evidence_id)
+        for evidence_id in policy.allowed_evidence_ids
+    )
     return (
         "<synthesis_policy "
         f'answer_mode="{answer_mode}" '
@@ -174,7 +183,13 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         f"<required_moves>{required}</required_moves>"
         f"<suppressed_moves>{suppressed}</suppressed_moves>"
         f"<reason>{reason}</reason>"
+        f"<allowed_evidence_ids>{allowed_evidence_ids}</allowed_evidence_ids>"
         "</synthesis_policy>"
+        "<internal_evidence_markers>"
+        "Every material numeric, comparison, association, prediction, causal, or recommendation claim "
+        "must end with one or more exact [[evidence:<EvidenceRecord ID>]] markers using IDs from allowed_evidence_ids. "
+        "Do not invent or substitute evidence IDs. These markers are internal and removed before publication."
+        "</internal_evidence_markers>"
         "<bounded_evidence_replenishment>"
         "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
         "Do not read raw datasets during synthesis. "
@@ -224,6 +239,14 @@ def _append_unique(items: list[str], item: str) -> list[str]:
     if item not in result:
         result.append(item)
     return result
+
+
+def _evidence_ids(evidence: list[Any]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(
+        str(_get(record, "id", "")).strip()
+        for record in evidence
+        if str(_get(record, "id", "")).strip()
+    ))
 
 
 def _text(value: Any) -> str:
