@@ -405,6 +405,14 @@ class TestConversationFlow:
             msg.get("role") == "user" and "<analysis_quality_guard>" in str(msg.get("content") or "")
             for msg in loop.messages
         )
+        assert not any(
+            "<final_answer_audit_repair" in str(msg.get("content") or "")
+            for msg in loop.messages
+        )
+        assert not any(
+            msg.get("role") == "assistant" and "[[evidence:" in str(msg.get("content") or "")
+            for msg in loop.messages
+        )
 
     def test_tool_content_is_error_detects_plain_error_prefix(self, clean_workspace):
         from data_agent.agent.loop import AgentLoop

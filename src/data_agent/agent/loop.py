@@ -77,6 +77,17 @@ _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "</analysis_quality_guard>"
 )
 
+_COMPUTATION_REPAIR_REASON_CODES = {
+    "computation_integrity_failure",
+    "evidence_identity_not_found",
+    "evidence_outside_current_plan",
+    "missing_structured_measurement",
+    "stale_dataset_evidence",
+    "stale_plan_evidence",
+    "unmet_block_claim_requirement",
+    "unsupported_claim",
+}
+
 
 # === LoopResult: Agent loop return types ===
 
@@ -926,6 +937,9 @@ class AgentLoop:
             synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
             if synthesis_instruction:
                 prompt = prompt + "\n\n" + synthesis_instruction
+            final_audit_instruction = getattr(self, "_turn_final_audit_instruction", "")
+            if final_audit_instruction:
+                prompt = prompt + "\n\n" + final_audit_instruction
             hint = self._execution_prompt_hint()
             if hint:
                 return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
@@ -1354,6 +1368,11 @@ class AgentLoop:
         self._turn_verification_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
+        self._turn_final_audit_revision_used = False
+        self._turn_final_audit_analysis_retry_used = False
+        self._turn_final_audit_instruction = ""
+        self._turn_last_final_audit = None
+        self._turn_resumed_from_confirmation = False
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -1456,6 +1475,217 @@ class AgentLoop:
         )
         self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
         self._turn_synthesis_policy_injected = True
+
+    def _is_final_answer_audit_candidate(self) -> bool:
+        intent = getattr(self, "_last_turn_intent", None)
+        if intent is not None and getattr(intent, "intent_type", "") in {
+            "directed_analysis", "comprehensive_report",
+        }:
+            return True
+        if not getattr(self, "_turn_resumed_from_confirmation", False):
+            return False
+        state = getattr(self.context, "analysis_state", None)
+        return state is not None and bool(
+            getattr(state, "analysis_plan", None)
+            or getattr(state, "evidence_records", None)
+        )
+
+    def _should_buffer_final_answer_text(self) -> bool:
+        return self._is_final_answer_audit_candidate()
+
+    def _analysis_retry_budget_available(self) -> bool:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return False
+        budget = getattr(turn_state, "budget", None)
+        if budget is None:
+            return False
+        if turn_state.tool_calls >= int(getattr(budget, "max_tool_calls", 0) or 0):
+            return False
+        token_budget = getattr(budget, "token_budget", None)
+        if token_budget is not None and turn_state.estimated_tokens_used >= token_budget:
+            return False
+        max_elapsed = getattr(budget, "max_elapsed_seconds", None)
+        if max_elapsed is not None and turn_state.elapsed_seconds >= max_elapsed:
+            return False
+        return True
+
+    def _discard_last_answer_candidate(self) -> None:
+        if not self.messages:
+            return
+        last = self.messages[-1]
+        if last.get("role") == "assistant" and not last.get("tool_calls"):
+            self.messages.pop()
+
+    def _replace_last_answer_candidate(self, public_text: str) -> None:
+        for message in reversed(self.messages):
+            if message.get("role") == "assistant" and not message.get("tool_calls"):
+                message["content"] = public_text
+                return
+        self.messages.append({"role": "assistant", "content": public_text})
+
+    def _public_intermediate_text(self, text: str) -> str:
+        from data_agent.agent.answer_quality import strip_internal_evidence_markers
+
+        return strip_internal_evidence_markers(text)
+
+    def _interrupted_response_text(self, partial_text: str) -> str:
+        if self._is_final_answer_audit_candidate():
+            return "分析在最终审计前被中断；未发布未经审计的分析结论。\n\n[已中断]"
+        return (partial_text or "分析已中断。") + "\n\n[已中断]"
+
+    def _inject_final_answer_audit_repair(
+        self,
+        *,
+        mode: str,
+        reason_codes: list[str],
+    ) -> None:
+        self._discard_last_answer_candidate()
+        if mode == "synthesis":
+            instruction = (
+                "Revise the synthesis only. Do not call tools. Use only current allowed EvidenceRecord IDs, "
+                "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
+                "the internal evidence markers for re-audit. This is the only synthesis revision attempt."
+            )
+        else:
+            instruction = (
+                "Do not merely rephrase the blocked draft. Continue the required analysis with available tools, "
+                "record current computation evidence, then synthesize only supported findings. If evidence cannot "
+                "be produced within the remaining budget, return only diagnostic evidence gaps."
+            )
+        codes = ",".join(sorted(set(reason_codes)))
+        self._turn_final_audit_instruction = (
+            f'<final_answer_audit_repair mode="{mode}" reason_codes="{codes}">'
+            f"{instruction}</final_answer_audit_repair>"
+        )
+        self._prompt_cache_dirty = True
+
+    def _safe_final_answer_fallback(self, audit: dict[str, Any]) -> str:
+        supported = [
+            str(check.get("claim") or "").strip()
+            for check in audit.get("claim_checks") or []
+            if isinstance(check, dict)
+            and check.get("status") == "passed"
+            and str(check.get("strength") or "") != "diagnostic"
+            and str(check.get("claim") or "").strip()
+        ]
+        prefix = "\n".join(dict.fromkeys(supported))
+        gap = (
+            "Some requested analysis claims could not be published because their current computation evidence "
+            "is missing, inconsistent, or does not satisfy the required assurance checks."
+        )
+        return f"{prefix}\n\n{gap}".strip() if prefix else gap
+
+    def _synthesis_audit_revision_active(self) -> bool:
+        return 'mode="synthesis"' in getattr(self, "_turn_final_audit_instruction", "")
+
+    def _reject_synthesis_revision_tool_calls(self) -> str:
+        if self.messages and self.messages[-1].get("role") == "assistant":
+            self.messages.pop()
+        audit = getattr(self, "_turn_last_final_audit", None)
+        fallback = self._safe_final_answer_fallback(
+            audit if isinstance(audit, dict) else {"claim_checks": []}
+        )
+        self._replace_last_answer_candidate(fallback)
+        self._turn_final_audit_instruction = ""
+        return fallback
+
+    def _gate_final_analysis_answer(
+        self,
+        user_input: str,
+        final_text: str,
+        *,
+        allow_repair: bool = True,
+    ) -> dict[str, str]:
+        if not self._is_final_answer_audit_candidate():
+            return {"action": "publish", "text": final_text}
+
+        from data_agent.agent.trust_workflow_runtime import (
+            audit_final_answer_draft,
+            hydrate_final_answer_audit_ref,
+        )
+
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            fallback = self._safe_final_answer_fallback({"claim_checks": []})
+            self._replace_last_answer_candidate(fallback)
+            return {"action": "fallback", "text": fallback}
+
+        try:
+            ref = audit_final_answer_draft(final_text, state)
+            audit = hydrate_final_answer_audit_ref(ref)
+        except Exception as exc:
+            logger.error(
+                "Final answer audit failed closed",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+            audit = None
+        if not isinstance(audit, dict):
+            fallback = self._safe_final_answer_fallback({"claim_checks": []})
+            self._replace_last_answer_candidate(fallback)
+            self._turn_final_audit_instruction = ""
+            return {"action": "fallback", "text": fallback}
+
+        self._turn_last_final_audit = audit
+
+        status = str(audit.get("status") or "blocked")
+        if status == "pass":
+            public_text = str(audit.get("public_text") or "")
+            self._replace_last_answer_candidate(public_text)
+            self._turn_final_audit_instruction = ""
+            return {"action": "publish", "text": public_text}
+
+        failed_codes = list(dict.fromkeys(
+            str(code)
+            for check in audit.get("claim_checks") or []
+            if isinstance(check, dict) and check.get("status") == "failed"
+            for code in check.get("reason_codes") or []
+            if str(code)
+        ))
+        all_codes = list(dict.fromkeys(
+            str(code)
+            for check in audit.get("claim_checks") or []
+            if isinstance(check, dict)
+            for code in check.get("reason_codes") or []
+            if str(code)
+        ))
+        evidence_available = bool(getattr(state, "evidence_records", None))
+        synthesis_repairable = status == "revise" or (
+            status == "blocked"
+            and evidence_available
+            and bool(failed_codes)
+            and set(failed_codes) <= {"missing_evidence_identity"}
+        )
+        if (
+            allow_repair
+            and synthesis_repairable
+            and not self._turn_final_audit_revision_used
+        ):
+            self._turn_final_audit_revision_used = True
+            self._inject_final_answer_audit_repair(
+                mode="synthesis",
+                reason_codes=all_codes,
+            )
+            return {"action": "continue", "mode": "synthesis"}
+
+        needs_computation = bool(set(failed_codes) & _COMPUTATION_REPAIR_REASON_CODES)
+        if (
+            allow_repair
+            and needs_computation
+            and not self._turn_final_audit_analysis_retry_used
+            and self._analysis_retry_budget_available()
+        ):
+            self._turn_final_audit_analysis_retry_used = True
+            self._inject_final_answer_audit_repair(
+                mode="analysis",
+                reason_codes=failed_codes,
+            )
+            return {"action": "continue", "mode": "analysis"}
+
+        fallback = self._safe_final_answer_fallback(audit)
+        self._replace_last_answer_candidate(fallback)
+        self._turn_final_audit_instruction = ""
+        return {"action": "fallback", "text": fallback}
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._is_analysis_quality_guard_candidate()
@@ -1898,6 +2128,7 @@ class AgentLoop:
             return FinalResponse(content=f"Error: {exc}")
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
+        self._turn_resumed_from_confirmation = True
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
@@ -1953,6 +2184,7 @@ class AgentLoop:
                 answer = result.get("answer", "cancelled")
             self._resolve_confirmation(susp, answer)
             resumed_input = self._build_resume_user_input(susp, answer)
+            self._turn_resumed_from_confirmation = True
 
             self.messages.append({"role": "user", "content": (
                 f"<confirmation_response suspension_id=\"{susp.suspension_id}\">\n"
@@ -2271,7 +2503,10 @@ class AgentLoop:
                 yield self._suspended_event(blocked_confirmation)
                 return
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            buffer_text_events = (
+                self._is_analysis_quality_guard_candidate()
+                or self._should_buffer_final_answer_text()
+            )
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2305,11 +2540,14 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
-            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
+            response_text = response.text or ""
+            if response.has_tool_calls and self._is_final_answer_audit_candidate():
+                response_text = self._public_intermediate_text(response_text)
+            assistant_msg: dict = {"role": "assistant", "content": response_text}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response.text:
-                final_text = response.text
+            if response_text:
+                final_text = response_text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -2326,6 +2564,14 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
+            if response.has_tool_calls and self._synthesis_audit_revision_active():
+                final_text = self._reject_synthesis_revision_tool_calls()
+                if final_text:
+                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                self._maybe_archive(user_input, final_text)
+                self._auto_save()
+                return
+
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
@@ -2335,17 +2581,29 @@ class AgentLoop:
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
-                if buffer_text_events:
+                if self._is_final_answer_audit_candidate():
+                    gate = self._gate_final_analysis_answer(user_input, final_text)
+                    if gate["action"] == "continue":
+                        continue
+                    final_text = gate["text"]
+                    if final_text:
+                        yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                elif buffer_text_events:
                     for ev in pending_text_events:
                         yield ev
-                # Text was already streamed; just archive and save
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
 
             if buffer_text_events:
-                for ev in pending_text_events:
-                    yield ev
+                if self._is_final_answer_audit_candidate():
+                    visible_text = str(assistant_msg.get("content") or "")
+                    if visible_text:
+                        prefix = "\n\n" if round_num > 1 else ""
+                        yield {"type": "text_delta", "text": prefix + visible_text, "turn_id": None}
+                else:
+                    for ev in pending_text_events:
+                        yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -2372,8 +2630,15 @@ class AgentLoop:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                if not final_text:
-                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
+                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
+                gate = self._gate_final_analysis_answer(
+                    user_input,
+                    bounded_text,
+                    allow_repair=False,
+                )
+                final_text = gate["text"]
+                if final_text:
+                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
@@ -2403,6 +2668,7 @@ class AgentLoop:
             return
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
+        self._turn_resumed_from_confirmation = True
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
@@ -2435,7 +2701,15 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            blocked_confirmation = self._runtime_confirmation_checkpoint()
+            if blocked_confirmation is not None:
+                yield self._suspended_event(blocked_confirmation)
+                return
+
+            buffer_text_events = (
+                self._is_analysis_quality_guard_candidate()
+                or self._should_buffer_final_answer_text()
+            )
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2467,11 +2741,14 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
-            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
+            response_text = response.text or ""
+            if response.has_tool_calls and self._is_final_answer_audit_candidate():
+                response_text = self._public_intermediate_text(response_text)
+            assistant_msg: dict = {"role": "assistant", "content": response_text}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response.text:
-                final_text = response.text
+            if response_text:
+                final_text = response_text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -2488,12 +2765,31 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
+            if response.has_tool_calls and self._synthesis_audit_revision_active():
+                final_text = self._reject_synthesis_revision_tool_calls()
+                if final_text:
+                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                self._maybe_archive(resumed_input, final_text)
+                self._auto_save()
+                return
+
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
-                if buffer_text_events:
+                blocked_confirmation = self._runtime_confirmation_checkpoint()
+                if blocked_confirmation is not None:
+                    yield self._suspended_event(blocked_confirmation)
+                    return
+                if self._is_final_answer_audit_candidate():
+                    gate = self._gate_final_analysis_answer(resumed_input, final_text)
+                    if gate["action"] == "continue":
+                        continue
+                    final_text = gate["text"]
+                    if final_text:
+                        yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                elif buffer_text_events:
                     for ev in pending_text_events:
                         yield ev
                 self._maybe_archive(resumed_input, final_text)
@@ -2501,8 +2797,14 @@ class AgentLoop:
                 return
 
             if buffer_text_events:
-                for ev in pending_text_events:
-                    yield ev
+                if self._is_final_answer_audit_candidate():
+                    visible_text = str(assistant_msg.get("content") or "")
+                    if visible_text:
+                        prefix = "\n\n" if round_num > 1 else ""
+                        yield {"type": "text_delta", "text": prefix + visible_text, "turn_id": None}
+                else:
+                    for ev in pending_text_events:
+                        yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -2528,8 +2830,15 @@ class AgentLoop:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                if not final_text:
-                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
+                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
+                gate = self._gate_final_analysis_answer(
+                    resumed_input,
+                    bounded_text,
+                    allow_repair=False,
+                )
+                final_text = gate["text"]
+                if final_text:
+                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
                 self._maybe_archive("", final_text)
                 self._auto_save()
                 return
@@ -2545,7 +2854,7 @@ class AgentLoop:
             if self._interrupt_event.is_set():
                 logger.info("Interrupted during tool execution")
                 self._fill_remaining_tool_responses(tool_calls, i, "Turn interrupted by user")
-                return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
+                return FinalResponse(content=self._interrupted_response_text(final_text))
 
             logger.info("Tool call", extra={"extra_data": {"tool": tc.name, "args_keys": list(tc.arguments.keys())}})
 
@@ -2766,7 +3075,7 @@ class AgentLoop:
             # 协作式中断检查
             if self._interrupt_event.is_set():
                 logger.info("Turn interrupted by user")
-                return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
+                return FinalResponse(content=self._interrupted_response_text(final_text))
 
             # Safety valve: force summary at high round count
             if round_num == 300:
@@ -2795,11 +3104,14 @@ class AgentLoop:
                 system=self._get_system_prompt(),
             )
 
-            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
+            response_text = response.text or ""
+            if response.has_tool_calls and self._is_final_answer_audit_candidate():
+                response_text = self._public_intermediate_text(response_text)
+            assistant_msg: dict = {"role": "assistant", "content": response_text}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response.text:
-                final_text = response.text
+            if response_text:
+                final_text = response_text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -2816,6 +3128,10 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
+            if response.has_tool_calls and self._synthesis_audit_revision_active():
+                fallback = self._reject_synthesis_revision_tool_calls()
+                return FinalResponse(content=fallback)
+
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
@@ -2824,6 +3140,10 @@ class AgentLoop:
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
+                gate = self._gate_final_analysis_answer(user_input, final_text)
+                if gate["action"] == "continue":
+                    continue
+                final_text = gate["text"]
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
@@ -2891,7 +3211,13 @@ class AgentLoop:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                return FinalResponse(content=final_text or "分析已完成。（已达到安全轮次上限）")
+                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
+                gate = self._gate_final_analysis_answer(
+                    user_input,
+                    bounded_text,
+                    allow_repair=False,
+                )
+                return FinalResponse(content=gate["text"])
 
     def _maybe_archive(self, user_input: str, reply: str) -> None:
         """当有实质性分析结果时自动归档。"""

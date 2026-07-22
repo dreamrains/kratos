@@ -966,6 +966,29 @@ def test_resume_turn_is_idempotent_for_same_runtime_answer(tmp_path, monkeypatch
     assert after == before
 
 
+def test_resume_turn_marks_confirmation_resume_for_publish_audit(tmp_path, monkeypatch):
+    _patch_direct_question_tool(monkeypatch, tmp_path)
+    loop = AgentLoop(client=None, session_id="resume_publish_audit")
+    suspended = loop._execute_single_tool(_ToolCall(), [_ToolCall()], 0)
+    observed = {}
+
+    def _loop_after_resume(_user_input):
+        observed["resumed"] = loop._turn_resumed_from_confirmation
+        return FinalResponse(content="done")
+
+    loop._loop = _loop_after_resume
+
+    result = loop.resume_turn(
+        suspended.confirmation_id,
+        "revenue",
+        expected_version=suspended.version,
+        idempotency_key="resume_publish_audit_key",
+    )
+
+    assert result == FinalResponse(content="done")
+    assert observed == {"resumed": True}
+
+
 def test_resume_turn_streaming_answers_runtime_confirmation(tmp_path, monkeypatch):
     from data_agent.agent.confirmation.models import ConfirmationStatus
     from data_agent.llm.client import Response
@@ -1089,6 +1112,9 @@ def test_sync_loop_blocks_final_response_when_runtime_confirmation_pending(tmp_p
             return Response(text="final answer should not bypass confirmation")
 
     loop.client = FinalOnlyClient()
+    loop._gate_final_analysis_answer = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("confirmation guard must run before final-answer audit")
+    )
 
     result = loop._loop("analyze data")
 
@@ -1127,6 +1153,9 @@ def test_stream_loop_blocks_final_response_when_runtime_confirmation_pending(tmp
         "response": Response(text="stream final should not bypass"),
         "streamed_text": "stream final should not bypass",
     }])
+    loop._gate_final_analysis_answer = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("confirmation guard must run before final-answer audit")
+    )
 
     events = list(loop.stream_turn("analyze data"))
     suspended = [event for event in events if event["type"] == "suspended"][0]
