@@ -199,3 +199,16 @@ def test_confirmation_flag_schemas_explain_that_receipts_are_authoritative():
         description = definitions[tool_name]["parameters"]["properties"]["confirmed"]["description"]
         assert "已废弃" in description
         assert "确认回执" in description
+
+
+def test_type_conversion_description_rejects_boolean_authorization():
+    from data_agent.tools import data_clean  # noqa: F401
+    from data_agent.tools.registry import registry
+
+    definitions = {item["name"]: item for item in registry.all_definitions()}
+    description = definitions["apply_type_conversion"]["description"]
+
+    assert "confirmed=true" in description
+    assert "不能授权" in description
+    assert "需 confirmed=true 后" not in description
+    assert "确认回执" in description

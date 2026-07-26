@@ -751,6 +751,7 @@ def suggest_column_types(name: str) -> str:
     description=(
         "在分析副本上执行类型转换。安全且无损的高置信度单列转换可直接应用；"
         "自动、带单位、部分成功或有信息损失的转换会返回版本绑定的确认回执，"
+        "confirmed=true 已废弃且不能授权提升；"
         "仅已解决的批准回执可提升新版本。"
     ),
     schema_overrides={

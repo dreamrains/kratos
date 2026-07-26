@@ -20,6 +20,40 @@ The production audit found no second writable confirmation store, requirement co
 
 The audit used targeted source searches for Boolean authorization, contract versions, compiler/verifier definitions, and `compact_history` call sites. No direct `confirmed=True` authorization remained. The stale user/tool wording was corrected without changing the established receipt authority.
 
+### Reproducible Production Searches
+
+Run these commands from the repository root. They are production-code audits, not tests.
+
+```powershell
+rg -n -i --glob '*.py' "confirmed\s*[=:]\s*(True|true)|_approved_confirmation_id|confirmation_receipt_required" src/data_agent/tools/data_clean.py
+```
+
+Result: the promotion paths use `_approved_confirmation_id` at the two `approved = bool(...)` decisions; public Boolean handling returns `confirmation_receipt_required`. The only literal `confirmed=true` is the corrected user-facing statement that it is deprecated and cannot authorize promotion.
+
+```powershell
+rg -n -i --glob '*.py' "def +compile.*requirement|analysis_requirement\.v1" src/data_agent/agent src/data_agent/tools
+```
+
+Result: `analysis_requirements.py` contains the single `compile_analysis_requirements` definition and the `analysis_requirement.v1` contract constant. No second compiler definition was returned.
+
+```powershell
+rg -n --glob '*.py' "EVIDENCE_RECORD_CONTRACT_VERSION|evidence_record\.v2|bind_evidence_to_computations" src/data_agent/agent src/data_agent/tools/analysis_flow.py
+```
+
+Result: `evidence_contracts.py` owns `EVIDENCE_RECORD_CONTRACT_VERSION` and `bind_evidence_to_computations`, which writes the v2 contract. `analysis_flow.py` imports and calls that binder for contract-bearing/plan evidence. `analysis_state.py` only recognizes non-v2 persisted evidence as `legacy_unbound` while loading state.
+
+```powershell
+rg -n --glob '*.py' "def verify_analysis_claims|def audit_final_answer_draft|build_final_answer_audit\(" src/data_agent/agent
+```
+
+Result: the only claim-verification entry point is `verification.verify_analysis_claims`; final-answer auditing is built by `answer_quality.build_final_answer_audit` and invoked from `trust_workflow_runtime.audit_final_answer_draft`. The second `build_final_answer_audit` occurrence is the builder's internal use, not a second verifier.
+
+```powershell
+rg -n --glob '*.py' "compact_history\(" src/data_agent
+```
+
+Result: `compact.compact_history` is the sole implementation. Loop, REPL, and web command handlers call it; no additional context-compressor definition was returned.
+
 ## Compatibility Boundaries and Removal Conditions
 
 - `analysis_plan_contracts` accepts `stage3c0b.v1`, `analysis_spec_id`, and legacy plan fields only while normalizing a loaded payload. `analysis_state.from_dict` is the persisted-state boundary. Remove these readers when supported persisted sessions contain no legacy plan version/field and no supported extension imports the legacy aliases.
@@ -100,5 +134,5 @@ Result: `compileall` and `git diff --check` exited 0. Before this report was add
 ## Environmental Notes and Untested Dependencies
 
 - A combined broad command exceeded the 120-second command limit at 86% without reporting a failure. Its core and real-data portions were then rerun separately to successful completion above.
-- Git emitted pre-existing environment warnings that `C:\Users\duguy\.config\git\ignore` is inaccessible and that Git will normalize LF to CRLF on the edited files. Neither warning affected test or diff-check exit status.
+- Git emitted pre-existing environment warnings that `C:\Users\duguy\.config\git\ignore` is inaccessible, the worktree `.pytest_cache/` directory cannot be opened because of permission denial, and Git will normalize LF to CRLF on the edited files. Neither warning affected test, diff-check, staging, or commit exit status.
 - Live LLM-provider calls, browser/web GUI interaction, and external service availability were not exercised; the validation covers their deterministic local contracts and fixtures only.
