@@ -30,14 +30,17 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
+TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+REAL_DATA_DIR = TEST_DATA_DIR
 
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
+CARD_PAYMENT = REAL_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"
+VOUCHER_DETAIL = REAL_DATA_DIR / "省钱卡代金券明细订单.xlsx"
+BEFORE_AFTER = REAL_DATA_DIR / "省钱卡购卡前后订单.xlsx"
 CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+HAS_REAL_DATA = all(
+    path.exists()
+    for path in (CARD_PAYMENT, VOUCHER_DETAIL, BEFORE_AFTER, CARD_ORDER)
+)
 
 
 @pytest.fixture

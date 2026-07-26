@@ -5,8 +5,8 @@ Test data files (from reference/test_doc):
   - 游戏A内购数据.xlsx: 248r x 13c, game in-app purchase metrics (daily aggregate)
   - 游戏A激励视频汇总数据报表.xlsx: 248r x 23c, game rewarded video metrics (daily aggregate)
   - 游戏互推.xlsx: 1985r x 8c, game cross-promotion data (multi-dimension aggregate)
-  - 省钱卡用户最近流水_20260511.xlsx: 13815r x 8c, savings card user transactions (individual)
-  - 省钱卡订单_20260507.xlsx: 71r x 7c, savings card orders (individual)
+  - 省钱卡0201到0510购卡用户付费数据.xlsx: 13757r x 9c, savings card user transactions (individual)
+  - 省钱卡订单.xlsx: 71r x 7c, savings card orders (individual)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
 
 
 def _data_path(filename: str) -> str:
@@ -112,7 +112,7 @@ class TestPhase1IntentClassification:
 
     def test_intent_with_savings_card_context(self):
         """Intent classification with savings card data context."""
-        ctx = "- orders: 13815 rows x 8 cols, columns: order_id, user_id, product_id"
+        ctx = "- orders: 13757 rows x 9 cols, columns: order_id, user_id, product_id"
         intent = self.plan("哪些用户购买频次最高", ctx)
         assert intent.intent_type in ("directed_analysis", "comprehensive_report", "data_operation")
 
@@ -255,7 +255,7 @@ class TestPhase2AutoInsight:
     @pytest.mark.parametrize("filename", [
         "游戏Abanner汇总数据.xlsx",
         "游戏互推.xlsx",
-        "省钱卡用户最近流水_20260511.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
     ])
     def test_auto_insight_scan_real_data(self, filename):
         from data_agent.tools.auto_insight import auto_insight_scan, format_auto_insight
@@ -291,7 +291,7 @@ class TestPhase2AutoInsight:
     def test_auto_insight_savings_card_transactions(self):
         """Savings card transaction data should detect ID columns and metrics."""
         from data_agent.tools.auto_insight import auto_insight_scan
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         result = auto_insight_scan(df, "transactions")
 
         semantics = result["field_semantics"]
@@ -311,8 +311,8 @@ class TestPhase2AutoInsight:
     def test_auto_insight_adaptive_sampling(self):
         """Large dataset should trigger sampling."""
         from data_agent.tools.auto_insight import auto_insight_scan
-        # 13815 rows is under 100K, should use full scan
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        # 13757 rows is under 100K, so the scan should remain lightweight.
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         result = auto_insight_scan(df, "large_test")
         assert result["scan_mode"] in ("full", "sampled_10pct", "sampled_1pct")
 
@@ -618,8 +618,8 @@ class TestPhase4MultiDataset:
         from data_agent.tools.data_understand import interpret_dataset
 
         ws = _fresh_workspace()
-        df_orders = _load_excel("省钱卡订单_20260507.xlsx")
-        df_transactions = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df_orders = _load_excel("省钱卡订单.xlsx")
+        df_transactions = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         ws.add("orders", df_orders)
         ws.add("transactions", df_transactions)
 
@@ -783,7 +783,7 @@ class TestPhase4ParallelExecution:
 
         registry._ensure_discovered()
         ws = _fresh_workspace()
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         ws.add("savings", df)
 
         with patch("data_agent.agent.loop.AgentLoop._ensure_mcp_initialized"):
@@ -909,7 +909,7 @@ class TestCrossPhaseIntegration:
         registry._ensure_discovered()
         ws = _fresh_workspace()
         # Use small subset of game data
-        df = _load_excel("省钱卡订单_20260507.xlsx").head(5)
+        df = _load_excel("省钱卡订单.xlsx").head(5)
         ws.add("tiny", df)
 
         ctx = AgentContext(session_id="test_conf_cal")
@@ -947,8 +947,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡用户最近流水_20260511.xlsx",
-            "省钱卡订单_20260507.xlsx",
+            "省钱卡0201到0510购卡用户付费数据.xlsx",
+            "省钱卡订单.xlsx",
         ]
         for f in files:
             df = _load_excel(f)
@@ -966,8 +966,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡用户最近流水_20260511.xlsx",
-            "省钱卡订单_20260507.xlsx",
+            "省钱卡0201到0510购卡用户付费数据.xlsx",
+            "省钱卡订单.xlsx",
         ]
         for f in files:
             ws = _fresh_workspace()
@@ -1064,7 +1064,7 @@ class TestUnifiedFieldClassification:
         from data_agent.tools.auto_insight import auto_insight_scan
         from data_agent.tools.data_understand import _classify_columns
 
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
 
         insight = auto_insight_scan(df, "savings")
         insight_ids = insight["field_semantics"]["id"]

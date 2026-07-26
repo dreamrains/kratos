@@ -37,15 +37,25 @@ if sys.platform == "win32":
 
 # ── Helpers ──────────────────────────────────────────────
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-HAS_REAL_DATA = TEST_DATA_DIR.exists()
+TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
 
 GAME_PURCHASE = TEST_DATA_DIR / "游戏A内购数据.xlsx"
 GAME_BANNER = TEST_DATA_DIR / "游戏Abanner汇总数据.xlsx"
 GAME_VIDEO = TEST_DATA_DIR / "游戏A激励视频汇总数据报表.xlsx"
 GAME_CROSS = TEST_DATA_DIR / "游戏互推.xlsx"
-ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
-ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
+ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单.xlsx"
+ECARD_FLOW = TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"
+HAS_REAL_DATA = all(
+    path.exists()
+    for path in (
+        GAME_PURCHASE,
+        GAME_BANNER,
+        GAME_VIDEO,
+        GAME_CROSS,
+        ECARD_ORDER,
+        ECARD_FLOW,
+    )
+)
 
 
 def _make_df(rows=100, seed=42):

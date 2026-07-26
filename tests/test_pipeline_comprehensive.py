@@ -27,9 +27,19 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-HAS_TEST_DATA = TEST_DATA_DIR.exists()
-HAS_REAL_DATA = Path("D:/Project/Daily/备用/20260512测试").exists()
+TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+HAS_TEST_DATA = all(
+    (TEST_DATA_DIR / filename).exists()
+    for filename in (
+        "游戏A内购数据.xlsx",
+        "游戏Abanner汇总数据.xlsx",
+        "游戏A激励视频汇总数据报表.xlsx",
+        "游戏互推.xlsx",
+        "省钱卡订单.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
+    )
+)
+HAS_REAL_DATA = (TEST_DATA_DIR / "省钱卡购卡前后订单.xlsx").exists()
 
 
 @pytest.fixture
@@ -347,7 +357,7 @@ class TestABTestEdge:
 
     def test_real_data_ab(self, env):
         """用真实数据验证 ab_test。"""
-        source = Path("D:/Project/Daily/备用/20260512测试/购卡前后订单.xlsx")
+        source = TEST_DATA_DIR / "省钱卡购卡前后订单.xlsx"
         if not source.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
@@ -590,8 +600,8 @@ class TestRealDataPipeline:
         ("游戏Abanner汇总数据.xlsx", "banner"),
         ("游戏A激励视频汇总数据报表.xlsx", "video"),
         ("游戏互推.xlsx", "cross"),
-        ("省钱卡订单_20260507.xlsx", "ecard"),
-        ("省钱卡用户最近流水_20260511.xlsx", "flow"),
+        ("省钱卡订单.xlsx", "ecard"),
+        ("省钱卡0201到0510购卡用户付费数据.xlsx", "flow"),
     ])
     def test_load_describe_eda(self, env, filename, name):
         """每个真实数据文件：加载 → 描述 → 基础 EDA。"""
@@ -643,13 +653,13 @@ class TestRealDataPipeline:
 
     def test_ecard_order_analysis(self, env):
         """省钱卡订单分析流程。"""
-        if not (TEST_DATA_DIR / "省钱卡订单_20260507.xlsx").exists():
+        if not (TEST_DATA_DIR / "省钱卡订单.xlsx").exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import distribution_analysis
         from data_agent.session.workspace import workspace
 
-        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
+        load_data(str(TEST_DATA_DIR / "省钱卡订单.xlsx"), name="card")
         df = workspace.get("card")
         assert df is not None
 
@@ -676,14 +686,14 @@ class TestRealDataPipeline:
 
     def test_large_dataset_performance(self, env):
         """大数据集(13K+ rows)加载性能。"""
-        if not (TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx").exists():
+        if not (TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx").exists():
             pytest.skip()
         import time
         from data_agent.tools.data_io import load_data
         from data_agent.session.workspace import workspace
 
         t0 = time.time()
-        load_data(str(TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"), name="big")
+        load_data(str(TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"), name="big")
         elapsed = time.time() - t0
 
         df = workspace.get("big")
@@ -1014,7 +1024,7 @@ class TestFunnelAnalysis:
 
     def test_real_data_funnel(self, env):
         """真实游戏数据构造漏斗。"""
-        source = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
+        source = TEST_DATA_DIR / "省钱卡订单.xlsx"
         if not source.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data

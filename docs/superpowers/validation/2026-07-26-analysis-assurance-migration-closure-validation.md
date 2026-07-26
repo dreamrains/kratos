@@ -3,6 +3,7 @@
 **Date:** 2026-07-26
 **Baseline:** `8fe6851` (`feat: preserve analysis assurance under context limits`)
 **Reviewed implementation baseline:** `2dfc336` (`fix: reproduce assurance migration audit`)
+**Final assurance follow-up baseline:** `88010b7` (`fix: close final assurance review follow-ups`)
 **Scope:** Task 9 migration, compatibility-boundary closure, and final whole-branch assurance review.
 
 ## Outcome
@@ -117,6 +118,80 @@ The final review verified and closed these durable behavior gaps:
 
 The worktree has no local virtual environment, so commands used the repository virtual environment with `PYTHONPATH=src` to ensure imports resolved to this worktree rather than the editable parent checkout.
 
+### Real-data fixture closure
+
+The ignored source fixtures under
+`D:\Project\Daily\data-agent\reference\test_doc` were copied into the isolated
+worktree's ignored `reference/test_doc` directory. Only the nine canonical
+source workbooks are present; no ignored compatibility aliases are required.
+
+Tracked tests now resolve `reference/test_doc` relative to their checkout and
+use the current canonical workbook names. In particular, the former
+`省钱卡用户最近流水_20260511.xlsx` references use
+`省钱卡0201到0510购卡用户付费数据.xlsx`, while former
+`省钱卡订单_20260507.xlsx` references use `省钱卡订单.xlsx` and its actual
+`售价` field. The three former backup-directory names use their current
+`省钱卡`-prefixed workbooks. Availability gates check the required files, not
+only whether the directory exists.
+
+The workspace-restore fixture also owns an isolated temporary task-manager
+directory and reads restored data inside the restored loop's context, matching
+the context-scoped workspace contract.
+
+After deleting the five initially created compatibility aliases, the focused
+RED run was **15 failed, 101 passed**. After migrating the tracked tests to the
+canonical fixture inventory, the same command was GREEN:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests/test_mvp_real_data_fixtures.py `
+  tests/test_optimization_comparison.py `
+  tests/test_phase_comprehensive.py `
+  -p no:cacheprovider
+```
+
+Result: **116 passed** with 24 pre-existing NumPy correlation warnings.
+
+The remaining migrated real-data modules were also exercised directly:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests/test_analysis_quality.py `
+  tests/test_comprehensive_analysis_flow.py `
+  tests/test_pipeline_comprehensive.py `
+  tests/test_system_data_analysis_quality_audit.py `
+  tests/test_real_data_integration.py `
+  -p no:cacheprovider
+```
+
+Result: **225 passed** with 27 non-fatal numerical warnings.
+
+### Full repository suite
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests -p no:cacheprovider
+```
+
+Result: **2466 passed, 11 skipped** in 356.65s. Pytest reported 35
+non-fatal numerical warnings and no failures. This closes the earlier 16
+fixture-related failures without relying on ignored compatibility aliases;
+nine previously skipped real-data cases now execute and pass.
+
+After the full run, the isolated canonical-fixture contract was rerun against
+the nine-workbook inventory:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests/test_mvp_real_data_fixtures.py -p no:cacheprovider
+```
+
+Result: **2 passed**.
+
 ### Follow-up RED/GREEN evidence
 
 - Chinese seasonality diagnostics: RED was `2 failed`; both `年季节性不可估计`
@@ -205,10 +280,10 @@ git diff --check
 git status --short
 ```
 
-Result: `compileall` and `git diff --check` exited 0. Before staging,
-`git status --short` showed exactly the intended validation update, two
-production changes, two regression-test changes, and deletion of the internal
-SDD report. `artifacts/` and `tmp/` were neither modified nor staged.
+Result: `compileall` and `git diff --check` exited 0. The final fixture-closure
+status showed exactly the intended validation update and eight test-file
+changes. `artifacts/`, `tmp/`, and the ignored fixture workbooks were not
+staged.
 
 ## Environmental Notes and Untested Dependencies
 
@@ -220,6 +295,7 @@ SDD report. `artifacts/` and `tmp/` were neither modified nor staged.
   and Git will normalize LF to CRLF on edited files. These warnings did not
   affect test or custom-runner exit status.
 - The 12 broad-suite skips are environment/data-gated cases, not failures.
-- The full repository suite was not rerun. The earlier controller run's
-  unavailable ignored real-data fixtures were not treated as code regressions.
+- The full-suite run completed with 11 pytest-marked skips and no failures.
+  The copied fixture workbooks remain ignored test inputs and are not part of
+  the Git commit.
 - Live LLM-provider calls, browser/web GUI interaction, and external service availability were not exercised; the validation covers their deterministic local contracts and fixtures only.
