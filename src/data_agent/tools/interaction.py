@@ -315,6 +315,7 @@ def _ask_multiple(questions: list[dict]) -> dict:
             "question": {
                 "type": "string",
                 "description": "要问的问题（单问题模式使用）",
+                "default": "",
             },
             "options": {
                 "type": "array",
@@ -327,14 +328,18 @@ def _ask_multiple(questions: list[dict]) -> dict:
                     },
                     "required": ["label"],
                 },
+                "default": None,
+                "nullable": True,
             },
             "multi_select": {
                 "type": "boolean",
                 "description": "是否允许多选（默认 false）。单问题模式使用。",
+                "default": False,
             },
             "preview": {
                 "type": "string",
                 "description": "选项的补充预览内容（可选），帮助用户对比选项差异",
+                "default": "",
             },
             "questions": {
                 "type": "string",
@@ -344,34 +349,41 @@ def _ask_multiple(questions: list[dict]) -> dict:
                     '"multi_select": false}]'
                     "。提供 questions 时忽略 question/options/multi_select 参数。"
                 ),
+                "default": "",
             },
             "confirmation_type": {
                 "type": "string",
                 "description": "结构化确认类型：scope_confirmation/data_requirement_confirmation/method_confirmation/data_quality_confirmation/follow_up_choice",
+                "default": "",
             },
             "blocking_reason": {
                 "type": "string",
                 "description": "为什么需要用户确认；用于 CLI/Web 展示和分析状态记录。",
+                "default": "",
             },
             "state_updates": {
                 "type": "string",
                 "description": "用户回答后要合并到 AnalysisSessionState 的 JSON 对象。",
+                "default": "",
             },
             "related_task_id": {
                 "type": "integer",
                 "description": "关联的 task id，可选。",
+                "default": 0,
             },
             "related_spec_id": {
                 "type": "string",
                 "description": "关联的 AnalysisSpec id，可选。",
+                "default": "",
             },
         },
         "required": [],
+        "additionalProperties": False,
     },
 )
 def ask_user_question(
     question: str = "",
-    options: list | str = "",
+    options: list | str | None = None,
     multi_select: bool = False,
     preview: str = "",
     questions: str = "",

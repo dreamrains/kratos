@@ -29,6 +29,7 @@ def _loader():
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Skill name"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 )
 def load_skill(name: str) -> str:
@@ -42,6 +43,7 @@ def load_skill(name: str) -> str:
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Skill name"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 )
 def unload_skill(name: str) -> str:
@@ -51,7 +53,7 @@ def unload_skill(name: str) -> str:
 @registry.register(
     name="list_skills",
     description="List installed global skills and their enabled/loaded state.",
-    parameters={"type": "object", "properties": {}},
+    parameters={"type": "object", "properties": {}, "additionalProperties": False},
 )
 def list_skills() -> str:
     loader = _loader()
@@ -75,6 +77,7 @@ def list_skills() -> str:
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Skill name"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 )
 def enable_skill(name: str) -> str:
@@ -88,6 +91,7 @@ def enable_skill(name: str) -> str:
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Skill name"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 )
 def disable_skill(name: str) -> str:
@@ -101,6 +105,7 @@ def disable_skill(name: str) -> str:
         "type": "object",
         "properties": {"name": {"type": "string", "description": "Skill name"}},
         "required": ["name"],
+        "additionalProperties": False,
     },
 )
 def delete_skill(name: str) -> str:

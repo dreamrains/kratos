@@ -244,13 +244,12 @@ def create_workflow_tasks_from_spec(spec: dict) -> dict:
 @registry.register(
     name="task_create",
     description=(
-        "创建分析任务。支持单个任务、批量 tasks JSON，以及从 AnalysisPlan 创建 workflow task。"
-        "复杂分析应先形成 AnalysisPlan，再用任务节点执行 method_plan。"
+        "创建分析任务。支持单个任务或批量 tasks JSON。"
+        "复杂分析应先用 record_analysis_plan 记录 canonical plan，"
+        "再基于当前 plan 或明确 analysis_plan_id 创建任务节点。"
     ),
     schema_overrides={
         "tasks": {"description": '批量创建模式：JSON 数组 [{"subject": "...", "description": "..."}]'},
-        "analysis_plan_json": {"description": "Optional canonical AnalysisPlan JSON used to create workflow tasks."},
-        "analysis_spec_json": {"description": "Deprecated AnalysisSpec JSON compatibility input."},
     },
     argument_aliases={"title": "subject"},
 )
@@ -258,7 +257,6 @@ def task_create(
     subject: str = "",
     description: str = "",
     tasks: str = "",
-    analysis_spec_json: str = "",
     workflow_id: str = "",
     project_name: str = "",
     stage: str = "",
@@ -272,24 +270,8 @@ def task_create(
     evidence_requirements: str = "",
     required_claim_keys: str = "",
     confirmation_policy: str = "",
-    analysis_plan_json: str = "",
     analysis_plan_id: str = "",
 ) -> str:
-    incoming_plan_json = analysis_plan_json or analysis_spec_json
-    if incoming_plan_json:
-        try:
-            plan = json.loads(incoming_plan_json)
-        except json.JSONDecodeError:
-            return json.dumps({"error": "analysis_plan_json must be valid JSON"}, ensure_ascii=False)
-        validation = normalize_analysis_plan_contract(plan, require_executable=True)
-        if not validation.ok:
-            return json.dumps({
-                "error": validation.message,
-                "error_type": validation.error_type,
-                "details": validation.details,
-            }, ensure_ascii=False)
-        return json.dumps(create_workflow_tasks_from_plan(validation.plan), ensure_ascii=False, indent=2)
-
     current_plan = _current_analysis_plan()
     active_plan_id = task_manager.get_active_plan_id(_session_id(), _project_name())
     active_tasks = (

@@ -313,7 +313,7 @@ def test_registry_exposes_tool_capability_metadata():
     assert "funnel_analysis" in funnel_tools or registry.capability_for("funnel_analysis")["capability_id"] == "analysis.funnel"
 
 
-def test_analysis_state_records_requirement_and_spec(tmp_path):
+def test_analysis_state_records_requirement_but_legacy_spec_is_display_only(tmp_path):
     from data_agent import config
     from data_agent.config import AgentConfig
     from data_agent.session.task_manager import task_manager
@@ -378,8 +378,8 @@ def test_analysis_state_records_requirement_and_spec(tmp_path):
 
         state = load_analysis_state("analysis_state_test", "savings_card")
         assert len(state.data_requirements) == 1
-        assert state.analysis_plan is not None
-        assert state.stage == "plan"
+        assert state.analysis_plan is None
+        assert state.stage == "scope"
     finally:
         config._config = old_cfg
         task_manager._dir = old_task_dir

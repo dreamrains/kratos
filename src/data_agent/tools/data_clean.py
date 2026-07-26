@@ -757,7 +757,7 @@ def suggest_column_types(name: str) -> str:
     schema_overrides={
         "name": {"description": "数据集名称"},
         "column": {"description": "目标列名"},
-        "target_type": {"description": "目标类型", "enum": ["datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
+        "target_type": {"description": "目标类型", "enum": ["", "datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
         "auto": {"type": "boolean", "description": "是否自动应用所有建议转换"},
         "confirmed": {
             "type": "boolean",

@@ -356,16 +356,9 @@ def record_analysis_spec(spec_json: str) -> str:
     if missing:
         return json.dumps({"error": f"AnalysisSpec 缺少字段: {missing}"}, ensure_ascii=False)
 
-    state = _current_state()
-    if state is not None:
-        payload = state.set_analysis_plan(payload)
-        state.save()
-
     result = _write_analysis_artifact("analysis_spec", payload)
     result.pop("payload", None)
-    if state is not None:
-        result["state_stage"] = state.stage
-        result["analysis_spec_id"] = payload.get("id")
+    result["analysis_spec_id"] = payload.get("id")
     result["analysis_plan_id"] = payload.get("id")
     result["deprecated_adapter"] = "record_analysis_spec"
     result["workflow"] = {

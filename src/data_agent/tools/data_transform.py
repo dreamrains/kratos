@@ -36,34 +36,42 @@ from data_agent.tools.registry import registry
                 "description": "操作类型",
                 "enum": ["filter", "select", "rename", "sort", "group_aggregate", "resample", "pivot", "merge"],
             },
-            "save_as": {"type": "string", "description": "保存为新数据集名称，为空则自动生成"},
-            "params": {"type": "string", "description": "[兼容] JSON 格式参数，优先级低于结构化参数"},
+            "save_as": {"type": "string", "description": "保存为新数据集名称，为空则自动生成", "default": ""},
+            "params": {"type": "string", "description": "[兼容] JSON 格式参数，优先级低于结构化参数", "default": ""},
             # filter 参数
-            "condition": {"type": "string", "description": "筛选条件（pandas query 语法，如 revenue > 100）"},
+            "condition": {"type": "string", "description": "筛选条件（pandas query 语法，如 revenue > 100）", "default": ""},
             # select 参数
             "columns": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "要选择的列名列表",
+                "default": None,
+                "nullable": True,
             },
             # rename 参数
             "rename_mapping": {
                 "type": "object",
                 "description": "重命名映射 {旧列名: 新列名}",
                 "additionalProperties": {"type": "string"},
+                "default": None,
+                "nullable": True,
             },
             # sort 参数
             "sort_by": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "排序列名",
+                "default": None,
+                "nullable": True,
             },
-            "ascending": {"type": "boolean", "description": "升序/降序（默认 true）"},
+            "ascending": {"type": "boolean", "description": "升序/降序（默认 true）", "default": True},
             # group_aggregate 参数
             "group_by": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "分组列名",
+                "default": None,
+                "nullable": True,
             },
             "aggregations": {
                 "type": "array",
@@ -80,43 +88,54 @@ from data_agent.tools.registry import registry
                     },
                     "required": ["column", "functions"],
                 },
+                "default": None,
+                "nullable": True,
             },
             # resample 参数
-            "date_col": {"type": "string", "description": "时间列名（resample 使用）"},
+            "date_col": {"type": "string", "description": "时间列名（resample 使用）", "default": ""},
             "freq": {
                 "type": "string",
                 "description": "重采样频率",
-                "enum": ["D", "W", "ME", "QE", "YE"],
+                "enum": ["", "D", "W", "ME", "QE", "YE"],
+                "default": "",
             },
             "resample_agg": {
                 "type": "object",
                 "description": "重采样聚合 {列名: 聚合函数}",
                 "additionalProperties": {"type": "string"},
+                "default": None,
+                "nullable": True,
             },
             # merge 参数
-            "other_name": {"type": "string", "description": "要合并的第二个数据集名称"},
-            "merge_on": {"type": "string", "description": "合并键列名"},
+            "other_name": {"type": "string", "description": "要合并的第二个数据集名称", "default": ""},
+            "merge_on": {"type": "string", "description": "合并键列名", "default": ""},
             "merge_how": {
                 "type": "string",
                 "description": "合并方式",
                 "enum": ["inner", "left", "right", "outer"],
+                "default": "inner",
             },
             # pivot 参数
-            "pivot_index": {"type": "string", "description": "pivot 索引列"},
-            "pivot_columns": {"type": "string", "description": "pivot 列名字段"},
-            "pivot_values": {"type": "string", "description": "pivot 值字段"},
+            "pivot_index": {"type": "string", "description": "pivot 索引列", "default": ""},
+            "pivot_columns": {"type": "string", "description": "pivot 列名字段", "default": ""},
+            "pivot_values": {"type": "string", "description": "pivot 值字段", "default": ""},
             "melt_id_vars": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "melt 操作的 ID 变量列",
+                "default": None,
+                "nullable": True,
             },
             "melt_value_vars": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "melt 操作的值变量列",
+                "default": None,
+                "nullable": True,
             },
         },
         "required": ["name", "operation"],
+        "additionalProperties": False,
     },
 )
 def transform_data(

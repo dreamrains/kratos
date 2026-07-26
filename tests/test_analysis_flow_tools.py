@@ -97,9 +97,19 @@ class TestRecordDataRequirement:
 
 
 class TestRecordAnalysisSpec:
-    def test_valid_spec(self):
+    def test_legacy_spec_is_display_only_and_does_not_replace_active_plan(self):
+        from data_agent.agent.analysis_state import AnalysisSessionState
         from data_agent.tools.analysis_flow import record_analysis_spec
         ctx = _make_ctx("spec_test")
+        original_plan = {
+            "id": "plan_existing",
+            "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
+            "goal": "existing canonical plan",
+        }
+        ctx.analysis_state = AnalysisSessionState(
+            session_id=ctx.session_id,
+            analysis_plan=dict(original_plan),
+        )
         with use_agent_context(ctx):
             spec = {
                 "goal": "evaluate savings card",
@@ -120,7 +130,7 @@ class TestRecordAnalysisSpec:
         assert result["analysis_spec_id"]
         assert result["analysis_plan_id"] == result["analysis_spec_id"]
         assert result["deprecated_adapter"] == "record_analysis_spec"
-        assert ctx.analysis_state.analysis_plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
+        assert ctx.analysis_state.analysis_plan == original_plan
 
     def test_legacy_spec_is_display_only_and_does_not_create_workflow(self, monkeypatch):
         from data_agent.tools.analysis_flow import record_analysis_spec

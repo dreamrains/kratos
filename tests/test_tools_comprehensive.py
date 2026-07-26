@@ -766,11 +766,8 @@ def test_regression_registry_normalizes_zero_cv_folds():
         },
     )
     parsed = json.loads(result.summary)
-    if "error" in parsed:
-        return f"registry should pass integer 0 to regression_analysis: {parsed}"
-    if "metrics" not in parsed:
-        return "registry regression result should include metrics"
-    return True
+    assert "error" not in parsed, parsed
+    assert "metrics" in parsed
 
 
 def test_regression_too_few_data():
@@ -834,7 +831,6 @@ def test_attribution_analysis():
 
 test("regression: 四种方法", test_regression_methods)
 test("regression: 交叉验证", test_regression_cv)
-test("regression: registry normalizes cv_folds", test_regression_registry_normalizes_zero_cv_folds)
 test("regression: 数据太少", test_regression_too_few_data)
 test("classification: 基本分类", test_classification_basic)
 test("forecast: simple", test_forecast_simple)

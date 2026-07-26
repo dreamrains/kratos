@@ -34,7 +34,7 @@ from data_agent.tools.registry import registry
         "date_col": {"description": "日期/时间列名，留空自动推断"},
         "value_col": {"description": "数值列名，留空自动推断"},
         "target_col": {"description": "目标列名（value_col 的别名）"},
-        "agg_func": {"description": "同一时间点多行时的聚合方式", "enum": ["sum", "mean"]},
+        "agg_func": {"description": "同一时间点多行时的聚合方式", "enum": ["", "sum", "mean"]},
         "seasonality_period": {
             "description": "要评估可估性的季节周期",
             "enum": ["annual", "quarterly", "monthly", "weekly"],
@@ -554,7 +554,7 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
         "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
         "period_b": {"description": "时间段 B（对比期），格式同上"},
         "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
-        "agg_func": {"description": "指标聚合方式", "enum": ["sum", "mean"]},
+        "agg_func": {"description": "指标聚合方式", "enum": ["", "sum", "mean"]},
     },
 )
 def compare_periods(

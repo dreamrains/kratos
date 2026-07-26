@@ -631,6 +631,40 @@ def _type_name(value: Any) -> str:
     return type(value).__name__
 
 
+def _matches_json_type_without_conversion(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> bool:
+    expected_type = schema.get("type")
+    if expected_type == "boolean":
+        return isinstance(value, bool)
+    if expected_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected_type == "string":
+        return isinstance(value, str)
+    if expected_type == "array":
+        return isinstance(value, list)
+    if expected_type == "object":
+        return isinstance(value, Mapping)
+    if expected_type == "null":
+        return value is None
+    return False
+
+
+def _distinct_normalized_values(values: list[Any]) -> list[Any]:
+    distinct: list[Any] = []
+    for value in values:
+        if any(
+            type(value) is type(existing) and value == existing
+            for existing in distinct
+        ):
+            continue
+        distinct.append(value)
+    return distinct
+
+
 def _normalize_schema_value(value: Any, schema: Mapping[str, Any]) -> Any:
     if value is None:
         if schema.get("nullable") is True or schema.get("type") == "null":
@@ -639,12 +673,30 @@ def _normalize_schema_value(value: Any, schema: Mapping[str, Any]) -> Any:
 
     variants = schema.get("anyOf")
     if isinstance(variants, list):
-        variant_errors: list[str] = []
-        for variant in variants:
+        exact_variants = [
+            variant
+            for variant in variants
+            if _matches_json_type_without_conversion(value, variant)
+        ]
+        candidates = exact_variants or variants
+        normalized_candidates: list[Any] = []
+        for variant in candidates:
             try:
-                return _normalize_schema_value(value, variant)
-            except _ArgumentValueError as exc:
-                variant_errors.append(exc.issue)
+                normalized_candidates.append(
+                    _normalize_schema_value(value, variant)
+                )
+            except _ArgumentValueError:
+                continue
+        distinct = _distinct_normalized_values(normalized_candidates)
+        if len(distinct) == 1:
+            return distinct[0]
+        if len(distinct) > 1:
+            issue = (
+                "ambiguous_union_type"
+                if exact_variants
+                else "ambiguous_union_conversion"
+            )
+            raise _ArgumentValueError(issue)
         raise _ArgumentValueError("no_matching_union_type")
 
     expected_type = schema.get("type")
@@ -750,6 +802,7 @@ def normalize_tool_arguments(
     for alias, target in definition.argument_aliases.items():
         if alias not in incoming:
             continue
+        alias_value = incoming.pop(alias)
         if target in incoming:
             issues.append({
                 "field": alias,
@@ -757,7 +810,17 @@ def normalize_tool_arguments(
                 "target": target,
             })
             continue
-        incoming[target] = incoming.pop(alias)
+        if (
+            target in definition.compatibility_json_object_parameters
+            and not isinstance(alias_value, str)
+        ):
+            issues.append({
+                "field": alias,
+                "issue": "compatibility_alias_requires_json_string",
+                "target": target,
+            })
+            continue
+        incoming[target] = alias_value
         aliased_targets.add(target)
 
     properties = definition.parameters.get("properties") or {}
@@ -875,6 +938,19 @@ def validate_tool_definition_contract(
     expected_properties = expected["properties"]
     issues: list[dict[str, Any]] = []
 
+    if definition.parameters.get("type") != expected["type"]:
+        issues.append({
+            "issue": "root_type_mismatch",
+            "expected": expected["type"],
+            "actual": definition.parameters.get("type"),
+        })
+    if definition.parameters.get("additionalProperties") is not False:
+        issues.append({
+            "issue": "additional_properties_mismatch",
+            "expected": False,
+            "actual": definition.parameters.get("additionalProperties"),
+        })
+
     visible_names = set(visible_properties)
     expected_names = set(expected_properties)
     if visible_names != expected_names:
@@ -906,13 +982,30 @@ def validate_tool_definition_contract(
             })
         parameter = signature.parameters[name]
         if parameter.default is not inspect.Parameter.empty:
-            visible_default = visible_schema.get("default", parameter.default)
-            if visible_default != parameter.default:
+            if "default" not in visible_schema:
+                issues.append({
+                    "field": name,
+                    "issue": "missing_default",
+                    "expected": parameter.default,
+                })
+            elif visible_schema["default"] != parameter.default:
                 issues.append({
                     "field": name,
                     "issue": "default_mismatch",
                     "expected": parameter.default,
-                    "actual": visible_default,
+                    "actual": visible_schema["default"],
+                })
+            try:
+                _normalize_schema_value(
+                    parameter.default,
+                    visible_schema,
+                )
+            except _ArgumentValueError as exc:
+                issues.append({
+                    "field": name,
+                    "issue": "default_schema_mismatch",
+                    "default": parameter.default,
+                    "schema_issue": exc.issue,
                 })
 
     for alias, target in definition.argument_aliases.items():
