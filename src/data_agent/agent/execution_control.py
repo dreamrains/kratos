@@ -112,6 +112,7 @@ class TurnExecutionState:
     trust_capsule_digest: str = ""
     revision_attempts: int = 0
     turn_id: str = field(default_factory=lambda: f"turn_{uuid.uuid4().hex}")
+    requirement_failures: dict[str, dict[str, Any]] = field(default_factory=dict)
     _call_order: list = field(default_factory=list)
 
     @property
@@ -325,6 +326,52 @@ class TurnExecutionState:
 
     def record_tool_success(self) -> None:
         self.consecutive_errors = 0
+
+    def record_requirement_failure(
+        self,
+        *,
+        requirement_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        error_type: str,
+    ) -> str:
+        """Persist a deterministic fingerprint for one requirement-level failure.
+
+        The fingerprint is a stable digest of ``requirement_id``, ``tool_name``,
+        normalized ``arguments`` and ``error_type``. ``attempts`` counts how
+        many times this exact signature has been recorded; later budget policy
+        (Task 8) consumes it to decide whether to permit another corrected
+        retry or block before registry execution.
+        """
+
+        canonical = json.dumps(
+            {
+                "requirement_id": requirement_id,
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "error_type": error_type,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        entry = self.requirement_failures.setdefault(
+            fingerprint,
+            {
+                "attempts": 0,
+                "requirement_id": requirement_id,
+                "tool_name": tool_name,
+                "error_type": error_type,
+            },
+        )
+        entry["attempts"] = int(entry.get("attempts", 0)) + 1
+        return fingerprint
+
+    def can_retry_failure(self, fingerprint: str) -> bool:
+        """Permit the initial failure plus one corrected retry; block the third."""
+
+        return int(self.requirement_failures.get(fingerprint, {}).get("attempts", 0)) < 2
 
     def record_tool_error(self, tool_name: str, args: dict[str, Any] | None, error: str) -> None:
         key = self._error_key(tool_name, args or {})
