@@ -5,6 +5,8 @@ import sys
 import threading
 import webbrowser
 
+from data_agent.utils.unicode_io import configure_utf8_stdio
+
 
 def _open_browser(host: str, port: int):
     """Auto-open browser after a short delay."""
@@ -23,8 +25,7 @@ def main():
 
     if sys.platform == "win32":
         os.system("")
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        configure_utf8_stdio()
 
     from data_agent.lifecycle import AgentLifecycle
     lifecycle = AgentLifecycle()

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
+
+from data_agent.utils.unicode_io import ReplacementSafeTextStream
 
 
 class JSONFormatter(logging.Formatter):
@@ -49,6 +52,20 @@ class ConsoleFormatter(logging.Formatter):
         return msg
 
 
+def build_console_handler(stream: TextIO | None = None) -> logging.StreamHandler:
+    """构建控制台 handler，确保即使被 CP936/GBK 终端提前捕获也不会中断。
+
+    默认绑定 ``sys.stderr``；将传入或默认的流用
+    :class:`ReplacementSafeTextStream` 包裹，避免 emit 时抛出
+    :class:`UnicodeEncodeError`。复用 ``data_agent`` logger 的 ConsoleFormatter。
+    """
+    resolved = stream if stream is not None else sys.stderr
+    safe_stream = ReplacementSafeTextStream(resolved)
+    handler = logging.StreamHandler(stream=safe_stream)
+    handler.setFormatter(ConsoleFormatter())
+    return handler
+
+
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[Path] = None,
@@ -67,10 +84,8 @@ def setup_logging(
     # 清除已有 handler 防止重复
     root_logger.handlers.clear()
 
-    # 控制台 handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(ConsoleFormatter())
-    root_logger.addHandler(console_handler)
+    # 控制台 handler（通过统一构造函数，保证 Unicode 安全）
+    root_logger.addHandler(build_console_handler())
 
     # 文件 handler
     if log_file:

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 
 if sys.platform == "win32":
     os.system("")
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    from data_agent.utils.unicode_io import configure_utf8_stdio
+    configure_utf8_stdio()
 
 from rich.console import Console
 from rich.markdown import Markdown
