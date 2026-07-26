@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import re
 import time
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from enum import Enum
+from types import UnionType
+from typing import (
+    Any,
+    Callable,
+    Literal,
+    Mapping,
+    Optional,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 
 # === ToolResult: structured return value ===
@@ -443,7 +456,18 @@ def infer_groups_from_text(text: str) -> set[str]:
 
 
 class ToolDefinition:
-    __slots__ = ("name", "description", "func", "parameters", "origin", "recovery_hint", "requires", "capability")
+    __slots__ = (
+        "name",
+        "description",
+        "func",
+        "parameters",
+        "origin",
+        "recovery_hint",
+        "requires",
+        "capability",
+        "argument_aliases",
+        "compatibility_json_object_parameters",
+    )
 
     def __init__(
         self,
@@ -455,6 +479,8 @@ class ToolDefinition:
         recovery_hint: str = "",
         requires: list[str] | None = None,
         capability: ToolCapability | dict[str, Any] | None = None,
+        argument_aliases: Mapping[str, str] | None = None,
+        compatibility_json_object_parameters: set[str] | None = None,
     ):
         self.name = name
         self.description = description
@@ -464,6 +490,10 @@ class ToolDefinition:
         self.recovery_hint = recovery_hint
         self.requires = requires or []
         self.capability = ToolCapability.from_dict(capability) if isinstance(capability, dict) else capability
+        self.argument_aliases = dict(argument_aliases or {})
+        self.compatibility_json_object_parameters = set(
+            compatibility_json_object_parameters or set()
+        )
 
     def to_llm_schema(self) -> dict:
         desc = self.description
@@ -476,7 +506,7 @@ class ToolDefinition:
         }
 
 
-def _python_type_to_json(py_type: type) -> str:
+def _python_type_to_json(py_type: Any) -> str:
     mapping = {
         str: "string",
         int: "integer",
@@ -484,39 +514,449 @@ def _python_type_to_json(py_type: type) -> str:
         bool: "boolean",
         list: "array",
         dict: "object",
+        type(None): "null",
     }
     return mapping.get(py_type, "string")
 
 
+def _annotation_schema(annotation: Any) -> dict[str, Any]:
+    if annotation is Any:
+        return {}
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin in (Union, UnionType):
+        non_none = [arg for arg in args if arg is not type(None)]
+        schema = (
+            _annotation_schema(non_none[0])
+            if len(non_none) == 1
+            else {"anyOf": [_annotation_schema(arg) for arg in non_none]}
+        )
+        if len(non_none) != len(args):
+            schema["nullable"] = True
+        return schema
+    if origin is Literal:
+        values = list(args)
+        return {
+            "type": _python_type_to_json(type(values[0])),
+            "enum": values,
+        }
+    if origin in (list, tuple, set):
+        item = args[0] if args else Any
+        return {"type": "array", "items": _annotation_schema(item)}
+    if origin is dict:
+        value = args[1] if len(args) == 2 else Any
+        return {
+            "type": "object",
+            "additionalProperties": _annotation_schema(value),
+        }
+    if inspect.isclass(annotation) and issubclass(annotation, Enum):
+        values = [member.value for member in annotation]
+        return {
+            "type": _python_type_to_json(type(values[0])),
+            "enum": values,
+        }
+    return {"type": _python_type_to_json(annotation)}
+
+
 def _build_schema(func: Callable) -> dict:
     """从函数签名自动构建 JSON Schema parameters。"""
-    sig = inspect.signature(func)
+    signature = inspect.signature(func)
+    hints = get_type_hints(func)
     properties: dict[str, Any] = {}
     required: list[str] = []
 
-    for pname, param in sig.parameters.items():
-        if pname in ("self", "cls"):
+    for name, parameter in signature.parameters.items():
+        if name in {"self", "cls"}:
             continue
-
-        annotation = param.annotation
-        if annotation is inspect.Parameter.empty:
-            json_type = "string"
+        properties[name] = _annotation_schema(hints.get(name, str))
+        if parameter.default is inspect.Parameter.empty:
+            required.append(name)
         else:
-            json_type = _python_type_to_json(annotation)
-
-        prop: dict[str, Any] = {"type": json_type}
-        properties[pname] = prop
-
-        if param.default is inspect.Parameter.empty:
-            required.append(pname)
-
-    schema: dict[str, Any] = {
+            properties[name]["default"] = parameter.default
+    return {
         "type": "object",
         "properties": properties,
+        "required": required,
+        "additionalProperties": False,
     }
-    if required:
-        schema["required"] = required
-    return schema
+
+
+class ToolArgumentValidationError(ValueError):
+    def __init__(self, *, issues: list[dict[str, Any]]):
+        self.issues = issues
+        super().__init__("invalid tool arguments")
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "error": "工具参数不符合已声明契约。",
+            "error_type": "invalid_tool_arguments",
+            "issues": self.issues,
+        }
+
+
+class _ArgumentValueError(ValueError):
+    def __init__(self, issue: str):
+        self.issue = issue
+        super().__init__(issue)
+
+
+_BOOLEAN_STRINGS: dict[str, bool] = {
+    "true": True,
+    "false": False,
+    "1": True,
+    "0": False,
+    "yes": True,
+    "no": False,
+    "on": True,
+    "off": False,
+}
+_INTEGER_PATTERN = re.compile(r"^[+-]?\d+$")
+
+
+def _type_name(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, Mapping):
+        return "object"
+    return type(value).__name__
+
+
+def _normalize_schema_value(value: Any, schema: Mapping[str, Any]) -> Any:
+    if value is None:
+        if schema.get("nullable") is True or schema.get("type") == "null":
+            return None
+        raise _ArgumentValueError("null_not_allowed")
+
+    variants = schema.get("anyOf")
+    if isinstance(variants, list):
+        variant_errors: list[str] = []
+        for variant in variants:
+            try:
+                return _normalize_schema_value(value, variant)
+            except _ArgumentValueError as exc:
+                variant_errors.append(exc.issue)
+        raise _ArgumentValueError("no_matching_union_type")
+
+    expected_type = schema.get("type")
+    if expected_type == "boolean":
+        if isinstance(value, bool):
+            normalized = value
+        elif isinstance(value, str) and value in _BOOLEAN_STRINGS:
+            normalized = _BOOLEAN_STRINGS[value]
+        elif isinstance(value, int) and not isinstance(value, bool) and value in (0, 1):
+            normalized = bool(value)
+        else:
+            raise _ArgumentValueError("invalid_boolean")
+    elif expected_type == "integer":
+        if isinstance(value, int) and not isinstance(value, bool):
+            normalized = value
+        elif isinstance(value, str) and _INTEGER_PATTERN.fullmatch(value):
+            normalized = int(value)
+        else:
+            raise _ArgumentValueError("invalid_integer")
+    elif expected_type == "number":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if not math.isfinite(value):
+                raise _ArgumentValueError("non_finite_number")
+            normalized = value
+        elif isinstance(value, str):
+            try:
+                normalized = float(value)
+            except ValueError as exc:
+                raise _ArgumentValueError("invalid_number") from exc
+            if not math.isfinite(normalized):
+                raise _ArgumentValueError("non_finite_number")
+        else:
+            raise _ArgumentValueError("invalid_number")
+    elif expected_type == "string":
+        if not isinstance(value, str):
+            raise _ArgumentValueError("invalid_string")
+        normalized = value
+    elif expected_type == "array":
+        if not isinstance(value, list):
+            raise _ArgumentValueError("invalid_array")
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, Mapping):
+            normalized = list(value)
+        else:
+            normalized = [
+                _normalize_schema_value(item, item_schema)
+                for item in value
+            ]
+    elif expected_type == "object":
+        if not isinstance(value, Mapping):
+            raise _ArgumentValueError("invalid_object")
+        properties = schema.get("properties")
+        required = set(schema.get("required") or [])
+        if not isinstance(properties, Mapping):
+            properties = {}
+        normalized_object: dict[str, Any] = {}
+        for required_name in required:
+            if required_name not in value:
+                raise _ArgumentValueError(
+                    f"missing_required_object_property:{required_name}"
+                )
+        additional = schema.get("additionalProperties", True)
+        for key, item in value.items():
+            if key in properties:
+                normalized_object[key] = _normalize_schema_value(
+                    item,
+                    properties[key],
+                )
+            elif additional is False:
+                raise _ArgumentValueError(f"unknown_object_property:{key}")
+            elif isinstance(additional, Mapping):
+                normalized_object[key] = _normalize_schema_value(
+                    item,
+                    additional,
+                )
+            else:
+                normalized_object[key] = item
+        normalized = normalized_object
+    elif expected_type == "null":
+        raise _ArgumentValueError("invalid_null")
+    else:
+        normalized = value
+
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and normalized not in enum_values:
+        raise _ArgumentValueError("value_not_in_enum")
+    return normalized
+
+
+def normalize_tool_arguments(
+    definition: ToolDefinition,
+    params: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(params, Mapping):
+        raise ToolArgumentValidationError(issues=[{
+            "field": "$",
+            "issue": "arguments_must_be_an_object",
+        }])
+
+    incoming = dict(params)
+    issues: list[dict[str, Any]] = []
+    aliased_targets: set[str] = set()
+    for alias, target in definition.argument_aliases.items():
+        if alias not in incoming:
+            continue
+        if target in incoming:
+            issues.append({
+                "field": alias,
+                "issue": "conflicting_alias",
+                "target": target,
+            })
+            continue
+        incoming[target] = incoming.pop(alias)
+        aliased_targets.add(target)
+
+    properties = definition.parameters.get("properties") or {}
+    required = set(definition.parameters.get("required") or [])
+    for key in incoming:
+        if key not in properties:
+            issues.append({
+                "field": key,
+                "issue": "unknown_argument",
+            })
+    for key in required:
+        if key not in incoming:
+            issues.append({
+                "field": key,
+                "issue": "missing_required_argument",
+            })
+
+    normalized: dict[str, Any] = {}
+    for key, value in incoming.items():
+        schema = properties.get(key)
+        if not isinstance(schema, Mapping):
+            continue
+        if (
+            key in aliased_targets
+            and key in definition.compatibility_json_object_parameters
+            and isinstance(value, str)
+        ):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                issues.append({
+                    "field": key,
+                    "issue": "invalid_compatibility_json_object",
+                })
+                continue
+            if not isinstance(decoded, dict):
+                issues.append({
+                    "field": key,
+                    "issue": "compatibility_json_must_decode_to_object",
+                })
+                continue
+            value = decoded
+        try:
+            normalized[key] = _normalize_schema_value(value, schema)
+        except _ArgumentValueError as exc:
+            issues.append({
+                "field": key,
+                "issue": exc.issue,
+                "expected_type": schema.get("type") or "union",
+                "received_type": _type_name(value),
+            })
+
+    if issues:
+        raise ToolArgumentValidationError(issues=issues)
+    return normalized
+
+
+def _schema_matches_annotation(
+    visible_schema: Mapping[str, Any],
+    annotation_schema: Mapping[str, Any],
+) -> bool:
+    if not annotation_schema:
+        return True
+    variants = annotation_schema.get("anyOf")
+    if isinstance(variants, list):
+        return any(
+            _schema_matches_annotation(visible_schema, variant)
+            for variant in variants
+        )
+    if visible_schema.get("type") != annotation_schema.get("type"):
+        return False
+    expected_enum = annotation_schema.get("enum")
+    visible_enum = visible_schema.get("enum")
+    if isinstance(expected_enum, list):
+        if not isinstance(visible_enum, list):
+            return False
+        if any(value not in expected_enum for value in visible_enum):
+            return False
+    if annotation_schema.get("type") == "array":
+        expected_items = annotation_schema.get("items")
+        if isinstance(expected_items, Mapping) and expected_items:
+            visible_items = visible_schema.get("items")
+            if not isinstance(visible_items, Mapping):
+                return False
+            if not _schema_matches_annotation(visible_items, expected_items):
+                return False
+    if annotation_schema.get("type") == "object":
+        expected_additional = annotation_schema.get("additionalProperties")
+        if isinstance(expected_additional, Mapping) and expected_additional:
+            visible_additional = visible_schema.get("additionalProperties")
+            if isinstance(visible_additional, Mapping):
+                if not _schema_matches_annotation(
+                    visible_additional,
+                    expected_additional,
+                ):
+                    return False
+            else:
+                visible_nested = visible_schema.get("properties")
+                if not isinstance(visible_nested, Mapping) or any(
+                    not _schema_matches_annotation(item, expected_additional)
+                    for item in visible_nested.values()
+                ):
+                    return False
+    return True
+
+
+def validate_tool_definition_contract(
+    definition: ToolDefinition,
+) -> list[dict[str, Any]]:
+    if definition.origin != "native":
+        return []
+
+    expected = _build_schema(definition.func)
+    visible_properties = definition.parameters.get("properties") or {}
+    expected_properties = expected["properties"]
+    issues: list[dict[str, Any]] = []
+
+    visible_names = set(visible_properties)
+    expected_names = set(expected_properties)
+    if visible_names != expected_names:
+        issues.append({
+            "issue": "parameter_names_mismatch",
+            "missing": sorted(expected_names - visible_names),
+            "extra": sorted(visible_names - expected_names),
+        })
+
+    visible_required = set(definition.parameters.get("required") or [])
+    expected_required = set(expected["required"])
+    if visible_required != expected_required:
+        issues.append({
+            "issue": "required_parameters_mismatch",
+            "expected": sorted(expected_required),
+            "actual": sorted(visible_required),
+        })
+
+    signature = inspect.signature(definition.func)
+    for name in sorted(visible_names & expected_names):
+        visible_schema = visible_properties[name]
+        expected_schema = expected_properties[name]
+        if not _schema_matches_annotation(visible_schema, expected_schema):
+            issues.append({
+                "field": name,
+                "issue": "annotation_schema_mismatch",
+                "expected": expected_schema,
+                "actual": visible_schema,
+            })
+        parameter = signature.parameters[name]
+        if parameter.default is not inspect.Parameter.empty:
+            visible_default = visible_schema.get("default", parameter.default)
+            if visible_default != parameter.default:
+                issues.append({
+                    "field": name,
+                    "issue": "default_mismatch",
+                    "expected": parameter.default,
+                    "actual": visible_default,
+                })
+
+    for alias, target in definition.argument_aliases.items():
+        if alias in visible_names or alias in expected_names:
+            issues.append({
+                "field": alias,
+                "issue": "alias_must_be_hidden",
+            })
+        if target not in expected_names:
+            issues.append({
+                "field": alias,
+                "issue": "alias_target_missing",
+                "target": target,
+            })
+
+    compatibility_targets = definition.compatibility_json_object_parameters
+    alias_targets = set(definition.argument_aliases.values())
+    for target in sorted(compatibility_targets):
+        if target not in expected_names:
+            issues.append({
+                "field": target,
+                "issue": "compatibility_target_missing",
+            })
+        if target not in alias_targets:
+            issues.append({
+                "field": target,
+                "issue": "compatibility_decoder_requires_alias",
+            })
+        target_schema = visible_properties.get(target)
+        if not isinstance(target_schema, Mapping) or target_schema.get("type") != "object":
+            issues.append({
+                "field": target,
+                "issue": "compatibility_decoder_requires_object_schema",
+            })
+    if compatibility_targets and not (
+        definition.name == "record_analysis_plan"
+        and definition.argument_aliases == {"plan_json": "plan"}
+        and compatibility_targets == {"plan"}
+    ):
+        issues.append({
+            "issue": "unsupported_compatibility_json_object_decoder",
+        })
+
+    return issues
 
 
 class ToolRegistry:
@@ -642,6 +1082,8 @@ class ToolRegistry:
         recovery_hint: Optional[str] = None,
         requires: Optional[list[str]] = None,
         capability: ToolCapability | dict[str, Any] | None = None,
+        argument_aliases: Mapping[str, str] | None = None,
+        compatibility_json_object_parameters: set[str] | None = None,
     ) -> Callable:
         """装饰器，注册一个工具函数。
 
@@ -670,6 +1112,10 @@ class ToolRegistry:
                 recovery_hint=recovery_hint or "",
                 requires=requires or [],
                 capability=capability or DEFAULT_TOOL_CAPABILITIES.get(tool_name),
+                argument_aliases=argument_aliases,
+                compatibility_json_object_parameters=(
+                    compatibility_json_object_parameters
+                ),
             )
             if self._tools[tool_name].capability is not None:
                 self._capabilities[tool_name] = self._tools[tool_name].capability
@@ -687,6 +1133,8 @@ class ToolRegistry:
         recovery_hint: str = "",
         requires: Optional[list[str]] = None,
         capability: ToolCapability | dict[str, Any] | None = None,
+        argument_aliases: Mapping[str, str] | None = None,
+        compatibility_json_object_parameters: set[str] | None = None,
     ):
         """直接注册一个工具函数。"""
         tool_params = parameters or _build_schema(func)
@@ -699,6 +1147,10 @@ class ToolRegistry:
             recovery_hint=recovery_hint,
             requires=requires or [],
             capability=capability or DEFAULT_TOOL_CAPABILITIES.get(name),
+            argument_aliases=argument_aliases,
+            compatibility_json_object_parameters=(
+                compatibility_json_object_parameters
+            ),
         )
         if self._tools[name].capability is not None:
             self._capabilities[name] = self._tools[name].capability
@@ -750,6 +1202,15 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(summary=json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False))
+
+        try:
+            params = normalize_tool_arguments(tool, params)
+        except ToolArgumentValidationError as exc:
+            payload = exc.to_payload()
+            return ToolResult(
+                summary=json.dumps(payload, ensure_ascii=False),
+                data=payload,
+            )
 
         # 前置条件检查
         if tool.requires:

@@ -48,6 +48,9 @@ def test(name, func):
         traceback.print_exc()
 
 
+test.__test__ = False
+
+
 def assert_ok(result, label=""):
     if isinstance(result, str) and result.startswith("Error"):
         return f"{label} returned error: {result[:300]}"
@@ -750,6 +753,26 @@ def test_regression_cv():
     return True
 
 
+def test_regression_registry_normalizes_zero_cv_folds():
+    from data_agent.tools.registry import registry
+
+    result = registry.execute(
+        "regression_analysis",
+        {
+            "name": "test",
+            "target_col": "sales",
+            "features": "users,revenue",
+            "cv_folds": "0",
+        },
+    )
+    parsed = json.loads(result.summary)
+    if "error" in parsed:
+        return f"registry should pass integer 0 to regression_analysis: {parsed}"
+    if "metrics" not in parsed:
+        return "registry regression result should include metrics"
+    return True
+
+
 def test_regression_too_few_data():
     from data_agent.tools.ml import regression_analysis
     workspace.add("tiny", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
@@ -811,6 +834,7 @@ def test_attribution_analysis():
 
 test("regression: 四种方法", test_regression_methods)
 test("regression: 交叉验证", test_regression_cv)
+test("regression: registry normalizes cv_folds", test_regression_registry_normalizes_zero_cv_folds)
 test("regression: 数据太少", test_regression_too_few_data)
 test("classification: 基本分类", test_classification_basic)
 test("forecast: simple", test_forecast_simple)

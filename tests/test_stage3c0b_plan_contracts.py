@@ -185,7 +185,7 @@ def test_record_analysis_plan_normalizes_unversioned_executable_plan(monkeypatch
         lambda kind, payload: {"saved": "artifact.json", "type": kind, "payload": payload},
     )
 
-    result = json.loads(record_analysis_plan(json.dumps({
+    result = json.loads(record_analysis_plan({
         "goal": "Analyze files",
         "method_plan": [{
             "step_id": "s1",
@@ -196,7 +196,7 @@ def test_record_analysis_plan_normalizes_unversioned_executable_plan(monkeypatch
             "evidence_requirements": ["sample_size"],
         }],
         "visualization_strategy": "none",
-    })))
+    }))
 
     assert "error" not in result
     assert result["analysis_plan_id"]
@@ -226,7 +226,7 @@ def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
         "visualization_strategy": "none",
     }
 
-    result = json.loads(record_analysis_plan(json.dumps(payload)))
+    result = json.loads(record_analysis_plan(payload))
 
     assert result["analysis_plan_id"]
     assert result["state_stage"] if "state_stage" in result else True

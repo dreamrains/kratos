@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from data_agent.agent.analysis_plan_contracts import analysis_plan_tool_object_schema
 from data_agent.tools.registry import registry
 
 
@@ -378,13 +379,29 @@ def record_analysis_spec(spec_json: str) -> str:
 
 @registry.register(
     name="record_analysis_plan",
-    description="Save an AnalysisPlan JSON for the expert analysis flow.",
+    description="Save a canonical executable AnalysisPlan.",
+    argument_aliases={"plan_json": "plan"},
+    compatibility_json_object_parameters={"plan"},
+    parameters={
+        "type": "object",
+        "properties": {
+            "plan": analysis_plan_tool_object_schema(),
+        },
+        "required": ["plan"],
+        "additionalProperties": False,
+    },
 )
-def record_analysis_plan(plan_json: str) -> str:
-    try:
-        payload = json.loads(plan_json)
-    except json.JSONDecodeError:
-        return json.dumps({"error": "plan_json must be valid JSON"}, ensure_ascii=False)
+def record_analysis_plan(plan: dict[str, Any]) -> str:
+    payload = plan
+    if not isinstance(payload, dict):
+        return json.dumps({
+            "error": "plan must be an object",
+            "error_type": "invalid_analysis_plan",
+        }, ensure_ascii=False)
+    return _persist_analysis_plan_payload(payload)
+
+
+def _persist_analysis_plan_payload(payload: dict[str, Any]) -> str:
     required = ["goal", "method_plan", "visualization_strategy"]
     missing = [k for k in required if k not in payload]
     if missing:

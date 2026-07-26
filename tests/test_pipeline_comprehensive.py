@@ -754,7 +754,7 @@ class TestAnalysisFlowTools:
             "dataset": "main",
             "quality_status": "ready",
         })
-        plan = json.dumps({
+        plan = {
             "contract_version": "analysis_plan.v1",
             "goal": "省钱卡效果评估",
             "method_plan": [{
@@ -767,7 +767,7 @@ class TestAnalysisFlowTools:
                 "required_claim_keys": ["arpu_change"],
             }],
             "visualization_strategy": "对比图",
-        })
+        }
         r3 = record_analysis_plan(plan)
         assert "saved" in r3 or "error" not in r3.lower()
         recorded_plan = json.loads(r3)

@@ -7,6 +7,7 @@ from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.task_manager import task_manager
 from data_agent.session.workspace import Workspace
 from data_agent.tools.ml import forecast
+from data_agent.tools.registry import registry
 from data_agent.tools.sandbox import run_python
 from data_agent.tools.task_tools import task_create
 
@@ -96,6 +97,29 @@ def test_task_create_inherits_current_analysis_plan(tmp_path):
         assert task["workflow_id"] == "wf_123"
         assert task["stage"] == "execute"
         assert task["confirmation_policy"]["requires_confirmation"] is True
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
+def test_task_create_title_alias_is_compatible_but_conflicts_fail(tmp_path):
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+
+    try:
+        aliased = registry.execute("task_create", {"title": "检查缺失值"})
+        assert aliased.data is None
+        assert json.loads(aliased.summary)["subject"] == "检查缺失值"
+
+        conflict = registry.execute(
+            "task_create",
+            {"subject": "A", "title": "B"},
+        )
+        payload = json.loads(conflict.summary)
+        assert payload["error_type"] == "invalid_tool_arguments"
+        assert payload == conflict.data
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id

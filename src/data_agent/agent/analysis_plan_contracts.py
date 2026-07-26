@@ -105,6 +105,36 @@ def _resolve_contract_ids(dataset_inputs: list[str], by_dataset: dict[str, str],
     return resolved
 
 
+def analysis_plan_tool_object_schema() -> dict[str, Any]:
+    """Return the canonical LLM-visible AnalysisPlan object boundary."""
+    return {
+        "type": "object",
+        "properties": {
+            "goal": {"type": "string"},
+            "method_plan": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+            },
+            "visualization_strategy": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "array"},
+                    {"type": "object"},
+                ],
+            },
+        },
+        "required": [
+            "goal",
+            "method_plan",
+            "visualization_strategy",
+        ],
+        "additionalProperties": True,
+    }
+
+
 def normalize_analysis_plan_contract(
     plan: dict[str, Any],
     *,

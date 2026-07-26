@@ -252,6 +252,7 @@ def create_workflow_tasks_from_spec(spec: dict) -> dict:
         "analysis_plan_json": {"description": "Optional canonical AnalysisPlan JSON used to create workflow tasks."},
         "analysis_spec_json": {"description": "Deprecated AnalysisSpec JSON compatibility input."},
     },
+    argument_aliases={"title": "subject"},
 )
 def task_create(
     subject: str = "",

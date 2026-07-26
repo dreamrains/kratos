@@ -140,10 +140,13 @@ def test_list_memory_candidates_registry_rejects_invalid_review_string(tmp_path,
     result = registry.execute("list_memory_candidates", {"needs_review": "sometimes"})
     payload = json.loads(result.summary)
 
-    assert "error" in payload
-    assert "needs_review" in payload["error"]
-    assert "true" in payload["error"]
-    assert "false" in payload["error"]
+    assert payload["error_type"] == "invalid_tool_arguments"
+    assert payload["issues"] == [{
+        "field": "needs_review",
+        "issue": "invalid_boolean",
+        "expected_type": "boolean",
+        "received_type": "string",
+    }]
 
 
 def test_extract_memory_candidates_returns_summary_payload(tmp_path, monkeypatch):

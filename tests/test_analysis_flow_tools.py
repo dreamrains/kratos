@@ -173,7 +173,7 @@ class TestRecordAnalysisPlan:
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _add_banner_contract(_make_ctx("plan_test"))
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_plan(json.dumps(_stage3c0b_plan())))
+            result = json.loads(record_analysis_plan(_stage3c0b_plan()))
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
@@ -184,7 +184,7 @@ class TestRecordAnalysisPlan:
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _make_ctx()
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_plan(json.dumps({"goal": "test"})))
+            result = json.loads(record_analysis_plan({"goal": "test"}))
         assert "error" in result
 
     def test_invalid_depth(self):
@@ -192,7 +192,7 @@ class TestRecordAnalysisPlan:
         ctx = _add_banner_contract(_make_ctx())
         with use_agent_context(ctx):
             plan = _stage3c0b_plan(depth="invalid_depth")
-            result = json.loads(record_analysis_plan(json.dumps(plan)))
+            result = json.loads(record_analysis_plan(plan))
         assert "error" in result
         assert "invalid_depth" in result.get("error_type", "")
 
@@ -202,7 +202,7 @@ class TestRecordAnalysisPlan:
             ctx = _add_banner_contract(_make_ctx(f"depth_{depth}"))
             with use_agent_context(ctx):
                 plan = _stage3c0b_plan(depth=depth)
-                result = json.loads(record_analysis_plan(json.dumps(plan)))
+                result = json.loads(record_analysis_plan(plan))
             assert "error" not in result
 
     def test_executable_record_uses_active_route_compiler_inputs(self):
@@ -225,7 +225,7 @@ class TestRecordAnalysisPlan:
         ]
 
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_plan(json.dumps(compiled)))
+            result = json.loads(record_analysis_plan(compiled))
 
         assert result["error_type"] == "missing_compiled_hard_requirement"
         assert result["details"]["missing_requirement_ids"] == ["req_step_banner_time_scope"]

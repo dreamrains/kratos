@@ -553,7 +553,7 @@ class TestCausalInferenceAwareness:
             "quality_status": "ready",
         })
 
-        plan = json.dumps({
+        plan = {
             "contract_version": "analysis_plan.v1",
             "goal": "省钱卡效果分析",
             "question_type": "evaluation",
@@ -582,7 +582,7 @@ class TestCausalInferenceAwareness:
                 "无对照组，不能建立因果关系",
                 "63个用户样本量有限",
             ],
-        })
+        }
 
         result = record_analysis_plan(plan)
         # 应成功保存

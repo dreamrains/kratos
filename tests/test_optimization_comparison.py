@@ -998,11 +998,11 @@ class TestAnalysisQualityTools:
         from data_agent.tools.analysis_flow import record_analysis_plan
 
         # 缺少 method_plan
-        incomplete = json.dumps({
+        incomplete = {
             "goal": "省钱卡效果分析",
             "question_type": "evaluation",
             "metrics": ["收益", "复购率"],
-        })
+        }
 
         result = record_analysis_plan(incomplete)
         assert "error" in result.lower(), "不完整的计划应报错"

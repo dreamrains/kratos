@@ -212,7 +212,7 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     ctx = AgentContext(session_id=session_id, project_name=project_name, workspace=Workspace(), analysis_state=state)
     with use_agent_context(ctx):
         plan_result = json.loads(
-            analysis_flow.record_analysis_plan(json.dumps(_replenishment_plan()))
+            analysis_flow.record_analysis_plan(_replenishment_plan())
         )
 
     assert plan_result["workflow"]["created"] == 1
