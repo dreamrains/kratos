@@ -66,7 +66,8 @@ _SENTENCE_SPLIT = re.compile(r"[^。！？\n]+[。！？]?")
 # Terms that, when present, make a sentence a "material" claim.
 _MATERIAL_HINTS = re.compile(
     r"\d|上升|下降|增长|降低|比|高于|低于|导致|因为|由于|主要|贡献|建议|应该|值得|推荐|"
-    r"increase|decrease|higher|lower|cause|associate|correlat|predict|forecast|recommend|should",
+    r"increase|decrease|higher|lower|cause|associate|correlat|predict|forecast|recommend|should|"
+    r"seasonal|seasonality|季节性",
     re.IGNORECASE,
 )
 _EVIDENCE_MARKER = re.compile(r"\[\[evidence:([A-Za-z0-9_.:-]+)\]\]", re.IGNORECASE)
@@ -83,6 +84,7 @@ _POPULATION_SCOPE = re.compile(
 )
 _DIAGNOSTIC = re.compile(
     r"missing|unavailable|insufficient|not available|cannot be determined|cannot determine|"
+    r"not estimable|cannot be estimated|"
     r"缺少|缺失|不可用|不足|无法判断|无法确定|不能判断",
     re.IGNORECASE,
 )

@@ -144,6 +144,33 @@ def test_current_plan_identity_is_required_even_with_an_exact_marker():
     assert "evidence_outside_current_plan" in audit["claim_checks"][0]["reason_codes"]
 
 
+def test_missing_current_dataset_identity_blocks_only_version_bound_evidence():
+    draft = (
+        "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]].\n"
+        "Limitation: this is a descriptive comparison only."
+    )
+    version_bound = _audit(
+        draft,
+        evidence=[_evidence(computation_refs=[{
+            "tool_call_id": "call_revenue",
+            "dataset_versions": ["dataset_sales_v1"],
+        }])],
+        current_dataset_versions=None,
+    )
+    non_versioned = _audit(
+        draft,
+        evidence=[_evidence(computation_refs=[])],
+        current_dataset_versions=None,
+    )
+
+    assert version_bound["status"] == "blocked"
+    assert (
+        "current_dataset_identity_unavailable"
+        in version_bound["claim_checks"][0]["reason_codes"]
+    )
+    assert non_versioned["status"] == "pass"
+
+
 def test_unmet_block_claim_requirement_blocks_and_supplies_safe_action():
     requirements = compile_analysis_requirements(
         plan={
@@ -173,6 +200,70 @@ def test_unmet_block_claim_requirement_blocks_and_supplies_safe_action():
     check = audit["claim_checks"][0]
     assert "unmet_block_claim_requirement" in check["reason_codes"]
     assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
+
+
+def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim():
+    requirements = compile_analysis_requirements(
+        plan={
+            "id": "plan_current",
+            "goal": "assess annual seasonality",
+            "method_plan": [{
+                "step_id": "step_seasonality",
+                "goal": "assess annual seasonality",
+                "node_type": "analysis",
+                "required_capability": "analysis.time_series",
+                "claim_type": "seasonality",
+                "seasonality_period": "annual",
+            }],
+        },
+        route={"direction": "trend"},
+        playbook=None,
+        dataset_contracts=[{
+            "dataset": "sales",
+            "analysis_profiles": {
+                "time_series": {
+                    "frequency": "monthly",
+                    "seasonality": {
+                        "annual": {
+                            "period_observations": 12,
+                            "minimum_complete_cycles": 2,
+                            "complete_cycles": 0,
+                            "status": "not_estimable",
+                            "reason": "Annual seasonality requires 24 monthly observations.",
+                        },
+                    },
+                },
+            },
+        }],
+        user_intent="assess annual seasonality",
+    )
+    seasonality = next(
+        item for item in requirements if item["name"] == "seasonality_estimability"
+    )
+    evidence = _evidence(
+        id="ev_seasonality",
+        step_id="step_seasonality",
+        claim="Annual seasonality is not estimable from the available history.",
+        method="time_series",
+        requirement_ids=[seasonality["id"]],
+        seasonality_estimability={
+            "status": "not_estimable",
+            "period": "annual",
+            "reason": "Annual seasonality requires 24 monthly observations.",
+        },
+        measurements=[],
+    )
+
+    audit = _audit(
+        "The series shows annual seasonality [[evidence:ev_seasonality]].\n"
+        "Limitation: only eight monthly observations are available.",
+        evidence=[evidence],
+        analysis_requirements=[seasonality],
+    )
+
+    assert audit["status"] == "blocked"
+    assert "claim_guard_blocked" in audit["claim_checks"][0]["reason_codes"]
+    assert audit["claim_checks"][1]["status"] == "passed"
 
 
 def test_multiple_exact_evidence_ids_can_collectively_satisfy_claim_requirements():

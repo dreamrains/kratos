@@ -351,6 +351,33 @@ class TestRecordEvidenceRecord:
         assert result["statistical_detail_status"] == "complete"
         assert result["statistical_detail_gaps"] == []
 
+    def test_explicit_significance_claim_requires_known_statistical_support(self):
+        from data_agent.tools.analysis_flow import record_evidence_record
+
+        ctx = _make_ctx("unknown_significance")
+        with use_agent_context(ctx):
+            evidence = {
+                "claim": "游戏B 1日留存显著高于7日留存",
+                "dataset": "game_retention",
+                "method": "descriptive retention analysis",
+                "tool_calls": [{"name": "load_data"}],
+                "result_summary": "weighted D1=42%, weighted D7=18%",
+                "limitations": ["descriptive comparison only"],
+                "confidence": "high",
+                "significance": "unknown",
+            }
+            result = json.loads(record_evidence_record(json.dumps(evidence, ensure_ascii=False)))
+
+        assert result["confidence_auto_downgraded"] is True
+        assert any(
+            "显著性表述" in warning
+            for warning in result["calibration_warnings"]
+        )
+        assert any(
+            "统计" in limitation
+            for limitation in result["auto_generated_limitations"]
+        )
+
     def test_invalid_insight_type(self):
         from data_agent.tools.analysis_flow import record_evidence_record
         ctx = _make_ctx()

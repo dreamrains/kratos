@@ -72,6 +72,46 @@ def _mark_statistical_detail_status(payload: dict) -> dict:
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
 
+
+def _claim_asserts_significance(payload: dict) -> bool:
+    claim_text = " ".join(
+        str(payload.get(field) or "")
+        for field in ("claim", "claim_type", "inference_mode")
+    ).lower()
+    return any(
+        marker in claim_text
+        for marker in (
+            "statistically significant",
+            "significantly",
+            "significant",
+            "significance",
+            "显著",
+        )
+    )
+
+
+def _significance_support_is_known(value: Any) -> bool:
+    if value in (None, "", [], {}):
+        return False
+    if isinstance(value, dict):
+        return any(_significance_support_is_known(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_significance_support_is_known(item) for item in value)
+    if isinstance(value, (bool, int, float)):
+        return True
+    normalized = " ".join(str(value).strip().lower().replace("-", " ").split())
+    return not normalized.startswith(
+        (
+            "unknown",
+            "not assessed",
+            "not reported",
+            "unreported",
+            "not available",
+            "n/a",
+        )
+    )
+
+
 def _auto_generate_limitations(payload: dict) -> list[str]:
     """Generate limitations from method-specific evidence, never raw n cutoffs."""
     auto = []
@@ -82,6 +122,16 @@ def _auto_generate_limitations(payload: dict) -> list[str]:
         if isinstance(raw_limitations, str)
         else list(raw_limitations) if isinstance(raw_limitations, list) else []
     )
+
+    if (
+        _claim_asserts_significance(payload)
+        and not _significance_support_is_known(payload.get("significance"))
+        and not any(
+            "统计" in str(item) or "significan" in str(item).lower()
+            for item in limitations
+        )
+    ):
+        auto.append("该显著性表述缺少已知统计检验或不确定性支持，不能排除随机波动")
 
     # Before/after comparison without control group
     if any(kw in method for kw in ["before_after", "前后对比", "period_compare", "compare_periods"]):
@@ -183,6 +233,11 @@ def _calibrate_confidence(payload: dict) -> list[str]:
         warnings.append("统计不显著，不应标记高置信度")
     elif significance and "p>" in significance:
         warnings.append("p值大于0.05，不应标记高置信度")
+    elif (
+        _claim_asserts_significance(payload)
+        and not _significance_support_is_known(payload.get("significance"))
+    ):
+        warnings.append("显著性表述缺少已知统计检验或不确定性支持，不应标记高置信度")
 
     # Check for missing limitations
     limitations = payload.get("limitations")

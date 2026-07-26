@@ -205,6 +205,34 @@ def test_exhausted_budget_returns_safe_partial_instead_of_requesting_reanalysis(
     assert loop._turn_final_audit_analysis_retry_used is False
 
 
+def test_safe_fallback_keeps_passed_limitation_framing_with_supported_claims():
+    loop = _analysis_loop()
+    fallback = loop._safe_final_answer_fallback({
+        "claim_checks": [
+            {
+                "claim": "Revenue increased 12%.",
+                "status": "passed",
+                "strength": "likely",
+            },
+            {
+                "claim": "Limitation: this is a descriptive comparison only.",
+                "status": "passed",
+                "strength": "diagnostic",
+            },
+            {
+                "claim": "The campaign caused the increase.",
+                "status": "failed",
+                "strength": "unsupported",
+            },
+        ],
+    })
+
+    assert "Revenue increased 12%." in fallback
+    assert "Limitation: this is a descriptive comparison only." in fallback
+    assert fallback.index("Revenue increased 12%.") < fallback.index("Limitation:")
+    assert "campaign caused" not in fallback
+
+
 def test_sync_loop_returns_only_audited_text(monkeypatch):
     loop = _analysis_loop()
     loop.client = SimpleNamespace(chat=lambda **_kwargs: Response(text="Raw streamed result."))
@@ -273,3 +301,51 @@ def test_streaming_analysis_buffers_raw_deltas_until_audit_passes(monkeypatch):
 
     assert text == "AUDITED PUBLIC"
     assert "UNAUDITED RAW" not in text
+
+
+def test_streaming_result_followup_hides_tool_call_claims_until_terminal_audit(monkeypatch):
+    class Client:
+        def __init__(self):
+            self.round = 0
+
+        def stream_chat_structured(self, **_kwargs):
+            self.round += 1
+            if self.round == 1:
+                yield StreamTextDelta("UNAUDITED INTERMEDIATE CLAIM")
+                yield StreamComplete(Response(
+                    text="UNAUDITED INTERMEDIATE CLAIM",
+                    tool_calls=[
+                        ToolCall(id="lookup", name="describe_dataset", arguments={"name": "sales"}),
+                    ],
+                ))
+                return
+            yield StreamTextDelta("UNAUDITED FOLLOWUP ANSWER")
+            yield StreamComplete(Response(text="UNAUDITED FOLLOWUP ANSWER"))
+
+    loop = AgentLoop(client=Client(), session_id="publish_gate_followup")
+    loop._get_system_prompt = lambda: ""
+    loop._prepare_analysis_turn = lambda _user_input: setattr(
+        loop,
+        "_last_turn_intent",
+        _intent("result_followup"),
+    ) or []
+    loop._maybe_auto_suspend_for_required_question = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    loop._process_tool_calls = lambda *_args, **_kwargs: iter(())
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    loop.context.analysis_state = _state()
+    monkeypatch.setattr(
+        loop,
+        "_gate_final_analysis_answer",
+        lambda *_args, **_kwargs: {"action": "publish", "text": "AUDITED FOLLOWUP"},
+    )
+
+    events = list(loop.stream_turn("why did the metric change?"))
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+
+    assert text == "AUDITED FOLLOWUP"
+    assert "UNAUDITED INTERMEDIATE CLAIM" not in text
+    assert "UNAUDITED FOLLOWUP ANSWER" not in text

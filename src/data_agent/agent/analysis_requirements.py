@@ -242,9 +242,9 @@ _register_definitions(
 )
 _register_definitions(
     (
-        "assignment_unit", "cutoff_assignment", "exposure_definition",
-        "instrument_definition", "outcome_definition", "per_arm_sample_size",
-        "treatment_arms", "treatment_timing",
+        "assignment_rule", "assignment_unit", "cutoff_assignment", "design_type",
+        "exposure_definition", "instrument_definition", "outcome_definition",
+        "per_arm_sample_size", "treatment_arms", "treatment_timing",
     ),
     category="data",
     unmet_action="block_claim",
@@ -651,6 +651,28 @@ _CAUSAL_DESIGN_DIAGNOSTICS = {
         "cutoff_assignment", "discontinuity_diagnostics", "bandwidth_sensitivity",
     ),
 }
+_EXPERIMENT_CORE_DESIGN_FACTS = (
+    "design_type",
+    "assignment_unit",
+    "treatment_arms",
+    "exposure_definition",
+    "outcome_definition",
+    "assignment_rule",
+)
+_CAUSAL_CORE_DESIGN_FACTS = (
+    "design_type",
+    "exposure_definition",
+    "outcome_definition",
+)
+_USER_DEFINITIONAL_REQUIREMENTS = frozenset({
+    *_EXPERIMENT_CORE_DESIGN_FACTS,
+    *_CAUSAL_CORE_DESIGN_FACTS,
+    "comparison_group",
+    "treatment_timing",
+    "instrument_definition",
+    "exclusion_restriction",
+    "cutoff_assignment",
+})
 
 
 def _causal_design_type(step: dict[str, Any]) -> str:
@@ -771,6 +793,23 @@ def _step_requirement_metadata(
 
     design_type = _causal_design_type(step)
     causal_claim_requested = claim_type in {"causal", "causal_effect", "causal_requested"}
+    experiment_design_requested = capability == "analysis.experiment" and (
+        causal_claim_requested
+        or bool(design_type)
+        or claim_type in {"planning", "detectability"}
+    )
+    if experiment_design_requested:
+        _add_requirement_metadata(
+            metadata,
+            _EXPERIMENT_CORE_DESIGN_FACTS,
+            trigger="core experiment design fact",
+        )
+    elif capability == "analysis.causal":
+        _add_requirement_metadata(
+            metadata,
+            _CAUSAL_CORE_DESIGN_FACTS,
+            trigger="core causal design fact",
+        )
     if capability == "analysis.experiment" and design_type == "randomized_experiment":
         _add_requirement_metadata(
             metadata,
@@ -865,6 +904,8 @@ def _step_requirement_metadata(
                 "exploratory_label_allowed": True,
             },
         }
+    for name in _USER_DEFINITIONAL_REQUIREMENTS.intersection(metadata):
+        metadata[name].setdefault("parameters", {})["input_source"] = "user_or_plan"
     return metadata
 
 

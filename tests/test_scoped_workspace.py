@@ -3166,13 +3166,21 @@ def test_synthesis_system_prompt_omits_dataset_names_and_schema(tmp_path, monkey
     loop.messages.append({"role": "user", "content": "summarize verified evidence"})
     loop.context.workspace.add("secret_dataset", pd.DataFrame({"secret_column": [9876]}))
     loop.context.analysis_state.dataset_contracts = [
-        {"id": "contract_1", "dataset": "secret_dataset", "quality_status": "valid"}
+        {
+            "id": "contract_1",
+            "dataset": "secret_dataset",
+            "quality_status": "valid",
+            "dataset_version_id": "dataset_secret_v1",
+            "source_fingerprint": "sha256:secret-source",
+        }
     ]
 
     prompt = loop._get_system_prompt()
 
     assert "secret_dataset" not in prompt
     assert "secret_column" not in prompt
+    assert "dataset_secret_v1" in prompt
+    assert "sha256:secret-source" in prompt
 
 
 def test_error_scope_prompt_exposes_control_error_without_workspace_details(tmp_path, monkeypatch):

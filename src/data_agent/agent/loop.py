@@ -397,6 +397,24 @@ _protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
 )
 
 
+def _redact_trust_dataset_names(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a prompt-safe projection while preserving opaque dataset identity."""
+
+    redacted = dict(payload)
+    datasets = payload.get("datasets")
+    if isinstance(datasets, list):
+        redacted["datasets"] = [
+            {
+                key: value
+                for key, value in item.items()
+                if key not in {"name", "dataset", "dataset_name"}
+            }
+            for item in datasets
+            if isinstance(item, dict)
+        ]
+    return redacted
+
+
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
@@ -863,10 +881,19 @@ class AgentLoop:
                 active_confirmation=self._active_confirmation_identity(),
                 active_datasets=self._active_dataset_capsule_inputs(),
             )
-            capsule_json = render_trust_capsule(capsule)
+            redact_dataset_names = scope.phase in {"synthesis", "error"}
+            prompt_capsule = (
+                _redact_trust_dataset_names(capsule)
+                if redact_dataset_names
+                else capsule
+            )
+            capsule_json = render_trust_capsule(prompt_capsule)
             self._turn_trust_capsule = capsule
             self._turn_trust_capsule_text = capsule_json
-            hydrated_trust_context = self._hydrate_overflow_trust_context(capsule)
+            hydrated_trust_context = self._hydrate_overflow_trust_context(
+                capsule,
+                redact_dataset_names=redact_dataset_names,
+            )
             self._turn_hydrated_trust_context_text = hydrated_trust_context
             session_context_without_capsule = session_ctx
             session_ctx = (
@@ -1426,7 +1453,12 @@ class AgentLoop:
                 result.append(entry)
         return result
 
-    def _hydrate_overflow_trust_context(self, capsule: dict[str, Any]) -> str:
+    def _hydrate_overflow_trust_context(
+        self,
+        capsule: dict[str, Any],
+        *,
+        redact_dataset_names: bool = False,
+    ) -> str:
         if capsule.get("status") != "requires_hydration":
             return ""
         state = getattr(self.context, "analysis_state", None)
@@ -1503,6 +1535,8 @@ class AgentLoop:
                     "spec_version",
                 )
             }
+        if redact_dataset_names:
+            hydrated = _redact_trust_dataset_names(hydrated)
         hydrated["status"] = "hydrated_with_limits"
         hydrated["omitted_counts"] = {
             key: max(0, len(values) - 8)
@@ -1882,7 +1916,7 @@ class AgentLoop:
     def _is_final_answer_audit_candidate(self) -> bool:
         intent = getattr(self, "_last_turn_intent", None)
         if intent is not None and getattr(intent, "intent_type", "") in {
-            "directed_analysis", "comprehensive_report",
+            "directed_analysis", "comprehensive_report", "result_followup",
         }:
             return True
         if not getattr(self, "_turn_resumed_from_confirmation", False):
@@ -1968,7 +2002,6 @@ class AgentLoop:
             for check in audit.get("claim_checks") or []
             if isinstance(check, dict)
             and check.get("status") == "passed"
-            and str(check.get("strength") or "") != "diagnostic"
             and str(check.get("claim") or "").strip()
         ]
         prefix = "\n".join(dict.fromkeys(supported))
@@ -2348,6 +2381,18 @@ class AgentLoop:
                 version,
                 idempotency_key,
             )
+
+        if (
+            resolved.resolution_action == "approve_dataset_transformation"
+            and resolved.response == "approve"
+        ):
+            from data_agent.tools.data_clean import apply_confirmed_transformation
+
+            apply_confirmed_transformation(
+                resolved.confirmation_id,
+                session_id=self.session_id,
+            )
+            self._prompt_cache_dirty = True
 
         return confirmation_record_to_loop_result(
             resolved,
@@ -3041,12 +3086,7 @@ class AgentLoop:
                 return
 
             if buffer_text_events:
-                if self._is_final_answer_audit_candidate():
-                    visible_text = str(assistant_msg.get("content") or "")
-                    if visible_text:
-                        prefix = "\n\n" if round_num > 1 else ""
-                        yield {"type": "text_delta", "text": prefix + visible_text, "turn_id": None}
-                else:
+                if not self._is_final_answer_audit_candidate():
                     for ev in pending_text_events:
                         yield ev
 
@@ -3239,12 +3279,7 @@ class AgentLoop:
                 return
 
             if buffer_text_events:
-                if self._is_final_answer_audit_candidate():
-                    visible_text = str(assistant_msg.get("content") or "")
-                    if visible_text:
-                        prefix = "\n\n" if round_num > 1 else ""
-                        yield {"type": "text_delta", "text": prefix + visible_text, "turn_id": None}
-                else:
+                if not self._is_final_answer_audit_candidate():
                     for ev in pending_text_events:
                         yield ev
 

@@ -75,6 +75,39 @@ def test_confirmation_approval_applies_once_and_reject_or_skip_do_not_mutate(mon
     assert store.get_active_version_info("orders")["dataset_id"] == rejected_active
 
 
+def test_agent_resume_applies_an_approved_transformation_before_continuing(monkeypatch, tmp_path):
+    from data_agent.agent.confirmation.runtime import build_action_registry
+    from data_agent.agent.confirmation.service import ConfirmationService
+    from data_agent.agent.loop import AgentLoop, FinalResponse
+    from data_agent.tools import data_clean
+
+    store, active = _store()
+    monkeypatch.setattr(data_clean, "workspace", store)
+    monkeypatch.setattr(data_clean, "_proposal_sessions_root", lambda: tmp_path)
+    monkeypatch.setattr(data_clean, "_data_clean_session_id", lambda _value="": "s1")
+    pending = json.loads(data_clean.clean_data("orders", missing_strategy="fill_median"))
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    record = service.get("s1", pending["confirmation_id"])
+    loop = AgentLoop(client=object(), session_id="s1")
+    monkeypatch.setattr(loop, "_confirmation_runtime", lambda: service)
+    monkeypatch.setattr(
+        loop,
+        "_loop",
+        lambda _resumed_input: FinalResponse(content="continued after applying"),
+    )
+
+    result = loop.resume_turn(
+        record.confirmation_id,
+        "approve",
+        expected_version=record.version,
+        idempotency_key="approve-through-runtime",
+    )
+
+    assert result.content == "continued after applying"
+    assert store.get_active_version_info("orders")["dataset_id"] != active["dataset_id"]
+    assert store.get("orders")["amount"].isna().sum() == 0
+
+
 def test_approved_proposal_cannot_apply_after_active_version_changes(monkeypatch, tmp_path):
     from data_agent.agent.confirmation.runtime import build_action_registry
     from data_agent.agent.confirmation.service import ConfirmationService

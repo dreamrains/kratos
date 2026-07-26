@@ -729,6 +729,32 @@ def _unmet_block_claim_requirements(
     ]
 
 
+def _claim_guard_blockers(
+    claim: Any,
+    evidence_records: list[dict[str, Any]],
+    analysis_requirements: list[dict[str, Any]],
+) -> list[str]:
+    if not re.search(
+        r"\bseason(?:al|ality)\b|季节性",
+        _claim_text(claim),
+        re.IGNORECASE,
+    ):
+        return []
+    step_ids = {
+        str(record.get("step_id") or "")
+        for record in evidence_records
+        if str(record.get("step_id") or "")
+    }
+    return [
+        str(requirement.get("id") or requirement.get("name") or "requirement")
+        for requirement in analysis_requirements
+        if isinstance(requirement, dict)
+        and str(requirement.get("step_id") or "") in step_ids
+        and requirement.get("name") == "seasonality_estimability"
+        and requirement.get("claim_guard") == "block_claim"
+    ]
+
+
 def _check_claim(
     claim: Any,
     index: int,
@@ -849,15 +875,25 @@ def _check_claim(
         check["issues"].extend(dict.fromkeys(revision_issues))
         return _finalize_check(check)
 
+    evidence_versions = {
+        str(version_id)
+        for record in revision_records
+        for ref in _normalize_items(record.get("computation_refs"))
+        if isinstance(ref, dict)
+        for version_id in _normalize_items(ref.get("dataset_versions"))
+        if str(version_id or "")
+    }
+    if evidence_versions and current_dataset_versions is None:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        check.setdefault("reason_codes", []).append(
+            "current_dataset_identity_unavailable"
+        )
+        check["issues"].append(
+            "Current dataset identity is unavailable for version-bound evidence"
+        )
+        return _finalize_check(check)
     if current_dataset_versions is not None:
-        evidence_versions = {
-            str(version_id)
-            for record in revision_records
-            for ref in _normalize_items(record.get("computation_refs"))
-            if isinstance(ref, dict)
-            for version_id in _normalize_items(ref.get("dataset_versions"))
-            if str(version_id or "")
-        }
         stale_versions = evidence_versions - current_dataset_versions
         if stale_versions:
             check["status"] = "failed"
@@ -910,6 +946,20 @@ def _check_claim(
         check.setdefault("reason_codes", []).append("unmet_block_claim_requirement")
         check["issues"].append(
             "Unmet block_claim requirements: " + ", ".join(unmet_requirements)
+        )
+
+    claim_guard_blockers = _claim_guard_blockers(
+        claim,
+        revision_records,
+        analysis_requirements or [],
+    )
+    if claim_guard_blockers:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        check.setdefault("reason_codes", []).append("claim_guard_blocked")
+        check["issues"].append(
+            "Claim is blocked by deterministic requirement guard: "
+            + ", ".join(claim_guard_blockers)
         )
 
     if (

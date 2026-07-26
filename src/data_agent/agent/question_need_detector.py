@@ -538,44 +538,44 @@ def _missing_material_design_facts(state: Any) -> list[str]:
     step = _high_risk_design_step(state)
     if step is None:
         return []
+    plan = getattr(state, "analysis_plan", None)
+    if not isinstance(plan, dict):
+        return []
+    from data_agent.agent.analysis_requirements import compile_analysis_requirements
+
+    try:
+        requirements = compile_analysis_requirements(
+            plan=plan,
+            route=None,
+            playbook=None,
+            dataset_contracts=_list_attr(state, "dataset_contracts"),
+            user_intent=_text(plan.get("goal")),
+            _allow_legacy_unknown=True,
+        )
+    except ValueError:
+        return ["design_type"]
+    step_id = _text(step.get("step_id"))
+    required_fields = [
+        _text(requirement.get("name"))
+        for requirement in requirements
+        if _text(requirement.get("step_id")) == step_id
+        and isinstance(requirement.get("parameters"), dict)
+        and requirement["parameters"].get("input_source") == "user_or_plan"
+        and _text(requirement.get("name"))
+    ]
     design = _text(
         step.get("design_type")
         or step.get("causal_design")
         or step.get("identification_strategy")
-    ).casefold().replace("-", "_").replace(" ", "_")
-    if not design:
+    )
+    if "design_type" in required_fields and not design:
         return ["design_type"]
-    aliases = {
-        "randomized": "randomized_experiment",
-        "rct": "randomized_experiment",
-        "did": "difference_in_differences",
-        "before_after": "pre_post",
-    }
-    design = aliases.get(design, design)
-    required_by_design = {
-        "randomized_experiment": (
-            "assignment_unit", "treatment_arms", "exposure_definition",
-            "outcome_definition", "assignment_rule",
-        ),
-        "difference_in_differences": (
-            "comparison_group", "treatment_timing", "exposure_definition",
-            "outcome_definition",
-        ),
-        "matching": ("exposure_definition", "outcome_definition"),
-        "weighting": ("exposure_definition", "outcome_definition"),
-        "instrumental_variables": (
-            "instrument_definition", "exposure_definition", "outcome_definition",
-            "exclusion_restriction",
-        ),
-        "regression_discontinuity": (
-            "cutoff_assignment", "exposure_definition", "outcome_definition",
-        ),
-        "pre_post": ("exposure_definition", "outcome_definition"),
-        "observational_comparison": ("exposure_definition", "outcome_definition"),
-    }
     missing = []
-    for field in required_by_design.get(design, ("exposure_definition", "outcome_definition")):
-        value = step.get(field)
+    for field in required_fields:
+        if field == "design_type":
+            value = design
+        else:
+            value = step.get(field)
         if isinstance(value, list):
             present = any(_text(item) for item in value)
         else:

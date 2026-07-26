@@ -88,6 +88,34 @@ def test_randomized_causal_experiment_compiles_design_and_publication_guards():
     assert by_name["multiplicity_handling"]["parameters"]["comparison_count"] == 3
 
 
+def test_experiment_compiler_owns_core_user_design_facts_before_design_selection():
+    requirements = _compile({
+        "required_capability": "analysis.experiment",
+        "claim_type": "causal",
+    })
+    by_name = {item["name"]: item for item in requirements}
+
+    assert {
+        "design_type",
+        "assignment_unit",
+        "treatment_arms",
+        "exposure_definition",
+        "outcome_definition",
+        "assignment_rule",
+    } <= set(by_name)
+    assert all(
+        by_name[name]["parameters"]["input_source"] == "user_or_plan"
+        for name in {
+            "design_type",
+            "assignment_unit",
+            "treatment_arms",
+            "exposure_definition",
+            "outcome_definition",
+            "assignment_rule",
+        }
+    )
+
+
 def test_power_mde_is_prospective_and_not_retrospective_proof():
     planning = _compile({
         "required_capability": "analysis.experiment",
@@ -241,4 +269,3 @@ def test_causal_route_schedules_diagnostics_and_exposes_association_boundary():
 
     assert decision["decision"] == "direct_analysis"
     assert decision["allowed_claim_class"] == "association"
-
