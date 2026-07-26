@@ -1,6 +1,6 @@
 # Analysis Execution and Publication Reliability Design
 
-**Status:** Draft for written review
+**Status:** Approved for implementation planning
 
 **Date:** 2026-07-27
 
@@ -55,8 +55,11 @@ internally, then lost most of its content at publication.
   import failure. Several then contain `NoneType` follow-on failures.
 - Session `1fa21df491e9` terminated after a Windows GBK
   `UnicodeEncodeError` while emitting text containing an emoji variation
-  selector. This is historical evidence, not proof that every current launcher
-  still fails.
+  selector. Direct current-host checks confirm that CP936/GBK still cannot
+  encode the relevant Unicode code points. The supported CLI, web, and REPL
+  entry points already reconfigure standard streams to UTF-8, so this is a
+  current host/sink compatibility hazard rather than proof that every supported
+  launcher still fails.
 - Repeated real sessions show opaque-plan and argument drift, including
   `record_analysis_plan` missing `method_plan` and
   `visualization_strategy`, `task_create(title=...)`, string booleans, and
@@ -102,19 +105,25 @@ because incomplete work could no longer be published as confident analysis.
    diagnostic gap; it is not silently deleted.
 4. Successful structured tools automatically project eligible evidence.
    Arbitrary or failed tool output never becomes trusted evidence automatically.
-5. Final analytical findings remain buffered until audit. Server-generated
-   progress and tool-stage events stream live.
-6. Analysis completion is decided from the current plan requirements and
-   critical step outcomes, not from the existence of one "substantive" tool
-   call.
-7. `analysis_requirement.v1`, `evidence_record.v2`, and
+5. Every directed analytical turn receives a server-owned canonical execution
+   envelope before its first substantive tool call. Evidence identity cannot
+   depend on the model voluntarily recording a plan.
+6. Final analytical findings remain buffered until audit. Server-generated
+   progress, method narration, and tool-stage events stream live.
+7. Process narration describes method and state only. It never exposes raw
+   reasoning, unaudited values, rankings, significance, or causal findings.
+8. Analysis completion is a bounded terminal-state decision, not a retry loop.
+   Missing evidence projection or answer wording cannot trigger recomputation.
+9. `analysis_requirement.v1`, `evidence_record.v2`, and
    `final_answer_audit.v1` remain the sole authorities. This work extends their
    runtime integration and does not create parallel contracts.
-8. Descriptive analysis does not require universal significance testing.
-   "Significant", inferential, and causal requests receive method-specific
-   requirements.
-9. A lower execution or context budget may reduce breadth, but it may not
-   strengthen the claim class.
+10. Descriptive analysis does not require universal significance testing.
+    "Significant", inferential, and causal requests receive method-specific
+    requirements.
+11. A lower execution or context budget may reduce breadth, but it may not
+    strengthen the claim class.
+12. Production rollout may fail safer through tiered or strict publication,
+    but it may not disable minimum deterministic assurance checks.
 
 ## 4. Architecture
 
@@ -122,7 +131,7 @@ because incomplete work could no longer be published as confident analysis.
 User question and uploaded data
               |
               v
-Intent + canonical method plan
+Intent + server-owned canonical execution envelope
               |
               v
 Typed tool contract -> tool execution -> computation_ref.v1
@@ -190,12 +199,16 @@ The supported observable contract is:
 
 - `pd`, `np`, `math`, `statistics`, `json`, and `stats` (`scipy.stats`) are
   available under fixed names;
-- the exact redundant forms `import pandas as pd`, `import numpy as np`,
-  `import math`, `import statistics`, `import json`, and
-  `from scipy import stats` are normalized to those preloaded names before
-  execution;
-- all other `Import` and `ImportFrom` statements are rejected before execution
-  with `sandbox_import_not_allowed`;
+- an AST-based normalizer accepts redundant imports from the preloaded module
+  allowlist: root modules `pandas`, `numpy`, `math`, `statistics`, and `json`,
+  plus the explicitly allowed `scipy.stats`;
+- ordinary aliases and public symbol imports bind to the preloaded objects.
+  Supported shapes include `import pandas`, `import pandas as frame_lib`,
+  `from pandas import DataFrame`, `import numpy`, and
+  `from scipy import stats`; no runtime `__import__` is executed;
+- unknown modules, unapproved dotted submodules, star imports, and private or
+  dunder symbols are rejected before execution with
+  `sandbox_import_not_allowed`;
 - network, file, process, dynamic import, reflection, and arbitrary package
   access remain forbidden;
 - `get_dataset(name)` returns a DataFrame or raises a structured
@@ -230,9 +243,11 @@ Background runner, logging, and console status paths must not propagate an
 encoding error into the analysis turn.
 
 User-visible browser/JSON text preserves Unicode. Console-only sinks use a
-replacement-safe policy when the host stream cannot represent a character.
-Regression coverage includes emoji, variation selectors, Chinese punctuation,
-and a simulated CP936/GBK output stream.
+replacement-safe policy when the host stream cannot represent a character,
+including when stream reconfiguration is unavailable, bypassed, or performed
+after a background/logging sink has already been captured. Regression coverage
+includes emoji, variation selectors, Chinese punctuation, every supported
+launcher, and a simulated CP936/GBK output stream.
 
 #### Chart source identity
 
@@ -304,20 +319,89 @@ representative successful output.
 The existing canonical requirement evaluator is extended; no new readiness
 authority is introduced.
 
-Before synthesis, completion checks:
+Before synthesis, completion checks execution obligations separately from
+publication obligations.
+
+Execution obligations are:
 
 - required plan steps attempted;
 - critical tools succeeded or have explicit unresolved diagnostics;
 - required structured fields are present;
-- evidence has been projected for completed claims;
-- required limitations are available;
 - the requested claim class has not exceeded the method.
 
+Publication obligations are:
+
+- eligible evidence has been projected for completed claims;
+- required limitations and downgrade semantics can be rendered;
+- unsupported claim classes are excluded from synthesis.
+
+A publication-obligation failure never returns execution to the tool-running
+state. When a successful traceable computation exists but projection or
+presentation remains incomplete, completion becomes `complete_with_limits` and
+the publication layer applies an exploratory or unsupported claim action. When
+no successful computation exists, the existing data, tool, or budget terminal
+state remains authoritative.
+
+The evaluator returns one of five terminal states:
+
+| State | Meaning | Next action |
+|---|---|---|
+| `complete` | Requested analysis obligations are satisfied | Synthesize at the supported claim class |
+| `complete_with_limits` | Useful computation exists, but the requested class is not attainable | Synthesize exploratory findings with specific limitations |
+| `blocked_by_data` | Required fields, grain, sample structure, or design are absent | Publish completed work and an exact data gap |
+| `blocked_by_tool` | A critical method and its declared fallback both failed | Publish completed work and the failed-method diagnostic |
+| `budget_limited` | Reserved execution budget is exhausted | Synthesize the best supported partial answer |
+
 The current "one substantive tool is enough" guard is replaced by this
-requirement-based result. Budget exhaustion produces an incomplete-but-usable
-answer, not silent early completion.
+requirement-based result, but the evaluator must converge:
+
+- each critical requirement receives at most one corrected retry and one
+  declared fallback as defined in Layer A;
+- the quality guard may request at most one additional analysis continuation
+  for the entire turn;
+- that continuation is allowed only when a missing hard computation is still
+  recoverable and the synthesis/audit reserve remains intact;
+- missing evidence projection, missing evidence markers, or missing limitation
+  wording never triggers a repeated computation;
+- no tool may be called solely to populate evidence bookkeeping;
+- once the highest attainable claim class is known, the evaluator returns a
+  terminal state and synthesis begins.
+
+Budget exhaustion therefore produces an incomplete-but-usable answer, not
+silent early completion or an evidence-completion loop.
 
 ### 4.3 Layer C: evidence and publication
+
+#### Canonical execution envelope
+
+Before the first substantive analytical tool call in every directed or
+comprehensive analysis turn, the server materializes a lightweight executable
+plan through the existing canonical `AnalysisPlan` writer and
+`analysis_requirement.v1` compiler. This is a default instance of the existing
+authority, not a parallel ad-hoc plan type.
+
+The envelope contains:
+
+- session and turn identity;
+- canonical plan ID and version;
+- current step ID;
+- active dataset names, fingerprints, and versions;
+- selected method route and maximum requested claim class;
+- canonical claim keys and requirement IDs for each executable step.
+
+An explicit `record_analysis_plan` call may provide a richer plan before
+substantive execution, but the absence of that call cannot leave new
+computations with an empty plan or step identity. The runtime scheduler binds a
+tool call to a step only when the current step or a single compatible pending
+step matches the tool capability. Ambiguous calls remain computation refs and
+produce a structured binding diagnostic; they are not guessed into trusted
+evidence.
+
+If envelope creation fails, the turn may still run bounded diagnostics.
+Resulting computations remain traceable computation refs, the terminal state
+cannot be `complete`, and the public answer is exploratory or diagnostic. The
+runtime never invents plan, requirement, dataset, or claim identity after the
+fact.
 
 #### Automatic evidence projection
 
@@ -326,8 +410,8 @@ The existing tool-output persistence path continues to create
 `evidence_record.v2` only when all of the following hold:
 
 - the computation is successful;
-- the call is bound to the current session, turn, plan, step, and active
-  dataset version;
+- the call is bound through the canonical execution envelope to the current
+  session, turn, plan, step, and active dataset version;
 - the tool has a truthful structured capability contract;
 - required evidence fields are present and validate;
 - the current step has a canonical claim key and matching requirement IDs.
@@ -392,6 +476,26 @@ draft.
 Response-level failure remains only for an unavailable/corrupt runtime state.
 That path emits a Chinese diagnostic with no analytical assertions.
 
+#### Rollout and rollback controls
+
+Production supports two publication modes:
+
+| Mode | Purpose | Behavior |
+|---|---|---|
+| `tiered` | Default product behavior | Use verified, exploratory, and unsupported claim actions to preserve a complete bounded answer |
+| `strict` | Fail-safe migration rollback | Retain minimum deterministic blockers and emit a Chinese diagnostic when the tiered renderer cannot safely recover |
+
+There is no production `off` mode. Value, direction, unit, scope, dataset
+version, failed-computation, invalid-grain, and unsupported
+causal/inferential blockers remain active in every production mode.
+
+`auto_evidence_projection_enabled` and `live_progress_enabled` are independent
+migration flags so either new integration can be rolled back without disabling
+the assurance kernel. Disabling automatic projection falls back to explicit
+v2 evidence recording and strict publication; it never upgrades unbound
+computations. An audit-only shadow mode is permitted in deterministic tests and
+offline replay, but cannot authorize live user-visible claims.
+
 #### Qualitative and grain claims
 
 Final claim extraction expands beyond numeric and causal sentences to include:
@@ -409,7 +513,7 @@ and grain.
 ### 4.4 Layer D: live progress and observability
 
 Final analytical claims remain buffered until audit. The backend emits
-server-owned progress events in real time:
+server-owned progress events and non-conclusion method narration in real time:
 
 - analysis plan selected;
 - step started/completed/failed;
@@ -419,8 +523,19 @@ server-owned progress events in real time:
 - audit revising/publishing;
 - partial-result reason.
 
-These events contain no unaudited analytical conclusion. Existing tool events
-may be reused, but the UI receives stable Chinese labels and step identity.
+Method narration is generated from canonical plan, step, and tool metadata,
+using stable Chinese templates such as:
+
+- "正在检查字段、数据粒度和缺失值";
+- "正在评估变量关系与有效样本结构";
+- "当前方法执行失败，正在尝试已声明的替代方法";
+- "数据不足以支持显著性判断，将降级为探索性分析".
+
+These events contain no unaudited analytical conclusion. They must not include
+raw chain-of-thought, draft-answer prose, numeric findings, rankings,
+significance statements, effect directions, or causal claims. Existing tool
+events may be reused, but the UI receives stable Chinese labels, step identity,
+and an event class that lets it distinguish progress from final content.
 
 Persisted turn diagnostics include:
 
@@ -444,11 +559,14 @@ conversation manually.
 | Sandbox forbidden import | Reject before execution; no identical retry | Explain bounded sandbox alternative only if analysis is affected |
 | Missing dataset/column | Return structured available candidates; one corrected retry | Report exact unresolved input if recovery fails |
 | Critical statistical tool failure | Use declared equivalent fallback once | Downgrade to exploratory or state no result |
+| Canonical envelope creation failure | Keep subsequent results traceable-only; do not synthesize a verified claim | Continue with bounded diagnostics and state the execution-identity limitation |
+| Ambiguous step binding | Retain computation ref; do not guess a plan/step identity | Continue with other supported work or report the unresolved method step |
 | Evidence projection ineligible | Retain computation ref; mark requirement unmet | Do not describe as verified |
-| Missing explicit marker with one exact typed match (claim class, quantities, direction, units, and scope) | Server attaches the internal identity deterministically | No user-facing warning |
+| Missing explicit marker with one exact existing evidence match (claim class, quantities, direction, units, and scope) | Server attaches that existing internal identity deterministically; it never creates evidence or reconstructs plan scope | No user-facing warning |
 | Ambiguous evidence match | No fuzzy authorization | Revision or explicit evidence gap |
 | Numeric/direction/unit/scope mismatch | Claim-level hard block | Replace claim with mismatch diagnostic |
 | Missing limitation/exploratory label | One synthesis revision | Publish with specific limitation |
+| Completion recovery exhausted | Return the applicable terminal state; do not continue for evidence bookkeeping | Publish the best supported complete-with-limits or diagnostic answer |
 | Audit infrastructure failure | Do not publish analytical assertions | Chinese system diagnostic; retain progress history |
 
 ## 6. Compatibility and migration
@@ -464,6 +582,11 @@ conversation manually.
    budget behavior is preserved.
 6. No historical conversation or artifact is overwritten. Verification uses
    new sessions or explicit replay fixtures.
+7. `publication_mode=tiered` is the production default. `strict` is a
+   fail-safer migration rollback; no production configuration disables the
+   minimum deterministic blockers.
+8. Migration flags for automatic evidence projection and live progress are
+   independent and default on after their focused regression gates pass.
 
 ## 7. Testing strategy
 
@@ -473,7 +596,10 @@ conversation manually.
   and enum/literal;
 - lossless normalization and ambiguous-argument rejection;
 - all registered tools' schemas match callable signatures;
-- sandbox approved import normalization and forbidden imports;
+- AST-based sandbox import normalization for root imports, arbitrary aliases,
+  public symbol imports, and the approved `scipy.stats` form;
+- sandbox rejection of unknown modules, unapproved dotted modules, star
+  imports, and private/dunder symbols;
 - `get_dataset` success and structured not-found behavior;
 - failed tools cannot satisfy a plan step or produce auto evidence;
 - Windows CP936/GBK console simulation with Chinese and emoji variation
@@ -481,14 +607,24 @@ conversation manually.
 - explicit unknown chart dataset never falls back;
 - factor/significance intent and playbook classification;
 - correlation, attribution, regression, and chart capability/output parity;
-- completion evaluation for complete, recoverable, exploratory, and
-  budget-limited cases;
+- completion evaluation for all five terminal states;
+- completion continuation, corrected retry, and fallback bounds;
+- evidence-projection or limitation failures cannot cause recomputation;
+- synthesis/audit budget reserve is preserved before any continuation;
+- canonical execution envelopes for explicit plans and ad-hoc analysis turns;
+- deterministic step binding plus ambiguous-binding rejection;
 - automatic evidence projection identity and rejection cases;
 - all three publication levels;
+- tiered/strict migration modes preserve minimum deterministic blockers;
+- disabled automatic projection falls back to explicit v2 recording and strict
+  publication rather than unbound authorization;
 - demographic/grain hallucination regression;
 - deterministic partial answer retains useful sections without blocked
   assertions;
-- streaming progress occurs before the final audited text.
+- streaming progress and non-conclusion method narration occur before the final
+  audited text;
+- progress payloads exclude raw reasoning, draft conclusions, values, rankings,
+  directions, significance, and causal language.
 
 ### 7.2 Real-session regression scenarios
 
@@ -501,15 +637,35 @@ Acceptance:
 - regression arguments are correctly typed;
 - the plan uses factor/significance semantics rather than generic data
   understanding;
+- a replay variant that omits `record_analysis_plan` still receives a
+  server-owned canonical execution envelope before substantive analysis;
 - a critical method failure triggers recovery or an explicit downgrade;
 - at least one eligible structured computation becomes v2 evidence;
+- execution reaches the applicable minimum analytical coverage rather than
+  stopping after one substantive tool:
+  1. grain, target, feature scope, and missingness;
+  2. univariate relationship with effective sample structure;
+  3. an appropriate multivariable method or an exact failure diagnostic;
+  4. applicable collinearity, stability, validation, or time-dependence
+     checks;
+  5. limitations and alternative explanations;
 - final output is non-empty, Chinese, and methodologically bounded;
-- safe progress arrives before the final answer;
+- safe progress and method narration arrive before the final answer;
+- the run terminates in a declared completion state without repeated tool or
+  evidence-bookkeeping loops;
 - no generic English publish warning appears.
 
 The original local session remains unchanged. A tracked fixture must be
 canonical and privacy-safe; local manual validation may additionally use the
-original uploaded file.
+original uploaded file. Tool-call count is diagnostic only and is not a depth
+metric.
+
+When a configured external provider is available, run three fresh target-prompt
+sessions outside deterministic CI. Every run must terminate without a repeated
+error loop and must either satisfy the minimum applicable coverage above or
+return `complete_with_limits`, `blocked_by_data`, or `blocked_by_tool` with an
+exact reason. This provider check validates behavioral consistency; the
+deterministic route, completion, and publication contracts remain the CI gate.
 
 #### Sandbox-heavy uploaded-file analyses
 
@@ -518,6 +674,7 @@ Replay representative savings-card and retention calculations.
 Acceptance:
 
 - approved imports do not fail with `__import__ not found`;
+- equivalent allowlisted aliases and public symbol imports behave consistently;
 - missing datasets do not become `NoneType` cascades;
 - identical failed code is not called repeatedly;
 - structured tools are preferred when they cover the calculation.
@@ -531,7 +688,9 @@ Acceptance:
 
 - the turn does not abort because a console sink cannot encode text;
 - browser and persisted conversation keep valid Unicode;
-- console fallback does not change analytical content.
+- console fallback does not change analytical content;
+- coverage includes the supported CLI, web, and REPL launch paths plus a sink
+  captured before UTF-8 reconfiguration.
 
 #### `3645266455a5`
 
@@ -572,18 +731,24 @@ true:
 4. Supported Windows launch paths survive Chinese and emoji output.
 5. The factor/significance question receives the correct plan and bounded
    claim class.
-6. Completion is requirement-based and does not stop after one shallow tool.
-7. Eligible structured computations automatically create current-plan v2
+6. Directed analysis receives a canonical execution envelope even when the
+   model does not explicitly record a plan.
+7. Completion is requirement-based, reaches an applicable minimum analytical
+   coverage, and converges to one of the five terminal states without evidence
+   rituals or repeated tool loops.
+8. Eligible structured computations automatically create current-plan v2
    evidence.
-8. Missing evidence does not erase the whole answer.
-9. Unsupported values, causal language, grain, or demographic claims are not
+9. Missing evidence does not erase the whole answer.
+10. Unsupported values, causal language, grain, or demographic claims are not
    published as assertions.
-10. Exploratory findings remain visible with precise limitations.
-11. Live progress precedes the final audited answer.
-12. The two target sessions and the additional systemic regression scenarios
+11. Exploratory findings remain visible with precise limitations.
+12. Live progress and safe method narration precede the final audited answer.
+13. Tiered and strict modes retain minimum deterministic blockers; production
+    has no assurance-off path.
+14. The two target sessions and the additional systemic regression scenarios
    meet their acceptance criteria.
-13. Existing confirmation, data-version, and causal safeguards remain passing.
-14. `artifacts/` and `tmp/` remain untouched unless a test uses an isolated
+15. Existing confirmation, data-version, and causal safeguards remain passing.
+16. `artifacts/` and `tmp/` remain untouched unless a test uses an isolated
    temporary directory.
 
 ## 9. Non-goals
@@ -609,14 +774,16 @@ The implementation plan must preserve this dependency order:
    failures.
 2. Repair registry schemas, runtime argument validation, sandbox imports,
    failure propagation, Unicode boundaries, and explicit chart source identity.
-3. Add factor/significance routing, truthful capabilities, and
-   requirement-based completion.
-4. Add automatic evidence projection and bounded evidence-catalog injection.
-5. Replace response-level blocking with three-level claim publication and the
-   deterministic partial renderer.
-6. Add safe real-time progress events.
-7. Run target-session replays, additional real-session scenarios, broad tests,
-   and browser verification.
+3. Materialize the server-owned canonical execution envelope and deterministic
+   step binding for explicit and ad-hoc analysis turns.
+4. Add factor/significance routing, truthful capabilities, and bounded
+   terminal-state completion.
+5. Add automatic evidence projection and bounded evidence-catalog injection.
+6. Replace response-level blocking with three-level claim publication, the
+   deterministic partial renderer, and fail-safer rollout controls.
+7. Add safe real-time progress events and method narration.
+8. Run target-session replays, depth/coverage checks, additional real-session
+   scenarios, broad tests, and browser verification.
 
 No later layer may be used to hide a failing earlier layer. In particular,
 publication labels cannot compensate for a calculation that never executed.
