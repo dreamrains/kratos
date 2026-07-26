@@ -522,3 +522,40 @@ def test_create_chart_recovery_hint_does_not_suggest_mermaid_for_data_charts():
 
     assert tool is not None
     assert "Mermaid" not in tool.recovery_hint
+
+
+def test_explicit_unknown_chart_dataset_never_falls_back(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ws = Workspace()
+    ws.add("orders", pd.DataFrame({"x": [1], "y": [2]}))
+    ctx = AgentContext(session_id="chart_unknown_dataset", workspace=ws)
+
+    try:
+        with use_agent_context(ctx):
+            payload = json.loads(
+                create_chart("bar", data="missing", x_col="x", y_col="y", title="Missing dataset")
+            )
+
+        assert payload["error_type"] == "chart_dataset_not_found"
+        assert payload["requested_dataset"] == "missing"
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_omitted_chart_dataset_requires_one_eligible_dataset(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ws = Workspace()
+    ws.add("orders", pd.DataFrame({"x": [1], "y": [2]}))
+    ws.add("users", pd.DataFrame({"x": [1], "y": [3]}))
+    ctx = AgentContext(session_id="chart_ambiguous_dataset", workspace=ws)
+
+    try:
+        with use_agent_context(ctx):
+            payload = json.loads(
+                create_chart("bar", x_col="x", y_col="y", title="Ambiguous dataset")
+            )
+
+        assert payload["error_type"] == "chart_dataset_ambiguous"
+        assert payload["eligible_datasets"] == ["orders", "users"]
+    finally:
+        cfg.sessions_dir = old_sessions
