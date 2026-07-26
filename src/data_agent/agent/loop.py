@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 import threading
 import uuid
@@ -429,12 +431,15 @@ class AgentLoop:
         )
         from data_agent.agent.analysis_state import load_analysis_state
         self.context.analysis_state = load_analysis_state(self.session_id, active_project)
+        self.context.user_quality_requirements = (
+            self.context.analysis_state.explicit_user_requirements
+        )
         self.messages: list[dict] = []
         self.token_threshold = cfg.token_threshold
         self._last_data_file = ""
         self._prompt_cache: str = ""
         self._prompt_cache_dirty: bool = True
-        self._prompt_cache_key: tuple[str, str] | None = None
+        self._prompt_cache_key: tuple[str, str, str] | None = None
         self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
         self._computation_ref_lock = threading.Lock()
@@ -834,7 +839,11 @@ class AgentLoop:
             session_ctx = (session_ctx + "\n" if session_ctx else "") + "\n".join(feature_lines)
 
         try:
-            from data_agent.agent.analysis_state import analysis_state_summary
+            from data_agent.agent.analysis_state import (
+                analysis_state_summary,
+                build_trust_capsule,
+                render_trust_capsule,
+            )
             scope = self.context.workspace_scope or self.__context_operation("refresh")
             if scope.phase in {"synthesis", "error"}:
                 state = self.context.analysis_state
@@ -848,8 +857,35 @@ class AgentLoop:
                 analysis_ctx = analysis_state_summary(self.context.analysis_state)
             if analysis_ctx:
                 session_ctx = (session_ctx + "\n\n" if session_ctx else "") + "<analysis_state>\n" + analysis_ctx + "\n</analysis_state>"
+            capsule = build_trust_capsule(
+                self.context.analysis_state,
+                user_requirements=self.context.user_quality_requirements,
+                active_confirmation=self._active_confirmation_identity(),
+                active_datasets=self._active_dataset_capsule_inputs(),
+            )
+            capsule_json = render_trust_capsule(capsule)
+            self._turn_trust_capsule = capsule
+            self._turn_trust_capsule_text = capsule_json
+            hydrated_trust_context = self._hydrate_overflow_trust_context(capsule)
+            self._turn_hydrated_trust_context_text = hydrated_trust_context
+            session_context_without_capsule = session_ctx
+            session_ctx = (
+                (session_ctx + "\n\n" if session_ctx else "")
+                + f'<trust_capsule digest="{capsule["digest"]}">\n'
+                + capsule_json
+                + "\n</trust_capsule>"
+            )
+            if hydrated_trust_context:
+                session_ctx += (
+                    "\n\n<hydrated_trust_context>\n"
+                    + hydrated_trust_context
+                    + "\n</hydrated_trust_context>"
+                )
         except Exception:
-            pass
+            self._turn_trust_capsule = {}
+            self._turn_trust_capsule_text = ""
+            self._turn_hydrated_trust_context_text = ""
+            session_context_without_capsule = session_ctx
 
         level = _classify_task(user_input, session_ctx) if user_input else "standard"
 
@@ -886,6 +922,21 @@ class AgentLoop:
                 f"  - {s.name}: {s.description}" for s in loaded
             )
             skill_instructions = self._skill_loader.get_prompt_injections()
+
+        self._prompt_component_payloads = {
+            "tool_list": tool_list,
+            "project_rules": rules_prompt,
+            "retrieved_context": retrieved_context if level != "chat" else "",
+            "session_context": session_context_without_capsule,
+            "skill_descriptions": skill_descriptions if level != "chat" else "",
+            "skill_instructions": skill_instructions if level != "chat" else "",
+            "user_input": user_input,
+            "user_requirements": self.context.user_quality_requirements,
+            "trust_capsule": getattr(self, "_turn_trust_capsule_text", ""),
+            "hydrated_trust_context": getattr(
+                self, "_turn_hydrated_trust_context_text", ""
+            ),
+        }
 
         # Chat 模式：只注入 rules（业务约束），跳过 domain/experience
         if level == "chat":
@@ -928,7 +979,11 @@ class AgentLoop:
                 if validation.ok:
                     bundle_fingerprint = str(validation.thaw_bundle().get("data_fingerprint") or "")
                     break
-            cache_key = (scope.fingerprint, bundle_fingerprint)
+            cache_key = (
+                scope.fingerprint,
+                bundle_fingerprint,
+                self._trust_state_cache_digest(),
+            )
             if self._prompt_cache_dirty or not self._prompt_cache or cache_key != self._prompt_cache_key:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
@@ -942,8 +997,117 @@ class AgentLoop:
                 prompt = prompt + "\n\n" + final_audit_instruction
             hint = self._execution_prompt_hint()
             if hint:
-                return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
+                prompt = prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None:
+                phase = self._current_prompt_phase()
+                turn_state.ensure_phase_capacity(phase)
+                components = dict(getattr(self, "_prompt_component_payloads", {}) or {})
+                components.update({
+                    "conversation_history": self.messages,
+                    "synthesis_instruction": synthesis_instruction,
+                    "final_audit_instruction": final_audit_instruction,
+                    "execution_control": hint,
+                })
+                capsule = getattr(self, "_turn_trust_capsule", {})
+                turn_state.record_prompt_assembly(
+                    components,
+                    assembled_payload={"system": prompt, "messages": self.messages},
+                    trust_capsule_digest=(
+                        str(capsule.get("digest") or "") if isinstance(capsule, dict) else ""
+                    ),
+                    phase=phase,
+                )
+                self._persist_budget_diagnostics(turn_state)
             return prompt
+
+    def _current_prompt_phase(self) -> str:
+        instruction = getattr(self, "_turn_final_audit_instruction", "")
+        if 'mode="synthesis"' in instruction:
+            return "revision"
+        turn_state = getattr(self.context, "turn_state", None)
+        if (
+            getattr(self, "_turn_synthesis_policy_instruction", "")
+            or (turn_state is not None and turn_state.exploration_budget_exhausted)
+        ):
+            return "synthesis"
+        return "exploration"
+
+    def _enter_synthesis_reserve_if_needed(self, user_input: str) -> None:
+        """Switch to synthesis before a nearly empty exploration slice can draft the answer."""
+
+        if getattr(self, "_turn_synthesis_policy_instruction", ""):
+            return
+        turn_state = getattr(self.context, "turn_state", None)
+        state = getattr(self.context, "analysis_state", None)
+        if turn_state is None or state is None or not getattr(state, "evidence_records", None):
+            return
+        synthesis_reserve = int(turn_state.budget.synthesis_reserve_tokens or 0)
+        if synthesis_reserve <= 0 or not turn_state.can_run_phase("synthesis"):
+            return
+        if turn_state.remaining_phase_tokens("exploration") > synthesis_reserve:
+            return
+        self._maybe_inject_synthesis_policy(user_input)
+
+    def _record_stream_delta_budget(self, text: str, *, phase: str) -> int:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None or not text:
+            return 0
+        amount = max(1, _estimate_tokens([{"text": text}]))
+        turn_state.record_token_usage(amount, phase=phase)
+        self._persist_budget_diagnostics(turn_state)
+        return amount
+
+    def _record_llm_response_budget(
+        self,
+        response: Any,
+        *,
+        phase: str,
+        pre_recorded_tokens: int = 0,
+    ) -> None:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None or response is None:
+            return
+        payload = {
+            "text": getattr(response, "text", "") or "",
+            "reasoning_content": getattr(response, "reasoning_content", "") or "",
+            "tool_calls": [
+                {
+                    "name": getattr(call, "name", ""),
+                    "arguments": getattr(call, "arguments", {}),
+                }
+                for call in (getattr(response, "tool_calls", None) or [])
+            ],
+        }
+        estimated = max(1, _estimate_tokens([payload]))
+        unreported = getattr(response, "unreported_output_tokens", None)
+        if unreported is None:
+            residual = max(0, estimated - max(0, int(pre_recorded_tokens or 0)))
+        else:
+            # Structured streaming reports hidden reasoning/tool output across
+            # all retry attempts; visible text deltas were charged in real time.
+            residual = max(0, int(unreported or 0))
+        turn_state.record_llm_round()
+        if residual:
+            turn_state.record_token_usage(residual, phase=phase)
+        self._persist_budget_diagnostics(turn_state)
+
+    def _llm_output_limit_kwargs(self, method: Any, *, phase: str) -> dict[str, int]:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return {}
+        configured_max = int(getattr(self.client, "max_tokens", get_config().max_tokens) or 1)
+        limit = turn_state.output_limit_for_phase(phase, configured_max)
+        try:
+            parameters = inspect.signature(method).parameters.values()
+            supports_limit = any(
+                parameter.name == "max_tokens"
+                or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+        except (TypeError, ValueError):
+            supports_limit = False
+        return {"max_tokens": limit} if supports_limit else {}
 
     def _prepare_analysis_turn(self, user_input: str):
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -1000,6 +1164,9 @@ class AgentLoop:
         # Extract user quality requirements on first analysis turn
         if not self.context.user_quality_requirements and user_input and len(user_input) > 100:
             self._extract_user_requirements(user_input)
+        if self.context.user_quality_requirements:
+            state.explicit_user_requirements = self.context.user_quality_requirements
+            state.save()
 
         return controller.activate_tool_groups(registry, intent, state, user_input)
 
@@ -1110,6 +1277,10 @@ class AgentLoop:
             requirements = resp.text.strip()
             if requirements and len(requirements) > 5:
                 self.context.user_quality_requirements = requirements
+                state = getattr(self.context, "analysis_state", None)
+                if state is not None:
+                    state.explicit_user_requirements = requirements
+                    state.save()
                 logger.info("User quality requirements extracted",
                             extra={"extra_data": {"requirements": requirements[:200]}})
         except Exception as e:
@@ -1143,6 +1314,238 @@ class AgentLoop:
         if turn_state is None:
             return ""
         return turn_state.prompt_hint()
+
+    def _compact_context_if_needed(self) -> None:
+        """Compact low-priority history while reattaching deterministic trust state."""
+
+        _microcompact(self.session_id, self.messages)
+        turn_state = getattr(self.context, "turn_state", None)
+        threshold = int(self.token_threshold)
+        summary_max_chars = 6_000
+        capsule_max_chars = 8_000
+        if turn_state is not None:
+            threshold = min(threshold, max(1, int(turn_state.exploration_token_budget)))
+            summary_max_chars = min(
+                summary_max_chars,
+                max(400, int(turn_state.budget.synthesis_reserve_tokens or 0) * 4),
+            )
+            capsule_max_chars = min(
+                capsule_max_chars,
+                max(2_000, int(turn_state.budget.audit_reserve_tokens or 0) * 4),
+            )
+        if _estimate_tokens(self.messages) <= threshold:
+            return
+        from data_agent.agent.analysis_state import build_trust_capsule
+
+        capsule = build_trust_capsule(
+            getattr(self.context, "analysis_state", None),
+            user_requirements=self.context.user_quality_requirements,
+            active_confirmation=self._active_confirmation_identity(),
+            active_datasets=self._active_dataset_capsule_inputs(),
+            max_chars=capsule_max_chars,
+        )
+        if turn_state is not None:
+            turn_state.trust_capsule_digest = str(capsule.get("digest") or "")
+            self._persist_budget_diagnostics(turn_state)
+        self.messages[:] = compact_history(
+            self.session_id,
+            self.client,
+            self.messages,
+            self._compact_state,
+            token_threshold=threshold,
+            trust_capsule=capsule,
+            summary_max_chars=summary_max_chars,
+            recent_max_chars=min(12_000, max(1_000, threshold * 2)),
+        )
+        self._prompt_cache_dirty = True
+
+    def _persist_budget_diagnostics(self, turn_state: TurnExecutionState) -> None:
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return
+        diagnostics = turn_state.budget_diagnostics()
+        previous = getattr(state, "budget_diagnostics", None)
+        previous_digest = (
+            str(previous.get("trust_capsule_digest") or "")
+            if isinstance(previous, dict)
+            else ""
+        )
+        state.budget_diagnostics = diagnostics
+        current_digest = str(diagnostics.get("trust_capsule_digest") or "")
+        if current_digest and current_digest != previous_digest:
+            save = getattr(state, "save", None)
+            if callable(save):
+                save()
+
+    def _active_confirmation_identity(self) -> dict[str, Any] | None:
+        """Read the durable confirmation checkpoint for capsule/restart identity."""
+
+        try:
+            record = self._confirmation_runtime().checkpoint(self.session_id)
+        except Exception:
+            return None
+        if record is None:
+            return None
+        params = getattr(record, "resolution_params", None)
+        params = dict(params) if isinstance(params, dict) else {}
+        return {
+            "confirmation_id": str(getattr(record, "confirmation_id", "") or ""),
+            "version": getattr(record, "version", None),
+            "proposal_ref": {
+                "proposal_id": str(params.get("proposal_id") or ""),
+                "candidate_fingerprint": str(params.get("candidate_fingerprint") or ""),
+                "data_version": str(
+                    params.get("data_version") or getattr(record, "data_version", "") or ""
+                ),
+                "spec_version": str(
+                    params.get("spec_version") or getattr(record, "spec_version", "") or ""
+                ),
+            },
+        }
+
+    def _active_dataset_capsule_inputs(self) -> list[dict[str, Any]]:
+        try:
+            datasets = self.context.workspace.list_datasets()
+        except Exception:
+            return []
+        result: list[dict[str, Any]] = []
+        for name, info in sorted((datasets or {}).items()):
+            if not isinstance(info, dict):
+                continue
+            metadata = info.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            source_fingerprint = str(metadata.get("_source_fingerprint") or "")
+            entry = {
+                "dataset": str(name),
+                "dataset_version_id": str(info.get("dataset_id") or ""),
+                "raw_dataset_id": str(info.get("raw_dataset_id") or ""),
+                "raw_fingerprint": source_fingerprint,
+                "source_fingerprint": source_fingerprint,
+            }
+            if any(entry.values()):
+                result.append(entry)
+        return result
+
+    def _hydrate_overflow_trust_context(self, capsule: dict[str, Any]) -> str:
+        if capsule.get("status") != "requires_hydration":
+            return ""
+        state = getattr(self.context, "analysis_state", None)
+        plan = getattr(state, "analysis_plan", None)
+        plan = plan if isinstance(plan, dict) else {}
+        requirement_ids = [
+            str(item.get("id") or "")
+            for group in (plan.get("analysis_requirements") or {}).values()
+            if isinstance(group, list)
+            for item in group
+            if isinstance(item, dict)
+            and item.get("status") != "satisfied"
+            and str(item.get("id") or "")
+        ] if isinstance(plan.get("analysis_requirements"), dict) else []
+        evidence_ids = [
+            str(item.get("id") or "")
+            for item in (getattr(state, "evidence_records", None) or [])
+            if isinstance(item, dict) and str(item.get("id") or "")
+        ]
+        dataset_names = [
+            str(item.get("dataset") or item.get("name") or "")
+            for item in self._active_dataset_capsule_inputs()
+            if str(item.get("dataset") or item.get("name") or "")
+        ]
+        requested = {
+            "datasets": dataset_names,
+            "unresolved_hard_requirements": requirement_ids,
+            "evidence_bindings": evidence_ids,
+        }
+        try:
+            from data_agent.agent.artifact_refs import hydrate_trust_capsule_manifest
+
+            hydrated = hydrate_trust_capsule_manifest(
+                capsule.get("trust_manifest") or {},
+                expected_session_id=self.session_id,
+                expected_plan_id=str(plan.get("id") or ""),
+                expected_body_digest=str(
+                    (capsule.get("trust_manifest") or {}).get("body_digest") or ""
+                ),
+                requested_ids=requested,
+                per_component_limit=8,
+                include_confirmation=True,
+            )
+        except Exception:
+            hydrated = {}
+        if not hydrated:
+            return json.dumps({
+                "status": "hydration_failed",
+                "required_action": "downgrade_or_disclose",
+                "manifest_digest": str(
+                    (capsule.get("trust_manifest") or {}).get("body_digest") or ""
+                ),
+            }, ensure_ascii=False, sort_keys=True)
+        confirmation = hydrated.get("active_confirmation")
+        if isinstance(confirmation, dict):
+            hydrated["active_confirmation"] = {
+                key: (
+                    confirmation.get(key)
+                    if key == "version"
+                    else (
+                        str(confirmation.get(key) or "")
+                        if len(str(confirmation.get(key) or "")) <= 320
+                        else "sha256:" + hashlib.sha256(
+                            str(confirmation.get(key) or "").encode("utf-8")
+                        ).hexdigest()
+                    )
+                )
+                for key in (
+                    "id",
+                    "version",
+                    "proposal_id",
+                    "candidate_fingerprint",
+                    "data_version",
+                    "spec_version",
+                )
+            }
+        hydrated["status"] = "hydrated_with_limits"
+        hydrated["omitted_counts"] = {
+            key: max(0, len(values) - 8)
+            for key, values in requested.items()
+        }
+        hydrated["required_action"] = (
+            "Use only hydrated identities. Downgrade or disclose any claim whose required identity is omitted."
+        )
+        text = json.dumps(hydrated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(text) <= 4_000:
+            return text
+        return json.dumps({
+            "status": "hydration_exceeded_prompt_limit",
+            "required_action": "downgrade_or_disclose",
+            "manifest_digest": str(
+                (capsule.get("trust_manifest") or {}).get("body_digest") or ""
+            ),
+        }, ensure_ascii=False, sort_keys=True)
+
+    def _trust_state_cache_digest(self) -> str:
+        state = getattr(self.context, "analysis_state", None)
+        payload = {
+            "user_requirements": self.context.user_quality_requirements,
+            "active_datasets": self._active_dataset_capsule_inputs(),
+            "active_confirmation": self._active_confirmation_identity(),
+        }
+        if state is not None:
+            for field_name in (
+                "goal",
+                "explicit_user_requirements",
+                "analysis_plan",
+                "data_pool",
+                "dataset_contracts",
+                "computation_refs",
+                "evidence_records",
+                "pending_confirmations",
+                "verification_reports",
+                "route_proposals",
+                "cleaning_logs",
+            ):
+                payload[field_name] = getattr(state, field_name, None)
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _is_tool_blocked_by_confirmation(self, tool_name: str) -> bool:
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -1502,8 +1905,7 @@ class AgentLoop:
             return False
         if turn_state.tool_calls >= int(getattr(budget, "max_tool_calls", 0) or 0):
             return False
-        token_budget = getattr(budget, "token_budget", None)
-        if token_budget is not None and turn_state.estimated_tokens_used >= token_budget:
+        if getattr(turn_state, "exploration_budget_exhausted", False):
             return False
         max_elapsed = getattr(budget, "max_elapsed_seconds", None)
         if max_elapsed is not None and turn_state.elapsed_seconds >= max_elapsed:
@@ -1614,6 +2016,10 @@ class AgentLoop:
         try:
             ref = audit_final_answer_draft(final_text, state)
             audit = hydrate_final_answer_audit_ref(ref)
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None:
+                turn_state.record_token_usage(1, phase="audit")
+                self._persist_budget_diagnostics(turn_state)
         except Exception as exc:
             logger.error(
                 "Final answer audit failed closed",
@@ -1660,6 +2066,10 @@ class AgentLoop:
             allow_repair
             and synthesis_repairable
             and not self._turn_final_audit_revision_used
+            and (
+                getattr(self.context, "turn_state", None) is None
+                or self.context.turn_state.claim_revision_attempt()
+            )
         ):
             self._turn_final_audit_revision_used = True
             self._inject_final_answer_audit_repair(
@@ -2259,15 +2669,30 @@ class AgentLoop:
 
         response = None
         streamed_text = ""
+        streamed_tokens = 0
+        used_sync_fallback = False
+        stream_requested_limit = 0
+        phase = self._current_prompt_phase()
 
         # Defensive: repair any broken tool_call sequences from prior turns
         self._repair_broken_tool_sequence()
 
         try:
+            system_prompt = self._get_system_prompt()
+            output_limit = self._llm_output_limit_kwargs(
+                self.client.stream_chat_structured,
+                phase=phase,
+            )
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None:
+                stream_requested_limit = int(
+                    turn_state.requested_max_output_tokens.get(phase, 0) or 0
+                )
             for ev in self.client.stream_chat_structured(
                 messages=self.messages,
                 tools=registry.active_definitions() or None,
-                system=self._get_system_prompt(),
+                system=system_prompt,
+                **output_limit,
             ):
                 # Check interrupt between streaming chunks
                 if self._interrupt_event.is_set():
@@ -2276,18 +2701,36 @@ class AgentLoop:
 
                 if isinstance(ev, StreamTextDelta):
                     streamed_text += ev.text
+                    streamed_tokens += self._record_stream_delta_budget(
+                        ev.text,
+                        phase=phase,
+                    )
                     yield {"type": "text_delta", "text": ev.text, "turn_id": None}
                 elif isinstance(ev, StreamComplete):
                     response = ev.response
         except Exception as e:
+            unreported = getattr(e, "unreported_output_tokens", None)
+            if unreported is None:
+                unreported = max(0, stream_requested_limit - streamed_tokens)
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None and int(unreported or 0) > 0:
+                turn_state.record_token_usage(int(unreported), phase=phase)
+                self._persist_budget_diagnostics(turn_state)
             logger.warning("Streaming LLM call failed, falling back to sync", extra={"extra_data": {"error": str(e)}})
             # Fallback to synchronous call on streaming failure
             try:
+                system_prompt = self._get_system_prompt()
+                output_limit = self._llm_output_limit_kwargs(
+                    self.client.chat,
+                    phase=phase,
+                )
                 response = self.client.chat(
                     messages=self.messages,
                     tools=registry.active_definitions() or None,
-                    system=self._get_system_prompt(),
+                    system=system_prompt,
+                    **output_limit,
                 )
+                used_sync_fallback = True
                 # Emit any text that wasn't streamed yet
                 new_text = (response.text or "")[len(streamed_text):]
                 if new_text:
@@ -2298,6 +2741,11 @@ class AgentLoop:
                 return
 
         # Internal event — caller uses this to continue the loop
+        self._record_llm_response_budget(
+            response,
+            phase=phase,
+            pre_recorded_tokens=(0 if used_sync_fallback else streamed_tokens),
+        )
         yield {"type": "_response", "response": response, "streamed_text": streamed_text}
 
     def _process_tool_calls(
@@ -2491,17 +2939,14 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            _microcompact(self.session_id, self.messages)
-            if _estimate_tokens(self.messages) > self.token_threshold:
-                self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
-                    self._compact_state, token_threshold=self.token_threshold,
-                )
+            self._compact_context_if_needed()
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 yield self._suspended_event(blocked_confirmation)
                 return
+
+            self._enter_synthesis_reserve_if_needed(user_input)
 
             buffer_text_events = (
                 self._is_analysis_quality_guard_candidate()
@@ -2694,17 +3139,14 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            _microcompact(self.session_id, self.messages)
-            if _estimate_tokens(self.messages) > self.token_threshold:
-                self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
-                    self._compact_state, token_threshold=self.token_threshold,
-                )
+            self._compact_context_if_needed()
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 yield self._suspended_event(blocked_confirmation)
                 return
+
+            self._enter_synthesis_reserve_if_needed(resumed_input)
 
             buffer_text_events = (
                 self._is_analysis_quality_guard_candidate()
@@ -3084,24 +3526,32 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            _microcompact(self.session_id, self.messages)
-            if _estimate_tokens(self.messages) > self.token_threshold:
-                self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
-                    self._compact_state, token_threshold=self.token_threshold,
-                )
+            self._compact_context_if_needed()
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 return blocked_confirmation
 
+            self._enter_synthesis_reserve_if_needed(user_input)
+
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
+            phase = self._current_prompt_phase()
+            system_prompt = self._get_system_prompt()
+            output_limit = self._llm_output_limit_kwargs(
+                self.client.chat,
+                phase=phase,
+            )
             response = self.client.chat(
                 messages=self.messages,
                 tools=registry.active_definitions() or None,
-                system=self._get_system_prompt(),
+                system=system_prompt,
+                **output_limit,
+            )
+            self._record_llm_response_budget(
+                response,
+                phase=phase,
             )
 
             response_text = response.text or ""
@@ -3199,12 +3649,6 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
-
-            # Track token usage for budget enforcement
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None:
-                round_tokens = _estimate_tokens(self.messages[-3:])
-                turn_state.record_token_usage(round_tokens)
 
             # Safety valve: hard stop at 310 rounds
             if round_num >= 310:

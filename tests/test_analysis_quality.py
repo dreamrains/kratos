@@ -635,6 +635,12 @@ class TestUserRequirementsInAnalysis:
             messages=messages,
             state=state,
             token_threshold=0,  # 强制压缩
+            trust_capsule={
+                "contract_version": "trust_capsule.v1",
+                "goal": "验证分析要求",
+                "explicit_user_requirements": "详细说明计算方式方法与流程",
+                "digest": "capsule_digest",
+            },
         )
 
         # 压缩后的第一条消息（摘要）应包含用户要求
@@ -645,6 +651,8 @@ class TestUserRequirementsInAnalysis:
                    "质量" in summary_content or \
                    "要求" in summary_content or \
                    "计算方式" in summary_content
+            assert "trust_capsule.v1" in summary_content
+            assert "详细说明计算方式方法与流程" in summary_content
 
 
 # ============================================================

@@ -105,6 +105,22 @@ def test_elapsed_time_budget_blocks_more_tools():
         raise AssertionError("expected elapsed time budget to block tool calls")
 
 
+def test_exploration_cannot_consume_synthesis_or_audit_reserves():
+    state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=1_000,
+        synthesis_reserve_tokens=200,
+        audit_reserve_tokens=100,
+        revision_reserve_tokens=100,
+    ))
+    state.record_token_usage(600, phase="exploration")
+
+    assert state.exploration_token_budget == 600
+    assert state.exploration_budget_exhausted is True
+    assert state.can_run_phase("synthesis")
+    assert state.can_run_phase("audit")
+    assert "assurance reserves" in state.prompt_hint().lower()
+
+
 def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch):
     from data_agent.agent.compact import persist_large_output
     from data_agent.config import get_config

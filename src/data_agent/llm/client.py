@@ -20,7 +20,13 @@ class ToolCall:
 
 
 class Response:
-    __slots__ = ("text", "tool_calls", "finish_reason", "reasoning_content")
+    __slots__ = (
+        "text",
+        "tool_calls",
+        "finish_reason",
+        "reasoning_content",
+        "unreported_output_tokens",
+    )
 
     def __init__(
         self,
@@ -28,11 +34,13 @@ class Response:
         tool_calls: Optional[list[ToolCall]] = None,
         finish_reason: str = "stop",
         reasoning_content: str = "",
+        unreported_output_tokens: Optional[int] = None,
     ):
         self.text = text
         self.tool_calls = tool_calls or []
         self.finish_reason = finish_reason
         self.reasoning_content = reasoning_content
+        self.unreported_output_tokens = unreported_output_tokens
 
     @property
     def has_tool_calls(self) -> bool:
@@ -121,11 +129,11 @@ class LLMClient:
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.temperature = temperature
 
-    def _base_kwargs(self, messages, tools=None, system=None) -> dict:
+    def _base_kwargs(self, messages, tools=None, system=None, max_tokens: Optional[int] = None) -> dict:
         kwargs: dict[str, Any] = {
             "model": self.model_id,
             "messages": messages,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max(1, min(self.max_tokens, int(max_tokens))) if max_tokens is not None else self.max_tokens,
             "timeout": self.timeout,
         }
         if self.api_base:
@@ -145,9 +153,10 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         system: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Response:
         """同步调用 LLM，返回统一 Response。带速率限制重试。"""
-        kwargs = self._base_kwargs(messages, tools, system)
+        kwargs = self._base_kwargs(messages, tools, system, max_tokens=max_tokens)
 
         last_error = None
         for attempt in range(self._MAX_RETRIES + 1):
@@ -178,13 +187,32 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         system: Optional[str] = None,
+        max_tokens: Optional[int] = None,
     ) -> Iterator[StreamEvent]:
         """流式调用 LLM，逐 token yield StreamTextDelta，最后 yield StreamComplete。
 
         支持工具调用：流式阶段累积 tool_call 参数，完成后放入 StreamComplete.response。
         """
-        kwargs = self._base_kwargs(messages, tools, system)
+        kwargs = self._base_kwargs(messages, tools, system, max_tokens=max_tokens)
         kwargs["stream"] = True
+        aggregate_output_limit = int(kwargs["max_tokens"])
+        aggregate_emitted_tokens = 0
+        aggregate_unreported_tokens = 0
+
+        def record_emitted(value: Any, *, visible_text: bool = False) -> None:
+            nonlocal aggregate_emitted_tokens, aggregate_unreported_tokens
+            text = str(value or "")
+            if text:
+                amount = max(1, (len(text) + 3) // 4)
+                aggregate_emitted_tokens += amount
+                if not visible_text:
+                    aggregate_unreported_tokens += amount
+
+        def attach_unreported_usage(exc: Exception) -> None:
+            try:
+                setattr(exc, "unreported_output_tokens", aggregate_unreported_tokens)
+            except Exception:
+                pass
 
         # Accumulate full response parts
         full_text = ""
@@ -202,11 +230,14 @@ class LLMClient:
                     if delta.content:
                         text = _sanitize(delta.content)
                         full_text += text
+                        record_emitted(text, visible_text=True)
                         yield StreamTextDelta(text=text)
 
                     # Reasoning content (for models that support it)
                     if getattr(delta, "reasoning_content", None):
-                        reasoning_text += _sanitize(delta.reasoning_content)
+                        reasoning_delta = _sanitize(delta.reasoning_content)
+                        reasoning_text += reasoning_delta
+                        record_emitted(reasoning_delta)
 
                     # Tool call deltas
                     if delta.tool_calls:
@@ -216,11 +247,14 @@ class LLMClient:
                                 tc_accum[idx] = {"id": "", "name": "", "arguments": ""}
                             if tc_delta.id:
                                 tc_accum[idx]["id"] = tc_delta.id
+                                record_emitted(tc_delta.id)
                             if tc_delta.function:
                                 if tc_delta.function.name:
                                     tc_accum[idx]["name"] = tc_delta.function.name
+                                    record_emitted(tc_delta.function.name)
                                 if tc_delta.function.arguments:
                                     tc_accum[idx]["arguments"] += tc_delta.function.arguments
+                                    record_emitted(tc_delta.function.arguments)
 
                 # Streaming complete — build final Response
                 tool_calls = []
@@ -241,32 +275,39 @@ class LLMClient:
                     text=full_text,
                     tool_calls=tool_calls,
                     reasoning_content=reasoning_text,
+                    unreported_output_tokens=aggregate_unreported_tokens,
                 )
                 yield StreamComplete(response=response)
                 return
 
-            except litellm.RateLimitError:
-                if attempt < self._MAX_RETRIES:
+            except litellm.RateLimitError as exc:
+                remaining = max(0, aggregate_output_limit - aggregate_emitted_tokens)
+                if attempt < self._MAX_RETRIES and remaining > 0:
                     import time
                     delay = self._RETRY_BASE_DELAY * (2 ** attempt)
                     print(f"\n[yellow]⚠ 流式速率限制，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
                     time.sleep(delay)
+                    kwargs["max_tokens"] = remaining
                     # Reset accumulators for retry
                     full_text = ""
                     reasoning_text = ""
                     tc_accum.clear()
                 else:
+                    attach_unreported_usage(exc)
                     raise
-            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError):
-                if attempt < self._MAX_RETRIES:
+            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError) as exc:
+                remaining = max(0, aggregate_output_limit - aggregate_emitted_tokens)
+                if attempt < self._MAX_RETRIES and remaining > 0:
                     import time
                     delay = self._RETRY_BASE_DELAY * (2 ** attempt)
                     print(f"\n[yellow]⚠ 流式服务不可用，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
                     time.sleep(delay)
+                    kwargs["max_tokens"] = remaining
                     full_text = ""
                     reasoning_text = ""
                     tc_accum.clear()
                 else:
+                    attach_unreported_usage(exc)
                     raise
 
     def stream_chat(

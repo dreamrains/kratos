@@ -32,6 +32,15 @@ _META_TOOLS: set[str] = {
     "generate_report",
 }
 
+_ASSURANCE_META_TOOLS: set[str] = {
+    "record_evidence_record",
+    "record_analysis_spec",
+    "record_analysis_plan",
+    "record_data_requirement",
+    "record_insight_record",
+    "ask_user_question",
+}
+
 
 @dataclass
 class ToolExecutionBudget:
@@ -45,6 +54,10 @@ class ToolExecutionBudget:
     soft_ratio: float = 0.75
     restrict_ratio: float = 0.85
     token_budget: int | None = None
+    synthesis_reserve_tokens: int | None = None
+    audit_reserve_tokens: int | None = None
+    revision_reserve_tokens: int | None = None
+    max_revision_attempts: int = 1
 
     def __post_init__(self) -> None:
         defaults = {
@@ -59,6 +72,20 @@ class ToolExecutionBudget:
             self.max_fallback_calls = fallback_calls
         if self.token_budget is None:
             self.token_budget = token_budget
+        total = max(0, int(self.token_budget or 0))
+        if self.synthesis_reserve_tokens is None:
+            self.synthesis_reserve_tokens = int(total * 0.08)
+        if self.audit_reserve_tokens is None:
+            self.audit_reserve_tokens = int(total * 0.05)
+        if self.revision_reserve_tokens is None:
+            self.revision_reserve_tokens = int(total * 0.07)
+        for field_name in (
+            "synthesis_reserve_tokens",
+            "audit_reserve_tokens",
+            "revision_reserve_tokens",
+        ):
+            setattr(self, field_name, max(0, int(getattr(self, field_name) or 0)))
+        self.max_revision_attempts = max(0, int(self.max_revision_attempts))
 
 
 @dataclass
@@ -74,7 +101,16 @@ class TurnExecutionState:
     seen_calls: dict[str, int] = field(default_factory=dict)
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
-    estimated_tokens_used: int = 0
+    approximate_runtime_tokens_used: int = 0
+    approximate_prompt_tokens: int = 0
+    approximate_prompt_component_tokens: dict[str, int] = field(default_factory=dict)
+    phase_token_usage: dict[str, int] = field(default_factory=dict)
+    phase_overflow_tokens: dict[str, int] = field(default_factory=dict)
+    phase_prompt_tokens: dict[str, int] = field(default_factory=dict)
+    requested_max_output_tokens: dict[str, int] = field(default_factory=dict)
+    prompt_assembly_count: int = 0
+    trust_capsule_digest: str = ""
+    revision_attempts: int = 0
     turn_id: str = field(default_factory=lambda: f"turn_{uuid.uuid4().hex}")
     _call_order: list = field(default_factory=list)
 
@@ -102,11 +138,128 @@ class TurnExecutionState:
     def elapsed_seconds(self) -> float:
         return time.monotonic() - self.started_at
 
+    @property
+    def estimated_tokens_used(self) -> int:
+        """Compatibility alias for approximate, non-provider usage accounting."""
+
+        return self.approximate_runtime_tokens_used
+
+    @estimated_tokens_used.setter
+    def estimated_tokens_used(self, value: int) -> None:
+        self.approximate_runtime_tokens_used = max(0, int(value or 0))
+
+    @property
+    def exploration_token_budget(self) -> int:
+        total = max(0, int(self.budget.token_budget or 0))
+        reserved = sum((
+            int(self.budget.synthesis_reserve_tokens or 0),
+            int(self.budget.audit_reserve_tokens or 0),
+            int(self.budget.revision_reserve_tokens or 0),
+        ))
+        return max(0, total - reserved)
+
+    @property
+    def exploration_budget_exhausted(self) -> bool:
+        return self.phase_token_usage.get("exploration", 0) >= self.exploration_token_budget
+
     def record_llm_round(self) -> None:
         self.llm_rounds += 1
 
-    def record_token_usage(self, delta: int) -> None:
-        self.estimated_tokens_used += delta
+    def record_token_usage(self, delta: int, *, phase: str = "exploration") -> None:
+        """Record approximate runtime usage without claiming provider billing parity."""
+
+        amount = max(0, int(delta or 0))
+        self.approximate_runtime_tokens_used += amount
+        limit = self.phase_token_limit(phase)
+        used = self.phase_token_usage.get(phase, 0)
+        accepted = min(amount, max(0, limit - used))
+        self.phase_token_usage[phase] = used + accepted
+        overflow = amount - accepted
+        if overflow:
+            self.phase_overflow_tokens[phase] = self.phase_overflow_tokens.get(phase, 0) + overflow
+
+    def record_prompt_assembly(
+        self,
+        components: dict[str, Any],
+        *,
+        assembled_payload: Any | None = None,
+        trust_capsule_digest: str = "",
+        phase: str = "",
+    ) -> None:
+        """Measure approximate prompt payload size at assembly time.
+
+        These values are diagnostics derived from serialized characters. They
+        are intentionally separate from any provider-reported billed usage.
+        """
+
+        measured = {
+            str(name): _approximate_payload_tokens(value)
+            for name, value in sorted((components or {}).items())
+        }
+        self.approximate_prompt_component_tokens = measured
+        payload = assembled_payload if assembled_payload is not None else components
+        self.approximate_prompt_tokens = _approximate_payload_tokens(payload)
+        if phase:
+            self.phase_prompt_tokens[phase] = self.approximate_prompt_tokens
+        self.prompt_assembly_count += 1
+        if trust_capsule_digest:
+            self.trust_capsule_digest = str(trust_capsule_digest)
+
+    def can_run_phase(self, phase: str) -> bool:
+        return self.phase_token_usage.get(phase, 0) < self.phase_token_limit(phase)
+
+    def phase_token_limit(self, phase: str) -> int:
+        limits = {
+            "exploration": self.exploration_token_budget,
+            "synthesis": int(self.budget.synthesis_reserve_tokens or 0),
+            "audit": int(self.budget.audit_reserve_tokens or 0),
+            "revision": int(self.budget.revision_reserve_tokens or 0),
+        }
+        return max(0, limits.get(phase, 0))
+
+    def ensure_phase_capacity(self, phase: str) -> None:
+        if not self.can_run_phase(phase):
+            raise BudgetExceeded(
+                f"{phase.capitalize()} token budget reached; do not consume another assurance phase."
+            )
+
+    def remaining_phase_tokens(self, phase: str) -> int:
+        return max(0, self.phase_token_limit(phase) - self.phase_token_usage.get(phase, 0))
+
+    def output_limit_for_phase(self, phase: str, configured_max: int) -> int:
+        self.ensure_phase_capacity(phase)
+        limit = max(1, min(int(configured_max), self.remaining_phase_tokens(phase)))
+        self.requested_max_output_tokens[phase] = limit
+        return limit
+
+    def claim_revision_attempt(self) -> bool:
+        if self.revision_attempts >= self.budget.max_revision_attempts:
+            return False
+        if not self.can_run_phase("revision"):
+            return False
+        self.revision_attempts += 1
+        return True
+
+    def budget_diagnostics(self) -> dict[str, Any]:
+        return {
+            "token_accounting_kind": "approximate_local_estimate",
+            "approximate_runtime_tokens_used": self.approximate_runtime_tokens_used,
+            "approximate_prompt_tokens": self.approximate_prompt_tokens,
+            "approximate_prompt_component_tokens": dict(self.approximate_prompt_component_tokens),
+            "prompt_assembly_count": self.prompt_assembly_count,
+            "phase_token_usage": dict(self.phase_token_usage),
+            "phase_overflow_tokens": dict(self.phase_overflow_tokens),
+            "phase_prompt_tokens": dict(self.phase_prompt_tokens),
+            "requested_max_output_tokens": dict(self.requested_max_output_tokens),
+            "component_reserves": {
+                "exploration": self.exploration_token_budget,
+                "synthesis": int(self.budget.synthesis_reserve_tokens or 0),
+                "audit": int(self.budget.audit_reserve_tokens or 0),
+                "revision": int(self.budget.revision_reserve_tokens or 0),
+            },
+            "revision_attempts": self.revision_attempts,
+            "trust_capsule_digest": self.trust_capsule_digest,
+        }
 
     def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         args = args or {}
@@ -118,6 +271,10 @@ class TurnExecutionState:
 
         # Meta tools: only error safety checks remain (bypass budget, fallback, resolution)
         if is_meta:
+            if self.exploration_budget_exhausted and tool_name not in _ASSURANCE_META_TOOLS:
+                raise BudgetExceeded(
+                    "Exploration token budget reached; only bounded assurance-recording meta tools remain available."
+                )
             key = self._error_key(tool_name, args)
             if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
@@ -126,6 +283,10 @@ class TurnExecutionState:
             return
 
         # --- Budget checks (non-meta tools) ---
+        if self.exploration_budget_exhausted:
+            raise BudgetExceeded(
+                "Exploration token budget reached; preserve assurance reserves for synthesis, audit, and revision."
+            )
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             raise BudgetExceeded("Tool call budget reached; summarize current evidence and stop calling tools.")
         if tool_name == "run_python" and self.fallback_calls >= (self.budget.max_fallback_calls or 0):
@@ -178,12 +339,14 @@ class TurnExecutionState:
 
     def prompt_hint(self) -> str:
         hints = []
-        if self.tool_calls == 0:
+        if self.tool_calls == 0 and not self.exploration_budget_exhausted:
             return ""
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             hints.append("Execution budget reached. Stop calling tools and summarize evidence, limits, and next steps.")
-        if self.budget.token_budget and self.estimated_tokens_used >= self.budget.token_budget:
-            hints.append("Token budget reached. Stop calling tools and summarize current findings.")
+        if self.exploration_budget_exhausted:
+            hints.append(
+                "Exploration budget reached. Stop exploratory tools and preserve assurance reserves for final synthesis, deterministic audit, and at most one revision."
+            )
         if not hints:
             if self.should_restrict_exploration:
                 hints.append("Execution budget is nearly exhausted. Do not start new exploratory tool paths; only record evidence or summarize.")
@@ -250,3 +413,57 @@ def recovery_hint_for_error(tool_name: str, error: str) -> str:
         "sandbox_violation": "Sandbox blocked the code. Prefer structured tools such as describe_dataset, preview_data, transform_data, or ask the user.",
     }
     return hints.get(category, f"{tool_name} failed. Try a different structured tool or summarize the limitation.")
+
+
+def _approximate_payload_tokens(value: Any) -> int:
+    if isinstance(value, str):
+        raw = value
+    else:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return len(raw) // 4
+
+
+def evaluate_budget_degradation(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare assurance invariants across budgets without comparing prose."""
+
+    strength = {
+        "diagnostic": 0,
+        "exploratory": 1,
+        "descriptive": 2,
+        "inferential": 3,
+        "causal": 4,
+    }
+
+    def strongest(outcome: dict[str, Any]) -> int:
+        classes = outcome.get("claim_classes")
+        if not isinstance(classes, list) or not classes:
+            return 0
+        return max(strength.get(str(item).strip().lower(), 0) for item in classes)
+
+    baseline_requirements = {
+        str(item) for item in baseline.get("retained_requirement_ids") or [] if str(item)
+    }
+    candidate_requirements = {
+        str(item) for item in candidate.get("retained_requirement_ids") or [] if str(item)
+    }
+    baseline_evidence = {str(item) for item in baseline.get("evidence_ids") or [] if str(item)}
+    candidate_evidence = {str(item) for item in candidate.get("evidence_ids") or [] if str(item)}
+    audit_status = str(candidate.get("audit_status") or "not_run").lower()
+    invariants = {
+        "claim_strength_not_increased": strongest(candidate) <= strongest(baseline),
+        "requirements_retained": baseline_requirements <= candidate_requirements,
+        "evidence_binding_retained": baseline_evidence <= candidate_evidence,
+        "audit_was_not_skipped": audit_status in {"pass", "revise", "blocked"},
+        "terminated": bool(candidate.get("completed")),
+    }
+    return {
+        "ok": all(invariants.values()),
+        "invariants": invariants,
+        "baseline_strongest_claim": strongest(baseline),
+        "candidate_strongest_claim": strongest(candidate),
+        "round_count": candidate.get("round_count"),
+        "latency_ms": candidate.get("latency_ms"),
+    }

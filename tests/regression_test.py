@@ -84,6 +84,20 @@ has_tool = any(m.get("role") == "tool" for m in recent)
 has_tc = any(m.get("role") == "assistant" and m.get("tool_calls") for m in recent)
 check("tool result 边界安全", not has_tool or has_tc, f"split={idx}")
 
+from data_agent.agent.execution_control import ToolExecutionBudget, TurnExecutionState
+
+budget_state = TurnExecutionState(ToolExecutionBudget(
+    token_budget=1000,
+    synthesis_reserve_tokens=200,
+    audit_reserve_tokens=100,
+    revision_reserve_tokens=100,
+))
+budget_state.record_token_usage(600, phase="exploration")
+check(
+    "探索预算不占用最终审计储备",
+    budget_state.exploration_budget_exhausted and budget_state.can_run_phase("audit"),
+)
+
 # ======== 4. JSONL 持久化 ========
 print("\n--- 4. JSONL 持久化 ---")
 from data_agent.config import get_config
