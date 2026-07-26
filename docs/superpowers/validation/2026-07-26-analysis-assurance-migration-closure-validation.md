@@ -2,11 +2,24 @@
 
 **Date:** 2026-07-26
 **Baseline:** `8fe6851` (`feat: preserve analysis assurance under context limits`)
-**Scope:** Task 9 migration and compatibility-boundary closure.
+**Reviewed implementation baseline:** `2dfc336` (`fix: reproduce assurance migration audit`)
+**Scope:** Task 9 migration, compatibility-boundary closure, and final whole-branch assurance review.
 
 ## Outcome
 
 The production audit found no second writable confirmation store, requirement compiler, evidence store, final-answer verifier, or context compressor. It did find stale public descriptions for the legacy `confirmed` Boolean in `data_clean.py`: implementation already rejected the Boolean, but the registered tool descriptions still implied that it authorized promotion. Those descriptions now state the receipt-bound behavior, and a focused regression test protects the public schema.
+
+The final whole-branch review found eight additional end-to-end gaps. They are
+closed without introducing parallel authorities: approved cleaning receipts
+now apply through the production resume path; result follow-ups and tool-round
+text remain behind the publish gate; seasonality insufficiency blocks positive
+claims while English and Chinese not-estimable diagnostics remain publishable;
+version-bound evidence fails closed when current dataset identity is
+unavailable; experiment design questions use the canonical requirement
+compiler; safe fallback retains passed limitation framing; synthesis/error
+prompts redact logical dataset names while retaining opaque identity; and
+explicit significance claims receive claim-specific protection when
+statistical support is unknown or clearly unassessed.
 
 ## Production Authority Audit
 
@@ -68,9 +81,66 @@ Result: `compact.compact_history` is the sole implementation. Loop, REPL, and we
 - Material final claims are audited against current evidence and requirements before publication; a deterministic blocker cannot be overridden by an optional judge.
 - Under context pressure, the bounded trust capsule preserves critical identities. The agent may narrow an answer but cannot strengthen an unsupported claim.
 
+## Final Whole-Branch Assurance Review Closure
+
+The final review verified and closed these durable behavior gaps:
+
+1. `AgentLoop.resume_turn` applies an approved dataset-transformation receipt
+   before analysis continues. The receipt ID remains runtime-owned and
+   idempotent.
+2. `result_followup` is a final-answer audit candidate. Assistant text from
+   tool-call rounds is not streamed before the terminal audit.
+3. A `seasonality_estimability` requirement with
+   `claim_guard="block_claim"` blocks a positive seasonality assertion.
+   Not-estimable disclosures remain diagnostic, including `不可估计` and
+   `无法估计`.
+4. Version-bound evidence fails closed with
+   `current_dataset_identity_unavailable` when the active dataset identity
+   cannot be established. Non-versioned evidence keeps its compatibility
+   behavior.
+5. Core experiment and causal design facts are compiled by
+   `analysis_requirements.py`; the question detector consumes those canonical
+   requirements instead of maintaining a second design map. Generic
+   inferential `ab_test` comparisons are not mislabeled as randomized designs.
+6. The supported fallback retains passed limitation and diagnostic framing
+   while excluding failed claims.
+7. Full trust-capsule identity stays in trusted state and artifacts.
+   Synthesis/error prompt projections omit logical dataset names and schema
+   while retaining dataset version IDs, fingerprints, and the capsule digest.
+8. Statistical limitations and high-confidence calibration are generated only
+   when a claim explicitly asserts significance and its support is missing,
+   unknown, unassessed, not applicable, or otherwise clearly unreported. This
+   does not restore a universal significance requirement for descriptive
+   claims.
+
 ## Verification
 
 The worktree has no local virtual environment, so commands used the repository virtual environment with `PYTHONPATH=src` to ensure imports resolved to this worktree rather than the editable parent checkout.
+
+### Follow-up RED/GREEN evidence
+
+- Chinese seasonality diagnostics: RED was `2 failed`; both `年季节性不可估计`
+  and `年季节性无法估计` were incorrectly blocked. After extending only the
+  diagnostic classifier, GREEN was `2 passed`; the positive seasonality claim
+  remained blocked by the deterministic guard.
+- Unsupported significance states: RED was `2 failed, 1 passed`;
+  `unassessed` and `not applicable` bypassed claim-specific protection while
+  `unknown` already behaved correctly. After normalizing those two clearly
+  unsupported states, GREEN was `3 passed`.
+
+### Affected behavior
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests/test_final_answer_claim_audit.py `
+  tests/test_analysis_flow_tools.py `
+  tests/test_time_series_route_requirements.py
+```
+
+Result: **69 passed** in 2.62s.
+
+### Plan-focused matrix
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path 'src').Path
@@ -91,7 +161,9 @@ $env:PYTHONPATH = (Resolve-Path 'src').Path
   tests/test_analysis_context_budget.py
 ```
 
-Result: **274 passed** in 13.69s.
+Result: **282 passed** in 11.90s.
+
+### Broad regression matrix
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path 'src').Path
@@ -109,19 +181,23 @@ $env:PYTHONPATH = (Resolve-Path 'src').Path
   tests/test_trust_workflow_runtime.py `
   tests/test_synthesis_policy.py `
   tests/test_comprehensive_analysis_flow.py `
-  tests/test_analysis_quality.py
-```
-
-Result: **376 passed, 11 skipped** in 116.46s.
-
-```powershell
-$env:PYTHONPATH = (Resolve-Path 'src').Path
-& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m pytest -q `
+  tests/test_analysis_quality.py `
   tests/real_data/test_golden_answer_quality.py `
   tests/real_data/test_context_budget_degradation.py
 ```
 
-Result: **26 passed, 1 skipped** in 3.84s.
+Result: **405 passed, 12 skipped** in 116.78s.
+
+### Custom tool runner
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path 'src').Path
+& 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' tests/test_tools_comprehensive.py
+```
+
+Result: **108 PASS, 0 FAIL, 2 SKIP**.
+
+### Static and repository checks
 
 ```powershell
 & 'D:\Project\Daily\data-agent\.venv\Scripts\python.exe' -m compileall -q src/data_agent
@@ -129,10 +205,21 @@ git diff --check
 git status --short
 ```
 
-Result: `compileall` and `git diff --check` exited 0. Before this report was added, `git status --short` showed only the intended documentation, `data_clean.py`, and focused-test changes. `artifacts/` and `tmp/` were neither modified nor staged.
+Result: `compileall` and `git diff --check` exited 0. Before staging,
+`git status --short` showed exactly the intended validation update, two
+production changes, two regression-test changes, and deletion of the internal
+SDD report. `artifacts/` and `tmp/` were neither modified nor staged.
 
 ## Environmental Notes and Untested Dependencies
 
-- A combined broad command exceeded the 120-second command limit at 86% without reporting a failure. Its core and real-data portions were then rerun separately to successful completion above.
-- Git emitted pre-existing environment warnings that `C:\Users\duguy\.config\git\ignore` is inaccessible, the worktree `.pytest_cache/` directory cannot be opened because of permission denial, and Git will normalize LF to CRLF on the edited files. Neither warning affected test, diff-check, staging, or commit exit status.
+- The custom runner emitted a non-fatal joblib warning because Windows
+  physical-core discovery was unavailable; joblib used the logical-core count.
+- Git emitted pre-existing environment warnings that
+  `C:\Users\duguy\.config\git\ignore` is inaccessible, the worktree
+  `.pytest_cache/` directory cannot be opened because of permission denial,
+  and Git will normalize LF to CRLF on edited files. These warnings did not
+  affect test or custom-runner exit status.
+- The 12 broad-suite skips are environment/data-gated cases, not failures.
+- The full repository suite was not rerun. The earlier controller run's
+  unavailable ignored real-data fixtures were not treated as code regressions.
 - Live LLM-provider calls, browser/web GUI interaction, and external service availability were not exercised; the validation covers their deterministic local contracts and fixtures only.

@@ -351,10 +351,17 @@ class TestRecordEvidenceRecord:
         assert result["statistical_detail_status"] == "complete"
         assert result["statistical_detail_gaps"] == []
 
-    def test_explicit_significance_claim_requires_known_statistical_support(self):
+    @pytest.mark.parametrize(
+        "significance",
+        ["unknown", "unassessed", "not applicable"],
+    )
+    def test_explicit_significance_claim_requires_known_statistical_support(
+        self,
+        significance,
+    ):
         from data_agent.tools.analysis_flow import record_evidence_record
 
-        ctx = _make_ctx("unknown_significance")
+        ctx = _make_ctx(f"unsupported_significance_{significance.replace(' ', '_')}")
         with use_agent_context(ctx):
             evidence = {
                 "claim": "游戏B 1日留存显著高于7日留存",
@@ -364,7 +371,7 @@ class TestRecordEvidenceRecord:
                 "result_summary": "weighted D1=42%, weighted D7=18%",
                 "limitations": ["descriptive comparison only"],
                 "confidence": "high",
-                "significance": "unknown",
+                "significance": significance,
             }
             result = json.loads(record_evidence_record(json.dumps(evidence, ensure_ascii=False)))
 

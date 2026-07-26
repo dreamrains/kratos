@@ -103,7 +103,9 @@ def _significance_support_is_known(value: Any) -> bool:
     return not normalized.startswith(
         (
             "unknown",
+            "unassessed",
             "not assessed",
+            "not applicable",
             "not reported",
             "unreported",
             "not available",

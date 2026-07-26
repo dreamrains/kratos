@@ -85,7 +85,7 @@ _POPULATION_SCOPE = re.compile(
 _DIAGNOSTIC = re.compile(
     r"missing|unavailable|insufficient|not available|cannot be determined|cannot determine|"
     r"not estimable|cannot be estimated|"
-    r"缺少|缺失|不可用|不足|无法判断|无法确定|不能判断",
+    r"缺少|缺失|不可用|不足|无法判断|无法确定|不能判断|不可估计|无法估计",
     re.IGNORECASE,
 )
 _CAUSAL = re.compile(r"\bcaus(?:al|e|ed|es|ing)\b|导致|证明|使得", re.IGNORECASE)

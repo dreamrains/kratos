@@ -202,7 +202,10 @@ def test_unmet_block_claim_requirement_blocks_and_supplies_safe_action():
     assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
 
 
-def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim():
+@pytest.mark.parametrize("diagnostic", ["年季节性不可估计。", "年季节性无法估计。"])
+def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim(
+    diagnostic,
+):
     requirements = compile_analysis_requirements(
         plan={
             "id": "plan_current",
@@ -256,7 +259,7 @@ def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim():
 
     audit = _audit(
         "The series shows annual seasonality [[evidence:ev_seasonality]].\n"
-        "Limitation: only eight monthly observations are available.",
+        + diagnostic,
         evidence=[evidence],
         analysis_requirements=[seasonality],
     )
@@ -264,6 +267,10 @@ def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim():
     assert audit["status"] == "blocked"
     assert "claim_guard_blocked" in audit["claim_checks"][0]["reason_codes"]
     assert audit["claim_checks"][1]["status"] == "passed"
+    assert (
+        "diagnostic_without_positive_claim"
+        in audit["claim_checks"][1]["reason_codes"]
+    )
 
 
 def test_multiple_exact_evidence_ids_can_collectively_satisfy_claim_requirements():
