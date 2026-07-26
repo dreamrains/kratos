@@ -36,10 +36,68 @@ class AnalysisFlowController:
         if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
+        # Capture whether an explicit executable plan (e.g. from
+        # ``record_analysis_plan``) was already in place before the auto
+        # envelope runs. Workflow projection is only invoked for explicit
+        # plans; the auto envelope exists to give computations plan/step
+        # identity, not to commit the model to a workflow it never affirmed.
+        explicit_executable_plan = bool(
+            isinstance(state.analysis_plan, dict)
+            and state.analysis_plan.get("review_status") == "executable"
+        )
+        if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
+            self.ensure_canonical_execution_envelope(state, intent, user_input)
         if intent.intent_type == "directed_analysis" and state.analysis_plan:
-            self.ensure_workflow_tasks(state)
+            if explicit_executable_plan:
+                self.ensure_workflow_tasks(state)
             self.ensure_confirmation_task(state)
         state.save()
+
+    def ensure_canonical_execution_envelope(
+        self,
+        state: AnalysisSessionState,
+        intent: TurnIntent,
+        user_input: str,
+    ):
+        """Materialize the canonical executable plan before substantive calls.
+
+        Called after route/playbook selection. When dataset contracts are
+        available, the server owns the plan: it injects the active dataset
+        identity into each analytical step and validates the plan as
+        executable. Failures are recorded as bounded turn diagnostics so the
+        turn cannot report completion against an unsupported plan.
+
+        Returns the ``EnvelopeResult`` so callers can distinguish auto-envelope
+        materialization from an existing explicit plan.
+        """
+
+        active_contracts = [
+            contract
+            for contract in (state.dataset_contracts or [])
+            if isinstance(contract, dict)
+        ]
+        if not active_contracts:
+            return None
+        from data_agent.agent.analysis_execution import (
+            ensure_canonical_execution_envelope as _ensure_envelope,
+        )
+
+        result = _ensure_envelope(
+            state=state,
+            intent=intent,
+            user_input=user_input,
+            active_dataset_contracts=active_contracts,
+        )
+        diagnostic = {
+            "event": "execution_envelope",
+            "ok": bool(result.ok),
+            "error_type": result.error_type,
+            "plan_id": (result.plan or {}).get("id", "") if isinstance(result.plan, dict) else "",
+        }
+        if result.details:
+            diagnostic["details"] = result.details
+        state.append_turn_diagnostic(diagnostic)
+        return result
 
     def has_pending_confirmation(self, state: AnalysisSessionState) -> bool:
         return any(is_actionable_pending_confirmation(c) for c in state.pending_confirmations)

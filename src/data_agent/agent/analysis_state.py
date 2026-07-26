@@ -184,6 +184,20 @@ class AnalysisSessionState:
     regression_history: list[dict[str, Any]] = field(default_factory=list)
     active_scope: dict[str, Any] = field(default_factory=lambda: _normalize_active_scope(None))
     updated_at: str = field(default_factory=_now)
+    turn_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+
+    def append_turn_diagnostic(self, diagnostic: dict[str, Any], *, limit: int = 20) -> None:
+        """Record a bounded provenance diagnostic for the current turn.
+
+        Each entry captures envelope/binding/failure identity only — no raw
+        rows or unbounded tool output — to keep memory bounded for replay.
+        """
+
+        if not isinstance(diagnostic, dict):
+            return
+        merged = list(self.turn_diagnostics or [])
+        merged.append(dict(diagnostic))
+        self.turn_diagnostics = merged[-limit:]
 
     @property
     def analysis_spec(self) -> dict[str, Any] | None:
@@ -253,6 +267,11 @@ class AnalysisSessionState:
             regression_history=list(data.get("regression_history") or []),
             active_scope=active_scope,
             updated_at=data.get("updated_at") or _now(),
+            turn_diagnostics=[
+                dict(item)
+                for item in (data.get("turn_diagnostics") or [])
+                if isinstance(item, dict)
+            ],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -285,6 +304,7 @@ class AnalysisSessionState:
             "regression_history": self.regression_history,
             "active_scope": _normalize_active_scope(self.active_scope),
             "updated_at": self.updated_at,
+            "turn_diagnostics": self.turn_diagnostics,
         }
 
     def touch(self) -> None:

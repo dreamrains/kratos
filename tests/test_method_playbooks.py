@@ -428,10 +428,54 @@ def test_controller_keeps_generated_playbook_plan_display_only(tmp_path):
 
         assert state.analysis_plan is not None
         assert state.analysis_plan["contract_version"] == "analysis_plan.v1"
+        # Without dataset contracts, the server-owned envelope does not
+        # materialize an executable plan; the playbook display-only plan
+        # remains as the initial projection.
         assert state.analysis_plan["review_status"] == "display_only"
         assert state.analysis_plan.get("workflow_id") is None
         assert first_tasks == []
         assert second_tasks == []
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_controller_materializes_executable_envelope_when_dataset_contract_exists(tmp_path):
+    """When a dataset contract is present, prepare_turn must materialize the
+    canonical executable envelope before any substantive tool call."""
+
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+    try:
+        state = AnalysisSessionState(session_id="controller_envelope", project_name=None)
+        state.dataset_contracts = [{
+            "id": "duc_orders_v1",
+            "dataset": "orders",
+            "quality_status": "ready",
+        }]
+        intent = plan_turn_intent("why did revenue decline", _loaded_context())
+        intent.intent_type = "directed_analysis"
+        intent.data_state = "data_loaded"
+
+        controller = AnalysisFlowController("controller_envelope")
+        controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
+
+        plan = state.analysis_plan
+        assert plan is not None
+        assert plan["review_status"] == "executable"
+        assert all(step["dataset_inputs"] == ["orders"] for step in plan["method_plan"])
+        assert all(step["requirement_ids"] for step in plan["method_plan"])
+        assert state.turn_diagnostics
+        envelope_diag = next(
+            (item for item in state.turn_diagnostics if item.get("event") == "execution_envelope"),
+            None,
+        )
+        assert envelope_diag is not None
+        assert envelope_diag["ok"] is True
+        assert envelope_diag["plan_id"] == plan["id"]
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id

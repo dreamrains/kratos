@@ -1605,8 +1605,60 @@ class AgentLoop:
                 "content": json.dumps({"error": reason, "error_type": "early_termination"}, ensure_ascii=False),
             })
 
-    def _compact_tool_output(self, tool_result, tc) -> str:
-        """Compact tool output for LLM context. Persist data/details to disk, return concise summary."""
+    def _bind_tool_call(self, tc):
+        """Bind a substantive tool call to its plan step before execution.
+
+        Returns a ``StepBindingResult`` (successful or not) for tools with
+        capability metadata; returns ``None`` for non-substantive tools that
+        don't participate in plan/step identity (e.g. capability-less helpers
+        or pure interaction tools). The caller passes the result into
+        ``_compact_tool_output`` which is the single consumer.
+        """
+
+        try:
+            from data_agent.agent.analysis_execution import bind_tool_call_to_plan_step
+
+            state = getattr(self.context, "analysis_state", None)
+            plan = getattr(state, "analysis_plan", None)
+            if not isinstance(plan, dict) or not plan:
+                return None
+            capability = registry.capability_for(tc.name)
+            if not capability:
+                return None
+            from data_agent.agent.execution_scope import dataset_arguments_for_tool
+
+            dataset_names = dataset_arguments_for_tool(
+                registry,
+                tc.name,
+                dict(tc.arguments or {}),
+            )
+            dataset_names = list(dict.fromkeys(dataset_names))
+            scope = getattr(self.context, "workspace_scope", None)
+            preferred_step_id = str(getattr(scope, "step_id", "") or "")
+            return bind_tool_call_to_plan_step(
+                plan=plan,
+                tool_name=tc.name,
+                capability=capability,
+                dataset_names=dataset_names,
+                preferred_step_id=preferred_step_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Tool binding skipped: %s",
+                exc,
+                extra={"extra_data": {"tool": tc.name, "error": str(exc)}},
+            )
+            return None
+
+    def _compact_tool_output(self, tool_result, tc, step_binding=None) -> str:
+        """Compact tool output for LLM context. Persist data/details to disk, return concise summary.
+
+        ``step_binding`` is the canonical ``StepBindingResult`` for this tool
+        call. When supplied and successful, plan/step identity and the claim
+        key/requirement IDs flow only from the binding. Unsuccessful or absent
+        bindings persist an untrusted computation ref with empty identity and
+        the structured diagnostic; we never invent identity later.
+        """
         from data_agent.tools.registry import ToolResult
 
         summary = tool_result.to_cli()
@@ -1619,9 +1671,7 @@ class AgentLoop:
             state = getattr(self.context, "analysis_state", None)
             turn_state = getattr(self.context, "turn_state", None)
             plan = getattr(state, "analysis_plan", None)
-            plan_id = str(plan.get("id") or "") if isinstance(plan, dict) else ""
             scope = getattr(self.context, "workspace_scope", None)
-            step_id = str(getattr(scope, "step_id", "") or "")
             from data_agent.agent.execution_scope import dataset_arguments_for_tool
             from data_agent.agent.evidence_contracts import (
                 analysis_plan_semantic_digest,
@@ -1644,11 +1694,33 @@ class AgentLoop:
                     if str(item)
                 )
             dataset_names = list(dict.fromkeys(dataset_names))
-            method_steps = [
-                item
-                for item in ((plan or {}).get("method_plan") or [])
-                if isinstance(item, dict) and str(item.get("step_id") or "")
-            ] if isinstance(plan, dict) else []
+            binding_active = step_binding is not None and bool(getattr(step_binding, "ok", False))
+            if binding_active:
+                plan_id = str(getattr(step_binding, "plan_id", "") or "")
+                step_id = str(getattr(step_binding, "step_id", "") or "")
+                claim_key = str(getattr(step_binding, "claim_key", "") or "")
+                requirement_ids = [
+                    str(item)
+                    for item in (getattr(step_binding, "requirement_ids", ()) or ())
+                    if str(item)
+                ]
+                binding_error_type = ""
+                binding_candidate_step_ids: list[str] = []
+            else:
+                plan_id = ""
+                step_id = ""
+                claim_key = ""
+                requirement_ids = []
+                if step_binding is not None:
+                    binding_error_type = str(getattr(step_binding, "error_type", "") or "")
+                    binding_candidate_step_ids = [
+                        str(item)
+                        for item in (getattr(step_binding, "candidate_step_ids", ()) or ())
+                        if str(item)
+                    ]
+                else:
+                    binding_error_type = "analysis_step_not_bound"
+                    binding_candidate_step_ids = []
             dataset_versions = []
             for dataset_name in dataset_names:
                 info = self.context.workspace.get_active_version_info(dataset_name)
@@ -1656,6 +1728,11 @@ class AgentLoop:
                     dataset_versions.append(str(info["dataset_id"]))
             definition = registry.get(tc.name)
             capability = getattr(definition, "capability", None)
+            method_steps = [
+                item
+                for item in ((plan or {}).get("method_plan") or [])
+                if isinstance(item, dict) and str(item.get("step_id") or "")
+            ] if isinstance(plan, dict) else []
             current_step = next((
                 item
                 for item in method_steps
@@ -1679,8 +1756,22 @@ class AgentLoop:
                     capability_id=str(getattr(capability, "capability_id", "") or ""),
                     evidence_fields=list(getattr(capability, "evidence_fields", []) or []),
                 )
+                ref["claim_key"] = claim_key
+                ref["requirement_ids"] = requirement_ids
+                ref["binding_error_type"] = binding_error_type
+                if binding_candidate_step_ids:
+                    ref["binding_candidate_step_ids"] = binding_candidate_step_ids
                 if state is not None:
                     state.upsert_computation_ref(ref)
+                    state.append_turn_diagnostic({
+                        "event": "tool_binding",
+                        "tool_call_id": tc.id,
+                        "tool_name": tc.name,
+                        "ok": binding_active,
+                        "plan_id": plan_id,
+                        "step_id": step_id,
+                        "error_type": binding_error_type,
+                    })
                     state.save()
         except Exception as exc:
             logger.warning(
@@ -2891,7 +2982,7 @@ class AgentLoop:
                 continue
 
             duration_ms = int((time.monotonic() - t0) * 1000)
-            tool_msg_content = self._compact_tool_output(tool_result, tc)
+            tool_msg_content = self._compact_tool_output(tool_result, tc, self._bind_tool_call(tc))
             tool_failed = self._tool_content_is_error(tool_msg_content)
 
             if tool_failed:
@@ -3424,7 +3515,7 @@ class AgentLoop:
             })
             return None
 
-        tool_msg_content = self._compact_tool_output(tool_result, tc)
+        tool_msg_content = self._compact_tool_output(tool_result, tc, self._bind_tool_call(tc))
         tool_failed = self._tool_content_is_error(tool_msg_content)
 
         if tool_failed:
@@ -3483,6 +3574,11 @@ class AgentLoop:
                 guard_errors[tc.id] = scope_error
             guarded_contexts[tc.id] = copy_context()
 
+        # Pre-compute deterministic bindings so the parallel workers can pass
+        # the canonical ``StepBindingResult`` into compaction without each
+        # worker touching ``state.analysis_plan`` concurrently.
+        bindings = {tc.id: self._bind_tool_call(tc) for tc in tool_calls}
+
         def _run_tool(tc):
             try:
                 scope_error = guard_errors.get(tc.id, "")
@@ -3501,7 +3597,9 @@ class AgentLoop:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                tool_msg_content = self._compact_tool_output(tool_result, tc)
+                tool_msg_content = self._compact_tool_output(
+                    tool_result, tc, bindings.get(tc.id)
+                )
                 tool_failed = self._tool_content_is_error(tool_msg_content)
 
                 if tool_failed:

@@ -70,6 +70,10 @@ def computation_env(tmp_path, monkeypatch):
                 "confidence_interval",
             ],
             "required_claim_keys": ["group_revenue_difference"],
+            # Declares the tool capability the step binds to so the
+            # server-owned execution envelope can deterministically bind
+            # ``test_group_comparison`` calls to this step.
+            "required_capability": "analysis.test_group_comparison",
         }],
         "visualization_strategy": "none",
     })
@@ -294,7 +298,10 @@ def test_comparison_requirements_are_satisfied_by_bound_server_fields(computatio
     current = computation_env["state"].analysis_plan
     step = dict(current["method_plan"][0])
     step.update({
-        "required_capability": "analysis.group_compare",
+        # Keep the capability the binder matches; the test exercises the
+        # additional claim_type/sampling_structure attributes, not capability
+        # remapping.
+        "required_capability": "analysis.test_group_comparison",
         "claim_type": "inferential",
         "sampling_structure": "independent_groups",
     })
@@ -816,6 +823,12 @@ def test_structured_checked_trusts_only_capability_declared_fields(computation_e
     )
     monkeypatch.setitem(registry._tools, definition.name, definition)
     monkeypatch.setitem(registry._capabilities, definition.name, definition.capability)
+    # Re-bind the plan step to the partially-declared capability so the
+    # server-owned binder can attach this tool's computation to the step.
+    current = computation_env["state"].analysis_plan
+    step = dict(current["method_plan"][0])
+    step["required_capability"] = "analysis.partially_declared"
+    computation_env["state"].set_analysis_plan({**current, "method_plan": [step]})
     ref = _execute_tool(
         computation_env,
         tool_call_id="call_partial",
@@ -1136,6 +1149,9 @@ def test_model_authored_correlation_cannot_satisfy_canonical_requirement(computa
             "expected_output": "Bound correlation evidence",
             "evidence_requirements": ["correlation"],
             "required_claim_keys": ["group_revenue_difference"],
+            # Bind to the fixture tool's capability so the server-owned
+            # envelope can attach this tool's computation to the step.
+            "required_capability": "analysis.test_group_comparison",
         }],
         "visualization_strategy": "none",
     })
@@ -1438,6 +1454,9 @@ def test_model_authored_unknown_requirement_field_cannot_satisfy_plan(computatio
             "expected_output": "Bound revenue evidence",
             "evidence_requirements": ["revenue"],
             "required_claim_keys": ["group_revenue_difference"],
+            # Bind to the fixture tool's capability so the server-owned
+            # envelope can attach this tool's computation to the step.
+            "required_capability": "analysis.test_group_comparison",
         }],
         "visualization_strategy": "none",
     })
@@ -1648,6 +1667,12 @@ def test_supported_native_statistic_is_independently_recomputed_from_exact_versi
     )
     monkeypatch.setitem(registry._tools, definition.name, definition)
     monkeypatch.setitem(registry._capabilities, definition.name, definition.capability)
+    # Re-bind the plan step to the recomputable capability so the
+    # server-owned envelope can attach this tool's computation to the step.
+    current = computation_env["state"].analysis_plan
+    step = dict(current["method_plan"][0])
+    step["required_capability"] = "analysis.group_mean_difference"
+    computation_env["state"].set_analysis_plan({**current, "method_plan": [step]})
     ref = _execute_tool(
         computation_env,
         tool_call_id="call_recomputed",

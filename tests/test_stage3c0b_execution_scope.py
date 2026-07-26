@@ -720,3 +720,205 @@ def test_snapshot_tool_guard_is_pure_and_does_not_resolve_manager_or_workspace(m
     )
 
     assert result.allowed is True
+
+
+def test_substantive_tool_call_binds_to_plan_step_before_registry_execution(tmp_path, monkeypatch):
+    """A substantive analytical tool call binds to its plan step, and the
+    resulting computation ref carries the bound plan/step identity + claim
+    key sourced ONLY from the binding (not from workspace scope)."""
+
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.eda as eda  # noqa: F401  -- ensures correlation_analysis is registered
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan_record = manager.create_plan(
+        session_id="s1",
+        project_name="",
+        goal="test binding",
+        source="analysis_plan",
+    )
+    task = manager.create(
+        "Correlate",
+        session_id="s1",
+        project_name="",
+        plan_id=plan_record["id"],
+        plan_version=plan_record["version"],
+        analysis_plan_id="plan_bound_step",
+        step_id="step_correlate",
+        dataset_inputs=["factors"],
+        dataset_contract_ids=["duc_factors_v1"],
+        combination_mode="single",
+    )
+    manager.update(task["id"], status="in_progress")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.dataset_contracts = [{"id": "duc_factors_v1", "dataset": "factors"}]
+    envelope_plan = {
+        "id": "plan_bound_step",
+        "contract_version": "analysis_plan.v1",
+        "review_status": "executable",
+        "goal": "test binding",
+        "analysis_requirements": {
+            "step_correlate": [
+                {"id": "req_step_correlate_correlation", "name": "correlation"}
+            ]
+        },
+        "method_plan": [
+            {
+                "step_id": "step_correlate",
+                "plan_id": "plan_bound_step",
+                "goal": "correlate",
+                "node_type": "analysis",
+                "required_capability": "analysis.correlation",
+                "expected_output": "correlation summary",
+                "evidence_requirements": ["correlation"],
+                "dataset_inputs": ["factors"],
+                "combination_mode": "independent",
+                "requirement_ids": ["req_step_correlate_correlation"],
+            }
+        ],
+    }
+    state.analysis_plan = envelope_plan
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    ctx.workspace.add("factors", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
+    ctx.analysis_state = state
+    monkeypatch.setattr(
+        registry,
+        "execute",
+        lambda name, params: ToolResult(summary=json.dumps({"correlation": 0.9})),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context = ctx
+    tc = ToolCall(id="tc_correlate", name="correlation_analysis", arguments={"name": "factors"})
+
+    cap = registry.capability_for("correlation_analysis")
+    assert cap and cap.get("capability_id") == "analysis.correlation"
+    binding = loop._bind_tool_call(tc)
+
+    assert binding is not None
+    assert binding.ok is True
+    assert binding.plan_id == "plan_bound_step"
+    assert binding.step_id == "step_correlate"
+    assert binding.claim_key
+    assert "req_step_correlate_correlation" in binding.requirement_ids
+
+    loop._execute_single_tool(tc, [tc], 0)
+
+    ref = next(r for r in state.computation_refs if r.get("tool_call_id") == "tc_correlate")
+    assert ref["plan_id"] == "plan_bound_step"
+    assert ref["step_id"] == "step_correlate"
+    assert ref["claim_key"] == binding.claim_key
+    assert ref["requirement_ids"] == ["req_step_correlate_correlation"]
+    assert ref["binding_error_type"] == ""
+    tool_diag = next(
+        item for item in state.turn_diagnostics
+        if item.get("event") == "tool_binding" and item.get("tool_call_id") == "tc_correlate"
+    )
+    assert tool_diag["ok"] is True
+    assert tool_diag["step_id"] == "step_correlate"
+
+
+def test_unbound_substantive_call_persists_computation_ref_with_empty_identity(tmp_path, monkeypatch):
+    """A substantive call that cannot be bound still persists a computation ref,
+    but with EMPTY plan/step identity and the structured diagnostic."""
+
+    import data_agent.session.task_manager as task_manager_module
+    import data_agent.tools.eda as eda  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan_record = manager.create_plan(
+        session_id="s1",
+        project_name="",
+        goal="no match",
+        source="analysis_plan",
+    )
+    task = manager.create(
+        "Orphan correlate",
+        session_id="s1",
+        project_name="",
+        plan_id=plan_record["id"],
+        plan_version=plan_record["version"],
+        analysis_plan_id="plan_no_match",
+        step_id="step_unrelated",
+        dataset_inputs=["factors"],
+        dataset_contract_ids=["duc_factors_v1"],
+        combination_mode="single",
+    )
+    manager.update(task["id"], status="in_progress")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+
+    state = AnalysisSessionState(session_id="s1", data_state="data_loaded")
+    state.analysis_plan = {
+        "id": "plan_no_match",
+        "contract_version": "analysis_plan.v1",
+        "review_status": "executable",
+        "goal": "no correlation step",
+        "analysis_requirements": {},
+        "method_plan": [
+            {
+                "step_id": "step_unrelated",
+                "plan_id": "plan_no_match",
+                "goal": "different analysis",
+                "node_type": "analysis",
+                "required_capability": "data.describe",
+                "expected_output": "summary",
+                "evidence_requirements": ["schema"],
+                "dataset_inputs": ["factors"],
+                "combination_mode": "independent",
+                "requirement_ids": [],
+            }
+        ],
+    }
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    ctx.workspace.add("factors", pd.DataFrame({"x": [1, 2], "y": [3, 4]}))
+    ctx.analysis_state = state
+    monkeypatch.setattr(
+        registry,
+        "execute",
+        lambda name, params: ToolResult(summary="executed"),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context = ctx
+    tc = ToolCall(id="tc_orphan", name="correlation_analysis", arguments={"name": "factors"})
+
+    binding = loop._bind_tool_call(tc)
+    assert binding is not None
+    assert binding.ok is False
+    assert binding.error_type == "analysis_step_not_found"
+
+    loop._execute_single_tool(tc, [tc], 0)
+
+    ref = next(r for r in state.computation_refs if r.get("tool_call_id") == "tc_orphan")
+    assert ref["plan_id"] == ""
+    assert ref["step_id"] == ""
+    assert ref["claim_key"] == ""
+    assert ref["requirement_ids"] == []
+    assert ref["binding_error_type"] == "analysis_step_not_found"
+
+
+def test_non_substantive_call_skips_binding(monkeypatch):
+    """Capability-less tools (e.g. workflow helpers) never participate in binding."""
+
+    state = AnalysisSessionState(session_id="s1")
+    state.analysis_plan = {
+        "id": "plan_anything",
+        "method_plan": [{"step_id": "step_1", "required_capability": "data.list"}],
+    }
+    ctx = AgentContext(session_id="s1", workspace=Workspace())
+    ctx.analysis_state = state
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context = ctx
+
+    _install_tool(
+        monkeypatch,
+        "no_capability_helper",
+        lambda: "ok",
+        {"type": "object", "properties": {}},
+        None,
+    )
+    tc = ToolCall(id="tc_helper", name="no_capability_helper", arguments={})
+
+    binding = loop._bind_tool_call(tc)
+
+    assert binding is None

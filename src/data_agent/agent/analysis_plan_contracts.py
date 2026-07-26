@@ -378,6 +378,19 @@ def _validate_executable_plan(
                     str(exc),
                     step_id=step_id,
                 )
+        # Project compiled requirement IDs onto each step so the executable
+        # plan is self-describing for binding/audit. The requirements dict is
+        # the canonical source; the step field is a derived projection.
+        grouped_for_step = normalized.get("analysis_requirements") or {}
+        step["requirement_ids"] = [
+            requirement["id"]
+            for requirement in (
+                grouped_for_step.get(step_id, [])
+                if isinstance(grouped_for_step, dict)
+                else []
+            )
+            if isinstance(requirement, dict) and requirement.get("id")
+        ]
         normalized_steps.append(step)
 
     normalized["method_plan"] = normalized_steps
