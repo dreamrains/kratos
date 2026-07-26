@@ -35,6 +35,7 @@ def test_method_playbooks_are_complete():
         "metric_overview",
         "trend_period_comparison",
         "driver_decomposition",
+        "factor_relationship",
         "funnel_conversion",
         "retention_lifecycle",
         "evaluation_causal",

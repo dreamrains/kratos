@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import warnings
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -588,3 +590,418 @@ def shap_analysis(name: str, target_col: str) -> str:
         return json.dumps({"error": "SHAP 未安装。运行: pip install shap"}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": f"SHAP 分析失败: {e}"}, ensure_ascii=False)
+
+
+_FACTOR_CATEGORICAL_CARDINALITY_CEILING = 12
+_FACTOR_MAXIMUM_HAC_LAGS = 4
+
+
+def _hac_maxlags(n: int) -> int:
+    """Documented HAC lag rule for the factor relationship tool.
+
+    We use ``min(4, floor(n / 100))`` with a minimum of one lag whenever the
+    sample is large enough to support HAC at all. The 4-lag ceiling keeps the
+    bandwidth tractable for the daily/weekly panels this tool is typically
+    applied to; users with stronger serial dependence should disclose it as a
+    limitation rather than silently widen the kernel.
+    """
+
+    if n < 30:
+        return 1
+    return max(1, min(_FACTOR_MAXIMUM_HAC_LAGS, n // 100))
+
+
+def _safe_float(value: Any, ndigits: int = 6) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return round(f, ndigits)
+
+
+def _encode_factor_design_matrix(
+    df: pd.DataFrame,
+    target_col: str,
+    feature_names: list[str],
+) -> tuple[pd.DataFrame, dict[str, Any], list[str], list[str]]:
+    """One-hot encode low-cardinality categoricals and collect numeric features.
+
+    Returns the design DataFrame (without the target), an encoding map
+    describing how each categorical was expanded, the list of dropped feature
+    names (and why), and the list of final design columns.
+    """
+
+    design_columns: list[pd.Series] = []
+    encoding_map: dict[str, Any] = {}
+    excluded: list[str] = []
+
+    for feature in feature_names:
+        if feature not in df.columns:
+            excluded.append(feature)
+            continue
+        col = df[feature]
+        if pd.api.types.is_numeric_dtype(col):
+            design_columns.append(col.astype(float))
+            continue
+        # Categorical (object/category/etc.) — only one-hot encode when the
+        # cardinality is small enough to keep the design identifiable.
+        distinct = col.dropna().astype(str).unique()
+        if len(distinct) < 2:
+            excluded.append(feature)
+            continue
+        if len(distinct) > _FACTOR_CATEGORICAL_CARDINALITY_CEILING:
+            excluded.append(feature)
+            continue
+        dummies = pd.get_dummies(col.astype(str), prefix=feature, drop_first=True)
+        for dcol in dummies.columns:
+            design_columns.append(dummies.astype(float))
+        encoding_map[feature] = {
+            "levels": list(distinct),
+            "encoding": "one_hot_drop_first",
+            "design_columns": list(dummies.columns),
+            "reference_level": sorted(set(distinct) - {str(c).split("_", 1)[-1] for c in dummies.columns}),
+        }
+
+    if not design_columns:
+        return pd.DataFrame(), encoding_map, excluded, []
+
+    design = pd.concat(design_columns, axis=1)
+    return design, encoding_map, excluded, list(design.columns)
+
+
+def _fit_factor_relationship(
+    *,
+    name: str,
+    target_col: str,
+    features: str,
+    time_col: str,
+    alpha: float,
+    correction: str,
+) -> dict[str, Any]:
+    df, err = get_df(name)
+    if err:
+        return {"error": err}
+
+    if target_col not in df.columns:
+        return {
+            "error": f"目标列 '{target_col}' 不存在",
+            "available_columns": list(df.columns),
+        }
+    if not pd.api.types.is_numeric_dtype(df[target_col]):
+        return {
+            "error": (
+                f"目标列 '{target_col}' 必须是数值类型才能拟合 OLS；"
+                "对分类目标请使用分类建模工具。"
+            )
+        }
+
+    requested_features = [c.strip() for c in (features or "").split(",") if c.strip()]
+    if not requested_features:
+        numeric_features = [
+            c for c in df.select_dtypes(include=[np.number]).columns
+            if c != target_col
+        ]
+        requested_features = numeric_features
+    if not requested_features:
+        return {"error": "没有可用的特征列；请显式传入 features 或加载包含数值列的数据集。"}
+
+    required_columns = [target_col] + [c for c in requested_features if c in df.columns]
+    if time_col and time_col in df.columns:
+        required_columns.append(time_col)
+    df_required = df[required_columns].dropna()
+    effective_sample_size = int(len(df_required))
+
+    design, encoding_map, excluded, design_columns = _encode_factor_design_matrix(
+        df_required, target_col, requested_features
+    )
+    if design.empty or len(design_columns) == 0:
+        return {
+            "error": "设计矩阵为空：所有特征均被排除（类型不匹配或低基数类别不足）。",
+            "effective_sample_size": effective_sample_size,
+            "excluded_features": excluded,
+        }
+
+    design = design.loc[df_required.index]
+    y = df_required[target_col].astype(float).loc[df_required.index]
+
+    if effective_sample_size < (len(design_columns) + 2):
+        return {
+            "allowed_claim_class": "inferential_associations",
+            "effective_sample_size": effective_sample_size,
+            "excluded_features": excluded,
+            "limitations": [
+                "有效样本量不足以稳定估计所请求的特征空间。",
+                "请减少特征数量、合并类别或补充样本后再尝试。",
+            ],
+            "diagnostics": {"status": "insufficient_sample_for_design"},
+        }
+
+    import statsmodels.api as sm
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    from statsmodels.stats.multitest import multipletests
+
+    X = sm.add_constant(design.astype(float), has_constant="add")
+
+    use_hac = bool(time_col) and time_col in df_required.columns
+    if use_hac:
+        maxlags = _hac_maxlags(effective_sample_size)
+        model = sm.OLS(y, X, hasconst=True)
+        try:
+            fit = model.fit(cov_type="HAC", cov_kwds={"maxlags": maxlags})
+            covariance_label = f"HAC(maxlags={maxlags})"
+            covariance_method = "HAC"
+        except Exception as exc:
+            return {
+                "error": f"HAC 协方差估计失败：{exc}",
+                "allowed_claim_class": "inferential_associations",
+            }
+    else:
+        model = sm.OLS(y, X, hasconst=True)
+        try:
+            fit = model.fit(cov_type="HC3")
+            covariance_label = "HC3 robust"
+            covariance_method = "HC3"
+        except Exception as exc:
+            return {
+                "error": f"HC3 协方差估计失败：{exc}",
+                "allowed_claim_class": "inferential_associations",
+            }
+
+    # Confidence intervals (robust).
+    ci_df = fit.conf_int(alpha=alpha)
+    raw_p_values = fit.pvalues
+    coefficients: list[dict[str, Any]] = []
+    coefficient_names = list(fit.params.index)
+
+    # Multiplicity correction on FEATURE coefficient p-values only.
+    # The intercept ("const") is a nuisance location parameter, not an
+    # effect being tested for significance, so it MUST be excluded from
+    # the correction input: including it would inflate the size of the
+    # correction family and overstate the significance of the feature
+    # coefficients. The intercept's adjusted_p_value is reported as None.
+    correction_method = "none" if correction == "none" else correction
+    coefficient_p = raw_p_values.astype(float)
+    is_intercept_mask = np.array(
+        [coef_name == "const" for coef_name in coefficient_names], dtype=bool
+    )
+    feature_p_values = coefficient_p.values[~is_intercept_mask]
+    if correction == "none":
+        feature_adjusted = feature_p_values
+    else:
+        try:
+            _, feature_adjusted, _, _ = multipletests(
+                feature_p_values, method=correction
+            )
+        except Exception:
+            correction_method = "none (fallback)"
+            feature_adjusted = feature_p_values
+
+    # Realign the corrected feature p-values to the original coefficient
+    # order; the intercept keeps adjusted_p_value=None because it was not
+    # part of the correction family.
+    feature_adjusted_iter = iter(feature_adjusted)
+    for index, coef_name in enumerate(coefficient_names):
+        estimate = _safe_float(fit.params.iloc[index])
+        std_err = _safe_float(fit.bse.iloc[index])
+        raw_p = _safe_float(coefficient_p.iloc[index])
+        is_intercept = bool(is_intercept_mask[index])
+        adj_p = None if is_intercept else _safe_float(next(feature_adjusted_iter))
+        ci_lower = _safe_float(ci_df.iloc[index, 0])
+        ci_upper = _safe_float(ci_df.iloc[index, 1])
+        coefficients.append({
+            "term": str(coef_name),
+            "estimate": estimate,
+            "std_error": std_err,
+            "confidence_interval": {"level": 1 - alpha, "lower": ci_lower, "upper": ci_upper},
+            "p_value": None if is_intercept else raw_p,
+            "adjusted_p_value": adj_p,
+            "is_intercept": is_intercept,
+        })
+
+    # Collinearity diagnostics — VIF is undefined when the design has only one
+    # predictor (besides the constant). Report an exact failure instead of a
+    # NaN silent-pass.
+    feature_only = design.copy()
+    collinearity: dict[str, Any]
+    if feature_only.shape[1] < 2:
+        collinearity = {
+            "status": "not_estimable",
+            "reason": "VIF requires at least two predictors; with a single predictor the design is exactly identified.",
+        }
+    else:
+        vif_values = []
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                for column_index, column_name in enumerate(feature_only.columns):
+                    vif_value = variance_inflation_factor(feature_only.values, column_index)
+                    vif_values.append({
+                        "term": str(column_name),
+                        "variance_inflation_factor": _safe_float(vif_value),
+                    })
+            collinearity = {
+                "status": "assessed",
+                "method": "variance_inflation_factor",
+                "terms": vif_values,
+                "high_vif_terms": [
+                    item["term"] for item in vif_values
+                    if item["variance_inflation_factor"] is not None
+                    and item["variance_inflation_factor"] >= 10
+                ],
+            }
+        except Exception as exc:
+            collinearity = {
+                "status": "exact_failure",
+                "reason": (
+                    "VIF computation failed because the design matrix is "
+                    f"singular: {exc}"
+                ),
+            }
+
+    # Residual / time-dependence diagnostics.
+    residuals = fit.resid
+    time_dependence: dict[str, Any]
+    if use_hac:
+        try:
+            # Durbin-Watson is a quick residual autocorrelation summary;
+            # reported alongside the HAC covariance so users see WHY HAC
+            # was chosen, not just that it was.
+            dw = float(sm.stats.stattools.durbin_watson(residuals))
+            time_dependence = {
+                "ordered_time_column": time_col,
+                "durbin_watson": round(dw, 6),
+                "hac_maxlags": maxlags,
+                "rule": "min(4, floor(n/100)) with a minimum of 1 lag",
+                "covariance": covariance_label,
+                "status": "assessed",
+                "reason": (
+                    "HAC standard errors are used because an ordered time "
+                    "column was supplied; residual autocorrelation is "
+                    "summarized by Durbin-Watson."
+                ),
+            }
+        except Exception as exc:
+            time_dependence = {
+                "ordered_time_column": time_col,
+                "status": "not_estimable",
+                "reason": f"Durbin-Watson diagnostic failed: {exc}",
+                "covariance": covariance_label,
+            }
+    else:
+        time_dependence = {
+            "ordered_time_column": None,
+            "status": "not_applicable",
+            "reason": (
+                "No ordered time column supplied. HC3 robust covariance is "
+                "used; serial dependence is not assessed. Supply time_col "
+                "to enable HAC and residual autocorrelation diagnostics."
+            ),
+            "covariance": covariance_label,
+        }
+
+    limitations = [
+        "OLS 系数描述的是在控制其他变量的条件下的关联强度，不能直接解释为因果效应。",
+        f"协方差方法：{covariance_label}。",
+        f"多重比较校正：{correction_method}。",
+        "若残差存在未建模的非线性或交互项，系数解释需要额外假设。",
+    ]
+    if use_hac:
+        limitations.append(
+            f"HAC 带宽使用 {maxlags} 阶（规则：min(4, floor(n/100))）。"
+            "强自相关场景请考虑更专门的时序模型。"
+        )
+    if excluded:
+        limitations.append(
+            f"被排除的特征：{excluded}（类型不匹配或类别基数过高）。"
+        )
+
+    r_squared = _safe_float(fit.rsquared)
+    adj_r_squared = _safe_float(fit.rsquared_adj)
+    f_p_value = _safe_float(fit.f_pvalue)
+
+    assumptions_block = [
+        {
+            "name": "linearity",
+            "status": "assumed",
+            "reason": "OLS estimates a linear conditional mean; non-linearity should be checked separately.",
+        },
+        {
+            "name": "method_appropriate_for_design",
+            "status": "passed",
+            "reason": (
+                "HC3/HAC robust covariance was selected based on the "
+                f"{'ordered time column' if use_hac else 'cross-sectional design'}"
+                "."
+            ),
+        },
+    ]
+
+    return {
+        "method": "OLS with robust covariance",
+        "covariance": covariance_label,
+        "covariance_method": covariance_method,
+        "target_col": target_col,
+        "features_requested": requested_features,
+        "features_included": [c for c in requested_features if c not in excluded],
+        "design_columns": design_columns,
+        "encoding_map": encoding_map,
+        "excluded_features": excluded,
+        "effective_sample_size": effective_sample_size,
+        "coefficients": coefficients,
+        "r_squared": r_squared,
+        "adjusted_r_squared": adj_r_squared,
+        "f_p_value": f_p_value,
+        "collinearity": collinearity,
+        "time_dependence": time_dependence,
+        "correction_method": correction_method,
+        "alpha": float(alpha),
+        "assumptions": assumptions_block,
+        "limitations": limitations,
+        "allowed_claim_class": "inferential_associations",
+    }
+
+
+@registry.register(
+    name="factor_relationship_analysis",
+    description=(
+        "拟合多变量 OLS 模型识别与目标值存在显著关联的因素，"
+        "默认使用 HC3 稳健协方差；传入有序时间列时切换到 HAC。"
+        "提供系数估计、稳健标准误、置信区间、原始与多重校正后的 p 值、"
+        "VIF 共线性诊断、残差/时间依赖诊断，以及明确的 claim class。"
+        "适用场景：哪些因素显著影响目标值、相关因素的相对强度。"
+        "不适用场景：因果效应（请使用 causal_analysis）、纯预测排序（请使用 regression_analysis）。"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "目标数值列"},
+        "features": {"description": "候选特征列，逗号分隔；留空则使用所有数值列"},
+        "time_col": {"description": "可选：有序时间列，传入后使用 HAC 协方差"},
+        "alpha": {"description": "置信区间与显著性水平，默认 0.05"},
+        "correction": {
+            "description": "p 值多重比较校正方法",
+            "enum": ["fdr_bh", "holm", "none"],
+        },
+    },
+)
+def factor_relationship_analysis(
+    name: str,
+    target_col: str,
+    features: str = "",
+    time_col: str = "",
+    alpha: float = 0.05,
+    correction: Literal["fdr_bh", "holm", "none"] = "fdr_bh",
+) -> str:
+    return json.dumps(
+        _fit_factor_relationship(
+            name=name,
+            target_col=target_col,
+            features=features,
+            time_col=time_col,
+            alpha=alpha,
+            correction=correction,
+        ),
+        ensure_ascii=False,
+        indent=2,
+    )

@@ -80,7 +80,13 @@ def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
         )
     )
     assert {"活跃用户", "新增用户", "付费人数", "内购收入"} <= set(corr["columns_analyzed"])
-    assert "high_correlations" in corr
+    # Task 7: correlation_analysis now emits truthful pairwise results with
+    # effective N and p-values. The shallow ``high_correlations`` shortcut was
+    # replaced by ``pairs`` so downstream evidence cannot overclaim.
+    assert "pairs" in corr
+    assert corr["allowed_claim_class"] == "exploratory_association"
+    sample_pair = corr["pairs"][0]
+    assert {"var1", "var2", "correlation", "effective_sample_size", "p_value"} <= set(sample_pair)
 
 
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")

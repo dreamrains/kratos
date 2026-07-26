@@ -86,6 +86,20 @@ _CAPABILITY_REQUIREMENT_INPUTS = {
         "sample_adequacy",
         "identification_status",
     ),
+    "analysis.factor_relationship": (
+        "grain_definition",
+        "target_definition",
+        "missingness_assessment",
+        "effective_sample_size",
+        "univariate_association",
+        "multivariable_adjustment",
+        "multiplicity_control",
+        "collinearity_assessment",
+        "stability_or_validation",
+        "time_dependence_assessment",
+        "effect_size_or_predictive_contribution",
+        "limitations_and_alternatives",
+    ),
 }
 _REQUIREMENT_CAPABILITY_HINTS = {
     "assumptions": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
@@ -295,6 +309,73 @@ _register_definitions(
     category="inference",
     unmet_action="block_claim",
 )
+
+# Factor-relationship method inputs (Task 7). These match the canonical
+# six-step factor_relationship playbook and the analysis.factor_relationship
+# capability inputs. They are explicitly categorized so the compiler can
+# route each input to the right method step.
+_factor_relationship_data_inputs = (
+    "grain_definition",
+    "missingness_assessment",
+)
+_register_definitions(
+    _factor_relationship_data_inputs,
+    category="data",
+    unmet_action="block_analysis",
+)
+_register_definitions(
+    (
+        "univariate_association",
+        "multivariable_adjustment",
+        "multiplicity_control",
+        "effect_size_or_predictive_contribution",
+    ),
+    category="inference",
+    unmet_action="block_claim",
+)
+_register_definitions(
+    (
+        "collinearity_assessment",
+        "stability_or_validation",
+        "time_dependence_assessment",
+    ),
+    category="assumption",
+    unmet_action="downgrade_claim",
+)
+_register_definitions(
+    ("limitations_and_alternatives",),
+    category="limitation",
+    unmet_action="disclose",
+)
+
+# Inferential factor-relationship coefficients require an explicit method-fit
+# assumption check so a malformed design cannot publish significance. Each
+# inference-category factor input inherits this guard through the explicit
+# definitions below.
+_REQUIREMENT_DEFINITIONS["univariate_association"] = {
+    "category": "inference",
+    "required_evidence_fields": ["univariate_association"],
+    "assumption_checks": ["method_appropriate_for_design"],
+    "unmet_action": "block_claim",
+}
+_REQUIREMENT_DEFINITIONS["multivariable_adjustment"] = {
+    "category": "inference",
+    "required_evidence_fields": ["multivariable_adjustment"],
+    "assumption_checks": ["method_appropriate_for_design"],
+    "unmet_action": "block_claim",
+}
+_REQUIREMENT_DEFINITIONS["multiplicity_control"] = {
+    "category": "inference",
+    "required_evidence_fields": ["multiplicity_control"],
+    "assumption_checks": ["method_appropriate_for_design"],
+    "unmet_action": "block_claim",
+}
+_REQUIREMENT_DEFINITIONS["effect_size_or_predictive_contribution"] = {
+    "category": "inference",
+    "required_evidence_fields": ["effect_size_or_predictive_contribution"],
+    "assumption_checks": ["method_appropriate_for_design"],
+    "unmet_action": "block_claim",
+}
 
 
 def _text(value: Any) -> str:

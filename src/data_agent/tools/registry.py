@@ -303,7 +303,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
     "stats": {
         "ab_test", "causal_analysis", "attribution_analysis",
-        "contribute_decomposition",
+        "contribute_decomposition", "factor_relationship_analysis",
     },
     "report": {
         "export_conversation",
@@ -388,7 +388,18 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "top_n": _cap("analysis.top_n", "decomposition", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
     "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
-    "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
+    "correlation_analysis": _cap(
+        "analysis.correlation",
+        "relationship",
+        ["drivers", "relationship"],
+        evidence_fields=[
+            "pairs.correlation",
+            "pairs.effective_sample_size",
+            "pairs.p_value",
+            "allowed_claim_class",
+        ],
+        fallback_tools=["factor_relationship_analysis"],
+    ),
     "ab_test": _cap(
         "analysis.experiment",
         "experiment",
@@ -402,9 +413,50 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
         requires_confirmation=True,
     ),
     "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
-    "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
+    "attribution_analysis": _cap(
+        "analysis.attribution",
+        "attribution",
+        ["attribution", "diagnosis"],
+        evidence_fields=[
+            "top_drivers",
+            "effective_sample_size",
+            "allowed_claim_class",
+            "limitations",
+        ],
+        fallback_tools=["factor_relationship_analysis"],
+    ),
     "forecast": _cap("analysis.forecast", "prediction", ["prediction", "monitoring"], evidence_fields=["forecast", "interval"], risk_level="medium", requires_confirmation=True),
-    "regression_analysis": _cap("analysis.regression", "modeling", ["drivers", "prediction"], evidence_fields=["coefficients", "fit"]),
+    "regression_analysis": _cap(
+        "analysis.regression",
+        "modeling",
+        ["drivers", "prediction"],
+        evidence_fields=[
+            "feature_importance",
+            "effective_sample_size",
+            "metrics.r2",
+            "allowed_claim_class",
+            "limitations",
+        ],
+        fallback_tools=["factor_relationship_analysis"],
+    ),
+    "factor_relationship_analysis": _cap(
+        "analysis.factor_relationship",
+        "relationship",
+        ["drivers", "relationship"],
+        evidence_fields=[
+            "effective_sample_size",
+            "coefficients.estimate",
+            "coefficients.std_error",
+            "coefficients.confidence_interval",
+            "coefficients.p_value",
+            "coefficients.adjusted_p_value",
+            "collinearity",
+            "time_dependence",
+            "allowed_claim_class",
+            "limitations",
+        ],
+        fallback_tools=["regression_analysis"],
+    ),
     "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "features"], risk_level="medium", requires_confirmation=True),
     "run_python": _cap("fallback.python", "fallback", ["custom"], risk_level="medium"),
     "ask_user_question": _cap("interaction.confirmation", "confirmation", ["confirmation"], risk_level="low"),
@@ -421,6 +473,88 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "export_conversation": _cap("report.conversation_export", "report", ["export"], evidence_fields=["conversation"]),
     "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
 }
+
+
+def _resolve_dotted_path(payload: Mapping[str, Any], field: str) -> Any:
+    """Resolve a dotted evidence field path through nested mappings.
+
+    Each path segment must be present in a mapping at the previous level.
+    Returns the located value, or ``None`` if any segment is missing or the
+    traversal encounters a non-mapping before the path is consumed.
+    """
+
+    value: Any = payload
+    for segment in field.split("."):
+        if not isinstance(value, Mapping) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def _evidence_field_is_present(payload: Mapping[str, Any], field: str) -> bool:
+    """Return True when the dotted evidence field exists with a non-empty value.
+
+    A field path that traverses into a list (e.g. ``pairs.correlation``) is
+    considered present when at least one list record exposes the trailing key.
+    Numeric ``0``/``0.0`` and explicit ``None`` inside list records are
+    accepted as evidence; only structural absence or a fully-empty traversal
+    counts as missing.
+    """
+
+    segments = field.split(".")
+    if not segments:
+        return False
+
+    value: Any = payload
+    for index, segment in enumerate(segments):
+        if isinstance(value, Mapping):
+            if segment not in value:
+                return False
+            value = value[segment]
+        elif isinstance(value, list):
+            tail = ".".join(segments[index:])
+            return any(
+                isinstance(item, Mapping)
+                and _resolve_dotted_path(item, tail) is not None
+                for item in value
+            )
+        else:
+            return False
+    return value is not None
+
+
+def validate_capability_output(
+    capability: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+) -> list[str]:
+    """Return the dotted evidence fields declared by ``capability`` that are
+    not present in a successful tool ``payload``.
+
+    Capability metadata owns the evidence contract: every entry in
+    ``evidence_fields`` MUST be resolvable through a real payload, otherwise
+    the tool is advertising fields it does not produce. The resolver
+    traverses dotted paths through nested mappings and (for one level only)
+    list records, so declarations like ``pairs.effective_sample_size`` and
+    ``coefficients.confidence_interval`` validate against the structured
+    payloads emitted by the corresponding tools.
+
+    Returns the list of missing field names in declaration order. An empty
+    list means every declared field is observable in the payload.
+    """
+
+    if not capability:
+        return []
+    raw_fields = capability.get("evidence_fields") if isinstance(capability, Mapping) else None
+    if not isinstance(raw_fields, list):
+        return []
+    missing: list[str] = []
+    for field in raw_fields:
+        if not isinstance(field, str) or not field:
+            continue
+        if not _evidence_field_is_present(payload, field):
+            missing.append(field)
+    return missing
+
 
 # Keywords that trigger group activation
 _GROUP_KEYWORDS: dict[str, list[str]] = {

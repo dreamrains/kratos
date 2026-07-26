@@ -50,6 +50,15 @@ class PlaybookSelection:
     requires_confirmation: bool = False
 
     @property
+    def primary_id(self) -> str:
+        """Short alias for :attr:`primary_playbook_id`.
+
+        Tests and route builders use this compact name to assert which playbook
+        a prompt selected.
+        """
+        return self.primary_playbook_id
+
+    @property
     def analysis_spec(self) -> dict[str, Any] | None:
         """Deprecated read-only projection for callers migrating to analysis_plan."""
         return self.analysis_plan
@@ -251,6 +260,126 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         ],
         evidence=["metric delta", "driver contribution"],
         limitations=["descriptive decomposition is not causal proof"],
+    ),
+    "factor_relationship": _pb(
+        id="factor_relationship",
+        name="Factor Relationship",
+        description=(
+            "Identify which factors are statistically associated with a numeric "
+            "target, using pairwise screening followed by a multivariable "
+            "inferential model with multiplicity, collinearity, and "
+            "time-dependence diagnostics."
+        ),
+        question_types=["diagnostic"],
+        typical_user_goals=[
+            "find significant factors",
+            "identify drivers of a target metric",
+            "associate variables with an outcome",
+        ],
+        must_have=["numeric target", "one or more candidate feature columns"],
+        recommended=[
+            "ordered time column for dependence diagnostics",
+            "low-cardinality categoricals for one-hot encoding",
+            "missingness report for the target and features",
+        ],
+        optional=["pre-registered contrast", "domain-blocked confounders"],
+        minimum=(
+            "A numeric target and at least one candidate feature with enough "
+            "pairwise-complete observations to fit a multivariable model."
+        ),
+        method_plan=[
+            {
+                "step": "confirm grain, target definition, and missingness",
+                "analysis_code": "grain_and_missingness_checked",
+                "node_type": "data_check",
+                "required_capability": "data.profile",
+                "expected_output": "row grain, target definition, missingness report",
+                "evidence_requirements": [
+                    "grain_definition", "target_definition", "missingness_assessment",
+                ],
+            },
+            {
+                "step": "screen univariate associations with effective sample size",
+                "analysis_code": "univariate_relationship_checked",
+                "node_type": "analysis",
+                "required_capability": "analysis.correlation",
+                "expected_output": "pairwise associations with p-values and N",
+                "evidence_requirements": [
+                    "univariate_association", "effective_sample_size",
+                ],
+            },
+            {
+                "step": "fit multivariable model with robust covariance and multiplicity control",
+                "analysis_code": "multivariable_method_attempted",
+                "node_type": "analysis",
+                "required_capability": "analysis.factor_relationship",
+                "expected_output": "adjusted coefficients, CI, and p-values",
+                "evidence_requirements": [
+                    "multivariable_adjustment", "multiplicity_control",
+                    "collinearity_assessment",
+                ],
+            },
+            {
+                "step": "check stability and residual/time dependence",
+                "analysis_code": "stability_and_dependence_checked",
+                "node_type": "analysis",
+                "required_capability": "analysis.factor_relationship",
+                "expected_output": "residual and time-dependence diagnostics",
+                "evidence_requirements": [
+                    "stability_or_validation", "time_dependence_assessment",
+                ],
+            },
+            {
+                "step": "estimate effect size or predictive contribution",
+                "analysis_code": "effect_or_contribution_estimated",
+                "node_type": "analysis",
+                "required_capability": "analysis.regression",
+                "expected_output": "standardized effect or predictive importance",
+                "evidence_requirements": [
+                    "effect_size_or_predictive_contribution",
+                ],
+            },
+            {
+                "step": "prepare limitations and alternative explanations",
+                "analysis_code": "limitations_prepared",
+                "node_type": "evidence",
+                "required_capability": "artifact.evidence_record",
+                "expected_output": "bounded conclusion with explicit limitations",
+                "evidence_requirements": ["limitations_and_alternatives"],
+            },
+        ],
+        evidence=[
+            "univariate_association",
+            "multivariable_adjustment",
+            "effective_sample_size",
+            "collinearity_assessment",
+            "time_dependence_assessment",
+            "limitations_and_alternatives",
+        ],
+        limitations=[
+            "association is not causation",
+            "multicollinearity can mask individual factor effects",
+            "serial dependence can underestimate standard errors if ignored",
+        ],
+        chart_suggestions=["correlation_heatmap", "coefficient_forest_plot"],
+        statistical_requirements=[
+            "effective_sample_size",
+            "univariate_association",
+            "multivariable_adjustment",
+            "multiplicity_control",
+            "collinearity_assessment",
+            "stability_or_validation",
+            "time_dependence_assessment",
+            "effect_size_or_predictive_contribution",
+            "limitations_and_alternatives",
+        ],
+        output_sections=[
+            "core_conclusion",
+            "significant_factors",
+            "diagnostics",
+            "limitations",
+            "next_analysis",
+        ],
     ),
     "funnel_conversion": _pb(
         id="funnel_conversion",
@@ -600,14 +729,118 @@ def _method_confirmation_options() -> list[dict[str, str]]:
     ]
 
 
+# Playbook → maximum publishable claim class when no override applies.
+# Playbooks not listed here default to "descriptive" unless their steps raise
+# the claim class via inferential/causal/predictive markers.
+_PLAYBOOK_CLAIM_CLASS: dict[str, str] = {
+    "factor_relationship": "inferential_associations",
+    "effect_evaluation": "inferential_associations",
+    "evaluation_causal": "causal_effect",
+    "driver_decomposition": "descriptive_attribution",
+}
+
+
+_PREDICTIVE_CLAIM_MARKERS = (
+    "predict", "forecast", "预测", "预估", "模拟",
+)
+_CAUSAL_CLAIM_MARKERS = (
+    "causal", "causes", "因为", "导致", "因果",
+)
+
+
+def _maximum_claim_class_for(playbook_id: str, user_input: str) -> str:
+    """Bound the publishable claim class for a selected playbook.
+
+    Predictive wording caps the class at ``predictive_importance`` so a
+    factor question cannot upgrade into inferential significance. Explicit
+    causal wording is routed through the evaluation_causal playbook; when
+    it leaks into a factor-style prompt we still downgrade rather than
+    strengthen.
+    """
+
+    base = _PLAYBOOK_CLAIM_CLASS.get(playbook_id, "descriptive")
+    text = (user_input or "").lower()
+    if any(marker in text for marker in _PREDICTIVE_CLAIM_MARKERS):
+        return "predictive_importance"
+    if any(marker in text for marker in _CAUSAL_CLAIM_MARKERS) and base != "causal_effect":
+        return "association_only"
+    return base
+
+
+def build_plan(user_input: str, dataset: str | None = None) -> dict[str, Any]:
+    """Build a display-only analysis plan for a prompt and optional dataset.
+
+    This is the prompt→plan builder used by analysis-route tests and by the
+    route selector when a caller needs the deterministic six-step plan
+    associated with a question. It classifies intent, selects a playbook,
+    builds the plan (binding the dataset contract when supplied), and tags
+    the result with the ``maximum_claim_class`` enforced by the selected
+    playbook.
+
+    The returned plan is display-only — it is not the canonical executable
+    envelope materialized by the analysis-flow controller. Tests assert
+    ``method_plan`` step ``analysis_code`` values and the bounded claim
+    class; runtime consumers should call :func:`select_playbooks` plus the
+    controller's envelope materialization for executable plans.
+
+    ``method_plan`` is the selected playbook's canonical step template — it
+    intentionally excludes the ``supporting check`` steps that the full
+    selector stitches together for live execution. Those supporting steps
+    do not carry ``analysis_code`` identifiers and would otherwise dilute
+    the deterministic six-step contract tests rely on.
+    """
+
+    from data_agent.agent.intent import classify_intent
+
+    text = user_input or ""
+    has_dataset = bool(dataset and str(dataset).strip())
+    intent = classify_intent(text, data_loaded=has_dataset)
+    dataset_profile = (
+        f"- {dataset.strip()}: data loaded"
+        if has_dataset
+        else ""
+    )
+    selection = select_playbooks(
+        text,
+        intent=intent,
+        state=None,
+        dataset_profile=dataset_profile,
+    )
+    playbook = PLAYBOOKS[selection.primary_playbook_id]
+    # Always build the plan from the playbook's own template so callers see
+    # exactly the canonical step sequence for the selected method, without
+    # supporting-check noise that the selector appends for live execution.
+    plan = _build_analysis_plan(playbook, text, supporting=[])
+    plan = dict(plan)
+    plan["maximum_claim_class"] = _maximum_claim_class_for(
+        selection.primary_playbook_id, text
+    )
+    return plan
+
+
 def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -> bool:
     return any(item.get("playbook_id") == playbook_id for item in items)
 
 
 _HIGH_CONFIDENCE_RULES: list[tuple[list[str], str]] = [
-    (["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"], "funnel_conversion"),
     (["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"], "forecast_decision_simulation"),
+    # Driver decomposition wins when explicit period-change wording is present
+    # (下降/为什么/归因/decline/drop/why/driver/attribution). Factor wording is
+    # checked separately below so it cannot preempt a clear decline question.
     (["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"], "driver_decomposition"),
+    (
+        # Factor wording must be checked BEFORE funnel_conversion because
+        # ``conversion`` is also a funnel keyword. Without this ordering, a
+        # question like "find factors associated with conversion" would
+        # misroute to the funnel playbook.
+        [
+            "影响因素", "显著影响", "驱动因素", "相关因素",
+            "associated factors", "significant factors",
+            "相关", "因素", "factors", "associated",
+        ],
+        "factor_relationship",
+    ),
+    (["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"], "funnel_conversion"),
     (["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"], "retention_lifecycle"),
     (["收益", "收入", "成本", "利润", "roi", "profit", "revenue", "cost", "net value"], "revenue_profitability"),
     (["trend", "period", "month", "week", "同比", "环比", "趋势"], "trend_period_comparison"),
@@ -671,6 +904,8 @@ def _choose_supporting(text: str, primary: str) -> list[str]:
         supporting.extend(["trend_period_comparison", "metric_overview"])
     elif primary == "driver_decomposition":
         supporting.extend(["trend_period_comparison", "metric_overview"])
+    elif primary == "factor_relationship":
+        supporting.extend(["driver_decomposition", "metric_overview"])
     elif primary == "retention_lifecycle":
         supporting.extend(["metric_overview"])
     elif primary == "data_understanding":

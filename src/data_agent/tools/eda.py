@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -299,9 +299,11 @@ def analyze_time_series(
 @registry.register(
     name="correlation_analysis",
     description=(
-        "计算数值列之间的相关系数矩阵，识别高相关性变量对。"
-        "使用场景：发现指标间的关联关系、筛选冗余特征、为归因分析提供线索。"
-        "不适用场景：类别型变量（无法计算相关系数）、非线性关系（考虑用 distribution_analysis）。"
+        "计算数值列之间的成对相关性：每个变量对在 pairwise-complete 行上计算，"
+        "并附上有效样本量和p值。"
+        "使用场景：发现指标间的关联关系、筛选冗余特征、为多变量分析提供线索。"
+        "不适用场景：类别型变量（无法计算相关系数）、非线性关系（考虑用 distribution_analysis）、"
+        "多变量显著性的最终判断（请改用 factor_relationship_analysis）。"
         "参数说明：columns 留空分析所有数值列，method 支持 pearson/spearman/kendall。"
         "常见错误：非数值列会被自动过滤，如遗漏请用 describe_dataset 检查类型。"
     ),
@@ -318,44 +320,131 @@ def correlation_analysis(name: str, columns: str = "", method: str = "pearson") 
 
     numeric_df = df.select_dtypes(include=[np.number])
     if columns:
-        cols = [c.strip() for c in columns.split(",")]
-        numeric_df = numeric_df[[c for c in cols if c in numeric_df.columns]]
+        requested = [c.strip() for c in columns.split(",") if c.strip()]
+        missing = [c for c in requested if c not in df.columns]
+        if missing:
+            return json.dumps(
+                {
+                    "error": f"请求的列不存在: {missing}",
+                    "available_columns": list(df.columns),
+                },
+                ensure_ascii=False,
+            )
+        numeric_df = df[requested].select_dtypes(include=[np.number])
+        ignored_non_numeric = [c for c in requested if c not in numeric_df.columns]
+    else:
+        ignored_non_numeric = []
 
-    if numeric_df.empty:
-        return "Error: 没有可分析的数值列"
+    cols_list = list(numeric_df.columns)
+    if len(cols_list) < 2:
+        return json.dumps(
+            {
+                "error": "至少需要两个数值列才能计算成对相关性",
+                "columns_analyzed": cols_list,
+                "ignored_non_numeric": ignored_non_numeric,
+            },
+            ensure_ascii=False,
+        )
 
     method = method if method in ("pearson", "spearman", "kendall") else "pearson"
-    corr = numeric_df.corr(method=method)
+    if method == "pearson":
+        corr_func = sp_stats.pearsonr
+    elif method == "spearman":
+        corr_func = sp_stats.spearmanr
+    else:
+        corr_func = sp_stats.kendalltau
 
-    # 完整矩阵（详情）
-    full_matrix = {}
-    cols_list = list(corr.columns)
+    pairs: list[dict[str, Any]] = []
+    matrix: dict[str, dict[str, float | None]] = {c: {} for c in cols_list}
     for c1 in cols_list:
-        full_matrix[c1] = {}
         for c2 in cols_list:
-            full_matrix[c1][c2] = round(float(corr.loc[c1, c2]), 4)
+            matrix[c1][c2] = 1.0
 
-    # 高相关性列表（摘要）
-    high_correlations = []
     for i, c1 in enumerate(cols_list):
         for j, c2 in enumerate(cols_list):
-            if i < j:
-                val = round(float(corr.loc[c1, c2]), 4)
-                if abs(val) > 0.3:
-                    high_correlations.append({
+            if i >= j:
+                continue
+            pair_df = df[[c1, c2]].dropna()
+            effective_n = int(len(pair_df))
+            if effective_n < 3:
+                # scipy's correlation tests require at least 3 observations
+                # (and Kendall needs more). Report a structured insufficient-
+                # data diagnostic instead of a coerced NaN statistic.
+                pair_result: dict[str, Any] = {
+                    "var1": c1,
+                    "var2": c2,
+                    "correlation": None,
+                    "effective_sample_size": effective_n,
+                    "p_value": None,
+                    "status": "insufficient_pairwise_sample",
+                    "reason": (
+                        "Pairwise-complete sample is smaller than 3; the "
+                        "correlation coefficient and p-value are undefined."
+                    ),
+                }
+            else:
+                try:
+                    outcome = corr_func(pair_df[c1].values, pair_df[c2].values)
+                    statistic = float(outcome.statistic)
+                    p_value = float(outcome.pvalue)
+                except Exception as exc:  # scipy raises on degenerate input
+                    pair_result = {
                         "var1": c1,
                         "var2": c2,
-                        "correlation": val,
-                        "strength": "strong" if abs(val) > 0.7 else "moderate" if abs(val) > 0.5 else "weak",
-                    })
+                        "correlation": None,
+                        "effective_sample_size": effective_n,
+                        "p_value": None,
+                        "status": "not_estimable",
+                        "reason": f"Correlation could not be estimated: {exc}",
+                    }
+                else:
+                    if not (np.isfinite(statistic) and np.isfinite(p_value)):
+                        pair_result = {
+                            "var1": c1,
+                            "var2": c2,
+                            "correlation": None,
+                            "effective_sample_size": effective_n,
+                            "p_value": None,
+                            "status": "not_estimable",
+                            "reason": (
+                                "Correlation statistic or p-value is not finite "
+                                "(constant input or degenerate distribution)."
+                            ),
+                        }
+                    else:
+                        pair_result = {
+                            "var1": c1,
+                            "var2": c2,
+                            "correlation": round(statistic, 6),
+                            "effective_sample_size": effective_n,
+                            "p_value": round(p_value, 6),
+                        }
+            pairs.append(pair_result)
+            matrix[c1][c2] = pair_result.get("correlation")
+            matrix[c2][c1] = pair_result.get("correlation")
 
     result = {
         "method": method,
         "columns_analyzed": cols_list,
-        "high_correlations": high_correlations,
+        "ignored_non_numeric": ignored_non_numeric,
+        "matrix": matrix,
+        "pairs": pairs,
+        "multiplicity": {
+            "strategy": "none",
+            "reason": (
+                "Pairwise exploratory screen; multiplicity correction is "
+                "applied by the multivariable factor_relationship_analysis "
+                "tool rather than this exploratory view."
+            ),
+        },
+        "allowed_claim_class": "exploratory_association",
+        "limitations": [
+            "相关关系不等于因果关系。",
+            "成对相关性未控制其他变量的干扰，多变量关系请使用 factor_relationship_analysis。",
+        ],
         "suggested_next": [
+            "factor_relationship_analysis 拟合多变量模型并做多重比较校正",
             "distribution_analysis 检查相关变量的分布特征",
-            "regression_analysis 建立回归模型量化影响",
         ],
     }
 
