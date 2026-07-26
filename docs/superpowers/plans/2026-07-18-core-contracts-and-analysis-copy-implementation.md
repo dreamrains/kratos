@@ -1,5 +1,7 @@
 # Core Contracts and Analysis Copy Implementation Plan
 
+> **Status:** Completed by the canonical-plan and versioned-analysis-copy migration; retained as the historical implementation baseline.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Consolidate analysis planning into one canonical contract and make all file preparation and cleaning operate on versioned analysis copies while preserving immutable raw snapshots.

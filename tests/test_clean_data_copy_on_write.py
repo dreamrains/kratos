@@ -187,3 +187,15 @@ def test_confirmation_flags_are_boolean_in_registered_tool_schemas():
     assert clean_properties["confirmed"]["type"] == "boolean"
     assert conversion_properties["confirmed"]["type"] == "boolean"
     assert conversion_properties["auto"]["type"] == "boolean"
+
+
+def test_confirmation_flag_schemas_explain_that_receipts_are_authoritative():
+    from data_agent.tools import data_clean  # noqa: F401
+    from data_agent.tools.registry import registry
+
+    definitions = {item["name"]: item for item in registry.all_definitions()}
+
+    for tool_name in ("clean_data", "apply_type_conversion"):
+        description = definitions[tool_name]["parameters"]["properties"]["confirmed"]["description"]
+        assert "已废弃" in description
+        assert "确认回执" in description

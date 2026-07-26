@@ -750,14 +750,18 @@ def suggest_column_types(name: str) -> str:
     name="apply_type_conversion",
     description=(
         "在分析副本上执行类型转换。安全且无损的高置信度单列转换可直接应用；"
-        "自动、带单位、部分成功或有信息损失的转换需 confirmed=true 后提升为新版本。"
+        "自动、带单位、部分成功或有信息损失的转换会返回版本绑定的确认回执，"
+        "仅已解决的批准回执可提升新版本。"
     ),
     schema_overrides={
         "name": {"description": "数据集名称"},
         "column": {"description": "目标列名"},
         "target_type": {"description": "目标类型", "enum": ["datetime", "numeric", "percentage_to_float", "bool", "category", "date_int_to_datetime", "numeric_with_suffix"]},
         "auto": {"type": "boolean", "description": "是否自动应用所有建议转换"},
-        "confirmed": {"type": "boolean", "description": "是否已确认需要人工批准的转换"},
+        "confirmed": {
+            "type": "boolean",
+            "description": "兼容入参，已废弃：不能授权实质性转换；请解决返回的确认回执。",
+        },
     },
 )
 def _apply_type_conversion_impl(
@@ -1011,7 +1015,10 @@ _OUTLIER_STRATEGIES = {
         "outlier_strategy": {"description": "异常值处理策略", "enum": ["mark", "cap", "drop"]},
         "columns": {"description": "目标列，逗号分隔，为空则处理所有列"},
         "fill_value": {"description": "fill_constant 策略的填充值"},
-        "confirmed": {"type": "boolean", "description": "是否已确认会改变数据内容的清洗操作"},
+        "confirmed": {
+            "type": "boolean",
+            "description": "兼容入参，已废弃：不能授权实质性清洗；请解决返回的确认回执。",
+        },
     },
 )
 def _clean_data_impl(
