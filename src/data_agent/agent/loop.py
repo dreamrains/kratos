@@ -1699,6 +1699,89 @@ class AgentLoop:
             )
             return None
 
+    def _maybe_project_structured_evidence(
+        self,
+        *,
+        ref: dict[str, Any],
+        step_binding: Any,
+        plan: dict[str, Any],
+        capability: Any,
+    ) -> None:
+        """Auto-project a successful structured computation into v2 evidence.
+
+        Reuses ``project_structured_computation_evidence``: on success it
+        upserts the validated record and dirties the synthesis-policy
+        cache so the next prompt rebuilds against the new evidence. On
+        failure it appends a bounded projection diagnostic. The model is
+        never asked to call ``record_evidence_record`` for this turn into
+        a tool call; eligibility failures stay computation-only.
+        """
+
+        try:
+            from data_agent.agent.evidence_contracts import (
+                project_structured_computation_evidence,
+            )
+            from data_agent.config import get_config
+
+            state = getattr(self.context, "analysis_state", None)
+            if state is None:
+                return
+            if step_binding is None or not getattr(step_binding, "ok", False):
+                return
+            capability_payload: dict[str, Any] | None = None
+            if capability is not None:
+                if isinstance(capability, dict):
+                    capability_payload = capability
+                else:
+                    to_dict = getattr(capability, "to_dict", None)
+                    if callable(to_dict):
+                        capability_payload = to_dict()
+                    else:
+                        capability_payload = {
+                            "capability_id": str(getattr(capability, "capability_id", "") or ""),
+                            "evidence_fields": list(getattr(capability, "evidence_fields", []) or []),
+                            "risk_level": str(getattr(capability, "risk_level", "") or ""),
+                        }
+            dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
+            turn_state = getattr(self.context, "turn_state", None)
+            turn_id = str(getattr(turn_state, "turn_id", "") or "")
+            result = project_structured_computation_evidence(
+                computation_ref=ref,
+                binding=step_binding,
+                plan=plan,
+                capability=capability_payload,
+                dataset_contracts=dataset_contracts,
+                current_session_id=self.session_id,
+                current_turn_id=turn_id,
+                sessions_root=get_config().sessions_resolved,
+            )
+            if result.projected:
+                state.upsert_evidence_record(result.record)
+                # Invalidate the synthesis-policy cache so the next prompt
+                # rebuilds the bounded evidence catalog with this record.
+                self._turn_synthesis_policy_injected = False
+                self._turn_synthesis_policy_instruction = ""
+                state.append_turn_diagnostic({
+                    "event": "evidence_projected",
+                    "tool_call_id": str(ref.get("tool_call_id") or ""),
+                    "plan_id": str(ref.get("plan_id") or ""),
+                    "step_id": str(ref.get("step_id") or ""),
+                    "claim_key": str(ref.get("claim_key") or ""),
+                })
+                return
+            state.append_turn_diagnostic({
+                "event": "evidence_projection_skipped",
+                "tool_call_id": str(ref.get("tool_call_id") or ""),
+                "reason": str(result.reason or ""),
+                "diagnostics": list(result.diagnostics or []),
+            })
+        except Exception as exc:
+            logger.warning(
+                "Structured evidence projection skipped: %s",
+                exc,
+                extra={"extra_data": {"tool": str(ref.get("tool_name") or ""), "error": str(exc)}},
+            )
+
     def _compact_tool_output(self, tool_result, tc, step_binding=None) -> str:
         """Compact tool output for LLM context. Persist data/details to disk, return concise summary.
 
@@ -1821,6 +1904,12 @@ class AgentLoop:
                         "step_id": step_id,
                         "error_type": binding_error_type,
                     })
+                    self._maybe_project_structured_evidence(
+                        ref=ref,
+                        step_binding=step_binding,
+                        plan=plan or {},
+                        capability=capability,
+                    )
                     state.save()
         except Exception as exc:
             logger.warning(

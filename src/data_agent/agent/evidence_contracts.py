@@ -6,7 +6,9 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
+
+from data_agent.agent.analysis_execution import StepBindingResult
 
 
 CANONICAL_EVIDENCE_FIELDS = (
@@ -2086,3 +2088,637 @@ def validate_stage3c0b_evidence(
 ) -> EvidenceValidationResult:
     """Read-only compatibility alias for the canonical validator."""
     return validate_evidence_record(record, current_plan_id=current_plan_id)
+
+
+# ---------------------------------------------------------------------------
+# Automatic structured-computation evidence projection (Task 9).
+#
+# Successful structured computations auto-project ``evidence_record.v2``
+# evidence without the model calling ``record_evidence_record``. The model
+# is no longer the bookkeeper for evidence that the server can derive from
+# a successful, exactly-bound, structured computation. Ineligible paths
+# stay computation-only and emit a bounded diagnostic instead.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EvidenceProjectionResult:
+    """Outcome of an automatic structured-computation evidence projection."""
+
+    projected: bool
+    record: dict[str, Any] = field(default_factory=dict)
+    reason: str = ""
+    diagnostics: tuple[dict[str, Any], ...] = ()
+
+
+_EMPTY_CATALOG_HEADER = (
+    "可用证据：0 条。请基于现有计算诊断说明局限，不要重新运行工具来制造证据。"
+)
+
+
+def _capability_evidence_fields(capability: Any) -> list[str]:
+    if not isinstance(capability, dict):
+        return []
+    raw = capability.get("evidence_fields")
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str) and item]
+
+
+def _step_for_id(plan: Any, step_id: str) -> dict[str, Any]:
+    if not isinstance(plan, dict):
+        return {}
+    method_plan = plan.get("method_plan")
+    if not isinstance(method_plan, list):
+        return {}
+    for raw_step in method_plan:
+        if isinstance(raw_step, dict) and _text(raw_step.get("step_id")) == step_id:
+            return raw_step
+    return {}
+
+
+def _step_dataset_inputs(plan: Any, step_id: str) -> list[str]:
+    step = _step_for_id(plan, step_id)
+    raw = step.get("dataset_inputs")
+    if not isinstance(raw, list):
+        return []
+    return [_text(item) for item in raw if _text(item)]
+
+
+def _active_dataset_versions_for_step(
+    dataset_contracts: Any, step_datasets: Sequence[str]
+) -> set[str]:
+    if not isinstance(dataset_contracts, list):
+        return set()
+    step_set = {_text(item) for item in step_datasets if _text(item)}
+    versions: set[str] = set()
+    for contract in dataset_contracts:
+        if not isinstance(contract, dict):
+            continue
+        if step_set and _text(contract.get("dataset")) not in step_set:
+            continue
+        version = _text(contract.get("dataset_id") or contract.get("dataset_version_id"))
+        if version:
+            versions.add(version)
+    return versions
+
+
+def _evidence_requirement_name(
+    plan: Any, step_id: str, requirement_ids: Sequence[str]
+) -> str:
+    if not isinstance(plan, dict):
+        return ""
+    grouped = plan.get("analysis_requirements")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(grouped, dict):
+        bucket = grouped.get(step_id)
+        if isinstance(bucket, list):
+            candidates = [item for item in bucket if isinstance(item, dict)]
+    selected_ids = {_text(item) for item in requirement_ids if _text(item)}
+    for requirement in candidates:
+        if selected_ids and _text(requirement.get("id")) in selected_ids:
+            name = _text(requirement.get("name"))
+            if name:
+                return name
+    if selected_ids:
+        return sorted(selected_ids)[0]
+    return ""
+
+
+def _claim_neutral_summary(
+    *,
+    capability: dict[str, Any],
+    output_data: dict[str, Any],
+) -> str:
+    """Build a claim-neutral summary string from declared structured fields.
+
+    The summary reports *what* the tool computed without framing it as a
+    material claim. Model prose is never parsed into evidence.
+    """
+
+    cap_id = _text(capability.get("capability_id")) if isinstance(capability, dict) else ""
+    parts: list[str] = []
+    for field_name in _capability_evidence_fields(capability):
+        value = _resolve_dotted_evidence_field(output_data, field_name)
+        if value is None:
+            continue
+        rendered = _render_structured_value(value)
+        if rendered:
+            parts.append(f"{field_name}={rendered}")
+    body = "; ".join(parts)
+    if body:
+        return f"Server-projected {cap_id} structured output: {body}."
+    return f"Server-projected {cap_id} structured output."
+
+
+def _resolve_dotted_evidence_field(payload: Any, field: str) -> Any:
+    """Resolve a dotted evidence field through nested mappings/lists.
+
+    Mirrors the resolver semantics of ``validate_capability_output`` (Task 7)
+    so the projection sees the same values the capability check sees.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    segments = field.split(".")
+    value: Any = payload
+    for index, segment in enumerate(segments):
+        if isinstance(value, dict):
+            if segment not in value:
+                return None
+            value = value[segment]
+        elif isinstance(value, list):
+            tail = ".".join(segments[index:])
+            for item in value:
+                if isinstance(item, dict):
+                    resolved = _resolve_dotted_evidence_field(item, tail)
+                    if resolved is not None:
+                        return resolved
+            return None
+        else:
+            return None
+    return value
+
+
+def _render_structured_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and _finite_number(value):
+        return str(value)
+    if isinstance(value, str):
+        text = " ".join(value.split())
+        return text[:60]
+    if isinstance(value, list):
+        if not value:
+            return ""
+        if isinstance(value[0], dict):
+            return f"list<{len(value)}>"
+        rendered = [_render_structured_value(item) for item in value[:3]]
+        return ",".join(item for item in rendered if item)
+    return ""
+
+
+def _projected_measurements_from_output(
+    *,
+    capability: dict[str, Any],
+    output_data: dict[str, Any],
+    method_label: str,
+) -> list[dict[str, Any]]:
+    """Build claim-neutral canonical measurements from structured output.
+
+    Each structured numeric field contributes one measurement. ``pairs.x``
+    style declarations contribute one measurement per list record so a
+    multi-pair correlation result yields one measurement per pair without
+    becoming a material claim. ``run_python`` is never upgraded, so this
+    helper is never called for free-form python output.
+    """
+
+    base_limitation = ["Server-projected structured computation; no model-authored interpretation."]
+    measurements: list[dict[str, Any]] = []
+    for field in _capability_evidence_fields(capability):
+        head = field.split(".", 1)[0]
+        tail = field.split(".", 1)[1] if "." in field else ""
+        if tail:
+            container = output_data.get(head) if isinstance(output_data, dict) else None
+            if isinstance(container, list):
+                for item in container:
+                    if not isinstance(item, dict):
+                        continue
+                    value = _resolve_dotted_evidence_field(item, tail)
+                    if not _finite_number(value):
+                        continue
+                    measurements.append(_claim_neutral_measurement(
+                        metric=field,
+                        value=float(value),
+                        method_label=method_label,
+                        limitation=base_limitation,
+                    ))
+                continue
+        value = _resolve_dotted_evidence_field(output_data, field)
+        if _finite_number(value):
+            measurements.append(_claim_neutral_measurement(
+                metric=field,
+                value=float(value),
+                method_label=method_label,
+                limitation=base_limitation,
+            ))
+    if not measurements:
+        measurements.append(_claim_neutral_measurement(
+            metric="structured_computation",
+            value=0.0,
+            method_label=method_label,
+            limitation=base_limitation,
+        ))
+    return measurements
+
+
+def _claim_neutral_measurement(
+    *,
+    metric: str,
+    value: float,
+    method_label: str,
+    limitation: list[str],
+) -> dict[str, Any]:
+    return {
+        "metric": metric,
+        "definition": "Server-projected structured computation field.",
+        "value": value,
+        "unit": "value",
+        "grain": "structured_field",
+        "population_scope": "as computed by tool",
+        "time_scope": "as computed by tool",
+        "method": method_label,
+        "denominator": "not_applicable",
+        "limitations": list(limitation),
+    }
+
+
+def _build_projected_record(
+    *,
+    computation_ref: dict[str, Any],
+    binding: StepBindingResult,
+    plan: dict[str, Any],
+    capability: dict[str, Any] | None,
+    dataset_contracts: list[dict[str, Any]],
+    output_data: dict[str, Any],
+    plan_id: str,
+) -> dict[str, Any]:
+    tool_name = _text(computation_ref.get("tool_name"))
+    cap_id = _text((capability or {}).get("capability_id")) if isinstance(capability, dict) else ""
+    method_label = ", ".join(item for item in (cap_id, tool_name) if item) or "server-bound computation"
+    step = _step_for_id(plan, binding.step_id)
+    step_dataset_name = ""
+    step_dataset_inputs_raw = step.get("dataset_inputs") if isinstance(step, dict) else None
+    if isinstance(step_dataset_inputs_raw, list) and step_dataset_inputs_raw:
+        step_dataset_name = _text(step_dataset_inputs_raw[0])
+    if not step_dataset_name:
+        # Fall back to the first contract's dataset (only when contracts provided).
+        if isinstance(dataset_contracts, list) and dataset_contracts:
+            first = dataset_contracts[0]
+            if isinstance(first, dict):
+                step_dataset_name = _text(first.get("dataset"))
+
+    dataset_contract_id = ""
+    step_contract_ids = step.get("dataset_contract_ids") if isinstance(step, dict) else None
+    if isinstance(step_contract_ids, list) and step_contract_ids:
+        dataset_contract_id = _text(step_contract_ids[0])
+    if not dataset_contract_id and isinstance(dataset_contracts, list):
+        for contract in dataset_contracts:
+            if isinstance(contract, dict) and _text(contract.get("dataset")) == step_dataset_name:
+                dataset_contract_id = _text(
+                    contract.get("id")
+                    or contract.get("contract_id")
+                    or contract.get("dataset_id")
+                )
+                if dataset_contract_id:
+                    break
+
+    requirement_ids = [str(item) for item in binding.requirement_ids if str(item)]
+    evidence_requirement = _evidence_requirement_name(plan, binding.step_id, requirement_ids)
+
+    sample_size_value: Any = _resolve_sample_size(output_data)
+
+    confidence = "medium"
+    if isinstance(capability, dict):
+        risk = _text(capability.get("risk_level"))
+        if risk == "high":
+            confidence = "low"
+        elif risk == "low":
+            confidence = "high"
+
+    measurements = _projected_measurements_from_output(
+        capability=capability if isinstance(capability, dict) else {},
+        output_data=output_data,
+        method_label=method_label,
+    )
+    result_summary = _claim_neutral_summary(
+        capability=capability if isinstance(capability, dict) else {},
+        output_data=output_data,
+    )
+
+    record: dict[str, Any] = {
+        "plan_id": plan_id,
+        "step_id": binding.step_id,
+        "claim_key": binding.claim_key,
+        "claim": (
+            f"Server-projected structured computation evidence for "
+            f"{binding.claim_key} from {method_label}."
+        ),
+        "dataset": step_dataset_name,
+        "dataset_contract_id": dataset_contract_id,
+        "method": method_label,
+        "tool_calls": [
+            {
+                "name": tool_name,
+                "capability_id": cap_id,
+                "tool_call_id": _text(computation_ref.get("tool_call_id")),
+            }
+        ],
+        "result_summary": result_summary,
+        "limitations": ["Server-projected from structured computation; no model-authored interpretation."],
+        "confidence": confidence,
+        "evidence_requirement": evidence_requirement or binding.claim_key,
+        "measurements": measurements,
+        "contract_version": EVIDENCE_RECORD_CONTRACT_VERSION,
+        "source_tool_call_ids": [_text(computation_ref.get("tool_call_id"))],
+        "requirement_ids": requirement_ids,
+        "computation_refs": [dict(computation_ref)],
+        "provenance_status": "bound",
+        "verification_level": _text(computation_ref.get("verification_level")) or "structured_checked",
+    }
+    if sample_size_value is not None:
+        record["sample_size"] = sample_size_value
+    allowed_claim_class = output_data.get("allowed_claim_class") if isinstance(output_data, dict) else None
+    if _text(allowed_claim_class):
+        record["allowed_claim_class"] = _text(allowed_claim_class)
+    return record
+
+
+def _resolve_sample_size(output_data: Any) -> float:
+    """Best-effort extraction of a sample size from structured output.
+
+    The canonical schema requires a non-empty ``sample_size`` field. Tools
+    that expose ``effective_sample_size.total`` (top-level or nested in a
+    pairs list) supply the value directly; otherwise we fall back to ``0``
+    so the validator accepts the record without manufacturing a fabricated
+    number. ``0`` is the explicit "no claimed sample size" sentinel.
+    """
+
+    if isinstance(output_data, dict):
+        ess = output_data.get("effective_sample_size")
+        if isinstance(ess, dict) and _finite_number(ess.get("total")):
+            return float(ess["total"])
+        pairs = output_data.get("pairs")
+        if isinstance(pairs, list):
+            for pair in pairs:
+                if isinstance(pair, dict) and _finite_number(pair.get("effective_sample_size")):
+                    return float(pair["effective_sample_size"])
+    return 0.0
+
+
+def project_structured_computation_evidence(
+    *,
+    computation_ref: dict[str, Any],
+    binding: StepBindingResult,
+    plan: dict[str, Any],
+    capability: dict[str, Any] | None,
+    dataset_contracts: list[dict[str, Any]],
+    current_session_id: str,
+    current_turn_id: str,
+    sessions_root: Path,
+) -> EvidenceProjectionResult:
+    """Project an eligible structured computation into ``evidence_record.v2``.
+
+    The early-return order is fixed by the Task 9 contract:
+
+    1. ``computation_failed`` when the ref's success flag is False;
+    2. ``ambiguous_analysis_step`` (or the binding's error code) when the
+       step binding did not succeed;
+    3. ``unstructured_tool`` for ``run_python`` or capability-less tools
+       (``run_python`` is never upgraded);
+    4. ``stale_session_identity`` / ``stale_turn_identity`` / ``stale_plan_identity``
+       / ``stale_step_identity`` when the ref does not match the current
+       session/turn/plan/step identity;
+    5. ``stale_dataset_version`` when the ref's dataset-version set differs
+       from the active step-bound contracts;
+    6. ``missing_declared_field`` when ``validate_capability_output`` reports
+       missing declared evidence fields in the real tool output;
+    7. ``missing_claim_identity`` when the binding does not surface a claim
+       key and at least one canonical requirement id;
+    8. the validated ``evidence_record.v2`` record otherwise.
+
+    The success branch builds a CLAIM-NEUTRAL summary from the declared
+    structured fields, sets the maximum allowed claim class from capability
+    output when present, and calls the existing ``validate_evidence_record``
+    before returning. It never parses model prose into evidence.
+    """
+
+    if not isinstance(computation_ref, dict):
+        return EvidenceProjectionResult(
+            projected=False, reason="computation_failed",
+            diagnostics=({"error_type": "invalid_ref"},),
+        )
+    if not bool(computation_ref.get("success")):
+        return EvidenceProjectionResult(projected=False, reason="computation_failed")
+    if not getattr(binding, "ok", False):
+        return EvidenceProjectionResult(
+            projected=False,
+            reason=_text(getattr(binding, "error_type", "")) or "ambiguous_analysis_step",
+        )
+    tool_name = _text(computation_ref.get("tool_name"))
+    if tool_name == "run_python":
+        return EvidenceProjectionResult(projected=False, reason="unstructured_tool")
+    declared_fields = _capability_evidence_fields(capability)
+    if not declared_fields or not _text(
+        (capability or {}).get("capability_id") if isinstance(capability, dict) else ""
+    ):
+        return EvidenceProjectionResult(projected=False, reason="unstructured_tool")
+
+    ref_session = _text(computation_ref.get("session_id"))
+    if ref_session != _text(current_session_id):
+        return EvidenceProjectionResult(projected=False, reason="stale_session_identity")
+    ref_turn = _text(computation_ref.get("turn_id"))
+    if ref_turn != _text(current_turn_id):
+        return EvidenceProjectionResult(projected=False, reason="stale_turn_identity")
+    plan_id = _text(plan.get("id")) if isinstance(plan, dict) else ""
+    ref_plan = _text(computation_ref.get("plan_id"))
+    if not plan_id or ref_plan != plan_id:
+        return EvidenceProjectionResult(projected=False, reason="stale_plan_identity")
+    ref_step = _text(computation_ref.get("step_id"))
+    binding_step = _text(getattr(binding, "step_id", ""))
+    if not binding_step or ref_step != binding_step:
+        return EvidenceProjectionResult(projected=False, reason="stale_step_identity")
+
+    step_datasets = _step_dataset_inputs(plan, binding_step)
+    active_versions = _active_dataset_versions_for_step(dataset_contracts, step_datasets)
+    if not active_versions and isinstance(dataset_contracts, list):
+        # Fall back to ALL active contracts when the plan step is silent.
+        active_versions = _active_dataset_versions_for_step(dataset_contracts, [])
+    ref_versions = {
+        _text(item) for item in computation_ref.get("dataset_versions") or []
+        if _text(item)
+    }
+    if active_versions and ref_versions != active_versions:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="stale_dataset_version",
+            diagnostics=(
+                {"ref_versions": sorted(ref_versions), "active_versions": sorted(active_versions)},
+            ),
+        )
+
+    try:
+        output = hydrate_computation_ref(
+            computation_ref,
+            sessions_root=Path(sessions_root),
+            current_session_id=current_session_id,
+        )
+    except Exception as exc:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="computation_artifact_unavailable",
+            diagnostics=({"error": str(exc)},),
+        )
+    if not isinstance(output, dict):
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="computation_artifact_unavailable",
+        )
+    output_data = output.get("data")
+    if not isinstance(output_data, dict):
+        output_data = {}
+    missing_fields = _capability_check_missing_fields(capability, output_data)
+    if missing_fields:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="missing_declared_field",
+            diagnostics=({"missing": list(missing_fields)},),
+        )
+
+    binding_claim = _text(getattr(binding, "claim_key", ""))
+    binding_requirements = tuple(_text(item) for item in getattr(binding, "requirement_ids", ()) if _text(item))
+    if not binding_claim or not binding_requirements:
+        return EvidenceProjectionResult(
+            projected=False, reason="missing_claim_identity",
+        )
+
+    record = _build_projected_record(
+        computation_ref=computation_ref,
+        binding=binding,
+        plan=plan,
+        capability=capability,
+        dataset_contracts=dataset_contracts,
+        output_data=output_data,
+        plan_id=plan_id,
+    )
+    validation = validate_evidence_record(record, current_plan_id=plan_id)
+    if not validation.ok:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="evidence_validation_failed",
+            diagnostics=(
+                {
+                    "error_type": validation.error_type,
+                    "message": validation.message,
+                    "details": dict(validation.details),
+                },
+            ),
+        )
+    return EvidenceProjectionResult(projected=True, record=validation.record)
+
+
+def _capability_check_missing_fields(
+    capability: dict[str, Any] | None, payload: dict[str, Any]
+) -> list[str]:
+    """Delegate to the shared capability-output validator (Task 7).
+
+    Reusing the existing validator avoids forking the field-presence
+    contract between capability truthfulness and evidence projection.
+    """
+
+    from data_agent.tools.registry import validate_capability_output
+
+    return list(validate_capability_output(capability, payload))
+
+
+def _format_measurement_for_catalog(measurements: Any) -> str:
+    if not isinstance(measurements, list) or not measurements:
+        return ""
+    parts: list[str] = []
+    for measurement in measurements[:3]:
+        if not isinstance(measurement, dict):
+            continue
+        value = measurement.get("value")
+        unit = _text(measurement.get("unit"))
+        metric = _text(measurement.get("metric"))
+        if not _finite_number(value):
+            text_value = _text(value)[:24]
+            if text_value:
+                parts.append(f"{metric}={text_value}" if metric else text_value)
+            continue
+        rendered = f"{float(value):g}"
+        if unit and unit not in {"value", "unitless"}:
+            rendered = f"{rendered} {unit}"
+        parts.append(f"{metric}={rendered}" if metric else rendered)
+    return "; ".join(part for part in parts if part)
+
+
+def build_bounded_evidence_catalog(
+    evidence_records: Sequence[dict[str, Any]],
+    *,
+    max_records: int = 12,
+    max_chars: int = 6000,
+) -> str:
+    """Build a bounded, deterministic catalog of current-plan evidence.
+
+    Records are sorted by ``(step_order, evidence_id)`` and rendered as one
+    compact line per record. The catalog stops before the next line would
+    exceed ``max_chars`` total and never lists more than ``max_records``
+    records. An empty catalog still returns the canonical header so the
+    synthesis policy always injects a catalog block (and never triggers a
+    tool ritual to manufacture evidence).
+    """
+
+    if not isinstance(evidence_records, list):
+        evidence_records = list(evidence_records or [])
+    total = len(evidence_records)
+    header = f"可用证据：{total} 条。请基于现有计算诊断说明局限，不要重新运行工具来制造证据。"
+    if not evidence_records:
+        return header
+
+    def _sort_key(record: dict[str, Any]) -> tuple[Any, str]:
+        order = record.get("step_order")
+        if isinstance(order, bool) or not isinstance(order, (int, float)):
+            order = 0
+        return (order, _text(record.get("id")))
+
+    def _format_line(record: dict[str, Any]) -> str:
+        claim_class = (
+            _text(record.get("allowed_claim_class"))
+            or _text(record.get("claim_class"))
+            or _text(record.get("claim_type"))
+        )
+        measurements = _format_measurement_for_catalog(record.get("measurements"))
+        dataset_versions = record.get("dataset_versions")
+        if isinstance(dataset_versions, list):
+            version_text = ",".join(
+                _text(item) for item in dataset_versions if _text(item)
+            )
+        elif isinstance(record.get("dataset_versions"), str):
+            version_text = _text(record.get("dataset_versions"))
+        else:
+            version_text = _text(record.get("dataset_id"))
+        limitations = record.get("limitations")
+        if isinstance(limitations, list):
+            limitation_text = "; ".join(_text(item) for item in limitations if _text(item))
+        else:
+            limitation_text = _text(limitations)
+        parts = [
+            f"id={_text(record.get('id'))}",
+            f"claim_key={_text(record.get('claim_key'))}",
+        ]
+        if claim_class:
+            parts.append(f"claim_class={claim_class}")
+        if measurements:
+            parts.append(f"measurements={measurements}")
+        if version_text:
+            parts.append(f"dataset_versions={version_text}")
+        if _text(record.get("verification_level")):
+            parts.append(f"verification_level={_text(record.get('verification_level'))}")
+        if limitation_text:
+            parts.append(f"limitations={limitation_text}")
+        return "- " + " | ".join(parts)
+
+    sorted_records = sorted(evidence_records, key=_sort_key)
+    lines: list[str] = [header]
+    body_chars = 0
+    budget = max(0, int(max_chars) - len(header) - 4)
+    for record in sorted_records[:max_records]:
+        if not isinstance(record, dict):
+            continue
+        line = _format_line(record)
+        if body_chars + len(line) + 1 > budget and lines[-1] != header:
+            break
+        lines.append(line)
+        body_chars += len(line) + 1
+    return "\n".join(lines)

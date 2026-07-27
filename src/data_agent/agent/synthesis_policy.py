@@ -11,8 +11,6 @@ from dataclasses import asdict, dataclass, replace
 from html import escape as html_escape
 from typing import Any
 
-from data_agent.agent.analysis_plan_contracts import ANALYSIS_PLAN_CONTRACT_VERSION
-
 
 @dataclass(frozen=True)
 class SynthesisPolicy:
@@ -25,6 +23,7 @@ class SynthesisPolicy:
     wording_style: str
     reason: str
     allowed_evidence_ids: tuple[str, ...] = ()
+    evidence_catalog: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -61,6 +60,7 @@ def derive_synthesis_policy(
         plan = _get(state, "analysis_plan", None) or {}
     evidence = evidence_records if evidence_records is not None else (_get(state, "evidence_records", None) or [])
     evidence = list(evidence or [])
+    evidence_catalog = _build_catalog_for_plan(evidence, plan)
     verification_status = _latest_verification_status(state)
     wording_style = _wording_style(proficiency)
 
@@ -76,6 +76,7 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason="Direct or terse request; suppressing business translation.",
                 allowed_evidence_ids=_evidence_ids(evidence),
+                evidence_catalog=evidence_catalog,
             ),
             verification_status,
         )
@@ -92,6 +93,7 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason="No evidence records are available, so synthesis stays exploratory.",
                 allowed_evidence_ids=(),
+                evidence_catalog=evidence_catalog,
             ),
             verification_status,
         )
@@ -127,6 +129,7 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
                 allowed_evidence_ids=_evidence_ids(evidence),
+                evidence_catalog=evidence_catalog,
             ),
             verification_status,
         )
@@ -153,9 +156,55 @@ def derive_synthesis_policy(
             wording_style=wording_style,
             reason=_reason(reasons, "Evidence supports a light analytical synthesis."),
             allowed_evidence_ids=_evidence_ids(evidence),
+            evidence_catalog=evidence_catalog,
         ),
         verification_status,
     )
+
+
+def _build_catalog_for_plan(
+    evidence_records: list[Any],
+    plan: Any,
+) -> str:
+    """Build the bounded synthesis-time evidence catalog.
+
+    Auto-projected records carry ``plan_id``; we filter to the current plan,
+    annotate each record with ``step_order`` from the plan's ``method_plan``,
+    and forward to ``build_bounded_evidence_catalog``. When the plan is empty
+    we still emit the catalog so the synthesis instruction always carries the
+    no-ritual reminder.
+    """
+
+    from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
+
+    plan_id = ""
+    method_plan: list[dict[str, Any]] = []
+    if isinstance(plan, dict):
+        plan_id = str(plan.get("id") or "")
+        raw_method_plan = plan.get("method_plan")
+        if isinstance(raw_method_plan, list):
+            method_plan = [item for item in raw_method_plan if isinstance(item, dict)]
+    step_order: dict[str, int] = {}
+    for index, step in enumerate(method_plan, 1):
+        step_id = str(step.get("step_id") or "").strip()
+        if step_id:
+            step_order[step_id] = index
+    annotated: list[dict[str, Any]] = []
+    for record in evidence_records:
+        if not isinstance(record, dict):
+            continue
+        record_plan_id = str(record.get("plan_id") or "").strip()
+        # Filter to current-plan records when we know the plan id; legacy
+        # unbound evidence (empty plan_id) passes through unchanged so the
+        # catalog still surfaces something useful when no plan exists yet.
+        if plan_id and record_plan_id and record_plan_id != plan_id:
+            continue
+        annotated_record = dict(record)
+        step_id = str(record.get("step_id") or "").strip()
+        if step_id in step_order:
+            annotated_record["step_order"] = step_order[step_id]
+        annotated.append(annotated_record)
+    return build_bounded_evidence_catalog(annotated)
 
 
 def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
@@ -173,6 +222,8 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         _escape_prompt_value(evidence_id)
         for evidence_id in policy.allowed_evidence_ids
     )
+    catalog_text = policy.evidence_catalog or ""
+    catalog_block = _escape_prompt_value(catalog_text)
     return (
         "<synthesis_policy "
         f'answer_mode="{answer_mode}" '
@@ -190,15 +241,16 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         "must end with one or more exact [[evidence:<EvidenceRecord ID>]] markers using IDs from allowed_evidence_ids. "
         "Do not invent or substitute evidence IDs. These markers are internal and removed before publication."
         "</internal_evidence_markers>"
-        "<bounded_evidence_replenishment>"
-        "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
+        "<bounded_evidence_catalog>"
+        f"{catalog_block}"
+        "</bounded_evidence_catalog>"
+        "<synthesis_evidence_discipline>"
+        "During final answer generation do not call any analysis, plan, or evidence-recording tool; "
+        "the bounded_evidence_catalog is the only evidence source for synthesis. "
         "Do not read raw datasets during synthesis. "
-        "If a material claim lacks evidence and a relevant dataset is available, call record_analysis_plan "
-        f"with contract_version {ANALYSIS_PLAN_CONTRACT_VERSION}, the current analysis plan id, and one bounded independent step "
-        "for that dataset. "
-        "After the step runs, record the result with record_evidence_record and synthesize from EvidenceRecords. "
-        "If evidence cannot be produced within the bounded plan, return a partial answer with missing-evidence limitations."
-        "</bounded_evidence_replenishment>"
+        "If a material claim is not supported by an EvidenceRecord in the catalog, return a partial answer with "
+        "missing-evidence limitations instead of strengthening the claim."
+        "</synthesis_evidence_discipline>"
     )
 
 

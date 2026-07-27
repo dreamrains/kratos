@@ -7,9 +7,10 @@ answer-text claim extraction and agent-verification folding.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 from data_agent.agent.analysis_quality_rubric import score_analysis_quality
 from data_agent.agent.verification import verify_analysis_claims
@@ -307,6 +308,108 @@ def is_supported_by_evidence(claim_text: str, evidence_records: list[dict[str, A
         if hay_ng and len(claim_ng & hay_ng) / len(claim_ng) >= 0.4:
             return True
     return False
+
+
+_CLAIM_CLASS_KEYS = ("claim_class", "claim_type")
+_CLAIM_QUANTITY_KEYS = ("value", "quantity", "magnitude")
+_CLAIM_UNIT_KEYS = ("unit", "units")
+_CLAIM_DIRECTION_KEYS = ("direction", "direction_label")
+_CLAIM_TIME_KEYS = ("time_scope", "time_window", "period")
+_CLAIM_POPULATION_KEYS = (
+    "population_scope",
+    "population",
+    "dataset_scope",
+    "dataset",
+)
+_CLAIM_PLAN_KEYS = ("plan_id",)
+
+
+def _claim_material_field(claim: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        if key in claim:
+            value = claim.get(key)
+            text = str(value).strip() if not isinstance(value, (list, dict)) else ""
+            if text:
+                return text.casefold()
+    return ""
+
+
+def _numbers_equal(left: str, right: str) -> bool:
+    try:
+        return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-12)
+    except (TypeError, ValueError):
+        return left == right
+
+
+def _material_match(claim: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    """All material fields must match exactly (missing == empty string)."""
+
+    pairs = (
+        (_CLAIM_CLASS_KEYS, _CLAIM_CLASS_KEYS),
+        (_CLAIM_UNIT_KEYS, _CLAIM_UNIT_KEYS + ("measurement_unit",)),
+        (_CLAIM_DIRECTION_KEYS, _CLAIM_DIRECTION_KEYS),
+        (_CLAIM_TIME_KEYS, _CLAIM_TIME_KEYS),
+        (_CLAIM_POPULATION_KEYS, _CLAIM_POPULATION_KEYS),
+        (_CLAIM_PLAN_KEYS, _CLAIM_PLAN_KEYS),
+    )
+    for claim_keys, evidence_keys in pairs:
+        claim_value = _claim_material_field(claim, claim_keys)
+        evidence_value = _claim_material_field(evidence, evidence_keys)
+        if claim_value != evidence_value:
+            return False
+    claim_quantity = _claim_material_field(claim, _CLAIM_QUANTITY_KEYS)
+    evidence_quantity = _claim_material_field(evidence, _CLAIM_QUANTITY_KEYS + ("magnitude_value",))
+    if claim_quantity or evidence_quantity:
+        if not claim_quantity or not evidence_quantity:
+            return False
+        if not _numbers_equal(claim_quantity, evidence_quantity):
+            return False
+    return True
+
+
+def attach_unique_exact_evidence_ids(
+    claims: Sequence[dict[str, Any]],
+    evidence_records: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach an existing evidence ID to a claim only on exactly one match.
+
+    Compares claim class, quantity, unit, direction, time scope,
+    population/dataset scope, and current plan ID. Zero or multiple matches
+    leave the claim unchanged (unbound for audit action); the matcher never
+    invents IDs. ``Sequence`` inputs are accepted to keep the helper friendly
+    to tuples/generators but a fresh list is always returned.
+    """
+
+    claims_list = list(claims or [])
+    evidence_list = [
+        record for record in (evidence_records or [])
+        if isinstance(record, dict)
+    ]
+    results: list[dict[str, Any]] = []
+    for claim in claims_list:
+        if not isinstance(claim, dict):
+            results.append(claim)
+            continue
+        matches = [
+            evidence
+            for evidence in evidence_list
+            if _material_match(claim, evidence)
+        ]
+        if len(matches) != 1:
+            results.append(claim)
+            continue
+        evidence_id = str(matches[0].get("id") or "").strip()
+        if not evidence_id:
+            results.append(claim)
+            continue
+        new_claim = dict(claim)
+        existing_ids = list(claim.get("evidence_ids") or [])
+        if evidence_id not in existing_ids:
+            existing_ids.append(evidence_id)
+        new_claim["evidence_ids"] = existing_ids
+        new_claim.setdefault("evidence_id", evidence_id)
+        results.append(new_claim)
+    return results
 
 
 def _relationship_uses_from_state(state) -> list[dict[str, Any]]:
