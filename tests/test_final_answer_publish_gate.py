@@ -167,8 +167,13 @@ def test_revise_gets_one_synthesis_only_retry_then_bounded_fallback(monkeypatch)
     loop.messages.append({"role": "assistant", "content": "Still incomplete [[evidence:ev_1]]."})
     second = loop._gate_final_analysis_answer("analyze", "Still incomplete [[evidence:ev_1]].")
 
+    # Old behavior emitted a generic English "could not be published" fallback
+    # that destroyed useful structure. The new renderer publishes the audit's
+    # public_text with downgraded claims kept (no whole-answer wipe), and
+    # strips internal evidence markers.
     assert second["action"] == "fallback"
-    assert "could not be published" in second["text"]
+    assert "Audited result" in second["text"]
+    assert "could not be published" not in second["text"]
     assert "[[evidence:" not in second["text"]
     assert loop._turn_final_audit_instruction == ""
 
@@ -205,32 +210,55 @@ def test_exhausted_budget_returns_safe_partial_instead_of_requesting_reanalysis(
     assert loop._turn_final_audit_analysis_retry_used is False
 
 
-def test_safe_fallback_keeps_passed_limitation_framing_with_supported_claims():
-    loop = _analysis_loop()
-    fallback = loop._safe_final_answer_fallback({
+def test_renderer_keeps_passed_claims_and_replaces_failed_with_chinese_diagnostic():
+    """Replaces the deleted `_safe_final_answer_fallback` test.
+
+    The renderer keeps verified passed claims (including limitations) in
+    their original order and replaces the failed claim's span with a Chinese
+    diagnostic. It must not emit the legacy English whole-answer fallback.
+    """
+
+    from data_agent.agent.answer_quality import render_audited_analysis_answer
+
+    public_text = (
+        "Revenue increased 12%.\n"
+        "Limitation: this is a descriptive comparison only.\n"
+        "The campaign caused the increase."
+    )
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "public_text": public_text,
+        "claims": [
+            {"id": "claim_1", "text": "Revenue increased 12%."},
+            {"id": "claim_2", "text": "Limitation: this is a descriptive comparison only."},
+            {"id": "claim_3", "text": "The campaign caused the increase."},
+        ],
         "claim_checks": [
+            {"claim_id": "claim_1", "status": "passed"},
+            {"claim_id": "claim_2", "status": "passed"},
             {
-                "claim": "Revenue increased 12%.",
-                "status": "passed",
-                "strength": "likely",
-            },
-            {
-                "claim": "Limitation: this is a descriptive comparison only.",
-                "status": "passed",
-                "strength": "diagnostic",
-            },
-            {
-                "claim": "The campaign caused the increase.",
+                "claim_id": "claim_3",
                 "status": "failed",
-                "strength": "unsupported",
+                "reason_codes": ["unmet_block_claim_requirement"],
             },
         ],
-    })
+    }
+    completion = SimpleNamespace(status="complete")
 
-    assert "Revenue increased 12%." in fallback
-    assert "Limitation: this is a descriptive comparison only." in fallback
-    assert fallback.index("Revenue increased 12%.") < fallback.index("Limitation:")
-    assert "campaign caused" not in fallback
+    result = render_audited_analysis_answer(
+        draft=public_text,
+        audit=audit,
+        completion=completion,
+        mode="tiered",
+    )
+
+    assert "Revenue increased 12%." in result.text
+    assert "Limitation: this is a descriptive comparison only." in result.text
+    assert result.text.index("Revenue increased 12%.") < result.text.index("Limitation:")
+    assert "campaign caused" not in result.text
+    assert "无法发布" in result.text
+    assert result.actions["claim_3"] == "unsupported"
+    assert "Some requested analysis claims" not in result.text
 
 
 def test_sync_loop_returns_only_audited_text(monkeypatch):
@@ -269,7 +297,11 @@ def test_synthesis_only_revision_cannot_escape_into_tool_execution():
 
     result = loop._loop_impl("analyze")
 
-    assert "could not be published" in result.content
+    # The tool call is rejected and the audit's public_text is published via
+    # claim-tier rendering. The legacy English "could not be published" wording
+    # is gone — that is the regression we are guarding against.
+    assert "Audited result" in result.content
+    assert "could not be published" not in result.content
     assert not any(message.get("tool_calls") for message in loop.messages)
     assert loop._turn_final_audit_instruction == ""
 

@@ -11,6 +11,12 @@ from dataclasses import asdict, dataclass, replace
 from html import escape as html_escape
 from typing import Any
 
+# Canonical Chinese exploratory suffix reused by claim-tier publication
+# (``answer_quality.render_audited_analysis_answer``). The synthesis prompt
+# keeps the marker discipline internal; the suffix is appended deterministically
+# by the publisher when a claim is downgraded or completion is limited.
+EXPLORATORY_CLAIM_SUFFIX = "（探索性，未经独立校验）"
+
 
 @dataclass(frozen=True)
 class SynthesisPolicy:

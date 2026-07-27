@@ -2249,34 +2249,118 @@ class AgentLoop:
         )
         self._prompt_cache_dirty = True
 
-    def _safe_final_answer_fallback(self, audit: dict[str, Any]) -> str:
-        supported = [
-            str(check.get("claim") or "").strip()
+    def _publication_mode(self) -> str:
+        from data_agent.config import get_config
+
+        try:
+            return str(getattr(get_config(), "assurance_publication_mode", "tiered") or "tiered")
+        except Exception:
+            return "tiered"
+
+    def _publication_feature_flags(self) -> dict[str, bool]:
+        from data_agent.config import get_config
+
+        try:
+            cfg = get_config()
+        except Exception:
+            return {
+                "auto_evidence_projection_enabled": True,
+                "analysis_live_progress_enabled": True,
+            }
+        return {
+            "auto_evidence_projection_enabled": bool(
+                getattr(cfg, "auto_evidence_projection_enabled", True)
+            ),
+            "analysis_live_progress_enabled": bool(
+                getattr(cfg, "analysis_live_progress_enabled", True)
+            ),
+        }
+
+    def _record_publication_diagnostic(self, publication: Any) -> None:
+        state = getattr(self.context, "analysis_state", None)
+        if state is None or publication is None:
+            return
+        try:
+            state.append_turn_diagnostic({
+                "event": "claim_tier_publication",
+                "mode": self._publication_mode(),
+                "feature_flags": self._publication_feature_flags(),
+                "actions": dict(getattr(publication, "actions", {}) or {}),
+            })
+        except Exception:
+            pass
+
+    def _record_pass_publication_diagnostic(self, audit: dict[str, Any]) -> None:
+        """Record a ``claim_tier_publication`` diagnostic on the pass path.
+
+        The pass path publishes ``audit.public_text`` directly without going
+        through ``_render_audited_publication`` (every claim passed, so there
+        is nothing to downgrade or replace). The publication still happened,
+        so we record the per-claim action map (all ``verified``) for
+        observability consistency with the fallback and revise paths.
+        """
+
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return
+        actions = {
+            str(check.get("claim_id") or ""): "verified"
             for check in audit.get("claim_checks") or []
-            if isinstance(check, dict)
-            and check.get("status") == "passed"
-            and str(check.get("claim") or "").strip()
-        ]
-        prefix = "\n".join(dict.fromkeys(supported))
-        gap = (
-            "Some requested analysis claims could not be published because their current computation evidence "
-            "is missing, inconsistent, or does not satisfy the required assurance checks."
+            if isinstance(check, dict) and check.get("status") == "passed"
+        }
+        try:
+            state.append_turn_diagnostic({
+                "event": "claim_tier_publication",
+                "mode": self._publication_mode(),
+                "feature_flags": self._publication_feature_flags(),
+                "actions": actions,
+            })
+        except Exception:
+            pass
+
+    def _render_audited_publication(
+        self,
+        draft: str,
+        audit: dict[str, Any] | None,
+    ) -> str:
+        """Render a draft answer under claim-tier publication rules.
+
+        Always publishes deterministically — never triggers another analysis
+        tool call. When ``audit`` is missing (audit failure) every material
+        claim is downgraded to exploratory so the published text cannot
+        strengthen an unsupported claim even when the audit itself failed.
+        """
+
+        from data_agent.agent.answer_quality import (
+            PublicationResult,
+            render_audited_analysis_answer,
         )
-        return f"{prefix}\n\n{gap}".strip() if prefix else gap
+
+        completion = self._evaluate_turn_completion()
+        rendered: PublicationResult = render_audited_analysis_answer(
+            draft=draft,
+            audit=audit if isinstance(audit, dict) else None,
+            completion=completion,
+            mode=self._publication_mode(),
+        )
+        self._record_publication_diagnostic(rendered)
+        return rendered.text
 
     def _synthesis_audit_revision_active(self) -> bool:
         return 'mode="synthesis"' in getattr(self, "_turn_final_audit_instruction", "")
 
     def _reject_synthesis_revision_tool_calls(self) -> str:
+        draft_text = ""
         if self.messages and self.messages[-1].get("role") == "assistant":
+            draft_text = str(self.messages[-1].get("content") or "")
             self.messages.pop()
         audit = getattr(self, "_turn_last_final_audit", None)
-        fallback = self._safe_final_answer_fallback(
-            audit if isinstance(audit, dict) else {"claim_checks": []}
+        rendered = self._render_audited_publication(
+            draft_text, audit if isinstance(audit, dict) else None,
         )
-        self._replace_last_answer_candidate(fallback)
+        self._replace_last_answer_candidate(rendered)
         self._turn_final_audit_instruction = ""
-        return fallback
+        return rendered
 
     def _gate_final_analysis_answer(
         self,
@@ -2295,9 +2379,10 @@ class AgentLoop:
 
         state = getattr(self.context, "analysis_state", None)
         if state is None:
-            fallback = self._safe_final_answer_fallback({"claim_checks": []})
-            self._replace_last_answer_candidate(fallback)
-            return {"action": "fallback", "text": fallback}
+            rendered = self._render_audited_publication(final_text, None)
+            self._replace_last_answer_candidate(rendered)
+            self._turn_final_audit_instruction = ""
+            return {"action": "fallback", "text": rendered}
 
         try:
             ref = audit_final_answer_draft(final_text, state)
@@ -2313,16 +2398,25 @@ class AgentLoop:
             )
             audit = None
         if not isinstance(audit, dict):
-            fallback = self._safe_final_answer_fallback({"claim_checks": []})
-            self._replace_last_answer_candidate(fallback)
+            # Audit failed closed. Publish deterministically via the renderer
+            # with a missing audit so every material claim is downgraded to
+            # exploratory. Never trigger another analysis tool call from this
+            # path — the renderer is read-only.
+            rendered = self._render_audited_publication(final_text, None)
+            self._replace_last_answer_candidate(rendered)
             self._turn_final_audit_instruction = ""
-            return {"action": "fallback", "text": fallback}
+            return {"action": "fallback", "text": rendered}
 
         self._turn_last_final_audit = audit
 
         status = str(audit.get("status") or "blocked")
         if status == "pass":
             public_text = str(audit.get("public_text") or "")
+            # Record the publication diagnostic on the pass path too — the
+            # publication still happened, so observability must be consistent
+            # with the fallback and revise paths. The published text is the
+            # audit's public_text verbatim (every claim passed).
+            self._record_pass_publication_diagnostic(audit)
             self._replace_last_answer_candidate(public_text)
             self._turn_final_audit_instruction = ""
             return {"action": "publish", "text": public_text}
@@ -2378,10 +2472,16 @@ class AgentLoop:
             )
             return {"action": "continue", "mode": "analysis"}
 
-        fallback = self._safe_final_answer_fallback(audit)
-        self._replace_last_answer_candidate(fallback)
+        # One bounded wording revision is already exhausted (or not allowed).
+        # Publish deterministically by claim tier: verified findings stay,
+        # downgraded claims get the exploratory suffix, fabricated/stale/
+        # cross-scope/contradictory/causal-invalid claims are replaced in
+        # place with Chinese diagnostics. The whole-answer English fallback
+        # must not appear.
+        rendered = self._render_audited_publication(final_text, audit)
+        self._replace_last_answer_candidate(rendered)
         self._turn_final_audit_instruction = ""
-        return {"action": "fallback", "text": fallback}
+        return {"action": "fallback", "text": rendered}
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._maybe_continue_for_analysis_quality(user_input, final_text) is not None

@@ -9,11 +9,59 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from data_agent.agent.analysis_quality_rubric import score_analysis_quality
 from data_agent.agent.verification import verify_analysis_claims
+
+ClaimAction = Literal["verified", "exploratory", "unsupported"]
+PublicationMode = Literal["tiered", "strict"]
+
+# Local suffix appended to current traceable computations that cannot be
+# published as verified (e.g. completion is ``complete_with_limits``). Kept
+# Chinese-only because the published answer is Chinese; a parallel English
+# suffix would weaken the signal.
+EXPLORATORY_CLAIM_SUFFIX = "（探索性，未经独立校验）"
+
+# Strict-mode fail-safe banner. When the tiered renderer cannot safely
+# recover (an unsupported claim could not be cleanly replaced in place, or
+# the audit was missing so claims were re-derived from the draft text),
+# strict mode prepends this Chinese diagnostic so the reader can see that
+# publication was downgraded. Tiered mode recovers silently — same per-claim
+# rules, no banner. The five deterministic blockers fire in BOTH modes; this
+# banner is a strict-only observability surface, not an additional gate.
+STRICT_RECOVERY_DIAGNOSTIC = (
+    "> 严格发布模式：部分结论因校验信息不完整未能精确还原，"
+    "已按最低确定性阻断并降级发布，请结合下方标注审阅。"
+)
+
+# Reason-code → Chinese diagnostic mapping for unsupported claims. Each
+# diagnostic names the missing evidence, method, or data so the reader can
+# tell what blocked publication. The five deterministic blockers
+# (fabricated value, contradictory direction, stale dataset, cross-scope
+# evidence, causal upgrade) all yield ``unsupported`` and route through here.
+_UNSUPPORTED_DIAGNOSTICS: dict[str, str] = {
+    "missing_evidence_identity": "无法发布该数值：缺少对应的当前计算证据标识",
+    "numeric_mismatch": "无法发布该数值：与当前计算证据的数值不一致",
+    "unit_mismatch": "无法发布该数值：单位口径与证据不一致",
+    "direction_mismatch": "无法发布该方向结论：与证据方向不一致",
+    "time_scope_mismatch": "无法发布该结论：时间口径与证据不一致",
+    "population_scope_mismatch": "无法发布该结论：人群口径与证据不一致",
+    "confidence_mismatch": "无法发布该结论：置信度表述与证据不一致",
+    "verification_level_overclaim": "无法发布该结论：所选证据的核验等级不足以支撑该表述",
+    "stale_dataset_evidence": "无法发布该结论：证据对应的输入数据版本已过期",
+    "stale_plan_evidence": "无法发布该结论：证据属于历史计划版本",
+    "evidence_outside_current_plan": "无法发布该结论：证据不在当前分析计划范围内",
+    "evidence_identity_not_found": "无法发布该结论：引用的证据在当前计划中不存在",
+    "causal_claim_not_identified": "无法发布该因果结论：未满足因果识别方法要求",
+    "unmet_block_claim_requirement": "无法发布该结论：未满足所需的统计分析保证",
+    "claim_guard_blocked": "无法发布该结论：声明性保证检查未通过",
+    "computation_integrity_failure": "无法发布该结论：计算完整性校验失败",
+    "unsupported_claim": "无法发布该结论：缺少当前证据支撑",
+}
+_UNSUPPORTED_DEFAULT_DIAGNOSTIC = "无法发布该结论：缺少当前证据支撑"
 
 SOFT_DIMENSIONS: dict[str, dict[str, str]] = {
     "rigor": {
@@ -492,3 +540,257 @@ def build_judge_context(state, question: str) -> dict[str, Any]:
     # latest-bundle convention (loop.py:796 iterates bundles in reverse).
     brief = build_user_data_brief(bundles[-1]) if bundles else {"datasets": [], "relationships": []}
     return {"question": question, "data_brief": brief}
+
+
+@dataclass(frozen=True)
+class PublicationResult:
+    """Result of claim-tier publication rendering.
+
+    ``text`` is the published answer with verified/exploratory findings kept
+    and unsupported claims replaced in place by Chinese diagnostics.
+    ``actions`` maps each audit claim id to its publication action. ``diagnostics``
+    carries per-claim audit metadata for turn diagnostics; it never re-derives
+    a publication decision on its own.
+    """
+
+    text: str
+    actions: dict[str, ClaimAction]
+    diagnostics: tuple[dict[str, Any], ...]
+
+
+def _diagnostic_for_reason_codes(reason_codes: Sequence[str]) -> str:
+    for code in reason_codes or ():
+        text = _UNSUPPORTED_DIAGNOSTICS.get(str(code))
+        if text:
+            return text
+    return _UNSUPPORTED_DEFAULT_DIAGNOSTIC
+
+
+def _completion_status_value(completion: Any) -> str:
+    if completion is None:
+        return ""
+    for attr in ("status", "completion_status"):
+        value = getattr(completion, attr, None)
+        if value:
+            return str(value)
+    if isinstance(completion, dict):
+        for key in ("status", "completion_status"):
+            value = completion.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _claim_material_flag(claim: dict[str, Any]) -> bool:
+    value = claim.get("material")
+    if isinstance(value, bool):
+        return value
+    text = str(claim.get("text") or claim.get("claim") or "")
+    if not text:
+        return False
+    claim_type = str(claim.get("claim_type") or "").strip()
+    if claim_type in {"diagnostic", "limitation"}:
+        return True
+    return bool(_MATERIAL_HINTS.search(text))
+
+
+def _claim_text(claim: dict[str, Any]) -> str:
+    return str(claim.get("text") or claim.get("claim") or "").strip()
+
+
+def _claim_identifier(claim: dict[str, Any]) -> str:
+    return str(claim.get("id") or claim.get("claim_id") or claim.get("claim_key") or "").strip()
+
+
+def _find_unconsumed_span(
+    haystack: str,
+    needle: str,
+    consumed: list[tuple[int, int]],
+) -> int:
+    if not needle:
+        return -1
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx < 0:
+            return -1
+        end = idx + len(needle)
+        if all(end <= c_start or idx >= c_end for c_start, c_end in consumed):
+            return idx
+        start = idx + 1
+
+
+def render_audited_analysis_answer(
+    *,
+    draft: str,
+    audit: dict[str, Any] | None,
+    completion: Any,
+    mode: PublicationMode = "tiered",
+) -> PublicationResult:
+    """Render ``draft`` under claim-tier publication rules.
+
+    The renderer is deterministic and never calls another tool. It uses the
+    existing audit (claims + claim_checks) to decide per-claim actions:
+
+    * ``verified`` — claim passed audit and the completion status is
+      ``complete``. Original text is retained.
+    * ``exploratory`` — claim passed but completion is limited, or audit
+      status is ``downgraded``, or the audit itself is missing. The claim
+      text is retained and the local suffix ``（探索性，未经独立校验）`` is
+      appended for material claims.
+    * ``unsupported`` — claim failed the audit (any reason code in the
+      deterministic blocker set, including fabricated values, contradictory
+      directions, stale dataset evidence, cross-scope evidence, and causal
+      upgrades). The claim span is replaced in place with a Chinese
+      diagnostic naming the missing evidence, method, or data.
+
+    Headings, tables, non-claim prose, method, and limitations stay in their
+    original order. The five deterministic blockers fire in BOTH modes; the
+    exploratory suffix rule is unchanged across modes.
+
+    Strict vs tiered — fail-safe rollback net. The two modes share the
+    per-claim rules above. ``strict`` is additionally more conservative: when
+    the tiered renderer cannot safely recover — (a) at least one unsupported
+    claim could NOT be cleanly replaced in place and had to be appended as a
+    trailing diagnostic block, OR (b) the audit is missing so claims were
+    re-derived from the draft text — ``strict`` emits a visible Chinese
+    recovery banner (``STRICT_RECOVERY_DIAGNOSTIC``) at the top of the
+    returned text and records it in ``PublicationResult.diagnostics``.
+    ``tiered`` recovers silently with no banner. This makes ``strict`` a real
+    rollback net: the published text is identical to ``tiered`` when recovery
+    is clean, but observably more cautious when it is not. The legacy
+    whole-answer English fallback must not appear in either mode.
+    """
+
+    draft_text = strip_internal_evidence_markers(draft or "")
+    public_text = draft_text
+    audit_present = isinstance(audit, dict)
+    if audit_present:
+        audited_public = str(audit.get("public_text") or "").strip()
+        if audited_public:
+            public_text = audited_public
+
+    completion_status = _completion_status_value(completion)
+    # An answer published without an audit must not claim ``verified`` —
+    # force ``complete`` to False so every material claim downgrades to
+    # exploratory. This matches the docstring of the loop's
+    # ``_render_audited_publication`` and is the safer behavior.
+    complete = completion_status == "complete" and audit_present
+
+    raw_audit_claims: list[dict[str, Any]] = []
+    audit_claims_provided = False
+    if audit_present:
+        raw_audit_claims = [
+            claim for claim in (audit.get("claims") or [])
+            if isinstance(claim, dict)
+        ]
+        audit_claims_provided = bool(raw_audit_claims)
+    if not raw_audit_claims:
+        raw_audit_claims = extract_material_claims(public_text)
+
+    checks_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(audit, dict):
+        for check in audit.get("claim_checks") or []:
+            if not isinstance(check, dict):
+                continue
+            claim_id = str(check.get("claim_id") or "").strip()
+            if claim_id:
+                checks_by_id[claim_id] = check
+
+    actions: dict[str, ClaimAction] = {}
+    diagnostics: list[dict[str, Any]] = []
+    spans: list[tuple[int, int, str, ClaimAction, dict[str, Any], bool]] = []
+    unmatched_unsupported: list[tuple[str, dict[str, Any]]] = []
+    consumed: list[tuple[int, int]] = []
+
+    for claim in raw_audit_claims:
+        claim_id = _claim_identifier(claim)
+        if not claim_id:
+            continue
+        claim_text = _claim_text(claim)
+        check = checks_by_id.get(claim_id, {})
+        status = str(check.get("status") or "").strip()
+        if status == "failed":
+            action: ClaimAction = "unsupported"
+        elif status == "downgraded" or not complete:
+            action = "exploratory"
+        else:
+            action = "verified"
+        actions[claim_id] = action
+        material = _claim_material_flag(claim)
+        diagnostics.append({
+            "claim_id": claim_id,
+            "action": action,
+            "audit_status": status,
+            "material": material,
+            "reason_codes": list(check.get("reason_codes") or []),
+        })
+        if not claim_text:
+            continue
+        match_index = _find_unconsumed_span(public_text, claim_text, consumed)
+        if match_index >= 0:
+            spans.append((
+                match_index,
+                match_index + len(claim_text),
+                claim_id,
+                action,
+                check,
+                material,
+            ))
+            consumed.append((match_index, match_index + len(claim_text)))
+            consumed.sort()
+        elif action == "unsupported":
+            unmatched_unsupported.append((claim_id, check))
+
+    spans.sort(key=lambda item: (item[0], item[1]))
+
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, _claim_id, action, check, material in spans:
+        if start < cursor:
+            continue
+        pieces.append(public_text[cursor:start])
+        original_span = public_text[start:end]
+        if action == "verified":
+            pieces.append(original_span)
+        elif action == "exploratory":
+            pieces.append(original_span)
+            if material:
+                pieces.append(EXPLORATORY_CLAIM_SUFFIX)
+        else:
+            pieces.append(_diagnostic_for_reason_codes(check.get("reason_codes") or []))
+        cursor = end
+    pieces.append(public_text[cursor:])
+
+    if unmatched_unsupported:
+        pieces.append("\n\n")
+        for _claim_id, check in unmatched_unsupported:
+            pieces.append(_diagnostic_for_reason_codes(check.get("reason_codes") or []))
+            pieces.append("\n")
+
+    text = "".join(pieces).rstrip()
+
+    # Strict-only fail-safe rollback net. When the tiered renderer cannot
+    # safely recover — (a) an unsupported claim could not be cleanly replaced
+    # in place and had to be appended as a trailing diagnostic block, or
+    # (b) the audit was missing so claims were re-derived from the draft —
+    # strict mode prepends a visible Chinese recovery banner and records it
+    # in diagnostics. Tiered mode recovers silently (no banner). The five
+    # deterministic blockers fire in BOTH modes above; this is an
+    # observability surface, not an additional gate.
+    if mode == "strict" and (unmatched_unsupported or not audit_claims_provided):
+        diagnostics.append({
+            "event": "strict_recovery_diagnostic",
+            "text": STRICT_RECOVERY_DIAGNOSTIC,
+            "unmatched_unsupported": len(unmatched_unsupported),
+            "audit_missing": not audit_claims_provided,
+        })
+        text = STRICT_RECOVERY_DIAGNOSTIC + "\n\n" + (text if text else "")
+
+    if text:
+        text = text + "\n"
+    return PublicationResult(
+        text=text,
+        actions=actions,
+        diagnostics=tuple(diagnostics),
+    )

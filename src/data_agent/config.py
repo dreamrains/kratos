@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +35,24 @@ class AgentConfig(BaseSettings):
     # MCP / Skill
     mcp_enabled: bool = Field(alias="MCP_ENABLED", default=True)
     skill_auto_discover: bool = Field(alias="SKILL_AUTO_DISCOVER", default=True)
+
+    # Analysis publication controls. The Literal deliberately omits ``off``:
+    # production cannot disable deterministic claim-tier publication. The
+    # projection and progress flags remain additive — disabling them keeps the
+    # completion status ``complete_with_limits``/exploratory and never weakens
+    # a deterministic blocker.
+    assurance_publication_mode: Literal["tiered", "strict"] = Field(
+        alias="ASSURANCE_PUBLICATION_MODE",
+        default="tiered",
+    )
+    auto_evidence_projection_enabled: bool = Field(
+        alias="AUTO_EVIDENCE_PROJECTION_ENABLED",
+        default=True,
+    )
+    analysis_live_progress_enabled: bool = Field(
+        alias="ANALYSIS_LIVE_PROGRESS_ENABLED",
+        default=True,
+    )
 
     @property
     def global_dir(self) -> Path:
