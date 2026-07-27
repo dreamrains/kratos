@@ -71,11 +71,36 @@ _SUBSTANTIVE_TOOLS = {
     "run_python",
 }
 
+# Tools that do not by themselves advance the analysis contract — only used to
+# detect the "loaded/profiled but never planned or executed" pre-plan case.
+_META_QUALITY_TOOLS = {
+    "load_data",
+    "list_data",
+    "record_data_requirement",
+    "record_insight_record",
+    "task_create",
+    "task_update",
+    "task_list",
+    "ask_user_question",
+}
+
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "<analysis_quality_guard>\n"
     "The user requested analysis, but this turn has only loaded or profiled data. "
-    "Continue by creating or applying an AnalysisSpec, running relevant analysis steps, "
+    "Continue by creating or applying an AnalysisPlan, running relevant analysis steps, "
     "and recording evidence before giving the final answer.\n"
+    "</analysis_quality_guard>"
+)
+
+_ANALYSIS_QUALITY_CONTINUATION_TEMPLATE = (
+    "<analysis_quality_guard>\n"
+    "Requirement-based completion evaluator: status={status}, reason={reason}.\n"
+    "Missing requirements: {missing}.\n"
+    "Allowed capability/fallback: {capability_hint}.\n"
+    "Do ONE more round: attempt the named missing requirement using a structured "
+    "tool, record evidence, and disclose any limitation. Do not Strengthen the "
+    "claim class. After this round, synthesize the final answer with explicit "
+    "limitations even if the requirement remains unmet.\n"
     "</analysis_quality_guard>"
 )
 
@@ -89,6 +114,26 @@ _COMPUTATION_REPAIR_REASON_CODES = {
     "unmet_block_claim_requirement",
     "unsupported_claim",
 }
+
+
+def _capability_hint_for_unmet(decision) -> str:
+    """Render a compact, requirement-aware capability hint for the guard.
+
+    Looked up from the recoverable requirement ids in the decision; never
+    invents a stronger capability than the supported claim class allows.
+    """
+
+    recoverable = list(getattr(decision, "recoverable_requirement_ids", ()) or ())
+    if not recoverable:
+        return "use the next planned analysis step or downgrade the claim"
+    head = recoverable[0]
+    head_text = str(head)
+    # The requirement id encodes the missing method input (e.g.
+    # ``req_step_multivariable_method_attempted_multivariable_adjustment``);
+    # surface the trailing segment so the model knows which structured
+    # output to produce without re-stating the whole plan.
+    tail = head_text.rsplit("_", 1)[-1] if "_" in head_text else head_text
+    return f"produce the structured {tail} output for {head_text}"
 
 
 # === LoopResult: Agent loop return types ===
@@ -1183,11 +1228,7 @@ class AgentLoop:
             )
         profile = _intent_to_budget_profile(intent.intent_type)
         cfg = get_config()
-        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
-            profile=profile,
-            token_budget=_token_budget_for_profile(profile, cfg.token_threshold),
-        ))
-
+        token_budget = _token_budget_for_profile(profile, cfg.token_threshold)
         # Extract user quality requirements on first analysis turn
         if not self.context.user_quality_requirements and user_input and len(user_input) > 100:
             self._extract_user_requirements(user_input)
@@ -1195,7 +1236,15 @@ class AgentLoop:
             state.explicit_user_requirements = self.context.user_quality_requirements
             state.save()
 
-        return controller.activate_tool_groups(registry, intent, state, user_input)
+        activated_groups = controller.activate_tool_groups(registry, intent, state, user_input)
+        # Install the turn execution state AFTER activate_tool_groups so the
+        # registry.reset_groups() call inside it (which clears per-turn state)
+        # does not wipe the budget/recovery counters we just compiled.
+        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+            profile=profile,
+            token_budget=token_budget,
+        ))
+        return activated_groups
 
     def _maybe_auto_suspend_for_required_question(self) -> SuspendedForConfirmation | None:
         state = getattr(self.context, "analysis_state", None)
@@ -1891,6 +1940,7 @@ class AgentLoop:
 
     def _reset_turn_tracking(self) -> None:
         self._turn_tools_used = []
+        self._turn_tool_outcomes = []
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
@@ -1917,8 +1967,31 @@ class AgentLoop:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
         self._turn_tools_used.append(tool_name)
-        if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
+        is_error = self._tool_content_is_error(tool_msg_content)
+        if not hasattr(self, "_turn_tool_outcomes"):
+            self._turn_tool_outcomes = []
+        # Keep the most recent outcome per tool_call_id-ish key (tool_name + index).
+        self._turn_tool_outcomes.append({
+            "tool_name": tool_name,
+            "tool_call_id": f"{tool_name}_{len(self._turn_tool_outcomes)}",
+            "success": not is_error,
+            "error_category": (
+                self._categorize_tool_error(tool_msg_content) if is_error else ""
+            ),
+        })
+        if tool_name == "load_data" and not is_error:
             self._turn_loaded_data = True
+
+    @staticmethod
+    def _categorize_tool_error(content: str) -> str:
+        text = (content or "").lower()
+        if "not found" in text or "不存在" in text or "missing" in text or "找不到" in text:
+            return "missing_column_or_data"
+        if "too few" in text or "数据点太少" in text or "insufficient" in text:
+            return "insufficient_data"
+        if "安全" in text or "sandbox" in text or "not allowed" in text:
+            return "sandbox_violation"
+        return "tool_error"
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -2222,9 +2295,22 @@ class AgentLoop:
         return {"action": "fallback", "text": fallback}
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
-        return self._is_analysis_quality_guard_candidate()
+        return self._maybe_continue_for_analysis_quality(user_input, final_text) is not None
 
     def _is_analysis_quality_guard_candidate(self) -> bool:
+        """Streaming-round buffer gate.
+
+        Text is buffered only when this turn is still eligible for one
+        analysis-quality continuation: the intent is analysis-bearing, the
+        guard has not yet been injected, and the per-turn continuation
+        budget still has room. The substantive-tool shortcut is gone — a
+        missing requirement can still force a recovery round even after a
+        successful substantive tool.
+        """
+
+        return self._is_analysis_continuation_candidate()
+
+    def _is_analysis_continuation_candidate(self) -> bool:
         if getattr(self, "_turn_final_guard_injected", False):
             return False
         intent = getattr(self, "_last_turn_intent", None)
@@ -2232,20 +2318,181 @@ class AgentLoop:
             return False
         if getattr(intent, "execution_readiness", "") not in ("ready", "pending_load"):
             return False
-        tools_used = set(getattr(self, "_turn_tools_used", []))
-        if tools_used & _SUBSTANTIVE_TOOLS:
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
             return False
-        if not tools_used or not tools_used <= _PROFILING_TOOLS:
-            return False
-        return True
+        return int(getattr(turn_state, "analysis_continuations_used", 0) or 0) < 1
 
-    def _inject_analysis_quality_guard(self) -> None:
+    def _evaluate_turn_completion(self):
+        """Build and run the requirement-based completion evaluator."""
+
+        from data_agent.agent.execution_control import evaluate_analysis_completion
+
+        state = getattr(self.context, "analysis_state", None)
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return None
+        plan = getattr(state, "analysis_plan", None) if state is not None else None
+        requirements: list[dict[str, Any]] = []
+        if state is not None and isinstance(plan, dict) and plan.get("method_plan"):
+            try:
+                from data_agent.agent.analysis_requirements import compile_analysis_requirements
+
+                requirements = compile_analysis_requirements(
+                    plan=plan,
+                    **state.analysis_requirement_inputs(plan),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Requirement compilation failed for completion evaluation: %s",
+                    exc,
+                    extra={"extra_data": {"session_id": self.session_id}},
+                )
+                requirements = []
+        computation_refs = list(getattr(state, "computation_refs", []) or []) if state is not None else []
+        evidence_records = list(getattr(state, "evidence_records", []) or []) if state is not None else []
+        tool_outcomes = list(getattr(self, "_turn_tool_outcomes", []) or [])
+        budget_exhausted = (
+            turn_state.tool_calls >= int(turn_state.budget.max_tool_calls or 0)
+            or getattr(turn_state, "exploration_budget_exhausted", False)
+        )
+        try:
+            return evaluate_analysis_completion(
+                plan=plan if isinstance(plan, dict) else None,
+                requirements=requirements,
+                computation_refs=computation_refs,
+                evidence_records=evidence_records,
+                tool_outcomes=tool_outcomes,
+                turn_state=turn_state,
+                budget_exhausted=budget_exhausted,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Completion evaluation failed: %s",
+                exc,
+                extra={"extra_data": {"session_id": self.session_id}},
+            )
+            return None
+
+    def _maybe_continue_for_analysis_quality(
+        self,
+        user_input: str,
+        final_text: str,
+    ):
+        """Return the system message to inject when continuation is allowed.
+
+        Returns ``None`` when the turn should proceed to synthesis.
+        Handles two paths:
+
+        1. ``plan_not_started`` — analysis intent, plan not materialized,
+           only profiling/meta tools used. Allow one continuation so the
+           agent can produce a plan and execute.
+        2. ``requirement_based`` — plan exists; the evaluator reports
+           ``allow_analysis_continuation=True`` for a recoverable
+           requirement. Inject a targeted instruction naming the
+           requirement and the allowed capability/fallback.
+        """
+
+        if not self._is_analysis_continuation_candidate():
+            return None
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return None
+        if not turn_state.can_run_phase("synthesis") or not turn_state.can_run_phase("audit"):
+            return None
+
+        state = getattr(self.context, "analysis_state", None)
+        plan = getattr(state, "analysis_plan", None) if state is not None else None
+        tools_used = set(getattr(self, "_turn_tools_used", []))
+        if (
+            not isinstance(plan, dict) or not plan.get("method_plan")
+        ) and tools_used and tools_used <= (_PROFILING_TOOLS | _META_QUALITY_TOOLS):
+            if not turn_state.consume_quality_continuation(reason="plan_not_started"):
+                return None
+            message = _ANALYSIS_QUALITY_GUARD_MESSAGE
+            self._record_completion_diagnostic(
+                status="complete_with_limits",
+                reason_code="plan_not_started",
+                unmet_requirement_ids=(),
+                recoverable_requirement_ids=(),
+                supported_claim_class="exploratory_association",
+            )
+            self._inject_analysis_quality_guard(message)
+            return message
+
+        decision = self._evaluate_turn_completion()
+        if decision is None or not decision.allow_analysis_continuation:
+            if decision is not None:
+                self._record_completion_diagnostic(
+                    status=decision.status,
+                    reason_code=decision.reason_code,
+                    unmet_requirement_ids=decision.unmet_requirement_ids,
+                    recoverable_requirement_ids=decision.recoverable_requirement_ids,
+                    supported_claim_class=decision.supported_claim_class,
+                )
+            return None
+        if not turn_state.consume_quality_continuation(reason=decision.reason_code):
+            self._record_completion_diagnostic(
+                status=decision.status,
+                reason_code=decision.reason_code,
+                unmet_requirement_ids=decision.unmet_requirement_ids,
+                recoverable_requirement_ids=decision.recoverable_requirement_ids,
+                supported_claim_class=decision.supported_claim_class,
+            )
+            return None
+        missing = ", ".join(decision.recoverable_requirement_ids) or "current_missing_requirement"
+        message = _ANALYSIS_QUALITY_CONTINUATION_TEMPLATE.format(
+            status=decision.status,
+            reason=decision.reason_code,
+            missing=missing,
+            capability_hint=_capability_hint_for_unmet(decision),
+        )
+        self._record_completion_diagnostic(
+            status=decision.status,
+            reason_code=decision.reason_code,
+            unmet_requirement_ids=decision.unmet_requirement_ids,
+            recoverable_requirement_ids=decision.recoverable_requirement_ids,
+            supported_claim_class=decision.supported_claim_class,
+        )
+        self._inject_analysis_quality_guard(message)
+        return message
+
+    def _record_completion_diagnostic(
+        self,
+        *,
+        status: str,
+        reason_code: str,
+        unmet_requirement_ids,
+        recoverable_requirement_ids,
+        supported_claim_class: str,
+    ) -> None:
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return
+        try:
+            state.append_turn_diagnostic({
+                "event": "completion_decision",
+                "status": str(status or ""),
+                "reason_code": str(reason_code or ""),
+                "unmet_requirement_ids": [str(item) for item in (unmet_requirement_ids or ())],
+                "recoverable_requirement_ids": [
+                    str(item) for item in (recoverable_requirement_ids or ())
+                ],
+                "supported_claim_class": str(supported_claim_class or ""),
+            })
+        except Exception:
+            pass
+
+    def _inject_analysis_quality_guard(self, message: str | None = None) -> None:
         self._turn_final_guard_injected = True
         if self.messages:
             last_msg = self.messages[-1]
             if last_msg.get("role") == "assistant" and not last_msg.get("tool_calls"):
                 self.messages.pop()
-        self.messages.append({"role": "system", "content": _ANALYSIS_QUALITY_GUARD_MESSAGE})
+        self.messages.append({
+            "role": "system",
+            "content": message or _ANALYSIS_QUALITY_GUARD_MESSAGE,
+        })
 
     def _last_external_user_message(self) -> str:
         for msg in reversed(self.messages):
@@ -3156,7 +3403,6 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
-                    self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
@@ -3349,7 +3595,6 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
-                    self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
@@ -3718,7 +3963,6 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
-                    self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:

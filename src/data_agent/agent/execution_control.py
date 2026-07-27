@@ -8,7 +8,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, Sequence
 
 
 class BudgetExceeded(RuntimeError):
@@ -113,6 +113,9 @@ class TurnExecutionState:
     revision_attempts: int = 0
     turn_id: str = field(default_factory=lambda: f"turn_{uuid.uuid4().hex}")
     requirement_failures: dict[str, dict[str, Any]] = field(default_factory=dict)
+    requirement_recovery: dict[str, dict[str, int]] = field(default_factory=dict)
+    analysis_continuations_used: int = 0
+    quality_continuation_reason: str = ""
     _call_order: list = field(default_factory=list)
 
     @property
@@ -260,6 +263,13 @@ class TurnExecutionState:
             },
             "revision_attempts": self.revision_attempts,
             "trust_capsule_digest": self.trust_capsule_digest,
+            "analysis_continuations_used": int(self.analysis_continuations_used or 0),
+            "quality_continuation_reason": str(self.quality_continuation_reason or ""),
+            "requirement_recovery": {
+                str(key): dict(value)
+                for key, value in self.requirement_recovery.items()
+                if isinstance(value, dict)
+            },
         }
 
     def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
@@ -373,6 +383,38 @@ class TurnExecutionState:
 
         return int(self.requirement_failures.get(fingerprint, {}).get("attempts", 0)) < 2
 
+    def can_correct_requirement(self, requirement_id: str) -> bool:
+        """One corrected retry per requirement, by Task 8 budget policy."""
+
+        return int(self.requirement_recovery.get(requirement_id, {}).get("corrected_retry", 0)) < 1
+
+    def record_corrected_retry(self, requirement_id: str) -> None:
+        entry = self.requirement_recovery.setdefault(requirement_id, {})
+        entry["corrected_retry"] = int(entry.get("corrected_retry", 0)) + 1
+
+    def can_use_fallback(self, requirement_id: str) -> bool:
+        """One fallback per requirement, by Task 8 budget policy."""
+
+        return int(self.requirement_recovery.get(requirement_id, {}).get("fallback", 0)) < 1
+
+    def record_fallback(self, requirement_id: str) -> None:
+        entry = self.requirement_recovery.setdefault(requirement_id, {})
+        entry["fallback"] = int(entry.get("fallback", 0)) + 1
+
+    def consume_quality_continuation(self, *, reason: str) -> bool:
+        """Allow at most one analysis-quality continuation per turn.
+
+        Surfaces the trigger reason via ``quality_continuation_reason`` so
+        downstream diagnostics can replay which requirement forced the
+        extra round without re-reading prompt content.
+        """
+
+        if int(self.analysis_continuations_used or 0) >= 1:
+            return False
+        self.analysis_continuations_used = int(self.analysis_continuations_used or 0) + 1
+        self.quality_continuation_reason = str(reason or "")
+        return True
+
     def record_tool_error(self, tool_name: str, args: dict[str, Any] | None, error: str) -> None:
         key = self._error_key(tool_name, args or {})
         self.repeated_errors[key] = self.repeated_errors.get(key, 0) + 1
@@ -460,6 +502,470 @@ def recovery_hint_for_error(tool_name: str, error: str) -> str:
         "sandbox_violation": "Sandbox blocked the code. Prefer structured tools such as describe_dataset, preview_data, transform_data, or ask the user.",
     }
     return hints.get(category, f"{tool_name} failed. Try a different structured tool or summarize the limitation.")
+
+
+# ---------------------------------------------------------------------------
+# Requirement-based bounded completion (Task 8)
+# ---------------------------------------------------------------------------
+
+CompletionStatus = Literal[
+    "complete",
+    "complete_with_limits",
+    "blocked_by_data",
+    "blocked_by_tool",
+    "budget_limited",
+]
+
+
+@dataclass(frozen=True)
+class CompletionDecision:
+    """Orchestration result of :func:`evaluate_analysis_completion`.
+
+    The decision is one of five terminal statuses plus a per-requirement
+    breakdown used by the loop to inject one targeted recovery instruction.
+    The loop never re-evaluates requirements itself; it consumes this
+    decision's ``allow_analysis_continuation`` and ``recoverable_requirement_ids``.
+    """
+
+    status: CompletionStatus
+    is_terminal: bool
+    supported_claim_class: str
+    satisfied_requirement_ids: tuple[str, ...]
+    unmet_requirement_ids: tuple[str, ...]
+    recoverable_requirement_ids: tuple[str, ...]
+    allow_analysis_continuation: bool
+    reason_code: str
+    diagnostics: tuple[dict[str, Any], ...]
+
+
+_CLAIM_CLASS_STRENGTH: dict[str, int] = {
+    "exploratory_association": 1,
+    "inferential_associations": 2,
+    "predictive_importance": 3,
+    "causal_effect": 4,
+}
+
+# Task 7 non-canonical markers and capability declarations are remapped to the
+# strict claim-class enumeration used by the completion evaluator. The mapping
+# is intentionally one-way (never strengthening): ``association_only`` and
+# ``descriptive_attribution`` collapse to ``exploratory_association`` so the
+# evaluator cannot accidentally upgrade a playbook ceiling.
+_CLAIM_CLASS_REMAP: dict[str, str] = {
+    "association_only": "exploratory_association",
+    "descriptive_attribution": "exploratory_association",
+    "association": "exploratory_association",
+    "descriptive": "exploratory_association",
+    "diagnostic": "exploratory_association",
+}
+
+_CAPABILITY_CLAIM_CLASS: dict[str, str] = {
+    "analysis.experiment": "causal_effect",
+    "analysis.causal": "causal_effect",
+    "analysis.regression": "predictive_importance",
+    "analysis.factor_relationship": "inferential_associations",
+    "analysis.group_compare": "inferential_associations",
+    "analysis.segment_compare": "inferential_associations",
+    "analysis.period_compare": "inferential_associations",
+    "analysis.correlation": "exploratory_association",
+    "analysis.time_series": "exploratory_association",
+    "data.profile": "exploratory_association",
+}
+
+_PUBLICATION_REQUIREMENT_CATEGORIES = frozenset({"limitation", "output", "provenance"})
+
+
+def _canonical_claim_class(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in _CLAIM_CLASS_REMAP:
+        return _CLAIM_CLASS_REMAP[text]
+    if text in _CLAIM_CLASS_STRENGTH:
+        return text
+    return None
+
+
+def _claim_strength(value: Any) -> int:
+    canonical = _canonical_claim_class(value)
+    if canonical is None:
+        return 0
+    return _CLAIM_CLASS_STRENGTH[canonical]
+
+
+def _supported_claim_class_from_refs(
+    plan: dict[str, Any],
+    successful_refs: list[dict[str, Any]],
+) -> str:
+    """Derive the strongest evidence-supported claim class.
+
+    The plan declares a ceiling (``maximum_claim_class``). Each successful
+    computation ref contributes a capability-derived claim class. The
+    supported class is the minimum of the ceiling and the strongest
+    capability class actually observed — never stronger than the plan allows
+    and never stronger than what the executed capability warrants.
+    """
+
+    ceiling = _canonical_claim_class(plan.get("maximum_claim_class")) if isinstance(plan, dict) else None
+    strongest_capability_strength = 0
+    for ref in successful_refs:
+        declared = ""
+        if isinstance(ref, dict):
+            declared = (
+                ref.get("allowed_claim_class")
+                or ref.get("claim_class")
+                or _CAPABILITY_CLAIM_CLASS.get(str(ref.get("capability_id") or ""))
+                or ""
+            )
+        strength = _claim_strength(declared)
+        if strength > strongest_capability_strength:
+            strongest_capability_strength = strength
+    if strongest_capability_strength == 0:
+        supported_strength = 0
+    elif ceiling is None:
+        supported_strength = strongest_capability_strength
+    else:
+        supported_strength = min(strongest_capability_strength, _CLAIM_CLASS_STRENGTH[ceiling])
+    if supported_strength == 0:
+        return "exploratory_association"
+    for name, strength in _CLAIM_CLASS_STRENGTH.items():
+        if strength == supported_strength:
+            return name
+    return "exploratory_association"
+
+
+def _downgrade_claim_on_failure(claim_class: str) -> str:
+    """Never report ``causal_effect`` after a tool/data/budget failure."""
+
+    canonical = _canonical_claim_class(claim_class) or "exploratory_association"
+    if canonical == "causal_effect":
+        return "inferential_associations"
+    if canonical == "predictive_importance":
+        return "inferential_associations"
+    if canonical == "inferential_associations":
+        return "exploratory_association"
+    return canonical
+
+
+def _is_projection_failure(
+    requirement: dict[str, Any],
+    successful_refs: list[dict[str, Any]],
+) -> bool:
+    """A successful computation already covered this requirement's evidence.
+
+    If the requirement is still unmet despite a successful binding, the gap
+    is publication (projection/presentation), not computation. Task 8 forbids
+    recomputation in that case.
+    """
+
+    requirement_id = str(requirement.get("id") or "")
+    if not requirement_id:
+        return False
+    for ref in successful_refs:
+        requirement_ids = ref.get("requirement_ids")
+        if isinstance(requirement_ids, list) and requirement_id in requirement_ids:
+            return True
+    return False
+
+
+def _categorize_execution_failures(
+    computation_refs: list[dict[str, Any]],
+    tool_outcomes: list[dict[str, Any]],
+) -> tuple[bool, bool, list[dict[str, Any]]]:
+    """Return ``(has_data_failure, has_tool_failure, diagnostics)."""
+
+    diagnostics: list[dict[str, Any]] = []
+    data_failure = False
+    tool_failure = False
+    for ref in computation_refs:
+        binding_error = str(ref.get("binding_error_type") or "")
+        if not binding_error:
+            continue
+        if binding_error == "missing_column_or_data" or "missing_column_or_data" in binding_error:
+            data_failure = True
+            diagnostics.append({
+                "source": "computation_ref",
+                "tool_call_id": str(ref.get("tool_call_id") or ""),
+                "binding_error_type": binding_error,
+                "category": "missing_data",
+            })
+        elif binding_error and binding_error != "analysis_step_not_bound":
+            tool_failure = True
+            diagnostics.append({
+                "source": "computation_ref",
+                "tool_call_id": str(ref.get("tool_call_id") or ""),
+                "binding_error_type": binding_error,
+                "category": "tool_failure",
+            })
+    for outcome in tool_outcomes:
+        if outcome.get("success") is False:
+            category = str(outcome.get("error_category") or "tool_error").lower()
+            if category == "missing_column_or_data":
+                data_failure = True
+            elif category == "insufficient_data":
+                data_failure = True
+            else:
+                tool_failure = True
+            diagnostics.append({
+                "source": "tool_outcome",
+                "tool_call_id": str(outcome.get("tool_call_id") or ""),
+                "tool_name": str(outcome.get("tool_name") or ""),
+                "error_category": category,
+            })
+    return data_failure, tool_failure, diagnostics
+
+
+def _recoverable_requirement_ids(
+    unmet: list[dict[str, Any]],
+    successful_refs: list[dict[str, Any]],
+    turn_state: TurnExecutionState,
+    *,
+    continuation_available: bool,
+    evidence_records: list[dict[str, Any]] | None = None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Recoverable requirements: execution category, not projection-missing.
+
+    Once the agent has recorded any evidence, unmet requirements are treated
+    as publication gaps rather than computation gaps — Task 8 forbids
+    recomputation for projection-only failures.
+    """
+
+    diagnostics: list[dict[str, Any]] = []
+    if not continuation_available:
+        for requirement in unmet:
+            diagnostics.append({
+                "requirement_id": str(requirement.get("id") or ""),
+                "recoverable": False,
+                "reason": "no_continuation_budget",
+            })
+        return [], diagnostics
+    if evidence_records:
+        for requirement in unmet:
+            diagnostics.append({
+                "requirement_id": str(requirement.get("id") or ""),
+                "recoverable": False,
+                "reason": "evidence_already_recorded",
+            })
+        return [], diagnostics
+    recoverable: list[str] = []
+    for requirement in unmet:
+        requirement_id = str(requirement.get("id") or "")
+        if not requirement_id:
+            continue
+        category = str(requirement.get("category") or "")
+        if category in _PUBLICATION_REQUIREMENT_CATEGORIES:
+            diagnostics.append({
+                "requirement_id": requirement_id,
+                "recoverable": False,
+                "reason": "publication_only",
+            })
+            continue
+        if _is_projection_failure(requirement, successful_refs):
+            diagnostics.append({
+                "requirement_id": requirement_id,
+                "recoverable": False,
+                "reason": "projection_missing",
+            })
+            continue
+        retry_available = (
+            turn_state.can_correct_requirement(requirement_id)
+            or turn_state.can_use_fallback(requirement_id)
+        )
+        if not retry_available:
+            diagnostics.append({
+                "requirement_id": requirement_id,
+                "recoverable": False,
+                "reason": "recovery_budget_exhausted",
+            })
+            continue
+        recoverable.append(requirement_id)
+        diagnostics.append({
+            "requirement_id": requirement_id,
+            "recoverable": True,
+            "reason": "execution_unmet",
+        })
+    return recoverable, diagnostics
+
+
+def evaluate_analysis_completion(
+    plan: dict[str, Any] | None,
+    requirements: Sequence[dict[str, Any]],
+    computation_refs: Sequence[dict[str, Any]],
+    evidence_records: Sequence[dict[str, Any]],
+    tool_outcomes: Sequence[dict[str, Any]],
+    turn_state: TurnExecutionState,
+    budget_exhausted: bool,
+) -> CompletionDecision:
+    """Derive one of five terminal completion states from canonical evidence.
+
+    The evaluator is orchestration only: requirement semantics come from
+    :func:`evaluate_requirement_satisfaction`; per-requirement retry and
+    fallback budgets come from :class:`TurnExecutionState`. It separately
+    derives execution obligations (plan steps attempted; critical tools
+    succeeded) from publication obligations (eligible evidence projected;
+    unsupported claim classes excluded).
+
+    A publication obligation failure never returns the loop to tool-running:
+    successful traceable computation but missing projection/presentation
+    yields ``complete_with_limits`` with ``allow_analysis_continuation=False``.
+    """
+
+    from data_agent.agent.analysis_requirements import evaluate_requirement_satisfaction
+
+    plan_value = plan if isinstance(plan, dict) else {}
+    requirements_list = [item for item in requirements if isinstance(item, dict)]
+    refs_list = [item for item in computation_refs if isinstance(item, dict)]
+    evidence_list = [item for item in evidence_records if isinstance(item, dict)]
+    outcomes_list = [item for item in tool_outcomes if isinstance(item, dict)]
+
+    evaluated = evaluate_requirement_satisfaction(requirements_list, evidence_list)
+    satisfied_ids = tuple(
+        str(item.get("id"))
+        for item in evaluated
+        if item.get("status") == "satisfied" and str(item.get("id") or "")
+    )
+    unmet_requirements = [
+        item for item in evaluated if item.get("status") == "unmet"
+    ]
+    unmet_ids = tuple(
+        str(item.get("id"))
+        for item in unmet_requirements
+        if str(item.get("id") or "")
+    )
+
+    successful_refs = [item for item in refs_list if item.get("success") is True]
+    supported_claim_class = _supported_claim_class_from_refs(plan_value, successful_refs)
+    has_data_failure, has_tool_failure, failure_diagnostics = _categorize_execution_failures(
+        refs_list, outcomes_list
+    )
+    continuation_available = int(getattr(turn_state, "analysis_continuations_used", 0) or 0) < 1
+    recoverable_ids, recovery_diagnostics = _recoverable_requirement_ids(
+        unmet_requirements,
+        successful_refs,
+        turn_state,
+        continuation_available=continuation_available,
+        evidence_records=evidence_list,
+    )
+
+    def _decision(
+        *,
+        status: CompletionStatus,
+        reason_code: str,
+        allow_analysis_continuation: bool,
+        supported_class: str | None = None,
+        recoverable: tuple[str, ...] | None = None,
+        extra_diagnostics: tuple[dict[str, Any], ...] = (),
+    ) -> CompletionDecision:
+        return CompletionDecision(
+            status=status,
+            is_terminal=True,
+            supported_claim_class=supported_class or supported_claim_class,
+            satisfied_requirement_ids=satisfied_ids,
+            unmet_requirement_ids=unmet_ids,
+            recoverable_requirement_ids=(
+                recoverable if recoverable is not None else tuple(recoverable_ids)
+            ),
+            allow_analysis_continuation=allow_analysis_continuation,
+            reason_code=reason_code,
+            diagnostics=(*failure_diagnostics, *recovery_diagnostics, *extra_diagnostics),
+        )
+
+    if budget_exhausted:
+        return _decision(
+            status="budget_limited",
+            reason_code="budget_exhausted",
+            allow_analysis_continuation=False,
+            supported_class=_downgrade_claim_on_failure(supported_claim_class),
+            recoverable=(),
+            extra_diagnostics=(
+                {
+                    "budget_exhausted": True,
+                    "unmet_requirement_count": len(unmet_ids),
+                },
+            ),
+        )
+
+    if not successful_refs:
+        # No traceable computation ref. If the agent still produced recorded
+        # evidence (e.g. via meta tools), treat that as successful computation:
+        # the loop has already chosen its publication path and the evaluator
+        # must not reactivate tools for projection-only gaps.
+        if not evidence_list:
+            # Nothing ran successfully: classify the blocker.
+            if has_data_failure:
+                status: CompletionStatus = "blocked_by_data"
+                reason_code = "missing_required_data"
+            elif has_tool_failure:
+                status = "blocked_by_tool"
+                reason_code = "critical_tool_failed"
+            elif unmet_ids:
+                status = "blocked_by_tool"
+                reason_code = "execution_obligations_not_attempted"
+            else:
+                status = "complete_with_limits"
+                reason_code = "no_traceable_computation"
+            return _decision(
+                status=status,
+                reason_code=reason_code,
+                allow_analysis_continuation=bool(recoverable_ids),
+                supported_class=_downgrade_claim_on_failure(supported_claim_class),
+            )
+        # Evidence was recorded but no traceable ref exists. Recoverable
+        # unmet requirements still allow one continuation; otherwise publish
+        # with limits.
+        if not unmet_ids:
+            return _decision(
+                status="complete",
+                reason_code="requirements_satisfied_via_recorded_evidence",
+                allow_analysis_continuation=False,
+            )
+        if recoverable_ids:
+            return _decision(
+                status="complete_with_limits",
+                reason_code="recoverable_unmet_requirements",
+                allow_analysis_continuation=True,
+            )
+        return _decision(
+            status="complete_with_limits",
+            reason_code="unrecoverable_unmet_requirements",
+            allow_analysis_continuation=False,
+            recoverable=(),
+        )
+
+    # Has successful computation. Publication failures never reactivate tools.
+    if not unmet_ids:
+        return _decision(
+            status="complete",
+            reason_code="requirements_satisfied",
+            allow_analysis_continuation=False,
+        )
+
+    if recoverable_ids:
+        # Execution obligations remain and one continuation is still available.
+        # If the recovery fails, the loop publishes with limits.
+        return _decision(
+            status="complete_with_limits",
+            reason_code="recoverable_unmet_requirements",
+            allow_analysis_continuation=True,
+        )
+
+    # Unmet requirements are publication-only or have their recovery budget
+    # exhausted. Either way the loop must publish with limits and may not
+    # reactivate tools.
+    reason = (
+        "unrecoverable_publication_failure"
+        if all(
+            str(req.get("category") or "") in _PUBLICATION_REQUIREMENT_CATEGORIES
+            or _is_projection_failure(req, successful_refs)
+            for req in unmet_requirements
+        )
+        else "recovery_budget_exhausted"
+    )
+    return _decision(
+        status="complete_with_limits",
+        reason_code=reason,
+        allow_analysis_continuation=False,
+        recoverable=(),
+    )
 
 
 def _approximate_payload_tokens(value: Any) -> int:
