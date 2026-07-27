@@ -658,3 +658,19 @@ class TestConfirmationWorkbenchWording:
         assert "diagnostic_only" not in html
         assert "关系待确认" not in html
         assert "等待确认" not in html
+
+
+class TestAnalysisProgressNarration:
+    """Task 11 — safe live progress narration reaches the browser without leaking findings."""
+
+    def test_frontend_handles_analysis_progress_without_appending_final_text(self, js):
+        assert "case 'analysis_progress':" in js
+        assert "turn.analysisProgress" in js
+        # Scope to the case body so the assertion is robust to other handlers.
+        start = js.index("case 'analysis_progress':")
+        end = js.index("break;", start)
+        block = js[start:end]
+        assert "turn.thinkingText = data.label" in block
+        # No mutation of the final answer text inside the progress handler.
+        assert "turn.content +=" not in block
+        assert "turn.content =" not in block

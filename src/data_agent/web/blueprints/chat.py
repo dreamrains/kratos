@@ -57,6 +57,17 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     eq.put(SSEEvent("task_update", {}))
             elif etype == "text_delta":
                 eq.put(SSEEvent("text_delta", {"text": event["text"], "turn_id": event.get("turn_id") or turn_id}))
+            elif etype == "analysis_progress":
+                # Safe live progress narration. Project only the closed-
+                # vocabulary identity fields — never echo any extra keys the
+                # loop might add later. The label is server-authored.
+                eq.put(SSEEvent("analysis_progress", {
+                    "code": event.get("code", ""),
+                    "label": event.get("label", ""),
+                    "status": event.get("status", ""),
+                    "step_id": event.get("step_id", ""),
+                    "phase": event.get("phase", ""),
+                }))
             elif etype == "_response":
                 pass  # Internal event, skip
             elif etype == "suspended":

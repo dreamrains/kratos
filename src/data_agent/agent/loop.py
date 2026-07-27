@@ -42,6 +42,7 @@ from data_agent.agent.execution_control import (
     TurnExecutionState,
 )
 from data_agent.session.workspace import Workspace, workspace
+from data_agent.agent.progress import build_analysis_progress
 
 logger = get_logger("loop")
 
@@ -2041,6 +2042,88 @@ class AgentLoop:
         self._turn_last_final_audit = None
         self._turn_resumed_from_confirmation = False
 
+    # --- Safe live analysis progress narration -----------------------------
+    # ``_progress_payload`` returns the wire dict for a closed-vocabulary
+    # progress event (or ``None`` if the code/state was rejected). Streaming
+    # callers yield the dict; sync callers pass it to
+    # ``_record_progress_diagnostic`` so CLI/tests share the same provenance
+    # trail without SSE. Progress payloads only carry identity/phase — no
+    # values, p-values, rankings, claims, or reasoning.
+
+    def _progress_payload(
+        self,
+        code: str,
+        *,
+        step_id: str = "",
+        status: str = "running",
+        phase: str = "",
+    ) -> dict[str, str] | None:
+        try:
+            return build_analysis_progress(
+                code=code,
+                step_id=step_id,
+                status=status,  # type: ignore[arg-type]
+                phase=phase,
+            ).to_dict()
+        except Exception as exc:
+            logger.warning(
+                "analysis_progress event skipped",
+                extra={"extra_data": {"code": code, "error": str(exc)}},
+            )
+            return None
+
+    def _record_progress_diagnostic(self, payload: dict[str, str] | None) -> None:
+        if not payload:
+            return
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return
+        diagnostic = {"kind": "analysis_progress"}
+        diagnostic.update(payload)
+        # Strip the wire-only ``type`` key so the diagnostic is purely
+        # observational and does not masquerade as a streamed event.
+        diagnostic.pop("type", None)
+        append = getattr(state, "append_turn_diagnostic", None)
+        # Best-effort observability: progress diagnostics must never break
+        # the main loop. Test stubs may use SimpleNamespace without the
+        # method; just drop the diagnostic in that case.
+        if callable(append):
+            try:
+                append(diagnostic)
+            except Exception as exc:
+                logger.warning(
+                    "analysis_progress diagnostic dropped",
+                    extra={"extra_data": {"error": str(exc)}},
+                )
+
+    def _emit_progress_stream(
+        self,
+        code: str,
+        *,
+        step_id: str = "",
+        status: str = "running",
+        phase: str = "",
+    ):
+        """Yield a progress event for SSE streaming (no-op on rejection)."""
+        payload = self._progress_payload(code, step_id=step_id, status=status, phase=phase)
+        if payload is not None:
+            yield payload
+
+    def _record_progress(
+        self,
+        code: str,
+        *,
+        step_id: str = "",
+        status: str = "running",
+        phase: str = "",
+    ) -> None:
+        """Record a progress event in turn diagnostics for sync execution."""
+        self._record_progress_diagnostic(
+            self._progress_payload(code, step_id=step_id, status=status, phase=phase)
+        )
+
+    # --- End progress narration -------------------------------------------
+
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
         payload_text = stripped.split(" [detail:", 1)[0]
@@ -3368,6 +3451,19 @@ class AgentLoop:
                 "arguments": tc.arguments,
                 "round": round_num,
             }
+            # Bind the call to its plan step BEFORE execution so a
+            # substantive analytical tool can narrate its step-specific
+            # method (e.g. ``正在评估变量关系``) ahead of the generic
+            # ``正在运行分析工具``. Compute once and reuse for compaction.
+            step_binding = self._bind_tool_call(tc)
+            if step_binding is not None and step_binding.ok and step_binding.step_id:
+                yield from self._emit_progress_stream(
+                    "analysis_step_started", step_id=step_binding.step_id
+                )
+            # Server-authored "tool starting" progress event. Closed
+            # vocabulary — the tool name is NOT in the payload, only the
+            # generic narration label.
+            yield from self._emit_progress_stream("tool_started")
 
             scope_error = _scope_guard(self, tc.name, tc.arguments)
             if scope_error:
@@ -3418,7 +3514,7 @@ class AgentLoop:
                 continue
 
             duration_ms = int((time.monotonic() - t0) * 1000)
-            tool_msg_content = self._compact_tool_output(tool_result, tc, self._bind_tool_call(tc))
+            tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
             tool_failed = self._tool_content_is_error(tool_msg_content)
 
             if tool_failed:
@@ -3458,6 +3554,11 @@ class AgentLoop:
                 "web": tool_result.to_web(),
                 "duration_ms": duration_ms,
             }
+            # Server-authored "tool finished" progress event fires only on a
+            # successful tool execution; errors already surface via the
+            # ``error`` SSE event and must not be repackaged as progress.
+            if not tool_failed:
+                yield from self._emit_progress_stream("tool_succeeded", status="completed")
 
     def _stream_turn_impl(self, user_input: str):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
@@ -3492,6 +3593,12 @@ class AgentLoop:
                 "related_spec_id": required_question.related_spec_id,
             }
             return
+
+        # Envelope ready: emit a single server-authored plan-ready progress
+        # event before any LLM round fires. This is the earliest progress
+        # signal the user sees and is guaranteed to precede any streamed or
+        # buffered final-answer text.
+        yield from self._emit_progress_stream("analysis_plan_ready", status="completed")
 
         final_text = ""
         round_num = 0
@@ -3593,13 +3700,24 @@ class AgentLoop:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     continue
+                # The requirement-based completion evaluator ran inside
+                # ``_should_continue_for_analysis_quality``; emit the
+                # resulting progress signal before any final-answer gate so
+                # the user sees "整理可支持的结论" before audit/publication.
+                yield from self._emit_progress_stream("completion_evaluated")
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
                 if self._is_final_answer_audit_candidate():
+                    yield from self._emit_progress_stream("audit_started")
                     gate = self._gate_final_analysis_answer(user_input, final_text)
                     if gate["action"] == "continue":
+                        # Audit-driven bounded recovery (synthesis or analysis
+                        # revision). Emit the recovery signal before the next
+                        # round so the user knows the agent is retrying within
+                        # the agreed bounds — never leaking the rejected draft.
+                        yield from self._emit_progress_stream("tool_recovery")
                         continue
                     final_text = gate["text"]
                     if final_text:
@@ -3642,6 +3760,8 @@ class AgentLoop:
                     "session": self.session_id, "rounds": round_num,
                 }})
                 bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
+                yield from self._emit_progress_stream("completion_evaluated")
+                yield from self._emit_progress_stream("audit_started")
                 gate = self._gate_final_analysis_answer(
                     user_input,
                     bounded_text,
@@ -3905,6 +4025,19 @@ class AgentLoop:
         self.__context_operation("refresh")
         turn_state = getattr(self.context, "turn_state", None)
 
+        # Bind once and reuse for both progress narration and compaction.
+        # A substantive tool that binds to a canonical step narrates the
+        # step-specific method before the generic ``tool_started`` breadcrumb.
+        step_binding = self._bind_tool_call(tc)
+        if step_binding is not None and step_binding.ok and step_binding.step_id:
+            self._record_progress(
+                "analysis_step_started", step_id=step_binding.step_id
+            )
+        # Sync mirror of the streaming ``tool_started`` progress event. Emit
+        # before scope/budget guards return early so a turn that suspends or
+        # errors still leaves a "正在运行分析工具" diagnostic breadcrumb.
+        self._record_progress("tool_started")
+
         scope_error = _scope_guard(self, tc.name, tc.arguments)
         if scope_error:
             if turn_state is not None:
@@ -3949,7 +4082,7 @@ class AgentLoop:
             })
             return None
 
-        tool_msg_content = self._compact_tool_output(tool_result, tc, self._bind_tool_call(tc))
+        tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
         tool_failed = self._tool_content_is_error(tool_msg_content)
 
         if tool_failed:
@@ -3962,6 +4095,10 @@ class AgentLoop:
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
         self._auto_track_task_progress(tc.name, not tool_failed)
+        if not tool_failed:
+            # Sync mirror of the streaming ``tool_succeeded`` event; only
+            # fires on a successful execution, never on errors.
+            self._record_progress("tool_succeeded", status="completed")
 
         # Check for stage regression after tool execution
         if self.context.analysis_state is not None:
@@ -4079,6 +4216,10 @@ class AgentLoop:
         # 惰性初始化 MCP
         self._ensure_mcp_initialized()
 
+        # Sync mirror of the streaming plan-ready progress event so CLI/tests
+        # share state without SSE. Fires once per turn, before any round.
+        self._record_progress("analysis_plan_ready", status="completed")
+
         while True:
             round_num += 1
             # 协作式中断检查
@@ -4153,11 +4294,15 @@ class AgentLoop:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     continue
+                # Sync mirror of completion/audit/recovery progress signals.
+                self._record_progress("completion_evaluated")
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
+                self._record_progress("audit_started")
                 gate = self._gate_final_analysis_answer(user_input, final_text)
                 if gate["action"] == "continue":
+                    self._record_progress("tool_recovery")
                     continue
                 final_text = gate["text"]
                 return FinalResponse(content=final_text)
@@ -4192,13 +4337,19 @@ class AgentLoop:
                             break
 
                 if can_parallelize:
+                    # Sync mirror of the streaming ``tool_started`` event for
+                    # each parallelized read-only tool. Per-tool signal so the
+                    # diagnostic trail matches the sequential path even when
+                    # execution is concurrent.
+                    for tc in tool_calls:
+                        self._record_progress("tool_started")
                     results = self._execute_tools_parallel(tool_calls)
                     for tc, tool_msg_content in results:
                         self._record_turn_tool_result(tc.name, tool_msg_content)
-                        self._auto_track_task_progress(
-                            tc.name,
-                            not self._tool_content_is_error(tool_msg_content),
-                        )
+                        succeeded = not self._tool_content_is_error(tool_msg_content)
+                        self._auto_track_task_progress(tc.name, succeeded)
+                        if succeeded:
+                            self._record_progress("tool_succeeded", status="completed")
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -4222,6 +4373,8 @@ class AgentLoop:
                     "session": self.session_id, "rounds": round_num,
                 }})
                 bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
+                self._record_progress("completion_evaluated")
+                self._record_progress("audit_started")
                 gate = self._gate_final_analysis_answer(
                     user_input,
                     bounded_text,

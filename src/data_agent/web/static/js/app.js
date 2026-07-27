@@ -2370,6 +2370,21 @@ function chatApp() {
                         if (isCurrentSession) { this.tokenPct = data.pct; this.tokenSupported = true; }
                     }
                     break;
+                case 'analysis_progress':
+                    // Safe live method narration. Server-authored label only —
+                    // never append to turn.content (claims stay buffered until
+                    // the final audited answer arrives via text_delta). The
+                    // indicator is cleared by final publication or terminal
+                    // error; the final status remains on the turn timeline.
+                    turn.analysisProgress = {
+                        code: data.code,
+                        label: data.label,
+                        status: data.status,
+                        stepId: data.step_id || ''
+                    };
+                    turn.thinkingText = data.label;
+                    this._renderMessages();
+                    break;
                 case 'text_delta':
                     turn.isThinking = false;
                     turn.content = (turn.content || '') + data.text;

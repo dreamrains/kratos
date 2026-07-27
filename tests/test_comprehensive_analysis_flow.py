@@ -561,7 +561,14 @@ class TestConversationFlow:
 
         events = loop.stream_turn("hello")
 
+        # Skip the server-authored ``analysis_progress`` narration events
+        # (Task 11); they precede ``llm_call_start`` and carry no findings.
+        # This test focuses on text-delta streaming behavior, not progress.
+        # Loop (not one-shot) so it stays robust if a second pre-LLM progress
+        # signal is ever added.
         first = next(events)
+        while first["type"] == "analysis_progress":
+            first = next(events)
         assert first["type"] == "llm_call_start"
         second = next(events)
         assert second == {"type": "text_delta", "text": "Hello", "turn_id": None}

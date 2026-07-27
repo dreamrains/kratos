@@ -98,6 +98,34 @@ def read_js():
         return f.read()
 
 
+def feed_one(event_dict):
+    """Drive one loop event through the chat blueprint mapping.
+
+    Returns the first SSE event produced. Mirrors the helper used in
+    ``test_analysis_progress_streaming.py`` so the projection stays consistent
+    across the live-script and pytest paths.
+    """
+
+    sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "src")))
+    from data_agent.web.blueprints.chat import _feed_events
+    from data_agent.web.event_bus import EventQueue
+
+    captured = []
+    eq = EventQueue()
+    eq.put = lambda sse_event: captured.append(sse_event)
+
+    class _FakeLoop:
+        session_id = "feed_one"
+        messages = []
+
+        def _auto_save(self):
+            pass
+
+    _feed_events(eq, _FakeLoop(), "t_feed_one", iter([event_dict]))
+    assert captured, f"no SSE event produced for {event_dict}"
+    return captured[0]
+
+
 # ============================================================
 print("=" * 60)
 print("SSE + Alpine.js 响应式修复 — 针对性测试")
@@ -152,6 +180,21 @@ check("SSE基础", "turn_start", "turn_start" in event_types)
 check("SSE基础", "text_delta", "text_delta" in event_types)
 check("SSE基础", "turn_end", "turn_end" in event_types)
 check("SSE基础", "_response 不泄露到前端", "_response" not in event_types)
+
+# 验证 analysis_progress 投影：服务端 authored 标签、不含 finding 字段
+try:
+    progress_sse = feed_one({
+        "type": "analysis_progress",
+        "code": "tool_started",
+        "label": "正在运行相关性分析",
+    })
+    check("分析进度", "SSE event 为 analysis_progress", progress_sse.event == "analysis_progress")
+    check("分析进度", "label 投影正确", progress_sse.data.get("label") == "正在运行相关性分析")
+    forbidden = {"value", "p_value", "ranking", "claim", "reasoning"}
+    check("分析进度", "不含 finding 字段", not (forbidden & set(progress_sse.data)),
+          f"keys={list(progress_sse.data.keys())}")
+except Exception as exc:
+    check("分析进度", "feed_one 投影 analysis_progress", False, str(exc))
 
 # 验证 SSE 事件格式
 for etype, edata in events:
