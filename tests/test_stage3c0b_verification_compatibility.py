@@ -130,6 +130,25 @@ def test_verify_analysis_claims_rejects_explicit_nonexistent_evidence_id():
     assert any("ev_missing" in issue for issue in check["issues"])
 
 
+def test_legacy_direct_evidence_id_remains_compatible_without_measurement_identity():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_legacy",
+            "claim": "Current conversion rate is 18%.",
+            "evidence_id": "ev_current",
+        }],
+        evidence_records=[_evidence()],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+    )
+
+    check = report["claim_checks"][0]
+    assert report["overall_status"] == "pass"
+    assert check["status"] == "passed"
+    assert check["measurement_key"] is None
+
+
 def test_verify_analysis_claims_rejects_incompatible_compare_evidence_ids():
     report = verify_analysis_claims(
         claims=[{

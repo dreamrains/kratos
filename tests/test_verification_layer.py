@@ -68,6 +68,7 @@ def test_complete_evidence_fields_pass_and_collect_route_ids():
     assert report["route_proposal_ids"] == ["route_1", "route_2"]
     assert check["status"] == "passed"
     assert check["strength"] == "likely"
+    assert check["measurement_key"] is None
     assert check["issues"] == []
 
 
@@ -124,6 +125,7 @@ def test_strict_final_answer_verification_rejects_fuzzy_match_without_evidence_i
 
     assert report["overall_status"] == "fail"
     assert report["claim_checks"][0]["reason_codes"] == ["missing_evidence_identity"]
+    assert report["claim_checks"][0]["measurement_key"] is None
 
 
 def test_claim_dict_id_matches_evidence_claim_id_or_id():

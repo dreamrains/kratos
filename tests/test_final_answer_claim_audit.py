@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,12 @@ from data_agent.agent.answer_quality import (
     strip_internal_evidence_markers,
 )
 from data_agent.agent.analysis_requirements import compile_analysis_requirements
+from data_agent.agent.evidence_contracts import (
+    computation_ref_key,
+    measurement_key_for,
+    validate_evidence_record,
+)
+from data_agent.agent.verification import verify_analysis_claims
 from data_agent.agent import trust_workflow_runtime as runtime
 
 
@@ -46,15 +53,198 @@ def _evidence(**overrides):
     return record
 
 
+def _bind_test_measurement_identity(record):
+    bound = copy.deepcopy(record)
+    measurements = bound.get("measurements")
+    if (
+        not isinstance(measurements, list)
+        or len(measurements) != 1
+        or not isinstance(measurements[0], dict)
+        or isinstance(measurements[0].get("identity"), dict)
+    ):
+        return bound
+    measurement = measurements[0]
+    direction = str(measurement.get("direction") or "")
+    if not direction and "increas" in str(bound.get("claim") or "").lower():
+        direction = "increase"
+        measurement["direction"] = direction
+    refs = [
+        item
+        for item in bound.get("computation_refs") or []
+        if isinstance(item, dict)
+    ]
+    if not refs:
+        refs = [{
+            "tool_call_id": "call_test_identity",
+            "plan_digest": "test_plan_digest",
+            "step_digest": "test_step_digest",
+            "dataset_versions": ["dataset_sales_v1"],
+        }]
+        bound["computation_refs"] = refs
+    requirement_ids = [
+        str(item)
+        for item in bound.get("requirement_ids") or ["req_test_identity"]
+    ]
+    dataset_versions = [
+        str(item)
+        for item in (
+            bound.get("dataset_versions")
+            or refs[0].get("dataset_versions")
+            or ["dataset_sales_v1"]
+        )
+    ]
+    bound["requirement_ids"] = requirement_ids
+    bound["dataset_versions"] = dataset_versions
+    bound.setdefault("allowed_claim_class", "comparison")
+    metric = str(measurement.get("metric") or "")
+    metric_label = metric.replace("_change", "").replace("_", " ").title()
+    identity = {
+        "contract_version": "measurement_identity.v1",
+        "metric_key": metric,
+        "metric_label": metric_label,
+        "metric_aliases": [metric.replace("_", " ")],
+        "claim_key": str(bound.get("claim_key") or ""),
+        "computation_ref_id": computation_ref_key(refs[0]),
+        "plan_id": str(bound.get("plan_id") or ""),
+        "plan_version": str(refs[0].get("plan_digest") or "test_plan_digest"),
+        "step_id": str(bound.get("step_id") or ""),
+        "requirement_ids": sorted(requirement_ids),
+        "dataset_versions": sorted(dataset_versions),
+        "time_scope": str(measurement.get("time_scope") or ""),
+        "population_scope": str(measurement.get("population_scope") or ""),
+        "value": measurement.get("value"),
+        "unit": str(measurement.get("unit") or ""),
+        "direction": direction,
+        "allowed_claim_class": str(bound.get("allowed_claim_class") or ""),
+    }
+    identity["measurement_key"] = measurement_key_for(identity)
+    measurement["identity"] = identity
+    return bound
+
+
 def _audit(text, *, evidence=None, **kwargs):
     current_plan_id = kwargs.pop("current_plan_id", "plan_current")
+    records = evidence if evidence is not None else [_evidence()]
+    records = [_bind_test_measurement_identity(record) for record in records]
+    if "current_dataset_versions" not in kwargs:
+        versions = {
+            str(item)
+            for record in records
+            for item in record.get("dataset_versions") or []
+        }
+        if versions:
+            kwargs["current_dataset_versions"] = sorted(versions)
+    requirements = [
+        item
+        for item in kwargs.pop("analysis_requirements", []) or []
+        if isinstance(item, dict)
+    ]
+    active_requirement_ids = {
+        str(item.get("id") or "") for item in requirements
+    }
+    for record in records:
+        for requirement_id in record.get("requirement_ids") or []:
+            requirement_id = str(requirement_id)
+            if requirement_id and requirement_id not in active_requirement_ids:
+                requirements.append({
+                    "id": requirement_id,
+                    "step_id": str(record.get("step_id") or ""),
+                    "name": "test_measurement_identity",
+                    "necessity": "required",
+                })
+                active_requirement_ids.add(requirement_id)
     return build_final_answer_audit(
         text,
-        evidence_records=evidence if evidence is not None else [_evidence()],
+        evidence_records=records,
         route_proposals=[],
         cleaning_logs=[],
         current_plan_id=current_plan_id,
+        analysis_requirements=requirements,
         **kwargs,
+    )
+
+
+@pytest.fixture
+def identity_evidence():
+    computation_ref = {
+        "contract_version": "computation_ref.v1",
+        "session_id": "session_current",
+        "turn_id": "turn_current",
+        "tool_call_id": "call_revenue",
+        "tool_name": "period_compare",
+        "output_digest": "sha256:revenue",
+        "plan_id": "plan_current",
+        "plan_digest": "plan_digest_current",
+        "step_id": "step_compare",
+        "step_digest": "step_digest_current",
+        "dataset_versions": ["dataset_sales_v1"],
+        "claim_key": "revenue_change",
+        "requirement_ids": ["req_revenue"],
+    }
+    identity = {
+        "contract_version": "measurement_identity.v1",
+        "metric_key": "revenue_change",
+        "metric_label": "Revenue",
+        "metric_aliases": ["Monthly revenue"],
+        "claim_key": "revenue_change",
+        "computation_ref_id": computation_ref_key(computation_ref),
+        "plan_id": "plan_current",
+        "plan_version": "plan_digest_current",
+        "step_id": "step_compare",
+        "requirement_ids": ["req_revenue"],
+        "dataset_versions": ["dataset_sales_v1"],
+        "time_scope": "2026-05",
+        "population_scope": "new users",
+        "value": 0.12,
+        "unit": "ratio",
+        "direction": "increase",
+        "allowed_claim_class": "comparison",
+    }
+    identity["measurement_key"] = measurement_key_for(identity)
+    measurement = {
+        **_evidence()["measurements"][0],
+        "time_scope": "2026-05",
+        "direction": "increase",
+        "identity": identity,
+    }
+    record = {
+        **_evidence(),
+        "contract_version": "evidence_record.v2",
+        "dataset_contract_id": "contract_sales_v1",
+        "tool_calls": ["call_revenue"],
+        "result_summary": "Revenue increased 12% in 2026-05 for new users.",
+        "evidence_requirement": "req_revenue",
+        "source_tool_call_ids": ["call_revenue"],
+        "requirement_ids": ["req_revenue"],
+        "dataset_versions": ["dataset_sales_v1"],
+        "computation_refs": [computation_ref],
+        "provenance_status": "bound",
+        "verification_level": "structured_checked",
+        "allowed_claim_class": "comparison",
+        "measurements": [measurement],
+    }
+    validation = validate_evidence_record(
+        record,
+        current_plan_id="plan_current",
+        require_measurement_identity=True,
+    )
+    assert validation.ok, (validation.error_type, validation.message)
+    return validation.record
+
+
+def _identity_audit(text, evidence):
+    return _audit(
+        text,
+        evidence=[evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        analysis_requirements=[{
+            "id": "req_revenue",
+            "step_id": "step_compare",
+            "name": "metric_delta",
+            "necessity": "required",
+        }],
     )
 
 
@@ -103,6 +293,294 @@ def test_extractor_retains_measurement_grain_reference():
     }]
     assert claims[0]["evidence_ids"] == ["ev_revenue"]
     assert "[[evidence:" not in claims[0]["text"]
+
+
+def test_exact_measurement_marker_verifies_revenue_claim(identity_evidence):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    audit = _identity_audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{identity_evidence['id']}#{measurement_key}]].\n"
+        "Limitation: descriptive comparison only.",
+        identity_evidence,
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claim_checks"][0]["status"] == "passed"
+    assert audit["claim_checks"][0]["measurement_key"] == measurement_key
+
+
+def test_revenue_measurement_marker_cannot_verify_profit_claim(identity_evidence):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    audit = _identity_audit(
+        "Profit increased 12% in 2026-05 for new users "
+        f"[[evidence:{identity_evidence['id']}#{measurement_key}]].",
+        identity_evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert (
+        "measurement_metric_mismatch"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
+
+
+def test_wrong_measurement_key_is_not_resolved(identity_evidence):
+    audit = _identity_audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{identity_evidence['id']}#m_wrong]].",
+        identity_evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert "measurement_not_found" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_direct_verifier_rejects_profit_claim_for_revenue_measurement(
+    identity_evidence,
+):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_profit",
+            "claim": "Profit increased 12% in 2026-05 for new users.",
+            "claim_type": "comparison",
+            "material": True,
+            "requires_evidence": True,
+            "quantities": [{"raw": "12%", "value": 12.0, "unit": "%"}],
+            "direction": "increase",
+            "time_scope": "2026-05",
+            "population_scope": "new users",
+            "evidence_ids": [identity_evidence["id"]],
+            "evidence_refs": [{
+                "evidence_id": identity_evidence["id"],
+                "measurement_key": measurement_key,
+            }],
+        }],
+        evidence_records=[identity_evidence],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        analysis_requirements=[{
+            "id": "req_revenue",
+            "step_id": "step_compare",
+            "name": "metric_delta",
+            "necessity": "required",
+        }],
+        require_explicit_evidence_ids=True,
+        strict_claim_semantics=True,
+    )
+
+    assert report["overall_status"] == "fail"
+    assert (
+        "measurement_metric_mismatch"
+        in report["claim_checks"][0]["reason_codes"]
+    )
+
+
+def test_measurement_reference_cannot_conflict_with_legacy_evidence_id(
+    identity_evidence,
+):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_conflicting_refs",
+            "claim": "Revenue increased 12% in 2026-05 for new users.",
+            "claim_type": "comparison",
+            "material": True,
+            "requires_evidence": True,
+            "quantities": [{"raw": "12%", "value": 12.0, "unit": "%"}],
+            "direction": "increase",
+            "time_scope": "2026-05",
+            "population_scope": "new users",
+            "evidence_id": "ev_other",
+            "evidence_refs": [{
+                "evidence_id": identity_evidence["id"],
+                "measurement_key": measurement_key,
+            }],
+        }],
+        evidence_records=[identity_evidence, _evidence(id="ev_other")],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        analysis_requirements=[{
+            "id": "req_revenue",
+            "step_id": "step_compare",
+            "name": "metric_delta",
+            "necessity": "required",
+        }],
+        require_explicit_evidence_ids=True,
+        strict_claim_semantics=True,
+    )
+
+    assert report["overall_status"] == "fail"
+    assert "measurement_ambiguous" in report["claim_checks"][0]["reason_codes"]
+
+
+def test_self_consistent_rekeyed_metric_identity_is_rejected(identity_evidence):
+    evidence = copy.deepcopy(identity_evidence)
+    identity = evidence["measurements"][0]["identity"]
+    identity["metric_key"] = "profit_change"
+    identity["metric_label"] = "Profit"
+    identity["metric_aliases"] = ["Monthly profit"]
+    identity["measurement_key"] = measurement_key_for(identity)
+
+    audit = _identity_audit(
+        "Profit increased 12% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{identity['measurement_key']}]].",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert (
+        "measurement_metric_mismatch"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason_code"),
+    [
+        ("claim_key", "profit_change", "measurement_claim_key_mismatch"),
+        ("plan_id", "plan_other", "measurement_marker_invalid"),
+        ("plan_version", "plan_digest_other", "measurement_marker_invalid"),
+        ("step_id", "step_other", "measurement_marker_invalid"),
+        ("requirement_ids", ["req_other"], "measurement_claim_key_mismatch"),
+        (
+            "dataset_versions",
+            ["dataset_sales_v0"],
+            "measurement_dataset_version_mismatch",
+        ),
+        ("computation_ref_id", "cr_other", "measurement_marker_invalid"),
+        ("value", 0.21, "numeric_mismatch"),
+        ("unit", "CNY", "unit_mismatch"),
+        ("direction", "decrease", "direction_mismatch"),
+        ("time_scope", "2026-06", "measurement_scope_mismatch"),
+        ("population_scope", "existing users", "measurement_scope_mismatch"),
+    ],
+)
+def test_self_consistent_identity_mutation_is_independently_rejected(
+    identity_evidence,
+    field,
+    value,
+    reason_code,
+):
+    evidence = copy.deepcopy(identity_evidence)
+    identity = evidence["measurements"][0]["identity"]
+    identity[field] = value
+    identity["measurement_key"] = measurement_key_for(identity)
+
+    audit = _identity_audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{identity['measurement_key']}]].",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert reason_code in audit["claim_checks"][0]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("claim", "reason_code"),
+    [
+        (
+            "Campaign caused Revenue to increase 12% in 2026-05 for new users",
+            "causal_claim_not_identified",
+        ),
+        (
+            "Revenue was associated with a 12% increase in 2026-05 for new users",
+            "verification_level_overclaim",
+        ),
+    ],
+)
+def test_claim_class_cannot_exceed_measurement_permission(
+    identity_evidence,
+    claim,
+    reason_code,
+):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    audit = _identity_audit(
+        f"{claim} "
+        f"[[evidence:{identity_evidence['id']}#{measurement_key}]].",
+        identity_evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert reason_code in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_selected_measurement_cannot_use_unrelated_measurement_value(
+    identity_evidence,
+):
+    evidence = copy.deepcopy(identity_evidence)
+    profit = copy.deepcopy(evidence["measurements"][0])
+    profit["metric"] = "profit_change"
+    profit["definition"] = "May profit change versus April"
+    profit["value"] = 0.21
+    profit_identity = profit["identity"]
+    profit_identity["metric_key"] = "profit_change"
+    profit_identity["metric_label"] = "Profit"
+    profit_identity["metric_aliases"] = ["Monthly profit"]
+    profit_identity["value"] = 0.21
+    profit_identity["measurement_key"] = measurement_key_for(profit_identity)
+    evidence["measurements"].append(profit)
+    revenue_key = evidence["measurements"][0]["identity"]["measurement_key"]
+
+    audit = _identity_audit(
+        "Revenue increased 21% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{revenue_key}]].",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert "numeric_mismatch" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_duplicate_measurement_key_is_ambiguous(identity_evidence):
+    evidence = copy.deepcopy(identity_evidence)
+    evidence["measurements"].append(copy.deepcopy(evidence["measurements"][0]))
+    measurement_key = evidence["measurements"][0]["identity"]["measurement_key"]
+
+    audit = _identity_audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{measurement_key}]].",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert "measurement_ambiguous" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_legacy_record_marker_resolves_single_identity_measurement(
+    identity_evidence,
+):
+    audit = _identity_audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{identity_evidence['id']}]].\n"
+        "Limitation: descriptive comparison only.",
+        identity_evidence,
+    )
+
+    assert audit["status"] == "pass"
+    assert (
+        audit["claim_checks"][0]["measurement_key"]
+        == identity_evidence["measurements"][0]["identity"]["measurement_key"]
+    )
 
 
 def test_marker_stripping_preserves_markdown_structure():
@@ -429,7 +907,7 @@ def test_current_plan_identity_is_required_even_with_an_exact_marker():
     assert "evidence_outside_current_plan" in audit["claim_checks"][0]["reason_codes"]
 
 
-def test_missing_current_dataset_identity_blocks_only_version_bound_evidence():
+def test_missing_current_dataset_identity_blocks_identity_bound_evidence():
     draft = (
         "Revenue increased 12% in 2026-05 for new users [[evidence:ev_revenue]].\n"
         "Limitation: this is a descriptive comparison only."
@@ -453,7 +931,11 @@ def test_missing_current_dataset_identity_blocks_only_version_bound_evidence():
         "current_dataset_identity_unavailable"
         in version_bound["claim_checks"][0]["reason_codes"]
     )
-    assert non_versioned["status"] == "pass"
+    assert non_versioned["status"] == "blocked"
+    assert (
+        "current_dataset_identity_unavailable"
+        in non_versioned["claim_checks"][0]["reason_codes"]
+    )
 
 
 def test_unmet_block_claim_requirement_blocks_and_supplies_safe_action():
@@ -550,7 +1032,10 @@ def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim(
     )
 
     assert audit["status"] == "blocked"
-    assert "claim_guard_blocked" in audit["claim_checks"][0]["reason_codes"]
+    assert (
+        "measurement_identity_missing"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
     assert audit["claim_checks"][1]["status"] == "passed"
     assert (
         "diagnostic_without_positive_claim"
@@ -558,7 +1043,7 @@ def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim(
     )
 
 
-def test_multiple_exact_evidence_ids_can_collectively_satisfy_claim_requirements():
+def test_multiple_record_level_markers_are_measurement_ambiguous():
     requirements = compile_analysis_requirements(
         plan={
             "id": "plan_current",
@@ -604,8 +1089,8 @@ def test_multiple_exact_evidence_ids_can_collectively_satisfy_claim_requirements
         analysis_requirements=[confidence_interval],
     )
 
-    assert audit["status"] == "pass"
-    assert audit["claim_checks"][0]["evidence_ids"] == ["ev_effect", "ev_uncertainty"]
+    assert audit["status"] == "blocked"
+    assert "measurement_ambiguous" in audit["claim_checks"][0]["reason_codes"]
 
 
 def test_traceable_lineage_cannot_support_independent_correctness_wording():
@@ -688,13 +1173,17 @@ def test_runtime_persists_full_audit_and_keeps_only_compact_ref_in_state(tmp_pat
     )
 
     assert ref["contract_version"] == "final_answer_audit.v1"
-    assert ref["status"] == "pass"
+    assert ref["status"] == "blocked"
     assert "claim_checks" not in ref
     assert len(ref["artifact_digest"]) == 64
     assert state.verification_reports[-1] == ref
     artifact = json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
     assert artifact["contract_version"] == "final_answer_audit.v1"
     assert artifact["claim_checks"][0]["evidence_id"] == "ev_revenue"
+    assert (
+        "measurement_identity_missing"
+        in artifact["claim_checks"][0]["reason_codes"]
+    )
     assert "[[evidence:" not in artifact["public_text"]
     assert runtime.hydrate_final_answer_audit_ref(ref) == artifact
 

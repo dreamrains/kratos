@@ -88,11 +88,31 @@ def _claim_evidence_id(claim: Any) -> str:
     return evidence_ids[0] if evidence_ids else ""
 
 
+def _claim_evidence_refs(claim: Any) -> list[dict[str, str]]:
+    if not isinstance(claim, dict):
+        return []
+    refs = []
+    for item in _normalize_items(claim.get("evidence_refs")):
+        if not isinstance(item, dict):
+            continue
+        evidence_id = str(item.get("evidence_id") or "").strip()
+        measurement_key = str(item.get("measurement_key") or "").strip()
+        if evidence_id:
+            refs.append({
+                "evidence_id": evidence_id,
+                "measurement_key": measurement_key,
+            })
+    return refs
+
+
 def _claim_evidence_ids(claim: Any) -> list[str]:
     if not isinstance(claim, dict):
         return []
     values = [claim.get("evidence_id")]
     values.extend(_normalize_items(claim.get("evidence_ids")))
+    values.extend(
+        item["evidence_id"] for item in _claim_evidence_refs(claim)
+    )
     return list(dict.fromkeys(
         str(item).strip() for item in values if str(item or "").strip()
     ))
@@ -486,6 +506,7 @@ def _plan_revision_issues(
 
 
 def _finalize_check(check: dict[str, Any]) -> dict[str, Any]:
+    check.setdefault("measurement_key", None)
     reason_codes = list(check.get("reason_codes") or [])
     for issue in check.get("issues") or []:
         lowered = str(issue).lower()
@@ -559,8 +580,25 @@ def _measurement_items(evidence: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _numeric_evidence_items(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    items = list(_measurement_items(evidence))
+def _identity_measurements(record: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in _normalize_items(record.get("measurements"))
+        if isinstance(item, dict)
+        and isinstance(item.get("identity"), dict)
+    ]
+
+
+def _numeric_evidence_items(
+    evidence: dict[str, Any],
+    *,
+    selected_measurements: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    items = list(
+        selected_measurements
+        if selected_measurements is not None
+        else _measurement_items(evidence)
+    )
     support = evidence.get("statistical_support")
     support = support if isinstance(support, dict) else {}
     effect = support.get("effect_estimate")
@@ -636,12 +674,21 @@ def _evidence_direction(evidence: dict[str, Any]) -> str:
 def _strict_semantic_issues(
     claim: Any,
     evidence: dict[str, Any],
+    *,
+    selected_measurements: list[dict[str, Any]] | None = None,
 ) -> list[tuple[str, str]]:
     if not isinstance(claim, dict):
         return []
     issues: list[tuple[str, str]] = []
-    measurements = _measurement_items(evidence)
-    numeric_evidence = _numeric_evidence_items(evidence)
+    measurements = (
+        selected_measurements
+        if selected_measurements is not None
+        else _measurement_items(evidence)
+    )
+    numeric_evidence = _numeric_evidence_items(
+        evidence,
+        selected_measurements=selected_measurements,
+    )
     quantities = [item for item in _normalize_items(claim.get("quantities")) if isinstance(item, dict)]
     if quantities:
         if not numeric_evidence:
@@ -666,7 +713,11 @@ def _strict_semantic_issues(
                     issues.append(("numeric_mismatch", f"Claim quantity {quantity.get('raw')} does not match canonical evidence values"))
 
     claim_direction = str(claim.get("direction") or "")
-    evidence_direction = _evidence_direction(evidence)
+    evidence_direction = (
+        str(measurements[0].get("direction") or "")
+        if selected_measurements is not None and len(measurements) == 1
+        else _evidence_direction(evidence)
+    )
     if claim_direction and claim_direction != evidence_direction:
         issues.append((
             "direction_mismatch",
@@ -698,6 +749,231 @@ def _strict_semantic_issues(
             "Traceable provenance does not independently verify statistical correctness",
         ))
     return issues
+
+
+def _claim_mentions_trusted_metric(
+    claim_text: Any,
+    metric_label: Any,
+    metric_aliases: Any,
+) -> bool:
+    normalized_claim = _normalize_text(claim_text)
+    if not normalized_claim:
+        return False
+    candidates = [
+        str(metric_label or ""),
+        *[
+            str(item)
+            for item in _normalize_items(metric_aliases)
+            if str(item or "").strip()
+        ],
+    ]
+    generic_single_labels = {"correlation"}
+    padded_claim = f" {normalized_claim} "
+    for candidate in candidates:
+        normalized_candidate = _normalize_text(candidate)
+        if (
+            not normalized_candidate
+            or normalized_candidate in generic_single_labels
+        ):
+            continue
+        if (
+            f" {normalized_candidate} " in padded_claim
+            or (
+                re.search(r"[\u4e00-\u9fff]", normalized_candidate)
+                and normalized_candidate in normalized_claim
+            )
+        ):
+            return True
+    return False
+
+
+def _measurement_identity_issues(
+    claim: dict[str, Any],
+    evidence: dict[str, Any],
+    measurement: dict[str, Any],
+    *,
+    current_plan_id: str,
+    current_plan_digest: str,
+    current_step_digests: dict[str, str],
+    current_dataset_versions: set[str] | None,
+    active_requirement_ids: set[str],
+) -> list[tuple[str, str]]:
+    from data_agent.agent.evidence_contracts import (
+        computation_ref_key,
+        validate_measurement_identity,
+    )
+
+    identity = measurement.get("identity")
+    if not isinstance(identity, dict):
+        return [(
+            "measurement_identity_missing",
+            "Referenced measurement has no server-owned identity.",
+        )]
+    validation = validate_measurement_identity(identity)
+    if not validation.ok:
+        return [(
+            "measurement_marker_invalid",
+            "Referenced measurement identity is invalid.",
+        )]
+    checks = [
+        (
+            identity.get("plan_id") == current_plan_id,
+            "measurement_marker_invalid",
+            "Measurement plan identity does not match the current plan.",
+        ),
+        (
+            not current_plan_digest
+            or identity.get("plan_version") == current_plan_digest,
+            "measurement_marker_invalid",
+            "Measurement plan version does not match the current plan.",
+        ),
+        (
+            not current_plan_digest
+            or all(
+                str(ref.get("plan_digest") or "")
+                == identity.get("plan_version")
+                for ref in evidence.get("computation_refs") or []
+                if isinstance(ref, dict)
+            ),
+            "measurement_marker_invalid",
+            "Measurement plan version does not match its computation.",
+        ),
+        (
+            identity.get("claim_key") == evidence.get("claim_key"),
+            "measurement_claim_key_mismatch",
+            "Measurement claim key does not match its EvidenceRecord.",
+        ),
+        (
+            identity.get("step_id") == evidence.get("step_id"),
+            "measurement_marker_invalid",
+            "Measurement step does not match its EvidenceRecord.",
+        ),
+        (
+            not current_step_digests
+            or identity.get("step_id") in current_step_digests,
+            "measurement_marker_invalid",
+            "Measurement step is absent from the current plan revision.",
+        ),
+    ]
+    issues = [(code, message) for ok, code, message in checks if not ok]
+    computation_ref_ids = {
+        computation_ref_key(ref)
+        for ref in evidence.get("computation_refs") or []
+        if isinstance(ref, dict)
+    }
+    if identity.get("computation_ref_id") not in computation_ref_ids:
+        issues.append((
+            "measurement_marker_invalid",
+            "Measurement computation identity does not match its EvidenceRecord.",
+        ))
+    identity_requirement_ids = {
+        str(item) for item in identity.get("requirement_ids") or []
+    }
+    evidence_requirement_ids = {
+        str(item) for item in evidence.get("requirement_ids") or []
+    }
+    if (
+        identity_requirement_ids != evidence_requirement_ids
+        or not identity_requirement_ids
+        or not identity_requirement_ids.issubset(active_requirement_ids)
+    ):
+        issues.append((
+            "measurement_claim_key_mismatch",
+            "Measurement requirements are not eligible in the current plan.",
+        ))
+    identity_versions = {
+        str(item) for item in identity.get("dataset_versions") or []
+    }
+    evidence_versions = {
+        str(item) for item in evidence.get("dataset_versions") or []
+    }
+    if (
+        current_dataset_versions is None
+        or identity_versions != evidence_versions
+        or identity_versions != current_dataset_versions
+    ):
+        issues.append((
+            "measurement_dataset_version_mismatch",
+            "Measurement dataset versions do not exactly match the current scope.",
+        ))
+    measurement_metric = _normalize_text(measurement.get("metric"))
+    identity_metric = _normalize_text(identity.get("metric_key"))
+    if (
+        not measurement_metric
+        or (
+            identity_metric != measurement_metric
+            and not identity_metric.startswith(measurement_metric + " ")
+        )
+    ):
+        issues.append((
+            "measurement_metric_mismatch",
+            "Measurement metric identity does not match the selected measurement.",
+        ))
+    if not _claim_mentions_trusted_metric(
+        _claim_text(claim),
+        identity.get("metric_label"),
+        identity.get("metric_aliases"),
+    ):
+        issues.append((
+            "measurement_metric_mismatch",
+            "Claim metric wording does not match the referenced measurement.",
+        ))
+    for field, code in (
+        ("value", "numeric_mismatch"),
+        ("unit", "unit_mismatch"),
+        ("direction", "direction_mismatch"),
+        ("time_scope", "measurement_scope_mismatch"),
+        ("population_scope", "measurement_scope_mismatch"),
+    ):
+        if identity.get(field) != measurement.get(field):
+            issues.append((
+                code,
+                f"Measurement identity {field} does not match the selected measurement.",
+            ))
+    if identity.get("allowed_claim_class") != evidence.get("allowed_claim_class"):
+        issues.append((
+            "measurement_claim_key_mismatch",
+            "Measurement claim class does not match its EvidenceRecord.",
+        ))
+    return issues
+
+
+def _measurement_claim_class_issues(
+    claim: dict[str, Any],
+    measurement: dict[str, Any],
+) -> list[tuple[str, str]]:
+    identity = measurement.get("identity")
+    identity = identity if isinstance(identity, dict) else {}
+    allowed = _normalize_text(identity.get("allowed_claim_class")).replace(" ", "_")
+    claim_type = _normalize_text(claim.get("claim_type")).replace(" ", "_")
+    if claim_type == "causal" and allowed not in {"causal", "causal_effect"}:
+        return [(
+            "causal_claim_not_identified",
+            "Referenced measurement does not permit a causal claim.",
+        )]
+    if (
+        claim_type
+        in {
+            "association",
+            "inferential",
+            "inferential_association",
+            "inferential_associations",
+        }
+        and allowed
+        not in {
+            "association",
+            "exploratory_association",
+            "inferential_association",
+            "inferential_associations",
+            "causal",
+            "causal_effect",
+        }
+    ):
+        return [(
+            "verification_level_overclaim",
+            "Referenced measurement does not permit an inferential association claim.",
+        )]
+    return []
 
 
 def _unmet_block_claim_requirements(
@@ -772,6 +1048,34 @@ def _check_claim(
 ) -> dict[str, Any]:
     text = _claim_text(claim)
     evidence: dict[str, Any] | None = None
+    selected_measurement: dict[str, Any] | None = None
+    evidence_refs = _claim_evidence_refs(claim)
+    requested_measurement_key = (
+        evidence_refs[0]["measurement_key"]
+        if len(evidence_refs) == 1
+        else ""
+    )
+    measurement_resolution_issues: list[tuple[str, str]] = []
+    if evidence_refs and isinstance(claim, dict):
+        legacy_evidence_ids = {
+            str(item).strip()
+            for item in [
+                claim.get("evidence_id"),
+                *_normalize_items(claim.get("evidence_ids")),
+            ]
+            if str(item or "").strip()
+        }
+        referenced_evidence_ids = {
+            item["evidence_id"] for item in evidence_refs
+        }
+        if (
+            legacy_evidence_ids
+            and legacy_evidence_ids != referenced_evidence_ids
+        ):
+            measurement_resolution_issues.append((
+                "measurement_ambiguous",
+                "Measurement reference conflicts with legacy evidence identity.",
+            ))
 
     if not _claim_requires_evidence(claim):
         return _finalize_check({
@@ -835,10 +1139,71 @@ def _check_claim(
     if evidence is None and not comparison_issues:
         evidence = _find_evidence(claim, _current_plan_evidence(evidence_records, current_plan_id))
 
+    if evidence_refs:
+        if len(evidence_refs) != 1:
+            measurement_resolution_issues.append((
+                "measurement_ambiguous",
+                "Material claim must resolve to exactly one evidence measurement.",
+            ))
+        else:
+            evidence_ref = evidence_refs[0]
+            referenced_records = [
+                record
+                for record in _find_evidence_by_id(
+                    evidence_ref["evidence_id"],
+                    evidence_records,
+                )
+                if _record_matches_current_plan(record, current_plan_id)
+            ]
+            if len(referenced_records) > 1:
+                measurement_resolution_issues.append((
+                    "measurement_ambiguous",
+                    "Evidence identity resolves to multiple current records.",
+                ))
+            elif len(referenced_records) == 1:
+                evidence = referenced_records[0]
+                identity_measurements = _identity_measurements(evidence)
+                measurement_key = evidence_ref["measurement_key"]
+                if measurement_key:
+                    matching_measurements = [
+                        item
+                        for item in identity_measurements
+                        if item["identity"].get("measurement_key")
+                        == measurement_key
+                    ]
+                    if len(matching_measurements) == 1:
+                        selected_measurement = matching_measurements[0]
+                    elif len(matching_measurements) > 1:
+                        measurement_resolution_issues.append((
+                            "measurement_ambiguous",
+                            "Measurement key resolves more than once in its EvidenceRecord.",
+                        ))
+                    else:
+                        measurement_resolution_issues.append((
+                            "measurement_not_found",
+                            "Referenced measurement key was not found in its EvidenceRecord.",
+                        ))
+                elif len(identity_measurements) == 1:
+                    selected_measurement = identity_measurements[0]
+                    requested_measurement_key = str(
+                        selected_measurement["identity"].get("measurement_key") or ""
+                    )
+                elif len(identity_measurements) > 1:
+                    measurement_resolution_issues.append((
+                        "measurement_ambiguous",
+                        "Legacy evidence marker resolves to multiple measurements.",
+                    ))
+                else:
+                    measurement_resolution_issues.append((
+                        "measurement_identity_missing",
+                        "Legacy evidence marker has no identity-bearing measurement.",
+                    ))
+
     check = {
         "claim_id": _claim_id(claim, index),
         "claim": text,
         "evidence_id": evidence.get("id") if evidence else None,
+        "measurement_key": requested_measurement_key or None,
         "evidence_ids": [
             str(record.get("id") or "")
             for record in (explicit_support_records or comparison_records or ([evidence] if evidence else []))
@@ -855,6 +1220,14 @@ def _check_claim(
         check["issues"].extend(comparison_issues)
         return _finalize_check(check)
 
+    if measurement_resolution_issues:
+        check["status"] = "failed"
+        check["strength"] = "unsupported"
+        for reason_code, issue in measurement_resolution_issues:
+            check.setdefault("reason_codes", []).append(reason_code)
+            check["issues"].append(issue)
+        return _finalize_check(check)
+
     if evidence is None:
         check["status"] = "failed"
         check["strength"] = "unsupported"
@@ -862,7 +1235,11 @@ def _check_claim(
         return _finalize_check(check)
 
     revision_issues: list[str] = []
-    revision_records = comparison_records or explicit_support_records or [evidence]
+    revision_records = (
+        [evidence]
+        if selected_measurement is not None
+        else comparison_records or explicit_support_records or [evidence]
+    )
     for revision_record in revision_records:
         revision_issues.extend(_plan_revision_issues(
             revision_record,
@@ -927,8 +1304,43 @@ def _check_claim(
                     )
                     return _finalize_check(check)
 
+    if selected_measurement is not None:
+        active_requirement_ids = {
+            str(item.get("id") or "")
+            for item in analysis_requirements or []
+            if isinstance(item, dict) and str(item.get("id") or "")
+        }
+        identity_issues = _measurement_identity_issues(
+            claim,
+            evidence,
+            selected_measurement,
+            current_plan_id=current_plan_id,
+            current_plan_digest=current_plan_digest,
+            current_step_digests=current_step_digests or {},
+            current_dataset_versions=current_dataset_versions,
+            active_requirement_ids=active_requirement_ids,
+        )
+        identity_issues.extend(
+            _measurement_claim_class_issues(claim, selected_measurement)
+        )
+        if identity_issues:
+            check["status"] = "failed"
+            check["strength"] = "unsupported"
+            for reason_code, issue in identity_issues:
+                if reason_code not in check.setdefault("reason_codes", []):
+                    check["reason_codes"].append(reason_code)
+                check["issues"].append(issue)
+
     if strict_claim_semantics:
-        semantic_issues = _strict_semantic_issues(claim, evidence)
+        semantic_issues = _strict_semantic_issues(
+            claim,
+            evidence,
+            selected_measurements=(
+                [selected_measurement]
+                if selected_measurement is not None
+                else None
+            ),
+        )
         if semantic_issues:
             check["status"] = "failed"
             check["strength"] = "unsupported"
