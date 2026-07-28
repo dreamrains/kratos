@@ -3140,26 +3140,22 @@ def _capability_check_missing_fields(
     return list(validate_capability_output(capability, payload))
 
 
-def _format_measurement_for_catalog(measurements: Any) -> str:
-    if not isinstance(measurements, list) or not measurements:
-        return ""
-    parts: list[str] = []
-    for measurement in measurements[:3]:
-        if not isinstance(measurement, dict):
-            continue
-        value = measurement.get("value")
-        unit = _text(measurement.get("unit"))
-        metric = _text(measurement.get("metric"))
-        if not _finite_number(value):
-            text_value = _text(value)[:24]
-            if text_value:
-                parts.append(f"{metric}={text_value}" if metric else text_value)
-            continue
+def _format_measurement_value(measurement: dict[str, Any]) -> str:
+    value = measurement.get("value")
+    unit = _text(measurement.get("unit"))
+    if _finite_number(value):
         rendered = f"{float(value):g}"
-        if unit and unit not in {"value", "unitless"}:
-            rendered = f"{rendered} {unit}"
-        parts.append(f"{metric}={rendered}" if metric else rendered)
-    return "; ".join(part for part in parts if part)
+    else:
+        rendered = _text(value)[:24]
+    if unit and unit not in {"value", "unitless"}:
+        return f"{rendered} {unit}".strip()
+    return rendered
+
+
+def _format_unbound_measurement_for_catalog(measurement: dict[str, Any]) -> str:
+    metric = _text(measurement.get("metric"))
+    rendered = _format_measurement_value(measurement)
+    return f"{metric}={rendered}" if metric else rendered
 
 
 def build_bounded_evidence_catalog(
@@ -3197,7 +3193,6 @@ def build_bounded_evidence_catalog(
             or _text(record.get("claim_class"))
             or _text(record.get("claim_type"))
         )
-        measurements = _format_measurement_for_catalog(record.get("measurements"))
         dataset_versions = record.get("dataset_versions")
         if isinstance(dataset_versions, list):
             version_text = ",".join(
@@ -3212,32 +3207,68 @@ def build_bounded_evidence_catalog(
             limitation_text = "; ".join(_text(item) for item in limitations if _text(item))
         else:
             limitation_text = _text(limitations)
-        parts = [
-            f"id={_text(record.get('id'))}",
-            f"claim_key={_text(record.get('claim_key'))}",
-        ]
+        common_parts = [f"id={_text(record.get('id'))}"]
         if claim_class:
-            parts.append(f"claim_class={claim_class}")
-        if measurements:
-            parts.append(f"measurements={measurements}")
+            common_parts.append(f"claim_class={claim_class}")
         if version_text:
-            parts.append(f"dataset_versions={version_text}")
+            common_parts.append(f"dataset_versions={version_text}")
         if _text(record.get("verification_level")):
-            parts.append(f"verification_level={_text(record.get('verification_level'))}")
+            common_parts.append(
+                f"verification_level={_text(record.get('verification_level'))}"
+            )
         if limitation_text:
-            parts.append(f"limitations={limitation_text}")
-        return "- " + " | ".join(parts)
+            common_parts.append(f"limitations={limitation_text}")
+
+        measurements = record.get("measurements")
+        if not isinstance(measurements, list) or not measurements:
+            return ["- " + " | ".join([
+                *common_parts,
+                f"claim_key={_text(record.get('claim_key'))}",
+            ])]
+
+        catalog_lines: list[str] = []
+        for measurement in measurements:
+            if not isinstance(measurement, dict):
+                continue
+            identity = measurement.get("identity")
+            if isinstance(identity, dict) and all(_text(identity.get(field)) for field in (
+                "measurement_key", "metric_key", "metric_label", "claim_key",
+            )):
+                parts = [
+                    *common_parts,
+                    f"measurement_key={_text(identity.get('measurement_key'))}",
+                    f"metric_key={_text(identity.get('metric_key'))}",
+                    f"metric_label={_text(identity.get('metric_label'))}",
+                    f"claim_key={_text(identity.get('claim_key'))}",
+                    f"value={_format_measurement_value(measurement)}",
+                ]
+            else:
+                parts = [
+                    *common_parts,
+                    f"claim_key={_text(record.get('claim_key'))}",
+                    "unbound_measurement="
+                    f"{_format_unbound_measurement_for_catalog(measurement)}",
+                ]
+            catalog_lines.append("- " + " | ".join(parts))
+        return catalog_lines or ["- " + " | ".join([
+            *common_parts,
+            f"claim_key={_text(record.get('claim_key'))}",
+        ])]
 
     sorted_records = sorted(evidence_records, key=_sort_key)
     lines: list[str] = [header]
     body_chars = 0
     budget = max(0, int(max_chars) - len(header) - 4)
-    for record in sorted_records[:max_records]:
+    entry_count = 0
+    for record in sorted_records:
         if not isinstance(record, dict):
             continue
-        line = _format_line(record)
-        if body_chars + len(line) + 1 > budget and lines[-1] != header:
-            break
-        lines.append(line)
-        body_chars += len(line) + 1
+        for line in _format_line(record):
+            if entry_count >= max_records:
+                return "\n".join(lines)
+            if body_chars + len(line) + 1 > budget and lines[-1] != header:
+                return "\n".join(lines)
+            lines.append(line)
+            body_chars += len(line) + 1
+            entry_count += 1
     return "\n".join(lines)

@@ -129,8 +129,8 @@ def test_synthesis_instruction_requires_exact_internal_evidence_markers():
     instruction = build_synthesis_instruction(policy)
 
     assert policy.allowed_evidence_ids == ("ev_1",)
-    assert "[[evidence:<EvidenceRecord ID>]]" in instruction
-    assert "one or more exact" in instruction
+    assert "[[evidence:<EvidenceRecord ID>#<measurement_key>]]" in instruction
+    assert "[[evidence:<EvidenceRecord ID>]] markers" not in instruction
     assert "ev_1" in instruction
     assert "Do not invent or substitute evidence IDs" in instruction
     assert "removed before publication" in instruction

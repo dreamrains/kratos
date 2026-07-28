@@ -91,6 +91,34 @@ def test_extractor_classifies_claims_and_extracts_semantics_and_markers():
     assert all(claim["material"] for claim in claims)
 
 
+def test_extractor_retains_measurement_grain_reference():
+    claims = extract_material_claims(
+        "Revenue increased 12% "
+        "[[evidence:ev_revenue#m_revenue_change]]."
+    )
+
+    assert claims[0]["evidence_refs"] == [{
+        "evidence_id": "ev_revenue",
+        "measurement_key": "m_revenue_change",
+    }]
+    assert claims[0]["evidence_ids"] == ["ev_revenue"]
+    assert "[[evidence:" not in claims[0]["text"]
+
+
+def test_marker_stripping_preserves_markdown_structure():
+    draft = (
+        "# Conclusion\n\n"
+        "| Metric | Change |\n|---|---|\n"
+        "| Revenue | 12% [[evidence:ev_1#m_1]] |\n"
+    )
+
+    public = strip_internal_evidence_markers(draft)
+
+    assert public.startswith("# Conclusion")
+    assert "| Revenue | 12% |" in public
+    assert "[[evidence:" not in public
+
+
 def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication():
     audit = _audit("Revenue increased 12% in 2026-05 for new users.")
 

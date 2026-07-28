@@ -86,6 +86,9 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
         max_records=8,
         max_chars=2000,
     )
+    assert f"measurement_key={identity['measurement_key']}" in catalog
+    assert "metric_key=pairs.correlation::revenue|cost" in catalog
+    assert "metric_label=revenue cost correlation" in catalog
     assert f"dataset_versions={DATASET_VERSION}" in catalog
 
 

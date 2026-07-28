@@ -118,7 +118,11 @@ _MATERIAL_HINTS = re.compile(
     r"seasonal|seasonality|季节性",
     re.IGNORECASE,
 )
-_EVIDENCE_MARKER = re.compile(r"\[\[evidence:([A-Za-z0-9_.:-]+)\]\]", re.IGNORECASE)
+_EVIDENCE_MARKER = re.compile(
+    r"\[\[evidence:([A-Za-z0-9_.:-]+)"
+    r"(?:#([A-Za-z0-9_.:-]+))?\]\]",
+    re.IGNORECASE,
+)
 _QUANTITY = re.compile(
     r"(?<![\w.-])([-+]?\d+(?:,\d{3})*(?:\.\d+)?)\s*"
     r"(%|percent(?:age points?)?|pp|CNY|USD|RMB|元|万元|亿元|人|次|件|个)?",
@@ -174,7 +178,14 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
         claim_type = _claim_type(text)
         non_positive = claim_type in {"diagnostic", "limitation"}
         material = non_positive or bool(_MATERIAL_HINTS.search(text))
-        evidence_ids = list(dict.fromkeys(_EVIDENCE_MARKER.findall(raw_text)))
+        marker_pairs = list(dict.fromkeys(_EVIDENCE_MARKER.findall(raw_text)))
+        evidence_refs = [
+            {"evidence_id": evidence_id, "measurement_key": measurement_key}
+            for evidence_id, measurement_key in marker_pairs
+        ]
+        evidence_ids = list(dict.fromkeys(
+            ref["evidence_id"] for ref in evidence_refs
+        ))
         claim_id = f"claim_{index + 1}"
         claims.append({
             "id": claim_id,
@@ -190,6 +201,7 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
             "time_scope": _first_group(_TIME_SCOPE, text),
             "population_scope": _first_group(_POPULATION_SCOPE, text),
             "evidence_ids": evidence_ids,
+            "evidence_refs": evidence_refs,
             "evidence_id": evidence_ids[0] if len(evidence_ids) == 1 else "",
             "verification_overclaim": bool(_INDEPENDENT_VERIFICATION_CLAIM.search(text)),
             "confidence_assertion": "high" if _HIGH_CONFIDENCE_CLAIM.search(text) else "",
@@ -200,7 +212,7 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
 def strip_internal_evidence_markers(answer_text: str) -> str:
     """Remove synthesis-only EvidenceRecord markers from user-visible text."""
 
-    text = re.sub(r"\s*\[\[evidence:[A-Za-z0-9_.:-]+\]\]", "", answer_text or "", flags=re.IGNORECASE)
+    text = _EVIDENCE_MARKER.sub("", answer_text or "")
     text = re.sub(r"[ \t]+([.,;:!?。！？；：])", r"\1", text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
