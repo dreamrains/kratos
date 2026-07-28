@@ -2611,25 +2611,33 @@ def _structured_metric_identity(
 
     context: list[str] = []
     metric_context: list[str] = []
+    variable_context: list[str] = []
     if isinstance(item, dict):
         variables = item.get("variables")
         if isinstance(variables, list):
-            context = [_text(value) for value in variables if _text(value)]
-            metric_context = list(context)
-        if not context:
-            for key in _METRIC_CONTEXT_FIELDS:
-                value = _text(item.get(key))
-                if value:
-                    context.append(value)
-                    metric_context.append(f"{key}={value}")
+            variable_context = [
+                _text(value) for value in variables if _text(value)
+            ]
+            context.extend(variable_context)
+            metric_context.extend(variable_context)
+        for key in _METRIC_CONTEXT_FIELDS:
+            value = _text(item.get(key))
+            if value:
+                context.append(value)
+                metric_context.append(f"{key}={value}")
     if not context:
         return None
     metric_key = declared_field
     metric_key += "::" + "|".join(metric_context)
     label = " ".join([*context, tail]).strip()
     aliases = [label]
-    if isinstance(item.get("variables"), list) and len(context) == 2:
-        aliases.append(" ".join([context[1], context[0], tail]).strip())
+    if len(variable_context) == 2:
+        aliases.append(" ".join([
+            variable_context[1],
+            variable_context[0],
+            *context[len(variable_context):],
+            tail,
+        ]).strip())
     return metric_key, label, list(dict.fromkeys(aliases))
 
 

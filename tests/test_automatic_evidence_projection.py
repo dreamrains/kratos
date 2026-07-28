@@ -158,6 +158,44 @@ def test_identity_uses_all_trusted_list_item_context_for_uniqueness(context):
     assert first["measurement_key"] != second["measurement_key"]
 
 
+def test_identity_combines_variables_with_other_trusted_item_context(context):
+    output = {
+        "summary": "Two dimension-specific correlations",
+        "data": {
+            "pairs": [
+                {
+                    "variables": ["revenue", "cost"],
+                    "dimension": "north",
+                    "correlation": 0.4,
+                    "effective_sample_size": 50,
+                    "p_value": 0.01,
+                },
+                {
+                    "variables": ["revenue", "cost"],
+                    "dimension": "south",
+                    "correlation": 0.4,
+                    "effective_sample_size": 50,
+                    "p_value": 0.01,
+                },
+            ],
+            "allowed_claim_class": "association",
+        },
+    }
+
+    result = project_real_correlation(context, output=output)
+
+    assert result.projected is True
+    first = result.record["measurements"][0]["identity"]
+    second = result.record["measurements"][1]["identity"]
+    assert first["metric_key"] == (
+        "pairs.correlation::revenue|cost|dimension=north"
+    )
+    assert second["metric_key"] == (
+        "pairs.correlation::revenue|cost|dimension=south"
+    )
+    assert first["measurement_key"] != second["measurement_key"]
+
+
 def test_reordered_multi_dataset_scope_has_same_computation_and_measurement_keys(
     context,
 ):
