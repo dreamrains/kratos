@@ -123,6 +123,10 @@ _EVIDENCE_MARKER = re.compile(
     r"(?:#([A-Za-z0-9_.:-]+))?\]\]",
     re.IGNORECASE,
 )
+_EVIDENCE_MARKER_RUN = re.compile(
+    rf"(?:{_EVIDENCE_MARKER.pattern})+",
+    _EVIDENCE_MARKER.flags,
+)
 _QUANTITY = re.compile(
     r"(?<![\w.-])([-+]?\d+(?:,\d{3})*(?:\.\d+)?)\s*"
     r"(%|percent(?:age points?)?|pp|CNY|USD|RMB|元|万元|亿元|人|次|件|个)?",
@@ -216,16 +220,30 @@ def strip_internal_evidence_markers(answer_text: str) -> str:
     parts: list[str] = []
     cursor = 0
     punctuation = ".,;:!?。！？；："
-    for match in _EVIDENCE_MARKER.finditer(source):
+    for match in _EVIDENCE_MARKER_RUN.finditer(source):
         prefix = source[cursor:match.start()]
-        after = source[match.end()] if match.end() < len(source) else ""
-        if after and after in punctuation:
+        next_index = match.end()
+        while next_index < len(source) and source[next_index] in " \t":
+            next_index += 1
+        follows_punctuation = (
+            next_index < len(source) and source[next_index] in punctuation
+        )
+        if follows_punctuation:
             prefix = prefix.rstrip(" \t")
+            after = source[next_index]
+        else:
+            after = source[match.end()] if match.end() < len(source) else ""
         parts.append(prefix)
         before = source[match.start() - 1] if match.start() else ""
-        if before and after and before.isalnum() and after.isalnum():
+        if (
+            not follows_punctuation
+            and before
+            and after
+            and not before.isspace()
+            and not after.isspace()
+        ):
             parts.append(" ")
-        cursor = match.end()
+        cursor = next_index if follows_punctuation else match.end()
     parts.append(source[cursor:])
     return "".join(parts)
 

@@ -140,6 +140,24 @@ def test_marker_stripping_preserves_trailing_whitespace_before_terminal_marker()
     ) == "Summary  "
 
 
+def test_marker_stripping_normalizes_only_marker_created_gap_before_punctuation():
+    assert strip_internal_evidence_markers(
+        "Revenue [[evidence:ev_1#m_1]] ."
+    ) == "Revenue."
+
+
+def test_marker_stripping_separates_markdown_tokens_across_a_marker():
+    assert strip_internal_evidence_markers(
+        "**Revenue**[[evidence:ev_1#m_1]]**increased**"
+    ) == "**Revenue** **increased**"
+
+
+def test_marker_stripping_separates_prose_across_adjacent_marker_run():
+    assert strip_internal_evidence_markers(
+        "Alpha[[evidence:ev_1#m_1]][[evidence:ev_2#m_2]]Beta"
+    ) == "Alpha Beta"
+
+
 def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication():
     audit = _audit("Revenue increased 12% in 2026-05 for new users.")
 
