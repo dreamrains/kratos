@@ -101,18 +101,28 @@ def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication
     assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
 
 
-def test_final_audit_auto_attaches_one_exact_current_measurement_and_verifies_it():
+def test_same_value_revenue_evidence_cannot_verify_profit_claim():
     audit = _audit(
-        "Revenue increased 12% in 2026-05 for new users.\n"
+        "Profit increased 12% in 2026-05 for new users.\n"
         "Limitation: this is a descriptive comparison only.",
         evidence=[_auto_bind_evidence()],
         current_dataset_versions=["dataset_sales_v1"],
     )
 
-    assert audit["status"] == "pass"
-    assert audit["claims"][0]["evidence_ids"] == ["ev_revenue"]
-    assert audit["claim_checks"][0]["evidence_ids"] == ["ev_revenue"]
-    assert audit["claim_checks"][0]["status"] == "passed"
+    assert audit["status"] == "blocked"
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_markerless_same_value_claim_is_not_automatically_verified():
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[_auto_bind_evidence()],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["status"] != "pass"
+    assert audit["claims"][0]["evidence_ids"] == []
 
 
 def test_final_audit_does_not_bind_when_both_claim_context_and_evidence_lack_plan():
