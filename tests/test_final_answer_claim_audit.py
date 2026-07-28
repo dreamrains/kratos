@@ -143,7 +143,13 @@ def test_marker_stripping_preserves_trailing_whitespace_before_terminal_marker()
 def test_marker_stripping_normalizes_only_marker_created_gap_before_punctuation():
     assert strip_internal_evidence_markers(
         "Revenue [[evidence:ev_1#m_1]] ."
-    ) == "Revenue."
+    ) == "Revenue ."
+
+
+def test_marker_stripping_preserves_marker_left_list_indentation_before_punctuation():
+    assert strip_internal_evidence_markers(
+        "-   [[evidence:ev_1#m_1]] ."
+    ) == "-   ."
 
 
 def test_marker_stripping_separates_markdown_tokens_across_a_marker():
@@ -627,7 +633,7 @@ def test_diagnostic_missing_evidence_statement_may_pass_without_marker():
 def test_internal_markers_are_removed_from_public_text():
     draft = "Revenue increased 12% [[evidence:ev_revenue]]."
 
-    assert strip_internal_evidence_markers(draft) == "Revenue increased 12%."
+    assert strip_internal_evidence_markers(draft) == "Revenue increased 12% ."
     assert "evidence:" not in _audit(draft)["public_text"]
 
 

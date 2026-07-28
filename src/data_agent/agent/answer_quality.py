@@ -135,7 +135,7 @@ _QUANTITY = re.compile(
 _TIME_SCOPE = re.compile(r"\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b")
 _POPULATION_SCOPE = re.compile(
     r"\b(?:for|among|within)\s+([A-Za-z][A-Za-z0-9 _-]*?"
-    r"(?:users|customers|orders|visitors|accounts|cohort))(?=[.,;]|$|\s*\[\[)",
+    r"(?:users|customers|orders|visitors|accounts|cohort))(?=\s*[.,;]|$|\s*\[\[)",
     re.IGNORECASE,
 )
 _DIAGNOSTIC = re.compile(
@@ -229,7 +229,6 @@ def strip_internal_evidence_markers(answer_text: str) -> str:
             next_index < len(source) and source[next_index] in punctuation
         )
         if follows_punctuation:
-            prefix = prefix.rstrip(" \t")
             after = source[next_index]
         else:
             after = source[match.end()] if match.end() < len(source) else ""
