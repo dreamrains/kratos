@@ -567,8 +567,18 @@ def measurement_key_for(identity: Mapping[str, Any]) -> str:
 
 
 def computation_ref_key(ref: Mapping[str, Any]) -> str:
+    dataset_versions = ref.get("dataset_versions")
+    if (
+        isinstance(dataset_versions, list)
+        and all(isinstance(item, str) for item in dataset_versions)
+    ):
+        dataset_versions = sorted(dataset_versions)
     payload = {
-        key: ref.get(key)
+        key: (
+            dataset_versions
+            if key == "dataset_versions"
+            else ref.get(key)
+        )
         for key in (
             "session_id",
             "turn_id",
@@ -1574,6 +1584,14 @@ def bind_evidence_to_computations(
             "authoritative_provenance_fields_forbidden",
             "EvidenceRecord computation refs and verification levels are server-owned.",
         )
+    if any(
+        isinstance(measurement, dict) and "identity" in measurement
+        for measurement in record.get("measurements") or []
+    ):
+        return _error(
+            "authoritative_measurement_identity_forbidden",
+            "Measurement identity is server-owned and cannot be supplied by the model.",
+        )
     source_ids = record.get("source_tool_call_ids")
     if not isinstance(source_ids, list) or not source_ids or any(
         not isinstance(item, str) or not item.strip() for item in source_ids
@@ -2089,6 +2107,7 @@ def validate_measurement(
     measurement: Any,
     *,
     index: int = 0,
+    require_identity: bool = False,
 ) -> EvidenceValidationResult:
     if not isinstance(measurement, dict):
         return _error(
@@ -2114,18 +2133,136 @@ def validate_measurement(
     for field_name in NORMALIZED_MEASUREMENT_TEXT_FIELDS:
         if field_name in normalized:
             normalized[field_name] = _text(normalized[field_name])
-    if "identity" in normalized:
-        identity_validation = validate_measurement_identity(normalized["identity"])
-        if not identity_validation.ok:
-            return identity_validation
-        normalized["identity"] = identity_validation.record
+    if "identity" not in normalized:
+        if require_identity:
+            return _error(
+                "missing_measurement_identity",
+                "A server-projected measurement identity is required.",
+                index=index,
+            )
+        return EvidenceValidationResult(True, record=normalized)
+
+    identity_validation = validate_measurement_identity(normalized["identity"])
+    if not identity_validation.ok:
+        return identity_validation
+    identity = identity_validation.record
+    measurement_metric = _text(normalized.get("metric"))
+    identity_metric = identity.get("metric_key")
+    if (
+        identity_metric != measurement_metric
+        and not identity_metric.startswith(measurement_metric + "::")
+    ):
+        return _error(
+            "measurement_identity_material_mismatch",
+            "Measurement metric does not match its identity metric key.",
+            index=index,
+            field="metric_key",
+            identity_value=identity_metric,
+            measurement_value=measurement_metric,
+        )
+    material_fields = {
+        "value": normalized.get("value"),
+        "unit": _text(normalized.get("unit")),
+        "direction": _text(normalized.get("direction")),
+        "time_scope": _text(normalized.get("time_scope")),
+        "population_scope": _text(normalized.get("population_scope")),
+    }
+    for field_name, expected in material_fields.items():
+        if identity.get(field_name) != expected:
+            return _error(
+                "measurement_identity_material_mismatch",
+                "Measurement identity disagrees with its enclosing measurement.",
+                index=index,
+                field=field_name,
+                identity_value=identity.get(field_name),
+                measurement_value=expected,
+            )
+    normalized["identity"] = identity
     return EvidenceValidationResult(True, record=normalized)
+
+
+def _validate_measurement_identity_provenance(
+    identity: dict[str, Any],
+    *,
+    record: dict[str, Any],
+    computation_refs: list[dict[str, Any]],
+    index: int,
+) -> EvidenceValidationResult:
+    expected_record_fields = {
+        "claim_key": _text(record.get("claim_key")),
+        "plan_id": _text(record.get("plan_id")),
+        "step_id": _text(record.get("step_id")),
+        "allowed_claim_class": _text(record.get("allowed_claim_class")),
+    }
+    for field_name, expected in expected_record_fields.items():
+        if identity.get(field_name) != expected:
+            return _error(
+                "measurement_identity_provenance_mismatch",
+                "Measurement identity disagrees with its enclosing evidence record.",
+                index=index,
+                field=field_name,
+            )
+
+    for field_name in ("requirement_ids", "dataset_versions"):
+        values = record.get(field_name)
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(item, str) or not item.strip() for item in values)
+            or len(values) != len(set(values))
+            or identity.get(field_name) != sorted(values)
+        ):
+            return _error(
+                "measurement_identity_provenance_mismatch",
+                "Measurement identity scope disagrees with its evidence record.",
+                index=index,
+                field=field_name,
+            )
+
+    matching_refs = [
+        ref
+        for ref in computation_refs
+        if computation_ref_key(ref) == identity.get("computation_ref_id")
+    ]
+    if len(matching_refs) != 1:
+        return _error(
+            "measurement_identity_provenance_mismatch",
+            "Measurement identity does not resolve to exactly one bound computation.",
+            index=index,
+            field="computation_ref_id",
+        )
+    ref = matching_refs[0]
+    ref_scope = ref.get("dataset_versions")
+    ref_requirements = ref.get("requirement_ids")
+    if (
+        not isinstance(ref_scope, list)
+        or any(not isinstance(item, str) or not item.strip() for item in ref_scope)
+        or len(ref_scope) != len(set(ref_scope))
+        or sorted(ref_scope) != identity["dataset_versions"]
+        or not isinstance(ref_requirements, list)
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in ref_requirements
+        )
+        or len(ref_requirements) != len(set(ref_requirements))
+        or sorted(ref_requirements) != identity["requirement_ids"]
+        or _text(ref.get("claim_key")) != identity["claim_key"]
+        or _text(ref.get("plan_id")) != identity["plan_id"]
+        or _text(ref.get("step_id")) != identity["step_id"]
+        or _text(ref.get("plan_digest")) != identity["plan_version"]
+    ):
+        return _error(
+            "measurement_identity_provenance_mismatch",
+            "Measurement identity disagrees with its bound computation.",
+            index=index,
+        )
+    return EvidenceValidationResult(True, record=identity)
 
 
 def validate_evidence_record(
     record: Any,
     *,
     current_plan_id: str | None = None,
+    require_measurement_identity: bool = False,
 ) -> EvidenceValidationResult:
     if not isinstance(record, dict):
         return _error("invalid_evidence", "EvidenceRecord must be a JSON object.")
@@ -2202,11 +2339,46 @@ def validate_evidence_record(
         )
 
     normalized_measurements = []
+    identity_count = 0
     for index, measurement in enumerate(measurements):
-        measurement_validation = validate_measurement(measurement, index=index)
+        identity_exempt = (
+            isinstance(measurement, dict)
+            and (
+                measurement.get("identity_status") == "metric_identity_missing"
+                or _text(measurement.get("metric")) == "structured_computation"
+            )
+        )
+        measurement_validation = validate_measurement(
+            measurement,
+            index=index,
+            require_identity=(
+                require_measurement_identity and not identity_exempt
+            ),
+        )
         if not measurement_validation.ok:
             return measurement_validation
-        normalized_measurements.append(measurement_validation.record)
+        normalized_measurement = measurement_validation.record
+        identity = normalized_measurement.get("identity")
+        if isinstance(identity, dict):
+            identity_count += 1
+            provenance_validation = _validate_measurement_identity_provenance(
+                identity,
+                record=record,
+                computation_refs=(
+                    record.get("computation_refs")
+                    if isinstance(record.get("computation_refs"), list)
+                    else []
+                ),
+                index=index,
+            )
+            if not provenance_validation.ok:
+                return provenance_validation
+        normalized_measurements.append(normalized_measurement)
+    if require_measurement_identity and identity_count == 0:
+        return _error(
+            "missing_measurement_identity",
+            "Server-projected evidence requires at least one measurement identity.",
+        )
 
     normalized = dict(record)
     for field_name in NORMALIZED_EVIDENCE_TEXT_FIELDS:
@@ -2433,25 +2605,30 @@ def _structured_metric_identity(
     item: dict[str, Any] | None,
 ) -> tuple[str, str, list[str]] | None:
     tail = declared_field.rsplit(".", 1)[-1].replace("_", " ").strip()
+    if item is None:
+        label = declared_field.replace(".", " ").replace("_", " ").strip()
+        return declared_field, label, [label]
+
     context: list[str] = []
+    metric_context: list[str] = []
     if isinstance(item, dict):
         variables = item.get("variables")
         if isinstance(variables, list):
             context = [_text(value) for value in variables if _text(value)]
+            metric_context = list(context)
         if not context:
             for key in _METRIC_CONTEXT_FIELDS:
                 value = _text(item.get(key))
                 if value:
-                    context = [value]
-                    break
-    if "." in declared_field and not context:
+                    context.append(value)
+                    metric_context.append(f"{key}={value}")
+    if not context:
         return None
     metric_key = declared_field
-    if context:
-        metric_key += "::" + "|".join(context)
+    metric_key += "::" + "|".join(metric_context)
     label = " ".join([*context, tail]).strip()
     aliases = [label]
-    if len(context) == 2:
+    if isinstance(item.get("variables"), list) and len(context) == 2:
         aliases.append(" ".join([context[1], context[0], tail]).strip())
     return metric_key, label, list(dict.fromkeys(aliases))
 
@@ -2483,14 +2660,11 @@ def _attach_projected_measurement_identity(
         "claim_key": binding.claim_key,
         "computation_ref_id": computation_ref_key(computation_ref),
         "plan_id": plan_id,
-        "plan_version": _text(computation_ref.get("plan_digest"))
-        or analysis_plan_semantic_digest(plan),
+        "plan_version": analysis_plan_semantic_digest(plan),
         "step_id": binding.step_id,
-        "requirement_ids": sorted(
-            str(requirement_id) for requirement_id in binding.requirement_ids
-        ),
+        "requirement_ids": sorted(binding.requirement_ids),
         "dataset_versions": sorted(
-            str(version) for version in computation_ref.get("dataset_versions") or []
+            computation_ref.get("dataset_versions") or []
         ),
         "time_scope": _text(measurement.get("time_scope")),
         "population_scope": _text(measurement.get("population_scope")),
@@ -2645,7 +2819,7 @@ def _build_projected_record(
                 if dataset_contract_id:
                     break
 
-    requirement_ids = [str(item) for item in binding.requirement_ids if str(item)]
+    requirement_ids = list(binding.requirement_ids)
     evidence_requirement = _evidence_requirement_name(plan, binding.step_id, requirement_ids)
 
     sample_size_value: Any = _resolve_sample_size(output_data)
@@ -2758,16 +2932,17 @@ def project_structured_computation_evidence(
        step binding did not succeed;
     3. ``unstructured_tool`` for ``run_python`` or capability-less tools
        (``run_python`` is never upgraded);
-    4. ``stale_session_identity`` / ``stale_turn_identity`` / ``stale_plan_identity``
-       / ``stale_step_identity`` when the ref does not match the current
-       session/turn/plan/step identity;
-    5. ``stale_dataset_version`` when the ref's dataset-version set differs
-       from the active step-bound contracts;
-    6. ``missing_declared_field`` when ``validate_capability_output`` reports
+    4. stale identity/revision reasons when the ref does not match the current
+       session, turn, semantic plan, or step;
+    5. ``invalid_dataset_versions`` or ``stale_dataset_version`` when the
+       ref's exact dataset-version scope is malformed or no longer current;
+    6. ``invalid_requirement_ids`` when the binding contains malformed
+       requirement identity;
+    7. ``missing_declared_field`` when ``validate_capability_output`` reports
        missing declared evidence fields in the real tool output;
-    7. ``missing_claim_identity`` when the binding does not surface a claim
+    8. ``missing_claim_identity`` when the binding does not surface a claim
        key and at least one canonical requirement id;
-    8. the validated ``evidence_record.v2`` record otherwise.
+    9. the validated ``evidence_record.v2`` record otherwise.
 
     The success branch builds a CLAIM-NEUTRAL summary from the declared
     structured fields, sets the maximum allowed claim class from capability
@@ -2806,20 +2981,52 @@ def project_structured_computation_evidence(
     ref_plan = _text(computation_ref.get("plan_id"))
     if not plan_id or ref_plan != plan_id:
         return EvidenceProjectionResult(projected=False, reason="stale_plan_identity")
+    current_plan_digest = analysis_plan_semantic_digest(plan)
+    if computation_ref.get("plan_digest") != current_plan_digest:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="stale_plan_revision",
+            diagnostics=({
+                "ref_plan_digest": computation_ref.get("plan_digest"),
+                "current_plan_digest": current_plan_digest,
+            },),
+        )
     ref_step = _text(computation_ref.get("step_id"))
     binding_step = _text(getattr(binding, "step_id", ""))
     if not binding_step or ref_step != binding_step:
         return EvidenceProjectionResult(projected=False, reason="stale_step_identity")
+    current_step = _step_for_id(plan, binding_step)
+    current_step_digest = analysis_step_semantic_digest(current_step)
+    if computation_ref.get("step_digest") != current_step_digest:
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="stale_plan_revision",
+            diagnostics=({
+                "ref_step_digest": computation_ref.get("step_digest"),
+                "current_step_digest": current_step_digest,
+            },),
+        )
 
+    raw_versions = computation_ref.get("dataset_versions")
+    if (
+        not isinstance(raw_versions, list)
+        or not raw_versions
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw_versions
+        )
+        or len(raw_versions) != len(set(raw_versions))
+    ):
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="invalid_dataset_versions",
+        )
     step_datasets = _step_dataset_inputs(plan, binding_step)
     active_versions = _active_dataset_versions_for_step(dataset_contracts, step_datasets)
     if not active_versions and isinstance(dataset_contracts, list):
         # Fall back to ALL active contracts when the plan step is silent.
         active_versions = _active_dataset_versions_for_step(dataset_contracts, [])
-    ref_versions = {
-        _text(item) for item in computation_ref.get("dataset_versions") or []
-        if _text(item)
-    }
+    ref_versions = set(raw_versions)
     if active_versions and ref_versions != active_versions:
         return EvidenceProjectionResult(
             projected=False,
@@ -2857,8 +3064,26 @@ def project_structured_computation_evidence(
             diagnostics=({"missing": list(missing_fields)},),
         )
 
-    binding_claim = _text(getattr(binding, "claim_key", ""))
-    binding_requirements = tuple(_text(item) for item in getattr(binding, "requirement_ids", ()) if _text(item))
+    binding_claim_raw = getattr(binding, "claim_key", "")
+    binding_claim = (
+        binding_claim_raw.strip()
+        if isinstance(binding_claim_raw, str)
+        else ""
+    )
+    binding_requirements = getattr(binding, "requirement_ids", ())
+    if (
+        not isinstance(binding_requirements, (list, tuple))
+        or not binding_requirements
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in binding_requirements
+        )
+        or len(binding_requirements) != len(set(binding_requirements))
+    ):
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="invalid_requirement_ids",
+        )
     if not binding_claim or not binding_requirements:
         return EvidenceProjectionResult(
             projected=False, reason="missing_claim_identity",
@@ -2873,7 +3098,11 @@ def project_structured_computation_evidence(
         output_data=output_data,
         plan_id=plan_id,
     )
-    validation = validate_evidence_record(record, current_plan_id=plan_id)
+    validation = validate_evidence_record(
+        record,
+        current_plan_id=plan_id,
+        require_measurement_identity=True,
+    )
     if not validation.ok:
         return EvidenceProjectionResult(
             projected=False,

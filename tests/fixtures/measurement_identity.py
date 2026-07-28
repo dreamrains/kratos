@@ -8,6 +8,8 @@ from pathlib import Path
 from data_agent.agent.analysis_execution import StepBindingResult
 from data_agent.agent.evidence_contracts import (
     COMPUTATION_REF_CONTRACT_VERSION,
+    analysis_plan_semantic_digest,
+    analysis_step_semantic_digest,
     computation_digest,
     persist_computation_output,
     project_structured_computation_evidence,
@@ -20,8 +22,6 @@ SESSION_ID = "sess_current"
 TURN_ID = "turn_1"
 TOOL_CALL_ID = "call_corr_1"
 DATASET_VERSION = "ds_main_v1"
-PLAN_DIGEST = "sha256:plan_digest"
-STEP_DIGEST = "sha256:step_digest"
 
 
 @dataclass
@@ -108,6 +108,10 @@ def current_plan() -> dict:
     }
 
 
+PLAN_DIGEST = analysis_plan_semantic_digest(current_plan())
+STEP_DIGEST = analysis_step_semantic_digest(current_plan()["method_plan"][0])
+
+
 def current_dataset_contracts() -> list[dict]:
     return [
         {
@@ -150,42 +154,55 @@ def _artifact_filename(turn_id: str, tool_call_id: str) -> str:
     return f"{sanitize_filename(tool_call_id)}_{suffix}_computation.json"
 
 
-def _write_correlation_artifact(sessions_root: Path) -> Path:
-    output_dir = sessions_root / SESSION_ID / "tool_outputs"
+def _write_correlation_artifact(
+    context: ProjectionContext,
+    *,
+    capability: dict,
+    output: dict,
+    dataset_versions: list,
+) -> Path:
+    plan_digest = analysis_plan_semantic_digest(context.plan)
+    step_digest = analysis_step_semantic_digest(context.plan["method_plan"][0])
+    output_dir = context.sessions_root / context.session_id / "tool_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     persist_computation_output(
-        sessions_root=sessions_root,
-        session_id=SESSION_ID,
-        turn_id=TURN_ID,
-        plan_id=PLAN_ID,
-        step_id=STEP_ID,
+        sessions_root=context.sessions_root,
+        session_id=context.session_id,
+        turn_id=context.turn_id,
+        plan_id=context.plan["id"],
+        step_id=context.plan["method_plan"][0]["step_id"],
         tool_call_id=TOOL_CALL_ID,
         tool_name="correlation_analysis",
         arguments={"name": "main", "method": "pearson"},
-        output=correlation_output(),
-        dataset_versions=[DATASET_VERSION],
+        output=output,
+        dataset_versions=dataset_versions,
         success=True,
-        plan_digest=PLAN_DIGEST,
-        step_digest=STEP_DIGEST,
-        capability_id="analysis.correlation",
-        evidence_fields=correlation_capability()["evidence_fields"],
+        plan_digest=plan_digest,
+        step_digest=step_digest,
+        capability_id=capability["capability_id"],
+        evidence_fields=capability["evidence_fields"],
     )
-    return output_dir / _artifact_filename(TURN_ID, TOOL_CALL_ID)
+    return output_dir / _artifact_filename(context.turn_id, TOOL_CALL_ID)
 
 
 def structured_correlation_ref(
     *,
     artifact_path: Path | str = "",
     dataset_versions: list[str] | None = None,
+    output: dict | None = None,
+    capability: dict | None = None,
+    plan_digest: str = PLAN_DIGEST,
+    step_digest: str = STEP_DIGEST,
 ) -> dict:
     arguments = {"name": "main", "method": "pearson"}
-    output = correlation_output()
+    output = correlation_output() if output is None else output
+    capability = correlation_capability() if capability is None else capability
     return {
         "contract_version": COMPUTATION_REF_CONTRACT_VERSION,
         "session_id": SESSION_ID,
         "tool_call_id": TOOL_CALL_ID,
         "tool_name": "correlation_analysis",
-        "capability_id": "analysis.correlation",
+        "capability_id": capability["capability_id"],
         "arguments_digest": computation_digest(arguments),
         "output_digest": computation_digest(output),
         "artifact_path": str(artifact_path or Path("/_unused")),
@@ -194,11 +211,11 @@ def structured_correlation_ref(
         ),
         "turn_id": TURN_ID,
         "plan_id": PLAN_ID,
-        "plan_digest": PLAN_DIGEST,
+        "plan_digest": plan_digest,
         "step_id": STEP_ID,
-        "step_digest": STEP_DIGEST,
+        "step_digest": step_digest,
         "success": True,
-        "structured_checked_fields": correlation_capability()["evidence_fields"],
+        "structured_checked_fields": capability["evidence_fields"],
         "verification_level": "structured_checked",
         "claim_key": "revenue_cost_correlation",
         "requirement_ids": ["req_corr_effect"],
@@ -236,13 +253,45 @@ def build_projection_context(tmp_path: Path) -> ProjectionContext:
     )
 
 
-def project_real_correlation(context: ProjectionContext):
-    artifact_path = _write_correlation_artifact(context.sessions_root)
+def project_real_correlation(
+    context: ProjectionContext,
+    *,
+    output: dict | None = None,
+    capability: dict | None = None,
+    dataset_versions: list | None = None,
+    binding: StepBindingResult | None = None,
+    ref_overrides: dict | None = None,
+):
+    output = correlation_output() if output is None else output
+    capability = context.capability if capability is None else capability
+    dataset_versions = (
+        list(dataset_versions)
+        if dataset_versions is not None
+        else [contract["dataset_id"] for contract in context.dataset_contracts]
+    )
+    plan_digest = analysis_plan_semantic_digest(context.plan)
+    step_digest = analysis_step_semantic_digest(context.plan["method_plan"][0])
+    artifact_path = _write_correlation_artifact(
+        context,
+        capability=capability,
+        output=output,
+        dataset_versions=dataset_versions,
+    )
+    ref = structured_correlation_ref(
+        artifact_path=artifact_path,
+        dataset_versions=dataset_versions,
+        output=output,
+        capability=capability,
+        plan_digest=plan_digest,
+        step_digest=step_digest,
+    )
+    if ref_overrides:
+        ref.update(ref_overrides)
     return project_structured_computation_evidence(
-        computation_ref=structured_correlation_ref(artifact_path=artifact_path),
-        binding=exact_step_binding(),
+        computation_ref=ref,
+        binding=binding or exact_step_binding(),
         plan=context.plan,
-        capability=context.capability,
+        capability=capability,
         dataset_contracts=context.dataset_contracts,
         current_session_id=context.session_id,
         current_turn_id=context.turn_id,

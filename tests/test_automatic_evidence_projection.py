@@ -10,6 +10,7 @@ exactly one material-field match.
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from data_agent.agent.analysis_execution import StepBindingResult
 from tests.fixtures.measurement_identity import (
     DATASET_VERSION,
     PLAN_DIGEST,
@@ -116,6 +118,249 @@ def test_measurement_identity_validator_rejects_tampered_key(context):
     validation = validate_measurement_identity(identity)
     assert validation.ok is False
     assert validation.error_type == "measurement_key_mismatch"
+
+
+def test_identity_uses_all_trusted_list_item_context_for_uniqueness(context):
+    output = {
+        "summary": "Two segment correlations",
+        "data": {
+            "pairs": [
+                {
+                    "target": "revenue",
+                    "dimension": "north",
+                    "correlation": 0.4,
+                    "effective_sample_size": 50,
+                    "p_value": 0.01,
+                },
+                {
+                    "target": "revenue",
+                    "dimension": "south",
+                    "correlation": 0.4,
+                    "effective_sample_size": 50,
+                    "p_value": 0.01,
+                },
+            ],
+            "allowed_claim_class": "association",
+        },
+    }
+
+    result = project_real_correlation(context, output=output)
+
+    assert result.projected is True
+    first = result.record["measurements"][0]["identity"]
+    second = result.record["measurements"][1]["identity"]
+    assert first["metric_key"] == (
+        "pairs.correlation::target=revenue|dimension=north"
+    )
+    assert second["metric_key"] == (
+        "pairs.correlation::target=revenue|dimension=south"
+    )
+    assert first["measurement_key"] != second["measurement_key"]
+
+
+def test_reordered_multi_dataset_scope_has_same_computation_and_measurement_keys(
+    context,
+):
+    context.plan["method_plan"][0]["dataset_inputs"] = ["main", "secondary"]
+    context.plan["method_plan"][0]["dataset_contract_ids"] = [
+        "contract_main_v1",
+        "contract_secondary_v1",
+    ]
+    context.dataset_contracts.append({
+        "id": "contract_secondary_v1",
+        "dataset": "secondary",
+        "dataset_id": "ds_secondary_v1",
+        "quality_status": "ready",
+    })
+
+    first = project_real_correlation(
+        context,
+        dataset_versions=[DATASET_VERSION, "ds_secondary_v1"],
+    )
+    second = project_real_correlation(
+        context,
+        dataset_versions=["ds_secondary_v1", DATASET_VERSION],
+    )
+
+    assert first.projected is True
+    assert second.projected is True
+    first_identity = first.record["measurements"][0]["identity"]
+    second_identity = second.record["measurements"][0]["identity"]
+    assert first_identity["computation_ref_id"] == second_identity["computation_ref_id"]
+    assert first_identity["measurement_key"] == second_identity["measurement_key"]
+
+
+def test_unambiguous_nested_scalar_receives_identity(context):
+    capability = {
+        "capability_id": "analysis.sample_size",
+        "category": "descriptive",
+        "evidence_fields": [
+            "effective_sample_size.total",
+            "allowed_claim_class",
+        ],
+    }
+    output = {
+        "summary": "Effective sample size is 100",
+        "data": {
+            "effective_sample_size": {"total": 100},
+            "allowed_claim_class": "descriptive",
+        },
+    }
+
+    result = project_real_correlation(
+        context,
+        capability=capability,
+        output=output,
+    )
+
+    assert result.projected is True
+    identity = result.record["measurements"][0]["identity"]
+    assert identity["metric_key"] == "effective_sample_size.total"
+    assert identity["metric_label"] == "effective sample size total"
+
+
+def test_projector_rejects_stale_plan_digest(context):
+    result = project_real_correlation(
+        context,
+        ref_overrides={"plan_digest": "sha256:stale_plan"},
+    )
+
+    assert result.projected is False
+    assert result.reason == "stale_plan_revision"
+
+
+def test_projector_rejects_stale_step_digest(context):
+    result = project_real_correlation(
+        context,
+        ref_overrides={"step_digest": "sha256:stale_step"},
+    )
+
+    assert result.projected is False
+    assert result.reason == "stale_plan_revision"
+
+
+@pytest.mark.parametrize(
+    ("dataset_versions", "binding", "reason"),
+    [
+        (
+            [DATASET_VERSION, 7],
+            None,
+            "invalid_dataset_versions",
+        ),
+        (
+            None,
+            StepBindingResult(
+                ok=True,
+                plan_id=PLAN_ID,
+                step_id=STEP_ID,
+                claim_key="revenue_cost_correlation",
+                requirement_ids=("req_corr_effect", 7),
+            ),
+            "invalid_requirement_ids",
+        ),
+    ],
+)
+def test_projector_rejects_malformed_material_identity_scope(
+    context,
+    dataset_versions,
+    binding,
+    reason,
+):
+    result = project_real_correlation(
+        context,
+        dataset_versions=dataset_versions,
+        binding=binding,
+    )
+
+    assert result.projected is False
+    assert result.reason == reason
+
+
+def test_present_identity_must_match_measurement_and_bound_provenance(context):
+    from data_agent.agent.evidence_contracts import (
+        measurement_key_for,
+        validate_evidence_record,
+    )
+
+    projected = project_real_correlation(context)
+    material_mismatch = copy.deepcopy(projected.record)
+    material_identity = material_mismatch["measurements"][0]["identity"]
+    material_identity["value"] = 999.0
+    material_identity["measurement_key"] = measurement_key_for(material_identity)
+
+    validation = validate_evidence_record(
+        material_mismatch,
+        current_plan_id=PLAN_ID,
+    )
+
+    assert validation.ok is False
+    assert validation.error_type == "measurement_identity_material_mismatch"
+
+    metric_mismatch = copy.deepcopy(projected.record)
+    metric_identity = metric_mismatch["measurements"][0]["identity"]
+    metric_identity["metric_key"] = "pairs.profit::revenue|cost"
+    metric_identity["measurement_key"] = measurement_key_for(metric_identity)
+
+    validation = validate_evidence_record(
+        metric_mismatch,
+        current_plan_id=PLAN_ID,
+    )
+
+    assert validation.ok is False
+    assert validation.error_type == "measurement_identity_material_mismatch"
+
+    provenance_mismatch = copy.deepcopy(projected.record)
+    provenance_identity = provenance_mismatch["measurements"][0]["identity"]
+    provenance_identity["computation_ref_id"] = "cr_forged"
+    provenance_identity["measurement_key"] = measurement_key_for(provenance_identity)
+
+    validation = validate_evidence_record(
+        provenance_mismatch,
+        current_plan_id=PLAN_ID,
+    )
+
+    assert validation.ok is False
+    assert validation.error_type == "measurement_identity_provenance_mismatch"
+
+
+def test_legacy_identity_free_record_loads_but_projector_mode_requires_identity(
+    context,
+):
+    from data_agent.agent.evidence_contracts import (
+        validate_evidence_record,
+        validate_measurement,
+    )
+
+    record = copy.deepcopy(project_real_correlation(context).record)
+    for measurement in record["measurements"]:
+        measurement.pop("identity", None)
+
+    legacy = validate_evidence_record(record, current_plan_id=PLAN_ID)
+    strict = validate_evidence_record(
+        record,
+        current_plan_id=PLAN_ID,
+        require_measurement_identity=True,
+    )
+    direct = validate_measurement(
+        record["measurements"][0],
+        require_identity=True,
+    )
+
+    assert legacy.ok is True
+    assert strict.ok is False
+    assert strict.error_type == "missing_measurement_identity"
+    assert direct.ok is False
+    assert direct.error_type == "missing_measurement_identity"
+
+    partially_stripped = copy.deepcopy(project_real_correlation(context).record)
+    partially_stripped["measurements"][0].pop("identity")
+    strict = validate_evidence_record(
+        partially_stripped,
+        current_plan_id=PLAN_ID,
+        require_measurement_identity=True,
+    )
+    assert strict.ok is False
+    assert strict.error_type == "missing_measurement_identity"
 
 
 @pytest.mark.parametrize(

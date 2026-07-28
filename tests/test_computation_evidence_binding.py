@@ -395,6 +395,20 @@ def test_task3_exposes_canonical_evidence_and_measurement_validators():
     assert callable(validate_measurement_identity)
 
 
+def test_model_authored_evidence_cannot_supply_measurement_identity(computation_env):
+    ref = _execute_computation(computation_env)
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload["measurements"][0]["identity"] = {
+        "contract_version": "measurement_identity.v1",
+        "measurement_key": "m_forged",
+    }
+
+    result = _record(computation_env, payload)
+
+    assert result["error_type"] == "authoritative_measurement_identity_forbidden"
+    assert computation_env["state"].evidence_records == []
+
+
 def test_record_evidence_rejects_unknown_source_tool_call_id(computation_env):
     result = _record(
         computation_env,
