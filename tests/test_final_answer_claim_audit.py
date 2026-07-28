@@ -47,14 +47,30 @@ def _evidence(**overrides):
 
 
 def _audit(text, *, evidence=None, **kwargs):
+    current_plan_id = kwargs.pop("current_plan_id", "plan_current")
     return build_final_answer_audit(
         text,
         evidence_records=evidence if evidence is not None else [_evidence()],
         route_proposals=[],
         cleaning_logs=[],
-        current_plan_id="plan_current",
+        current_plan_id=current_plan_id,
         **kwargs,
     )
+
+
+def _auto_bind_evidence(**overrides):
+    measurement = dict(_evidence()["measurements"][0])
+    measurement.update({
+        "direction": "increase",
+        "time_scope": "2026-05",
+    })
+    record = _evidence(
+        allowed_claim_class="comparison",
+        dataset_versions=["dataset_sales_v1"],
+        measurements=[measurement],
+    )
+    record.update(overrides)
+    return record
 
 
 def test_extractor_classifies_claims_and_extracts_semantics_and_markers():
@@ -83,6 +99,192 @@ def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication
     check = audit["claim_checks"][0]
     assert "missing_evidence_identity" in check["reason_codes"]
     assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
+
+
+def test_final_audit_auto_attaches_one_exact_current_measurement_and_verifies_it():
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.\n"
+        "Limitation: this is a descriptive comparison only.",
+        evidence=[_auto_bind_evidence()],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claims"][0]["evidence_ids"] == ["ev_revenue"]
+    assert audit["claim_checks"][0]["evidence_ids"] == ["ev_revenue"]
+    assert audit["claim_checks"][0]["status"] == "passed"
+
+
+def test_final_audit_does_not_bind_when_both_claim_context_and_evidence_lack_plan():
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[_auto_bind_evidence(plan_id="")],
+        current_plan_id="",
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        _auto_bind_evidence(plan_id="plan_old"),
+        _auto_bind_evidence(plan_id="PLAN_CURRENT"),
+        _auto_bind_evidence(dataset_versions=["dataset_sales_v0"]),
+        _auto_bind_evidence(dataset_versions=["DATASET_SALES_V1"]),
+        _auto_bind_evidence(
+            dataset_versions=["dataset_sales_v1", "dataset_other_v1"],
+        ),
+    ],
+    ids=[
+        "wrong-plan",
+        "case-changed-plan",
+        "wrong-version",
+        "case-changed-version",
+        "non-exact-version-set",
+    ],
+)
+def test_final_audit_does_not_bind_wrong_plan_or_dataset_version(evidence):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        [],
+        [_auto_bind_evidence(id="ev_1"), _auto_bind_evidence(id="ev_2")],
+    ],
+    ids=["zero-match", "multiple-matches"],
+)
+def test_final_audit_does_not_guess_on_zero_or_multiple_exact_matches(evidence):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=evidence,
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_final_audit_does_not_bind_a_multi_quantity_claim():
+    audit = _audit(
+        "Revenue increased 12% and 13% in 2026-05 for new users.",
+        evidence=[_auto_bind_evidence()],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert len(audit["claims"][0]["quantities"]) == 2
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    ("draft", "evidence_overrides", "claim_field"),
+    [
+        (
+            "Revenue was 12% in 2026-05 for new users.",
+            {"allowed_claim_class": "numeric"},
+            "direction",
+        ),
+        (
+            "Revenue increased 12 in 2026-05 for new users.",
+            {},
+            "units",
+        ),
+        (
+            "Revenue increased 12% for new users.",
+            {},
+            "time_scope",
+        ),
+        (
+            "Revenue increased 12% in 2026-05.",
+            {},
+            "population_scope",
+        ),
+    ],
+    ids=["direction", "unit", "time-scope", "population-scope"],
+)
+def test_final_audit_fails_closed_when_claim_identity_is_incomplete(
+    draft,
+    evidence_overrides,
+    claim_field,
+):
+    audit = _audit(
+        draft,
+        evidence=[_auto_bind_evidence(**evidence_overrides)],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert not audit["claims"][0][claim_field]
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+def test_final_audit_does_not_choose_one_measurement_from_multi_measurement_evidence():
+    measurement = dict(_auto_bind_evidence()["measurements"][0])
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[_auto_bind_evidence(measurements=[measurement, dict(measurement)])],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"allowed_claim_class": ""},
+        {"dataset_versions": []},
+        {"measurements": [{
+            **_auto_bind_evidence()["measurements"][0],
+            "direction": "",
+        }]},
+        {"measurements": [{
+            **_auto_bind_evidence()["measurements"][0],
+            "unit": "",
+        }]},
+        {"measurements": [{
+            **_auto_bind_evidence()["measurements"][0],
+            "time_scope": "",
+        }]},
+        {"measurements": [{
+            **_auto_bind_evidence()["measurements"][0],
+            "population_scope": "",
+        }]},
+    ],
+    ids=[
+        "claim-class",
+        "dataset-version-scope",
+        "direction",
+        "unit",
+        "time-scope",
+        "population-scope",
+    ],
+)
+def test_final_audit_fails_closed_when_evidence_identity_is_incomplete(overrides):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[_auto_bind_evidence(**overrides)],
+        current_dataset_versions=["dataset_sales_v1"],
+    )
+
+    assert audit["claims"][0]["evidence_ids"] == []
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(

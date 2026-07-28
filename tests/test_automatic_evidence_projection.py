@@ -450,31 +450,63 @@ def test_empty_evidence_still_injects_catalog_header():
 def test_exact_unique_match_attaches_existing_id_only():
     from data_agent.agent.answer_quality import attach_unique_exact_evidence_ids
 
-    claims = [{"text": "收入增长 12%", "value": 12, "unit": "%", "direction": "increase"}]
-    bound = attach_unique_exact_evidence_ids(claims, [matching_evidence("ev_1")])
+    claims = [exact_material_claim()]
+    bound = attach_unique_exact_evidence_ids(
+        claims,
+        [matching_evidence("ev_1")],
+        current_plan_id=PLAN_ID,
+        current_dataset_versions=[DATASET_VERSION],
+    )
     assert bound[0]["evidence_ids"] == ["ev_1"]
 
 
 def test_zero_or_multiple_matches_never_guess():
     from data_agent.agent.answer_quality import attach_unique_exact_evidence_ids
 
-    claims = [{"text": "收入增长 12%", "value": 12, "unit": "%", "direction": "increase"}]
-    assert attach_unique_exact_evidence_ids(claims, []) == claims
+    claims = [exact_material_claim()]
+    context = {
+        "current_plan_id": PLAN_ID,
+        "current_dataset_versions": [DATASET_VERSION],
+    }
+    assert attach_unique_exact_evidence_ids(claims, [], **context) == claims
     assert (
         attach_unique_exact_evidence_ids(
             claims,
             [matching_evidence("ev_1"), matching_evidence("ev_2")],
+            **context,
         )
         == claims
     )
 
 
+def exact_material_claim() -> dict:
+    return {
+        "text": "Revenue increased 12% in 2026-05 for new users.",
+        "claim_type": "comparison",
+        "material": True,
+        "requires_evidence": True,
+        "quantities": [{"raw": "12%", "value": 12, "unit": "%"}],
+        "direction": "increase",
+        "time_scope": "2026-05",
+        "population_scope": "new users",
+        "evidence_ids": [],
+        "evidence_id": "",
+    }
+
+
 def matching_evidence(ev_id: str) -> dict:
     return {
         "id": ev_id,
-        "value": 12,
-        "unit": "%",
-        "direction": "increase",
+        "plan_id": PLAN_ID,
+        "allowed_claim_class": "comparison",
+        "dataset_versions": [DATASET_VERSION],
+        "measurements": [{
+            "value": 0.12,
+            "unit": "ratio",
+            "direction": "increase",
+            "time_scope": "2026-05",
+            "population_scope": "new users",
+        }],
     }
 
 

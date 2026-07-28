@@ -7,10 +7,10 @@ answer-text claim extraction and agent-verification folding.
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Sequence
 
 from data_agent.agent.analysis_quality_rubric import score_analysis_quality
@@ -294,6 +294,12 @@ def build_final_answer_audit(
         }
         for claim in claims
     ]
+    claims = attach_unique_exact_evidence_ids(
+        claims,
+        evidence_records or [],
+        current_plan_id=current_plan_id,
+        current_dataset_versions=current_dataset_versions,
+    )
     report = verify_analysis_claims(
         claims=claims,
         evidence_records=evidence_records or [],
@@ -359,89 +365,201 @@ def is_supported_by_evidence(claim_text: str, evidence_records: list[dict[str, A
 
 
 _CLAIM_CLASS_KEYS = ("claim_class", "claim_type")
-_CLAIM_QUANTITY_KEYS = ("value", "quantity", "magnitude")
-_CLAIM_UNIT_KEYS = ("unit", "units")
-_CLAIM_DIRECTION_KEYS = ("direction", "direction_label")
-_CLAIM_TIME_KEYS = ("time_scope", "time_window", "period")
-_CLAIM_POPULATION_KEYS = (
-    "population_scope",
-    "population",
-    "dataset_scope",
-    "dataset",
-)
-_CLAIM_PLAN_KEYS = ("plan_id",)
+_EVIDENCE_CLAIM_CLASS_KEYS = ("allowed_claim_class", "claim_class")
+_PERCENT_UNITS = frozenset({"%", "percent", "percentage"})
+_UNIT_ALIASES = {
+    "%": "ratio",
+    "percent": "ratio",
+    "percentage": "ratio",
+    "proportion": "ratio",
+    "percentage point": "percentage_points",
+    "percentage points": "percentage_points",
+    "pp": "percentage_points",
+    "rmb": "cny",
+    "元": "cny",
+    "人民币": "cny",
+    "$": "usd",
+}
 
 
-def _claim_material_field(claim: dict[str, Any], keys: tuple[str, ...]) -> str:
-    for key in keys:
-        if key in claim:
-            value = claim.get(key)
-            text = str(value).strip() if not isinstance(value, (list, dict)) else ""
-            if text:
-                return text.casefold()
-    return ""
+def _identity_text(value: Any) -> str:
+    if value is None or isinstance(value, (list, dict, set, tuple)):
+        return ""
+    return " ".join(str(value).strip().casefold().split())
 
 
-def _numbers_equal(left: str, right: str) -> bool:
+def _identity_id(value: Any) -> str:
+    if value is None or isinstance(value, (list, dict, set, tuple)):
+        return ""
+    return str(value).strip()
+
+
+def _one_consistent_text(record: dict[str, Any], keys: tuple[str, ...]) -> str:
+    values = {
+        value
+        for key in keys
+        if (value := _identity_text(record.get(key)))
+    }
+    if len(values) != 1:
+        return ""
+    return values.pop()
+
+
+def _dataset_version_scope(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (list, set, tuple)):
+        return ()
+    versions = {
+        normalized
+        for item in value
+        if (normalized := _identity_id(item))
+    }
+    return tuple(sorted(versions))
+
+
+def _canonical_quantity(value: Any, unit: Any) -> tuple[Decimal, str] | None:
+    if isinstance(value, bool):
+        return None
+    unit_text = _identity_text(unit)
+    if not unit_text:
+        return None
     try:
-        return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-12)
-    except (TypeError, ValueError):
-        return left == right
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not number.is_finite():
+        return None
+    canonical_unit = _UNIT_ALIASES.get(unit_text, unit_text)
+    if unit_text in _PERCENT_UNITS:
+        number /= Decimal("100")
+    return number.normalize(), canonical_unit
 
 
-def _material_match(claim: dict[str, Any], evidence: dict[str, Any]) -> bool:
-    """All material fields must match exactly (missing == empty string)."""
-
-    pairs = (
-        (_CLAIM_CLASS_KEYS, _CLAIM_CLASS_KEYS),
-        (_CLAIM_UNIT_KEYS, _CLAIM_UNIT_KEYS + ("measurement_unit",)),
-        (_CLAIM_DIRECTION_KEYS, _CLAIM_DIRECTION_KEYS),
-        (_CLAIM_TIME_KEYS, _CLAIM_TIME_KEYS),
-        (_CLAIM_POPULATION_KEYS, _CLAIM_POPULATION_KEYS),
-        (_CLAIM_PLAN_KEYS, _CLAIM_PLAN_KEYS),
+def _claim_measurement_identity(
+    claim: dict[str, Any],
+    *,
+    current_plan_id: str,
+    current_dataset_versions: tuple[str, ...],
+) -> tuple[Any, ...] | None:
+    if claim.get("material") is not True or claim.get("requires_evidence") is not True:
+        return None
+    plan_id = _identity_id(current_plan_id)
+    if not plan_id or not current_dataset_versions:
+        return None
+    quantities = claim.get("quantities")
+    if not isinstance(quantities, (list, tuple)) or len(quantities) != 1:
+        return None
+    quantity = quantities[0]
+    if not isinstance(quantity, dict):
+        return None
+    canonical_quantity = _canonical_quantity(quantity.get("value"), quantity.get("unit"))
+    claim_class = _one_consistent_text(claim, _CLAIM_CLASS_KEYS)
+    direction = _identity_text(claim.get("direction"))
+    time_scope = _identity_text(claim.get("time_scope"))
+    population_scope = _identity_text(claim.get("population_scope"))
+    if (
+        canonical_quantity is None
+        or not claim_class
+        or not direction
+        or not time_scope
+        or not population_scope
+    ):
+        return None
+    return (
+        plan_id,
+        current_dataset_versions,
+        claim_class,
+        *canonical_quantity,
+        direction,
+        time_scope,
+        population_scope,
     )
-    for claim_keys, evidence_keys in pairs:
-        claim_value = _claim_material_field(claim, claim_keys)
-        evidence_value = _claim_material_field(evidence, evidence_keys)
-        if claim_value != evidence_value:
-            return False
-    claim_quantity = _claim_material_field(claim, _CLAIM_QUANTITY_KEYS)
-    evidence_quantity = _claim_material_field(evidence, _CLAIM_QUANTITY_KEYS + ("magnitude_value",))
-    if claim_quantity or evidence_quantity:
-        if not claim_quantity or not evidence_quantity:
-            return False
-        if not _numbers_equal(claim_quantity, evidence_quantity):
-            return False
-    return True
+
+
+def _evidence_measurement_identity(
+    evidence: dict[str, Any],
+    *,
+    current_plan_id: str,
+    current_dataset_versions: tuple[str, ...],
+) -> tuple[Any, ...] | None:
+    plan_id = _identity_id(evidence.get("plan_id"))
+    if not plan_id or plan_id != _identity_id(current_plan_id):
+        return None
+    evidence_versions = _dataset_version_scope(evidence.get("dataset_versions"))
+    if not evidence_versions or evidence_versions != current_dataset_versions:
+        return None
+    measurements = evidence.get("measurements")
+    if not isinstance(measurements, (list, tuple)) or len(measurements) != 1:
+        return None
+    measurement = measurements[0]
+    if not isinstance(measurement, dict):
+        return None
+    canonical_quantity = _canonical_quantity(
+        measurement.get("value"),
+        measurement.get("unit"),
+    )
+    claim_class = _one_consistent_text(evidence, _EVIDENCE_CLAIM_CLASS_KEYS)
+    direction = _identity_text(measurement.get("direction"))
+    time_scope = _identity_text(measurement.get("time_scope"))
+    population_scope = _identity_text(measurement.get("population_scope"))
+    if (
+        canonical_quantity is None
+        or not claim_class
+        or not direction
+        or not time_scope
+        or not population_scope
+    ):
+        return None
+    return (
+        plan_id,
+        evidence_versions,
+        claim_class,
+        *canonical_quantity,
+        direction,
+        time_scope,
+        population_scope,
+    )
 
 
 def attach_unique_exact_evidence_ids(
     claims: Sequence[dict[str, Any]],
     evidence_records: Sequence[dict[str, Any]],
+    *,
+    current_plan_id: str = "",
+    current_dataset_versions: Sequence[str] | set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Attach an existing evidence ID to a claim only on exactly one match.
-
-    Compares claim class, quantity, unit, direction, time scope,
-    population/dataset scope, and current plan ID. Zero or multiple matches
-    leave the claim unchanged (unbound for audit action); the matcher never
-    invents IDs. ``Sequence`` inputs are accepted to keep the helper friendly
-    to tuples/generators but a fresh list is always returned.
-    """
+    """Attach one existing ID only for an exact server-scoped measurement."""
 
     claims_list = list(claims or [])
     evidence_list = [
         record for record in (evidence_records or [])
         if isinstance(record, dict)
     ]
+    dataset_versions = _dataset_version_scope(current_dataset_versions)
     results: list[dict[str, Any]] = []
     for claim in claims_list:
         if not isinstance(claim, dict):
             results.append(claim)
             continue
+        if claim.get("evidence_ids") or _identity_text(claim.get("evidence_id")):
+            results.append(claim)
+            continue
+        claim_identity = _claim_measurement_identity(
+            claim,
+            current_plan_id=current_plan_id,
+            current_dataset_versions=dataset_versions,
+        )
+        if claim_identity is None:
+            results.append(claim)
+            continue
         matches = [
             evidence
             for evidence in evidence_list
-            if _material_match(claim, evidence)
+            if _evidence_measurement_identity(
+                evidence,
+                current_plan_id=current_plan_id,
+                current_dataset_versions=dataset_versions,
+            )
+            == claim_identity
         ]
         if len(matches) != 1:
             results.append(claim)
