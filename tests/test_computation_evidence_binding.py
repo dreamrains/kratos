@@ -387,10 +387,12 @@ def test_task3_exposes_canonical_evidence_and_measurement_validators():
     from data_agent.agent.evidence_contracts import (
         validate_evidence_record,
         validate_measurement,
+        validate_measurement_identity,
     )
 
     assert callable(validate_evidence_record)
     assert callable(validate_measurement)
+    assert callable(validate_measurement_identity)
 
 
 def test_record_evidence_rejects_unknown_source_tool_call_id(computation_env):

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -66,6 +67,28 @@ NORMALIZED_MEASUREMENT_TEXT_FIELDS = (
 EVIDENCE_RECORD_CONTRACT_VERSION = "evidence_record.v2"
 COMPUTATION_REF_CONTRACT_VERSION = "computation_ref.v1"
 TOOL_OUTPUT_CONTRACT_VERSION = "tool_output.v1"
+MEASUREMENT_IDENTITY_CONTRACT_VERSION = "measurement_identity.v1"
+
+MEASUREMENT_IDENTITY_REQUIRED_FIELDS = (
+    "contract_version",
+    "measurement_key",
+    "metric_key",
+    "metric_label",
+    "metric_aliases",
+    "claim_key",
+    "computation_ref_id",
+    "plan_id",
+    "plan_version",
+    "step_id",
+    "requirement_ids",
+    "dataset_versions",
+    "time_scope",
+    "population_scope",
+    "value",
+    "unit",
+    "direction",
+    "allowed_claim_class",
+)
 
 _SAFE_MODEL_EVIDENCE_FIELDS = frozenset({
     *CANONICAL_EVIDENCE_FIELDS,
@@ -523,6 +546,136 @@ def _json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+def _canonical_identity_payload(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): _json_value(value[key])
+        for key in sorted(value)
+        if key != "measurement_key"
+    }
+
+
+def measurement_key_for(identity: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        _canonical_identity_payload(identity),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "m_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+
+def computation_ref_key(ref: Mapping[str, Any]) -> str:
+    payload = {
+        key: ref.get(key)
+        for key in (
+            "session_id",
+            "turn_id",
+            "tool_call_id",
+            "tool_name",
+            "output_digest",
+            "plan_digest",
+            "step_digest",
+            "dataset_versions",
+        )
+    }
+    encoded = json.dumps(
+        _json_value(payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "cr_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+
+def validate_measurement_identity(identity: Any) -> EvidenceValidationResult:
+    if not isinstance(identity, dict):
+        return _error(
+            "invalid_measurement_identity",
+            "Measurement identity must be an object.",
+        )
+    missing = [
+        field
+        for field in MEASUREMENT_IDENTITY_REQUIRED_FIELDS
+        if field not in identity
+    ]
+    if missing:
+        return _error(
+            "missing_measurement_identity_fields",
+            "Measurement identity is incomplete.",
+            missing=missing,
+        )
+    if identity.get("contract_version") != MEASUREMENT_IDENTITY_CONTRACT_VERSION:
+        return _error(
+            "invalid_measurement_identity_version",
+            "Measurement identity contract version is invalid.",
+        )
+    aliases = identity.get("metric_aliases")
+    if not isinstance(aliases, list) or any(
+        not isinstance(item, str) or not item.strip() for item in aliases
+    ):
+        return _error(
+            "invalid_metric_aliases",
+            "Metric aliases must be a list of non-empty trusted labels.",
+        )
+    for field in (
+        "metric_key",
+        "metric_label",
+        "claim_key",
+        "computation_ref_id",
+        "plan_id",
+        "plan_version",
+        "step_id",
+        "time_scope",
+        "population_scope",
+        "allowed_claim_class",
+    ):
+        if not isinstance(identity.get(field), str) or not identity[field].strip():
+            return _error(
+                "invalid_measurement_identity_field",
+                f"Measurement identity {field} must be a non-empty string.",
+                field=field,
+            )
+    for field in ("requirement_ids", "dataset_versions"):
+        values = identity.get(field)
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(item, str) or not item.strip() for item in values)
+            or values != sorted(set(values))
+        ):
+            return _error(
+                "invalid_measurement_identity_field",
+                f"Measurement identity {field} must be sorted unique strings.",
+                field=field,
+            )
+    value = identity.get("value")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        return _error(
+            "invalid_measurement_identity_field",
+            "Measurement identity value must be a finite number.",
+            field="value",
+        )
+    for field in ("unit", "direction"):
+        if not isinstance(identity.get(field), str):
+            return _error(
+                "invalid_measurement_identity_field",
+                f"Measurement identity {field} must be a string.",
+                field=field,
+            )
+    expected = measurement_key_for(identity)
+    if identity.get("measurement_key") != expected:
+        return _error(
+            "measurement_key_mismatch",
+            "Measurement key does not match its canonical identity.",
+            expected=expected,
+        )
+    return EvidenceValidationResult(True, record=dict(identity))
 
 
 def computation_digest(value: Any) -> str:
@@ -1961,6 +2114,11 @@ def validate_measurement(
     for field_name in NORMALIZED_MEASUREMENT_TEXT_FIELDS:
         if field_name in normalized:
             normalized[field_name] = _text(normalized[field_name])
+    if "identity" in normalized:
+        identity_validation = validate_measurement_identity(normalized["identity"])
+        if not identity_validation.ok:
+            return identity_validation
+        normalized["identity"] = identity_validation.record
     return EvidenceValidationResult(True, record=normalized)
 
 
@@ -2258,11 +2416,103 @@ def _render_structured_value(value: Any) -> str:
     return ""
 
 
+_METRIC_CONTEXT_FIELDS = (
+    "metric",
+    "target",
+    "feature",
+    "dimension",
+    "column",
+    "label",
+    "name",
+)
+
+
+def _structured_metric_identity(
+    *,
+    declared_field: str,
+    item: dict[str, Any] | None,
+) -> tuple[str, str, list[str]] | None:
+    tail = declared_field.rsplit(".", 1)[-1].replace("_", " ").strip()
+    context: list[str] = []
+    if isinstance(item, dict):
+        variables = item.get("variables")
+        if isinstance(variables, list):
+            context = [_text(value) for value in variables if _text(value)]
+        if not context:
+            for key in _METRIC_CONTEXT_FIELDS:
+                value = _text(item.get(key))
+                if value:
+                    context = [value]
+                    break
+    if "." in declared_field and not context:
+        return None
+    metric_key = declared_field
+    if context:
+        metric_key += "::" + "|".join(context)
+    label = " ".join([*context, tail]).strip()
+    aliases = [label]
+    if len(context) == 2:
+        aliases.append(" ".join([context[1], context[0], tail]).strip())
+    return metric_key, label, list(dict.fromkeys(aliases))
+
+
+def _attach_projected_measurement_identity(
+    measurement: dict[str, Any],
+    *,
+    declared_field: str,
+    item: dict[str, Any] | None,
+    computation_ref: dict[str, Any],
+    binding: StepBindingResult,
+    plan: dict[str, Any],
+    plan_id: str,
+    allowed_claim_class: str,
+) -> None:
+    metric_identity = _structured_metric_identity(
+        declared_field=declared_field,
+        item=item,
+    )
+    if metric_identity is None:
+        measurement["identity_status"] = "metric_identity_missing"
+        return
+    metric_key, metric_label, metric_aliases = metric_identity
+    identity = {
+        "contract_version": MEASUREMENT_IDENTITY_CONTRACT_VERSION,
+        "metric_key": metric_key,
+        "metric_label": metric_label,
+        "metric_aliases": metric_aliases,
+        "claim_key": binding.claim_key,
+        "computation_ref_id": computation_ref_key(computation_ref),
+        "plan_id": plan_id,
+        "plan_version": _text(computation_ref.get("plan_digest"))
+        or analysis_plan_semantic_digest(plan),
+        "step_id": binding.step_id,
+        "requirement_ids": sorted(
+            str(requirement_id) for requirement_id in binding.requirement_ids
+        ),
+        "dataset_versions": sorted(
+            str(version) for version in computation_ref.get("dataset_versions") or []
+        ),
+        "time_scope": _text(measurement.get("time_scope")),
+        "population_scope": _text(measurement.get("population_scope")),
+        "value": measurement.get("value"),
+        "unit": _text(measurement.get("unit")),
+        "direction": _text(measurement.get("direction")),
+        "allowed_claim_class": _text(allowed_claim_class),
+    }
+    identity["measurement_key"] = measurement_key_for(identity)
+    measurement["identity"] = identity
+
+
 def _projected_measurements_from_output(
     *,
     capability: dict[str, Any],
     output_data: dict[str, Any],
     method_label: str,
+    computation_ref: dict[str, Any],
+    binding: StepBindingResult,
+    plan: dict[str, Any],
+    plan_id: str,
+    allowed_claim_class: str,
 ) -> list[dict[str, Any]]:
     """Build claim-neutral canonical measurements from structured output.
 
@@ -2287,21 +2537,43 @@ def _projected_measurements_from_output(
                     value = _resolve_dotted_evidence_field(item, tail)
                     if not _finite_number(value):
                         continue
-                    measurements.append(_claim_neutral_measurement(
+                    measurement = _claim_neutral_measurement(
                         metric=field,
                         value=float(value),
                         method_label=method_label,
                         limitation=base_limitation,
-                    ))
+                    )
+                    _attach_projected_measurement_identity(
+                        measurement,
+                        declared_field=field,
+                        item=item,
+                        computation_ref=computation_ref,
+                        binding=binding,
+                        plan=plan,
+                        plan_id=plan_id,
+                        allowed_claim_class=allowed_claim_class,
+                    )
+                    measurements.append(measurement)
                 continue
         value = _resolve_dotted_evidence_field(output_data, field)
         if _finite_number(value):
-            measurements.append(_claim_neutral_measurement(
+            measurement = _claim_neutral_measurement(
                 metric=field,
                 value=float(value),
                 method_label=method_label,
                 limitation=base_limitation,
-            ))
+            )
+            _attach_projected_measurement_identity(
+                measurement,
+                declared_field=field,
+                item=None,
+                computation_ref=computation_ref,
+                binding=binding,
+                plan=plan,
+                plan_id=plan_id,
+                allowed_claim_class=allowed_claim_class,
+            )
+            measurements.append(measurement)
     if not measurements:
         measurements.append(_claim_neutral_measurement(
             metric="structured_computation",
@@ -2386,10 +2658,20 @@ def _build_projected_record(
         elif risk == "low":
             confidence = "high"
 
+    allowed_claim_class = (
+        output_data.get("allowed_claim_class")
+        if isinstance(output_data, dict)
+        else None
+    )
     measurements = _projected_measurements_from_output(
         capability=capability if isinstance(capability, dict) else {},
         output_data=output_data,
         method_label=method_label,
+        computation_ref=computation_ref,
+        binding=binding,
+        plan=plan,
+        plan_id=plan_id,
+        allowed_claim_class=_text(allowed_claim_class),
     )
     result_summary = _claim_neutral_summary(
         capability=capability if isinstance(capability, dict) else {},
@@ -2429,7 +2711,6 @@ def _build_projected_record(
     }
     if sample_size_value is not None:
         record["sample_size"] = sample_size_value
-    allowed_claim_class = output_data.get("allowed_claim_class") if isinstance(output_data, dict) else None
     if _text(allowed_claim_class):
         record["allowed_claim_class"] = _text(allowed_claim_class)
     return record
