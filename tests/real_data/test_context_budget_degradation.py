@@ -19,6 +19,7 @@ from data_agent.agent.evidence_contracts import (
 )
 from data_agent.agent.loop import AgentLoop
 from data_agent.llm.client import Response
+from tests.fixtures.measurement_identity import bind_validated_measurement_identity
 
 
 class _BudgetClient:
@@ -28,6 +29,7 @@ class _BudgetClient:
         self.level = level
         self.analysis_calls = 0
         self.requested_output_limits = []
+        self.evidence_marker = ""
 
     def chat(self, **kwargs):
         if "数据分析对话摘要专家" in str(kwargs.get("system") or ""):
@@ -39,15 +41,19 @@ class _BudgetClient:
             # Force the real audit gate to spend its single synthesis-repair attempt.
             return Response(text="Revenue increased 12%.\nLimitation: descriptive only.")
         return Response(text=(
-            "Revenue increased 12% [[evidence:ev_revenue_real]].\n"
+            f"Revenue increased 12% {self.evidence_marker}.\n"
             "Limitation: descriptive only."
         ))
 
 
 def _evidence(computation_ref):
-    return {
+    bound_ref = {
+        **computation_ref,
+        "claim_key": "revenue_change",
+        "requirement_ids": ["req_revenue_change"],
+    }
+    record = {
         "id": "ev_revenue_real",
-        "contract_version": "evidence_record.v2",
         "plan_id": "plan_context_budget",
         "step_id": "step_compare",
         "claim_key": "revenue_change",
@@ -55,22 +61,37 @@ def _evidence(computation_ref):
         "dataset": "orders",
         "dataset_contract_id": "contract_orders",
         "method": "period_compare",
+        "tool_calls": ["call_revenue_compare"],
+        "result_summary": "April revenue=400; May revenue=448; increase=12%.",
         "sample_size": 8,
         "time_scope": "2026-05",
         "calculation_method": "May revenue divided by April revenue minus one",
         "method_detail": "descriptive period comparison on the real fixture rows",
+        "metric_delta": {"value": 0.12, "unit": "ratio"},
         "limitations": ["descriptive only"],
         "confidence": "medium",
-        "verification_level": computation_ref["verification_level"],
-        "computation_refs": [computation_ref],
+        "evidence_requirement": "req_revenue_change",
         "measurements": [{
             "metric": "revenue_change",
+            "definition": "May revenue change versus April revenue.",
             "value": 0.12,
             "unit": "ratio",
+            "grain": "period",
             "population_scope": "all users",
             "time_scope": "2026-05",
+            "method": "period_compare",
+            "denominator": "April revenue",
+            "limitations": ["descriptive only"],
+            "direction": "increase",
         }],
     }
+    return bind_validated_measurement_identity(
+        record,
+        computation_ref=bound_ref,
+        metric_label="Revenue",
+        metric_aliases=["Monthly revenue"],
+        allowed_claim_class="comparison",
+    )
 
 
 def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
@@ -107,8 +128,25 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
             "dataset_inputs": ["orders"],
             "dataset_contract_ids": ["contract_orders"],
             "required_claim_keys": ["revenue_change"],
+            "requirement_ids": ["req_revenue_change"],
         }],
-        "analysis_requirements": {},
+        "analysis_requirements": {
+            "step_compare": [{
+                "contract_version": "analysis_requirement.v1",
+                "id": "req_revenue_change",
+                "step_id": "step_compare",
+                "name": "metric_delta",
+                "trigger": "Revenue comparison requires canonical measurement evidence.",
+                "category": "measurement",
+                "necessity": "required",
+                "status": "pending",
+                "required_evidence_fields": ["metric_delta"],
+                "assumption_checks": [],
+                "unmet_action": "disclose",
+                "evidence_ids": [],
+                "reason": "",
+            }],
+        },
     }
     state.analysis_plan = plan
     state.dataset_contracts = [{
@@ -159,6 +197,11 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
     )
     state.computation_refs = [computation_ref]
     state.evidence_records = [_evidence(computation_ref)]
+    evidence = state.evidence_records[0]
+    client.evidence_marker = (
+        f"[[evidence:{evidence['id']}#"
+        f"{evidence['measurements'][0]['identity']['measurement_key']}]]"
+    )
     loop.messages = [
         {"role": "user", "content": "Analyze the real order rows. " + ("x" * 500)},
         *[
@@ -189,7 +232,7 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
         for dataset in restored_capsule["datasets"]
         for version in dataset["version_ids"]
     }
-    assert restored_capsule["evidence_bindings"][0]["id"] == "ev_revenue_real"
+    assert restored_capsule["evidence_bindings"][0]["id"] == evidence["id"]
     assert audit is not None
 
     claim_classes = [
@@ -200,7 +243,14 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
         "budget_level": level,
         "claim_classes": claim_classes,
         "retained_requirement_ids": [item["id"] for item in state.data_requirements],
-        "evidence_ids": [item["id"] for item in state.evidence_records],
+        "evidence_ids": [
+            ":".join((
+                str(item.get("plan_id") or ""),
+                str(item.get("step_id") or ""),
+                str(item.get("claim_key") or ""),
+            ))
+            for item in state.evidence_records
+        ],
         "audit_status": ref["status"],
         "completed": bool(result.content),
         "round_count": turn.llm_rounds,

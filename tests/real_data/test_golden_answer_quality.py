@@ -10,6 +10,11 @@ from data_agent.agent.golden_answer_runner import (
     load_golden_manifest,
     GoldenManifestError,
 )
+from data_agent.agent.evidence_contracts import (
+    analysis_plan_semantic_digest,
+    analysis_step_semantic_digest,
+)
+from tests.fixtures.measurement_identity import bind_validated_measurement_identity
 
 WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = next(
@@ -100,13 +105,121 @@ def test_is_supported_by_evidence():
 
 
 class _FakeState:
-    def __init__(self, evidence, verification_reports=None):
+    def __init__(
+        self,
+        evidence,
+        verification_reports=None,
+        *,
+        analysis_plan=None,
+        current_dataset_versions=None,
+    ):
         self.evidence_records = evidence
         self.verification_reports = verification_reports or []
         self.route_proposals = []
         self.cleaning_logs = []
         self.file_relationships = []
         self.data_understanding_bundles = []
+        self.analysis_plan = analysis_plan or {}
+        self.current_dataset_versions = current_dataset_versions
+
+
+def _purchase_evidence_context():
+    plan = {
+        "id": "plan_purchase",
+        "contract_version": "analysis_plan.v1",
+        "goal": "Compare spending before and after card purchase.",
+        "method_plan": [{
+            "step_id": "step_purchase",
+            "goal": "Compute the descriptive spending change.",
+            "dataset_inputs": ["orders"],
+            "dataset_contract_ids": ["contract_orders"],
+            "required_claim_keys": ["spending_change"],
+            "requirement_ids": ["req_spending_change"],
+        }],
+        "analysis_requirements": {
+            "step_purchase": [{
+                "contract_version": "analysis_requirement.v1",
+                "id": "req_spending_change",
+                "step_id": "step_purchase",
+                "name": "metric_delta",
+                "trigger": "Purchase comparison requires canonical measurement evidence.",
+                "category": "measurement",
+                "necessity": "required",
+                "status": "pending",
+                "required_evidence_fields": ["metric_delta"],
+                "assumption_checks": [],
+                "unmet_action": "disclose",
+                "evidence_ids": [],
+                "reason": "",
+            }],
+        },
+    }
+    dataset_version = "dataset_orders_v1"
+    computation_ref = {
+        "contract_version": "computation_ref.v1",
+        "session_id": "session_purchase",
+        "turn_id": "turn_purchase",
+        "tool_call_id": "call_purchase_compare",
+        "tool_name": "period_compare",
+        "output_digest": "sha256:purchase_compare",
+        "plan_id": plan["id"],
+        "plan_digest": analysis_plan_semantic_digest(plan),
+        "step_id": "step_purchase",
+        "step_digest": analysis_step_semantic_digest(plan["method_plan"][0]),
+        "dataset_versions": [dataset_version],
+        "verification_level": "structured_checked",
+        "claim_key": "spending_change",
+        "requirement_ids": ["req_spending_change"],
+    }
+    record = {
+        "plan_id": plan["id"],
+        "step_id": "step_purchase",
+        "claim_key": "spending_change",
+        "claim": "买卡后消费提升50%",
+        "dataset": "orders",
+        "dataset_contract_id": "contract_orders",
+        "method": "period_compare",
+        "tool_calls": ["call_purchase_compare"],
+        "result_summary": "前后对比 +50%",
+        "sample_size": 100,
+        "time_scope": "fixture period",
+        "calculation_method": "before-after ratio",
+        "method_detail": "compared spending before and after purchase",
+        "metric_delta": {"value": 0.5, "unit": "ratio"},
+        "limitations": ["descriptive comparison only"],
+        "confidence": "medium",
+        "evidence_requirement": "req_spending_change",
+        "measurements": [{
+            "metric": "消费",
+            "definition": "买卡前后消费变化。",
+            "value": 0.5,
+            "unit": "ratio",
+            "grain": "card_buyer",
+            "population_scope": "card buyers",
+            "time_scope": "fixture period",
+            "method": "period_compare",
+            "denominator": "spending before purchase",
+            "limitations": ["descriptive comparison only"],
+            "direction": "increase",
+        }],
+    }
+    evidence = bind_validated_measurement_identity(
+        record,
+        computation_ref=computation_ref,
+        metric_label="消费",
+        metric_aliases=["买卡后消费"],
+        allowed_claim_class="comparison",
+    )
+    marker = (
+        f"[[evidence:{evidence['id']}#"
+        f"{evidence['measurements'][0]['identity']['measurement_key']}]]"
+    )
+    state = _FakeState(
+        evidence=[evidence],
+        analysis_plan=plan,
+        current_dataset_versions=[dataset_version],
+    )
+    return state, marker
 
 
 def test_evaluate_fatal_blocks_unsupported_material_claim():
@@ -119,27 +232,9 @@ def test_evaluate_fatal_blocks_unsupported_material_claim():
 
 
 def test_evaluate_fatal_passes_when_claim_supported():
-    state = _FakeState(evidence=[{
-        "id": "ev_purchase",
-        "claim": "买卡后消费提升50%",
-        "result_summary": "前后对比 +50%",
-        "dataset": "orders",
-        "method": "period_compare",
-        "sample_size": 100,
-        "time_scope": "fixture period",
-        "calculation_method": "before-after ratio",
-        "method_detail": "compared spending before and after purchase",
-        "limitations": ["descriptive comparison only"],
-        "measurements": [{
-            "metric": "spending_change",
-            "value": 0.5,
-            "unit": "ratio",
-            "population_scope": "card buyers",
-            "time_scope": "fixture period",
-        }],
-    }])
+    state, marker = _purchase_evidence_context()
     result = aq.evaluate_fatal(
-        "买卡后消费提升了50% [[evidence:ev_purchase]]。局限：这只是描述性前后对比。",
+        f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
         state,
     )
     assert result["claim_delivery_ready"] is True
@@ -256,28 +351,10 @@ from data_agent.agent import golden_answer_runner as gar
 
 
 def test_evaluate_answer_composes_fatal_and_soft():
-    state = _FakeState(evidence=[{
-        "id": "ev_purchase",
-        "claim": "买卡后消费提升50%",
-        "result_summary": "前后对比 +50%",
-        "dataset": "orders",
-        "method": "period_compare",
-        "sample_size": 100,
-        "time_scope": "fixture period",
-        "calculation_method": "before-after ratio",
-        "method_detail": "compared spending before and after purchase",
-        "limitations": ["descriptive comparison only"],
-        "measurements": [{
-            "metric": "spending_change",
-            "value": 0.5,
-            "unit": "ratio",
-            "population_scope": "card buyers",
-            "time_scope": "fixture period",
-        }],
-    }])
+    state, marker = _purchase_evidence_context()
     payload = '{"insight_depth": {"score": 2, "rationale": "基本是数值描述"}}'
     out = gar.evaluate_answer(
-        answer_text="买卡后消费提升了50% [[evidence:ev_purchase]]。局限：这只是描述性前后对比。",
+        answer_text=f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
         state=state,
         question="省钱卡表现？",
         dimensions=["insight_depth"],

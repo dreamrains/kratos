@@ -417,12 +417,35 @@ def evaluate_fatal(answer_text: str, state) -> dict[str, Any]:
     evidence_records = getattr(state, "evidence_records", []) or []
     plan = getattr(state, "analysis_plan", None)
     plan = plan if isinstance(plan, dict) else {}
+    from data_agent.agent.evidence_contracts import (
+        analysis_plan_semantic_digest,
+        analysis_step_semantic_digest,
+    )
+
+    method_plan = plan.get("method_plan")
+    method_plan = method_plan if isinstance(method_plan, list) else []
+    current_step_digests = {
+        str(step.get("step_id") or ""): analysis_step_semantic_digest(step)
+        for step in method_plan
+        if isinstance(step, dict) and str(step.get("step_id") or "")
+    }
     audit = build_final_answer_audit(
         answer_text,
         evidence_records=evidence_records,
         route_proposals=getattr(state, "route_proposals", []) or [],
         cleaning_logs=getattr(state, "cleaning_logs", []) or [],
         current_plan_id=str(plan.get("id") or ""),
+        current_dataset_versions=getattr(
+            state,
+            "current_dataset_versions",
+            None,
+        ),
+        current_plan_digest=(
+            analysis_plan_semantic_digest(plan)
+            if plan.get("id")
+            else ""
+        ),
+        current_step_digests=current_step_digests,
         analysis_requirements=_flatten_analysis_requirements(plan),
     )
     checks_by_id = {

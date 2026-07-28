@@ -599,6 +599,8 @@ def _numeric_evidence_items(
         if selected_measurements is not None
         else _measurement_items(evidence)
     )
+    if selected_measurements is not None:
+        return items
     support = evidence.get("statistical_support")
     support = support if isinstance(support, dict) else {}
     effect = support.get("effect_estimate")
@@ -787,6 +789,73 @@ def _claim_mentions_trusted_metric(
     return False
 
 
+def _metric_base_identity_issues(
+    measurement_metric: Any,
+    identity_metric_key: Any,
+    metric_label: Any,
+    metric_aliases: Any,
+) -> list[tuple[str, str]]:
+    measurement_base = str(measurement_metric or "").strip()
+    metric_key = str(identity_metric_key or "").strip()
+    identity_base, delimiter, context = metric_key.partition("::")
+    if (
+        not measurement_base
+        or identity_base != measurement_base
+        or (delimiter and not context)
+    ):
+        return [(
+            "measurement_metric_mismatch",
+            "Measurement metric identity does not match the selected measurement.",
+        )]
+
+    base_tokens = _normalize_text(
+        re.sub(r"[._]+", " ", measurement_base)
+    ).split()
+    structural_tokens = {
+        "change",
+        "correlation",
+        "estimate",
+        "effect",
+        "metric",
+        "pair",
+        "pairs",
+        "rate",
+        "total",
+        "value",
+        "values",
+    }
+    authoritative_tokens = [
+        token for token in base_tokens if token not in structural_tokens
+    ]
+    if not authoritative_tokens:
+        return []
+
+    trusted_labels = [
+        str(metric_label or ""),
+        *[
+            str(item)
+            for item in _normalize_items(metric_aliases)
+            if str(item or "").strip()
+        ],
+    ]
+    for label in trusted_labels:
+        normalized_label = _normalize_text(label)
+        label_tokens = set(normalized_label.split())
+        if not all(
+            token in label_tokens
+            or (
+                re.search(r"[\u4e00-\u9fff]", token)
+                and token in normalized_label
+            )
+            for token in authoritative_tokens
+        ):
+            return [(
+                "measurement_metric_mismatch",
+                "Trusted metric wording is inconsistent with its authoritative base metric.",
+            )]
+    return []
+
+
 def _measurement_identity_issues(
     claim: dict[str, Any],
     evidence: dict[str, Any],
@@ -896,19 +965,12 @@ def _measurement_identity_issues(
             "measurement_dataset_version_mismatch",
             "Measurement dataset versions do not exactly match the current scope.",
         ))
-    measurement_metric = _normalize_text(measurement.get("metric"))
-    identity_metric = _normalize_text(identity.get("metric_key"))
-    if (
-        not measurement_metric
-        or (
-            identity_metric != measurement_metric
-            and not identity_metric.startswith(measurement_metric + " ")
-        )
-    ):
-        issues.append((
-            "measurement_metric_mismatch",
-            "Measurement metric identity does not match the selected measurement.",
-        ))
+    issues.extend(_metric_base_identity_issues(
+        measurement.get("metric"),
+        identity.get("metric_key"),
+        identity.get("metric_label"),
+        identity.get("metric_aliases"),
+    ))
     if not _claim_mentions_trusted_metric(
         _claim_text(claim),
         identity.get("metric_label"),

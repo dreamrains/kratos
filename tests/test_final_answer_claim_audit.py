@@ -451,6 +451,82 @@ def test_self_consistent_rekeyed_metric_identity_is_rejected(identity_evidence):
     )
 
 
+def test_structured_metric_suffix_cannot_rekey_revenue_as_profit(
+    identity_evidence,
+):
+    evidence = copy.deepcopy(identity_evidence)
+    identity = evidence["measurements"][0]["identity"]
+    identity["metric_key"] = "revenue_change::profit_change"
+    identity["metric_label"] = "Profit"
+    identity["metric_aliases"] = ["Monthly profit"]
+    identity["measurement_key"] = measurement_key_for(identity)
+
+    audit = _identity_audit(
+        "Profit increased 12% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{identity['measurement_key']}]].\n"
+        "Limitation: descriptive comparison only.",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert (
+        "measurement_metric_mismatch"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
+
+
+def test_legitimate_structured_metric_context_suffix_still_verifies(
+    identity_evidence,
+):
+    evidence = copy.deepcopy(identity_evidence)
+    measurement = evidence["measurements"][0]
+    measurement["metric"] = "pairs.correlation"
+    identity = measurement["identity"]
+    identity["metric_key"] = "pairs.correlation::revenue|cost"
+    identity["metric_label"] = "revenue cost correlation"
+    identity["metric_aliases"] = ["cost revenue correlation"]
+    identity["allowed_claim_class"] = "association"
+    evidence["allowed_claim_class"] = "association"
+    identity["measurement_key"] = measurement_key_for(identity)
+
+    audit = _identity_audit(
+        "Revenue cost correlation was 12% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{identity['measurement_key']}]].\n"
+        "Limitation: descriptive association only.",
+        evidence,
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claim_checks"][0]["status"] == "passed"
+
+
+def test_selected_measurement_ignores_unrelated_record_level_effect(
+    identity_evidence,
+):
+    evidence = copy.deepcopy(identity_evidence)
+    evidence["statistical_support"] = {
+        "effect_estimate": {"value": 0.21, "unit": "ratio"},
+        "confidence_interval": {
+            "level": 0.95,
+            "lower": 0.20,
+            "upper": 0.22,
+            "unit": "ratio",
+        },
+        "test": {"p_value": 0.21},
+    }
+    measurement_key = evidence["measurements"][0]["identity"]["measurement_key"]
+
+    audit = _identity_audit(
+        "Revenue increased 21% in 2026-05 for new users "
+        f"[[evidence:{evidence['id']}#{measurement_key}]].\n"
+        "Limitation: descriptive comparison only.",
+        evidence,
+    )
+
+    assert audit["status"] == "blocked"
+    assert "numeric_mismatch" in audit["claim_checks"][0]["reason_codes"]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "reason_code"),
     [
@@ -878,12 +954,29 @@ def test_later_revision_findings_cannot_weaken_a_deterministic_block():
     assert "numeric_mismatch" in audit["claim_checks"][0]["reason_codes"]
 
 
-def test_numeric_audit_accepts_effect_and_structured_confidence_interval_values():
-    audit = _audit(
-        "Revenue increased 12% (95% CI 5% to 19%) in 2026-05 for new users "
-        "[[evidence:ev_revenue]].\n"
-        "Limitation: this is a descriptive comparison only.",
-        evidence=[_evidence(statistical_support={
+def test_legacy_direct_verifier_accepts_structured_confidence_interval_values():
+    report = verify_analysis_claims(
+        claims=[{
+            "id": "claim_legacy_interval",
+            "claim": (
+                "Revenue increased 12% (95% CI 5% to 19%) "
+                "in 2026-05 for new users."
+            ),
+            "claim_type": "comparison",
+            "material": True,
+            "requires_evidence": True,
+            "quantities": [
+                {"raw": "12%", "value": 12.0, "unit": "%"},
+                {"raw": "95%", "value": 95.0, "unit": "%"},
+                {"raw": "5%", "value": 5.0, "unit": "%"},
+                {"raw": "19%", "value": 19.0, "unit": "%"},
+            ],
+            "direction": "increase",
+            "time_scope": "2026-05",
+            "population_scope": "new users",
+            "evidence_id": "ev_revenue",
+        }],
+        evidence_records=[_evidence(statistical_support={
             "effect_estimate": {"value": 0.12, "unit": "ratio"},
             "confidence_interval": {
                 "level": 0.95,
@@ -892,9 +985,13 @@ def test_numeric_audit_accepts_effect_and_structured_confidence_interval_values(
                 "unit": "ratio",
             },
         })],
+        route_proposals=[],
+        cleaning_logs=[],
+        current_plan_id="plan_current",
+        strict_claim_semantics=True,
     )
 
-    assert audit["status"] == "pass"
+    assert report["overall_status"] == "pass"
 
 
 def test_current_plan_identity_is_required_even_with_an_exact_marker():
@@ -1021,21 +1118,33 @@ def test_not_estimable_seasonality_blocks_only_the_positive_seasonality_claim(
             "period": "annual",
             "reason": "Annual seasonality requires 24 monthly observations.",
         },
-        measurements=[],
+        measurements=[{
+            "metric": "annual_seasonality",
+            "definition": "Annual seasonality estimability status.",
+            "value": 1.0,
+            "unit": "status",
+            "grain": "time_series",
+            "population_scope": "sales series",
+            "time_scope": "available history",
+            "method": "time_series",
+            "denominator": "not_applicable",
+            "limitations": ["Annual seasonality is not estimable."],
+            "direction": "",
+        }],
     )
+    evidence = _bind_test_measurement_identity(evidence)
+    measurement_key = evidence["measurements"][0]["identity"]["measurement_key"]
 
     audit = _audit(
-        "The series shows annual seasonality [[evidence:ev_seasonality]].\n"
+        "The series shows annual seasonality "
+        f"[[evidence:ev_seasonality#{measurement_key}]].\n"
         + diagnostic,
         evidence=[evidence],
         analysis_requirements=[seasonality],
     )
 
     assert audit["status"] == "blocked"
-    assert (
-        "measurement_identity_missing"
-        in audit["claim_checks"][0]["reason_codes"]
-    )
+    assert "claim_guard_blocked" in audit["claim_checks"][0]["reason_codes"]
     assert audit["claim_checks"][1]["status"] == "passed"
     assert (
         "diagnostic_without_positive_claim"

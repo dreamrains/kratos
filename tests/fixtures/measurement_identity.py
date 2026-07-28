@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -10,9 +11,12 @@ from data_agent.agent.evidence_contracts import (
     COMPUTATION_REF_CONTRACT_VERSION,
     analysis_plan_semantic_digest,
     analysis_step_semantic_digest,
+    computation_ref_key,
     computation_digest,
+    measurement_key_for,
     persist_computation_output,
     project_structured_computation_evidence,
+    validate_evidence_record,
 )
 
 
@@ -22,6 +26,75 @@ SESSION_ID = "sess_current"
 TURN_ID = "turn_1"
 TOOL_CALL_ID = "call_corr_1"
 DATASET_VERSION = "ds_main_v1"
+
+
+def bind_validated_measurement_identity(
+    record: dict,
+    *,
+    computation_ref: dict,
+    metric_label: str,
+    metric_aliases: list[str],
+    allowed_claim_class: str,
+    metric_key: str | None = None,
+) -> dict:
+    """Bind one test measurement through the production v2 validators."""
+
+    bound = copy.deepcopy(record)
+    ref = copy.deepcopy(computation_ref)
+    measurements = bound.get("measurements")
+    if (
+        not isinstance(measurements, list)
+        or len(measurements) != 1
+        or not isinstance(measurements[0], dict)
+    ):
+        raise AssertionError("validated fixture requires exactly one measurement")
+    measurement = measurements[0]
+    requirement_ids = sorted(str(item) for item in ref.get("requirement_ids") or [])
+    dataset_versions = sorted(str(item) for item in ref.get("dataset_versions") or [])
+    if not requirement_ids or not dataset_versions:
+        raise AssertionError("validated fixture requires requirement and dataset identities")
+
+    bound.update({
+        "contract_version": "evidence_record.v2",
+        "source_tool_call_ids": [str(ref.get("tool_call_id") or "")],
+        "requirement_ids": requirement_ids,
+        "dataset_versions": dataset_versions,
+        "computation_refs": [ref],
+        "provenance_status": "bound",
+        "verification_level": str(ref.get("verification_level") or "structured_checked"),
+        "allowed_claim_class": allowed_claim_class,
+    })
+    identity = {
+        "contract_version": "measurement_identity.v1",
+        "metric_key": metric_key or str(measurement.get("metric") or ""),
+        "metric_label": metric_label,
+        "metric_aliases": list(metric_aliases),
+        "claim_key": str(bound.get("claim_key") or ""),
+        "computation_ref_id": computation_ref_key(ref),
+        "plan_id": str(bound.get("plan_id") or ""),
+        "plan_version": str(ref.get("plan_digest") or ""),
+        "step_id": str(bound.get("step_id") or ""),
+        "requirement_ids": requirement_ids,
+        "dataset_versions": dataset_versions,
+        "time_scope": str(measurement.get("time_scope") or ""),
+        "population_scope": str(measurement.get("population_scope") or ""),
+        "value": measurement.get("value"),
+        "unit": str(measurement.get("unit") or ""),
+        "direction": str(measurement.get("direction") or ""),
+        "allowed_claim_class": allowed_claim_class,
+    }
+    identity["measurement_key"] = measurement_key_for(identity)
+    measurement["identity"] = identity
+    validation = validate_evidence_record(
+        bound,
+        current_plan_id=str(bound.get("plan_id") or ""),
+        require_measurement_identity=True,
+    )
+    if not validation.ok:
+        raise AssertionError(
+            f"{validation.error_type}: {validation.message} {validation.details}"
+        )
+    return validation.record
 
 
 @dataclass
