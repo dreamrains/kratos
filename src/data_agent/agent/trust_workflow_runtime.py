@@ -12,6 +12,7 @@ from data_agent.agent.answer_quality import build_final_answer_audit
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.intent_refinement import refine_intent_with_data
 from data_agent.agent.verification import verify_analysis_claims
+from data_agent.config import get_config
 from data_agent.utils.logging import get_logger
 
 
@@ -34,6 +35,7 @@ def audit_final_answer_draft(
     current_plan_digest, current_step_digests = _current_plan_semantic_identity(state)
     sessions_root = _sessions_root()
     current_session_id = str(getattr(state, "session_id", "") or "")
+    measurement_binding_mode = get_config().measurement_evidence_binding_mode
     audit = build_final_answer_audit(
         answer_text,
         evidence_records=evidence_records,
@@ -47,6 +49,7 @@ def audit_final_answer_draft(
         current_step_digests=current_step_digests,
         analysis_requirements=_current_analysis_requirements(state),
         llm_critique=llm_critique,
+        measurement_binding_mode=measurement_binding_mode,
     )
     path = _persist_final_answer_audit(
         audit,

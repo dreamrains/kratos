@@ -202,6 +202,43 @@ def test_verified_claim_keeps_original_text_when_completion_is_complete():
     assert result.actions["claim_verified"] == "verified"
 
 
+def test_missing_measurement_identity_keeps_complete_answer_structure():
+    draft = (
+        "# Conclusion\n\n"
+        "Revenue increased 12%.\n\n"
+        "## Limitation\n\n"
+        "This is a descriptive comparison only."
+    )
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "status": "revise",
+        "public_text": draft,
+        "claims": [{
+            "id": "claim_revenue",
+            "text": "Revenue increased 12%.",
+            "claim_type": "comparison",
+            "material": True,
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_revenue",
+            "status": "downgraded",
+            "reason_codes": ["measurement_identity_missing"],
+        }],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.text.startswith("# Conclusion")
+    assert "Revenue increased 12%." in result.text
+    assert "## Limitation" in result.text
+    assert result.actions["claim_revenue"] == "exploratory"
+
+
 # ---------------------------------------------------------------------------
 # Step 2: deterministic blockers + config
 # ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ def _bind_test_measurement_identity(record):
         or len(measurements) != 1
         or not isinstance(measurements[0], dict)
         or isinstance(measurements[0].get("identity"), dict)
+        or measurements[0].get("identity_status") == "metric_identity_missing"
     ):
         return bound
     measurement = measurements[0]
@@ -124,8 +125,28 @@ def _bind_test_measurement_identity(record):
 
 def _audit(text, *, evidence=None, **kwargs):
     current_plan_id = kwargs.pop("current_plan_id", "plan_current")
+    preserve_legacy_marker = kwargs.pop("preserve_legacy_marker", False)
     records = evidence if evidence is not None else [_evidence()]
     records = [_bind_test_measurement_identity(record) for record in records]
+    if not preserve_legacy_marker:
+        for record in records:
+            identity_measurements = [
+                measurement
+                for measurement in record.get("measurements") or []
+                if isinstance(measurement, dict)
+                and isinstance(measurement.get("identity"), dict)
+            ]
+            if len(identity_measurements) != 1:
+                continue
+            evidence_id = str(record.get("id") or "")
+            measurement_key = str(
+                identity_measurements[0]["identity"].get("measurement_key") or ""
+            )
+            if evidence_id and measurement_key:
+                text = text.replace(
+                    f"[[evidence:{evidence_id}]]",
+                    f"[[evidence:{evidence_id}#{measurement_key}]]",
+                )
     if "current_dataset_versions" not in kwargs:
         versions = {
             str(item)
@@ -232,7 +253,16 @@ def identity_evidence():
     return validation.record
 
 
-def _identity_audit(text, evidence):
+@pytest.fixture
+def unbound_projected_evidence(identity_evidence):
+    evidence = copy.deepcopy(identity_evidence)
+    measurement = evidence["measurements"][0]
+    measurement.pop("identity")
+    measurement["identity_status"] = "metric_identity_missing"
+    return evidence
+
+
+def _identity_audit(text, evidence, **kwargs):
     return _audit(
         text,
         evidence=[evidence],
@@ -245,6 +275,7 @@ def _identity_audit(text, evidence):
             "name": "metric_delta",
             "necessity": "required",
         }],
+        **kwargs,
     )
 
 
@@ -261,6 +292,149 @@ def _auto_bind_evidence(**overrides):
     )
     record.update(overrides)
     return record
+
+
+def _audit_with_exact_marker(identity_evidence, *, measurement_binding_mode):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    return _audit(
+        "Revenue increased 12% in 2026-05 for new users "
+        f"[[evidence:{identity_evidence['id']}#{measurement_key}]].\n"
+        "Limitation: descriptive comparison only.",
+        evidence=[identity_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        analysis_requirements=[{
+            "id": "req_revenue",
+            "step_id": "step_compare",
+            "name": "metric_delta",
+            "necessity": "required",
+        }],
+        measurement_binding_mode=measurement_binding_mode,
+    )
+
+
+def test_soft_mode_downgrades_exact_markerless_candidate(identity_evidence):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.\n"
+        "Limitation: descriptive comparison only.",
+        evidence=[identity_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="soft",
+    )
+
+    check = audit["claim_checks"][0]
+    assert audit["status"] == "revise"
+    assert check["status"] == "downgraded"
+    assert check["strength"] == "exploratory"
+    assert check["evidence_ids"] == []
+    assert check["measurement_key"] is None
+    assert "measurement_identity_missing" in check["reason_codes"]
+
+
+def test_soft_mode_downgrades_current_auto_projected_unbound_measurement(
+    unbound_projected_evidence,
+):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.\n"
+        "Limitation: descriptive comparison only.",
+        evidence=[unbound_projected_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="soft",
+    )
+
+    check = audit["claim_checks"][0]
+    assert audit["status"] == "revise"
+    assert check["status"] == "downgraded"
+    assert check["evidence_ids"] == []
+    assert check["measurement_key"] is None
+    assert "measurement_identity_missing" in check["reason_codes"]
+
+
+def test_soft_mode_requires_matching_metric_semantics_for_unbound_candidate(
+    unbound_projected_evidence,
+):
+    audit = _audit(
+        "Profit increased 12% in 2026-05 for new users.",
+        evidence=[unbound_projected_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="soft",
+    )
+
+    assert audit["status"] == "blocked"
+    assert (
+        "missing_evidence_identity"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
+
+
+def test_soft_mode_does_not_publish_uncomputed_number_as_exploratory():
+    audit = _audit(
+        "Profit increased 99% in 2026-05 for new users.",
+        evidence=[],
+        current_dataset_versions=["dataset_sales_v1"],
+        measurement_binding_mode="soft",
+    )
+
+    assert audit["status"] == "blocked"
+
+
+def test_shadow_mode_records_exact_v2_match_without_authorizing_it(
+    identity_evidence,
+):
+    audit = _audit_with_exact_marker(
+        identity_evidence,
+        measurement_binding_mode="shadow",
+    )
+
+    assert audit["status"] == "revise"
+    assert audit["claim_checks"][0]["status"] == "downgraded"
+    assert audit["measurement_binding_diagnostics"] == {
+        "mode": "shadow",
+        "v2_exact_match_count": 1,
+        "v2_authorized_count": 0,
+        "downgrade_count": 1,
+        "contradiction_count": 0,
+    }
+
+
+@pytest.mark.parametrize("mode", ["soft", "enforced"])
+def test_authorizing_modes_accept_exact_v2_marker(identity_evidence, mode):
+    audit = _audit_with_exact_marker(
+        identity_evidence,
+        measurement_binding_mode=mode,
+    )
+
+    assert audit["status"] == "pass"
+    assert audit["claim_checks"][0]["status"] == "passed"
+    assert audit["measurement_binding_diagnostics"][
+        "v2_authorized_count"
+    ] == 1
+
+
+def test_enforced_mode_rejects_markerless_exact_candidate(identity_evidence):
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[identity_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="enforced",
+    )
+
+    assert audit["status"] == "blocked"
+    assert (
+        "measurement_identity_missing"
+        in audit["claim_checks"][0]["reason_codes"]
+    )
 
 
 def test_extractor_classifies_claims_and_extracts_semantics_and_markers():
@@ -304,6 +478,7 @@ def test_exact_measurement_marker_verifies_revenue_claim(identity_evidence):
         f"[[evidence:{identity_evidence['id']}#{measurement_key}]].\n"
         "Limitation: descriptive comparison only.",
         identity_evidence,
+        preserve_legacy_marker=True,
     )
 
     assert audit["status"] == "pass"
@@ -642,7 +817,7 @@ def test_duplicate_measurement_key_is_ambiguous(identity_evidence):
     assert "measurement_ambiguous" in audit["claim_checks"][0]["reason_codes"]
 
 
-def test_legacy_record_marker_resolves_single_identity_measurement(
+def test_enforced_legacy_record_marker_never_authorizes_by_number_first(
     identity_evidence,
 ):
     audit = _identity_audit(
@@ -650,12 +825,14 @@ def test_legacy_record_marker_resolves_single_identity_measurement(
         f"[[evidence:{identity_evidence['id']}]].\n"
         "Limitation: descriptive comparison only.",
         identity_evidence,
+        preserve_legacy_marker=True,
     )
 
-    assert audit["status"] == "pass"
+    assert audit["status"] == "blocked"
+    assert audit["claim_checks"][0]["measurement_key"] is None
     assert (
-        audit["claim_checks"][0]["measurement_key"]
-        == identity_evidence["measurements"][0]["identity"]["measurement_key"]
+        "measurement_identity_missing"
+        in audit["claim_checks"][0]["reason_codes"]
     )
 
 
@@ -669,7 +846,7 @@ def test_marker_stripping_preserves_markdown_structure():
     public = strip_internal_evidence_markers(draft)
 
     assert public.startswith("# Conclusion")
-    assert "| Revenue | 12%  |" in public
+    assert "| Revenue | 12% |" in public
     assert "[[evidence:" not in public
 
 
@@ -724,7 +901,7 @@ def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication
     assert audit["contract_version"] == "final_answer_audit.v1"
     assert audit["status"] == "blocked"
     check = audit["claim_checks"][0]
-    assert "missing_evidence_identity" in check["reason_codes"]
+    assert "measurement_identity_missing" in check["reason_codes"]
     assert check["safe_action"]["action"] == "remove_or_downgrade_claim"
 
 
@@ -738,7 +915,7 @@ def test_same_value_revenue_evidence_cannot_verify_profit_claim():
 
     assert audit["status"] == "blocked"
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 def test_markerless_same_value_claim_is_not_automatically_verified():
@@ -762,7 +939,7 @@ def test_final_audit_does_not_bind_when_both_claim_context_and_evidence_lack_pla
 
     assert audit["status"] == "blocked"
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -793,7 +970,7 @@ def test_final_audit_does_not_bind_wrong_plan_or_dataset_version(evidence):
 
     assert audit["status"] == "blocked"
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -813,7 +990,7 @@ def test_final_audit_does_not_guess_on_zero_or_multiple_exact_matches(evidence):
 
     assert audit["status"] == "blocked"
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 def test_final_audit_does_not_bind_a_multi_quantity_claim():
@@ -825,7 +1002,7 @@ def test_final_audit_does_not_bind_a_multi_quantity_claim():
 
     assert len(audit["claims"][0]["quantities"]) == 2
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -867,7 +1044,7 @@ def test_final_audit_fails_closed_when_claim_identity_is_incomplete(
 
     assert not audit["claims"][0][claim_field]
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 def test_final_audit_does_not_choose_one_measurement_from_multi_measurement_evidence():
@@ -879,7 +1056,7 @@ def test_final_audit_does_not_choose_one_measurement_from_multi_measurement_evid
     )
 
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -921,7 +1098,7 @@ def test_final_audit_fails_closed_when_evidence_identity_is_incomplete(overrides
     )
 
     assert audit["claims"][0]["evidence_ids"] == []
-    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
+    assert "measurement_identity_missing" in audit["claim_checks"][0]["reason_codes"]
 
 
 @pytest.mark.parametrize(
@@ -1289,10 +1466,7 @@ def test_runtime_persists_full_audit_and_keeps_only_compact_ref_in_state(tmp_pat
     artifact = json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
     assert artifact["contract_version"] == "final_answer_audit.v1"
     assert artifact["claim_checks"][0]["evidence_id"] == "ev_revenue"
-    assert (
-        "measurement_identity_missing"
-        in artifact["claim_checks"][0]["reason_codes"]
-    )
+    assert "missing_evidence_identity" in artifact["claim_checks"][0]["reason_codes"]
     assert "[[evidence:" not in artifact["public_text"]
     assert runtime.hydrate_final_answer_audit_ref(ref) == artifact
 

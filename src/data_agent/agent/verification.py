@@ -1038,6 +1038,154 @@ def _measurement_claim_class_issues(
     return []
 
 
+def _claim_matches_projected_metric_fields(
+    claim: dict[str, Any],
+    measurement: dict[str, Any],
+) -> bool:
+    """Require server-projected metric semantics, not only equal numbers."""
+
+    claim_text = _normalize_text(_claim_text(claim)).replace("_", " ")
+    if not claim_text:
+        return False
+    structural_tokens = {
+        "change",
+        "correlation",
+        "estimate",
+        "effect",
+        "metric",
+        "rate",
+        "total",
+        "value",
+        "values",
+    }
+    metric_tokens = [
+        token
+        for token in _normalize_text(measurement.get("metric"))
+        .replace("_", " ")
+        .split()
+        if token not in structural_tokens
+    ]
+    if metric_tokens and all(token in claim_text.split() for token in metric_tokens):
+        return True
+
+    definition_tokens = [
+        token
+        for token in _normalize_text(measurement.get("definition"))
+        .replace("_", " ")
+        .split()
+        if token not in MATCH_STOPWORDS and token not in structural_tokens
+    ]
+    if not definition_tokens:
+        return False
+    overlap = sum(token in claim_text.split() for token in definition_tokens)
+    return overlap >= min(2, len(definition_tokens))
+
+
+def _has_current_bound_computation(
+    evidence: dict[str, Any],
+    *,
+    current_plan_digest: str,
+    current_step_digests: dict[str, str],
+    current_dataset_versions: set[str] | None,
+) -> bool:
+    """Recognize only a current server-bound v2 computation candidate."""
+
+    if (
+        evidence.get("contract_version") != "evidence_record.v2"
+        or evidence.get("provenance_status") != "bound"
+        or not current_plan_digest
+        or current_dataset_versions is None
+    ):
+        return False
+    step_id = str(evidence.get("step_id") or "")
+    current_step_digest = current_step_digests.get(step_id, "")
+    if not step_id or not current_step_digest:
+        return False
+    evidence_versions = {
+        str(item)
+        for item in _normalize_items(evidence.get("dataset_versions"))
+        if str(item or "")
+    }
+    if not evidence_versions or evidence_versions != current_dataset_versions:
+        return False
+    refs = [
+        ref
+        for ref in _normalize_items(evidence.get("computation_refs"))
+        if isinstance(ref, dict)
+    ]
+    if not refs:
+        return False
+    return all(
+        ref.get("contract_version") == "computation_ref.v1"
+        and ref.get("success") is not False
+        and str(ref.get("plan_id") or "") == str(evidence.get("plan_id") or "")
+        and str(ref.get("plan_digest") or "") == current_plan_digest
+        and str(ref.get("step_id") or "") == step_id
+        and str(ref.get("step_digest") or "") == current_step_digest
+        and {
+            str(item)
+            for item in _normalize_items(ref.get("dataset_versions"))
+            if str(item or "")
+        }
+        == current_dataset_versions
+        for ref in refs
+    )
+
+
+def _exact_exploratory_measurement_candidates(
+    claim: dict[str, Any],
+    evidence_records: list[dict[str, Any]],
+    *,
+    current_plan_id: str,
+    current_plan_digest: str,
+    current_step_digests: dict[str, str],
+    current_dataset_versions: set[str] | None,
+    active_requirement_ids: set[str],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    candidates = []
+    for evidence in _current_plan_evidence(evidence_records, current_plan_id):
+        if not _has_current_bound_computation(
+            evidence,
+            current_plan_digest=current_plan_digest,
+            current_step_digests=current_step_digests,
+            current_dataset_versions=current_dataset_versions,
+        ):
+            continue
+        for measurement in _measurement_items(evidence):
+            identity = measurement.get("identity")
+            if isinstance(identity, dict):
+                identity_issues = _measurement_identity_issues(
+                    claim,
+                    evidence,
+                    measurement,
+                    current_plan_id=current_plan_id,
+                    current_plan_digest=current_plan_digest,
+                    current_step_digests=current_step_digests,
+                    current_dataset_versions=current_dataset_versions,
+                    active_requirement_ids=active_requirement_ids,
+                )
+            elif (
+                measurement.get("identity_status")
+                == "metric_identity_missing"
+                and _claim_matches_projected_metric_fields(claim, measurement)
+            ):
+                identity_issues = []
+            else:
+                continue
+            semantic_issues = _strict_semantic_issues(
+                claim,
+                evidence,
+                selected_measurements=[measurement],
+            )
+            claim_class_issues = _measurement_claim_class_issues(
+                claim,
+                measurement,
+            )
+            if not identity_issues and not semantic_issues and not claim_class_issues:
+                candidates.append((evidence, measurement))
+    return candidates
+
+
 def _unmet_block_claim_requirements(
     evidence_records: list[dict[str, Any]],
     analysis_requirements: list[dict[str, Any]],
@@ -1107,10 +1255,13 @@ def _check_claim(
     analysis_requirements: list[dict[str, Any]] | None = None,
     require_explicit_evidence_ids: bool = False,
     strict_claim_semantics: bool = False,
+    measurement_binding_mode: str = "enforced",
 ) -> dict[str, Any]:
     text = _claim_text(claim)
     evidence: dict[str, Any] | None = None
     selected_measurement: dict[str, Any] | None = None
+    exploratory_measurement_candidate = False
+    measurement_v2_exact_match = False
     evidence_refs = _claim_evidence_refs(claim)
     requested_measurement_key = (
         evidence_refs[0]["measurement_key"]
@@ -1118,6 +1269,11 @@ def _check_claim(
         else ""
     )
     measurement_resolution_issues: list[tuple[str, str]] = []
+    active_requirement_ids = {
+        str(item.get("id") or "")
+        for item in analysis_requirements or []
+        if isinstance(item, dict) and str(item.get("id") or "")
+    }
     if evidence_refs and isinstance(claim, dict):
         legacy_evidence_ids = {
             str(item).strip()
@@ -1164,15 +1320,58 @@ def _check_claim(
         and not explicit_evidence_ids
         and not _claim_compare_evidence_ids(claim)
     ):
-        return _finalize_check({
-            "claim_id": _claim_id(claim, index),
-            "claim": text,
-            "evidence_id": None,
-            "status": "failed",
-            "strength": "unsupported",
-            "issues": ["Material final-answer claim is missing an exact EvidenceRecord identity"],
-            "reason_codes": ["missing_evidence_identity"],
-        })
+        candidates = (
+            _exact_exploratory_measurement_candidates(
+                claim,
+                evidence_records,
+                current_plan_id=current_plan_id,
+                current_plan_digest=current_plan_digest,
+                current_step_digests=current_step_digests or {},
+                current_dataset_versions=current_dataset_versions,
+                active_requirement_ids=active_requirement_ids,
+            )
+            if (
+                isinstance(claim, dict)
+                and measurement_binding_mode in {"shadow", "soft"}
+            )
+            else []
+        )
+        if len(candidates) == 1:
+            evidence, selected_measurement = candidates[0]
+            exploratory_measurement_candidate = True
+        elif len(candidates) > 1:
+            return _finalize_check({
+                "claim_id": _claim_id(claim, index),
+                "claim": text,
+                "evidence_id": None,
+                "evidence_ids": [],
+                "status": "failed",
+                "strength": "unsupported",
+                "issues": [
+                    "Material final-answer claim matches multiple current "
+                    "measurement candidates."
+                ],
+                "reason_codes": ["measurement_ambiguous"],
+            })
+        else:
+            reason_code = (
+                "measurement_identity_missing"
+                if measurement_binding_mode == "enforced"
+                else "missing_evidence_identity"
+            )
+            return _finalize_check({
+                "claim_id": _claim_id(claim, index),
+                "claim": text,
+                "evidence_id": None,
+                "evidence_ids": [],
+                "status": "failed",
+                "strength": "unsupported",
+                "issues": [
+                    "Material final-answer claim is missing an exact "
+                    "EvidenceRecord measurement identity"
+                ],
+                "reason_codes": [reason_code],
+            })
     explicit_support_records: list[dict[str, Any]] = []
     for explicit_evidence_id in explicit_evidence_ids:
         explicit_matches = _find_evidence_by_id(explicit_evidence_id, evidence_records)
@@ -1245,32 +1444,59 @@ def _check_claim(
                             "measurement_not_found",
                             "Referenced measurement key was not found in its EvidenceRecord.",
                         ))
-                elif len(identity_measurements) == 1:
-                    selected_measurement = identity_measurements[0]
-                    requested_measurement_key = str(
-                        selected_measurement["identity"].get("measurement_key") or ""
-                    )
-                elif len(identity_measurements) > 1:
-                    measurement_resolution_issues.append((
-                        "measurement_ambiguous",
-                        "Legacy evidence marker resolves to multiple measurements.",
-                    ))
                 else:
-                    measurement_resolution_issues.append((
-                        "measurement_identity_missing",
-                        "Legacy evidence marker has no identity-bearing measurement.",
-                    ))
+                    candidates = (
+                        _exact_exploratory_measurement_candidates(
+                            claim,
+                            referenced_records,
+                            current_plan_id=current_plan_id,
+                            current_plan_digest=current_plan_digest,
+                            current_step_digests=current_step_digests or {},
+                            current_dataset_versions=current_dataset_versions,
+                            active_requirement_ids=active_requirement_ids,
+                        )
+                        if (
+                            isinstance(claim, dict)
+                            and measurement_binding_mode in {"shadow", "soft"}
+                        )
+                        else []
+                    )
+                    if len(candidates) == 1:
+                        evidence, selected_measurement = candidates[0]
+                        exploratory_measurement_candidate = True
+                    elif len(candidates) > 1:
+                        measurement_resolution_issues.append((
+                            "measurement_ambiguous",
+                            "Legacy evidence marker matches multiple current measurements.",
+                        ))
+                    else:
+                        measurement_resolution_issues.append((
+                            (
+                                "measurement_identity_missing"
+                                if measurement_binding_mode == "enforced"
+                                else "missing_evidence_identity"
+                            ),
+                            "Legacy evidence marker has no exact non-authorizing measurement candidate.",
+                        ))
 
     check = {
         "claim_id": _claim_id(claim, index),
         "claim": text,
-        "evidence_id": evidence.get("id") if evidence else None,
-        "measurement_key": requested_measurement_key or None,
+        "evidence_id": (
+            evidence.get("id")
+            if evidence and not exploratory_measurement_candidate
+            else None
+        ),
+        "measurement_key": (
+            requested_measurement_key
+            if requested_measurement_key and not exploratory_measurement_candidate
+            else None
+        ),
         "evidence_ids": [
             str(record.get("id") or "")
             for record in (explicit_support_records or comparison_records or ([evidence] if evidence else []))
             if str(record.get("id") or "")
-        ],
+        ] if not exploratory_measurement_candidate else [],
         "status": "passed",
         "strength": "confirmed" if str((evidence or {}).get("confidence") or "").lower() == "high" else "likely",
         "issues": [],
@@ -1366,12 +1592,8 @@ def _check_claim(
                     )
                     return _finalize_check(check)
 
-    if selected_measurement is not None:
-        active_requirement_ids = {
-            str(item.get("id") or "")
-            for item in analysis_requirements or []
-            if isinstance(item, dict) and str(item.get("id") or "")
-        }
+    identity_issues: list[tuple[str, str]] = []
+    if selected_measurement is not None and not exploratory_measurement_candidate:
         identity_issues = _measurement_identity_issues(
             claim,
             evidence,
@@ -1393,6 +1615,7 @@ def _check_claim(
                     check["reason_codes"].append(reason_code)
                 check["issues"].append(issue)
 
+    semantic_issues: list[tuple[str, str]] = []
     if strict_claim_semantics:
         semantic_issues = _strict_semantic_issues(
             claim,
@@ -1409,6 +1632,14 @@ def _check_claim(
             for reason_code, issue in semantic_issues:
                 check.setdefault("reason_codes", []).append(reason_code)
                 check["issues"].append(issue)
+    if (
+        selected_measurement is not None
+        and not exploratory_measurement_candidate
+        and isinstance(selected_measurement.get("identity"), dict)
+        and not identity_issues
+        and not semantic_issues
+    ):
+        measurement_v2_exact_match = True
 
     unmet_requirements = _unmet_block_claim_requirements(
         revision_records,
@@ -1535,6 +1766,36 @@ def _check_claim(
     if cleaning_issues:
         _mark_downgraded(check, cleaning_issues)
 
+    if exploratory_measurement_candidate and check["status"] != "failed":
+        check["status"] = "downgraded"
+        check["strength"] = "exploratory"
+        check.setdefault("reason_codes", []).append(
+            "measurement_identity_missing"
+        )
+        check["issues"].append(
+            "Exact current computation is informational until the claim "
+            "includes a measurement-grain identity."
+        )
+    if (
+        measurement_binding_mode == "shadow"
+        and measurement_v2_exact_match
+        and check["status"] != "failed"
+    ):
+        check["status"] = "downgraded"
+        check["strength"] = "exploratory"
+        check.setdefault("reason_codes", []).append(
+            "measurement_identity_missing"
+        )
+        check["issues"].append(
+            "Shadow mode observed an exact measurement identity without "
+            "authorizing the claim."
+        )
+    check["_measurement_v2_exact_match"] = measurement_v2_exact_match
+    check["_measurement_v2_authorized"] = bool(
+        measurement_v2_exact_match
+        and measurement_binding_mode in {"soft", "enforced"}
+        and check["status"] != "failed"
+    )
     return _finalize_check(check)
 
 
@@ -1582,9 +1843,13 @@ def verify_analysis_claims(
     analysis_requirements: list[dict[str, Any]] | None = None,
     require_explicit_evidence_ids: bool = False,
     strict_claim_semantics: bool = False,
+    *,
+    measurement_binding_mode: str = "enforced",
 ) -> dict[str, Any]:
     """Verify claims against recorded evidence, route metadata, and cleaning risk."""
 
+    if measurement_binding_mode not in {"shadow", "soft", "enforced"}:
+        raise ValueError("measurement_binding_mode must be shadow, soft, or enforced")
     safe_claims = _normalize_items(claims)
     safe_evidence = [record for record in _normalize_items(evidence_records) if isinstance(record, dict)]
     safe_routes = [route for route in _normalize_items(route_proposals) if isinstance(route, dict)]
@@ -1618,9 +1883,44 @@ def verify_analysis_claims(
             ],
             bool(require_explicit_evidence_ids),
             bool(strict_claim_semantics),
+            measurement_binding_mode,
         )
         for index, claim in enumerate(safe_claims)
     ]
+    measurement_codes = {
+        "measurement_identity_missing",
+        "measurement_marker_invalid",
+        "measurement_not_found",
+        "measurement_metric_mismatch",
+        "measurement_claim_key_mismatch",
+        "measurement_scope_mismatch",
+        "measurement_dataset_version_mismatch",
+        "measurement_ambiguous",
+    }
+    measurement_binding_diagnostics = {
+        "mode": measurement_binding_mode,
+        "v2_exact_match_count": sum(
+            bool(check.pop("_measurement_v2_exact_match", False))
+            for check in claim_checks
+        ),
+        "v2_authorized_count": sum(
+            bool(check.pop("_measurement_v2_authorized", False))
+            for check in claim_checks
+        ),
+        "downgrade_count": sum(
+            check.get("status") == "downgraded"
+            and "measurement_identity_missing" in check.get("reason_codes", [])
+            for check in claim_checks
+        ),
+        "contradiction_count": sum(
+            check.get("status") == "failed"
+            and bool(
+                set(check.get("reason_codes") or [])
+                & (measurement_codes - {"measurement_identity_missing"})
+            )
+            for check in claim_checks
+        ),
+    }
     route_proposal_ids = [str(route["id"]) for route in safe_routes if route.get("id")]
     payload_for_id = {
         "claims": safe_claims,
@@ -1635,6 +1935,7 @@ def verify_analysis_claims(
         ],
         "require_explicit_evidence_ids": bool(require_explicit_evidence_ids),
         "strict_claim_semantics": bool(strict_claim_semantics),
+        "measurement_binding_diagnostics": measurement_binding_diagnostics,
     }
     if current_plan_id:
         payload_for_id["current_plan_id"] = str(current_plan_id)
@@ -1655,4 +1956,5 @@ def verify_analysis_claims(
         "claim_checks": claim_checks,
         "route_proposal_ids": route_proposal_ids,
         "overall_status": _overall_status(claim_checks),
+        "measurement_binding_diagnostics": measurement_binding_diagnostics,
     }

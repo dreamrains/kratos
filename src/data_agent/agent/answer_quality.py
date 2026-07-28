@@ -243,6 +243,13 @@ def strip_internal_evidence_markers(answer_text: str) -> str:
         ):
             parts.append(" ")
         cursor = next_index if follows_punctuation else match.end()
+        if (
+            not follows_punctuation
+            and prefix.endswith((" ", "\t"))
+            and cursor < len(source)
+            and source[cursor] in " \t"
+        ):
+            cursor += 1
     parts.append(source[cursor:])
     return "".join(parts)
 
@@ -320,6 +327,7 @@ def build_final_answer_audit(
     current_step_digests: dict[str, str] | None = None,
     analysis_requirements: list[dict[str, Any]] | None = None,
     llm_critique: dict[str, Any] | None = None,
+    measurement_binding_mode: str = "enforced",
 ) -> dict[str, Any]:
     """Audit the actual candidate answer against exact, current evidence."""
 
@@ -349,6 +357,7 @@ def build_final_answer_audit(
         analysis_requirements=analysis_requirements or [],
         require_explicit_evidence_ids=True,
         strict_claim_semantics=True,
+        measurement_binding_mode=measurement_binding_mode,
     )
     status = {
         "fail": "blocked",
@@ -371,6 +380,9 @@ def build_final_answer_audit(
         "claim_checks": list(report.get("claim_checks") or []),
         "verification_report_id": report.get("id"),
         "deterministic_overall_status": report.get("overall_status"),
+        "measurement_binding_diagnostics": dict(
+            report.get("measurement_binding_diagnostics") or {}
+        ),
         "llm_critique": dict(llm_critique) if isinstance(llm_critique, dict) else None,
     }
 

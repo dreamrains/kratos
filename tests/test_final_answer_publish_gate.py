@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from data_agent.agent.execution_control import ToolExecutionBudget, TurnExecutionState
 from data_agent.agent.loop import AgentLoop
 from data_agent.agent import trust_workflow_runtime as runtime
@@ -102,7 +104,10 @@ def test_internal_evidence_markers_are_stripped_from_intermediate_analysis_text(
     assert public == "Working on the next step."
 
 
-def test_gate_runs_real_persisted_audit_before_publishing(tmp_path, monkeypatch):
+def test_gate_runs_real_persisted_audit_before_tiered_publication(
+    tmp_path,
+    monkeypatch,
+):
     evidence = {
         "id": "ev_1",
         "plan_id": "plan_current",
@@ -148,8 +153,9 @@ def test_gate_runs_real_persisted_audit_before_publishing(tmp_path, monkeypatch)
         "Revenue increased 12% [[evidence:ev_1]].\nLimitation: descriptive only.",
     )
 
-    assert result["action"] == "publish"
+    assert result["action"] == "fallback"
     assert "[[evidence:" not in result["text"]
+    assert "Revenue increased 12%" not in result["text"]
     assert state.verification_reports[-1]["contract_version"] == "final_answer_audit.v1"
 
 
@@ -176,6 +182,84 @@ def test_revise_gets_one_synthesis_only_retry_then_bounded_fallback(monkeypatch)
     assert "could not be published" not in second["text"]
     assert "[[evidence:" not in second["text"]
     assert loop._turn_final_audit_instruction == ""
+
+
+def test_measurement_identity_missing_gets_at_most_one_synthesis_only_revision(
+    monkeypatch,
+):
+    loop = _analysis_loop()
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit("blocked", reason_codes=["measurement_identity_missing"]),
+    )
+
+    first = loop._gate_final_analysis_answer("analyze", "Markerless result.")
+
+    assert first == {"action": "continue", "mode": "synthesis"}
+    assert loop._turn_final_audit_revision_used is True
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert 'mode="synthesis"' in loop._turn_final_audit_instruction
+    assert "Do not call tools" in loop._turn_final_audit_instruction
+
+    loop.messages.append({"role": "assistant", "content": "Still markerless."})
+    second = loop._gate_final_analysis_answer("analyze", "Still markerless.")
+
+    assert second["action"] == "fallback"
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert 'mode="analysis"' not in loop._turn_final_audit_instruction
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "expected_action"),
+    [
+        ("measurement_marker_invalid", "continue"),
+        ("measurement_not_found", "fallback"),
+        ("measurement_metric_mismatch", "fallback"),
+        ("measurement_claim_key_mismatch", "fallback"),
+        ("measurement_scope_mismatch", "fallback"),
+        ("measurement_dataset_version_mismatch", "fallback"),
+        ("measurement_ambiguous", "fallback"),
+    ],
+)
+def test_measurement_bookkeeping_never_requests_analysis_retry(
+    monkeypatch,
+    reason_code,
+    expected_action,
+):
+    loop = _analysis_loop()
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit("blocked", reason_codes=[reason_code]),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", "Measured result.")
+
+    assert result["action"] == expected_action
+    assert result.get("mode") != "analysis"
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert 'mode="analysis"' not in loop._turn_final_audit_instruction
+
+
+def test_measurement_contradiction_suppresses_mixed_generic_analysis_retry(
+    monkeypatch,
+):
+    loop = _analysis_loop()
+    loop.context.turn_state = TurnExecutionState(
+        budget=ToolExecutionBudget(max_tool_calls=1),
+    )
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit(
+            "blocked",
+            reason_codes=["measurement_not_found", "unsupported_claim"],
+        ),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", "Measured result.")
+
+    assert result["action"] == "fallback"
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert 'mode="analysis"' not in loop._turn_final_audit_instruction
 
 
 def test_missing_computation_evidence_continues_analysis_only_when_budget_remains(monkeypatch):

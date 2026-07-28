@@ -116,6 +116,22 @@ _COMPUTATION_REPAIR_REASON_CODES = {
     "unsupported_claim",
 }
 
+_MEASUREMENT_BOOKKEEPING_CODES = {
+    "measurement_identity_missing",
+    "measurement_marker_invalid",
+    "measurement_not_found",
+    "measurement_metric_mismatch",
+    "measurement_claim_key_mismatch",
+    "measurement_scope_mismatch",
+    "measurement_dataset_version_mismatch",
+    "measurement_ambiguous",
+}
+
+_SYNTHESIS_MEASUREMENT_REPAIR_CODES = {
+    "measurement_identity_missing",
+    "measurement_marker_invalid",
+}
+
 
 def _capability_hint_for_unmet(decision) -> str:
     """Render a compact, requirement-aware capability hint for the guard.
@@ -2315,7 +2331,8 @@ class AgentLoop:
         self._discard_last_answer_candidate()
         if mode == "synthesis":
             instruction = (
-                "Revise the synthesis only. Do not call tools. Use only current allowed EvidenceRecord IDs, "
+                "Revise the synthesis only. Do not call tools. Use only current allowed measurement-grain "
+                "[[evidence:record_id#measurement_key]] markers, "
                 "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
                 "the internal evidence markers for re-audit. This is the only synthesis revision attempt."
             )
@@ -2523,7 +2540,10 @@ class AgentLoop:
             status == "blocked"
             and evidence_available
             and bool(failed_codes)
-            and set(failed_codes) <= {"missing_evidence_identity"}
+            and set(failed_codes) <= {
+                "missing_evidence_identity",
+                *_SYNTHESIS_MEASUREMENT_REPAIR_CODES,
+            }
         )
         if (
             allow_repair
@@ -2541,7 +2561,14 @@ class AgentLoop:
             )
             return {"action": "continue", "mode": "synthesis"}
 
-        needs_computation = bool(set(failed_codes) & _COMPUTATION_REPAIR_REASON_CODES)
+        failed_code_set = set(failed_codes)
+        has_measurement_bookkeeping = bool(
+            failed_code_set & _MEASUREMENT_BOOKKEEPING_CODES
+        )
+        needs_computation = (
+            not has_measurement_bookkeeping
+            and bool(failed_code_set & _COMPUTATION_REPAIR_REASON_CODES)
+        )
         if (
             allow_repair
             and needs_computation

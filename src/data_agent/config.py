@@ -45,6 +45,12 @@ class AgentConfig(BaseSettings):
         alias="ASSURANCE_PUBLICATION_MODE",
         default="tiered",
     )
+    measurement_evidence_binding_mode: Literal[
+        "shadow", "soft", "enforced"
+    ] = Field(
+        alias="MEASUREMENT_EVIDENCE_BINDING_MODE",
+        default="soft",
+    )
     auto_evidence_projection_enabled: bool = Field(
         alias="AUTO_EVIDENCE_PROJECTION_ENABLED",
         default=True,

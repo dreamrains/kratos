@@ -124,7 +124,10 @@ def test_strict_final_answer_verification_rejects_fuzzy_match_without_evidence_i
     )
 
     assert report["overall_status"] == "fail"
-    assert report["claim_checks"][0]["reason_codes"] == ["missing_evidence_identity"]
+    assert (
+        "measurement_identity_missing"
+        in report["claim_checks"][0]["reason_codes"]
+    )
     assert report["claim_checks"][0]["measurement_key"] is None
 
 
