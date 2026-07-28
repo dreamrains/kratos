@@ -3167,19 +3167,16 @@ def build_bounded_evidence_catalog(
     """Build a bounded, deterministic catalog of current-plan evidence.
 
     Records are sorted by ``(step_order, evidence_id)`` and rendered as one
-    compact line per record. The catalog stops before the next line would
-    exceed ``max_chars`` total and never lists more than ``max_records``
-    records. An empty catalog still returns the canonical header so the
-    synthesis policy always injects a catalog block (and never triggers a
-    tool ritual to manufacture evidence).
+    compact line per measurement entry. Duplicate ``(evidence_id,
+    measurement_key)`` references are emitted once, in first-seen order.
+    ``max_records`` bounds emitted entries and ``max_chars`` bounds the whole
+    catalog, including its header. An empty catalog still returns the
+    canonical header so the synthesis policy always injects a catalog block
+    (and never triggers a tool ritual to manufacture evidence).
     """
 
     if not isinstance(evidence_records, list):
         evidence_records = list(evidence_records or [])
-    total = len(evidence_records)
-    header = f"可用证据：{total} 条。请基于现有计算诊断说明局限，不要重新运行工具来制造证据。"
-    if not evidence_records:
-        return header
 
     def _sort_key(record: dict[str, Any]) -> tuple[Any, str]:
         order = record.get("step_order")
@@ -3187,7 +3184,9 @@ def build_bounded_evidence_catalog(
             order = 0
         return (order, _text(record.get("id")))
 
-    def _format_line(record: dict[str, Any]) -> str:
+    def _format_line(
+        record: dict[str, Any],
+    ) -> list[tuple[tuple[str, str] | None, str]]:
         claim_class = (
             _text(record.get("allowed_claim_class"))
             or _text(record.get("claim_class"))
@@ -3207,7 +3206,8 @@ def build_bounded_evidence_catalog(
             limitation_text = "; ".join(_text(item) for item in limitations if _text(item))
         else:
             limitation_text = _text(limitations)
-        common_parts = [f"id={_text(record.get('id'))}"]
+        record_id = _text(record.get("id"))
+        common_parts = [f"id={record_id}"]
         if claim_class:
             common_parts.append(f"claim_class={claim_class}")
         if version_text:
@@ -3221,27 +3221,32 @@ def build_bounded_evidence_catalog(
 
         measurements = record.get("measurements")
         if not isinstance(measurements, list) or not measurements:
-            return ["- " + " | ".join([
+            return [(None, "- " + " | ".join([
                 *common_parts,
                 f"claim_key={_text(record.get('claim_key'))}",
-            ])]
+            ]))]
 
-        catalog_lines: list[str] = []
+        catalog_lines: list[tuple[tuple[str, str] | None, str]] = []
         for measurement in measurements:
             if not isinstance(measurement, dict):
                 continue
             identity = measurement.get("identity")
-            if isinstance(identity, dict) and all(_text(identity.get(field)) for field in (
-                "measurement_key", "metric_key", "metric_label", "claim_key",
-            )):
+            try:
+                validation = validate_measurement_identity(identity)
+            except Exception:
+                validation = None
+            if record_id and validation is not None and validation.ok:
+                validated_identity = validation.record
+                measurement_key = _text(validated_identity.get("measurement_key"))
                 parts = [
                     *common_parts,
-                    f"measurement_key={_text(identity.get('measurement_key'))}",
-                    f"metric_key={_text(identity.get('metric_key'))}",
-                    f"metric_label={_text(identity.get('metric_label'))}",
-                    f"claim_key={_text(identity.get('claim_key'))}",
+                    f"measurement_key={measurement_key}",
+                    f"metric_key={_text(validated_identity.get('metric_key'))}",
+                    f"metric_label={_text(validated_identity.get('metric_label'))}",
+                    f"claim_key={_text(validated_identity.get('claim_key'))}",
                     f"value={_format_measurement_value(measurement)}",
                 ]
+                reference: tuple[str, str] | None = (record_id, measurement_key)
             else:
                 parts = [
                     *common_parts,
@@ -3249,26 +3254,40 @@ def build_bounded_evidence_catalog(
                     "unbound_measurement="
                     f"{_format_unbound_measurement_for_catalog(measurement)}",
                 ]
-            catalog_lines.append("- " + " | ".join(parts))
-        return catalog_lines or ["- " + " | ".join([
+                reference = None
+            catalog_lines.append((reference, "- " + " | ".join(parts)))
+        return catalog_lines or [(None, "- " + " | ".join([
             *common_parts,
             f"claim_key={_text(record.get('claim_key'))}",
-        ])]
+        ]))]
 
     sorted_records = sorted(evidence_records, key=_sort_key)
-    lines: list[str] = [header]
-    body_chars = 0
-    budget = max(0, int(max_chars) - len(header) - 4)
-    entry_count = 0
+    candidates: list[str] = []
+    seen_references: set[tuple[str, str]] = set()
     for record in sorted_records:
         if not isinstance(record, dict):
             continue
-        for line in _format_line(record):
-            if entry_count >= max_records:
-                return "\n".join(lines)
-            if body_chars + len(line) + 1 > budget and lines[-1] != header:
-                return "\n".join(lines)
-            lines.append(line)
-            body_chars += len(line) + 1
-            entry_count += 1
+        for reference, line in _format_line(record):
+            if reference is not None:
+                if reference in seen_references:
+                    continue
+                seen_references.add(reference)
+            candidates.append(line)
+
+    header = (
+        f"可用证据测量：{len(candidates)} 条。请基于现有计算诊断说明局限，"
+        "不要重新运行工具来制造证据。"
+    )
+    limit = max(0, int(max_chars))
+    if len(header) > limit:
+        return header[:limit]
+
+    lines: list[str] = [header]
+    used_chars = len(header)
+    max_entries = max(0, int(max_records))
+    for line in candidates[:max_entries]:
+        if used_chars + 1 + len(line) > limit:
+            break
+        lines.append(line)
+        used_chars += 1 + len(line)
     return "\n".join(lines)

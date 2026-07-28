@@ -212,9 +212,22 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
 def strip_internal_evidence_markers(answer_text: str) -> str:
     """Remove synthesis-only EvidenceRecord markers from user-visible text."""
 
-    text = _EVIDENCE_MARKER.sub("", answer_text or "")
-    text = re.sub(r"[ \t]+([.,;:!?。！？；：])", r"\1", text)
-    return re.sub(r"[ \t]{2,}", " ", text).strip()
+    source = answer_text or ""
+    parts: list[str] = []
+    cursor = 0
+    punctuation = ".,;:!?。！？；："
+    for match in _EVIDENCE_MARKER.finditer(source):
+        prefix = source[cursor:match.start()]
+        after = source[match.end()] if match.end() < len(source) else ""
+        if after and after in punctuation:
+            prefix = prefix.rstrip(" \t")
+        parts.append(prefix)
+        before = source[match.start() - 1] if match.start() else ""
+        if before and after and before.isalnum() and after.isalnum():
+            parts.append(" ")
+        cursor = match.end()
+    parts.append(source[cursor:])
+    return "".join(parts)
 
 
 def _claim_type(text: str) -> str:

@@ -115,8 +115,29 @@ def test_marker_stripping_preserves_markdown_structure():
     public = strip_internal_evidence_markers(draft)
 
     assert public.startswith("# Conclusion")
-    assert "| Revenue | 12% |" in public
+    assert "| Revenue | 12%  |" in public
     assert "[[evidence:" not in public
+
+
+def test_marker_stripping_preserves_hard_breaks_and_indentation():
+    draft = "Summary  \n[[evidence:ev_1#m_1]]\n    nested detail\n"
+
+    public = strip_internal_evidence_markers(draft)
+
+    assert public == "Summary  \n\n    nested detail\n"
+
+
+def test_marker_stripping_separates_adjacent_prose_and_handles_marker_only_text():
+    assert strip_internal_evidence_markers(
+        "Alpha[[evidence:ev_1#m_1]]Beta"
+    ) == "Alpha Beta"
+    assert strip_internal_evidence_markers("[[evidence:ev_1#m_1]]") == ""
+
+
+def test_marker_stripping_preserves_trailing_whitespace_before_terminal_marker():
+    assert strip_internal_evidence_markers(
+        "Summary  [[evidence:ev_1#m_1]]"
+    ) == "Summary  "
 
 
 def test_fuzzy_text_similarity_without_exact_marker_cannot_authorize_publication():

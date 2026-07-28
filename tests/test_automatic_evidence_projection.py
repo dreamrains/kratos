@@ -123,6 +123,29 @@ def test_measurement_identity_validator_rejects_tampered_key(context):
     assert validation.error_type == "measurement_key_mismatch"
 
 
+def test_catalog_rejects_partial_and_inconsistent_measurement_identities(context):
+    from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
+
+    projected = project_real_correlation(context).record
+    valid_identity = projected["measurements"][0]["identity"]
+
+    partial = copy.deepcopy(projected)
+    partial["measurements"][0]["identity"] = {
+        field: valid_identity[field]
+        for field in ("measurement_key", "metric_key", "metric_label", "claim_key")
+    }
+    inconsistent = copy.deepcopy(projected)
+    inconsistent["measurements"][0]["identity"]["measurement_key"] = "m_fabricated"
+
+    catalog = build_bounded_evidence_catalog(
+        [partial, inconsistent], max_records=8, max_chars=2000
+    )
+
+    assert catalog.count("unbound_measurement=") == 2
+    assert f"measurement_key={valid_identity['measurement_key']}" not in catalog
+    assert "measurement_key=m_fabricated" not in catalog
+
+
 def test_identity_uses_all_trusted_list_item_context_for_uniqueness(context):
     output = {
         "summary": "Two segment correlations",
@@ -456,11 +479,11 @@ def test_empty_evidence_still_injects_catalog_header():
     from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
 
     catalog = build_bounded_evidence_catalog([], max_records=8, max_chars=2000)
-    assert "可用证据：0 条" in catalog
+    assert "可用证据测量：0 条" in catalog
     assert "不要重新运行工具来制造证据" in catalog
 
 
-def test_catalog_caps_records_and_chars():
+def test_catalog_caps_measurement_entries_and_chars():
     from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
 
     records = []
@@ -480,10 +503,37 @@ def test_catalog_caps_records_and_chars():
             "limitations": ["descriptive only"],
         })
     catalog = build_bounded_evidence_catalog(records, max_records=4, max_chars=800)
-    # Header line + up to 4 record lines.
+    # Header line + up to 4 emitted measurement entries.
     lines = [line for line in catalog.splitlines() if line.strip()]
-    assert lines[0].startswith("可用证据：")
-    # Records present are capped at 4.
+    assert lines[0].startswith("可用证据测量：")
+    # Measurement entries present are capped at 4.
     record_lines = [line for line in lines[1:] if line.startswith("- ")]
     assert len(record_lines) <= 4
-    assert len(catalog) <= 1500  # generous upper bound; max_chars only bounds the records loop
+    assert len(catalog) <= 800
+
+
+def test_catalog_deduplicates_measurement_references(context):
+    from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
+
+    record = project_real_correlation(context).record
+    identity = record["measurements"][0]["identity"]
+    record["measurements"].append(copy.deepcopy(record["measurements"][0]))
+
+    catalog = build_bounded_evidence_catalog([record], max_records=8, max_chars=2000)
+
+    assert catalog.count(f"measurement_key={identity['measurement_key']}") == 1
+
+
+def test_catalog_never_exceeds_max_chars_when_first_entry_is_too_long(context):
+    from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
+
+    record = project_real_correlation(context).record
+    full_catalog = build_bounded_evidence_catalog([record], max_records=8, max_chars=2000)
+    header = full_catalog.splitlines()[0]
+
+    catalog = build_bounded_evidence_catalog(
+        [record], max_records=8, max_chars=len(header)
+    )
+
+    assert catalog == header
+    assert len(catalog) <= len(header)
