@@ -1,6 +1,6 @@
 # Measurement Identity and Honest Release Gates Design
 
-**Status:** Draft for user review
+**Status:** Approved
 
 **Date:** 2026-07-28
 
