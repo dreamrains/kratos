@@ -4,8 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
+from data_agent.agent.analysis_state import AnalysisSessionState
+from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.agent.data_lineage import frame_fingerprint
 from data_agent.agent.golden_answer_runner import (
     load_golden_manifest,
     GoldenManifestError,
@@ -14,6 +18,7 @@ from data_agent.agent.evidence_contracts import (
     analysis_plan_semantic_digest,
     analysis_step_semantic_digest,
 )
+from data_agent.session.workspace import Workspace
 from tests.fixtures.measurement_identity import bind_validated_measurement_identity
 
 WORKTREE_ROOT = Path(__file__).resolve().parents[2]
@@ -111,7 +116,6 @@ class _FakeState:
         verification_reports=None,
         *,
         analysis_plan=None,
-        current_dataset_versions=None,
     ):
         self.evidence_records = evidence
         self.verification_reports = verification_reports or []
@@ -120,7 +124,6 @@ class _FakeState:
         self.file_relationships = []
         self.data_understanding_bundles = []
         self.analysis_plan = analysis_plan or {}
-        self.current_dataset_versions = current_dataset_versions
 
 
 def _purchase_evidence_context():
@@ -154,7 +157,20 @@ def _purchase_evidence_context():
             }],
         },
     }
-    dataset_version = "dataset_orders_v1"
+    workspace = Workspace()
+    frame = pd.DataFrame({"spending": [100.0, 150.0]})
+    raw = workspace.register_raw_snapshot(
+        "orders",
+        frame,
+        frame_fingerprint(frame),
+    )
+    active = workspace.promote_analysis_copy(
+        "orders",
+        frame,
+        raw["dataset_id"],
+        {"operation": "load_golden_purchase_fixture"},
+    )
+    dataset_version = active["dataset_id"]
     computation_ref = {
         "contract_version": "computation_ref.v1",
         "session_id": "session_purchase",
@@ -214,12 +230,17 @@ def _purchase_evidence_context():
         f"[[evidence:{evidence['id']}#"
         f"{evidence['measurements'][0]['identity']['measurement_key']}]]"
     )
-    state = _FakeState(
-        evidence=[evidence],
+    state = AnalysisSessionState(
+        session_id="session_purchase",
         analysis_plan=plan,
-        current_dataset_versions=[dataset_version],
+        evidence_records=[evidence],
     )
-    return state, marker
+    context = AgentContext(
+        session_id=state.session_id,
+        workspace=workspace,
+        analysis_state=state,
+    )
+    return state, marker, context
 
 
 def test_evaluate_fatal_blocks_unsupported_material_claim():
@@ -232,11 +253,13 @@ def test_evaluate_fatal_blocks_unsupported_material_claim():
 
 
 def test_evaluate_fatal_passes_when_claim_supported():
-    state, marker = _purchase_evidence_context()
-    result = aq.evaluate_fatal(
-        f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
-        state,
-    )
+    state, marker, context = _purchase_evidence_context()
+    assert isinstance(state, AnalysisSessionState)
+    with use_agent_context(context):
+        result = aq.evaluate_fatal(
+            f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
+            state,
+        )
     assert result["claim_delivery_ready"] is True
     assert result["blockers"] == []
 
@@ -351,15 +374,16 @@ from data_agent.agent import golden_answer_runner as gar
 
 
 def test_evaluate_answer_composes_fatal_and_soft():
-    state, marker = _purchase_evidence_context()
+    state, marker, context = _purchase_evidence_context()
     payload = '{"insight_depth": {"score": 2, "rationale": "基本是数值描述"}}'
-    out = gar.evaluate_answer(
-        answer_text=f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
-        state=state,
-        question="省钱卡表现？",
-        dimensions=["insight_depth"],
-        judge_client=_StubClient(payload),
-    )
+    with use_agent_context(context):
+        out = gar.evaluate_answer(
+            answer_text=f"买卡后消费提升了50% {marker}。局限：这只是描述性前后对比。",
+            state=state,
+            question="省钱卡表现？",
+            dimensions=["insight_depth"],
+            judge_client=_StubClient(payload),
+        )
     assert out["fatal"]["claim_delivery_ready"] is True
     assert out["soft"]["absolute"]["insight_depth"]["score"] == 2
     assert out["soft"]["pairwise"] is None

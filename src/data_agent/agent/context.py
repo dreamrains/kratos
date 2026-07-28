@@ -632,6 +632,29 @@ def _create_current_context_facades(getter, binder, resetter):
 )
 del _create_current_context_facades
 
+
+def authoritative_dataset_versions() -> list[str] | None:
+    """Return active dataset-version IDs from the current workspace authority."""
+
+    try:
+        context = get_current_context()
+        if context is None:
+            return None
+        version_ids = context.workspace.active_dataset_version_ids()
+        if isinstance(version_ids, list):
+            return sorted({str(item) for item in version_ids if str(item)})
+        datasets = context.workspace.list_datasets()
+        if not isinstance(datasets, dict):
+            return None
+        return sorted({
+            str(info.get("dataset_id"))
+            for info in datasets.values()
+            if isinstance(info, dict) and str(info.get("dataset_id") or "")
+        })
+    except Exception:
+        return None
+
+
 # Complete the circular dispatch handshake during trusted module initialization.
 # Importing ``context`` directly therefore initializes and hides the one-shot
 # workspace installer before callers can construct their first AgentContext.

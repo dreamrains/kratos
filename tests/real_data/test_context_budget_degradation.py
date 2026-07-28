@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from data_agent.agent import execution_control as control
 from data_agent.agent import trust_workflow_runtime as runtime
 from data_agent.agent.analysis_state import AnalysisSessionState, build_trust_capsule, load_analysis_state
 from data_agent.agent.context import use_agent_context
@@ -46,7 +47,7 @@ class _BudgetClient:
         ))
 
 
-def _evidence(computation_ref):
+def _evidence(computation_ref, *, measurement_value=0.12):
     bound_ref = {
         **computation_ref,
         "claim_key": "revenue_change",
@@ -67,14 +68,14 @@ def _evidence(computation_ref):
         "time_scope": "2026-05",
         "calculation_method": "May revenue divided by April revenue minus one",
         "method_detail": "descriptive period comparison on the real fixture rows",
-        "metric_delta": {"value": 0.12, "unit": "ratio"},
+        "metric_delta": {"value": measurement_value, "unit": "ratio"},
         "limitations": ["descriptive only"],
         "confidence": "medium",
         "evidence_requirement": "req_revenue_change",
         "measurements": [{
             "metric": "revenue_change",
             "definition": "May revenue change versus April revenue.",
-            "value": 0.12,
+            "value": measurement_value,
             "unit": "ratio",
             "grain": "period",
             "population_scope": "all users",
@@ -243,14 +244,12 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
         "budget_level": level,
         "claim_classes": claim_classes,
         "retained_requirement_ids": [item["id"] for item in state.data_requirements],
-        "evidence_ids": [
-            ":".join((
-                str(item.get("plan_id") or ""),
-                str(item.get("step_id") or ""),
-                str(item.get("claim_key") or ""),
-            ))
-            for item in state.evidence_records
-        ],
+        "evidence_ids": control.evidence_semantic_bindings(
+            state.evidence_records,
+            selected_measurement_keys=[
+                evidence["measurements"][0]["identity"]["measurement_key"],
+            ],
+        ),
         "audit_status": ref["status"],
         "completed": bool(result.content),
         "round_count": turn.llm_rounds,
@@ -316,3 +315,72 @@ def test_degradation_evaluation_rejects_stronger_or_unaudited_low_budget_claims(
     assert stronger["ok"] is False
     assert stronger["invariants"]["claim_strength_not_increased"] is False
     assert stronger["invariants"]["audit_was_not_skipped"] is False
+
+
+def test_context_budget_binding_rejects_changed_computation_measurement_or_dataset():
+    base_ref = {
+        "contract_version": "computation_ref.v1",
+        "session_id": "session_full",
+        "turn_id": "turn_full",
+        "tool_call_id": "call_revenue_compare",
+        "tool_name": "period_compare",
+        "output_digest": "sha256:revenue_compare",
+        "plan_id": "plan_context_budget",
+        "plan_digest": "sha256:plan_context_budget",
+        "step_id": "step_compare",
+        "step_digest": "sha256:step_compare",
+        "dataset_versions": ["dataset_orders_v1"],
+        "verification_level": "structured_checked",
+        "claim_key": "revenue_change",
+        "requirement_ids": ["req_revenue_change"],
+    }
+    def semantic_binding(record):
+        return control.evidence_semantic_bindings(
+            [record],
+            selected_measurement_keys=[
+                record["measurements"][0]["identity"]["measurement_key"],
+            ],
+        )
+
+    baseline_binding = semantic_binding(_evidence(base_ref))
+    cross_session_binding = semantic_binding(
+        _evidence({
+            **base_ref,
+            "session_id": "session_low",
+            "turn_id": "turn_low",
+        })
+    )
+    assert cross_session_binding == baseline_binding
+
+    mutations = [
+        _evidence({
+            **base_ref,
+            "session_id": "session_low",
+            "turn_id": "turn_low",
+            "output_digest": "sha256:recomputed_revenue_compare",
+        }),
+        _evidence(base_ref, measurement_value=0.13),
+        _evidence({
+            **base_ref,
+            "session_id": "session_low",
+            "turn_id": "turn_low",
+            "dataset_versions": ["dataset_orders_v2"],
+        }),
+    ]
+    baseline = {
+        "claim_classes": ["descriptive"],
+        "retained_requirement_ids": ["req_revenue_change"],
+        "evidence_ids": baseline_binding,
+        "audit_status": "pass",
+        "completed": True,
+    }
+
+    for changed_record in mutations:
+        changed_binding = semantic_binding(changed_record)
+        assert changed_binding != baseline_binding
+        result = evaluate_budget_degradation(
+            baseline,
+            {**baseline, "evidence_ids": changed_binding},
+        )
+        assert result["ok"] is False
+        assert result["invariants"]["evidence_binding_retained"] is False

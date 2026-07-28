@@ -421,6 +421,7 @@ def evaluate_fatal(answer_text: str, state) -> dict[str, Any]:
         analysis_plan_semantic_digest,
         analysis_step_semantic_digest,
     )
+    from data_agent.agent.context import authoritative_dataset_versions
 
     method_plan = plan.get("method_plan")
     method_plan = method_plan if isinstance(method_plan, list) else []
@@ -435,11 +436,7 @@ def evaluate_fatal(answer_text: str, state) -> dict[str, Any]:
         route_proposals=getattr(state, "route_proposals", []) or [],
         cleaning_logs=getattr(state, "cleaning_logs", []) or [],
         current_plan_id=str(plan.get("id") or ""),
-        current_dataset_versions=getattr(
-            state,
-            "current_dataset_versions",
-            None,
-        ),
+        current_dataset_versions=authoritative_dataset_versions(),
         current_plan_digest=(
             analysis_plan_semantic_digest(plan)
             if plan.get("id")

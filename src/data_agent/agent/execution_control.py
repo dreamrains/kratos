@@ -976,6 +976,115 @@ def _approximate_payload_tokens(value: Any) -> int:
     return len(raw) // 4
 
 
+def evidence_semantic_bindings(
+    evidence_records: Sequence[dict[str, Any]],
+    *,
+    selected_measurement_keys: Sequence[str],
+) -> list[str]:
+    """Project selected evidence grain into stable cross-session bindings."""
+
+    from data_agent.agent.evidence_contracts import (
+        computation_ref_key,
+        validate_evidence_record,
+    )
+
+    requested_keys = {
+        str(item)
+        for item in selected_measurement_keys
+        if str(item)
+    }
+    bindings = []
+    for candidate in evidence_records:
+        validation = validate_evidence_record(
+            candidate,
+            current_plan_id=str(candidate.get("plan_id") or ""),
+            require_measurement_identity=True,
+        )
+        if not validation.ok:
+            continue
+        record = validation.record
+        refs_by_key = {
+            computation_ref_key(ref): ref
+            for ref in record.get("computation_refs") or []
+            if isinstance(ref, dict)
+        }
+        for measurement in record.get("measurements") or []:
+            if not isinstance(measurement, dict):
+                continue
+            identity = measurement.get("identity")
+            if not isinstance(identity, dict):
+                continue
+            raw_measurement_key = str(identity.get("measurement_key") or "")
+            if raw_measurement_key not in requested_keys:
+                continue
+            ref = refs_by_key.get(str(identity.get("computation_ref_id") or ""))
+            if not isinstance(ref, dict):
+                continue
+            computation_identity = {
+                "contract_version": str(ref.get("contract_version") or ""),
+                "tool_name": str(ref.get("tool_name") or ""),
+                "capability_id": str(ref.get("capability_id") or ""),
+                "arguments_digest": str(ref.get("arguments_digest") or ""),
+                "output_digest": str(ref.get("output_digest") or ""),
+                "plan_id": str(ref.get("plan_id") or ""),
+                "plan_digest": str(ref.get("plan_digest") or ""),
+                "step_id": str(ref.get("step_id") or ""),
+                "step_digest": str(ref.get("step_digest") or ""),
+                "dataset_versions": sorted(
+                    str(item) for item in ref.get("dataset_versions") or []
+                ),
+                "success": bool(ref.get("success", True)),
+                "structured_checked_fields": sorted(
+                    str(item)
+                    for item in ref.get("structured_checked_fields") or []
+                ),
+                "verification_level": str(ref.get("verification_level") or ""),
+                "claim_key": str(ref.get("claim_key") or ""),
+                "requirement_ids": sorted(
+                    str(item) for item in ref.get("requirement_ids") or []
+                ),
+            }
+            stable_identity = {
+                str(key): value
+                for key, value in identity.items()
+                if key not in {"measurement_key", "computation_ref_id"}
+            }
+            stable_identity["computation_identity"] = computation_identity
+            stable_measurement_key = "sm_" + hashlib.sha256(
+                json.dumps(
+                    stable_identity,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()[:24]
+            binding = {
+                "contract_version": "evidence_semantic_binding.v1",
+                "plan_id": str(record.get("plan_id") or ""),
+                "step_id": str(record.get("step_id") or ""),
+                "claim_key": str(record.get("claim_key") or ""),
+                "dataset_versions": sorted(
+                    str(item) for item in record.get("dataset_versions") or []
+                ),
+                "computation_identity": computation_identity,
+                "selected_measurement_key": stable_measurement_key,
+                "selected_measurement_identity": stable_identity,
+            }
+            bindings.append(
+                "eb_" + hashlib.sha256(
+                    json.dumps(
+                        binding,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8")
+                ).hexdigest()[:32]
+            )
+    return sorted(set(bindings))
+
+
 def evaluate_budget_degradation(
     baseline: dict[str, Any],
     candidate: dict[str, Any],
