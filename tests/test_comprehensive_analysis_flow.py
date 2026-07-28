@@ -444,10 +444,20 @@ class TestConversationFlow:
         assert loop._turn_tools_used == ["load_data"]
         assert loop._turn_loaded_data is False
 
-    def test_same_turn_file_plus_analysis_does_not_end_after_profile(self, tmp_path, clean_workspace):
+    def test_same_turn_file_plus_analysis_does_not_end_after_profile(
+        self,
+        tmp_path,
+        clean_workspace,
+        tmp_project,
+        monkeypatch,
+    ):
         from data_agent.agent.loop import AgentLoop
         from data_agent.agent.context import use_agent_context
         from data_agent.llm.client import Response, ToolCall
+        from data_agent.session.task_manager import task_manager
+
+        monkeypatch.setattr(task_manager, "_dir", tmp_path / "tasks")
+        monkeypatch.setattr(task_manager, "_next_id_val", 0)
 
         df = _make_df(50)
         csv_path = tmp_path / "sales.csv"
@@ -485,7 +495,11 @@ class TestConversationFlow:
         assert "Suggested next analyses" not in reply
         assert "Final analysis" in reply
         with use_agent_context(loop.context):
-            assert loop.context.workspace.list_datasets()
+            assert loop.context.workspace.list_datasets(), json.dumps(
+                loop.messages,
+                ensure_ascii=False,
+                default=str,
+            )
         self._assert_final_guard_history_is_not_user_visible(loop)
 
     def test_streaming_guard_does_not_emit_profile_only_text(self, tmp_path, clean_workspace):

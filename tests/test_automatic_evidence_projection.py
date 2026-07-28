@@ -348,6 +348,7 @@ def projection_context(tmp_path) -> _ProjectionContext:
 def test_bound_structured_computation_auto_projects_v2_evidence(context):
     from data_agent.agent.evidence_contracts import (
         EVIDENCE_RECORD_CONTRACT_VERSION,
+        build_bounded_evidence_catalog,
         project_structured_computation_evidence,
     )
 
@@ -386,6 +387,14 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
     assert result.record["contract_version"] == EVIDENCE_RECORD_CONTRACT_VERSION
     assert result.record["plan_id"] == current_plan()["id"]
     assert result.record["requirement_ids"] == list(exact_step_binding().requirement_ids)
+    assert result.record["dataset_versions"] == [DATASET_VERSION]
+
+    catalog = build_bounded_evidence_catalog(
+        [result.record],
+        max_records=8,
+        max_chars=2000,
+    )
+    assert f"dataset_versions={DATASET_VERSION}" in catalog
 
 
 @pytest.mark.parametrize(

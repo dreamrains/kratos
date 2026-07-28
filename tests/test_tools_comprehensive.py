@@ -1010,8 +1010,11 @@ def test_chart_no_data():
         workspace.remove(name)
     try:
         result = create_chart(chart_type="line")
-        if "Error" not in result:
-            return "should error when no data available"
+        payload = json.loads(result)
+        if payload.get("error_type") != "chart_dataset_ambiguous":
+            return f"should return chart_dataset_ambiguous with no data: {result}"
+        if payload.get("eligible_datasets") != []:
+            return f"should expose no eligible datasets: {result}"
     finally:
         # 恢复 workspace
         for name, df in saved.items():
@@ -1553,4 +1556,8 @@ if "pytest" in sys.modules:
     def pytest_collect_file(parent, file_path):
         if file_path.name == "test_tools_comprehensive.py":
             return PytestModule.from_parent(parent, path=file_path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(1 if FAIL else 0)
 

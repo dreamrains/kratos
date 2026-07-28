@@ -2422,6 +2422,7 @@ def _build_projected_record(
         "contract_version": EVIDENCE_RECORD_CONTRACT_VERSION,
         "source_tool_call_ids": [_text(computation_ref.get("tool_call_id"))],
         "requirement_ids": requirement_ids,
+        "dataset_versions": list(computation_ref.get("dataset_versions") or []),
         "computation_refs": [dict(computation_ref)],
         "provenance_status": "bound",
         "verification_level": _text(computation_ref.get("verification_level")) or "structured_checked",

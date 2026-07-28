@@ -395,9 +395,17 @@ def test_golden_revenue_decline_attribution(tmp_path):
     assert_adapter_plan_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["paid channel", "descriptive attribution"], confidence="medium")
-    task_text = json.dumps(result.state.analysis_plan, ensure_ascii=False).lower()
-    for term in ("compare", "decompose", "exclude"):
-        assert term in task_text
+    method_capabilities = {
+        str(step.get("required_capability") or "")
+        for step in result.state.analysis_plan["method_plan"]
+        if isinstance(step, dict)
+    }
+    assert {
+        "analysis.period_compare",
+        "analysis.dimension_decomposition",
+    } <= method_capabilities
+    forbidden_claims = result.state.analysis_plan["evidence_policy"]["forbidden_claims"]
+    assert any("causal" in str(claim).lower() for claim in forbidden_claims)
     assert_final_boundary(result, ["limitation", "confidence"])
 
 

@@ -68,6 +68,9 @@ def test_streaming_context_is_bound_only_while_generator_runs(
 
         assert get_current_context() is outer
         first = next(events)
+        while first.get("type") == "analysis_progress":
+            assert get_current_context() is loop.context
+            first = next(events)
         assert first == {"type": "text_delta", "text": "chunk"}
         assert get_current_context() is loop.context
 
@@ -77,7 +80,7 @@ def test_streaming_context_is_bound_only_while_generator_runs(
             with pytest.raises(RuntimeError, match="stream exploded"):
                 next(events)
         else:
-            assert list(events) == []
+            assert all(event.get("type") == "analysis_progress" for event in events)
 
         assert get_current_context() is outer
 
