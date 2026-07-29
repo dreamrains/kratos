@@ -409,6 +409,31 @@ def test_model_authored_evidence_cannot_supply_measurement_identity(computation_
     assert computation_env["state"].evidence_records == []
 
 
+@pytest.mark.parametrize(
+    "forged_fields",
+    [
+        {"identity_status": "metric_identity_missing"},
+        {"projection_origin": "structured_computation_projector.v1"},
+        {
+            "identity_status": "metric_identity_missing",
+            "projection_origin": "structured_computation_projector.v1",
+        },
+    ],
+)
+def test_model_authored_evidence_cannot_supply_projection_identity_fields(
+    computation_env,
+    forged_fields,
+):
+    ref = _execute_computation(computation_env)
+    payload = _evidence_payload(computation_env, ref["tool_call_id"])
+    payload["measurements"][0].update(forged_fields)
+
+    result = _record(computation_env, payload)
+
+    assert result["error_type"] == "authoritative_measurement_identity_forbidden"
+    assert computation_env["state"].evidence_records == []
+
+
 def test_record_evidence_rejects_unknown_source_tool_call_id(computation_env):
     result = _record(
         computation_env,

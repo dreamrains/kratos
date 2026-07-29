@@ -2562,8 +2562,9 @@ class AgentLoop:
             return {"action": "continue", "mode": "synthesis"}
 
         failed_code_set = set(failed_codes)
+        all_code_set = set(all_codes)
         has_measurement_bookkeeping = bool(
-            failed_code_set & _MEASUREMENT_BOOKKEEPING_CODES
+            all_code_set & _MEASUREMENT_BOOKKEEPING_CODES
         )
         needs_computation = (
             not has_measurement_bookkeeping

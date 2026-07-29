@@ -262,6 +262,47 @@ def test_measurement_contradiction_suppresses_mixed_generic_analysis_retry(
     assert 'mode="analysis"' not in loop._turn_final_audit_instruction
 
 
+def test_downgraded_measurement_bookkeeping_suppresses_failed_claim_retry(
+    monkeypatch,
+):
+    loop = _analysis_loop()
+    loop.context.turn_state = TurnExecutionState(
+        budget=ToolExecutionBudget(max_tool_calls=1),
+    )
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_two_checks",
+        "status": "blocked",
+        "public_text": "Measured result. Unsupported result.",
+        "claim_checks": [
+            {
+                "claim_id": "claim_measurement",
+                "claim": "Measured result.",
+                "status": "downgraded",
+                "reason_codes": ["measurement_identity_missing"],
+                "issues": ["missing measurement-grain marker"],
+            },
+            {
+                "claim_id": "claim_unsupported",
+                "claim": "Unsupported result.",
+                "status": "failed",
+                "reason_codes": ["unsupported_claim"],
+                "issues": ["no computation evidence"],
+            },
+        ],
+    }
+    _patch_runtime_audit(monkeypatch, audit)
+
+    result = loop._gate_final_analysis_answer(
+        "analyze",
+        "Measured result. Unsupported result.",
+    )
+
+    assert result["action"] == "fallback"
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert 'mode="analysis"' not in loop._turn_final_audit_instruction
+
+
 def test_missing_computation_evidence_continues_analysis_only_when_budget_remains(monkeypatch):
     loop = _analysis_loop()
     loop.context.turn_state = TurnExecutionState(

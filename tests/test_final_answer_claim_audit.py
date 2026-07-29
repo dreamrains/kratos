@@ -254,12 +254,58 @@ def identity_evidence():
 
 
 @pytest.fixture
-def unbound_projected_evidence(identity_evidence):
-    evidence = copy.deepcopy(identity_evidence)
-    measurement = evidence["measurements"][0]
-    measurement.pop("identity")
-    measurement["identity_status"] = "metric_identity_missing"
-    return evidence
+def unbound_projected_evidence(tmp_path):
+    from tests.fixtures.measurement_identity import (
+        DATASET_VERSION,
+        PLAN_DIGEST,
+        PLAN_ID,
+        SESSION_ID,
+        STEP_DIGEST,
+        STEP_ID,
+        build_projection_context,
+        project_real_correlation,
+    )
+
+    context = build_projection_context(tmp_path)
+    capability = {
+        "capability_id": "analysis.correlation",
+        "category": "relationship",
+        "evidence_fields": [
+            "measurements.value",
+            "allowed_claim_class",
+        ],
+    }
+    output = {
+        "summary": "Revenue result 12; profit result 7.",
+        "data": {
+            "measurements": [
+                {"metric": "revenue", "value": 12.0, "unit": "CNY"},
+                {"definition": "profit result", "value": 7.0, "unit": "CNY"},
+            ],
+            "allowed_claim_class": "numeric",
+        },
+    }
+    result = project_real_correlation(
+        context,
+        output=output,
+        capability=capability,
+    )
+    assert result.projected is True
+    return {
+        "record": result.record,
+        "sessions_root": context.sessions_root,
+        "current_session_id": SESSION_ID,
+        "current_plan_id": PLAN_ID,
+        "current_plan_digest": PLAN_DIGEST,
+        "current_step_digests": {STEP_ID: STEP_DIGEST},
+        "current_dataset_versions": [DATASET_VERSION],
+        "analysis_requirements": [{
+            "id": "req_corr_effect",
+            "step_id": STEP_ID,
+            "name": "correlation",
+            "necessity": "required",
+        }],
+    }
 
 
 def _identity_audit(text, evidence, **kwargs):
@@ -339,13 +385,24 @@ def test_soft_mode_downgrades_exact_markerless_candidate(identity_evidence):
 def test_soft_mode_downgrades_current_auto_projected_unbound_measurement(
     unbound_projected_evidence,
 ):
+    bundle = unbound_projected_evidence
+    unbound = [
+        item
+        for item in bundle["record"]["measurements"]
+        if item.get("identity_status") == "metric_identity_missing"
+    ]
+    assert len(unbound) == 1
     audit = _audit(
-        "Revenue increased 12% in 2026-05 for new users.\n"
-        "Limitation: descriptive comparison only.",
-        evidence=[unbound_projected_evidence],
-        current_dataset_versions=["dataset_sales_v1"],
-        current_plan_digest="plan_digest_current",
-        current_step_digests={"step_compare": "step_digest_current"},
+        "Profit result was 7 CNY.\n"
+        "Limitation: server-projected structured computation.",
+        evidence=[bundle["record"]],
+        sessions_root=bundle["sessions_root"],
+        current_session_id=bundle["current_session_id"],
+        current_plan_id=bundle["current_plan_id"],
+        current_dataset_versions=bundle["current_dataset_versions"],
+        current_plan_digest=bundle["current_plan_digest"],
+        current_step_digests=bundle["current_step_digests"],
+        analysis_requirements=bundle["analysis_requirements"],
         measurement_binding_mode="soft",
     )
 
@@ -360,12 +417,17 @@ def test_soft_mode_downgrades_current_auto_projected_unbound_measurement(
 def test_soft_mode_requires_matching_metric_semantics_for_unbound_candidate(
     unbound_projected_evidence,
 ):
+    bundle = unbound_projected_evidence
     audit = _audit(
-        "Profit increased 12% in 2026-05 for new users.",
-        evidence=[unbound_projected_evidence],
-        current_dataset_versions=["dataset_sales_v1"],
-        current_plan_digest="plan_digest_current",
-        current_step_digests={"step_compare": "step_digest_current"},
+        "Revenue result was 7 CNY.",
+        evidence=[bundle["record"]],
+        sessions_root=bundle["sessions_root"],
+        current_session_id=bundle["current_session_id"],
+        current_plan_id=bundle["current_plan_id"],
+        current_dataset_versions=bundle["current_dataset_versions"],
+        current_plan_digest=bundle["current_plan_digest"],
+        current_step_digests=bundle["current_step_digests"],
+        analysis_requirements=bundle["analysis_requirements"],
         measurement_binding_mode="soft",
     )
 
@@ -374,6 +436,26 @@ def test_soft_mode_requires_matching_metric_semantics_for_unbound_candidate(
         "missing_evidence_identity"
         in audit["claim_checks"][0]["reason_codes"]
     )
+
+
+def test_soft_mode_rejects_model_authored_unbound_origin(identity_evidence):
+    evidence = copy.deepcopy(identity_evidence)
+    measurement = evidence["measurements"][0]
+    measurement.pop("identity")
+    measurement["identity_status"] = "metric_identity_missing"
+    measurement["projection_origin"] = "model_authored"
+
+    audit = _audit(
+        "Revenue increased 12% in 2026-05 for new users.",
+        evidence=[evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="soft",
+    )
+
+    assert audit["status"] == "blocked"
+    assert "missing_evidence_identity" in audit["claim_checks"][0]["reason_codes"]
 
 
 def test_soft_mode_does_not_publish_uncomputed_number_as_exploratory():
@@ -418,6 +500,58 @@ def test_authorizing_modes_accept_exact_v2_marker(identity_evidence, mode):
     assert audit["measurement_binding_diagnostics"][
         "v2_authorized_count"
     ] == 1
+
+
+@pytest.mark.parametrize(
+    ("claim_text", "reason_code"),
+    [
+        (
+            "Revenue increased 21% in 2026-05 for new users",
+            "numeric_mismatch",
+        ),
+        (
+            "Revenue increased 12 CNY in 2026-05 for new users",
+            "unit_mismatch",
+        ),
+        (
+            "Revenue decreased 12% in 2026-05 for new users",
+            "direction_mismatch",
+        ),
+        (
+            "Revenue increased 12% in 2026-06 for new users",
+            "time_scope_mismatch",
+        ),
+        (
+            "Revenue increased 12% in 2026-05 for existing users",
+            "population_scope_mismatch",
+        ),
+        (
+            "Revenue increased 12% with high confidence",
+            "confidence_mismatch",
+        ),
+    ],
+)
+def test_measurement_diagnostics_count_semantic_contradictions(
+    identity_evidence,
+    claim_text,
+    reason_code,
+):
+    measurement_key = identity_evidence["measurements"][0]["identity"][
+        "measurement_key"
+    ]
+    audit = _audit(
+        f"{claim_text} "
+        f"[[evidence:{identity_evidence['id']}#{measurement_key}]].",
+        evidence=[identity_evidence],
+        current_dataset_versions=["dataset_sales_v1"],
+        current_plan_digest="plan_digest_current",
+        current_step_digests={"step_compare": "step_digest_current"},
+        measurement_binding_mode="soft",
+    )
+
+    assert audit["status"] == "blocked"
+    assert reason_code in audit["claim_checks"][0]["reason_codes"]
+    assert audit["measurement_binding_diagnostics"]["contradiction_count"] == 1
 
 
 def test_enforced_mode_rejects_markerless_exact_candidate(identity_evidence):
@@ -1473,3 +1607,36 @@ def test_runtime_persists_full_audit_and_keeps_only_compact_ref_in_state(tmp_pat
     artifact["status"] = "blocked"
     Path(ref["artifact_path"]).write_text(json.dumps(artifact), encoding="utf-8")
     assert runtime.hydrate_final_answer_audit_ref(ref) is None
+
+
+def test_runtime_uses_validated_cached_measurement_binding_mode(
+    tmp_path,
+    monkeypatch,
+):
+    from data_agent import config as config_module
+    from data_agent.config import AgentConfig
+
+    cached = AgentConfig(
+        MEASUREMENT_EVIDENCE_BINDING_MODE="shadow",
+        _env_file=None,
+    )
+    monkeypatch.setattr(config_module, "_config", cached)
+    monkeypatch.setattr(runtime, "_sessions_root", lambda: tmp_path / "sessions")
+    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: None)
+    state = SimpleNamespace(
+        session_id="audit_shadow_config",
+        analysis_plan={"id": "plan_current", "analysis_requirements": {}},
+        evidence_records=[_evidence()],
+        route_proposals=[],
+        cleaning_logs=[],
+        verification_reports=[],
+        save=lambda: None,
+    )
+
+    ref = runtime.audit_final_answer_draft(
+        "Revenue increased 12% [[evidence:ev_revenue]].",
+        state,
+    )
+    artifact = json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
+
+    assert artifact["measurement_binding_diagnostics"]["mode"] == "shadow"

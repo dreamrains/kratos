@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from data_agent.agent.evidence_compatibility import compare_measurements
-from data_agent.agent.evidence_contracts import validate_measurement
+from data_agent.agent.evidence_contracts import (
+    MEASUREMENT_PROJECTION_ORIGIN,
+    validate_measurement,
+)
 
 
 REQUIRED_EVIDENCE_FIELDS = (
@@ -1167,6 +1170,8 @@ def _exact_exploratory_measurement_candidates(
             elif (
                 measurement.get("identity_status")
                 == "metric_identity_missing"
+                and measurement.get("projection_origin")
+                == MEASUREMENT_PROJECTION_ORIGIN
                 and _claim_matches_projected_metric_fields(claim, measurement)
             ):
                 identity_issues = []
@@ -1796,6 +1801,7 @@ def _check_claim(
         and measurement_binding_mode in {"soft", "enforced"}
         and check["status"] != "failed"
     )
+    check["_measurement_checked"] = selected_measurement is not None
     return _finalize_check(check)
 
 
@@ -1897,6 +1903,20 @@ def verify_analysis_claims(
         "measurement_dataset_version_mismatch",
         "measurement_ambiguous",
     }
+    semantic_measurement_contradiction_codes = {
+        "numeric_mismatch",
+        "unit_mismatch",
+        "direction_mismatch",
+        "time_scope_mismatch",
+        "population_scope_mismatch",
+        "confidence_mismatch",
+        "verification_level_overclaim",
+        "causal_claim_not_identified",
+    }
+    measurement_checked = [
+        bool(check.pop("_measurement_checked", False))
+        for check in claim_checks
+    ]
     measurement_binding_diagnostics = {
         "mode": measurement_binding_mode,
         "v2_exact_match_count": sum(
@@ -1917,8 +1937,13 @@ def verify_analysis_claims(
             and bool(
                 set(check.get("reason_codes") or [])
                 & (measurement_codes - {"measurement_identity_missing"})
+                or (
+                    measurement_checked[index]
+                    and set(check.get("reason_codes") or [])
+                    & semantic_measurement_contradiction_codes
+                )
             )
-            for check in claim_checks
+            for index, check in enumerate(claim_checks)
         ),
     }
     route_proposal_ids = [str(route["id"]) for route in safe_routes if route.get("id")]

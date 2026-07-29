@@ -68,6 +68,7 @@ EVIDENCE_RECORD_CONTRACT_VERSION = "evidence_record.v2"
 COMPUTATION_REF_CONTRACT_VERSION = "computation_ref.v1"
 TOOL_OUTPUT_CONTRACT_VERSION = "tool_output.v1"
 MEASUREMENT_IDENTITY_CONTRACT_VERSION = "measurement_identity.v1"
+MEASUREMENT_PROJECTION_ORIGIN = "structured_computation_projector.v1"
 
 MEASUREMENT_IDENTITY_REQUIRED_FIELDS = (
     "contract_version",
@@ -1585,7 +1586,15 @@ def bind_evidence_to_computations(
             "EvidenceRecord computation refs and verification levels are server-owned.",
         )
     if any(
-        isinstance(measurement, dict) and "identity" in measurement
+        isinstance(measurement, dict)
+        and any(
+            field_name in measurement
+            for field_name in (
+                "identity",
+                "identity_status",
+                "projection_origin",
+            )
+        )
         for measurement in record.get("measurements") or []
     ):
         return _error(
@@ -2341,10 +2350,32 @@ def validate_evidence_record(
     normalized_measurements = []
     identity_count = 0
     for index, measurement in enumerate(measurements):
+        projection_fields_present = (
+            isinstance(measurement, dict)
+            and (
+                "identity_status" in measurement
+                or "projection_origin" in measurement
+            )
+        )
+        if projection_fields_present and not (
+            measurement.get("identity_status") == "metric_identity_missing"
+            and measurement.get("projection_origin")
+            == MEASUREMENT_PROJECTION_ORIGIN
+        ):
+            return _error(
+                "invalid_measurement_projection_origin",
+                "Unbound measurement origin is not server-projector owned.",
+                index=index,
+            )
         identity_exempt = (
             isinstance(measurement, dict)
             and (
-                measurement.get("identity_status") == "metric_identity_missing"
+                (
+                    measurement.get("identity_status")
+                    == "metric_identity_missing"
+                    and measurement.get("projection_origin")
+                    == MEASUREMENT_PROJECTION_ORIGIN
+                )
                 or _text(measurement.get("metric")) == "structured_computation"
             )
         )
@@ -2652,12 +2683,27 @@ def _attach_projected_measurement_identity(
     plan_id: str,
     allowed_claim_class: str,
 ) -> None:
+    projected_unit = (
+        _text(item.get("unit"))
+        if isinstance(item, dict)
+        else ""
+    )
+    if projected_unit:
+        measurement["unit"] = projected_unit
     metric_identity = _structured_metric_identity(
         declared_field=declared_field,
         item=item,
     )
     if metric_identity is None:
+        projected_definition = (
+            _text(item.get("definition"))
+            if isinstance(item, dict)
+            else ""
+        )
+        if projected_definition:
+            measurement["definition"] = projected_definition
         measurement["identity_status"] = "metric_identity_missing"
+        measurement["projection_origin"] = MEASUREMENT_PROJECTION_ORIGIN
         return
     metric_key, metric_label, metric_aliases = metric_identity
     identity = {
