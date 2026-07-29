@@ -68,6 +68,17 @@ def test_deterministic_profile_does_not_claim_browser_pass():
     assert report["product_release_passed"] is False
 
 
+def test_deterministic_profile_forces_external_gates_not_run():
+    report = build_gate_report(
+        profile="deterministic",
+        gate_results={gate: "PASS" for gate in "ABCDEF"},
+    )
+    assert report["overall_status"] == "PASS"
+    assert report["gates"]["E"]["status"] == "NOT_RUN"
+    assert report["gates"]["F"]["status"] == "NOT_RUN"
+    assert report["product_release_passed"] is False
+
+
 def test_product_profile_fails_when_browser_or_live_gate_is_not_run():
     report = build_gate_report(
         profile="product",
@@ -127,6 +138,45 @@ def test_harness_inspection_does_not_treat_comments_as_collect_ignore(tmp_path):
     result = inspect_test_harness(conftest)
     assert result["status"] == "PASS"
     assert result["release_critical_ignored"] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "reason"),
+    [
+        (
+            'collect_ignore = []\ncollect_ignore.append("test_web_gui.py")\n',
+            "dynamic_collect_ignore",
+        ),
+        (
+            'collect_ignore = []\ncollect_ignore.extend(["test_web_gui.py"])\n',
+            "dynamic_collect_ignore",
+        ),
+        (
+            'collect_ignore_glob = ["test_web*.py"]\n',
+            "collect_ignore_glob_unsupported",
+        ),
+        (
+            "def pytest_ignore_collect(collection_path, config):\n"
+            "    return True\n",
+            "unsafe_collection_hook",
+        ),
+        (
+            "def pytest_collection_modifyitems(config, items):\n"
+            "    items.clear()\n",
+            "unsafe_collection_hook",
+        ),
+    ],
+)
+def test_harness_inspection_rejects_dynamic_collection_controls(
+    tmp_path,
+    source,
+    reason,
+):
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(source, encoding="utf-8")
+    result = inspect_test_harness(conftest)
+    assert result["status"] == "FAIL"
+    assert reason in result["reason_codes"]
 
 
 def _passing_browser_receipt() -> dict:
@@ -216,15 +266,44 @@ def test_product_gate_rejects_missing_or_stale_receipt(gate, receipt):
     assert report["gates"][gate]["status"] in {"FAIL", "BLOCKED"}
 
 
-def test_product_gate_accepts_only_exact_versioned_source_bound_receipts():
+@pytest.mark.parametrize(
+    "live_receipt",
+    [
+        {
+            "contract_version": "analysis_live_provider_gate.v1",
+            "status": "PASS",
+            "source_digest": SOURCE_DIGEST,
+        },
+        {
+            "contract_version": "analysis_live_provider_gate.v1",
+            "status": "PASS",
+            "source_digest": SOURCE_DIGEST,
+            "provider_model": "forged-model",
+            "runs": [{"status": "PASS"} for _index in range(3)],
+        },
+    ],
+)
+def test_product_gate_blocks_live_pass_until_real_validator_exists(live_receipt):
     report = build_product_report_for_test(
         browser_receipt=_passing_browser_receipt(),
-        live_receipt=_passing_live_receipt(),
+        live_receipt=live_receipt,
         expected_source_digest=SOURCE_DIGEST,
+    )
+    assert report["overall_status"] == "FAIL"
+    assert report["product_release_passed"] is False
+    assert report["gates"]["F"] == {
+        "status": "BLOCKED",
+        "reason_codes": ["live_provider_pass_not_yet_acceptable"],
+    }
+
+
+def test_pure_product_status_requires_all_a_through_f_pass():
+    report = build_gate_report(
+        profile="product",
+        gate_results={gate: "PASS" for gate in "ABCDEF"},
     )
     assert report["overall_status"] == "PASS"
     assert report["product_release_passed"] is True
-    assert all(report["gates"][gate]["status"] == "PASS" for gate in "ABCDEF")
 
 
 def test_product_gate_preserves_source_bound_live_blocked_status():
@@ -313,6 +392,10 @@ def test_declared_pytest_commands_fail_on_return_not_none_warning(tmp_path):
         and "error::pytest.PytestReturnNotNoneWarning" in command
         for command in pytest_commands
     )
+    assert sum(
+        "tests/test_analysis_release_gate_runner.py" in command
+        for command in pytest_commands
+    ) == 1
     assert ["git", "diff", "--check"] in commands
 
 

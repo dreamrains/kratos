@@ -40,6 +40,20 @@ _RELEASE_CRITICAL_IGNORED = frozenset(
 _DIRECT_RUNNERS = {
     "test_tools_comprehensive.py": "tests/test_tools_comprehensive.py",
 }
+_COLLECTION_HOOKS = frozenset(
+    {
+        "pytest_ignore_collect",
+        "pytest_collect_directory",
+        "pytest_collect_file",
+        "pytest_pycollect_makemodule",
+        "pytest_pycollect_makeitem",
+        "pytest_make_collect_report",
+        "pytest_collection",
+        "pytest_collection_modifyitems",
+        "pytest_collection_finish",
+        "pytest_deselected",
+    }
+)
 _MAX_RECEIPT_BYTES = 1024 * 1024
 _MAX_CAPTURE_CHARS = 4000
 
@@ -62,7 +76,11 @@ def build_gate_report(
     )
     gates: dict[str, dict[str, Any]] = {}
     for gate in PRODUCT_REQUIRED:
-        status = gate_results.get(gate, "NOT_RUN")
+        status = (
+            "NOT_RUN"
+            if profile == "deterministic" and gate in {"E", "F"}
+            else gate_results.get(gate, "NOT_RUN")
+        )
         if status not in VALID_GATE_STATUSES:
             raise ValueError(f"invalid gate status for {gate}: {status}")
         gates[gate] = {"status": status}
@@ -115,6 +133,53 @@ def _collect_ignore_values(tree: ast.AST) -> tuple[list[str], list[str]]:
     return values, reasons
 
 
+def _contains_name(node: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(item, ast.Name) and item.id == name
+        for item in ast.walk(node)
+    )
+
+
+def _collection_control_reasons(tree: ast.AST) -> list[str]:
+    reasons: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Name)
+            and node.id == "collect_ignore_glob"
+        ):
+            reasons.append("collect_ignore_glob_unsupported")
+        if isinstance(node, ast.Call) and _contains_name(node, "collect_ignore"):
+            reasons.append("dynamic_collect_ignore")
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+            )
+            for target in targets:
+                if (
+                    not isinstance(target, ast.Name)
+                    and _contains_name(target, "collect_ignore")
+                ):
+                    reasons.append("dynamic_collect_ignore")
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id in _COLLECTION_HOOKS
+                ):
+                    reasons.append("unsafe_collection_hook")
+        if isinstance(node, ast.Delete) and any(
+            _contains_name(target, "collect_ignore")
+            for target in node.targets
+        ):
+            reasons.append("dynamic_collect_ignore")
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in _COLLECTION_HOOKS
+        ):
+            reasons.append("unsafe_collection_hook")
+    return list(dict.fromkeys(reasons))
+
+
 def inspect_test_harness(conftest: Path) -> dict[str, Any]:
     """Classify ignored tests and reject hidden release-critical Web tests."""
 
@@ -125,6 +190,7 @@ def inspect_test_harness(conftest: Path) -> dict[str, Any]:
         tree = ast.parse(source, filename=str(conftest))
         ignored, parse_reasons = _collect_ignore_values(tree)
         reasons.extend(parse_reasons)
+        reasons.extend(_collection_control_reasons(tree))
     except (OSError, UnicodeError, SyntaxError):
         reasons.append("test_harness_unreadable")
     ignored_names = {Path(item).name for item in ignored}
@@ -165,6 +231,7 @@ def _declared_commands(replay_root: Path) -> dict[str, list[tuple[str, list[str]
                     "tests/test_web_sse_contract.py",
                     "tests/test_web_sse_reactivity_contract.py",
                     "tests/test_analysis_progress_streaming.py",
+                    "tests/test_analysis_release_gate_runner.py",
                 ),
             ),
             (
@@ -369,6 +436,11 @@ def _validate_receipt(
         reasons.append("stale_live_provider_receipt")
     if reasons:
         return {"status": "FAIL", "reason_codes": reasons}
+    if raw_status == "PASS":
+        return {
+            "status": "BLOCKED",
+            "reason_codes": ["live_provider_pass_not_yet_acceptable"],
+        }
     receipt_reasons = receipt.get("reason_codes") or []
     if not (
         isinstance(receipt_reasons, list)
