@@ -21,6 +21,7 @@ from __future__ import annotations
 import sys
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 
 # Make the harness importable as ``replay_analysis_reliability``.
 _SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -32,10 +33,12 @@ from replay_analysis_reliability import (  # noqa: E402
     _DIMENSION_OPPORTUNITY_PROMPT,
     _dimension_opportunity_responses,
     _superficial_profile_only_responses,
+    run_release_replay,
     run_deterministic_replay,
     run_sandbox_replay,
     run_unicode_replay,
 )
+import replay_analysis_reliability  # noqa: E402
 from tests.fixtures.analysis_reliability import (  # noqa: E402
     build_aggregate_payment_frame,
     build_factor_relationship_frame,
@@ -358,4 +361,67 @@ def test_unicode_progress_replay_survives_cp936_and_keeps_browser_unicode(tmp_pa
     result = run_unicode_replay(tmp_path, console_encoding="cp936")
     assert result.turn_completed is True
     assert "⚠️" in result.persisted_text
-    assert "⚠️" in result.browser_text
+    assert "⚠️" in result.streamed_text
+
+
+def test_live_replay_without_provider_is_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        replay_analysis_reliability,
+        "get_config",
+        lambda: SimpleNamespace(api_key=None, model_id="gpt-4o"),
+        raising=False,
+    )
+    summary = run_release_replay(tmp_path, mode="live")
+    assert summary["accepted"] is False
+    assert summary["overall_status"] == "BLOCKED"
+    assert summary["live_provider_status"] == "BLOCKED"
+    assert summary["reason"] == "provider_credentials_unavailable"
+
+
+def test_live_replay_with_provider_is_blocked_until_real_runner_exists(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        replay_analysis_reliability,
+        "get_config",
+        lambda: SimpleNamespace(api_key="configured", model_id="gpt-4o"),
+        raising=False,
+    )
+    summary = run_release_replay(tmp_path, mode="live")
+    assert summary["accepted"] is False
+    assert summary["overall_status"] == "BLOCKED"
+    assert summary["live_provider_status"] == "BLOCKED"
+    assert summary["reason"] == "live_provider_runner_not_implemented"
+
+
+def test_deterministic_replay_never_uses_global_selection_providers(
+    monkeypatch,
+    tmp_path,
+):
+    from data_agent.agent import llm_intent, llm_playbook
+
+    class FailingIntentClient:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            raise AssertionError("deterministic replay called external intent provider")
+
+    intent_sentinel = FailingIntentClient()
+    playbook_sentinel = FailingIntentClient()
+    monkeypatch.setattr(llm_intent, "_client", intent_sentinel)
+    monkeypatch.setattr(llm_playbook, "_client", playbook_sentinel)
+    result = run_deterministic_replay(
+        frame=build_factor_relationship_frame(),
+        prompt=factor_relationship_prompt(),
+        root=tmp_path,
+        session_id="offline_intent_replay",
+    )
+
+    assert result.turn_completed is True
+    assert intent_sentinel.calls == 0
+    assert playbook_sentinel.calls == 0
+    assert llm_intent._client is intent_sentinel
+    assert llm_playbook._client is playbook_sentinel

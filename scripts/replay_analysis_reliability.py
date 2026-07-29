@@ -43,7 +43,7 @@ from data_agent.agent.evidence_contracts import (  # noqa: E402
     analysis_plan_semantic_digest,
     analysis_step_semantic_digest,
 )
-from data_agent.config import AgentConfig  # noqa: E402
+from data_agent.config import AgentConfig, get_config  # noqa: E402
 from data_agent.llm.client import Response, ToolCall  # noqa: E402
 from data_agent.session.task_manager import task_manager  # noqa: E402
 from data_agent.tools import analysis_flow as _analysis_flow  # noqa: E402,F401
@@ -85,7 +85,7 @@ class ReplayResult:
     Field union covers every assertion in the four replay tests: the canonical
     analysis trace, terminal completion state, structured evidence, ordered
     progress events, language detection, claimed dimensions, sandbox-recovery
-    counters, and the persisted vs. browser-visible text.
+    counters, and the persisted vs. SSE-streamed text.
     """
 
     turn_completed: bool = False
@@ -100,7 +100,7 @@ class ReplayResult:
     serialized_trace: str = ""
     max_identical_failure_attempts: int = 0
     persisted_text: str = ""
-    browser_text: str = ""
+    streamed_text: str = ""
     successful_capability_ids: list[str] = field(default_factory=list)
     requirement_statuses: dict[str, str] = field(default_factory=dict)
     published_limitations: list[str] = field(default_factory=list)
@@ -112,6 +112,12 @@ class ReplayResult:
     current_dataset_versions: list[str] = field(default_factory=list)
     sessions_root: str = ""
     current_session_id: str = ""
+
+    @property
+    def browser_text(self) -> str:
+        """Deprecated alias; SSE aggregation is not actual-browser evidence."""
+
+        return self.streamed_text
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +175,13 @@ class _ScriptedLLM:
 
         response = self.chat(messages, tools=tools, system=system)
         yield StreamComplete(response=response)
+
+
+class _OfflineSemanticClient:
+    """Return no semantic override so deterministic replays stay offline."""
+
+    def chat(self, *_args, **_kwargs) -> Response:
+        return Response(text="")
 
 
 def _tool_call(name: str, arguments: dict[str, Any], *, call_id: str | None = None) -> ToolCall:
@@ -521,9 +534,13 @@ def _factor_measurement_marker(state) -> str:
 def _test_config(tmp_path: Path, session_id: str) -> Iterator[None]:
     """Point the global config + task_manager at isolated tmp directories."""
 
+    from data_agent.agent import llm_intent, llm_playbook
+
     old_cfg = _config._config
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
+    old_intent_client = llm_intent._client
+    old_playbook_client = llm_playbook._client
 
     _config._config = AgentConfig(
         PROJECT_DIR=tmp_path / session_id / "project",
@@ -531,12 +548,16 @@ def _test_config(tmp_path: Path, session_id: str) -> Iterator[None]:
     )
     task_manager._dir = tmp_path / session_id / "tasks"
     task_manager._next_id_val = 0
+    llm_intent._client = _OfflineSemanticClient()
+    llm_playbook._client = _OfflineSemanticClient()
     try:
         yield
     finally:
         _config._config = old_cfg
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
+        llm_intent._client = old_intent_client
+        llm_playbook._client = old_playbook_client
 
 
 @contextmanager
@@ -599,7 +620,7 @@ def _drive_replay(
     tmp_path: Path,
     streaming: bool = False,
 ) -> tuple[AgentLoop, str, str, str]:
-    """Drive a single AgentLoop turn. Returns ``(loop, final_text, persisted, browser)``."""
+    """Return ``(loop, final_text, persisted_text, streamed_text)``."""
 
     client = _ScriptedLLM(
         responses,
@@ -639,18 +660,18 @@ def _drive_replay(
     with _noninteractive_stdin():
         if streaming:
             events = list(loop.stream_turn(prompt))
-            browser_text = "".join(
+            streamed_text = "".join(
                 str(ev.get("text") or "")
                 for ev in events
                 if isinstance(ev, dict) and ev.get("type") == "text_delta"
             )
-            final_text = browser_text or _last_assistant_text(loop.messages)
+            final_text = streamed_text or _last_assistant_text(loop.messages)
         else:
             final_text = loop.run_turn(prompt) or ""
-            browser_text = final_text or _last_assistant_text(loop.messages)
+            streamed_text = final_text or _last_assistant_text(loop.messages)
 
     persisted_text = _last_assistant_text(loop.messages) or final_text
-    return loop, final_text, persisted_text, browser_text
+    return loop, final_text, persisted_text, streamed_text
 
 
 def _finalize_result(
@@ -658,7 +679,7 @@ def _finalize_result(
     loop: AgentLoop,
     final_text: str,
     persisted_text: str,
-    browser_text: str,
+    streamed_text: str,
 ) -> ReplayResult:
     state = getattr(loop.context, "analysis_state", None)
     if state is None:
@@ -667,7 +688,7 @@ def _finalize_result(
             final_answer=final_text,
             final_answer_language=_detect_language(final_text),
             persisted_text=persisted_text,
-            browser_text=browser_text,
+            streamed_text=streamed_text,
         )
     trace, completion_state, max_identical_failures = _build_trace(state)
     progress_events, final_answer_sequence = _build_progress_events(state)
@@ -705,7 +726,7 @@ def _finalize_result(
         serialized_trace=_serialized_trace(state, loop),
         max_identical_failure_attempts=max_identical_failures,
         persisted_text=persisted_text,
-        browser_text=browser_text,
+        streamed_text=streamed_text,
         successful_capability_ids=_successful_capability_ids(state),
         requirement_statuses=_requirement_statuses(
             state,
@@ -1001,7 +1022,7 @@ def run_deterministic_replay(
         fallback_text = _FACTOR_FINAL_TEXT
 
     with _test_config(root, session_id):
-        loop, final_text, persisted, browser = _drive_replay(
+        loop, final_text, persisted, streamed = _drive_replay(
             csv_path=csv_path,
             prompt=prompt,
             responses=responses,
@@ -1015,7 +1036,7 @@ def run_deterministic_replay(
         loop=loop,
         final_text=final_text,
         persisted_text=persisted,
-        browser_text=browser,
+        streamed_text=streamed,
     )
 
 
@@ -1027,7 +1048,7 @@ def run_sandbox_replay(root: Path) -> ReplayResult:
     csv_path = _write_factor_csv(root)
     responses = _sandbox_responses(csv_path)
     with _test_config(root, "sandbox_replay"):
-        loop, final_text, persisted, browser = _drive_replay(
+        loop, final_text, persisted, streamed = _drive_replay(
             csv_path=csv_path,
             prompt="请用 python 检查数据基本特征并尝试稳健性诊断",
             responses=responses,
@@ -1040,7 +1061,7 @@ def run_sandbox_replay(root: Path) -> ReplayResult:
         loop=loop,
         final_text=final_text,
         persisted_text=persisted,
-        browser_text=browser,
+        streamed_text=streamed,
     )
 
 
@@ -1048,7 +1069,7 @@ def run_unicode_replay(root: Path, *, console_encoding: str = "cp936") -> Replay
     """Drive a streaming replay under a constrained console encoding.
 
     Verifies the unicode-safe boundary (Task 4) keeps ``⚠️`` intact in both
-    the persisted assistant message and the SSE/browser text path, even when
+    the persisted assistant message and SSE-streamed text, even when
     the console is captured under ``cp936``.
     """
 
@@ -1057,7 +1078,7 @@ def run_unicode_replay(root: Path, *, console_encoding: str = "cp936") -> Replay
     csv_path = _write_factor_csv(root)
     responses = _unicode_responses(csv_path)
     with _test_config(root, "unicode_replay"), _console_encoding(console_encoding):
-        loop, final_text, persisted, browser = _drive_replay(
+        loop, final_text, persisted, streamed = _drive_replay(
             csv_path=csv_path,
             prompt="请分析哪些影响因素与目标值存在显著关系，并说明方法、稳定性和局限。",
             responses=responses,
@@ -1071,7 +1092,7 @@ def run_unicode_replay(root: Path, *, console_encoding: str = "cp936") -> Replay
         loop=loop,
         final_text=final_text,
         persisted_text=persisted,
-        browser_text=browser,
+        streamed_text=streamed,
     )
 
 
@@ -1080,20 +1101,18 @@ def run_unicode_replay(root: Path, *, console_encoding: str = "cp936") -> Replay
 # ---------------------------------------------------------------------------
 
 
-def replay_suite(
+def run_release_replay(
+    output_dir: Path,
     *,
     mode: str,
-    runs: int,
-    output_dir: Path,
+    runs: int | None = None,
 ) -> dict[str, Any]:
-    """Run the four deterministic scenarios and return the acceptance summary.
+    """Run deterministic replay or report why live execution is blocked."""
 
-    ``mode`` is currently ``"deterministic"`` (the release gate). ``"live"``
-    is documented for forward compatibility; without configured provider
-    credentials it records ``not_run_no_provider_credentials`` and the
-    deterministic scenarios remain authoritative.
-    """
-
+    if mode not in {"deterministic", "live"}:
+        raise ValueError("mode must be deterministic or live")
+    if runs is None:
+        runs = 3 if mode == "live" else 1
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1101,26 +1120,24 @@ def replay_suite(
         if runs != 3:
             raise ValueError("live mode requires --runs 3")
         try:
-            from data_agent.config import get_config
-
             cfg = get_config()
-            provider_ready = bool(getattr(cfg, "api_key", "") and getattr(cfg, "model_id", ""))
+            provider_ready = bool(
+                getattr(cfg, "api_key", "")
+                and getattr(cfg, "model_id", "")
+            )
         except Exception:
             provider_ready = False
-        if not provider_ready:
-            return {
-                "accepted": True,
-                "mode": "live",
-                "live_provider_status": "not_run_no_provider_credentials",
-                "factor_relationship": True,
-                "sandbox_recovery": True,
-                "unicode_boundary": True,
-                "aggregate_profile_boundary": True,
-            }
-        # Live mode is intentionally out of scope for Phase A. When the
-        # provider is configured, defer to the deterministic gate until
-        # Phase B/C wires the three-run live path.
-        mode = "deterministic"
+        return {
+            "accepted": False,
+            "overall_status": "BLOCKED",
+            "mode": "live",
+            "live_provider_status": "BLOCKED",
+            "reason": (
+                "live_provider_runner_not_implemented"
+                if provider_ready
+                else "provider_credentials_unavailable"
+            ),
+        }
 
     factor_root = output_dir / "factor"
     sandbox_root = output_dir / "sandbox"
@@ -1135,12 +1152,24 @@ def replay_suite(
     accepted = factor_ok and sandbox_ok and unicode_ok and aggregate_ok
     return {
         "accepted": accepted,
+        "overall_status": "PASS" if accepted else "FAIL",
         "mode": "deterministic",
         "factor_relationship": factor_ok,
         "sandbox_recovery": sandbox_ok,
         "unicode_boundary": unicode_ok,
         "aggregate_profile_boundary": aggregate_ok,
     }
+
+
+def replay_suite(
+    *,
+    mode: str,
+    runs: int,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Compatibility wrapper for the release replay CLI."""
+
+    return run_release_replay(output_dir, mode=mode, runs=runs)
 
 
 def _run_factor_scenario(root: Path) -> bool:
@@ -1240,7 +1269,7 @@ def _run_unicode_scenario(root: Path) -> bool:
         return False
     if not result.turn_completed:
         return False
-    return "⚠️" in result.persisted_text and "⚠️" in result.browser_text
+    return "⚠️" in result.persisted_text and "⚠️" in result.streamed_text
 
 
 def main() -> int:
