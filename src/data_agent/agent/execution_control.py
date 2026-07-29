@@ -780,11 +780,12 @@ def _recoverable_requirement_ids(
     continuation_available: bool,
     evidence_records: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """Recoverable requirements: execution category, not projection-missing.
+    """Classify recoverability independently for each unmet requirement.
 
-    Once the agent has recorded any evidence, unmet requirements are treated
-    as publication gaps rather than computation gaps — Task 8 forbids
-    recomputation for projection-only failures.
+    Evidence for one requirement cannot turn separate execution obligations
+    into publication gaps. A requirement is projection-only only when its own
+    successful computation ref is present; incomplete or unrelated evidence
+    does not suppress the bounded execution continuation.
     """
 
     diagnostics: list[dict[str, Any]] = []
@@ -796,25 +797,27 @@ def _recoverable_requirement_ids(
                 "reason": "no_continuation_budget",
             })
         return [], diagnostics
-    if evidence_records:
-        for requirement in unmet:
-            diagnostics.append({
-                "requirement_id": str(requirement.get("id") or ""),
-                "recoverable": False,
-                "reason": "evidence_already_recorded",
-            })
-        return [], diagnostics
     recoverable: list[str] = []
     for requirement in unmet:
         requirement_id = str(requirement.get("id") or "")
         if not requirement_id:
             continue
-        category = str(requirement.get("category") or "")
+        category = str(requirement.get("category") or "").strip().lower()
+        bound_incomplete_evidence_count = sum(
+            1
+            for record in evidence_records or []
+            if requirement_id in (
+                record.get("requirement_ids")
+                if isinstance(record.get("requirement_ids"), list)
+                else []
+            )
+        )
         if category in _PUBLICATION_REQUIREMENT_CATEGORIES:
             diagnostics.append({
                 "requirement_id": requirement_id,
                 "recoverable": False,
                 "reason": "publication_only",
+                "bound_incomplete_evidence_count": bound_incomplete_evidence_count,
             })
             continue
         if _is_projection_failure(requirement, successful_refs):
@@ -822,6 +825,7 @@ def _recoverable_requirement_ids(
                 "requirement_id": requirement_id,
                 "recoverable": False,
                 "reason": "projection_missing",
+                "bound_incomplete_evidence_count": bound_incomplete_evidence_count,
             })
             continue
         retry_available = (
@@ -833,6 +837,7 @@ def _recoverable_requirement_ids(
                 "requirement_id": requirement_id,
                 "recoverable": False,
                 "reason": "recovery_budget_exhausted",
+                "bound_incomplete_evidence_count": bound_incomplete_evidence_count,
             })
             continue
         recoverable.append(requirement_id)
@@ -840,6 +845,7 @@ def _recoverable_requirement_ids(
             "requirement_id": requirement_id,
             "recoverable": True,
             "reason": "execution_unmet",
+            "bound_incomplete_evidence_count": bound_incomplete_evidence_count,
         })
     return recoverable, diagnostics
 

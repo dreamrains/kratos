@@ -602,6 +602,125 @@ def test_factor_plan_recovers_for_one_continuation(factor_plan, factor_completio
     assert decision.allow_analysis_continuation is True
 
 
+def test_partial_evidence_does_not_hide_separate_unexecuted_analysis_requirement(
+    factor_plan,
+    factor_completion_case,
+):
+    case = factor_completion_case(
+        plan=factor_plan,
+        computation_refs=[successful_profile_ref()],
+        evidence_records=[
+            {
+                "id": "ev_profile",
+                "step_id": "step_grain_and_missingness_checked",
+                "requirement_ids": [
+                    "req_grain_definition",
+                    "req_missingness_assessment",
+                ],
+                "grain_definition": {"grain": "one row per customer-month"},
+                "missingness_assessment": {"status": "assessed"},
+            },
+            {
+                "id": "ev_multivariable_partial",
+                "step_id": "step_multivariable_method_attempted",
+                "requirement_ids": ["req_multivariable_adjustment"],
+                "method_diagnostic": {"status": "not_yet_executed"},
+            },
+        ],
+        tool_outcomes=[successful_tool_outcome("profile_data")],
+        budget_exhausted=False,
+    )
+
+    decision = evaluate_analysis_completion(**case)
+
+    assert "req_grain_definition" in decision.satisfied_requirement_ids
+    assert "req_missingness_assessment" in decision.satisfied_requirement_ids
+    assert "req_grain_definition" not in decision.recoverable_requirement_ids
+    assert "req_multivariable_adjustment" in decision.recoverable_requirement_ids
+    assert decision.allow_analysis_continuation is True
+
+
+def test_successful_bound_computation_gap_is_projection_only(turn_state):
+    decision = evaluate_analysis_completion(
+        plan={
+            "id": "plan_projection_gap",
+            "maximum_claim_class": "inferential_associations",
+        },
+        requirements=[
+            _requirement(
+                "req_metric_delta",
+                "step_compare",
+                "metric_delta",
+                category="measurement",
+            ),
+        ],
+        computation_refs=[
+            _ref(
+                plan_id="plan_projection_gap",
+                step_id="step_compare",
+                tool_call_id="tc_compare",
+                tool_name="compare_periods",
+                capability_id="analysis.period_compare",
+                evidence_fields=["metric_delta"],
+                requirement_ids=["req_metric_delta"],
+            )
+        ],
+        evidence_records=[],
+        tool_outcomes=[_outcome("tc_compare", "compare_periods", success=True)],
+        turn_state=turn_state,
+        budget_exhausted=False,
+    )
+
+    assert decision.recoverable_requirement_ids == ()
+    assert decision.allow_analysis_continuation is False
+    assert any(
+        diagnostic.get("requirement_id") == "req_metric_delta"
+        and diagnostic.get("reason") == "projection_missing"
+        for diagnostic in decision.diagnostics
+    )
+
+
+def test_unmet_analysis_requirement_stays_terminal_after_recovery_budget_exhausted(
+    turn_state,
+):
+    turn_state.record_corrected_retry("req_multivariable_adjustment")
+    turn_state.record_fallback("req_multivariable_adjustment")
+    decision = evaluate_analysis_completion(
+        plan={
+            "id": "plan_exhausted",
+            "maximum_claim_class": "inferential_associations",
+        },
+        requirements=[
+            _requirement(
+                "req_multivariable_adjustment",
+                "step_multivariable",
+                "multivariable_adjustment",
+                category="inference",
+            ),
+        ],
+        computation_refs=[],
+        evidence_records=[
+            {
+                "id": "ev_multivariable_partial",
+                "step_id": "step_multivariable",
+                "requirement_ids": ["req_multivariable_adjustment"],
+                "method_diagnostic": {"status": "failed"},
+            },
+        ],
+        tool_outcomes=[],
+        turn_state=turn_state,
+        budget_exhausted=False,
+    )
+
+    assert decision.recoverable_requirement_ids == ()
+    assert decision.allow_analysis_continuation is False
+    assert any(
+        diagnostic.get("requirement_id") == "req_multivariable_adjustment"
+        and diagnostic.get("reason") == "recovery_budget_exhausted"
+        for diagnostic in decision.diagnostics
+    )
+
+
 def test_budget_exhausted_does_not_strengthen_claim(execution_budget_exhausted):
     decision = evaluate_analysis_completion(**execution_budget_exhausted)
     assert decision.status == "budget_limited"
