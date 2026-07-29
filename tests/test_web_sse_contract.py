@@ -135,6 +135,14 @@ def test_success_stream_contract_rejects_blank_text_or_mismatched_terminal_ident
     with pytest.raises(AssertionError):
         assert_success_stream_contract(blank_delta)
 
+    wrong_nonblank_delta = [*events]
+    wrong_nonblank_delta[3] = (
+        "text_delta",
+        {**wrong_nonblank_delta[3][1], "text": "wrong second segment"},
+    )
+    with pytest.raises(AssertionError):
+        assert_success_stream_contract(wrong_nonblank_delta)
+
     mismatched_turn_end = [*events]
     mismatched_turn_end[-1] = (
         "turn_end",
