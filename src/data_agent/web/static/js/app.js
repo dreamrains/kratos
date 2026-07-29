@@ -794,13 +794,13 @@ function chatApp() {
 
         // --- Sessions ---
 
-        async loadSessions() {
+        async loadSessions({ preserveConnectionError = false } = {}) {
             try {
                 const res = await fetch('/api/sessions');
                 this.sessions = await res.json();
-                this.connectionError = '';
+                if (!preserveConnectionError) this.connectionError = '';
             } catch (e) {
-                this.connectionError = '加载会话失败';
+                if (!preserveConnectionError) this.connectionError = '加载会话失败';
             }
         },
 
@@ -1153,15 +1153,18 @@ function chatApp() {
 
         async loadSessionArtifacts(sessionId = this.currentSessionId) {
             if (!sessionId || sessionId === '_pending_') {
-                this.sessionArtifacts = [];
+                if (sessionId === this.currentSessionId) this.sessionArtifacts = [];
                 return;
             }
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/artifacts-list`);
-                this.sessionArtifacts = res.ok ? await res.json() : [];
-                if (sessionId === this.currentSessionId) this.turns = [...this.turns];
+                const artifacts = res.ok ? await res.json() : [];
+                if (sessionId === this.currentSessionId) {
+                    this.sessionArtifacts = artifacts;
+                    this.turns = [...this.turns];
+                }
             } catch {
-                this.sessionArtifacts = [];
+                if (sessionId === this.currentSessionId) this.sessionArtifacts = [];
             }
         },
 
@@ -1585,24 +1588,27 @@ function chatApp() {
             } catch (e) {
                 turn.isThinking = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
-                this.connectionError = e.message;
+                if (this._sessionStates[this.currentSessionId] === state) {
+                    this.connectionError = e.message;
+                }
             } finally {
+                const isOriginCurrent = this._sessionStates[this.currentSessionId] === state;
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    // this.currentSessionId may have migrated from _pending_ to real ID
-                    const activeSid = this.currentSessionId;
-                    const stillOnSession = activeSid && activeSid !== '_pending_';
-                    if (stillOnSession) {
+                    if (isOriginCurrent) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
+                        this._saveCurrentState();
                     }
                 }
-                await this.loadSessions();
+                await this.loadSessions({ preserveConnectionError: !isOriginCurrent });
                 await this.loadTasks();
-                requestAnimationFrame(() => {
-                    const el = document.getElementById('messages-container');
-                    if (el) this._renderMermaidInElement(el);
-                });
+                if (isOriginCurrent) {
+                    requestAnimationFrame(() => {
+                        const el = document.getElementById('messages-container');
+                        if (el) this._renderMermaidInElement(el);
+                    });
+                }
             }
         },
 
@@ -2301,12 +2307,20 @@ function chatApp() {
             let buffer = '';
             // Track the effective sessionId — updated when turn_start migrates _pending_
             let effectiveSid = sessionId;
+            const isCurrentStreamSession = () => (
+                this.currentSessionId === effectiveSid
+                && this._sessionStates[effectiveSid] === state
+            );
             while (true) {
                 let result;
                 try { result = await reader.read(); } catch {
                     turn.isThinking = false;
                     if (!turn.content) turn.content = '**连接已断开。**';
-                    this.connectionError = '连接已断开';
+                    if (isCurrentStreamSession()) {
+                        this.connectionError = '连接已断开';
+                        this.turns = [...state.turns];
+                        this._stopThinkingCycle();
+                    }
                     return;
                 }
                 const { done, value } = result;
@@ -2329,9 +2343,12 @@ function chatApp() {
             }
             turn.isThinking = false;
             state.isLoading = false;
-            if (this.currentSessionId === effectiveSid) this.isLoading = false;
-            this._stopThinkingCycle();
-            this.connectionError = '';
+            if (isCurrentStreamSession()) {
+                this.isLoading = false;
+                this._stopThinkingCycle();
+                this.connectionError = '';
+                this.turns = [...state.turns];
+            }
         },
 
         _handleEvent(type, data, turn, state, sessionId) {
@@ -2363,7 +2380,7 @@ function chatApp() {
                 case 'llm_call_start':
                     turn.isThinking = true;
                     turn.thinkingText = this._thinkingStates[0];
-                    this._startThinkingCycle(turn);
+                    if (isCurrentSession) this._startThinkingCycle(turn);
                     if (data.pct !== undefined) {
                         state.tokenPct = data.pct;
                         state.tokenSupported = true;
@@ -2421,7 +2438,7 @@ function chatApp() {
                         const chartArtifact = this._chartArtifactFromText(web.summary || web.content || '');
                         if (chartArtifact) this._addTurnArtifact(turn, chartArtifact, sessionId);
                         if ((web.artifacts && web.artifacts.length) || chartArtifact) {
-                            this.loadSessionArtifacts(sessionId);
+                            if (isCurrentSession) this.loadSessionArtifacts(sessionId);
                         }
                     }
                     if (isCurrentSession) this.turns = [...state.turns];
