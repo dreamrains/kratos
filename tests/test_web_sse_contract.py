@@ -84,6 +84,66 @@ def parse_sse_chunks(chunks):
     assert not pending, f"incomplete SSE frame: {pending!r}"
 
 
+def assert_success_stream_contract(events):
+    """Assert the non-negotiable success-wire payload and identity contract."""
+    types = [event for event, _data in events]
+    assert types == [
+        "turn_start",
+        "analysis_progress",
+        "text_delta",
+        "text_delta",
+        "turn_end",
+    ]
+
+    start = events[0][1]
+    session_id = start["session_id"]
+    turn_id = start["turn_id"]
+    assert isinstance(session_id, str) and session_id
+    assert isinstance(turn_id, str) and turn_id
+
+    deltas = [events[2][1], events[3][1]]
+    assert [delta["text"] for delta in deltas] == ["first segment", "second segment"]
+    assert all(delta["turn_id"] == turn_id for delta in deltas)
+
+    terminal = events[-1][1]
+    assert terminal["status"] == "completed"
+    assert terminal["session_id"] == session_id
+    assert terminal["turn_id"] == turn_id
+
+
+def test_success_stream_contract_rejects_blank_text_or_mismatched_terminal_identity():
+    events = [
+        ("turn_start", {"session_id": "sse_contract", "turn_id": "t_123"}),
+        ("analysis_progress", {}),
+        (
+            "text_delta",
+            {"text": "first segment", "session_id": "sse_contract", "turn_id": "t_123"},
+        ),
+        (
+            "text_delta",
+            {"text": "second segment", "session_id": "sse_contract", "turn_id": "t_123"},
+        ),
+        (
+            "turn_end",
+            {"session_id": "sse_contract", "turn_id": "t_123", "status": "completed"},
+        ),
+    ]
+    assert_success_stream_contract(events)
+
+    blank_delta = [*events]
+    blank_delta[2] = ("text_delta", {**blank_delta[2][1], "text": ""})
+    with pytest.raises(AssertionError):
+        assert_success_stream_contract(blank_delta)
+
+    mismatched_turn_end = [*events]
+    mismatched_turn_end[-1] = (
+        "turn_end",
+        {**mismatched_turn_end[-1][1], "turn_id": "t_other"},
+    )
+    with pytest.raises(AssertionError):
+        assert_success_stream_contract(mismatched_turn_end)
+
+
 @pytest.fixture
 def app(monkeypatch, tmp_path):
     import data_agent.config
@@ -113,18 +173,10 @@ def test_real_chat_route_streams_progress_before_text_and_turn_end(app):
         buffered=False,
     )
     events = list(parse_sse_chunks(response.response))
-    types = [event for event, _data in events]
-
     assert response.status_code == 200
     assert response.mimetype == "text/event-stream"
     assert response.headers["X-Accel-Buffering"] == "no"
-    assert types == [
-        "turn_start",
-        "analysis_progress",
-        "text_delta",
-        "text_delta",
-        "turn_end",
-    ]
+    assert_success_stream_contract(events)
     assert events[1][1] == {
         "code": "analysis_plan_ready",
         "label": "Analysis plan is ready",
@@ -133,7 +185,6 @@ def test_real_chat_route_streams_progress_before_text_and_turn_end(app):
         "phase": "",
     }
     assert "finding" not in events[1][1]
-    assert events[-1][1]["status"] == "completed"
 
     loop = app.config["agent_manager"].loop
     assert loop.messages == [
