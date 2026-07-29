@@ -9,6 +9,8 @@
 6. 中断机制
 """
 
+# Manual legacy diagnostic only: cannot satisfy actual-browser Gate E.
+# This custom runner is non-authoritative and intended for ad-hoc troubleshooting.
 import json
 import os
 import sys
