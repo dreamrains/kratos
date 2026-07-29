@@ -100,6 +100,10 @@ _CAPABILITY_REQUIREMENT_INPUTS = {
         "effect_size_or_predictive_contribution",
         "limitations_and_alternatives",
     ),
+    "analysis.dimension_decomposition": (
+        "segment_coverage",
+        "opportunity_candidates",
+    ),
 }
 _REQUIREMENT_CAPABILITY_HINTS = {
     "assumptions": ("analysis.group_compare", "analysis.period_compare", "analysis.time_series"),
@@ -139,6 +143,18 @@ _REQUIREMENT_CAPABILITY_HINTS = {
 
 
 _REQUIREMENT_DEFINITIONS = {
+    "segment_coverage": {
+        "category": "output",
+        "required_evidence_fields": ["segment_coverage"],
+        "assumption_checks": [],
+        "unmet_action": "block_claim",
+    },
+    "opportunity_candidates": {
+        "category": "output",
+        "required_evidence_fields": ["opportunity_candidates"],
+        "assumption_checks": [],
+        "unmet_action": "disclose",
+    },
     "assumptions": {
         "category": "assumption",
         "required_evidence_fields": ["assumptions"],

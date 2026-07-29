@@ -437,6 +437,18 @@ def correlation_analysis(name: str, columns: str = "", method: str = "pearson") 
                 "tool rather than this exploratory view."
             ),
         },
+        "assumptions": [
+            {
+                "name": "method_appropriate_for_design",
+                "status": "passed",
+                "method": method,
+                "reason": (
+                    "The selected association method is applicable to the "
+                    "numeric pairwise-complete columns for an exploratory, "
+                    "noncausal association screen."
+                ),
+            }
+        ],
         "allowed_claim_class": "exploratory_association",
         "limitations": [
             "相关关系不等于因果关系。",
@@ -1151,6 +1163,7 @@ def contribute_decomposition(
     data = {
         "metric": metric,
         "dimension": dimension,
+        "allowed_claim_class": "descriptive_attribution",
         "agg_func": agg_func,
         "multiplicity_handling": {
             "strategy": "exploratory_label",

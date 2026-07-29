@@ -9,9 +9,12 @@ from data_agent.agent.answer_quality import (
     render_audited_analysis_answer,
 )
 from data_agent.agent.evidence_contracts import (
+    _project_requirement_semantics,
     build_bounded_evidence_catalog,
     measurement_key_for,
 )
+from data_agent.agent.analysis_requirements import evaluate_requirement_satisfaction
+from data_agent.agent.verification import _unmet_block_claim_requirements
 from data_agent.agent.execution_control import CompletionDecision
 from tests.fixtures.measurement_identity import (
     DATASET_VERSION,
@@ -226,3 +229,138 @@ def test_real_correlation_pairs_have_unique_variable_bound_identities(
         "var1=revenue|var2=cost",
         "var1=profit|var2=cost",
     }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "stale_plan",
+        "stale_step",
+        "dataset_mismatch",
+        "legacy_unbound",
+        "invalid_hydration",
+    ],
+)
+def test_same_id_prerequisite_uses_only_current_hydratable_evidence(
+    projection_context,
+    mutation,
+):
+    evidence = copy.deepcopy(project_real_correlation(projection_context).record)
+    if mutation == "stale_plan":
+        evidence["computation_refs"][0]["plan_digest"] = "sha256:stale"
+    elif mutation == "stale_step":
+        evidence["computation_refs"][0]["step_digest"] = "sha256:stale"
+    elif mutation == "dataset_mismatch":
+        evidence["dataset_versions"] = ["dataset_other_v1"]
+    elif mutation == "legacy_unbound":
+        evidence["provenance_status"] = "legacy_unbound"
+    elif mutation == "invalid_hydration":
+        evidence["computation_refs"][0]["artifact_path"] = str(
+            projection_context.sessions_root / "missing.json"
+        )
+
+    unmet = _unmet_block_claim_requirements(
+        [evidence],
+        projection_context.analysis_requirements,
+        satisfaction_evidence_records=[evidence],
+        current_plan_id=PLAN_ID,
+        current_plan_digest=PLAN_DIGEST,
+        current_step_digests={STEP_ID: STEP_DIGEST},
+        current_dataset_versions={DATASET_VERSION},
+        active_requirement_ids={
+            item["id"] for item in projection_context.analysis_requirements
+        },
+        sessions_root=projection_context.sessions_root,
+        current_session_id=SESSION_ID,
+    )
+
+    assert unmet == ["req_corr_effect"]
+
+
+def test_same_id_prerequisite_accepts_current_hydratable_evidence(
+    projection_context,
+):
+    evidence = project_real_correlation(projection_context).record
+
+    assert _unmet_block_claim_requirements(
+        [evidence],
+        projection_context.analysis_requirements,
+        satisfaction_evidence_records=[evidence],
+        current_plan_id=PLAN_ID,
+        current_plan_digest=PLAN_DIGEST,
+        current_step_digests={STEP_ID: STEP_DIGEST},
+        current_dataset_versions={DATASET_VERSION},
+        active_requirement_ids={
+            item["id"] for item in projection_context.analysis_requirements
+        },
+        sessions_root=projection_context.sessions_root,
+        current_session_id=SESSION_ID,
+    ) == []
+
+
+def test_correlation_method_name_alone_does_not_pass_design_assumption(
+    projection_context,
+):
+    evidence = project_real_correlation(projection_context).record
+    requirement = copy.deepcopy(projection_context.analysis_requirements[0])
+    requirement["required_evidence_fields"] = ["univariate_association"]
+    requirement["assumption_checks"] = ["method_appropriate_for_design"]
+
+    evaluated = evaluate_requirement_satisfaction([requirement], [evidence])
+
+    assert evaluated[0]["status"] == "unmet"
+
+
+def test_requirement_semantics_do_not_duplicate_numeric_authority():
+    semantics = _project_requirement_semantics(
+        capability_id="analysis.factor_relationship",
+        output_data={
+            "effective_sample_size": 80,
+            "target_col": "outcome",
+            "features_requested": ["feature"],
+            "features_included": ["feature"],
+            "coefficients": [
+                {
+                    "term": "feature",
+                    "estimate": 1.25,
+                    "p_value": 0.01,
+                    "confidence_interval": {"lower": 0.5, "upper": 2.0},
+                }
+            ],
+            "correction_method": "fdr_bh",
+            "alpha": 0.05,
+            "collinearity": {
+                "status": "assessed",
+                "method": "variance_inflation_factor",
+                "terms": [{"term": "feature", "variance_inflation_factor": 1.2}],
+            },
+            "time_dependence": {
+                "status": "assessed",
+                "lag_1": 0.2,
+            },
+            "r_squared": 0.7,
+            "adjusted_r_squared": 0.68,
+        },
+    )
+
+    def _contains_number(value):
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return True
+        if isinstance(value, dict):
+            return any(_contains_number(item) for item in value.values())
+        if isinstance(value, list):
+            return any(_contains_number(item) for item in value)
+        return False
+
+    for field in (
+        "effective_sample_size",
+        "effect_size_or_predictive_contribution",
+        "multivariable_adjustment",
+        "multiplicity_control",
+        "collinearity_assessment",
+        "time_dependence_assessment",
+        "stability_or_validation",
+    ):
+        assert not _contains_number(semantics[field]), field

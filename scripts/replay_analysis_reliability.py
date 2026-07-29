@@ -791,6 +791,64 @@ def _factor_responses(csv_path: Path) -> list[Response]:
     ]
 
 
+_DIMENSION_OPPORTUNITY_PROMPT = (
+    "为什么目标值下降？请按渠道做贡献分解，并给出仅供验证的探索性机会候选。"
+)
+
+_DIMENSION_OPPORTUNITY_FINAL_TEXT = (
+    "The channel contributions are descriptive observations. Any opportunity "
+    "candidate is an exploratory hypothesis for validation, not a causal claim."
+)
+
+
+def _dimension_opportunity_responses(
+    csv_path: Path,
+    *,
+    include_decomposition: bool = True,
+) -> list[Response]:
+    responses = [
+        _tool_response(
+            _tool_call(
+                "load_data",
+                {"source": str(csv_path), "name": "opportunity_data"},
+            )
+        ),
+        _tool_response(
+            _tool_call(
+                "compare_periods",
+                {
+                    "name": "opportunity_data",
+                    "date_col": "日期",
+                    "metrics": "目标值",
+                    "period_a": "2026-01-01~2026-01-16",
+                    "period_b": "2026-01-17~2026-02-01",
+                    "dimensions": "渠道",
+                    "agg_func": "sum",
+                },
+            )
+        ),
+    ]
+    if include_decomposition:
+        responses.append(
+            _tool_response(
+                _tool_call(
+                    "contribute_decomposition",
+                    {
+                        "name": "opportunity_data",
+                        "metric": "目标值",
+                        "dimension": "渠道",
+                        "date_col": "日期",
+                        "period_a": "2026-01-01~2026-01-16",
+                        "period_b": "2026-01-17~2026-02-01",
+                        "agg_func": "sum",
+                    },
+                )
+            )
+        )
+    responses.append(_text_response(_DIMENSION_OPPORTUNITY_FINAL_TEXT))
+    return responses
+
+
 def _superficial_profile_only_responses(*, repetitions: int) -> list[Response]:
     return [
         _tool_response(

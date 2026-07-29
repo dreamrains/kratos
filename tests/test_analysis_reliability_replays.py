@@ -28,6 +28,9 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from replay_analysis_reliability import (  # noqa: E402
+    _DIMENSION_OPPORTUNITY_FINAL_TEXT,
+    _DIMENSION_OPPORTUNITY_PROMPT,
+    _dimension_opportunity_responses,
     _superficial_profile_only_responses,
     run_deterministic_replay,
     run_sandbox_replay,
@@ -199,6 +202,85 @@ def test_repeated_superficial_tools_cannot_complete_factor_request(tmp_path):
     assert result.requirement_statuses["collinearity_assessment"] != "satisfied"
     assert result.completion_state != "complete"
     assert "显著影响" not in result.final_answer
+
+
+def _contains_number(value):
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, dict):
+        return any(_contains_number(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_number(item) for item in value)
+    return False
+
+
+def test_dimension_replay_proves_observed_segments_and_hypothesis_only_opportunities(
+    tmp_path,
+):
+    csv_path = tmp_path / "opportunity_data.csv"
+    frame = build_factor_relationship_frame()
+    frame.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    result = run_deterministic_replay(
+        frame=frame,
+        prompt=_DIMENSION_OPPORTUNITY_PROMPT,
+        responses=_dimension_opportunity_responses(csv_path),
+        fallback_text=_DIMENSION_OPPORTUNITY_FINAL_TEXT,
+        root=tmp_path,
+        session_id="dimension_opportunity",
+        project_name="dimension_opportunity",
+        dataset_name="opportunity_data",
+    )
+
+    assert "analysis.dimension_decomposition" in result.successful_capability_ids
+    assert result.requirement_statuses["segment_coverage"] == "satisfied"
+    assert result.requirement_statuses["opportunity_candidates"] == "satisfied"
+    evidence = next(
+        record
+        for record in result.evidence_records
+        if any(
+            call.get("capability_id") == "analysis.dimension_decomposition"
+            for call in record.get("tool_calls") or []
+        )
+    )
+    segment = evidence["segment_coverage"]
+    opportunity = evidence["opportunity_candidates"]
+    assert segment["status"] == "observed"
+    assert opportunity["status"] == "hypothesis_only"
+    assert opportunity["claim_class"] == "exploratory"
+    assert opportunity["basis"] == "observed_dimension_contribution"
+    assert opportunity["causal_authorization"] == "none"
+    assert not _contains_number(segment)
+    assert not _contains_number(opportunity)
+
+
+def test_same_driver_plan_without_decomposition_leaves_semantic_requirements_unmet(
+    tmp_path,
+):
+    csv_path = tmp_path / "opportunity_data.csv"
+    frame = build_factor_relationship_frame()
+    frame.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    result = run_deterministic_replay(
+        frame=frame,
+        prompt=_DIMENSION_OPPORTUNITY_PROMPT,
+        responses=_dimension_opportunity_responses(
+            csv_path,
+            include_decomposition=False,
+        ),
+        fallback_text=_DIMENSION_OPPORTUNITY_FINAL_TEXT,
+        root=tmp_path,
+        session_id="dimension_opportunity_without_decomposition",
+        project_name="dimension_opportunity_without_decomposition",
+        dataset_name="opportunity_data",
+    )
+
+    requirement_names = {
+        requirement["name"] for requirement in result.analysis_requirements
+    }
+    assert {"segment_coverage", "opportunity_candidates"} <= requirement_names
+    assert result.requirement_statuses["segment_coverage"] != "satisfied"
+    assert result.requirement_statuses["opportunity_candidates"] != "satisfied"
 
 
 def test_aggregate_profile_replay_blocks_unavailable_user_claims(tmp_path):

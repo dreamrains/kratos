@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from data_agent.tools.eda import correlation_analysis
+from data_agent.tools.eda import correlation_analysis, contribute_decomposition
 from data_agent.tools.data_understand import quick_profile as _quick_profile  # noqa: F401
 from data_agent.tools.registry import registry, validate_capability_output
 from data_agent.tools.statistics import factor_relationship_analysis
@@ -81,8 +81,31 @@ def test_factor_relationship_emits_inferential_diagnostics(workspace):
     assert payload["allowed_claim_class"] == "inferential_associations"
 
 
+def test_decomposition_attests_descriptive_noncausal_claim_class(workspace):
+    result = registry.execute(
+        "contribute_decomposition",
+        {
+            "name": "factors",
+            "metric": "目标值",
+            "dimension": "渠道",
+            "date_col": "日期",
+            "period_a": "2026-01-01~2026-01-16",
+            "period_b": "2026-01-17~2026-02-01",
+            "agg_func": "sum",
+        },
+    )
+    payload = result.data
+    assert isinstance(payload, dict)
+    assert payload["allowed_claim_class"] == "descriptive_attribution"
+    assert payload["allowed_claim_class"] != "causal_effect"
+    capability = registry.capability_for("contribute_decomposition")
+    assert "allowed_claim_class" in capability["evidence_fields"]
+    assert validate_capability_output(capability, payload) == []
+
+
 @pytest.mark.parametrize(("tool_name", "arguments"), [
     ("quick_profile", {"name": "factors"}),
+    ("quick_profile", {"name": "factors", "compact": True}),
     ("correlation_analysis", {"name": "factors", "columns": "目标值,活跃度"}),
     ("factor_relationship_analysis", {
         "name": "factors",

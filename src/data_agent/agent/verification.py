@@ -1226,14 +1226,15 @@ def _unmet_block_claim_requirements(
     )
 
     try:
-        evaluated = evaluate_requirement_satisfaction(
-            matching,
-            satisfaction_evidence_records or claim_evidence_records,
-        )
         current_steps = current_step_digests or {}
         active_ids = active_requirement_ids or set()
         qualified_support: list[dict[str, Any]] = []
-        for record in satisfaction_evidence_records or []:
+        candidate_catalog = (
+            satisfaction_evidence_records
+            if satisfaction_evidence_records is not None
+            else claim_evidence_records
+        )
+        for record in candidate_catalog:
             if (
                 not validate_evidence_record(
                     record,
@@ -1269,6 +1270,10 @@ def _unmet_block_claim_requirements(
             except (TypeError, ValueError):
                 continue
             qualified_support.append(record)
+        evaluated = evaluate_requirement_satisfaction(
+            matching,
+            qualified_support,
+        )
         evaluated_all = evaluate_requirement_satisfaction(
             analysis_requirements,
             qualified_support,

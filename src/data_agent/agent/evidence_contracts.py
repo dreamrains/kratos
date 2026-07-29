@@ -2664,6 +2664,10 @@ def _structured_metric_identity(
             if value:
                 context.append(value)
                 metric_context.append(f"{key}={value}")
+        segment_value = item.get("value")
+        if isinstance(segment_value, str) and _text(segment_value):
+            context.append(_text(segment_value))
+            metric_context.append(f"value={_text(segment_value)}")
     if not context:
         return None
     metric_key = declared_field
@@ -2989,40 +2993,54 @@ def _project_requirement_semantics(
             semantics["missingness_assessment"] = {
                 "status": "assessed",
                 "columns": [
-                    {
-                        "name": _text(item.get("name")),
-                        "missing_pct": item.get("missing_pct"),
-                    }
+                    _text(item.get("name"))
                     for item in columns
                     if isinstance(item, dict)
                     and _text(item.get("name"))
-                    and _finite_number(item.get("missing_pct"))
                 ],
             }
         return semantics
 
     if capability_id == "analysis.correlation":
-        method = _text(output_data.get("method"))
         pairs = output_data.get("pairs")
         if isinstance(pairs, list) and pairs:
-            semantics["univariate_association"] = pairs
-            sample_sizes = [
-                float(item["effective_sample_size"])
+            semantics["univariate_association"] = {
+                "status": "available",
+                "measurement_fields": ["pairs.correlation"],
+                "pairs": [
+                    {
+                        "var1": _text(item.get("var1")),
+                        "var2": _text(item.get("var2")),
+                    }
+                    for item in pairs
+                    if isinstance(item, dict)
+                    and _text(item.get("var1"))
+                    and _text(item.get("var2"))
+                ],
+            }
+            if any(
+                _finite_number(item.get("effective_sample_size"))
                 for item in pairs
                 if isinstance(item, dict)
-                and _finite_number(item.get("effective_sample_size"))
-            ]
-            if sample_sizes:
+            ):
                 semantics["effective_sample_size"] = {
-                    "total": max(sample_sizes),
+                    "status": "available",
+                    "measurement_fields": ["pairs.effective_sample_size"],
                 }
-        if method:
+        assumptions = [
+            {
+                key: _text(item.get(key))
+                for key in ("name", "status", "reason", "method")
+                if _text(item.get(key))
+            }
+            for item in list(output_data.get("assumptions") or [])
+            if isinstance(item, dict)
+            and _text(item.get("name"))
+            and _text(item.get("status"))
+        ]
+        if assumptions:
             semantics["assumption_checks"] = [
-                {
-                    "name": "method_appropriate_for_design",
-                    "status": "passed",
-                    "method": method,
-                }
+                item for item in assumptions if item
             ]
         return semantics
 
@@ -3036,10 +3054,12 @@ def _project_requirement_semantics(
             semantics["assumption_checks"] = assumptions
         effective_n = output_data.get("effective_sample_size")
         if _finite_number(effective_n):
-            semantics["effective_sample_size"] = {"total": float(effective_n)}
+            semantics["effective_sample_size"] = {
+                "status": "available",
+                "measurement_fields": ["effective_sample_size"],
+            }
             semantics["grain_definition"] = {
                 "grain": "complete_case_model_row",
-                "effective_sample_size": float(effective_n),
             }
         target = _text(output_data.get("target_col"))
         if target:
@@ -3052,33 +3072,109 @@ def _project_requirement_semantics(
         }
         coefficients = output_data.get("coefficients")
         if isinstance(coefficients, list) and coefficients:
-            semantics["effect_size_or_predictive_contribution"] = coefficients
+            terms = [
+                _text(item.get("term"))
+                for item in coefficients
+                if isinstance(item, dict) and _text(item.get("term"))
+            ]
+            semantics["effect_size_or_predictive_contribution"] = {
+                "status": "available",
+                "terms": terms,
+                "measurement_fields": [
+                    "coefficients.estimate",
+                    "coefficients.confidence_interval",
+                    "coefficients.p_value",
+                    "coefficients.adjusted_p_value",
+                ],
+            }
             semantics["multivariable_adjustment"] = {
                 "method": _text(output_data.get("method")),
                 "covariance": _text(output_data.get("covariance")),
-                "coefficients": coefficients,
+                "terms": terms,
+                "measurement_fields": ["coefficients.estimate"],
             }
         correction = _text(output_data.get("correction_method"))
         if correction:
             semantics["multiplicity_control"] = {
                 "method": correction,
-                "alpha": output_data.get("alpha"),
+                "measurement_fields": ["coefficients.adjusted_p_value"],
             }
         collinearity = output_data.get("collinearity")
         if isinstance(collinearity, dict) and collinearity:
-            semantics["collinearity_assessment"] = collinearity
+            semantics["collinearity_assessment"] = {
+                key: value
+                for key, value in {
+                    "status": _text(collinearity.get("status")),
+                    "method": _text(collinearity.get("method")),
+                    "high_vif_terms": [
+                        _text(item)
+                        for item in collinearity.get("high_vif_terms") or []
+                        if _text(item)
+                    ],
+                }.items()
+                if value != "" and value != []
+            }
         time_dependence = output_data.get("time_dependence")
         if isinstance(time_dependence, dict) and time_dependence:
-            semantics["time_dependence_assessment"] = time_dependence
+            semantics["time_dependence_assessment"] = {
+                key: value
+                for key, value in {
+                    "status": _text(time_dependence.get("status")),
+                    "reason": _text(time_dependence.get("reason")),
+                    "covariance": _text(time_dependence.get("covariance")),
+                    "ordered_time_column": _text(
+                        time_dependence.get("ordered_time_column")
+                    ),
+                }.items()
+                if value
+            }
         semantics["stability_or_validation"] = {
-            "r_squared": output_data.get("r_squared"),
-            "adjusted_r_squared": output_data.get("adjusted_r_squared"),
-            "assumptions": list(output_data.get("assumptions") or []),
+            "status": (
+                "available"
+                if _finite_number(output_data.get("r_squared"))
+                else "not_reported"
+            ),
+            "method": _text(output_data.get("method")),
         }
         if semantics.get("limitations"):
             semantics["limitations_and_alternatives"] = list(
                 semantics["limitations"]
             )
+        return semantics
+
+    if capability_id == "analysis.dimension_decomposition":
+        decomposition = [
+            item
+            for item in list(output_data.get("decomposition") or [])
+            if isinstance(item, dict) and _text(item.get("value"))
+        ]
+        dimension = _text(output_data.get("dimension"))
+        if decomposition and dimension:
+            labels = [_text(item.get("value")) for item in decomposition]
+            semantics["segment_coverage"] = {
+                "status": "observed",
+                "dimension": dimension,
+                "segments": labels,
+                "measurement_fields": ["decomposition.contribution"],
+            }
+            candidates = [
+                _text(item)
+                for item in [
+                    *(output_data.get("top_positive") or []),
+                    *(output_data.get("top_negative") or []),
+                ]
+                if _text(item)
+            ]
+            if candidates:
+                semantics["opportunity_candidates"] = {
+                    "status": "hypothesis_only",
+                    "claim_class": "exploratory",
+                    "basis": "observed_dimension_contribution",
+                    "dimension": dimension,
+                    "candidates": list(dict.fromkeys(candidates)),
+                    "measurement_fields": ["decomposition.contribution"],
+                    "causal_authorization": "none",
+                }
     return semantics
 
 
