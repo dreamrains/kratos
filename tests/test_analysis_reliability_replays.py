@@ -19,6 +19,7 @@ release gate relies on:
 from __future__ import annotations
 
 import sys
+import copy
 from pathlib import Path
 
 # Make the harness importable as ``replay_analysis_reliability``.
@@ -27,6 +28,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from replay_analysis_reliability import (  # noqa: E402
+    _superficial_profile_only_responses,
     run_deterministic_replay,
     run_sandbox_replay,
     run_unicode_replay,
@@ -36,7 +38,11 @@ from tests.fixtures.analysis_reliability import (  # noqa: E402
     build_factor_relationship_frame,
     factor_relationship_prompt,
 )
-from tests.replay_assertions import assert_reliable_analysis_trace  # noqa: E402
+from tests.replay_assertions import (  # noqa: E402
+    assert_bound_projected_measurements,
+    assert_reliable_analysis_trace,
+)
+from data_agent.agent.answer_quality import build_final_answer_audit  # noqa: E402
 
 
 def test_factor_session_replay_is_deep_bounded_and_publishable(tmp_path):
@@ -52,6 +58,147 @@ def test_factor_session_replay_is_deep_bounded_and_publishable(tmp_path):
     assert result.final_answer.strip()
     assert result.final_answer_language == "zh"
     assert "Some requested analysis claims" not in result.final_answer
+    assert result.final_audit_status == "pass"
+    assert "5.399135" in result.final_answer
+    assert "[[evidence:" not in result.final_answer
+    assert_bound_projected_measurements(result.evidence_records)
+
+
+def test_factor_replay_satisfies_semantic_depth_not_tool_count(tmp_path):
+    result = run_deterministic_replay(
+        frame=build_factor_relationship_frame(),
+        prompt=factor_relationship_prompt(),
+        root=tmp_path,
+    )
+    assert {
+        "data.profile",
+        "analysis.correlation",
+        "analysis.factor_relationship",
+    }.issubset(result.successful_capability_ids)
+    for name in (
+        "grain_definition",
+        "target_definition",
+        "missingness_assessment",
+        "univariate_association",
+        "multivariable_adjustment",
+        "multiplicity_control",
+        "collinearity_assessment",
+        "effect_size_or_predictive_contribution",
+        "limitations_and_alternatives",
+    ):
+        assert result.requirement_statuses[name] == "satisfied"
+    for name in ("stability_or_validation", "time_dependence_assessment"):
+        assert result.requirement_statuses[name] in {"satisfied", "limited"}
+    assert result.published_limitations
+
+
+def test_equivalent_cross_step_prerequisite_is_current_and_fail_closed(tmp_path):
+    result = run_deterministic_replay(
+        frame=build_factor_relationship_frame(),
+        prompt=factor_relationship_prompt(),
+        root=tmp_path,
+        session_id="cross_step_prerequisite",
+    )
+    factor = next(
+        record
+        for record in result.evidence_records
+        if any(
+            call.get("capability_id") == "analysis.factor_relationship"
+            for call in record.get("tool_calls") or []
+        )
+    )
+    measurement = next(
+        item
+        for item in factor["measurements"]
+        if item["identity"]["metric_key"].startswith(
+            "coefficients.estimate::term=活跃度"
+        )
+    )
+    draft = (
+        "活跃度 estimate 为 5.399135 "
+        f"[[evidence:{factor['id']}#{measurement['identity']['measurement_key']}]]。"
+        "局限：样本量有限、关联不等于因果。"
+    )
+
+    def _audit(records, requirements):
+        return build_final_answer_audit(
+            draft,
+            evidence_records=records,
+            current_plan_id=result.current_plan_id,
+            current_dataset_versions=result.current_dataset_versions,
+            sessions_root=Path(result.sessions_root),
+            current_session_id=result.current_session_id,
+            current_plan_digest=result.current_plan_digest,
+            current_step_digests=result.current_step_digests,
+            analysis_requirements=requirements,
+            measurement_binding_mode="soft",
+        )
+
+    assert _audit(
+        result.evidence_records,
+        result.analysis_requirements,
+    )["status"] == "pass"
+
+    def _mutate_requirement_field(records, requirements):
+        source = next(
+            item
+            for item in requirements
+            if item["id"] == "req_step_2_univariate_association"
+        )
+        source["required_evidence_fields"] = ["different_metric_semantics"]
+
+    def _mutate_assumption(records, requirements):
+        source = next(
+            item
+            for item in requirements
+            if item["id"] == "req_step_2_univariate_association"
+        )
+        source["assumption_checks"] = ["different_design_assumption"]
+
+    def _mutate_stale_plan(records, requirements):
+        records[1]["computation_refs"][0]["plan_digest"] = "sha256:stale"
+
+    def _mutate_dataset(records, requirements):
+        records[1]["dataset_versions"] = ["dataset_other_v1"]
+
+    def _mutate_legacy_provenance(records, requirements):
+        records[1]["provenance_status"] = "legacy_unbound"
+
+    for mutation in (
+        _mutate_requirement_field,
+        _mutate_assumption,
+        _mutate_stale_plan,
+        _mutate_dataset,
+        _mutate_legacy_provenance,
+    ):
+        records = copy.deepcopy(result.evidence_records)
+        requirements = copy.deepcopy(result.analysis_requirements)
+        mutation(records, requirements)
+        audit = _audit(records, requirements)
+        numeric_check = next(
+            check
+            for check in audit["claim_checks"]
+            if "5.399135" in str(check.get("claim") or "")
+        )
+        assert audit["status"] == "blocked", mutation.__name__
+        assert (
+            "unmet_block_claim_requirement" in numeric_check["reason_codes"]
+        ), mutation.__name__
+
+
+def test_repeated_superficial_tools_cannot_complete_factor_request(tmp_path):
+    result = run_deterministic_replay(
+        frame=build_factor_relationship_frame(),
+        prompt=factor_relationship_prompt(),
+        responses=_superficial_profile_only_responses(repetitions=6),
+        fallback_text="活跃度显著影响目标值。",
+        root=tmp_path,
+        session_id="superficial_replay",
+    )
+    assert result.requirement_statuses["multivariable_adjustment"] != "satisfied"
+    assert result.requirement_statuses["collinearity_assessment"] != "satisfied"
+    assert result.completion_state != "complete"
+    assert "显著影响" not in result.final_answer
 
 
 def test_aggregate_profile_replay_blocks_unavailable_user_claims(tmp_path):

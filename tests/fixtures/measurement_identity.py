@@ -107,8 +107,13 @@ class ProjectionContext:
     sessions_root: Path
 
     @property
-    def analysis_requirements(self) -> dict:
-        return self.plan["analysis_requirements"]
+    def analysis_requirements(self) -> list[dict]:
+        grouped = self.plan["analysis_requirements"]
+        return [
+            requirement
+            for step_requirements in grouped.values()
+            for requirement in step_requirements
+        ]
 
 
 def correlation_capability() -> dict:
@@ -131,7 +136,8 @@ def correlation_output() -> dict:
             "method": "pearson",
             "pairs": [
                 {
-                    "variables": ["revenue", "cost"],
+                    "var1": "revenue",
+                    "var2": "cost",
                     "correlation": 0.4,
                     "effective_sample_size": 100,
                     "p_value": 0.001,
@@ -163,18 +169,34 @@ def current_plan() -> dict:
         "analysis_requirements": {
             STEP_ID: [
                 {
+                    "contract_version": "analysis_requirement.v1",
                     "id": "req_corr_effect",
                     "step_id": STEP_ID,
                     "name": "correlation",
+                    "category": "inference",
                     "necessity": "required",
                     "trigger": "relationship",
+                    "required_evidence_fields": ["measurements"],
+                    "assumption_checks": [],
+                    "unmet_action": "block_claim",
+                    "status": "pending",
+                    "evidence_ids": [],
+                    "reason": "",
                 },
                 {
+                    "contract_version": "analysis_requirement.v1",
                     "id": "req_corr_interval",
                     "step_id": STEP_ID,
                     "name": "confidence_interval",
-                    "necessity": "required",
+                    "category": "inference",
+                    "necessity": "conditional",
                     "trigger": "relationship",
+                    "required_evidence_fields": ["confidence_interval"],
+                    "assumption_checks": [],
+                    "unmet_action": "disclose",
+                    "status": "pending",
+                    "evidence_ids": [],
+                    "reason": "",
                 },
             ]
         },

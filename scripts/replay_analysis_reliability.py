@@ -14,8 +14,10 @@ the ``replay_analysis_reliability`` CLI (acceptance JSON).
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
+import re
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -34,6 +36,13 @@ import pandas as pd  # noqa: E402
 
 from data_agent import config as _config  # noqa: E402
 from data_agent.agent.loop import AgentLoop  # noqa: E402
+from data_agent.agent.analysis_requirements import (  # noqa: E402
+    evaluate_requirement_satisfaction,
+)
+from data_agent.agent.evidence_contracts import (  # noqa: E402
+    analysis_plan_semantic_digest,
+    analysis_step_semantic_digest,
+)
 from data_agent.config import AgentConfig  # noqa: E402
 from data_agent.llm.client import Response, ToolCall  # noqa: E402
 from data_agent.session.task_manager import task_manager  # noqa: E402
@@ -53,6 +62,8 @@ TERMINAL_STATES = {
     "blocked_by_tool",
     "budget_limited",
 }
+_REPLAY_CSV_PLACEHOLDER = "__REPLAY_CSV_PATH__"
+_FACTOR_MARKER_TOKEN = "__FACTOR_MEASUREMENT_MARKER__"
 
 # Canonical analysis checkpoint codes attached to substantive tool
 # capabilities. Derived from ``PLAYBOOKS["factor_relationship"].method_plan``;
@@ -90,6 +101,17 @@ class ReplayResult:
     max_identical_failure_attempts: int = 0
     persisted_text: str = ""
     browser_text: str = ""
+    successful_capability_ids: list[str] = field(default_factory=list)
+    requirement_statuses: dict[str, str] = field(default_factory=dict)
+    published_limitations: list[str] = field(default_factory=list)
+    final_audit_status: str = ""
+    analysis_requirements: list[dict[str, Any]] = field(default_factory=list)
+    current_plan_id: str = ""
+    current_plan_digest: str = ""
+    current_step_digests: dict[str, str] = field(default_factory=dict)
+    current_dataset_versions: list[str] = field(default_factory=list)
+    sessions_root: str = ""
+    current_session_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -107,18 +129,40 @@ class _ScriptedLLM:
     the test author to count calls exactly.
     """
 
-    def __init__(self, responses: list[Response], *, fallback_text: str = ""):
+    def __init__(
+        self,
+        responses: list[Response],
+        *,
+        fallback_text: str = "",
+        csv_path: Path | None = None,
+    ):
         self._responses = list(responses)
         self._fallback_text = fallback_text
+        self._csv_path = Path(csv_path) if csv_path is not None else None
+        self._state_provider = lambda: None
         self.call_count = 0
         self.calls: list[dict[str, Any]] = []
+
+    def bind_state_provider(self, provider) -> None:
+        self._state_provider = provider
 
     def chat(self, messages, tools=None, system=None, **kwargs) -> Response:
         self.call_count += 1
         self.calls.append({"messages": messages, "tools": tools, "system": system})
         if self._responses:
-            return self._responses.pop(0)
-        return Response(text=self._fallback_text)
+            response = copy.deepcopy(self._responses.pop(0))
+        else:
+            response = Response(text=self._fallback_text)
+        for tool_call in response.tool_calls:
+            if (
+                self._csv_path is not None
+                and tool_call.arguments.get("source") == _REPLAY_CSV_PLACEHOLDER
+            ):
+                tool_call.arguments["source"] = str(self._csv_path)
+        if _FACTOR_MARKER_TOKEN in response.text:
+            marker = _factor_measurement_marker(self._state_provider())
+            response.text = response.text.replace(_FACTOR_MARKER_TOKEN, marker)
+        return response
 
     def stream_chat_structured(self, messages, tools=None, system=None, **kwargs):
         from data_agent.llm.client import StreamComplete
@@ -348,6 +392,126 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _successful_capability_ids(state) -> list[str]:
+    return list(dict.fromkeys(
+        str(ref.get("capability_id") or "")
+        for ref in getattr(state, "computation_refs", []) or []
+        if isinstance(ref, dict)
+        and bool(ref.get("success"))
+        and str(ref.get("capability_id") or "")
+    ))
+
+
+def _latest_final_audit_status(state) -> str:
+    for report in reversed(getattr(state, "verification_reports", []) or []):
+        if (
+            isinstance(report, dict)
+            and report.get("contract_version") == "final_answer_audit.v1"
+        ):
+            return str(report.get("status") or "")
+    return ""
+
+
+def _current_requirements(state) -> list[dict[str, Any]]:
+    plan = getattr(state, "analysis_plan", None)
+    grouped = plan.get("analysis_requirements") if isinstance(plan, dict) else None
+    if not isinstance(grouped, dict):
+        return []
+    return [
+        requirement
+        for group in grouped.values()
+        if isinstance(group, list)
+        for requirement in group
+        if isinstance(requirement, dict)
+    ]
+
+
+def _extract_published_limitations(text: str) -> list[str]:
+    match = re.search(
+        r"(?:局限|限制|limitations?)\s*[：:]\s*(.+?)(?=(?:建议|下一步)\s*[：:]|$)",
+        text or "",
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+    return [
+        item.strip(" \n\t。.")
+        for item in re.split(r"[、；;。]\s*", match.group(1))
+        if item.strip(" \n\t。.")
+    ]
+
+
+def _requirement_statuses(
+    state,
+    *,
+    evidence_records: list[dict[str, Any]],
+    published_limitations: list[str],
+) -> dict[str, str]:
+    limitation_text = " ".join(published_limitations).casefold()
+
+    def _has_matching_limitation(requirement: dict[str, Any]) -> bool:
+        candidates = {
+            token
+            for value in (
+                str(requirement.get("name") or "").replace("_", " "),
+                str(requirement.get("reason") or ""),
+            )
+            for token in re.findall(r"[\w\u4e00-\u9fff]+", value.casefold())
+            if len(token) >= 4
+        }
+        return any(token in limitation_text for token in candidates)
+
+    requirements = _current_requirements(state)
+    evaluated = evaluate_requirement_satisfaction(requirements, evidence_records)
+    statuses: dict[str, str] = {}
+    for requirement in evaluated:
+        name = str(requirement.get("name") or "")
+        if not name:
+            continue
+        status = str(requirement.get("status") or "unmet")
+        if status == "satisfied":
+            statuses[name] = "satisfied"
+            continue
+        if statuses.get(name) == "satisfied":
+            continue
+        unmet_action = str(requirement.get("unmet_action") or "")
+        if (
+            status == "unmet"
+            and unmet_action in {"downgrade_claim", "disclose"}
+            and _has_matching_limitation(requirement)
+        ):
+            statuses[name] = "limited"
+        else:
+            statuses.setdefault(name, status)
+    return statuses
+
+
+def _factor_measurement_marker(state) -> str:
+    records = list(getattr(state, "evidence_records", []) or [])
+    for record in reversed(records):
+        if not isinstance(record, dict):
+            continue
+        for measurement in record.get("measurements") or []:
+            if not isinstance(measurement, dict):
+                continue
+            identity = measurement.get("identity")
+            if not isinstance(identity, dict):
+                continue
+            label = str(identity.get("metric_label") or "")
+            metric_key = str(identity.get("metric_key") or "")
+            if "活跃度" not in label or not metric_key.startswith(
+                "coefficients.estimate"
+            ):
+                continue
+            measurement_key = str(identity.get("measurement_key") or "")
+            evidence_id = str(record.get("id") or "")
+            if evidence_id and measurement_key:
+                return f"[[evidence:{evidence_id}#{measurement_key}]]"
+    raise AssertionError(
+        "factor replay reached synthesis without a projected factor measurement"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Config / workspace isolation
 # ---------------------------------------------------------------------------
@@ -437,13 +601,37 @@ def _drive_replay(
 ) -> tuple[AgentLoop, str, str, str]:
     """Drive a single AgentLoop turn. Returns ``(loop, final_text, persisted, browser)``."""
 
-    client = _ScriptedLLM(responses, fallback_text=fallback_text)
+    client = _ScriptedLLM(
+        responses,
+        fallback_text=fallback_text,
+        csv_path=csv_path,
+    )
     loop = AgentLoop(client=client, session_id=session_id, project_name=project_name)
+    client.bind_state_provider(lambda: loop.context.analysis_state)
     # The replay exercises the routing/binding/completion/publication
     # pipeline, not prompt-template rendering. Empty system prompt keeps the
     # fake-LLM harness deterministic without pulling in optional heavy
     # modules that are irrelevant to the reliability contracts under test.
     loop._get_system_prompt = lambda: ""  # type: ignore[assignment]
+    production_bind = loop._bind_tool_call
+
+    def _bind_replay_step(tool_call):
+        if tool_call.name != "factor_relationship_analysis":
+            return production_bind(tool_call)
+        from data_agent.agent.analysis_execution import bind_tool_call_to_plan_step
+        from data_agent.tools.registry import registry
+
+        state = getattr(loop.context, "analysis_state", None)
+        plan = getattr(state, "analysis_plan", None)
+        return bind_tool_call_to_plan_step(
+            plan=plan if isinstance(plan, dict) else {},
+            tool_name=tool_call.name,
+            capability=registry.capability_for(tool_call.name),
+            dataset_names=[str(tool_call.arguments.get("name") or "")],
+            preferred_step_id="step_3",
+        )
+
+    loop._bind_tool_call = _bind_replay_step  # type: ignore[assignment]
 
     # Swap stdin for an empty stream so the loop's CLI confirmation handler
     # auto-cancels the method-confirmation prompt instead of blocking on a
@@ -483,6 +671,27 @@ def _finalize_result(
         )
     trace, completion_state, max_identical_failures = _build_trace(state)
     progress_events, final_answer_sequence = _build_progress_events(state)
+    evidence_records = list(getattr(state, "evidence_records", []) or [])
+    published_limitations = _extract_published_limitations(final_text)
+    plan = getattr(state, "analysis_plan", None)
+    plan = plan if isinstance(plan, dict) else {}
+    method_plan = plan.get("method_plan")
+    method_plan = method_plan if isinstance(method_plan, list) else []
+    dataset_versions = sorted({
+        str(version)
+        for record in evidence_records
+        if isinstance(record, dict)
+        for version in record.get("dataset_versions") or []
+        if str(version)
+    })
+    artifact_paths = [
+        Path(str(ref.get("artifact_path")))
+        for record in evidence_records
+        if isinstance(record, dict)
+        for ref in record.get("computation_refs") or []
+        if isinstance(ref, dict) and str(ref.get("artifact_path") or "")
+    ]
+    sessions_root = str(artifact_paths[0].parents[2]) if artifact_paths else ""
     return ReplayResult(
         turn_completed=bool(final_text),
         final_answer=final_text,
@@ -491,12 +700,33 @@ def _finalize_result(
         trace=trace,
         progress_events=progress_events,
         final_answer_sequence=final_answer_sequence,
-        evidence_records=list(getattr(state, "evidence_records", []) or []),
+        evidence_records=evidence_records,
         asserted_dimensions=_extract_asserted_dimensions(state),
         serialized_trace=_serialized_trace(state, loop),
         max_identical_failure_attempts=max_identical_failures,
         persisted_text=persisted_text,
         browser_text=browser_text,
+        successful_capability_ids=_successful_capability_ids(state),
+        requirement_statuses=_requirement_statuses(
+            state,
+            evidence_records=evidence_records,
+            published_limitations=published_limitations,
+        ),
+        published_limitations=published_limitations,
+        final_audit_status=_latest_final_audit_status(state),
+        analysis_requirements=_current_requirements(state),
+        current_plan_id=str(plan.get("id") or ""),
+        current_plan_digest=(
+            analysis_plan_semantic_digest(plan) if plan else ""
+        ),
+        current_step_digests={
+            str(step.get("step_id") or ""): analysis_step_semantic_digest(step)
+            for step in method_plan
+            if isinstance(step, dict) and str(step.get("step_id") or "")
+        },
+        current_dataset_versions=dataset_versions,
+        sessions_root=sessions_root,
+        current_session_id=str(getattr(state, "session_id", "") or ""),
     )
 
 
@@ -506,10 +736,9 @@ def _finalize_result(
 
 
 _FACTOR_FINAL_TEXT = (
-    "结论：在控制价格与活跃度后，活跃度对目标值存在正向且统计显著的关联。"
-    "方法：OLS HC3 稳健协方差 + fdr_bh 多重比较校正。"
-    "局限：样本量较小（32 行）、关联不等于因果、缺失特征样本被剔除。"
-    "建议下一步：扩充样本并加入时间维度的稳定性复查。"
+    "活跃度 estimate 为 5.399135 "
+    f"{_FACTOR_MARKER_TOKEN}。"
+    "局限：样本量有限、关联不等于因果、缺失特征样本被剔除。"
 )
 
 _AGGREGATE_FINAL_TEXT = (
@@ -541,15 +770,6 @@ def _write_aggregate_csv(tmp_path: Path) -> Path:
 
 
 def _factor_responses(csv_path: Path) -> list[Response]:
-    evidence_payload = {
-        "claim": "活跃度对目标值存在正向显著关联",
-        "dataset": "factor_data",
-        "method": "OLS HC3 稳健协方差 + fdr_bh 多重比较校正",
-        "tool_calls": ["factor_relationship_analysis"],
-        "result_summary": "活跃度系数正向显著；价格不显著；缺失特征样本较小",
-        "limitations": ["关联不等于因果", "样本量有限", "缺失特征样本被剔除"],
-        "confidence": "medium",
-    }
     return [
         _tool_response(
             _tool_call("load_data", {"source": str(csv_path), "name": "factor_data"})
@@ -567,13 +787,28 @@ def _factor_responses(csv_path: Path) -> list[Response]:
                 {"name": "factor_data", "target_col": "目标值"},
             )
         ),
+        _text_response(_FACTOR_FINAL_TEXT),
+    ]
+
+
+def _superficial_profile_only_responses(*, repetitions: int) -> list[Response]:
+    return [
         _tool_response(
             _tool_call(
-                "record_evidence_record",
-                {"record_json": json.dumps(evidence_payload, ensure_ascii=False)},
+                "load_data",
+                {"source": _REPLAY_CSV_PLACEHOLDER, "name": "factor_data"},
             )
         ),
-        _text_response(_FACTOR_FINAL_TEXT),
+        *[
+            _tool_response(
+                _tool_call(
+                    "quick_profile",
+                    {"name": "factor_data"},
+                    call_id=f"tc_quick_profile_superficial_{index}",
+                )
+            )
+            for index in range(repetitions)
+        ],
     ]
 
 
@@ -695,7 +930,7 @@ def run_deterministic_replay(
 
     When ``responses`` is omitted, a default factor-analysis script is built
     that exercises the full Tasks 6-11 pipeline (load → profile → correlation
-    → factor_relationship_analysis → record_evidence_record → synthesis).
+    → factor_relationship_analysis → automatic evidence projection → synthesis).
     """
 
     root = Path(root)
@@ -863,6 +1098,8 @@ def _run_factor_scenario(root: Path) -> bool:
         return False
     if not result.evidence_records or result.final_answer_language != "zh":
         return False
+    if result.final_audit_status != "pass" or not result.published_limitations:
+        return False
     if "Some requested analysis claims" in result.final_answer:
         return False
     if not result.progress_events:
@@ -870,14 +1107,28 @@ def _run_factor_scenario(root: Path) -> bool:
     first_progress = int(getattr(result.progress_events[0], "sequence", 0))
     if first_progress >= result.final_answer_sequence:
         return False
-    codes = {str(event.get("code") or "") for event in result.trace if event.get("code")}
-    required = {
-        "grain_and_missingness_checked",
-        "univariate_relationship_checked",
-        "multivariable_method_attempted",
-        "limitations_prepared",
+    required_statuses = {
+        "grain_definition",
+        "target_definition",
+        "missingness_assessment",
+        "univariate_association",
+        "multivariable_adjustment",
+        "multiplicity_control",
+        "collinearity_assessment",
+        "effect_size_or_predictive_contribution",
+        "limitations_and_alternatives",
     }
-    return required <= codes
+    return (
+        {
+            "data.profile",
+            "analysis.correlation",
+            "analysis.factor_relationship",
+        }.issubset(result.successful_capability_ids)
+        and all(
+            result.requirement_statuses.get(name) == "satisfied"
+            for name in required_statuses
+        )
+    )
 
 
 def _run_aggregate_scenario(root: Path) -> bool:

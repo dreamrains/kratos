@@ -354,7 +354,18 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "list_data": _cap("data.list", "data_view", ["data_understanding"]),
     "preview_data": _cap("data.preview", "data_view", ["data_understanding"]),
     "describe_dataset": _cap("data.describe", "profile", ["data_understanding"], evidence_fields=["schema", "rows", "columns"]),
-    "quick_profile": _cap("data.profile", "profile", ["data_understanding", "quality"], evidence_fields=["schema", "missingness", "distribution"]),
+    "quick_profile": _cap(
+        "data.profile",
+        "profile",
+        ["data_understanding", "quality"],
+        evidence_fields=[
+            "grain",
+            "columns.missing_pct",
+            "quality.missing",
+            "quality.outliers",
+            "quality.duplicates",
+        ],
+    ),
     "detect_data_quality": _cap("data.quality", "quality", ["quality"], evidence_fields=["missingness", "duplicates", "outliers"]),
     "compare_periods": _cap(
         "analysis.period_compare",

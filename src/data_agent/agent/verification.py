@@ -633,6 +633,8 @@ def _numeric_evidence_items(
 
 def _unit_family(unit: Any) -> str:
     normalized = str(unit or "").strip().lower()
+    if normalized in {"value", "unitless"}:
+        return ""
     if normalized in {"%", "percent", "percentage", "ratio", "proportion"}:
         return "ratio"
     if normalized in {"percentage point", "percentage points", "pp"}:
@@ -816,6 +818,7 @@ def _metric_base_identity_issues(
     ).split()
     structural_tokens = {
         "change",
+        "coefficients",
         "correlation",
         "estimate",
         "effect",
@@ -1192,12 +1195,21 @@ def _exact_exploratory_measurement_candidates(
 
 
 def _unmet_block_claim_requirements(
-    evidence_records: list[dict[str, Any]],
+    claim_evidence_records: list[dict[str, Any]],
     analysis_requirements: list[dict[str, Any]],
+    *,
+    satisfaction_evidence_records: list[dict[str, Any]] | None = None,
+    current_plan_id: str = "",
+    current_plan_digest: str = "",
+    current_step_digests: dict[str, str] | None = None,
+    current_dataset_versions: set[str] | None = None,
+    active_requirement_ids: set[str] | None = None,
+    sessions_root: Any = None,
+    current_session_id: str = "",
 ) -> list[str]:
-    if not evidence_records:
+    if not claim_evidence_records:
         return []
-    step_id = str(evidence_records[0].get("step_id") or "")
+    step_id = str(claim_evidence_records[0].get("step_id") or "")
     matching = [
         requirement
         for requirement in analysis_requirements
@@ -1208,15 +1220,106 @@ def _unmet_block_claim_requirements(
     if not matching:
         return []
     from data_agent.agent.analysis_requirements import evaluate_requirement_satisfaction
+    from data_agent.agent.evidence_contracts import (
+        hydrate_computation_ref,
+        validate_evidence_record,
+    )
 
     try:
-        evaluated = evaluate_requirement_satisfaction(matching, evidence_records)
+        evaluated = evaluate_requirement_satisfaction(
+            matching,
+            satisfaction_evidence_records or claim_evidence_records,
+        )
+        current_steps = current_step_digests or {}
+        active_ids = active_requirement_ids or set()
+        qualified_support: list[dict[str, Any]] = []
+        for record in satisfaction_evidence_records or []:
+            if (
+                not validate_evidence_record(
+                    record,
+                    current_plan_id=current_plan_id,
+                    require_measurement_identity=True,
+                ).ok
+                or not _has_current_bound_computation(
+                    record,
+                    current_plan_digest=current_plan_digest,
+                    current_step_digests=current_steps,
+                    current_dataset_versions=current_dataset_versions,
+                )
+            ):
+                continue
+            record_requirement_ids = {
+                str(item)
+                for item in record.get("requirement_ids") or []
+                if str(item)
+            }
+            if (
+                not record_requirement_ids
+                or not active_ids
+                or not record_requirement_ids.issubset(active_ids)
+            ):
+                continue
+            try:
+                for ref in record.get("computation_refs") or []:
+                    hydrate_computation_ref(
+                        ref,
+                        sessions_root=sessions_root,
+                        current_session_id=current_session_id or None,
+                    )
+            except (TypeError, ValueError):
+                continue
+            qualified_support.append(record)
+        evaluated_all = evaluate_requirement_satisfaction(
+            analysis_requirements,
+            qualified_support,
+        )
     except ValueError:
         return [str(item.get("id") or item.get("name") or "invalid_requirement") for item in matching]
+
+    def _semantic_key(requirement: dict[str, Any]) -> str:
+        semantic_contract = {
+            key: value
+            for key, value in requirement.items()
+            if key not in {"id", "step_id", "status", "evidence_ids"}
+        }
+        for key in ("name", "category", "necessity", "unmet_action"):
+            if key in semantic_contract:
+                semantic_contract[key] = _normalize_text(semantic_contract[key])
+        for key in ("required_evidence_fields", "assumption_checks"):
+            if isinstance(semantic_contract.get(key), list):
+                semantic_contract[key] = sorted(
+                    _normalize_text(item)
+                    for item in semantic_contract[key]
+                )
+        return json.dumps(
+            semantic_contract,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    requirements_by_id = {
+        str(item.get("id") or ""): item
+        for item in analysis_requirements
+        if isinstance(item, dict) and str(item.get("id") or "")
+    }
+    satisfied_semantics = {
+        _semantic_key(
+            requirements_by_id.get(str(item.get("id") or ""), item)
+        )
+        for item in evaluated_all
+        if item.get("status") == "satisfied"
+    }
     return [
         str(item.get("id") or item.get("name") or "requirement")
         for item in evaluated
-        if item.get("status") == "unmet"
+        if (
+            item.get("status") == "unmet"
+            and _semantic_key(
+                requirements_by_id.get(str(item.get("id") or ""), item)
+            )
+            not in satisfied_semantics
+        )
     ]
 
 
@@ -1649,6 +1752,14 @@ def _check_claim(
     unmet_requirements = _unmet_block_claim_requirements(
         revision_records,
         analysis_requirements or [],
+        satisfaction_evidence_records=evidence_records,
+        current_plan_id=current_plan_id,
+        current_plan_digest=current_plan_digest,
+        current_step_digests=current_step_digests or {},
+        current_dataset_versions=current_dataset_versions,
+        active_requirement_ids=active_requirement_ids,
+        sessions_root=sessions_root,
+        current_session_id=current_session_id,
     )
     if unmet_requirements:
         check["status"] = "failed"

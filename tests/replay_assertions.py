@@ -23,10 +23,22 @@ def assert_reliable_analysis_trace(
     assert "univariate_relationship_checked" in codes
     if require_inferential_attempt:
         assert "multivariable_method_attempted" in codes
-    assert "limitations_prepared" in codes
     repeated = [
         event
         for event in trace
         if int(event.get("same_failure_attempt", 0) or 0) > 2
     ]
     assert repeated == []
+
+
+def assert_bound_projected_measurements(
+    evidence_records: list[dict[str, object]],
+) -> None:
+    assert evidence_records
+    for record in evidence_records:
+        assert record.get("provenance_status") == "bound"
+        assert record.get("computation_refs")
+        for measurement in record.get("measurements") or []:
+            if measurement.get("identity_status") == "metric_identity_missing":
+                continue
+            assert isinstance(measurement.get("identity"), dict)

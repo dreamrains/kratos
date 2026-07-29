@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from data_agent.tools.eda import correlation_analysis
+from data_agent.tools.data_understand import quick_profile as _quick_profile  # noqa: F401
 from data_agent.tools.registry import registry, validate_capability_output
 from data_agent.tools.statistics import factor_relationship_analysis
 from data_agent.session.workspace import Workspace
@@ -81,6 +82,7 @@ def test_factor_relationship_emits_inferential_diagnostics(workspace):
 
 
 @pytest.mark.parametrize(("tool_name", "arguments"), [
+    ("quick_profile", {"name": "factors"}),
     ("correlation_analysis", {"name": "factors", "columns": "目标值,活跃度"}),
     ("factor_relationship_analysis", {
         "name": "factors",

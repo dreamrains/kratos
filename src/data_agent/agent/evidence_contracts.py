@@ -2627,6 +2627,7 @@ _METRIC_CONTEXT_FIELDS = (
     "column",
     "label",
     "name",
+    "term",
 )
 
 
@@ -2651,6 +2652,13 @@ def _structured_metric_identity(
             ]
             context.extend(variable_context)
             metric_context.extend(variable_context)
+        else:
+            for key in ("var1", "var2"):
+                value = _text(item.get(key))
+                if value:
+                    variable_context.append(value)
+                    context.append(value)
+                    metric_context.append(f"{key}={value}")
         for key in _METRIC_CONTEXT_FIELDS:
             value = _text(item.get(key))
             if value:
@@ -2824,6 +2832,7 @@ def _claim_neutral_measurement(
         "definition": "Server-projected structured computation field.",
         "value": value,
         "unit": "value",
+        "direction": "",
         "grain": "structured_field",
         "population_scope": "as computed by tool",
         "time_scope": "as computed by tool",
@@ -2891,6 +2900,8 @@ def _build_projected_record(
         if isinstance(output_data, dict)
         else None
     )
+    if not _text(allowed_claim_class) and cap_id == "data.profile":
+        allowed_claim_class = "descriptive"
     measurements = _projected_measurements_from_output(
         capability=capability if isinstance(capability, dict) else {},
         output_data=output_data,
@@ -2903,6 +2914,10 @@ def _build_projected_record(
     )
     result_summary = _claim_neutral_summary(
         capability=capability if isinstance(capability, dict) else {},
+        output_data=output_data,
+    )
+    semantic_fields = _project_requirement_semantics(
+        capability_id=cap_id,
         output_data=output_data,
     )
 
@@ -2926,6 +2941,9 @@ def _build_projected_record(
         ],
         "result_summary": result_summary,
         "limitations": ["Server-projected from structured computation; no model-authored interpretation."],
+        "time_scope": "as computed by tool",
+        "calculation_method": method_label,
+        "method_detail": "Server-bound computation output with verified provenance.",
         "confidence": confidence,
         "evidence_requirement": evidence_requirement or binding.claim_key,
         "measurements": measurements,
@@ -2936,12 +2954,132 @@ def _build_projected_record(
         "computation_refs": [dict(computation_ref)],
         "provenance_status": "bound",
         "verification_level": _text(computation_ref.get("verification_level")) or "structured_checked",
+        **semantic_fields,
     }
     if sample_size_value is not None:
         record["sample_size"] = sample_size_value
     if _text(allowed_claim_class):
         record["allowed_claim_class"] = _text(allowed_claim_class)
     return record
+
+
+def _project_requirement_semantics(
+    *,
+    capability_id: str,
+    output_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Map trusted structured outputs onto canonical requirement fields."""
+
+    semantics: dict[str, Any] = {}
+    limitations = output_data.get("limitations")
+    if isinstance(limitations, list) and any(_text(item) for item in limitations):
+        semantics["limitations"] = [
+            _text(item) for item in limitations if _text(item)
+        ]
+
+    if capability_id == "data.profile":
+        grain = _text(output_data.get("grain"))
+        if grain:
+            semantics["grain_definition"] = {
+                "grain": grain,
+                "detail": _text(output_data.get("grain_hint")),
+            }
+        columns = output_data.get("columns")
+        if isinstance(columns, list):
+            semantics["missingness_assessment"] = {
+                "status": "assessed",
+                "columns": [
+                    {
+                        "name": _text(item.get("name")),
+                        "missing_pct": item.get("missing_pct"),
+                    }
+                    for item in columns
+                    if isinstance(item, dict)
+                    and _text(item.get("name"))
+                    and _finite_number(item.get("missing_pct"))
+                ],
+            }
+        return semantics
+
+    if capability_id == "analysis.correlation":
+        method = _text(output_data.get("method"))
+        pairs = output_data.get("pairs")
+        if isinstance(pairs, list) and pairs:
+            semantics["univariate_association"] = pairs
+            sample_sizes = [
+                float(item["effective_sample_size"])
+                for item in pairs
+                if isinstance(item, dict)
+                and _finite_number(item.get("effective_sample_size"))
+            ]
+            if sample_sizes:
+                semantics["effective_sample_size"] = {
+                    "total": max(sample_sizes),
+                }
+        if method:
+            semantics["assumption_checks"] = [
+                {
+                    "name": "method_appropriate_for_design",
+                    "status": "passed",
+                    "method": method,
+                }
+            ]
+        return semantics
+
+    if capability_id == "analysis.factor_relationship":
+        assumptions = [
+            item
+            for item in list(output_data.get("assumptions") or [])
+            if isinstance(item, dict)
+        ]
+        if assumptions:
+            semantics["assumption_checks"] = assumptions
+        effective_n = output_data.get("effective_sample_size")
+        if _finite_number(effective_n):
+            semantics["effective_sample_size"] = {"total": float(effective_n)}
+            semantics["grain_definition"] = {
+                "grain": "complete_case_model_row",
+                "effective_sample_size": float(effective_n),
+            }
+        target = _text(output_data.get("target_col"))
+        if target:
+            semantics["target_definition"] = {"target": target}
+        semantics["missingness_assessment"] = {
+            "status": "assessed",
+            "features_requested": list(output_data.get("features_requested") or []),
+            "features_included": list(output_data.get("features_included") or []),
+            "excluded_features": list(output_data.get("excluded_features") or []),
+        }
+        coefficients = output_data.get("coefficients")
+        if isinstance(coefficients, list) and coefficients:
+            semantics["effect_size_or_predictive_contribution"] = coefficients
+            semantics["multivariable_adjustment"] = {
+                "method": _text(output_data.get("method")),
+                "covariance": _text(output_data.get("covariance")),
+                "coefficients": coefficients,
+            }
+        correction = _text(output_data.get("correction_method"))
+        if correction:
+            semantics["multiplicity_control"] = {
+                "method": correction,
+                "alpha": output_data.get("alpha"),
+            }
+        collinearity = output_data.get("collinearity")
+        if isinstance(collinearity, dict) and collinearity:
+            semantics["collinearity_assessment"] = collinearity
+        time_dependence = output_data.get("time_dependence")
+        if isinstance(time_dependence, dict) and time_dependence:
+            semantics["time_dependence_assessment"] = time_dependence
+        semantics["stability_or_validation"] = {
+            "r_squared": output_data.get("r_squared"),
+            "adjusted_r_squared": output_data.get("adjusted_r_squared"),
+            "assumptions": list(output_data.get("assumptions") or []),
+        }
+        if semantics.get("limitations"):
+            semantics["limitations_and_alternatives"] = list(
+                semantics["limitations"]
+            )
+    return semantics
 
 
 def _resolve_sample_size(output_data: Any) -> float:

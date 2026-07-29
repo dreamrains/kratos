@@ -67,7 +67,9 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
     identity = measurement["identity"]
     assert identity["contract_version"] == "measurement_identity.v1"
     assert identity["measurement_key"].startswith("m_")
-    assert identity["metric_key"] == "pairs.correlation::revenue|cost"
+    assert identity["metric_key"] == (
+        "pairs.correlation::var1=revenue|var2=cost"
+    )
     assert identity["metric_label"] == "revenue cost correlation"
     assert identity["metric_aliases"] == [
         "revenue cost correlation",
@@ -87,7 +89,10 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
         max_chars=2000,
     )
     assert f"measurement_key={identity['measurement_key']}" in catalog
-    assert "metric_key=pairs.correlation::revenue|cost" in catalog
+    assert (
+        "metric_key=pairs.correlation::var1=revenue|var2=cost"
+        in catalog
+    )
     assert "metric_label=revenue cost correlation" in catalog
     assert f"dataset_versions={DATASET_VERSION}" in catalog
 
