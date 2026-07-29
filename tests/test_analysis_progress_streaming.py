@@ -407,6 +407,8 @@ def test_frontend_handles_analysis_progress_without_appending_final_text():
     progress_block_end = source.index("break;", progress_block_start)
     progress_block = source[progress_block_start:progress_block_end]
     assert "turn.thinkingText = data.label" in progress_block
+    assert "this._renderMessages()" not in progress_block
+    assert "this.turns = [...state.turns]" in progress_block
     # No mutation of the final answer text inside the progress handler —
     # findings stay buffered until the audited ``text_delta`` arrives.
     assert "turn.content +=" not in progress_block

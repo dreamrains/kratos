@@ -1559,10 +1559,9 @@ function chatApp() {
                 role: 'assistant', content: '', toolCalls: [], artifacts: [],
                 confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
             });
-            const turn = state.turns[state.turns.length - 1];
-
-            // Sync to reactive properties
             this.turns = [...state.turns];
+            state.turns = this.turns;
+            const turn = this.turns[this.turns.length - 1];
             this.isLoading = true;
             this._scrollToBottom();
 
@@ -1740,8 +1739,9 @@ function chatApp() {
                     role: 'assistant', content: '', toolCalls: [], artifacts: [],
                     confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
                 });
-                newTurn = state.turns[state.turns.length - 1];
                 this.turns = [...state.turns];
+                state.turns = this.turns;
+                const newTurn = this.turns[this.turns.length - 1];
                 this._scrollToBottom();
                 await this._processSSE(response, newTurn, state, sseSessionId);
             } catch (e) {
@@ -2369,6 +2369,7 @@ function chatApp() {
                         state.tokenSupported = true;
                         if (isCurrentSession) { this.tokenPct = data.pct; this.tokenSupported = true; }
                     }
+                    if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'analysis_progress':
                     // Safe live method narration. Server-authored label only —
@@ -2383,11 +2384,12 @@ function chatApp() {
                         stepId: data.step_id || ''
                     };
                     turn.thinkingText = data.label;
-                    this._renderMessages();
+                    if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'text_delta':
                     turn.isThinking = false;
                     turn.content = (turn.content || '') + data.text;
+                    if (isCurrentSession) this.turns = [...state.turns];
                     if (isCurrentSession) {
                         this._scrollToBottom();
                     }
@@ -2400,6 +2402,7 @@ function chatApp() {
                         arguments: data.arguments, duration_ms: 0,
                         result_summary: '', status: 'running', _expanded: false,
                     });
+                    if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'tool_result':
                     turn.isThinking = true;
@@ -2421,6 +2424,7 @@ function chatApp() {
                             this.loadSessionArtifacts(sessionId);
                         }
                     }
+                    if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'task_update':
                     this._debouncedLoadTasks();

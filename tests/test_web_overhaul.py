@@ -671,6 +671,8 @@ class TestAnalysisProgressNarration:
         end = js.index("break;", start)
         block = js[start:end]
         assert "turn.thinkingText = data.label" in block
+        assert "this._renderMessages()" not in block
+        assert "this.turns = [...state.turns]" in block
         # No mutation of the final answer text inside the progress handler.
         assert "turn.content +=" not in block
         assert "turn.content =" not in block
