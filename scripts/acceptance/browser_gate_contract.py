@@ -32,6 +32,13 @@ _PRE_TURN_END_OBSERVATIONS = (
     "first_chunk_before_second",
     "complete_answer_before_turn_end",
 )
+_NORMAL_STREAM_OBSERVATIONS = (
+    "upload_starts_analysis",
+    *_PRE_TURN_END_OBSERVATIONS,
+    "markdown_table_and_limitation_rendered",
+    "persisted_after_refresh",
+    "retained_after_session_switch",
+)
 _TOP_LEVEL_FIELDS = frozenset(
     {
         "contract_version",
@@ -168,6 +175,8 @@ def validate_browser_gate_receipt(
             for field in ("browser_ms", "server_event_ms", "turn_end_browser_ms")
         ):
             reasons.append("invalid_browser_timing")
+        elif item["server_event_ms"] > item["browser_ms"]:
+            reasons.append("server_event_after_browser_observation")
     if duplicate_names:
         reasons.append("duplicate_browser_observations")
     if not REQUIRED_OBSERVATIONS.issubset(observations):
@@ -186,10 +195,19 @@ def validate_browser_gate_receipt(
         observations.get(name, {}).get("browser_ms")
         for name in _PRE_TURN_END_OBSERVATIONS
     ]
-    if all(_is_nonnegative_int(value) for value in ordered) and ordered != sorted(
-        ordered
+    if all(_is_nonnegative_int(value) for value in ordered) and not all(
+        earlier < later for earlier, later in zip(ordered, ordered[1:])
     ):
         reasons.append("invalid_browser_observation_order")
+    normal_turn_ends = [
+        observations.get(name, {}).get("turn_end_browser_ms")
+        for name in _NORMAL_STREAM_OBSERVATIONS
+    ]
+    if (
+        all(_is_nonnegative_int(value) for value in normal_turn_ends)
+        and len(set(normal_turn_ends)) != 1
+    ):
+        reasons.append("inconsistent_normal_stream_turn_end")
 
     reasons.extend(_privacy_reason_codes(receipt))
     return ReceiptValidation(

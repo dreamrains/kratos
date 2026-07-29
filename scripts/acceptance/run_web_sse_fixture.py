@@ -222,21 +222,71 @@ def _install_scripted_provider_boundaries() -> Callable[[], None]:
     llm_intent._client = scripted
 
     def restore() -> None:
-        if llm_intent._client is scripted:
-            llm_intent._client = previous
+        llm_intent._client = previous
 
     return restore
 
 
 class _FixtureConfirmationRuntime:
+    def __init__(self, session_id: str):
+        self._session_id = session_id
+        self._active: dict[str, Any] | None = None
+        self._next_version = CONFIRMATION_VERSION
+        self._lock = threading.Lock()
+
+    def create(self) -> dict[str, Any]:
+        with self._lock:
+            if self._active is not None:
+                raise RuntimeError("fixture confirmation is already unresolved")
+            record = {
+                "confirmation_id": CONFIRMATION_ID,
+                "session_id": self._session_id,
+                "version": self._next_version,
+            }
+            self._next_version += 1
+            self._active = record
+            return dict(record)
+
     def get(self, session_id: str, confirmation_id: str):
-        if confirmation_id != CONFIRMATION_ID:
-            raise KeyError(confirmation_id)
-        return {
-            "confirmation_id": CONFIRMATION_ID,
-            "session_id": session_id,
-            "version": CONFIRMATION_VERSION,
-        }
+        with self._lock:
+            record = self._active
+            if (
+                record is None
+                or session_id != self._session_id
+                or confirmation_id != record["confirmation_id"]
+            ):
+                raise KeyError(confirmation_id)
+            return dict(record)
+
+    def resolve(
+        self,
+        session_id: str,
+        confirmation_id: str,
+        user_response: str,
+        *,
+        expected_version: int | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        response = str(user_response or "").strip()
+        if not response:
+            raise ValueError("fixture confirmation response must be nonblank")
+        if not str(idempotency_key or "").strip():
+            raise ValueError("invalid fixture confirmation identity or version")
+        with self._lock:
+            record = self._active
+            if (
+                record is None
+                or session_id != self._session_id
+                or confirmation_id != record["confirmation_id"]
+            ):
+                raise KeyError(confirmation_id)
+            if expected_version != record["version"]:
+                raise ValueError("invalid fixture confirmation identity or version")
+            self._active = None
+            resolved = dict(record)
+            resolved["response"] = response
+            resolved["idempotency_key"] = idempotency_key
+            return resolved
 
 
 class DelayedAuditedLoop:
@@ -245,7 +295,7 @@ class DelayedAuditedLoop:
     def __init__(self, inner):
         self.inner = inner
         self.interrupted = threading.Event()
-        self._runtime = _FixtureConfirmationRuntime()
+        self._runtime = _FixtureConfirmationRuntime(self.session_id)
 
     @property
     def session_id(self) -> str:
@@ -271,16 +321,30 @@ class DelayedAuditedLoop:
     def request_interrupt(self) -> None:
         self.interrupted.set()
 
+    def _assert_audited_publication_identity(self, final_text: str) -> None:
+        audit = getattr(self.inner, "_turn_last_final_audit", None)
+        persisted = self.messages[-1] if self.messages else None
+        valid = (
+            isinstance(audit, dict)
+            and audit.get("status") == "pass"
+            and audit.get("public_text") == final_text
+            and isinstance(persisted, dict)
+            and persisted.get("role") == "assistant"
+            and persisted.get("content") == final_text
+        )
+        assert valid, "audited publication identity mismatch"
+
     def _control_stream(self, message: str):
         if message == ERROR_PROMPT:
             raise RuntimeError("synthetic_acceptance_error")
         if message != SUSPEND_PROMPT:
             raise ValueError(f"unsupported fixture control prompt: {message}")
+        record = self._runtime.create()
         yield {
             "type": "suspended",
-            "confirmation_id": CONFIRMATION_ID,
-            "suspension_id": CONFIRMATION_ID,
-            "version": CONFIRMATION_VERSION,
+            "confirmation_id": record["confirmation_id"],
+            "suspension_id": record["confirmation_id"],
+            "version": record["version"],
             "question": "是否继续暂停验收？",
             "options": ["继续"],
             "context": {"fixture_id": FIXTURE_ID},
@@ -304,10 +368,10 @@ class DelayedAuditedLoop:
                 final_text += str(event.get("text") or "")
             else:
                 yield event
+        self._assert_audited_publication_identity(final_text)
         for chunk in split_audited_fixture_text(final_text):
             if self.interrupted.wait(0.6):
-                yield {"type": "error", "message": "已中断验收"}
-                return
+                raise RuntimeError("已中断验收")
             yield {"type": "text_delta", "text": chunk}
 
     def resume_turn_streaming(
@@ -318,19 +382,20 @@ class DelayedAuditedLoop:
         expected_version: int | None = None,
         idempotency_key: str = "",
     ):
-        if (
-            confirmation_id != CONFIRMATION_ID
-            or expected_version != CONFIRMATION_VERSION
-            or not idempotency_key
-        ):
-            raise ValueError("invalid fixture confirmation identity or version")
+        resolved = self._runtime.resolve(
+            self.session_id,
+            confirmation_id,
+            user_response,
+            expected_version=expected_version,
+            idempotency_key=idempotency_key,
+        )
         text = "恢复后内容"
         self.messages.append(
             {
                 "role": "user",
                 "content": (
-                    f"<confirmation_response suspension_id=\"{CONFIRMATION_ID}\">"
-                    f"{user_response}</confirmation_response>"
+                    f"<confirmation_response suspension_id=\"{confirmation_id}\">"
+                    f"{resolved['response']}</confirmation_response>"
                 ),
             }
         )
@@ -393,8 +458,8 @@ def _configure_isolated_roots(output_dir: Path) -> Callable[[], None]:
     previous_config = data_agent.config._config
     os.environ["WORKSPACE_DIR"] = str(output_dir / "workspace")
     os.environ["SESSIONS_DIR"] = str(output_dir / "sessions")
-    os.environ.setdefault("MCP_ENABLED", "false")
-    os.environ.setdefault("SKILL_AUTO_DISCOVER", "false")
+    os.environ["MCP_ENABLED"] = "false"
+    os.environ["SKILL_AUTO_DISCOVER"] = "false"
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     data_agent.config._config = None
 
@@ -409,63 +474,88 @@ def _configure_isolated_roots(output_dir: Path) -> Callable[[], None]:
     return restore
 
 
+def _configure_interaction_mode() -> Callable[[], None]:
+    from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
+
+    previous = get_interaction_mode()
+    set_interaction_mode("web")
+
+    def restore() -> None:
+        set_interaction_mode(previous)
+
+    return restore
+
+
+def _run_fixture_cleanups(
+    callbacks: list[Callable[[], None]],
+    *,
+    raise_errors: bool,
+) -> None:
+    first_error: BaseException | None = None
+    while callbacks:
+        callback = callbacks.pop()
+        try:
+            callback()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+    if raise_errors and first_error is not None:
+        raise first_error
+
+
 def build_fixture_app(output_dir: Path):
     """Create the normal Flask app after isolating every persistent root."""
 
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     fixture_csv = write_browser_fixture_csv(output_dir)
-    restore_isolated_roots = _configure_isolated_roots(output_dir)
-    restore_provider_boundaries = _install_scripted_provider_boundaries()
+    cleanups: list[Callable[[], None]] = []
+    try:
+        cleanups.append(_configure_isolated_roots(output_dir))
+        cleanups.append(_configure_interaction_mode())
+        cleanups.append(_install_scripted_provider_boundaries())
 
-    from data_agent.lifecycle import AgentLifecycle
+        from data_agent.lifecycle import AgentLifecycle
 
-    lifecycle = AgentLifecycle()
-    lifecycle.initialize()
+        lifecycle = AgentLifecycle()
+        cleanups.append(lambda: lifecycle.shutdown())
+        lifecycle.initialize()
 
-    from data_agent.web.app import create_app
+        from data_agent.web.app import create_app
 
-    app = create_app()
-    from data_agent.config import get_config
+        app = create_app()
+        from data_agent.config import get_config
 
-    uploaded_fixture = get_config().inbox_dir / fixture_csv.name
-    app.config["agent_manager"] = ScriptedManager(uploaded_fixture)
-    app.config["lifecycle"] = lifecycle
+        uploaded_fixture = get_config().inbox_dir / fixture_csv.name
+        app.config["agent_manager"] = ScriptedManager(uploaded_fixture)
+        app.config["lifecycle"] = lifecycle
 
-    trace_path = output_dir / "browser_fixture_events.jsonl"
-    from data_agent.web.blueprints import chat as chat_blueprint
+        trace_path = output_dir / "browser_fixture_events.jsonl"
+        from data_agent.web.blueprints import chat as chat_blueprint
 
-    previous_event_queue = chat_blueprint.EventQueue
-    observed_event_queue = make_observed_event_queue(trace_path)
-    chat_blueprint.EventQueue = observed_event_queue
+        previous_event_queue = chat_blueprint.EventQueue
+        observed_event_queue = make_observed_event_queue(trace_path)
+        chat_blueprint.EventQueue = observed_event_queue
 
-    def restore_event_queue() -> None:
-        if chat_blueprint.EventQueue is observed_event_queue:
+        def restore_event_queue() -> None:
             chat_blueprint.EventQueue = previous_event_queue
 
-    app.config["fixture_event_trace"] = str(trace_path)
-    app.config["fixture_output_dir"] = str(output_dir)
-    app.config["fixture_csv"] = str(fixture_csv)
-    app.config["fixture_restore_event_queue"] = restore_event_queue
-    app.config["fixture_restore_provider_boundaries"] = restore_provider_boundaries
-    app.config["fixture_restore_isolated_roots"] = restore_isolated_roots
-    return app
+        cleanups.append(restore_event_queue)
+        app.config["fixture_event_trace"] = str(trace_path)
+        app.config["fixture_output_dir"] = str(output_dir)
+        app.config["fixture_csv"] = str(fixture_csv)
+        app.config["fixture_cleanup_callbacks"] = cleanups
+        return app
+    except BaseException:
+        _run_fixture_cleanups(cleanups, raise_errors=False)
+        raise
 
 
 def shutdown_fixture_app(app) -> None:
     """Release fixture-owned process globals and lifecycle resources."""
 
-    lifecycle = app.config.get("lifecycle")
-    if lifecycle is not None:
-        lifecycle.shutdown()
-    for key in (
-        "fixture_restore_event_queue",
-        "fixture_restore_provider_boundaries",
-        "fixture_restore_isolated_roots",
-    ):
-        restore = app.config.pop(key, None)
-        if callable(restore):
-            restore()
+    callbacks = app.config.pop("fixture_cleanup_callbacks", [])
+    _run_fixture_cleanups(callbacks, raise_errors=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:

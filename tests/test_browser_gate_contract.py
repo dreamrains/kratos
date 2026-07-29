@@ -9,8 +9,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import threading
+import types
 from pathlib import Path
 
 import pytest
@@ -194,6 +196,68 @@ def test_browser_receipt_rejects_stale_source_or_malformed_timing():
     assert "invalid_browser_timing" in result.reason_codes
 
 
+def test_browser_receipt_rejects_server_event_after_browser_observation():
+    receipt = _valid_observation()
+    item = next(
+        item
+        for item in receipt["observations"]
+        if item["name"] == "persisted_after_refresh"
+    )
+    item["server_event_ms"] = item["browser_ms"] + 1
+
+    result = validate_browser_gate_receipt(
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "FAIL"
+    assert "server_event_after_browser_observation" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("first_name", "second_name"),
+    [
+        ("progress_before_answer", "first_chunk_before_second"),
+        ("first_chunk_before_second", "complete_answer_before_turn_end"),
+    ],
+)
+def test_browser_receipt_requires_strict_normal_stream_order(
+    first_name, second_name
+):
+    receipt = _valid_observation()
+    observations = {
+        item["name"]: item
+        for item in receipt["observations"]
+    }
+    observations[second_name]["browser_ms"] = observations[first_name]["browser_ms"]
+
+    result = validate_browser_gate_receipt(
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "FAIL"
+    assert "invalid_browser_observation_order" in result.reason_codes
+
+
+def test_browser_receipt_requires_one_normal_stream_turn_end():
+    receipt = _valid_observation()
+    item = next(
+        item
+        for item in receipt["observations"]
+        if item["name"] == "markdown_table_and_limitation_rendered"
+    )
+    item["turn_end_browser_ms"] += 1
+
+    result = validate_browser_gate_receipt(
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "FAIL"
+    assert "inconsistent_normal_stream_turn_end" in result.reason_codes
+
+
 def test_browser_receipt_writer_validates_before_atomic_persistence(tmp_path):
     receipt_path = tmp_path / "analysis_browser_gate.v1.json"
     write_browser_gate_receipt(
@@ -340,6 +404,10 @@ class _AuditedInner:
     def __init__(self):
         self.messages = []
         self.saved = 0
+        self._turn_last_final_audit = {
+            "status": "pass",
+            "public_text": BROWSER_FINAL_DRAFT,
+        }
 
     def stream_turn(self, message):
         self.messages.append({"role": "user", "content": message})
@@ -357,6 +425,31 @@ class _AuditedInner:
         self.saved += 1
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ["extra_separator", "failed_audit", "persisted_mismatch"],
+)
+def test_delayed_loop_rejects_publication_identity_mutations(mutation):
+    class _MutatedInner(_AuditedInner):
+        def stream_turn(self, message):
+            self.messages.append({"role": "user", "content": message})
+            streamed = BROWSER_FINAL_DRAFT
+            persisted = BROWSER_FINAL_DRAFT
+            if mutation == "extra_separator":
+                streamed += "\n\n"
+            elif mutation == "failed_audit":
+                self._turn_last_final_audit["status"] = "fail"
+            elif mutation == "persisted_mismatch":
+                persisted += "\n\n"
+            yield {"type": "text_delta", "text": streamed}
+            self.messages.append({"role": "assistant", "content": persisted})
+
+    loop = DelayedAuditedLoop(_MutatedInner())
+
+    with pytest.raises(AssertionError, match="audited publication identity"):
+        list(loop.stream_turn(BROWSER_NORMAL_PROMPT))
+
+
 def test_delayed_loop_forwards_progress_then_exactly_three_audited_chunks():
     loop = DelayedAuditedLoop(_AuditedInner())
     events = list(loop.stream_turn(BROWSER_NORMAL_PROMPT))
@@ -371,11 +464,20 @@ def test_delayed_loop_forwards_progress_then_exactly_three_audited_chunks():
 def test_control_paths_suspend_resume_and_error_without_blank_turn():
     inner = _AuditedInner()
     loop = DelayedAuditedLoop(inner)
+    with pytest.raises(KeyError):
+        loop._confirmation_runtime().get(loop.session_id, CONFIRMATION_ID)
+
     suspended = list(loop.stream_turn(SUSPEND_PROMPT))
     assert len(suspended) == 1
     assert suspended[0]["type"] == "suspended"
     assert suspended[0]["confirmation_id"] == CONFIRMATION_ID
     assert suspended[0]["version"] == CONFIRMATION_VERSION
+    record = loop._confirmation_runtime().get(loop.session_id, CONFIRMATION_ID)
+    assert record["session_id"] == loop.session_id
+    assert record["confirmation_id"] == CONFIRMATION_ID
+    assert record["version"] == CONFIRMATION_VERSION
+    with pytest.raises(KeyError):
+        loop._confirmation_runtime().get("different-session", CONFIRMATION_ID)
 
     with pytest.raises(ValueError, match="identity or version"):
         list(
@@ -384,6 +486,16 @@ def test_control_paths_suspend_resume_and_error_without_blank_turn():
                 "继续",
                 expected_version=CONFIRMATION_VERSION + 1,
                 idempotency_key="fixture-resume",
+            )
+        )
+
+    with pytest.raises(ValueError, match="nonblank"):
+        list(
+            loop.resume_turn_streaming(
+                CONFIRMATION_ID,
+                "  ",
+                expected_version=CONFIRMATION_VERSION,
+                idempotency_key="fixture-blank",
             )
         )
 
@@ -398,6 +510,17 @@ def test_control_paths_suspend_resume_and_error_without_blank_turn():
     assert resumed == [{"type": "text_delta", "text": "恢复后内容"}]
     assert inner.messages[-1] == {"role": "assistant", "content": "恢复后内容"}
     assert inner.saved == 1
+    with pytest.raises(KeyError):
+        loop._confirmation_runtime().get(loop.session_id, CONFIRMATION_ID)
+    with pytest.raises(KeyError):
+        list(
+            loop.resume_turn_streaming(
+                CONFIRMATION_ID,
+                "继续",
+                expected_version=CONFIRMATION_VERSION,
+                idempotency_key="fixture-replay",
+            )
+        )
 
     with pytest.raises(RuntimeError, match="synthetic_acceptance_error"):
         list(loop.stream_turn(ERROR_PROMPT))
@@ -410,8 +533,7 @@ def test_delayed_loop_interrupts_during_chunk_delay_with_nonblank_error():
     interrupt = threading.Timer(0.05, loop.request_interrupt)
     interrupt.start()
     try:
-        assert next(stream) == {"type": "error", "message": "已中断验收"}
-        with pytest.raises(StopIteration):
+        with pytest.raises(RuntimeError, match="已中断验收"):
             next(stream)
     finally:
         interrupt.cancel()
@@ -496,6 +618,143 @@ def test_fixture_app_uses_real_page_routes_and_isolated_roots(tmp_path, monkeypa
     assert data_agent.config._config is None
 
 
+def test_fixture_forces_optional_integrations_off_and_restores_process_globals(
+    tmp_path, monkeypatch
+):
+    import data_agent.config
+    from data_agent.agent import llm_intent
+    from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
+    from data_agent.web.blueprints import chat as chat_blueprint
+
+    monkeypatch.setenv("MCP_ENABLED", "true")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "true")
+    monkeypatch.setenv("WORKSPACE_DIR", "inherited-workspace")
+    monkeypatch.setenv("SESSIONS_DIR", "inherited-sessions")
+    monkeypatch.setattr(data_agent.config, "_config", None)
+    previous_intent_client = object()
+    monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    previous_event_queue = chat_blueprint.EventQueue
+    set_interaction_mode("cli")
+
+    app = build_fixture_app(tmp_path)
+    try:
+        assert os.environ["MCP_ENABLED"] == "false"
+        assert os.environ["SKILL_AUTO_DISCOVER"] == "false"
+        assert get_interaction_mode() == "web"
+    finally:
+        shutdown_fixture_app(app)
+
+    assert os.environ["MCP_ENABLED"] == "true"
+    assert os.environ["SKILL_AUTO_DISCOVER"] == "true"
+    assert os.environ["WORKSPACE_DIR"] == "inherited-workspace"
+    assert os.environ["SESSIONS_DIR"] == "inherited-sessions"
+    assert data_agent.config._config is None
+    assert llm_intent._client is previous_intent_client
+    assert chat_blueprint.EventQueue is previous_event_queue
+    assert get_interaction_mode() == "cli"
+
+
+@pytest.mark.parametrize("failure_stage", ["initialize", "create_app", "later"])
+def test_build_fixture_app_unwinds_process_globals_on_failure(
+    failure_stage, tmp_path, monkeypatch
+):
+    import data_agent.config
+    import data_agent.lifecycle
+    import data_agent.web.app as web_app
+    from data_agent.agent import llm_intent
+    from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
+    from data_agent.web.blueprints import chat as chat_blueprint
+
+    previous_config = object()
+    previous_intent_client = object()
+    previous_event_queue = chat_blueprint.EventQueue
+    monkeypatch.setattr(data_agent.config, "_config", previous_config)
+    monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setenv("MCP_ENABLED", "true")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "true")
+    monkeypatch.setenv("WORKSPACE_DIR", "before-workspace")
+    monkeypatch.setenv("SESSIONS_DIR", "before-sessions")
+    set_interaction_mode("cli")
+
+    class _FailingLifecycle:
+        def __init__(self):
+            self.shutdown_calls = 0
+
+        def initialize(self):
+            if failure_stage == "initialize":
+                raise RuntimeError("initialize failed")
+
+        def shutdown(self):
+            self.shutdown_calls += 1
+
+    lifecycle = _FailingLifecycle()
+    monkeypatch.setattr(data_agent.lifecycle, "AgentLifecycle", lambda: lifecycle)
+    if failure_stage == "create_app":
+        monkeypatch.setattr(
+            web_app,
+            "create_app",
+            lambda: (_ for _ in ()).throw(RuntimeError("create_app failed")),
+        )
+    elif failure_stage == "later":
+        class _FailingConfig(dict):
+            def __setitem__(self, key, value):
+                if key == "fixture_event_trace":
+                    raise RuntimeError("later construction failed")
+                super().__setitem__(key, value)
+
+        monkeypatch.setattr(
+            web_app,
+            "create_app",
+            lambda: types.SimpleNamespace(config=_FailingConfig()),
+        )
+
+    with pytest.raises(RuntimeError, match="failed"):
+        build_fixture_app(tmp_path)
+
+    assert lifecycle.shutdown_calls == 1
+    assert data_agent.config._config is previous_config
+    assert llm_intent._client is previous_intent_client
+    assert chat_blueprint.EventQueue is previous_event_queue
+    assert get_interaction_mode() == "cli"
+    assert os.environ["MCP_ENABLED"] == "true"
+    assert os.environ["SKILL_AUTO_DISCOVER"] == "true"
+    assert os.environ["WORKSPACE_DIR"] == "before-workspace"
+    assert os.environ["SESSIONS_DIR"] == "before-sessions"
+
+
+def test_shutdown_fixture_app_restores_globals_when_lifecycle_shutdown_raises(
+    tmp_path, monkeypatch
+):
+    import data_agent.config
+    from data_agent.agent import llm_intent
+    from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
+    from data_agent.web.blueprints import chat as chat_blueprint
+
+    monkeypatch.setenv("MCP_ENABLED", "true")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "true")
+    monkeypatch.setattr(data_agent.config, "_config", None)
+    previous_intent_client = object()
+    monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    previous_event_queue = chat_blueprint.EventQueue
+    set_interaction_mode("cli")
+    app = build_fixture_app(tmp_path)
+    monkeypatch.setattr(
+        app.config["lifecycle"],
+        "shutdown",
+        lambda: (_ for _ in ()).throw(RuntimeError("shutdown failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        shutdown_fixture_app(app)
+
+    assert os.environ["MCP_ENABLED"] == "true"
+    assert os.environ["SKILL_AUTO_DISCOVER"] == "true"
+    assert data_agent.config._config is None
+    assert llm_intent._client is previous_intent_client
+    assert chat_blueprint.EventQueue is previous_event_queue
+    assert get_interaction_mode() == "cli"
+
+
 def _parse_sse(chunks):
     pending = ""
     for chunk in chunks:
@@ -514,6 +773,129 @@ def _parse_sse(chunks):
             assert event_name and payload is not None
             yield event_name, payload
     assert not pending
+
+
+def test_real_control_routes_suspend_resume_replay_and_error(
+    tmp_path, monkeypatch, request
+):
+    import data_agent.config
+
+    monkeypatch.setattr(data_agent.config, "_config", None)
+    app = build_fixture_app(tmp_path)
+    request.addfinalizer(lambda: shutdown_fixture_app(app))
+    app.testing = True
+    client = app.test_client()
+    session_id = "fixture_control_routes"
+
+    suspended_response = client.post(
+        "/api/chat",
+        json={"message": SUSPEND_PROMPT, "session_id": session_id},
+        buffered=False,
+    )
+    suspended_events = list(_parse_sse(suspended_response.response))
+    assert [name for name, _payload in suspended_events] == [
+        "turn_start",
+        "suspended",
+        "turn_end",
+    ]
+    suspended = suspended_events[1][1]
+    assert suspended["confirmation_id"] == CONFIRMATION_ID
+    assert suspended["version"] == CONFIRMATION_VERSION
+    assert suspended["question"].strip()
+    assert suspended_events[-1][1]["status"] == "suspended"
+
+    resumed_response = client.post(
+        "/api/chat/resume",
+        json={
+            "session_id": session_id,
+            "confirmation_id": suspended["confirmation_id"],
+            "expected_version": suspended["version"],
+            "idempotency_key": "fixture-route-resume",
+            "user_response": "继续",
+        },
+        buffered=False,
+    )
+    resumed_events = list(_parse_sse(resumed_response.response))
+    assert [name for name, _payload in resumed_events] == [
+        "turn_start",
+        "text_delta",
+        "turn_end",
+    ]
+    assert resumed_events[1][1]["text"].strip() == "恢复后内容"
+    assert resumed_events[-1][1]["status"] == "completed"
+    loop = app.config["agent_manager"].get(session_id)
+    assert loop is not None
+    assert loop.messages[-1] == {"role": "assistant", "content": "恢复后内容"}
+
+    replay = client.post(
+        "/api/chat/resume",
+        json={
+            "session_id": session_id,
+            "confirmation_id": suspended["confirmation_id"],
+            "expected_version": suspended["version"],
+            "idempotency_key": "fixture-route-replay",
+            "user_response": "继续",
+        },
+    )
+    assert replay.status_code == 404
+    assert "not found" in replay.get_json()["error"]
+
+    error_response = client.post(
+        "/api/chat",
+        json={"message": ERROR_PROMPT, "session_id": "fixture_error_route"},
+        buffered=False,
+    )
+    error_events = list(_parse_sse(error_response.response))
+    assert [name for name, _payload in error_events] == [
+        "turn_start",
+        "error",
+        "turn_end",
+    ]
+    assert error_events[1][1]["message"] == "synthetic_acceptance_error"
+    assert error_events[-1][1]["status"] == "error"
+
+
+def test_real_interrupt_route_projects_nonblank_error_and_error_terminal_status(
+    tmp_path, monkeypatch, request
+):
+    import data_agent.config
+    import data_agent.llm.client
+
+    monkeypatch.setattr(data_agent.config, "_config", None)
+    monkeypatch.setattr(
+        data_agent.llm.client,
+        "completion",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("fixture made an unscripted provider call")
+        ),
+    )
+    app = build_fixture_app(tmp_path)
+    request.addfinalizer(lambda: shutdown_fixture_app(app))
+    app.testing = True
+    session_id = "fixture_interrupt_route"
+    response = app.test_client().post(
+        "/api/chat",
+        json={"message": BROWSER_NORMAL_PROMPT, "session_id": session_id},
+        buffered=False,
+    )
+    event_iter = _parse_sse(response.response)
+    events = []
+    while not any(name == "analysis_progress" for name, _payload in events):
+        events.append(next(event_iter))
+
+    interrupt = app.test_client().post(
+        "/api/chat/interrupt",
+        json={"session_id": session_id},
+    )
+    assert interrupt.status_code == 200
+    assert interrupt.get_json()["status"] == "interrupt_requested"
+    events.extend(event_iter)
+
+    errors = [payload for name, payload in events if name == "error"]
+    assert errors == [{"message": "已中断验收"}]
+    assert not [payload for name, payload in events if name == "text_delta"]
+    assert events[-1][0] == "turn_end"
+    assert events[-1][1]["status"] == "error"
 
 
 def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
@@ -558,12 +940,47 @@ def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
     assert event_names[0] == "turn_start"
     assert event_names[-1] == "turn_end"
     assert events[-1][1]["status"] == "completed"
-    assert [payload["name"] for name, payload in events if name == "tool_call"] == [
+    expected_tools = [
         "load_data",
         "quick_profile",
         "correlation_analysis",
         "factor_relationship_analysis",
     ]
+    tool_calls = [
+        payload
+        for name, payload in events
+        if name == "tool_call"
+    ]
+    tool_results = [
+        payload
+        for name, payload in events
+        if name == "tool_result"
+    ]
+    assert [payload["name"] for payload in tool_calls] == expected_tools
+    assert [payload["name"] for payload in tool_results] == expected_tools
+    assert {
+        payload["tool_call_id"]: payload["name"]
+        for payload in tool_results
+    } == {
+        payload["tool_call_id"]: payload["name"]
+        for payload in tool_calls
+    }
+    for result in tool_results:
+        assert isinstance(result["web"], dict)
+        summary = str(result["web"].get("summary") or "").strip()
+        assert summary
+        assert not result["web"].get("error")
+        assert not summary.lower().startswith(("error", '{"error"'))
+        assert not summary.startswith("错误")
+        if summary.startswith("{"):
+            parsed_summary = json.loads(summary)
+            assert not (
+                isinstance(parsed_summary, dict)
+                and parsed_summary.get("error")
+            )
+        assert isinstance(result["duration_ms"], (int, float))
+        assert result["duration_ms"] >= 0
+
     first_progress = event_names.index("analysis_progress")
     first_text = event_names.index("text_delta")
     assert first_progress < first_text
@@ -588,6 +1005,16 @@ def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
 
     loop = app.config["agent_manager"].get("fixture_real_path")
     assert loop is not None
+    datasets = loop.context.workspace.list_datasets()
+    assert datasets["browser_fixture"]["rows"] == 120
+    assert datasets["browser_fixture"]["columns"] == 4
+    assert datasets["browser_fixture"]["column_names"] == [
+        "日期",
+        "收入",
+        "成本",
+        "渠道",
+    ]
+    assert set(expected_tools[1:]).issubset(loop.context.executed_tools)
     assert loop.messages[-1]["role"] == "assistant"
     assert loop.messages[-1]["content"] == publication
     assert loop.inner._turn_last_final_audit["status"] == "pass"
