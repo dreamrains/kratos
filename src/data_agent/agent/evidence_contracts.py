@@ -2267,6 +2267,92 @@ def _validate_measurement_identity_provenance(
     return EvidenceValidationResult(True, record=identity)
 
 
+def _validate_record_claim_authority(
+    record: dict[str, Any],
+) -> EvidenceValidationResult | None:
+    """Reject rewritten claim permissions that conflict with tool authority."""
+
+    computation_refs = record.get("computation_refs")
+    if not isinstance(computation_refs, list):
+        return None
+    dimension_ref = next(
+        (
+            item
+            for item in computation_refs
+            if isinstance(item, dict)
+            and _text(item.get("capability_id"))
+            == "analysis.dimension_decomposition"
+        ),
+        None,
+    )
+    if dimension_ref is None:
+        return None
+
+    from data_agent.agent.execution_control import resolve_claim_class_authority
+    from data_agent.tools.registry import registry
+
+    capability = registry.capability_for(_text(dimension_ref.get("tool_name")))
+    output_contract = (
+        capability.get("output_contract")
+        if isinstance(capability, dict)
+        else None
+    )
+    claim_ceiling = (
+        output_contract.get("allowed_claim_class_ceiling")
+        if isinstance(output_contract, dict)
+        else None
+    )
+    authority = resolve_claim_class_authority(
+        record.get("allowed_claim_class"),
+        ceiling=claim_ceiling,
+    )
+    if not authority.valid:
+        return _error(
+            "invalid_claim_class_authority",
+            "EvidenceRecord claim permission is invalid for its tool capability.",
+            reason=authority.reason,
+        )
+
+    supplied_claim_class = record.get("claim_class")
+    if supplied_claim_class is not None:
+        supplied_authority = resolve_claim_class_authority(
+            supplied_claim_class,
+            ceiling=claim_ceiling,
+        )
+        if (
+            not supplied_authority.valid
+            or supplied_authority.canonical != authority.canonical
+        ):
+            return _error(
+                "claim_class_authority_mismatch",
+                "EvidenceRecord claim class conflicts with tool authority.",
+            )
+
+    opportunity = record.get("opportunity_candidates")
+    if not isinstance(opportunity, dict):
+        return None
+    expected = {
+        "status": (
+            "causal_candidate"
+            if authority.causal_authorized
+            else "hypothesis_only"
+        ),
+        "claim_class": authority.canonical,
+        "causal_authorization": (
+            "authorized"
+            if authority.causal_authorized
+            else "none"
+        ),
+    }
+    if any(opportunity.get(field) != value for field, value in expected.items()):
+        return _error(
+            "claim_class_authority_mismatch",
+            "Opportunity semantics conflict with tool claim authority.",
+            expected=expected,
+        )
+    return None
+
+
 def validate_evidence_record(
     record: Any,
     *,
@@ -2410,6 +2496,9 @@ def validate_evidence_record(
             "missing_measurement_identity",
             "Server-projected evidence requires at least one measurement identity.",
         )
+    claim_authority_validation = _validate_record_claim_authority(record)
+    if claim_authority_validation is not None:
+        return claim_authority_validation
 
     normalized = dict(record)
     for field_name in NORMALIZED_EVIDENCE_TEXT_FIELDS:
@@ -2922,6 +3011,7 @@ def _build_projected_record(
     )
     semantic_fields = _project_requirement_semantics(
         capability_id=cap_id,
+        capability=capability if isinstance(capability, dict) else {},
         output_data=output_data,
     )
 
@@ -2971,6 +3061,7 @@ def _project_requirement_semantics(
     *,
     capability_id: str,
     output_data: dict[str, Any],
+    capability: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Map trusted structured outputs onto canonical requirement fields."""
 
@@ -3143,6 +3234,26 @@ def _project_requirement_semantics(
         return semantics
 
     if capability_id == "analysis.dimension_decomposition":
+        from data_agent.agent.execution_control import (
+            resolve_claim_class_authority,
+        )
+
+        output_contract = (
+            capability.get("output_contract")
+            if isinstance(capability, dict)
+            else None
+        )
+        claim_ceiling = (
+            output_contract.get("allowed_claim_class_ceiling")
+            if isinstance(output_contract, dict)
+            else None
+        )
+        authority = resolve_claim_class_authority(
+            output_data.get("allowed_claim_class"),
+            ceiling=claim_ceiling,
+        )
+        if not authority.valid:
+            return semantics
         decomposition = [
             item
             for item in list(output_data.get("decomposition") or [])
@@ -3167,13 +3278,21 @@ def _project_requirement_semantics(
             ]
             if candidates:
                 semantics["opportunity_candidates"] = {
-                    "status": "hypothesis_only",
-                    "claim_class": "exploratory",
+                    "status": (
+                        "causal_candidate"
+                        if authority.causal_authorized
+                        else "hypothesis_only"
+                    ),
+                    "claim_class": authority.canonical,
                     "basis": "observed_dimension_contribution",
                     "dimension": dimension,
                     "candidates": list(dict.fromkeys(candidates)),
                     "measurement_fields": ["decomposition.contribution"],
-                    "causal_authorization": "none",
+                    "causal_authorization": (
+                        "authorized"
+                        if authority.causal_authorized
+                        else "none"
+                    ),
                 }
     return semantics
 

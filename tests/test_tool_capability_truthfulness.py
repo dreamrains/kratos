@@ -100,7 +100,40 @@ def test_decomposition_attests_descriptive_noncausal_claim_class(workspace):
     assert payload["allowed_claim_class"] != "causal_effect"
     capability = registry.capability_for("contribute_decomposition")
     assert "allowed_claim_class" in capability["evidence_fields"]
+    assert capability["output_contract"]["allowed_claim_class_ceiling"] == (
+        "descriptive_attribution"
+    )
     assert validate_capability_output(capability, payload) == []
+
+
+@pytest.mark.parametrize(
+    "tampered_class",
+    ["causal", "causal_effect", "unknown_class", "", None],
+)
+def test_decomposition_rejects_invalid_or_over_ceiling_claim_attestation(
+    workspace,
+    tampered_class,
+):
+    result = registry.execute(
+        "contribute_decomposition",
+        {
+            "name": "factors",
+            "metric": "目标值",
+            "dimension": "渠道",
+            "date_col": "日期",
+            "period_a": "2026-01-01~2026-01-16",
+            "period_b": "2026-01-17~2026-02-01",
+            "agg_func": "sum",
+        },
+    )
+    payload = dict(result.data or {})
+    payload["allowed_claim_class"] = tampered_class
+
+    capability = registry.capability_for("contribute_decomposition")
+
+    assert validate_capability_output(capability, payload) == [
+        "allowed_claim_class"
+    ]
 
 
 @pytest.mark.parametrize(("tool_name", "arguments"), [

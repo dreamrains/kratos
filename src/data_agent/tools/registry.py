@@ -337,6 +337,7 @@ def _cap(
     requires_confirmation: bool = False,
     dependencies: list[str] | None = None,
     fallback_tools: list[str] | None = None,
+    output_contract: dict[str, Any] | None = None,
 ) -> ToolCapability:
     return ToolCapability(
         capability_id=capability_id,
@@ -347,6 +348,7 @@ def _cap(
         requires_confirmation=requires_confirmation,
         dependencies=dependencies or [],
         fallback_tools=fallback_tools or [],
+        output_contract=output_contract or {},
     )
 
 
@@ -402,6 +404,9 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
             "top_negative",
             "allowed_claim_class",
         ],
+        output_contract={
+            "allowed_claim_class_ceiling": "descriptive_attribution",
+        },
     ),
     "top_n": _cap("analysis.top_n", "decomposition", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
@@ -573,6 +578,27 @@ def validate_capability_output(
             continue
         if not _evidence_field_is_present(payload, field):
             missing.append(field)
+    output_contract = (
+        capability.get("output_contract")
+        if isinstance(capability, Mapping)
+        else None
+    )
+    claim_ceiling = (
+        output_contract.get("allowed_claim_class_ceiling")
+        if isinstance(output_contract, Mapping)
+        else None
+    )
+    if claim_ceiling:
+        from data_agent.agent.execution_control import (
+            resolve_claim_class_authority,
+        )
+
+        authority = resolve_claim_class_authority(
+            payload.get("allowed_claim_class"),
+            ceiling=claim_ceiling,
+        )
+        if not authority.valid and "allowed_claim_class" not in missing:
+            missing.append("allowed_claim_class")
     return missing
 
 

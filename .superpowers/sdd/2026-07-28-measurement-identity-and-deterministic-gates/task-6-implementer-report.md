@@ -128,3 +128,42 @@ participate in measurement identity only when `value` is a string, avoiding a
 numeric-context shortcut. Requirement satisfaction remains fail-closed for
 stale, unbound, mismatched, or unhydratable evidence. Remaining concern is only
 the incomplete bounded broad-suite run; all affected focused gates are green.
+
+## Fix Round 2 — single claim-class authority
+
+Closed the remaining split-authority gap for dimension decomposition:
+
+- Execution control now exposes one claim-class authority resolver backed by
+  its existing vocabulary remap and strength ordering.
+- The decomposition capability declares a
+  `descriptive_attribution` output ceiling. Registry validation rejects empty,
+  unknown, `causal`, and `causal_effect` attestations instead of treating field
+  presence as sufficient or silently downgrading a contradiction.
+- Projection consumes that validated authority and derives canonical
+  `exploratory_association`, `hypothesis_only`, and
+  `causal_authorization="none"` semantics. It no longer manufactures a
+  separate `"exploratory"` class.
+- Record validation uses bound computation refs, not rewritable display
+  metadata, and rejects model-supplied causal classes, rewritten tool
+  attestations, semantic-class rewrites, and authorization rewrites.
+
+TDD evidence:
+
+- RED: causal, causal-effect, unknown, and empty attestations passed registry
+  validation; the capability had no declared ceiling.
+- RED: the real driver replay exposed projector-authored `"exploratory"`.
+- RED: a model-supplied causal class passed after rewriting display
+  `tool_calls`, proving the check had to use bound computation refs.
+- GREEN: authority/tamper tests, real driver positive/negative replay, and all
+  prior Fix Round 1 gates pass.
+
+Verification:
+
+- Measurement pipeline: 24 passed.
+- Deterministic replay suite: 9 passed; final driver authority slice: 2 passed.
+- Tool truthfulness and tamper suite: 15 passed.
+- Affected compatibility suite: 209 passed.
+- Deterministic replay CLI: accepted all four canonical scenarios.
+- `py_compile` and `git diff --check`: passed.
+- The bounded broad suite was optional for this round and was not rerun; Fix
+  Round 1's documented 300-second partial run remains the latest broad result.

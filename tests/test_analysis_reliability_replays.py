@@ -248,11 +248,46 @@ def test_dimension_replay_proves_observed_segments_and_hypothesis_only_opportuni
     opportunity = evidence["opportunity_candidates"]
     assert segment["status"] == "observed"
     assert opportunity["status"] == "hypothesis_only"
-    assert opportunity["claim_class"] == "exploratory"
+    assert opportunity["claim_class"] == "exploratory_association"
     assert opportunity["basis"] == "observed_dimension_contribution"
     assert opportunity["causal_authorization"] == "none"
     assert not _contains_number(segment)
     assert not _contains_number(opportunity)
+
+    from data_agent.agent.evidence_contracts import validate_evidence_record
+
+    rewritten_cases = []
+    model_supplied_class = copy.deepcopy(evidence)
+    model_supplied_class["claim_class"] = "causal_effect"
+    rewritten_cases.append(model_supplied_class)
+    rewritten_display_call = copy.deepcopy(model_supplied_class)
+    rewritten_display_call["tool_calls"] = [
+        {
+            "name": "quick_profile",
+            "capability_id": "data.profile",
+            "tool_call_id": "rewritten_display_call",
+        }
+    ]
+    rewritten_cases.append(rewritten_display_call)
+    rewritten_attestation = copy.deepcopy(evidence)
+    rewritten_attestation["allowed_claim_class"] = "causal_effect"
+    rewritten_cases.append(rewritten_attestation)
+    rewritten_semantics = copy.deepcopy(evidence)
+    rewritten_semantics["opportunity_candidates"]["claim_class"] = "causal_effect"
+    rewritten_cases.append(rewritten_semantics)
+    rewritten_authorization = copy.deepcopy(evidence)
+    rewritten_authorization["opportunity_candidates"][
+        "causal_authorization"
+    ] = "authorized"
+    rewritten_cases.append(rewritten_authorization)
+
+    for rewritten in rewritten_cases:
+        validation = validate_evidence_record(
+            rewritten,
+            current_plan_id=result.current_plan_id,
+            require_measurement_identity=True,
+        )
+        assert validation.ok is False
 
 
 def test_same_driver_plan_without_decomposition_leaves_semantic_requirements_unmet(

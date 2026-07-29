@@ -585,6 +585,64 @@ def _canonical_claim_class(value: Any) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class ClaimClassAuthority:
+    """Canonical claim permission resolved against one declared ceiling."""
+
+    declared: str
+    canonical: str
+    ceiling: str
+    valid: bool
+    causal_authorized: bool
+    reason: str = ""
+
+
+def resolve_claim_class_authority(
+    value: Any,
+    *,
+    ceiling: Any,
+) -> ClaimClassAuthority:
+    """Validate and canonicalize a claim attestation without strengthening it."""
+
+    declared = str(value or "").strip().lower()
+    canonical = _canonical_claim_class(declared)
+    canonical_ceiling = _canonical_claim_class(ceiling)
+    if canonical is None:
+        return ClaimClassAuthority(
+            declared=declared,
+            canonical="",
+            ceiling=canonical_ceiling or "",
+            valid=False,
+            causal_authorized=False,
+            reason="unknown_or_empty_claim_class",
+        )
+    if canonical_ceiling is None:
+        return ClaimClassAuthority(
+            declared=declared,
+            canonical=canonical,
+            ceiling="",
+            valid=False,
+            causal_authorized=False,
+            reason="invalid_claim_class_ceiling",
+        )
+    if _CLAIM_CLASS_STRENGTH[canonical] > _CLAIM_CLASS_STRENGTH[canonical_ceiling]:
+        return ClaimClassAuthority(
+            declared=declared,
+            canonical=canonical,
+            ceiling=canonical_ceiling,
+            valid=False,
+            causal_authorized=False,
+            reason="claim_class_exceeds_ceiling",
+        )
+    return ClaimClassAuthority(
+        declared=declared,
+        canonical=canonical,
+        ceiling=canonical_ceiling,
+        valid=True,
+        causal_authorized=canonical == "causal_effect",
+    )
+
+
 def _claim_strength(value: Any) -> int:
     canonical = _canonical_claim_class(value)
     if canonical is None:
