@@ -30,6 +30,11 @@ function chatApp() {
         // Popover
         activePopover: null,
 
+        // Application-owned confirmation dialog. Native window.confirm is
+        // unreliable in embedded browsers and cannot be styled or observed.
+        confirmDialog: { show: false, message: '' },
+        _confirmResolver: null,
+
         // Config modal
         configModal: { show: false, model_id: '', api_base: '', api_key: '', has_key: false, saving: false },
         capabilityModal: {
@@ -412,7 +417,7 @@ function chatApp() {
         },
 
         async deleteSkill(skill) {
-            if (!confirm(`确定删除技能「${skill.name}」？`)) return;
+            if (!(await this._confirmAction(`确定删除技能「${skill.name}」？`))) return;
             await fetch(`/api/skills/${encodeURIComponent(skill.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
             if (this.managementCenter.show) await this.loadManagementSection('skills');
@@ -443,7 +448,7 @@ function chatApp() {
         },
 
         async deleteMcpServer(server) {
-            if (!confirm(`确定删除 MCP 服务器「${server.name}」？`)) return;
+            if (!(await this._confirmAction(`确定删除 MCP 服务器「${server.name}」？`))) return;
             await fetch(`/api/mcp/servers/${encodeURIComponent(server.name)}`, { method: 'DELETE' });
             await this.loadCapabilityAdmin();
             if (this.managementCenter.show) await this.loadManagementSection('mcp');
@@ -592,7 +597,7 @@ function chatApp() {
         },
 
         async deprecateKnowledge(item) {
-            if (!confirm(`确定废弃知识「${item.title}」？`)) return;
+            if (!(await this._confirmAction(`确定废弃知识「${item.title}」？`))) return;
             await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}/deprecate`, { method: 'POST' });
             await this.loadManagementSection('knowledge');
         },
@@ -603,7 +608,7 @@ function chatApp() {
         },
 
         async deleteKnowledge(item) {
-            if (!confirm(`确定删除知识「${item.title}」？此操作不可撤销。`)) return;
+            if (!(await this._confirmAction(`确定删除知识「${item.title}」？此操作不可撤销。`))) return;
             const res = await fetch(`/api/management/knowledge/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
             if (!res.ok) {
                 this.showToast('删除失败');
@@ -731,7 +736,7 @@ function chatApp() {
         },
 
         async deleteMemory(item) {
-            if (!confirm(`确定删除记忆「${item.summary || item.text || item.id}」？`)) return;
+            if (!(await this._confirmAction(`确定删除记忆「${item.summary || item.text || item.id}」？`))) return;
             const res = await fetch(`/api/management/memory/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
             if (!res.ok) {
                 this.showToast('只能删除候选或已拒绝的记忆');
@@ -869,7 +874,7 @@ function chatApp() {
 
         async rewindMessage(roundIndex) {
             if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
-            if (!confirm('回退到这条消息之前？该消息及之后的所有内容将被移除，消息内容将填入输入框供编辑重发。')) return;
+            if (!(await this._confirmAction('回退到这条消息之前？该消息及之后的所有内容将被移除，消息内容将填入输入框供编辑重发。'))) return;
             await this._doRewind(roundIndex);
         },
 
@@ -928,6 +933,23 @@ function chatApp() {
             this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, 3000);
         },
 
+        _confirmAction(message) {
+            if (this._confirmResolver) {
+                this._confirmResolver(false);
+            }
+            this.confirmDialog = { show: true, message: String(message || '') };
+            return new Promise(resolve => {
+                this._confirmResolver = resolve;
+            });
+        },
+
+        _resolveUiConfirmation(accepted) {
+            const resolve = this._confirmResolver;
+            this._confirmResolver = null;
+            this.confirmDialog = { show: false, message: '' };
+            if (resolve) resolve(!!accepted);
+        },
+
         _startThinkingCycle(turn, sessionId, state) {
             this._stopThinkingCycle();
             this._thinkingStateIndex = 0;
@@ -957,7 +979,7 @@ function chatApp() {
         },
 
         async newSession() {
-            if (this.isLoading && !confirm('任务正在运行，确认新建会话？')) return;
+            if (this.isLoading && !(await this._confirmAction('任务正在运行，确认新建会话？'))) return;
             this._saveCurrentState();
             this.currentSessionId = null;
             this.activeProjectName = '';
@@ -1035,7 +1057,7 @@ function chatApp() {
         },
 
         async deleteSession(sessionId) {
-            if (!confirm('确认删除此会话？')) return;
+            if (!(await this._confirmAction('确认删除此会话？'))) return;
             const res = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
             // Immediately remove from local sessions array for instant UI update
             this.sessions = this.sessions.filter(s => s.session_id !== sessionId);
@@ -1083,7 +1105,7 @@ function chatApp() {
         },
 
         async deleteProject(projectName) {
-            if (!confirm(`确认删除项目 "${projectName}" 并解除所有会话绑定？`)) return;
+            if (!(await this._confirmAction(`确认删除项目 "${projectName}" 并解除所有会话绑定？`))) return;
             try {
                 const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}`, { method: 'DELETE' });
                 if (res.ok) {
@@ -1217,7 +1239,7 @@ function chatApp() {
         },
 
         async deleteArtifactFromModal(index) {
-            if (!confirm('确认删除此产出物？')) return;
+            if (!(await this._confirmAction('确认删除此产出物？'))) return;
             try {
                 await fetch(`/api/sessions/${this.artifactsModal.sessionId}/artifacts/${index}`, { method: 'DELETE' });
                 this.artifactsModal.items.splice(index, 1);
@@ -1488,7 +1510,7 @@ function chatApp() {
 
         async resetAnalysisState() {
             if (!this.currentSessionId || this.currentSessionId === '_pending_') return;
-            if (!confirm('确认重置此会话的分析状态？对话和产出物将保留。')) return;
+            if (!(await this._confirmAction('确认重置此会话的分析状态？对话和产出物将保留。'))) return;
             const res = await fetch(`/api/sessions/${this.currentSessionId}/analysis/reset`, { method: 'POST' });
             if (res.ok) this.analysisState = await res.json();
         },
@@ -1909,7 +1931,7 @@ function chatApp() {
 
         async interruptTurn() {
             if (!this.currentSessionId) return;
-            if (!confirm('停止当前对话？此操作无法撤销。')) return;
+            if (!(await this._confirmAction('停止当前对话？此操作无法撤销。'))) return;
             const state = this._getSessionState(this.currentSessionId);
             state._interrupted = true;
             const turn = state.turns[state.turns.length - 1];
@@ -2379,10 +2401,21 @@ function chatApp() {
 
         // --- SSE ---
 
+        async _yieldAfterVisibleSSEMutation() {
+            // SSE frames may arrive in one fetch chunk. Yield a browser task
+            // after visible progress/text so Alpine can paint it before a
+            // following terminal frame changes the turn state.
+            await new Promise(resolve => setTimeout(resolve, 0));
+        },
+
         async _processSSE(response, turn, state, sessionId) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            // SSE field state belongs to the logical frame, not to an
+            // arbitrary network chunk. Keep it across reader.read() calls.
+            let eventType = '';
+            let eventDataLines = [];
             // Track the effective sessionId — updated when turn_start migrates _pending_
             let effectiveSid = sessionId;
             const isCurrentStreamSession = () => this._ownsSessionState(effectiveSid, state);
@@ -2403,16 +2436,26 @@ function chatApp() {
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                let eventType = '', eventData = '';
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-                    else if (line.startsWith('data: ')) eventData = line.slice(6);
-                    else if (line === '' && eventType && eventData) {
+                for (const rawLine of lines) {
+                    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+                    if (line.startsWith('event:')) eventType = line.slice(6).trim();
+                    else if (line.startsWith('data:')) eventDataLines.push(line.slice(5).trimStart());
+                    else if (line === '' && eventType && eventDataLines.length) {
                         try {
-                            const updated = this._handleEvent(eventType, JSON.parse(eventData), turn, state, effectiveSid);
+                            const updated = this._handleEvent(
+                                eventType,
+                                JSON.parse(eventDataLines.join('\n')),
+                                turn,
+                                state,
+                                effectiveSid,
+                            );
                             if (updated) effectiveSid = updated;
+                            if (eventType === 'analysis_progress' || eventType === 'text_delta') {
+                                await this._yieldAfterVisibleSSEMutation();
+                            }
                         } catch (e) { console.error('SSE event error:', eventType, e); }
-                        eventType = ''; eventData = '';
+                        eventType = '';
+                        eventDataLines = [];
                     }
                 }
             }
@@ -2484,6 +2527,7 @@ function chatApp() {
                         stepId: data.step_id || ''
                     };
                     turn.thinkingText = data.label;
+                    this._debouncedLoadTasks();
                     if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'text_delta':

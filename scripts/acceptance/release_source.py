@@ -97,7 +97,15 @@ def release_source_digest(root: Path) -> str:
         for raw in completed.stdout.split(b"\0")
         if raw
     }
-    selected = sorted(path for path in paths if _is_release_source(path))
+    # ``git ls-files --cached`` includes tracked paths deleted in the current
+    # worktree. Release identity describes the candidate that can actually be
+    # executed, so deleted legacy scripts must not be sent to ``hash-object``
+    # (which would crash the gate before it can report a truthful status).
+    selected = sorted(
+        path
+        for path in paths
+        if _is_release_source(path) and (root / Path(path)).is_file()
+    )
     blob_ids = _git_filtered_blob_ids(root, selected)
 
     digest = hashlib.sha256()

@@ -37,7 +37,14 @@ class WorkspaceScopeSnapshot:
     combination_mode: str = ""
 
     def __post_init__(self) -> None:
-        if self.phase not in {"legacy", "planning", "execution", "synthesis", "error"}:
+        if self.phase not in {
+            "legacy",
+            "planning",
+            "execution",
+            "synthesis",
+            "terminal",
+            "error",
+        }:
             raise ValueError(f"Unsupported workspace scope phase: {self.phase}")
         object.__setattr__(self, "session_id", _identity(self.session_id))
         object.__setattr__(self, "project_name", _identity(self.project_name))
@@ -69,7 +76,7 @@ class WorkspaceScopeSnapshot:
 
     @property
     def active(self) -> bool:
-        return self.phase in {"execution", "synthesis"}
+        return self.phase in {"execution", "synthesis", "terminal"}
 
 
 @dataclass(frozen=True)
@@ -139,6 +146,28 @@ def resolve_workspace_scope(manager, session_id: str, project_name: str = "") ->
     """Resolve the exact active Stage 3C0B plan without wildcard scope semantics."""
     session = _identity(session_id)
     project = _identity(project_name)
+    run_scope_resolver = getattr(manager, "get_analysis_run_scope", None)
+    run_scope = (
+        run_scope_resolver(session, project)
+        if callable(run_scope_resolver)
+        else None
+    )
+    if run_scope is not None:
+        return WorkspaceScopeSnapshot(
+            phase=_text(run_scope.get("phase")) or "execution",
+            session_id=session,
+            project_name=project,
+            plan_id=_identity(run_scope.get("plan_id")),
+            task_id=int(run_scope.get("task_id") or 0),
+            step_id=_text(run_scope.get("step_id")),
+            allowed_datasets=frozenset(
+                _text_set(run_scope.get("allowed_datasets"))
+            ),
+            dataset_contract_ids=frozenset(
+                _text_set(run_scope.get("dataset_contract_ids"))
+            ),
+            combination_mode=_text(run_scope.get("combination_mode")).casefold(),
+        )
     plan_id = _identity(manager.get_active_plan_id(session, project))
     if not plan_id:
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
@@ -423,6 +452,29 @@ def _create_scope_enforcement_chain(
     def resolve_scope(manager, session_id: str, project_name: str = ""):
         session = normalize_identity(session_id)
         project = normalize_identity(project_name)
+        run_scope_resolver = getattr(manager, "get_analysis_run_scope", None)
+        run_scope = (
+            run_scope_resolver(session, project)
+            if callable(run_scope_resolver)
+            else None
+        )
+        if run_scope is not None:
+            mode = normalize_text(run_scope.get("combination_mode")).casefold()
+            return snapshot_type(
+                phase=normalize_text(run_scope.get("phase")) or "execution",
+                session_id=session,
+                project_name=project,
+                plan_id=normalize_identity(run_scope.get("plan_id")),
+                task_id=int(run_scope.get("task_id") or 0),
+                step_id=normalize_text(run_scope.get("step_id")),
+                allowed_datasets=frozenset(
+                    normalize_text_set(run_scope.get("allowed_datasets"))
+                ),
+                dataset_contract_ids=frozenset(
+                    normalize_text_set(run_scope.get("dataset_contract_ids"))
+                ),
+                combination_mode=mode,
+            )
         plan_id = normalize_identity(manager.get_active_plan_id(session, project))
         if not plan_id:
             return snapshot_type(session_id=session, project_name=project)

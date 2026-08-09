@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -2254,7 +2254,14 @@ def _validate_measurement_identity_provenance(
         )
         or len(ref_requirements) != len(set(ref_requirements))
         or sorted(ref_requirements) != identity["requirement_ids"]
-        or _text(ref.get("claim_key")) != identity["claim_key"]
+        or identity["claim_key"] not in (
+            {
+                _text(item)
+                for item in ref.get("claim_keys") or []
+                if _text(item)
+            }
+            or {_text(ref.get("claim_key"))}
+        )
         or _text(ref.get("plan_id")) != identity["plan_id"]
         or _text(ref.get("step_id")) != identity["step_id"]
         or _text(ref.get("plan_digest")) != identity["plan_version"]
@@ -2557,6 +2564,7 @@ class EvidenceProjectionResult:
 
     projected: bool
     record: dict[str, Any] = field(default_factory=dict)
+    records: tuple[dict[str, Any], ...] = ()
     reason: str = ""
     diagnostics: tuple[dict[str, Any], ...] = ()
 
@@ -3504,12 +3512,22 @@ def project_structured_computation_evidence(
             diagnostics=({"missing": list(missing_fields)},),
         )
 
-    binding_claim_raw = getattr(binding, "claim_key", "")
-    binding_claim = (
-        binding_claim_raw.strip()
-        if isinstance(binding_claim_raw, str)
-        else ""
-    )
+    raw_binding_claims = getattr(binding, "claim_keys", ())
+    binding_claims = tuple(
+        dict.fromkeys(
+            item.strip()
+            for item in raw_binding_claims
+            if isinstance(item, str) and item.strip()
+        )
+    ) if isinstance(raw_binding_claims, (list, tuple)) else ()
+    if not binding_claims:
+        binding_claim_raw = getattr(binding, "claim_key", "")
+        binding_claim = (
+            binding_claim_raw.strip()
+            if isinstance(binding_claim_raw, str)
+            else ""
+        )
+        binding_claims = (binding_claim,) if binding_claim else ()
     binding_requirements = getattr(binding, "requirement_ids", ())
     if (
         not isinstance(binding_requirements, (list, tuple))
@@ -3524,38 +3542,85 @@ def project_structured_computation_evidence(
             projected=False,
             reason="invalid_requirement_ids",
         )
-    if not binding_claim or not binding_requirements:
+    if not binding_claims or not binding_requirements:
         return EvidenceProjectionResult(
             projected=False, reason="missing_claim_identity",
         )
-
-    record = _build_projected_record(
-        computation_ref=computation_ref,
-        binding=binding,
-        plan=plan,
-        capability=capability,
-        dataset_contracts=dataset_contracts,
-        output_data=output_data,
-        plan_id=plan_id,
-    )
-    validation = validate_evidence_record(
-        record,
-        current_plan_id=plan_id,
-        require_measurement_identity=True,
-    )
-    if not validation.ok:
+    ref_claims_raw = computation_ref.get("claim_keys")
+    ref_claims = {
+        item.strip()
+        for item in ref_claims_raw
+        if isinstance(item, str) and item.strip()
+    } if isinstance(ref_claims_raw, list) else set()
+    if not ref_claims:
+        ref_claim = _text(computation_ref.get("claim_key"))
+        ref_claims = {ref_claim} if ref_claim else set()
+    if set(binding_claims) != ref_claims:
         return EvidenceProjectionResult(
             projected=False,
-            reason="evidence_validation_failed",
-            diagnostics=(
-                {
-                    "error_type": validation.error_type,
-                    "message": validation.message,
-                    "details": dict(validation.details),
-                },
-            ),
+            reason="stale_claim_identity",
+            diagnostics=({
+                "binding_claim_keys": list(binding_claims),
+                "ref_claim_keys": sorted(ref_claims),
+            },),
         )
-    return EvidenceProjectionResult(projected=True, record=validation.record)
+    step_claims_raw = current_step.get("required_claim_keys")
+    step_claims = {
+        item.strip()
+        for item in step_claims_raw
+        if isinstance(item, str) and item.strip()
+    } if isinstance(step_claims_raw, list) else set()
+    if step_claims and any(claim not in step_claims for claim in binding_claims):
+        return EvidenceProjectionResult(
+            projected=False,
+            reason="invalid_claim_identity",
+            diagnostics=({
+                "binding_claim_keys": list(binding_claims),
+                "step_claim_keys": sorted(step_claims),
+            },),
+        )
+
+    validated_records: list[dict[str, Any]] = []
+    for claim_key in binding_claims:
+        claim_binding = replace(
+            binding,
+            claim_key=claim_key,
+            claim_keys=(claim_key,),
+        )
+        record = _build_projected_record(
+            computation_ref=computation_ref,
+            binding=claim_binding,
+            plan=plan,
+            capability=capability,
+            dataset_contracts=dataset_contracts,
+            output_data=output_data,
+            plan_id=plan_id,
+        )
+        validation = validate_evidence_record(
+            record,
+            current_plan_id=plan_id,
+            require_measurement_identity=True,
+        )
+        if not validation.ok:
+            return EvidenceProjectionResult(
+                projected=False,
+                reason="evidence_validation_failed",
+                diagnostics=(
+                    {
+                        "claim_key": claim_key,
+                        "error_type": validation.error_type,
+                        "message": validation.message,
+                        "details": dict(validation.details),
+                    },
+                ),
+            )
+        validated_records.append(validation.record)
+    records = tuple(validated_records)
+    return EvidenceProjectionResult(
+        projected=True,
+        record=records[0],
+        records=records,
+    )
 
 
 def _capability_check_missing_fields(

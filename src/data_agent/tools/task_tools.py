@@ -219,12 +219,39 @@ def _ensure_llm_plan_for_batch(task_list_data: list, current_plan: dict, active_
 def create_workflow_tasks_from_plan(plan: dict) -> dict:
     from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
+    session_id = _session_id()
+    project_name = _project_name()
+    active_tasks = task_manager.list_active_for_scope(
+        session_id=session_id,
+        project_name=project_name,
+    )
+    existing_step_ids = {
+        str(task.get("step_id") or "") for task in active_tasks
+    }
+    planned_steps = [
+        step for step in plan.get("method_plan") or [] if isinstance(step, dict)
+    ]
+    adds_independent_step = any(
+        str(step.get("combination_mode") or "").casefold() != "synthesis"
+        and str(step.get("step_id") or "") not in existing_step_ids
+        for step in planned_steps
+    )
+    has_active_synthesis = any(
+        str(task.get("combination_mode") or "").casefold() == "synthesis"
+        and task.get("status") in {"pending", "blocked", "in_progress"}
+        for task in active_tasks
+    )
+    source = (
+        "synthesis_replenishment"
+        if has_active_synthesis and adds_independent_step
+        else "analysis_plan"
+    )
     result = project_plan_to_workflow_tasks(
         task_manager,
         plan,
-        session_id=_session_id(),
-        project_name=_project_name(),
-        source="analysis_plan",
+        session_id=session_id,
+        project_name=project_name,
+        source=source,
     )
     task_ids = [int(task_id) for task_id in result.get("task_ids") or []]
     tasks = [task_manager.get(task_id) for task_id in task_ids]

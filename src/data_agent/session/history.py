@@ -4,14 +4,42 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any, Optional
 
 from data_agent.config import get_config
 
 logger = logging.getLogger(__name__)
+
+_SESSION_IO_LOCK = threading.RLock()
+
+
+def _locked_session_io(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with _SESSION_IO_LOCK:
+            return func(*args, **kwargs)
+
+    return wrapped
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """Replace JSON atomically so a concurrent refresh never sees half a file."""
+
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _sessions_dir() -> Path:
@@ -67,6 +95,7 @@ def _read_jsonl(path: Path) -> list[dict]:
     return messages
 
 
+@_locked_session_io
 def _rotate_jsonl(session_id: str) -> None:
     """JSONL 超过阈值时合并到 conversation.json 并清空 JSONL。"""
     sdir = _session_dir(session_id)
@@ -88,12 +117,11 @@ def _rotate_jsonl(session_id: str) -> None:
 
     all_messages = json_messages + jsonl_messages
     conv = _serialize_messages(all_messages)
-    conv_path.write_text(
-        json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    _atomic_write_json(conv_path, conv)
     jsonl_path.unlink(missing_ok=True)
 
 
+@_locked_session_io
 def push_message(session_id: str, message: dict) -> None:
     """追加一条消息到 JSONL。快速的 per-turn 持久化。"""
     sdir = _session_dir(session_id)
@@ -113,6 +141,7 @@ def push_message(session_id: str, message: dict) -> None:
         pass
 
 
+@_locked_session_io
 def push_messages(session_id: str, messages: list[dict]) -> None:
     """批量追加多条消息到 JSONL。"""
     sdir = _session_dir(session_id)
@@ -136,6 +165,54 @@ def push_messages(session_id: str, messages: list[dict]) -> None:
 
 # ── 会话保存与恢复 ────────────────────────────────────────
 
+@_locked_session_io
+def checkpoint_session(
+    messages: list[dict],
+    session_id: str,
+    *,
+    start_index: int,
+    data_file: str = "",
+    extra_meta: Optional[dict] = None,
+) -> str:
+    """Append a recoverable checkpoint without running final evidence indexing."""
+
+    sdir = _session_dir(session_id)
+    new_messages = messages[max(0, start_index):]
+    if new_messages:
+        push_messages(session_id, new_messages)
+
+    meta_path = sdir / "meta.json"
+    existing: dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            existing = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    meta = {
+        **existing,
+        "session_id": session_id,
+        "saved_at": _now_str(),
+        "tag": existing.get("tag", ""),
+        "data_file": data_file or existing.get("data_file", ""),
+        "message_count": len(messages),
+        "summary": _extract_summary(messages),
+        "project_name": existing.get("project_name"),
+        "stream_status": "running",
+    }
+    if extra_meta:
+        extra = dict(extra_meta)
+        project_name = extra.pop("project_name", None)
+        object_name = extra.pop("object_name", None)
+        active_project = project_name if project_name is not None else object_name
+        if active_project is not None:
+            meta["project_name"] = active_project
+        meta.update(extra)
+    # The journal is durable before metadata exposes the session in the list.
+    _atomic_write_json(meta_path, meta)
+    return session_id
+
+
+@_locked_session_io
 def save_session(
     messages: list[dict],
     session_id: str,
@@ -176,13 +253,11 @@ def save_session(
         active_project = project_name if project_name is not None else object_name
         meta["project_name"] = active_project
         meta.update(extra)
-    (sdir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # conversation.json
+    # Publish the conversation before metadata exposes a new session to the
+    # sidebar. Atomic replacements make concurrent refreshes all-or-nothing.
     conv = _serialize_messages(messages)
-    (sdir / "conversation.json").write_text(
-        json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    _atomic_write_json(sdir / "conversation.json", conv)
+    _atomic_write_json(sdir / "meta.json", meta)
 
     # JSONL 已合并到 JSON，删除
     jsonl_path = sdir / "conversation.jsonl"
@@ -193,6 +268,7 @@ def save_session(
     return session_id
 
 
+@_locked_session_io
 def load_session(session_id: str) -> Optional[dict]:
     """加载指定会话。自动检测 JSON/JSONL 格式并合并。自动清洗连续同 role 消息。"""
     sdir = _session_dir(session_id)
@@ -238,6 +314,7 @@ def load_session(session_id: str) -> Optional[dict]:
     }
 
 
+@_locked_session_io
 def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
     """列出所有会话摘要。支持按项目名过滤，object_name 为兼容别名。"""
     results = []
@@ -270,6 +347,7 @@ def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:
     return results
 
 
+@_locked_session_io
 def update_session_meta(session_id: str, updates: dict) -> bool:
     """原子更新会话元数据。用于动态绑定/解绑对象。"""
     sdir = _session_dir(session_id)
@@ -284,9 +362,7 @@ def update_session_meta(session_id: str, updates: dict) -> bool:
             updates["project_name"] = project_name
             updates.pop("object_name", None)
         meta.update(updates)
-        meta_path.write_text(
-            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write_json(meta_path, meta)
         return True
     except (json.JSONDecodeError, OSError):
         return False

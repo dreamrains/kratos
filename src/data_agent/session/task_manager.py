@@ -6,6 +6,7 @@ Task 是持久化工作项，LLM 完全控制生命周期，系统只做存取�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import datetime
@@ -79,9 +80,15 @@ class TaskManager:
     支持 blocks/blockedBy 依赖关系（双向传播）。
     """
 
-    def __init__(self, tasks_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        tasks_dir: Optional[Path] = None,
+        analysis_run_coordinator=None,
+    ):
         self._dir = tasks_dir
         self._next_id_val = 0
+        self._analysis_run_coordinator_instance = analysis_run_coordinator
+        self._applying_analysis_run_projection = False
 
     @property
     def dir(self) -> Path:
@@ -90,6 +97,152 @@ class TaskManager:
             self._dir = cfg.project_resolved / "tasks"
         self._dir.mkdir(parents=True, exist_ok=True)
         return self._dir
+
+    def _analysis_run_coordinator(self, *, create: bool):
+        if self._analysis_run_coordinator_instance is not None:
+            return self._analysis_run_coordinator_instance
+        state_root = self.dir / ".analysis-runtime"
+        database = state_root / "analysis-runs.sqlite3"
+        if not create and not database.exists():
+            return None
+        from data_agent.agent.analysis_run_coordinator import AnalysisRunCoordinator
+        from data_agent.session.analysis_run_store import AnalysisRunStore
+
+        self._analysis_run_coordinator_instance = AnalysisRunCoordinator(
+            AnalysisRunStore(database, state_root=state_root)
+        )
+        return self._analysis_run_coordinator_instance
+
+    def _apply_analysis_run_projection(self, run) -> None:
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None or run is None:
+            return
+        self._applying_analysis_run_projection = True
+        try:
+            for task_id, status in coordinator.legacy_projection(run).items():
+                task = self.get(task_id)
+                if task is not None and task.get("status") != status:
+                    self.update(task_id, status=status)
+        finally:
+            self._applying_analysis_run_projection = False
+
+    def materialize_analysis_run(
+        self,
+        *,
+        session_id: str,
+        project_name: str,
+        plan_id: str,
+        tasks: list[dict],
+    ) -> dict:
+        coordinator = self._analysis_run_coordinator(create=True)
+        run = coordinator.materialize_plan(
+            session_id=session_id,
+            project_name=project_name,
+            plan_id=plan_id,
+            tasks=tasks,
+        )
+        self._apply_analysis_run_projection(run)
+        return {
+            "run_id": run.run_id,
+            "status": run.status.value,
+            "version": run.version,
+        }
+
+    def get_analysis_run_scope(
+        self,
+        session_id: str,
+        project_name: str = "",
+    ) -> dict | None:
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return None
+        scope = coordinator.current_scope(
+            session_id=session_id,
+            project_name=project_name,
+        )
+        active = coordinator.store.get_active_run(session_id)
+        if active is not None:
+            self._apply_analysis_run_projection(active)
+        return scope
+
+    def advance_analysis_run_tasks(
+        self,
+        *,
+        session_id: str,
+        completed_task_ids: list[int],
+        idempotency_key: str,
+    ):
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return None
+        run = coordinator.advance_completed_tasks(
+            session_id=session_id,
+            completed_task_ids=completed_task_ids,
+            idempotency_key=idempotency_key,
+        )
+        self._apply_analysis_run_projection(run)
+        return run
+
+    def get_analysis_run_tool_binding(
+        self,
+        *,
+        session_id: str,
+        project_name: str,
+        external_step_id: str = "",
+    ) -> dict | None:
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return None
+        run = coordinator.store.get_active_run(session_id)
+        if run is None:
+            return None
+        candidates = [
+            step
+            for step in run.steps
+            if not external_step_id
+            or str(step.payload.get("external_step_id") or "")
+            == external_step_id
+        ]
+        step = candidates[0] if len(candidates) == 1 else run.current_step
+        if step is None:
+            return None
+        if str(step.payload.get("project_name") or "") != project_name:
+            return None
+        return {
+            "run_id": run.run_id,
+            "step_id": step.step_id,
+            "external_step_id": str(
+                step.payload.get("external_step_id") or ""
+            ),
+        }
+
+    def record_analysis_tool_outcome(
+        self,
+        *,
+        session_id: str,
+        binding: dict,
+        tool_call_id: str,
+        tool_name: str,
+        state: str,
+        artifact_ids: tuple[str, ...],
+        warning: dict | None,
+    ) -> dict | None:
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None or not binding:
+            return None
+        return coordinator.store.record_tool_outcome(
+            run_id=str(binding.get("run_id") or ""),
+            session_id=session_id,
+            step_id=str(binding.get("step_id") or ""),
+            tool_name=tool_name,
+            state=state,
+            artifact_id=(artifact_ids[0] if artifact_ids else ""),
+            payload={
+                "artifact_ids": list(artifact_ids),
+                "warning": warning or {},
+            },
+            idempotency_key=f"tool-call:{tool_call_id}",
+        )
 
     def _init_next_id(self) -> None:
         if self._next_id_val == 0:
@@ -255,6 +408,26 @@ class TaskManager:
                 task[key] = workflow_fields[key]
 
         self._save(task)
+        if (
+            status in {"completed", "failed"}
+            and not self._applying_analysis_run_projection
+            and task.get("session_id")
+        ):
+            coordinator = self._analysis_run_coordinator(create=False)
+            if coordinator is not None:
+                timestamp = task.get(
+                    "completed_at" if status == "completed" else "failed_at",
+                    "",
+                )
+                run = coordinator.advance_terminal_task(
+                    session_id=str(task.get("session_id") or ""),
+                    legacy_task_id=int(task["id"]),
+                    final_status=status,
+                    idempotency_key=(
+                        f"legacy-terminal:{task['id']}:{status}:{timestamp}"
+                    ),
+                )
+                self._apply_analysis_run_projection(run)
         return task
 
     def _is_stale(self, task: dict) -> bool:
@@ -803,6 +976,25 @@ class TaskManager:
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
+            if completed:
+                evidence_idempotency = evidence_id
+                if not evidence_idempotency:
+                    evidence_idempotency = hashlib.sha256(
+                        json.dumps(
+                            evidence,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            default=str,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                run = self.advance_analysis_run_tasks(
+                    session_id=session_id,
+                    completed_task_ids=completed,
+                    idempotency_key=f"evidence:{evidence_idempotency}",
+                )
+                if run is not None:
+                    return completed
+
             activated_scopes: set[tuple[str, str]] = set()
             for task in active_tasks:
                 if task.get("id") not in completed:

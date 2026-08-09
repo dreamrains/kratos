@@ -13,6 +13,97 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "src/data_agent/web/static/js/app.js").read_text(encoding="utf-8")
+INDEX_HTML = (ROOT / "src/data_agent/web/templates/index.html").read_text(encoding="utf-8")
+
+NODE_SPLIT_FRAME = r"""
+const fs = require('fs');
+const vm = require('vm');
+
+vm.runInThisContext(
+  fs.readFileSync('src/data_agent/web/static/js/app.js', 'utf8'),
+  { filename: 'app.js' },
+);
+
+global.requestAnimationFrame = (callback) => callback();
+
+(async () => {
+  const app = chatApp();
+  const state = app._emptySessionState();
+  const turn = {
+    role: 'assistant', content: '', toolCalls: [], artifacts: [],
+    confirmation: null, isThinking: true,
+  };
+  state.turns = [turn];
+  state.isLoading = true;
+  app._sessionStates = { A: state };
+  app.currentSessionId = 'A';
+  app.turns = state.turns;
+  app.isLoading = true;
+  app._debouncedLoadTasks = () => {};
+  app.loadTrustView = async () => {};
+  app._scrollToBottom = () => {};
+  app._queueMermaidRenderIfOwned = () => {};
+  app._stopThinkingCycle = () => {};
+
+  const observed = [];
+  const actualHandle = app._handleEvent.bind(app);
+  app._handleEvent = (...args) => {
+    observed.push(args[0]);
+    return actualHandle(...args);
+  };
+  app._yieldAfterVisibleSSEMutation = async () => { observed.push('paint'); };
+
+  const encoder = new TextEncoder();
+  const chunks = [
+    encoder.encode('event: text_delta\n'),
+    encoder.encode('data: {"text":"first"}\n\nevent: turn_end\n'),
+    encoder.encode('data: {"status":"completed"}\n\n'),
+  ];
+  let index = 0;
+  const response = {
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (index >= chunks.length) return { done: true, value: undefined };
+            return { done: false, value: chunks[index++] };
+          },
+        };
+      },
+    },
+  };
+
+  await app._processSSE(response, turn, state, 'A');
+  process.stdout.write(JSON.stringify({ content: turn.content, observed }));
+})().catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+"""
+
+NODE_UI_CONFIRMATION = r"""
+const fs = require('fs');
+const vm = require('vm');
+vm.runInThisContext(
+  fs.readFileSync('src/data_agent/web/static/js/app.js', 'utf8'),
+  { filename: 'app.js' },
+);
+
+(async () => {
+  const app = chatApp();
+  const acceptedPromise = app._confirmAction('stop now');
+  const opened = { ...app.confirmDialog };
+  app._resolveUiConfirmation(true);
+  const accepted = await acceptedPromise;
+  const cancelledPromise = app._confirmAction('delete later');
+  app._resolveUiConfirmation(false);
+  const cancelled = await cancelledPromise;
+  process.stdout.write(JSON.stringify({ opened, accepted, cancelled, closed: app.confirmDialog }));
+})().catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exitCode = 1;
+});
+"""
 
 
 def _method_block(start, end):
@@ -50,6 +141,53 @@ def test_current_turn_mutations_publish_reactive_array_updates():
 
     text = block[block.index("case 'text_delta':") : block.index("case 'tool_call':")]
     assert text.index(expected) < text.index("this._scrollToBottom(")
+
+
+def test_analysis_progress_refreshes_the_task_projection():
+    block = _method_block("_handleEvent(type, data, turn, state, sessionId)", "// --- Helpers ---")
+    progress = block[
+        block.index("case 'analysis_progress':") : block.index("case 'text_delta':")
+    ]
+    assert "this._debouncedLoadTasks();" in progress
+
+
+def test_sse_parser_preserves_frames_across_network_chunks_and_yields_before_terminal():
+    result = subprocess.run(
+        ["node", "-e", NODE_SPLIT_FRAME],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = __import__("json").loads(result.stdout)
+    assert payload == {
+        "content": "first",
+        "observed": ["text_delta", "paint", "turn_end"],
+    }
+
+
+def test_app_confirmation_is_explicit_and_does_not_use_native_confirm():
+    assert "confirm(" not in APP_JS
+    assert 'x-show="confirmDialog.show"' in INDEX_HTML
+    assert '@click="_resolveUiConfirmation(false)"' in INDEX_HTML
+    assert '@click="_resolveUiConfirmation(true)"' in INDEX_HTML
+
+    result = subprocess.run(
+        ["node", "-e", NODE_UI_CONFIRMATION],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = __import__("json").loads(result.stdout)
+    assert payload == {
+        "opened": {"show": True, "message": "stop now"},
+        "accepted": True,
+        "cancelled": False,
+        "closed": {"show": False, "message": ""},
+    }
 
 
 def test_resume_uses_reactive_new_turn():

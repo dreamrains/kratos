@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 
@@ -11,6 +12,7 @@ from flask import Blueprint, Response, current_app, jsonify, request
 from data_agent.web.event_bus import SSEEvent, EventQueue
 
 chat_bp = Blueprint("chat", __name__)
+logger = logging.getLogger(__name__)
 
 
 def _token_usage(loop) -> dict | None:
@@ -33,9 +35,25 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
         tu = _token_usage(loop)
         return tu if tu else {}
 
+    checkpointed_start = False
+
+    def _checkpoint(*, final: bool = False):
+        try:
+            if final:
+                loop._auto_save()
+            elif hasattr(loop, "_stream_checkpoint"):
+                loop._stream_checkpoint()
+        except Exception:
+            # Persistence failures must not strand the SSE lifecycle, but they
+            # remain visible in server diagnostics.
+            logger.exception("Failed to checkpoint streaming session")
+
     try:
         for event in gen:
             etype = event["type"]
+            if not checkpointed_start:
+                _checkpoint()
+                checkpointed_start = True
             if etype == "llm_call_start":
                 eq.put(SSEEvent("llm_call_start", {"round": event["round"], **_pct_payload()}))
             elif etype == "tool_call":
@@ -46,6 +64,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "round": event["round"],
                 }))
             elif etype == "tool_result":
+                _checkpoint()
                 eq.put(SSEEvent("tool_result", {
                     "tool_call_id": event["tool_call_id"],
                     "name": event["name"],
@@ -71,6 +90,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
             elif etype == "_response":
                 pass  # Internal event, skip
             elif etype == "suspended":
+                _checkpoint()
                 eq.put(SSEEvent("suspended", {
                     "confirmation_id": event.get("confirmation_id") or event["suspension_id"],
                     "suspension_id": event["suspension_id"],
@@ -85,6 +105,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "related_task_id": event.get("related_task_id"),
                     "related_spec_id": event.get("related_spec_id"),
                 }))
+                _checkpoint(final=True)
                 eq.put(SSEEvent("turn_end", {
                     "session_id": loop.session_id,
                     "turn_id": turn_id,
@@ -94,6 +115,7 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                 return
             elif etype == "error":
                 eq.put(SSEEvent("error", {"message": event["message"]}))
+        _checkpoint(final=True)
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
             "turn_id": turn_id,
@@ -102,16 +124,13 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
         }))
     except Exception as e:
         eq.put(SSEEvent("error", {"message": str(e)}))
+        _checkpoint(final=True)
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
             "turn_id": turn_id,
             "status": "error",
         }))
     finally:
-        try:
-            loop._auto_save()
-        except Exception:
-            pass
         eq.close()
 
 

@@ -13,10 +13,13 @@ def _intent(intent_type="directed_analysis"):
 
 
 def _state(*, evidence=True):
-    return SimpleNamespace(
+    state = SimpleNamespace(
         evidence_records=[{"id": "ev_1"}] if evidence else [],
         verification_reports=[],
+        turn_diagnostics=[],
     )
+    state.append_turn_diagnostic = state.turn_diagnostics.append
+    return state
 
 
 def _audit(status, *, reason_codes=None, public_text="Audited result."):
@@ -161,6 +164,43 @@ def test_passed_audit_cannot_publish_process_narration_as_comprehensive_report(m
     assert "analysis_answer_incomplete" in loop._turn_final_audit_instruction
     assert "Do not call tools" in loop._turn_final_audit_instruction
     assert not any(message.get("role") == "assistant" for message in loop.messages)
+
+
+def test_directed_analysis_process_narration_is_repaired_before_audit(monkeypatch):
+    loop = _analysis_loop()
+    process_note = "复核完成，现在做最后一步：检验分群差异是否显著。"
+    monkeypatch.setattr(
+        runtime,
+        "audit_final_answer_draft",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("incomplete process narration must be repaired before audit")
+        ),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", process_note)
+
+    assert result == {"action": "continue", "mode": "synthesis"}
+    assert "analysis_answer_incomplete" in loop._turn_final_audit_instruction
+
+
+def test_audit_runtime_failure_records_bounded_diagnostic(monkeypatch):
+    loop = _analysis_loop()
+    diagnostics = []
+    loop.context.analysis_state.turn_diagnostics = diagnostics
+    loop.context.analysis_state.append_turn_diagnostic = diagnostics.append
+    monkeypatch.setattr(
+        runtime,
+        "audit_final_answer_draft",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("secret detail")),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", "分析结果。")
+
+    assert result["action"] == "fallback"
+    assert {
+        "event": "final_answer_audit_runtime_failure",
+        "exception_type": "RuntimeError",
+    } in diagnostics
 
 
 def test_internal_evidence_markers_are_stripped_from_intermediate_analysis_text():
@@ -662,6 +702,72 @@ def test_synthesis_only_revision_cannot_escape_into_tool_execution():
     assert loop._turn_final_audit_instruction == ""
 
 
+def test_truncation_revision_tool_call_falls_back_to_original_candidate(monkeypatch):
+    original = (
+        "发现：收入在客户分群之间存在明显差异。" * 20
+        + "\n建议：优先验证分群定价和渠道策略。" * 12
+        + "\n局限：当前结果是描述性关联，不能解释为因果关系。" * 12
+    )
+
+    class Client:
+        max_tokens = 8_000
+
+        def __init__(self):
+            self.round = 0
+
+        def chat(self, **_kwargs):
+            self.round += 1
+            if self.round == 1:
+                return Response(text=original, finish_reason="length")
+            return Response(
+                text="我再运行一次计算。",
+                tool_calls=[
+                    ToolCall(id="forbidden", name="run_python", arguments={"code": "print(1)"}),
+                ],
+            )
+
+    client = Client()
+    loop = AgentLoop(client=client, session_id="publish_gate_truncation_tool_revision")
+    loop._last_turn_intent = _intent("comprehensive_report")
+    loop.context.analysis_state = _state()
+    loop.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=40_000,
+        synthesis_reserve_tokens=8_000,
+        audit_reserve_tokens=4_000,
+        revision_reserve_tokens=8_000,
+    ))
+    loop._get_system_prompt = lambda: getattr(loop, "_turn_final_audit_instruction", "")
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    captured = {}
+    ref = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_tool_revision_fallback",
+        "status": "pass",
+        "artifact_path": "fixture.json",
+        "artifact_digest": "0" * 64,
+    }
+
+    def audit_draft(text, *_args, **_kwargs):
+        captured["text"] = text
+        return ref
+
+    monkeypatch.setattr(runtime, "audit_final_answer_draft", audit_draft)
+    monkeypatch.setattr(
+        runtime,
+        "hydrate_final_answer_audit_ref",
+        lambda _ref: _audit("pass", public_text=captured["text"]),
+    )
+
+    result = loop._loop_impl("analyze comprehensively")
+
+    assert client.round == 2
+    assert result.content == original
+    assert captured["text"] == original
+    assert not any(message.get("tool_calls") for message in loop.messages)
+
+
 def test_streaming_analysis_buffers_raw_deltas_until_audit_passes(monkeypatch):
     class Client:
         def stream_chat_structured(self, **_kwargs):
@@ -755,6 +861,212 @@ def test_streaming_length_truncation_gets_one_complete_revision_before_audit(mon
     assert audited == ["发现：收入存在分群差异。\n建议：验证定价策略。\n局限：仅为描述性分析。"]
     assert text == "AUDITED COMPLETE"
     assert "TRUNCATED DRAFT" not in text
+
+
+def test_quality_continuation_reclassifies_discarded_synthesis_budget(monkeypatch):
+    class Client:
+        max_tokens = 8_000
+
+        def __init__(self):
+            self.round = 0
+            self.output_limits = []
+
+        def stream_chat_structured(self, **kwargs):
+            self.round += 1
+            self.output_limits.append(kwargs.get("max_tokens"))
+            if self.round == 1:
+                draft = "正在继续分析。" * 200
+                yield StreamTextDelta(draft)
+                yield StreamComplete(Response(text=draft, finish_reason="stop"))
+                return
+            complete = "发现：收入存在分群差异。\n建议：验证定价策略。\n局限：仅为描述性分析。"
+            yield StreamTextDelta(complete)
+            yield StreamComplete(Response(text=complete, finish_reason="stop"))
+
+    client = Client()
+    loop = AgentLoop(client=client, session_id="publish_gate_quality_budget")
+
+    def prepare(_user_input):
+        loop._last_turn_intent = _intent("comprehensive_report")
+        loop._turn_synthesis_policy_instruction = "synthesize"
+        return []
+
+    loop._prepare_analysis_turn = prepare
+    loop._get_system_prompt = lambda: loop._turn_synthesis_policy_instruction
+    loop._maybe_auto_suspend_for_required_question = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    continuation_calls = 0
+
+    def continue_once(*_args):
+        nonlocal continuation_calls
+        continuation_calls += 1
+        return continuation_calls == 1
+
+    loop._should_continue_for_analysis_quality = continue_once
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    loop.context.analysis_state = _state()
+    loop.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=40_000,
+        synthesis_reserve_tokens=8_000,
+        audit_reserve_tokens=4_000,
+        revision_reserve_tokens=8_000,
+    ))
+    monkeypatch.setattr(
+        loop,
+        "_gate_final_analysis_answer",
+        lambda _user_input, text, **_kwargs: {"action": "publish", "text": text},
+    )
+
+    events = list(loop.stream_turn("analyze comprehensively"))
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+
+    assert client.output_limits == [8_000, 8_000]
+    assert "发现：收入存在分群差异" in text
+    diagnostics = loop.context.analysis_state.turn_diagnostics
+    assert any(item.get("event") == "discarded_candidate_budget_reclassified" for item in diagnostics)
+
+
+def test_structured_quality_continuation_reclassifies_discarded_synthesis_budget(monkeypatch):
+    class Client:
+        max_tokens = 8_000
+
+        def __init__(self):
+            self.round = 0
+            self.output_limits = []
+
+        def chat(self, **kwargs):
+            self.round += 1
+            self.output_limits.append(kwargs.get("max_tokens"))
+            if self.round == 1:
+                return Response(text="正在继续分析。" * 200, finish_reason="stop")
+            return Response(
+                text="发现：收入存在分群差异。\n建议：验证定价策略。\n局限：仅为描述性分析。",
+                finish_reason="stop",
+            )
+
+    client = Client()
+    loop = AgentLoop(client=client, session_id="publish_gate_quality_budget_sync")
+
+    def prepare(_user_input):
+        loop._last_turn_intent = _intent("comprehensive_report")
+        loop._turn_synthesis_policy_instruction = "synthesize"
+        return []
+
+    loop._prepare_analysis_turn = prepare
+    loop._get_system_prompt = lambda: loop._turn_synthesis_policy_instruction
+    loop._maybe_auto_suspend_for_required_question = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    continuation_calls = 0
+
+    def continue_once(*_args):
+        nonlocal continuation_calls
+        continuation_calls += 1
+        return continuation_calls == 1
+
+    loop._should_continue_for_analysis_quality = continue_once
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    loop.context.analysis_state = _state()
+    loop.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=40_000,
+        synthesis_reserve_tokens=8_000,
+        audit_reserve_tokens=4_000,
+        revision_reserve_tokens=8_000,
+    ))
+    monkeypatch.setattr(
+        loop,
+        "_gate_final_analysis_answer",
+        lambda _user_input, text, **_kwargs: {"action": "publish", "text": text},
+    )
+
+    result = loop.run_turn_structured("analyze comprehensively")
+
+    assert result.content.startswith("发现：收入存在分群差异")
+    assert client.output_limits == [8_000, 8_000]
+    assert any(
+        item.get("event") == "discarded_candidate_budget_reclassified"
+        for item in loop.context.analysis_state.turn_diagnostics
+    )
+
+
+def test_short_truncation_revision_falls_back_to_better_original_candidate(monkeypatch):
+    original = (
+        "发现：收入在客户分群之间存在明显差异。" * 20
+        + "\n建议：优先验证分群定价和渠道策略。" * 12
+        + "\n局限：当前结果是描述性关联，不能解释为因果关系。" * 12
+    )
+
+    class Client:
+        max_tokens = 8_000
+
+        def __init__(self):
+            self.round = 0
+
+        def stream_chat_structured(self, **_kwargs):
+            self.round += 1
+            if self.round == 1:
+                yield StreamTextDelta(original)
+                yield StreamComplete(Response(text=original, finish_reason="length"))
+                return
+            short = "图表已生成。"
+            yield StreamTextDelta(short)
+            yield StreamComplete(Response(text=short, finish_reason="stop"))
+
+    client = Client()
+    loop = AgentLoop(client=client, session_id="publish_gate_best_candidate")
+    loop._get_system_prompt = lambda: getattr(loop, "_turn_final_audit_instruction", "")
+    loop._prepare_analysis_turn = lambda _user_input: setattr(
+        loop,
+        "_last_turn_intent",
+        _intent("comprehensive_report"),
+    ) or []
+    loop._maybe_auto_suspend_for_required_question = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    loop.context.analysis_state = _state()
+    loop.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=40_000,
+        synthesis_reserve_tokens=8_000,
+        audit_reserve_tokens=4_000,
+        revision_reserve_tokens=8_000,
+    ))
+    captured = {}
+    ref = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_best_candidate",
+        "status": "pass",
+        "artifact_path": "fixture.json",
+        "artifact_digest": "0" * 64,
+    }
+
+    def audit_draft(text, *_args, **_kwargs):
+        captured["text"] = text
+        return ref
+
+    monkeypatch.setattr(runtime, "audit_final_answer_draft", audit_draft)
+    monkeypatch.setattr(
+        runtime,
+        "hydrate_final_answer_audit_ref",
+        lambda _ref: _audit("pass", public_text=captured["text"]),
+    )
+
+    events = list(loop.stream_turn("analyze comprehensively"))
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+
+    assert client.round == 2
+    assert captured["text"] == original
+    assert text == original
+    assert "图表已生成" not in text
+    assert any(
+        item.get("event") == "final_answer_candidate_fallback"
+        for item in loop.context.analysis_state.turn_diagnostics
+    )
 
 
 def test_streaming_result_followup_hides_tool_call_claims_until_terminal_audit(monkeypatch):

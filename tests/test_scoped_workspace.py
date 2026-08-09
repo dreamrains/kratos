@@ -3754,3 +3754,61 @@ def test_post_tool_refresh_failure_is_sanitized_recorded_and_recovers(monkeypatc
     assert "workspace_scope_guard_error" in first_output
     assert "9876" not in first_output + second_output + serialized_events
     assert loop.context.workspace_scope.phase == "execution"
+
+
+@pytest.mark.parametrize("path", ["single", "streaming", "parallel"])
+def test_post_tool_scope_error_cannot_replace_committed_evidence_result(
+    monkeypatch,
+    path,
+):
+    active = _sequenced_scope_state(["bound"])
+    manager = _SequencedScopeManager(
+        [
+            active,
+            active,
+            RuntimeError("sensitive post refresh detail 9876"),
+        ]
+    )
+    _bind_manager(monkeypatch, manager)
+    monkeypatch.setitem(
+        registry._tools,
+        "commit_evidence",
+        ToolDefinition(
+            name="commit_evidence",
+            description="persist evidence and return its identity",
+            func=lambda: json.dumps(
+                {"saved": True, "evidence_id": "evidence-71aa"},
+                ensure_ascii=False,
+            ),
+            parameters={"type": "object", "properties": {}},
+            capability=None,
+        ),
+    )
+    loop = AgentLoop(client=object(), session_id="s1")
+    loop.context.analysis_state = None
+    call = ToolCall(id=f"commit-{path}", name="commit_evidence", arguments={})
+
+    if path == "single":
+        loop._execute_single_tool(call, [call], 0)
+        output = loop.messages[-1]["content"]
+        events = []
+    elif path == "streaming":
+        events = list(
+            loop._process_tool_calls(Response(tool_calls=[call]), round_num=1)
+        )
+        output = loop.messages[-1]["content"]
+    else:
+        events = []
+        output = loop._execute_tools_parallel([call])[0][1]
+
+    payload = json.loads(output)
+    assert payload["saved"] is True
+    assert payload["evidence_id"] == "evidence-71aa"
+    assert "error" not in payload
+    assert payload["_tool_outcome"]["state"] == "committed_with_warning"
+    assert (
+        payload["_tool_outcome"]["workflow_warning"]["error_type"]
+        == "workspace_scope_guard_error"
+    )
+    assert "9876" not in output
+    assert not any(event.get("type") == "error" for event in events)

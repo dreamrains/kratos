@@ -54,6 +54,7 @@ class AgentManager:
             sdata = load_session(sid)
             if sdata and sdata.get("messages"):
                 loop.messages = sdata["messages"]
+                loop._last_jsonl_idx = len(loop.messages)
                 loop.restore_object_context()
                 loop._restore_workspace()
                 logger.info("Session restored from disk",

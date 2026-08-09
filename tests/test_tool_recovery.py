@@ -101,7 +101,7 @@ def test_loop_failed_run_python_does_not_block_next_structured_tool(monkeypatch)
     assert state.pending_fallback_resolution is False
 
 
-def test_loop_successful_run_python_exposes_resolution_before_next_tool(monkeypatch):
+def test_loop_successful_persisted_run_python_auto_resolves_as_computation_only(monkeypatch):
     loop = AgentLoop(client=object(), session_id="successful_fallback_state")
     state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
     loop.context.turn_state = state
@@ -121,8 +121,13 @@ def test_loop_successful_run_python_exposes_resolution_before_next_tool(monkeypa
     )
 
     hint = state.prompt_hint()
-    assert state.pending_fallback_resolution is True
-    assert "pending resolution" in hint
+    assert state.pending_fallback_resolution is False
+    assert "pending resolution" not in hint
+    assert state.fallback_resolutions[-1] == {
+        "resolution": "computation_only_limitation",
+        "trust_level": "computation_only",
+    }
+    state.ensure_can_call("preview_data", {"name": "main"})
 
 
 def test_task_create_inherits_current_analysis_plan(tmp_path):

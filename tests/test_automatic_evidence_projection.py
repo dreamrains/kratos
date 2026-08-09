@@ -97,6 +97,44 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
     assert f"dataset_versions={DATASET_VERSION}" in catalog
 
 
+def test_multi_claim_binding_projects_one_valid_record_per_exact_claim(context):
+    context.plan["method_plan"][0]["required_claim_keys"] = [
+        "significant_factors",
+        "effect_estimates",
+    ]
+    binding = StepBindingResult(
+        ok=True,
+        plan_id=PLAN_ID,
+        step_id=STEP_ID,
+        claim_key="significant_factors",
+        claim_keys=("significant_factors", "effect_estimates"),
+        requirement_ids=("req_corr_effect",),
+    )
+
+    result = project_real_correlation(
+        context,
+        binding=binding,
+        ref_overrides={
+            "claim_key": "significant_factors",
+            "claim_keys": ["significant_factors", "effect_estimates"],
+        },
+    )
+
+    assert result.projected is True
+    assert result.record == result.records[0]
+    assert [record["claim_key"] for record in result.records] == [
+        "significant_factors",
+        "effect_estimates",
+    ]
+    assert len({record["id"] for record in result.records}) == 2
+    for record in result.records:
+        assert {
+            measurement["identity"]["claim_key"]
+            for measurement in record["measurements"]
+            if isinstance(measurement.get("identity"), dict)
+        } == {record["claim_key"]}
+
+
 def test_data_quality_projection_emits_nested_missingness_and_duplicate_measurements(context):
     capability = {
         "capability_id": "data.quality",

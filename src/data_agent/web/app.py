@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from flask import Flask
@@ -9,6 +10,13 @@ from flask import Flask
 from data_agent.web.agent_manager import AgentManager
 
 MAX_UPLOAD_MB = 200
+
+
+def static_asset_version(static_root: Path, filename: str) -> str:
+    """Return a content-bound cache key for a first-party static asset."""
+
+    path = Path(static_root) / filename
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
 def create_app() -> Flask:
@@ -22,6 +30,9 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = "data-agent-web"
     app.config["agent_manager"] = AgentManager()
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+    app.jinja_env.globals["asset_version"] = lambda filename: static_asset_version(
+        Path(app.static_folder), filename
+    )
 
     from data_agent.config import get_config
     cfg = get_config()

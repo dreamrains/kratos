@@ -769,6 +769,11 @@ def test_run_python_ref_captures_actual_dataset_reads_as_traceable(
 
     assert ref["dataset_versions"] == [computation_env["active"]["dataset_id"]]
     assert ref["verification_level"] == "traceable"
+    assert ref["fallback_resolution"] == "computation_only_limitation"
+    assert computation_env["ctx"].turn_state.pending_fallback_resolution is False
+    computation_env["ctx"].turn_state.ensure_can_call(
+        "preview_data", {"name": "orders"}
+    )
     persisted = json.loads(_artifact_path(computation_env, ref).read_text(encoding="utf-8"))
     assert persisted["output"]["data"]["dataset_reads"] == ["orders"]
 
@@ -871,6 +876,41 @@ def test_auto_projected_evidence_advances_canonical_task_without_model_bookkeepi
     assert evidence["claim_key"] == "group_revenue_difference"
     assert task["status"] == "completed"
     assert task["completed_by"] == "evidence"
+
+
+def test_auto_projection_persists_all_claims_and_completes_multi_claim_task(
+    computation_env,
+):
+    computation_env["state"].dataset_contracts[0]["dataset_id"] = (
+        computation_env["active"]["dataset_id"]
+    )
+    claim_keys = ["significant_factors", "effect_estimates"]
+    step = computation_env["state"].analysis_plan["method_plan"][0]
+    step["required_claim_keys"] = claim_keys
+    step["requirement_ids"] = [
+        item["id"]
+        for item in computation_env["state"].analysis_plan["analysis_requirements"][
+            "step_compare"
+        ]
+    ]
+    task = next(
+        item
+        for item in computation_env["manager"].list_active_for_scope(session_id="s1")
+        if item["step_id"] == "step_compare"
+    )
+    computation_env["manager"].update(
+        task["id"],
+        required_claim_keys=claim_keys,
+    )
+
+    ref = _execute_computation(computation_env)
+
+    assert ref["claim_keys"] == claim_keys
+    records = computation_env["state"].evidence_records
+    assert [record["claim_key"] for record in records] == claim_keys
+    updated = computation_env["manager"].get(task["id"])
+    assert updated["status"] == "completed"
+    assert updated["satisfied_claim_keys"] == claim_keys
 
 
 def test_structured_checked_trusts_only_capability_declared_fields(computation_env, monkeypatch):

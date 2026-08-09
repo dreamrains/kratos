@@ -11,11 +11,14 @@ import io
 import json
 import os
 import subprocess
+import sys
 import threading
 import types
 from pathlib import Path
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.acceptance.browser_gate_contract import (
     validate_browser_gate_receipt,
@@ -39,6 +42,31 @@ from scripts.acceptance.run_web_sse_fixture import (
     split_audited_fixture_text,
     write_browser_fixture_csv,
 )
+
+
+def test_standalone_browser_fixture_binds_imports_to_its_own_checkout():
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import runpy; "
+                "runpy.run_path('scripts/acceptance/run_web_sse_fixture.py', "
+                "run_name='fixture_probe'); "
+                "import data_agent; print(data_agent.__file__)"
+            ),
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
+    imported = Path(probe.stdout.strip()).resolve()
+    assert imported == (ROOT / "src/data_agent/__init__.py").resolve()
 
 
 EXPECTED_DIGEST = "sha256:" + "a" * 64
@@ -405,6 +433,17 @@ def test_release_source_digest_keeps_binary_byte_changes_significant(tmp_path):
     binary.write_bytes(b"\x89BIN\x00line\nend")
 
     assert release_source_digest(root) != baseline
+
+
+def test_release_source_digest_ignores_tracked_files_deleted_from_candidate(tmp_path):
+    root, _selected = _make_digest_repo(tmp_path)
+    deleted = root / "scripts/check.py"
+    deleted.unlink()
+
+    candidate_digest = release_source_digest(root)
+    _git(root, "rm", "--cached", "scripts/check.py")
+
+    assert release_source_digest(root) == candidate_digest
 
 
 def test_audited_fixture_text_is_split_without_substitution():

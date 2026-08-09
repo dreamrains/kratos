@@ -7,6 +7,7 @@ not replace the actual-browser observation required by release Gate E.
 from __future__ import annotations
 
 import json
+import threading
 
 import pytest
 
@@ -61,6 +62,44 @@ class ScriptedManager:
 
     def remove(self, _session_id):
         return None
+
+
+class CheckpointingBlockingLoop(ScriptedLoop):
+    session_id = "sse_checkpoint"
+
+    def __init__(self):
+        super().__init__()
+        self.release = threading.Event()
+        self.checkpoints = 0
+
+    def stream_turn(self, message):
+        self.messages.append({"role": "user", "content": message})
+        yield {
+            "type": "analysis_progress",
+            "code": "analysis_plan_ready",
+            "label": "Analysis plan is ready",
+            "status": "finished",
+            "step_id": "step_profile",
+        }
+        assert self.release.wait(timeout=5), "test did not release the stream"
+        self.messages.append({"role": "assistant", "content": "persisted answer"})
+        yield {"type": "text_delta", "text": "persisted answer"}
+
+    def _stream_checkpoint(self):
+        from data_agent.session.history import checkpoint_session
+
+        checkpoint_session(
+            self.messages,
+            self.session_id,
+            start_index=0 if self.checkpoints == 0 else len(self.messages),
+        )
+        self.checkpoints += 1
+
+    def _auto_save(self):
+        from data_agent.session.history import save_session
+
+        save_session(self.messages, self.session_id)
+        self.saved += 1
 
 
 def parse_sse_chunks(chunks):
@@ -222,3 +261,55 @@ def test_feed_events_serializes_generator_error_then_closes_and_autosaves():
     assert queue._closed is True
     assert list(queue.iter()) == []
     assert loop.saved == 1
+
+
+def test_turn_end_is_enqueued_only_after_final_session_save():
+    from data_agent.web.blueprints.chat import _feed_events
+    from data_agent.web.event_bus import EventQueue
+
+    loop = ScriptedLoop()
+
+    class ObservingQueue(EventQueue):
+        saved_when_terminal_was_enqueued = None
+
+        def put(self, event):
+            if event.event == "turn_end":
+                self.saved_when_terminal_was_enqueued = loop.saved
+            super().put(event)
+
+    queue = ObservingQueue()
+    _feed_events(queue, loop, "t_saved_first", loop.stream_turn("finish"))
+
+    assert queue.saved_when_terminal_was_enqueued == 1
+
+
+def test_running_session_is_listed_and_reloadable_before_turn_end(app):
+    loop = CheckpointingBlockingLoop()
+    app.config["agent_manager"] = ScriptedManager(loop)
+    stream_client = app.test_client()
+    read_client = app.test_client()
+
+    response = stream_client.post(
+        "/api/chat",
+        json={"message": "checkpoint me"},
+        buffered=False,
+    )
+    event_iter = parse_sse_chunks(response.response)
+    assert next(event_iter)[0] == "turn_start"
+    assert next(event_iter)[0] == "analysis_progress"
+
+    sessions = read_client.get("/api/sessions").get_json()
+    assert [item["session_id"] for item in sessions] == [loop.session_id]
+    running = read_client.get(f"/api/sessions/{loop.session_id}").get_json()
+    assert running["messages"] == [
+        {"role": "user", "content": "checkpoint me"},
+    ]
+
+    loop.release.set()
+    remaining = list(event_iter)
+    assert remaining[-1][0] == "turn_end"
+    completed = read_client.get(f"/api/sessions/{loop.session_id}").get_json()
+    assert completed["messages"][-1] == {
+        "role": "assistant",
+        "content": "persisted answer",
+    }

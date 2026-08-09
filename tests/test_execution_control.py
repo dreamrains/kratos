@@ -126,6 +126,29 @@ def test_exploration_cannot_consume_synthesis_or_audit_reserves():
     assert "assurance reserves" in state.prompt_hint().lower()
 
 
+def test_discarded_synthesis_usage_can_be_reclassified_without_hiding_total_usage():
+    state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=1_000,
+        synthesis_reserve_tokens=200,
+        audit_reserve_tokens=100,
+        revision_reserve_tokens=100,
+    ))
+    state.record_token_usage(120, phase="synthesis")
+    runtime_before = state.approximate_runtime_tokens_used
+
+    moved = state.reclassify_phase_usage(
+        120,
+        source_phase="synthesis",
+        target_phase="exploration",
+    )
+
+    assert moved == 120
+    assert state.phase_token_usage["synthesis"] == 0
+    assert state.phase_token_usage["exploration"] == 120
+    assert state.approximate_runtime_tokens_used == runtime_before
+    assert state.remaining_phase_tokens("synthesis") == 200
+
+
 def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch):
     from data_agent.agent.compact import persist_large_output
     from data_agent.config import get_config
@@ -206,6 +229,22 @@ def test_successful_resolution_clears_pending_fallback():
     state.record_tool_success("record_evidence_record")
 
     assert state.pending_fallback_resolution is False
+
+
+def test_server_resolved_fallback_limitation_never_opens_manual_resolution_gate():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
+    state.record_tool_call("run_python", {"purpose": "check", "code": "print(1)"})
+
+    state.record_tool_success(
+        "run_python",
+        fallback_resolution="computation_only_limitation",
+    )
+
+    assert state.pending_fallback_resolution is False
+    assert state.fallback_resolutions[-1]["resolution"] == (
+        "computation_only_limitation"
+    )
+    state.ensure_can_call("preview_data", {"name": "main"})
 
 
 def test_repeated_tool_error_is_blocked_after_two_failures():

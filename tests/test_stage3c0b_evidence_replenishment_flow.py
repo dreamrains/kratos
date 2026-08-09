@@ -221,10 +221,9 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     independent = next(task for task in active_tasks if task["step_id"] == "step_orders_revenue")
     assert independent["combination_mode"] == "independent"
     assert independent["dataset_inputs"] == ["orders"]
-    assert manager.get(synthesis["id"])["status"] == "in_progress"
-
-    manager.update(synthesis["id"], status="blocked")
-    manager.update(independent["id"], status="in_progress")
+    assert manager.get(independent["id"])["status"] == "in_progress"
+    assert manager.get(synthesis["id"])["status"] == "pending"
+    assert manager.get(synthesis["id"])["blockedBy"] == [independent["id"]]
     store = ctx.workspace
     frame = pd.DataFrame({"revenue": [10.0, 15.0]})
     raw = store.register_raw_snapshot("orders", frame, frame_fingerprint(frame))
@@ -316,7 +315,7 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
     assert completed["status"] == "completed"
     assert completed["completed_by"] == "evidence"
 
-    manager.update(synthesis["id"], status="in_progress")
+    assert manager.get(synthesis["id"])["status"] == "in_progress"
     still_blocked = ensure_dataset_allowed_for_current_task(
         manager,
         session_id,

@@ -118,6 +118,7 @@ class TurnExecutionState:
     seen_calls: dict[str, int] = field(default_factory=dict)
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
+    fallback_resolutions: list[dict[str, str]] = field(default_factory=list)
     approximate_runtime_tokens_used: int = 0
     approximate_prompt_tokens: int = 0
     approximate_prompt_component_tokens: dict[str, int] = field(default_factory=dict)
@@ -319,6 +320,11 @@ class TurnExecutionState:
                 for key, value in self.requirement_recovery.items()
                 if isinstance(value, dict)
             },
+            "fallback_resolutions": [
+                dict(item)
+                for item in self.fallback_resolutions
+                if isinstance(item, dict)
+            ],
         }
 
     def ensure_can_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
@@ -400,11 +406,24 @@ class TurnExecutionState:
         if tool_name == "run_python":
             self.fallback_calls += 1
 
-    def record_tool_success(self, tool_name: str = "") -> None:
+    def record_tool_success(
+        self,
+        tool_name: str = "",
+        *,
+        fallback_resolution: str = "",
+    ) -> None:
         self.consecutive_errors = 0
         self.consecutive_error_recovery_attempted = False
         if tool_name == "run_python":
-            self.pending_fallback_resolution = True
+            resolution = str(fallback_resolution or "").strip()
+            if resolution:
+                self.pending_fallback_resolution = False
+                self.fallback_resolutions.append({
+                    "resolution": resolution,
+                    "trust_level": "computation_only",
+                })
+            else:
+                self.pending_fallback_resolution = True
         elif tool_name in self._fallback_resolution_tools():
             self.pending_fallback_resolution = False
 

@@ -7,6 +7,8 @@ from data_agent.config import AgentConfig
 
 
 def test_workspace_dir_defaults_to_workspace(tmp_path, monkeypatch):
+    monkeypatch.delenv("WORKSPACE_DIR", raising=False)
+    monkeypatch.delenv("PROJECT_DIR", raising=False)
     monkeypatch.chdir(tmp_path)
     cfg = AgentConfig(_env_file=None)
     assert cfg.workspace_resolved == tmp_path / "workspace"

@@ -264,10 +264,39 @@ def project_plan_to_workflow_tasks(
             for dependency_id in dependency_ids:
                 manager.update(dependency_id, addBlocks=[task["id"]])
 
-    manager.activate_next_ready_plan_task(
+    if source == "synthesis_replenishment":
+        replenishment_ids = [
+            task["id"]
+            for task in created
+            if str(task.get("combination_mode") or "").casefold() != "synthesis"
+        ]
+        if replenishment_ids:
+            for task in manager.list_active_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+            ):
+                if task.get("plan_id") != plan_record["id"]:
+                    continue
+                if str(task.get("combination_mode") or "").casefold() != "synthesis":
+                    continue
+                manager.update(task["id"], addBlockedBy=replenishment_ids)
+                for dependency_id in replenishment_ids:
+                    manager.update(dependency_id, addBlocks=[task["id"]])
+
+    projected_tasks = [
+        task
+        for task in manager.list_active_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+        )
+        if task.get("plan_id") == plan_record["id"]
+        and task.get("task_kind") == "plan_task"
+    ]
+    analysis_run = manager.materialize_analysis_run(
         session_id=session_id,
         project_name=project_name,
         plan_id=plan_record["id"],
+        tasks=projected_tasks,
     )
 
     return {
@@ -277,4 +306,5 @@ def project_plan_to_workflow_tasks(
         "created": len(created),
         "reused": len(reused),
         "task_ids": [task["id"] for task in created + reused],
+        "analysis_run": analysis_run,
     }

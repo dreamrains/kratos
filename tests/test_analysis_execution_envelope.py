@@ -154,7 +154,29 @@ def test_single_compatible_pending_step_binds_deterministically(envelope):
     )
     assert binding.ok is True
     assert binding.claim_key
+    assert binding.claim_keys == (binding.claim_key,)
     assert binding.requirement_ids
+
+
+def test_multi_claim_step_binding_preserves_every_exact_required_claim_key(envelope):
+    step = next(
+        item
+        for item in envelope.plan["method_plan"]
+        if item.get("required_capability") == "analysis.correlation"
+    )
+    step["required_claim_keys"] = ["significant_factors", "effect_estimates"]
+
+    binding = bind_tool_call_to_plan_step(
+        plan=envelope.plan,
+        tool_name="correlation_analysis",
+        capability=registry.capability_for("correlation_analysis"),
+        dataset_names=["factors"],
+        preferred_step_id=step["step_id"],
+    )
+
+    assert binding.ok is True
+    assert binding.claim_key == "significant_factors"
+    assert binding.claim_keys == ("significant_factors", "effect_estimates")
 
 
 # --- Step 2: ambiguity and envelope failure ----------------------------------

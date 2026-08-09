@@ -50,6 +50,7 @@ class StepBindingResult:
     plan_id: str = ""
     step_id: str = ""
     claim_key: str = ""
+    claim_keys: tuple[str, ...] = ()
     requirement_ids: tuple[str, ...] = ()
     error_type: str = ""
     candidate_step_ids: tuple[str, ...] = ()
@@ -233,21 +234,33 @@ def _dataset_inputs_match(step: dict[str, Any], dataset_names: Sequence[str]) ->
     return all(name in tool_datasets for name in declared)
 
 
-def _claim_key_for(step: dict[str, Any], capability: dict[str, Any] | None) -> str:
+def _claim_keys_for(
+    step: dict[str, Any], capability: dict[str, Any] | None
+) -> tuple[str, ...]:
+    """Return the exact material claims owned by the bound plan step.
+
+    ``required_claim_keys`` is the canonical workflow contract.  Earlier
+    code collapsed a multi-claim step to the capability id, which made a
+    successful structured computation incapable of satisfying the claims
+    the plan actually declared.  Fallback identity is retained only for
+    legacy steps that do not declare exact claim keys.
+    """
+
+    raw_required = step.get("required_claim_keys")
+    if isinstance(raw_required, list):
+        required = tuple(
+            dict.fromkeys(_text(item) for item in raw_required if _text(item))
+        )
+        if required:
+            return required
     cap_id = _text(capability.get("capability_id")) if capability else ""
-    required_claim_keys = step.get("required_claim_keys")
-    exact_required_claim = (
-        _text(required_claim_keys[0])
-        if isinstance(required_claim_keys, list) and len(required_claim_keys) == 1
-        else ""
-    )
-    return (
+    fallback = (
         _text(step.get("claim_type"))
-        or exact_required_claim
         or cap_id
         or _text(step.get("expected_output"))
         or _text(step.get("step_id"))
     )
+    return (fallback,) if fallback else ()
 
 
 def bind_tool_call_to_plan_step(
@@ -357,10 +370,12 @@ def _successful_binding(
     if not isinstance(raw_requirement_ids, list):
         raw_requirement_ids = []
     requirement_ids = tuple(_text(item) for item in raw_requirement_ids if _text(item))
+    claim_keys = _claim_keys_for(step, capability)
     return StepBindingResult(
         ok=True,
         plan_id=plan_id,
         step_id=step_id,
-        claim_key=_claim_key_for(step, capability),
+        claim_key=claim_keys[0] if claim_keys else "",
+        claim_keys=claim_keys,
         requirement_ids=requirement_ids,
     )
