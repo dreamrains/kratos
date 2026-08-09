@@ -21,7 +21,9 @@
       "description": "Inspect savings-card relationship value and risk without materializing a join.",
       "required_files": [
         "省钱卡订单.xlsx",
-        "省钱卡0201到0510购卡用户付费数据.xlsx"
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
+        "省钱卡代金券明细订单.xlsx",
+        "省钱卡购卡前后订单.xlsx"
       ],
       "analysis_mode": "relationship_diagnostic_only",
       "executed_join": false,
@@ -37,6 +39,15 @@
           "time_scope"
         ]
       }
+    },
+    {
+      "id": "cross_promotion_quality_and_funnel",
+      "description": "Validate numeric conversion, funnel ordering, and internal/external comparison before analysis.",
+      "required_files": [
+        "游戏互推.xlsx"
+      ],
+      "analysis_mode": "independent",
+      "executed_join": false
     },
     {
       "id": "unrelated_files_false_join_prevention",

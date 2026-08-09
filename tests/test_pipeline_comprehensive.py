@@ -356,7 +356,7 @@ class TestABTestEdge:
         assert "error" in parsed
 
     def test_real_data_ab(self, env):
-        """用真实数据验证 ab_test。"""
+        """真实重复用户数据不得被误当成独立样本 A/B 测试。"""
         source = TEST_DATA_DIR / "省钱卡购卡前后订单.xlsx"
         if not source.exists():
             pytest.skip()
@@ -365,8 +365,9 @@ class TestABTestEdge:
         load_data(str(source), name="ba")
         r = ab_test("ba", group_col="用户类型（1是购卡前30天内，2是购卡后30天内）", metric_col="实收金额")
         parsed = json.loads(r)
-        assert "test" in parsed
-        assert "significant" in parsed["test"]
+        assert parsed["error_type"] == "analysis_unit_design_required"
+        assert "test" not in parsed
+        assert parsed["candidate_unit_columns"][0]["column"] == "user_id"
 
 
 class TestCausalAnalysisEdge:

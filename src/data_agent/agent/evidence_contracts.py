@@ -1423,9 +1423,32 @@ def _independently_recompute_native_ab_test(
     groups = frame[group_col].dropna().unique()
     if len(groups) < 2:
         return {}
+    observation_design = str(output_data.get("observation_design") or "independent")
+    unit_col = str(arguments.get("unit_col") or "")
+    unit_aggregation = str(arguments.get("unit_aggregation") or "")
     try:
-        left = frame.loc[frame[group_col] == groups[0], metric_col].dropna().astype(float)
-        right = frame.loc[frame[group_col] == groups[1], metric_col].dropna().astype(float)
+        if observation_design in {"paired", "clustered"}:
+            if unit_col not in frame.columns or unit_aggregation not in {"sum", "mean", "median"}:
+                return {}
+            reduced = frame[[unit_col, group_col, metric_col]].dropna().copy()
+            reduced[metric_col] = reduced[metric_col].astype(float)
+            reduced = (
+                reduced.groupby([unit_col, group_col], as_index=False, dropna=False)[metric_col]
+                .agg(unit_aggregation)
+            )
+            if observation_design == "paired":
+                paired = reduced.pivot(index=unit_col, columns=group_col, values=metric_col)
+                matched = paired.dropna(subset=[groups[0], groups[1]])
+                left = matched[groups[0]].astype(float)
+                right = matched[groups[1]].astype(float)
+            else:
+                if bool((reduced.groupby(unit_col)[group_col].nunique() > 1).any()):
+                    return {}
+                left = reduced.loc[reduced[group_col] == groups[0], metric_col].astype(float)
+                right = reduced.loc[reduced[group_col] == groups[1], metric_col].astype(float)
+        else:
+            left = frame.loc[frame[group_col] == groups[0], metric_col].dropna().astype(float)
+            right = frame.loc[frame[group_col] == groups[1], metric_col].dropna().astype(float)
     except (TypeError, ValueError):
         return {}
     if len(left) < 2 or len(right) < 2:
@@ -1435,7 +1458,14 @@ def _independently_recompute_native_ab_test(
     import warnings
 
     method = str(output_data.get("method") or "")
-    if method == "ttest":
+    if method == "paired_ttest" and observation_design == "paired":
+        statistic, p_value = sp_stats.ttest_rel(right.to_numpy(), left.to_numpy())
+    elif method == "wilcoxon" and observation_design == "paired":
+        differences = right.to_numpy() - left.to_numpy()
+        if all(math.isclose(float(value), 0.0, abs_tol=1e-12) for value in differences):
+            return {}
+        statistic, p_value = sp_stats.wilcoxon(right.to_numpy(), left.to_numpy())
+    elif method == "ttest" and observation_design in {"independent", "clustered"}:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             _, levene_p = sp_stats.levene(left.to_numpy(), right.to_numpy())
@@ -1444,7 +1474,7 @@ def _independently_recompute_native_ab_test(
                 right.to_numpy(),
                 equal_var=bool(math.isfinite(float(levene_p)) and levene_p > 0.05),
             )
-    elif method == "mannwhitneyu":
+    elif method == "mannwhitneyu" and observation_design in {"independent", "clustered"}:
         statistic, p_value = sp_stats.mannwhitneyu(
             left.to_numpy(),
             right.to_numpy(),
@@ -1477,8 +1507,14 @@ def _independently_recompute_native_ab_test(
     ):
         return {}
 
-    expected_sample = {"total": len(left) + len(right), "groups": group_counts}
-    if method == "mannwhitneyu":
+    expected_sample = (
+        {"total": len(left), "pairs": len(left)}
+        if observation_design == "paired"
+        else {"total": len(left) + len(right), "groups": group_counts}
+    )
+    if observation_design == "paired":
+        effect_metric = "mean_paired_difference"
+    elif method == "mannwhitneyu":
         effect_value = round(
             float(1 - (2 * float(statistic) / (len(left) * len(right)))),
             8,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import warnings
 from typing import Any, Literal
 
@@ -134,6 +135,99 @@ def _comparison_missingness(df: pd.DataFrame, *columns: str) -> dict[str, dict[s
     }
 
 
+_ANALYSIS_UNIT_NAME = re.compile(
+    r"(?:^|[_\s-])(?:user|member|account|device|player|order)[_\s-]*id(?:$|[_\s-])"
+    r"|(?:用户|会员|账号|账户|设备|玩家|订单).*(?:id|ID|编号|号)"
+    r"|(?:^|[_\s-])id(?:$|[_\s-])",
+)
+
+
+def _analysis_unit_candidates(
+    df: pd.DataFrame,
+    *,
+    group_col: str,
+    metric_col: str,
+) -> list[dict[str, int | str]]:
+    """Find strong ID-like columns whose reuse violates row independence."""
+
+    candidates: list[dict[str, int | str]] = []
+    for column in df.columns:
+        name = str(column)
+        if name in {group_col, metric_col} or not _ANALYSIS_UNIT_NAME.search(name):
+            continue
+        subset = df[[column, group_col]].dropna()
+        if subset.empty:
+            continue
+        normalized = subset[column].astype("string").str.strip()
+        counts = normalized.value_counts()
+        repeated_units = set(counts[counts > 1].index.astype(str))
+        group_sets = [
+            set(
+                subset.loc[subset[group_col] == group, column]
+                .astype("string")
+                .str.strip()
+                .astype(str)
+            )
+            for group in subset[group_col].dropna().unique()[:2]
+        ]
+        overlap = group_sets[0] & group_sets[1] if len(group_sets) == 2 else set()
+        if not repeated_units and not overlap:
+            continue
+        candidates.append({
+            "column": name,
+            "distinct_unit_count": int(normalized.nunique()),
+            "repeated_unit_count": len(repeated_units),
+            "cross_group_overlap_count": len(overlap),
+        })
+    return sorted(
+        candidates,
+        key=lambda item: (
+            -int(item["cross_group_overlap_count"]),
+            -int(item["repeated_unit_count"]),
+            str(item["column"]),
+        ),
+    )
+
+
+def _aggregate_unit_metric(
+    df: pd.DataFrame,
+    *,
+    group_col: str,
+    metric_col: str,
+    unit_col: str,
+    aggregation: str,
+) -> pd.DataFrame:
+    working = df[[unit_col, group_col, metric_col]].dropna(
+        subset=[unit_col, group_col, metric_col]
+    ).copy()
+    working[metric_col] = working[metric_col].astype(float)
+    return (
+        working.groupby([unit_col, group_col], as_index=False, dropna=False)[metric_col]
+        .agg(aggregation)
+    )
+
+
+def _paired_mean_difference_interval(
+    differences: np.ndarray,
+    *,
+    level: float = 0.95,
+) -> dict[str, float | str]:
+    difference = float(np.mean(differences))
+    standard_error = float(sp_stats.sem(differences)) if len(differences) > 1 else 0.0
+    critical = (
+        float(sp_stats.t.ppf((1 + level) / 2, len(differences) - 1))
+        if standard_error > 0
+        else 0.0
+    )
+    margin = critical * standard_error
+    return {
+        "level": level,
+        "lower": round(difference - margin, 6),
+        "upper": round(difference + margin, 6),
+        "method": "paired_t_mean_difference",
+    }
+
+
 @registry.register(
     name="ab_test",
     description=(
@@ -144,10 +238,30 @@ def _comparison_missingness(df: pd.DataFrame, *columns: str) -> dict[str, dict[s
         "name": {"description": "数据集名称"},
         "group_col": {"description": "分组列名（二值列，区分实验组和对照组）"},
         "metric_col": {"description": "指标列名"},
-        "method": {"description": "检验方法", "enum": ["auto", "ttest", "mannwhitneyu", "chi2"]},
+        "method": {
+            "description": "检验方法；配对设计可使用 paired_ttest 或 wilcoxon",
+            "enum": ["auto", "ttest", "mannwhitneyu", "chi2", "paired_ttest", "wilcoxon"],
+        },
+        "observation_design": {
+            "description": "观测设计。重复用户/实体必须明确为 paired 或 clustered",
+            "enum": ["auto", "independent", "paired", "clustered"],
+        },
+        "unit_col": {"description": "分析单位列，如 user_id；配对或聚类设计必填"},
+        "unit_aggregation": {
+            "description": "同一分析单位在每组内有多行时的聚合口径",
+            "enum": ["unspecified", "sum", "mean", "median"],
+        },
     },
 )
-def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") -> str:
+def ab_test(
+    name: str,
+    group_col: str,
+    metric_col: str,
+    method: str = "auto",
+    observation_design: str = "auto",
+    unit_col: str = "",
+    unit_aggregation: str = "unspecified",
+) -> str:
     df, err = get_df(name)
     if err:
         return err
@@ -162,6 +276,229 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         return f"Error: A/B 比较要求恰好 2 个分组，当前有 {len(groups)} 个"
 
     g1_name, g2_name = str(groups[0]), str(groups[1])
+
+    valid_designs = {"auto", "independent", "paired", "clustered"}
+    if observation_design not in valid_designs:
+        return json.dumps({
+            "error": f"不支持的 observation_design: {observation_design}",
+            "error_type": "invalid_observation_design",
+            "allowed": sorted(valid_designs),
+        }, ensure_ascii=False)
+
+    candidates = _analysis_unit_candidates(
+        df,
+        group_col=group_col,
+        metric_col=metric_col,
+    )
+    if not unit_col and candidates:
+        return json.dumps({
+            "error": (
+                "检测到用户/实体级重复或跨组重叠，行级独立样本检验会夸大有效样本量。"
+                "请明确 unit_col、observation_design 和 unit_aggregation 后重试。"
+            ),
+            "error_type": "analysis_unit_design_required",
+            "candidate_unit_columns": candidates,
+            "required_parameters": [
+                "unit_col",
+                "observation_design",
+                "unit_aggregation",
+            ],
+            "allowed_designs": ["paired", "clustered"],
+        }, ensure_ascii=False, indent=2)
+
+    effective_design = observation_design
+    unit_diagnostics: dict[str, Any] | None = None
+    aggregated: pd.DataFrame | None = None
+    if unit_col:
+        if unit_col not in df.columns:
+            return json.dumps({
+                "error": f"分析单位列不存在: {unit_col}",
+                "error_type": "missing_unit_column",
+            }, ensure_ascii=False)
+        if unit_aggregation not in {"sum", "mean", "median"}:
+            return json.dumps({
+                "error": "指定 unit_col 时必须明确 unit_aggregation: sum、mean 或 median",
+                "error_type": "unit_aggregation_required",
+            }, ensure_ascii=False)
+        try:
+            aggregated = _aggregate_unit_metric(
+                df,
+                group_col=group_col,
+                metric_col=metric_col,
+                unit_col=unit_col,
+                aggregation=unit_aggregation,
+            )
+        except (ValueError, TypeError) as exc:
+            return json.dumps({
+                "error": f"指标列 '{metric_col}' 包含非数值数据，无法按分析单位聚合",
+                "error_type": "non_numeric_metric",
+                "detail": str(exc),
+            }, ensure_ascii=False)
+        unit_groups = aggregated.groupby(unit_col)[group_col].nunique()
+        cross_group_units = int((unit_groups > 1).sum())
+        repeated_source_units = int(
+            (df.dropna(subset=[unit_col]).groupby(unit_col).size() > 1).sum()
+        )
+        if effective_design == "auto":
+            effective_design = "paired" if cross_group_units else "clustered"
+        if effective_design == "independent" and repeated_source_units:
+            return json.dumps({
+                "error": (
+                    "指定的分析单位在源数据中重复，不能继续按行级 independent 设计检验。"
+                    "请选择 paired 或 clustered，并保留明确的聚合口径。"
+                ),
+                "error_type": "independence_violated",
+                "unit_col": unit_col,
+                "repeated_unit_count": repeated_source_units,
+                "cross_group_overlap_count": cross_group_units,
+            }, ensure_ascii=False)
+        if effective_design == "clustered" and cross_group_units:
+            return json.dumps({
+                "error": "部分分析单位同时出现在两个组中，clustered 独立组设计不成立；请使用 paired",
+                "error_type": "cross_group_unit_overlap",
+                "unit_col": unit_col,
+                "cross_group_overlap_count": cross_group_units,
+            }, ensure_ascii=False)
+        if effective_design == "paired" and cross_group_units < 2:
+            return json.dumps({
+                "error": "paired 设计至少需要 2 个同时出现在两组中的分析单位",
+                "error_type": "insufficient_matched_units",
+                "unit_col": unit_col,
+                "cross_group_overlap_count": cross_group_units,
+            }, ensure_ascii=False)
+        unit_diagnostics = {
+            "source_row_count": int(len(df)),
+            "aggregated_unit_group_row_count": int(len(aggregated)),
+            "distinct_unit_count": int(aggregated[unit_col].nunique()),
+            "repeated_source_unit_count": repeated_source_units,
+            "cross_group_overlap_count": cross_group_units,
+        }
+    elif effective_design in {"paired", "clustered"}:
+        return json.dumps({
+            "error": f"{effective_design} 设计必须指定 unit_col 和 unit_aggregation",
+            "error_type": "analysis_unit_required",
+        }, ensure_ascii=False)
+    else:
+        effective_design = "independent"
+
+    if method == "chi2" and effective_design != "independent":
+        return json.dumps({
+            "error": "当前 chi2 路径只支持独立观测；配对分类数据需要专门的配对分类检验",
+            "error_type": "unsupported_categorical_design",
+            "observation_design": effective_design,
+        }, ensure_ascii=False)
+
+    if effective_design == "paired":
+        assert aggregated is not None
+        paired = aggregated.pivot(index=unit_col, columns=group_col, values=metric_col)
+        matched = paired.dropna(subset=[groups[0], groups[1]])
+        left = matched[groups[0]].to_numpy(dtype=float)
+        right = matched[groups[1]].to_numpy(dtype=float)
+        if len(left) < 2:
+            return json.dumps({
+                "error": "配对检验至少需要 2 个完整配对分析单位",
+                "error_type": "insufficient_matched_units",
+            }, ensure_ascii=False)
+        differences = right - left
+        paired_method = method
+        if paired_method == "auto":
+            normal = False
+            if len(differences) >= 3 and np.ptp(differences) > 0:
+                _, normal_p = sp_stats.shapiro(differences)
+                normal = bool(normal_p > 0.05)
+            paired_method = "paired_ttest" if normal else "wilcoxon"
+        elif paired_method == "ttest":
+            paired_method = "paired_ttest"
+        elif paired_method == "mannwhitneyu":
+            paired_method = "wilcoxon"
+        if paired_method not in {"paired_ttest", "wilcoxon"}:
+            return json.dumps({
+                "error": f"paired 设计不支持方法 {method}",
+                "error_type": "method_design_mismatch",
+            }, ensure_ascii=False)
+
+        mean_diff = float(np.mean(differences))
+        result = {
+            "group_col": group_col,
+            "metric_col": metric_col,
+            "groups": {
+                g1_name: {"n": len(left), "mean": round(float(np.mean(left)), 4), "std": round(float(np.std(left)), 4)},
+                g2_name: {"n": len(right), "mean": round(float(np.mean(right)), 4), "std": round(float(np.std(right)), 4)},
+            },
+            "method": paired_method,
+            "observation_design": "paired",
+            "unit_of_analysis": {"column": unit_col, "aggregation": unit_aggregation},
+            "design_diagnostics": {
+                **(unit_diagnostics or {}),
+                "matched_unit_count": len(left),
+                "unmatched_unit_count": int(len(paired) - len(matched)),
+            },
+            "effective_sample_size": {"total": len(left), "pairs": len(left)},
+            "denominator": {"matched_pairs": len(left)},
+            "missingness": _comparison_missingness(df, group_col, metric_col, unit_col),
+            "estimand": {
+                "metric": metric_col,
+                "aggregation": unit_aggregation,
+                "contrast": "group_2_minus_group_1_within_matched_unit",
+            },
+            "difference": {
+                "absolute": round(mean_diff, 4),
+                "relative_pct": round(mean_diff / abs(float(np.mean(left))) * 100, 2)
+                if np.mean(left) != 0 else None,
+                "cohens_dz": round(mean_diff / float(np.std(differences, ddof=1)), 4)
+                if np.std(differences, ddof=1) > 0 else None,
+            },
+            "effect_estimate": {
+                "value": round(mean_diff, 8),
+                "metric": "mean_paired_difference",
+            },
+            "confidence_interval": _paired_mean_difference_interval(differences),
+            "assumptions": [
+                {
+                    "name": "paired_observations",
+                    "status": "passed",
+                    "reason": f"{len(left)} units have measurements in both groups after explicit {unit_aggregation} aggregation.",
+                },
+                {
+                    "name": "method_appropriate_for_design",
+                    "status": "passed",
+                    "reason": "The calculation uses within-unit paired differences rather than treating rows as independent.",
+                },
+                {
+                    "name": "unit_aggregation_matches_business_estimand",
+                    "status": "assumed",
+                    "reason": f"The caller selected {unit_aggregation}; business suitability still requires domain confirmation.",
+                },
+            ],
+            "sample_adequacy": {
+                "status": "adequate_with_limits",
+                "design": "paired_units",
+                "reason": f"The test uses {len(left)} matched units; population representativeness remains a design assumption.",
+            },
+        }
+        if paired_method == "paired_ttest":
+            statistic, p_value = sp_stats.ttest_rel(right, left)
+        elif np.allclose(differences, 0):
+            statistic = p_value = math.nan
+        else:
+            statistic, p_value = sp_stats.wilcoxon(right, left)
+        if np.isfinite(statistic) and np.isfinite(p_value):
+            result["test"] = {
+                "statistic": round(float(statistic), 4),
+                "p_value": round(float(p_value), 6),
+                "significant": bool(p_value < 0.05),
+            }
+        else:
+            result["test"] = {
+                "status": "not_estimable",
+                "reason": "All paired differences are zero or the paired statistic is undefined.",
+            }
+            result["sample_adequacy"] = {
+                "status": "not_estimable",
+                "design": "paired_units",
+                "reason": result["test"]["reason"],
+            }
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     # chi2 直接使用列联表，不需要 float 转换
     if method == "chi2":
@@ -178,6 +515,7 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         result = {
             "group_col": group_col,
             "metric_col": metric_col,
+            "observation_design": "independent",
             "groups": {g1_name: {"n": int(contingency.loc[groups[0]].sum())},
                        g2_name: {"n": int(contingency.loc[groups[1]].sum())}},
             "method": "chi2",
@@ -233,9 +571,11 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         }
         return json.dumps(result, ensure_ascii=False, indent=2)
 
+    analysis_frame = aggregated if effective_design == "clustered" else df
+    assert analysis_frame is not None
     try:
-        g1 = df[df[group_col] == groups[0]][metric_col].dropna().values.astype(float)
-        g2 = df[df[group_col] == groups[1]][metric_col].dropna().values.astype(float)
+        g1 = analysis_frame[analysis_frame[group_col] == groups[0]][metric_col].dropna().values.astype(float)
+        g2 = analysis_frame[analysis_frame[group_col] == groups[1]][metric_col].dropna().values.astype(float)
     except (ValueError, TypeError) as e:
         return json.dumps({
             "error": f"指标列 '{metric_col}' 包含非数值数据，无法进行统计检验",
@@ -277,6 +617,7 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
     result = {
         "group_col": group_col,
         "metric_col": metric_col,
+        "observation_design": effective_design,
         "groups": {
             g1_name: {"n": len(g1), "mean": round(float(np.mean(g1)), 4), "std": round(float(np.std(g1)), 4)},
             g2_name: {"n": len(g2), "mean": round(float(np.mean(g2)), 4), "std": round(float(np.std(g2)), 4)},
@@ -290,13 +631,24 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
         "missingness": _comparison_missingness(df, group_col, metric_col),
         "sample_adequacy": {
             "status": "adequate_with_limits",
-            "design": "independent_groups",
+            "design": (
+                "independent_units_after_aggregation"
+                if effective_design == "clustered"
+                else "independent_groups"
+            ),
             "reason": (
-                f"The test is computable with group sizes {len(g1)} and {len(g2)}, but independence, "
-                "sampling-unit validity, and population representativeness require design evidence."
+                f"The test is computable with group sizes {len(g1)} and {len(g2)} at the "
+                f"{'explicit unit level' if effective_design == 'clustered' else 'row level'}, but "
+                "population representativeness remains a design assumption."
             ),
         },
     }
+    if effective_design == "clustered":
+        result["unit_of_analysis"] = {
+            "column": unit_col,
+            "aggregation": unit_aggregation,
+        }
+        result["design_diagnostics"] = unit_diagnostics
 
     diff = float(np.mean(g2) - np.mean(g1))
     result["difference"] = {
@@ -335,18 +687,32 @@ def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") ->
     result["assumptions"] = [
         {
             "name": "independent_observations",
-            "status": "assumed",
-            "reason": "Independence and sampling-unit validity must be confirmed from the study design.",
+            "status": "passed" if effective_design == "clustered" else "assumed",
+            "reason": (
+                "Rows were reduced to one explicitly aggregated value per analysis unit, and units do not cross groups."
+                if effective_design == "clustered"
+                else "Independence and sampling-unit validity must be confirmed from the study design."
+            ),
         },
         {
             "name": "method_appropriate_for_design",
             "status": "passed",
             "reason": (
                 "The calculation matches the declared independent two-group design; "
-                "study-level independence remains a disclosed assumption."
+                + (
+                    "source rows were aggregated to independent analysis units."
+                    if effective_design == "clustered"
+                    else "study-level independence remains a disclosed assumption."
+                )
             ),
         },
     ]
+    if effective_design == "clustered":
+        result["assumptions"].append({
+            "name": "unit_aggregation_matches_business_estimand",
+            "status": "assumed",
+            "reason": f"The caller selected {unit_aggregation}; business suitability still requires domain confirmation.",
+        })
     if method == "ttest":
         result["assumptions"].append({
             "name": "variance_handling",

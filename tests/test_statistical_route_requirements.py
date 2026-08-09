@@ -786,6 +786,148 @@ def test_ab_test_rejects_silent_first_two_selection_from_three_groups():
     assert "恰好 2 个分组" in result
 
 
+def test_ab_test_blocks_repeated_user_rows_until_design_and_aggregation_are_explicit():
+    from data_agent.tools.statistics import ab_test
+
+    frame = pd.DataFrame({
+        "user_id": ["u1", "u1", "u1", "u2", "u2", "u2"],
+        "period": ["before", "before", "after", "before", "after", "after"],
+        "amount": [10.0, 5.0, 8.0, 7.0, 4.0, 3.0],
+    })
+    context = AgentContext(session_id="repeated_users", workspace=Workspace())
+    with use_agent_context(context):
+        context.workspace.add("orders", frame)
+        result = json.loads(ab_test(
+            "orders",
+            group_col="period",
+            metric_col="amount",
+        ))
+
+    assert result["error_type"] == "analysis_unit_design_required"
+    assert result["candidate_unit_columns"][0]["column"] == "user_id"
+    assert result["candidate_unit_columns"][0]["cross_group_overlap_count"] == 2
+    assert "test" not in result
+
+
+def test_ab_test_supports_paired_unit_aggregation_for_before_after_data():
+    from data_agent.tools.statistics import ab_test
+
+    frame = pd.DataFrame({
+        "user_id": [
+            "u1", "u1", "u1", "u2", "u2", "u2", "u3", "u3",
+            "u4", "u4", "u5", "u5",
+        ],
+        "period": [
+            "before", "before", "after", "before", "after", "after", "before", "after",
+            "before", "after", "before", "after",
+        ],
+        "amount": [10.0, 5.0, 13.0, 7.0, 2.0, 2.0, 9.0, 5.0, 20.0, 15.0, 7.0, 1.0],
+    })
+    context = AgentContext(session_id="paired_users", workspace=Workspace())
+    with use_agent_context(context):
+        context.workspace.add("orders", frame)
+        result = json.loads(ab_test(
+            "orders",
+            group_col="period",
+            metric_col="amount",
+            observation_design="paired",
+            unit_col="user_id",
+            unit_aggregation="sum",
+        ))
+
+    assert result["observation_design"] == "paired"
+    assert result["unit_of_analysis"] == {
+        "column": "user_id",
+        "aggregation": "sum",
+    }
+    assert result["effective_sample_size"] == {"total": 5, "pairs": 5}
+    assert result["difference"]["absolute"] == -4.0
+    assert result["effect_estimate"] == {
+        "value": -4.0,
+        "metric": "mean_paired_difference",
+    }
+    assert result["sample_adequacy"]["design"] == "paired_units"
+    assert result["test"]["significant"] is True
+
+
+def test_ab_test_supports_clustered_rows_via_explicit_unit_aggregation():
+    from data_agent.tools.statistics import ab_test
+
+    frame = pd.DataFrame({
+        "user_id": ["a1", "a1", "a2", "a2", "b1", "b1", "b2", "b2"],
+        "group": ["A", "A", "A", "A", "B", "B", "B", "B"],
+        "amount": [1.0, 2.0, 2.0, 3.0, 5.0, 6.0, 6.0, 7.0],
+    })
+    context = AgentContext(session_id="clustered_users", workspace=Workspace())
+    with use_agent_context(context):
+        context.workspace.add("orders", frame)
+        result = json.loads(ab_test(
+            "orders",
+            group_col="group",
+            metric_col="amount",
+            method="ttest",
+            observation_design="clustered",
+            unit_col="user_id",
+            unit_aggregation="sum",
+        ))
+
+    assert result["observation_design"] == "clustered"
+    assert result["groups"]["A"]["n"] == 2
+    assert result["groups"]["B"]["n"] == 2
+    assert result["difference"]["absolute"] == 8.0
+    assert result["sample_adequacy"]["design"] == "independent_units_after_aggregation"
+
+
+def test_paired_ab_test_evidence_is_recomputed_from_the_bound_dataset_version():
+    from data_agent.agent.data_lineage import frame_fingerprint
+    from data_agent.agent.evidence_contracts import _independently_recompute_native_ab_test
+    from data_agent.tools.statistics import ab_test
+
+    frame = pd.DataFrame({
+        "user_id": ["u1", "u1", "u2", "u2", "u3", "u3", "u4", "u4"],
+        "period": ["before", "after"] * 4,
+        "amount": [10.0, 8.0, 15.0, 12.0, 7.0, 3.0, 20.0, 15.0],
+    })
+    workspace = Workspace()
+    raw = workspace.register_raw_snapshot("orders", frame, frame_fingerprint(frame))
+    active = workspace.promote_analysis_copy(
+        "orders",
+        frame,
+        raw["dataset_id"],
+        {"operation": "paired_fixture"},
+    )
+    context = AgentContext(session_id="paired_recompute", workspace=workspace)
+    arguments = {
+        "name": "orders",
+        "group_col": "period",
+        "metric_col": "amount",
+        "method": "paired_ttest",
+        "observation_design": "paired",
+        "unit_col": "user_id",
+        "unit_aggregation": "sum",
+    }
+    with use_agent_context(context):
+        output = json.loads(ab_test(**arguments))
+
+    support = {
+        "effective_sample_size": output["effective_sample_size"],
+        "effect_estimate": output["effect_estimate"],
+        "test": output["test"],
+    }
+    recomputed = _independently_recompute_native_ab_test(
+        envelope={
+            "tool_name": "ab_test",
+            "arguments": arguments,
+            "output": {"data": output},
+        },
+        ref={"dataset_versions": [active["dataset_id"]]},
+        workspace=workspace,
+        statistical_support=support,
+    )
+
+    assert recomputed == support
+
+
 def test_mann_whitney_reports_a_rank_effect_with_matching_interval():
     from data_agent.tools.statistics import ab_test
 
