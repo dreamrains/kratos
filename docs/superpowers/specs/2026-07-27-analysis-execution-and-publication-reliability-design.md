@@ -1,6 +1,6 @@
 # Analysis Execution and Publication Reliability Design
 
-**Status:** Implemented and product-validated (uncommitted)
+**Status:** Implemented and product-validated
 
 **Date:** 2026-07-27
 

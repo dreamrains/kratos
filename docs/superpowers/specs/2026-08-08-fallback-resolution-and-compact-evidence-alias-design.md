@@ -1,6 +1,6 @@
 # Fallback Resolution and Compact Evidence Alias Design
 
-**Status:** Implemented and validated (uncommitted)
+**Status:** Implemented and product-validated
 
 **Date:** 2026-08-08
 
@@ -9,7 +9,7 @@
 **Implementation baseline:** `4cab45238af0547cc13b55908b6683913a9ee3fc`
 
 **Current release-source digest:**
-`sha256:7ff6b3aba6a9b8c80ab22a7a318b38f26450e8fa393bade03bf57afc2097143c`
+`sha256:de69f2f7ed103f8e812720b6393e0efcb348445f47c769cdb2780d769b0e4b20`
 
 **Amends:**
 
@@ -360,3 +360,31 @@ Receipts and report:
 
 Task 12 is therefore implementation- and product-gate complete in this
 worktree. Commit, merge, and push remain separate user-authorized actions.
+
+## 12. Post-merge source-identity portability repair
+
+After commit `a3fd32c46015082d283ed0871778e6739fe257a0` was fast-forwarded to
+`main`, the same Git commit produced different release-source digests across
+the pre-commit worktree, the Windows `core.autocrlf=true` main checkout, and
+the canonical Git blobs. All 150 differing release files were byte-identical
+after line-ending normalization. The original digest therefore represented a
+checkout encoding, not a portable source identity, and the prior Gate E/F
+receipts became formally stale on merged `main`.
+
+The minimal repair hashes each selected current file through Git's configured
+clean filters and incorporates its blob identity. It continues to include
+dirty and untracked release files, preserves binary byte sensitivity, and does
+not add a gate or relax stale-receipt validation. The repair is frozen at
+`sha256:de69f2f7ed103f8e812720b6393e0efcb348445f47c769cdb2780d769b0e4b20`.
+The full suite reports `2967 passed, 11 skipped`; the direct tool runner reports
+`108 PASS, 0 FAIL, 2 SKIP`; deterministic Gates A-D pass; and a fresh actual
+in-app Browser Gate E passes all 10 observations. Gate E receipt:
+`C:\Users\duguy\AppData\Local\Temp\data-agent-browser-gate-de69f2-20260809-01\analysis_browser_gate.v1.json`.
+A fresh same-digest Gate F ran exactly three real-provider sessions and passed.
+Gate F receipt:
+`C:\Users\duguy\AppData\Local\Temp\data-agent-live-gate-de69f2-20260809-01\analysis_live_provider_gate.v1.json`
+(`sha256:9b1dd013f7d52f676d147ac3517bd457dd3aba74fe8e08ed2934db87209514a0`).
+The product A-F aggregator then passed all six gates. Product receipt:
+`C:\Users\duguy\AppData\Local\Temp\data-agent-product-gates-de69f2-20260809-01\analysis_reliability_release.v1.json`
+(`sha256:194175b737288be51c610ab6c20cca560fd6405872f31100d94a9eee7baadaee`).
+Task 12 is therefore product-gate complete for the portability-repaired source.

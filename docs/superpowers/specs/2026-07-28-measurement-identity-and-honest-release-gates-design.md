@@ -1,6 +1,6 @@
 # Measurement Identity and Honest Release Gates Design
 
-**Status:** Implemented and product-validated (uncommitted)
+**Status:** Implemented and product-validated
 
 **Date:** 2026-07-28
 

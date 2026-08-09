@@ -629,10 +629,13 @@ Create `release_source.py` with
 `release_source_digest(root: Path) -> str`. It runs
 `git ls-files -z --cached --others --exclude-standard -- src scripts tests
 pyproject.toml`, excludes `__pycache__`, `*.pyc`, and generated receipts, then
-hashes each UTF-8 path, a NUL separator, and the exact file bytes in sorted
-path order. The return value is
+hashes each UTF-8 path, a NUL separator, and the current file's Git-filtered
+blob identity in sorted path order. This preserves dirty and untracked source
+changes while making semantically identical LF/CRLF checkouts share one
+identity; binary byte changes remain significant. The return value is
 `sha256:<64 lowercase hex>`. Add tests proving a tracked source/test byte
-change changes the digest while a `docs/` change does not.
+change changes the digest, Git-normalized line endings do not, binary changes
+do, and a `docs/` change does not.
 
 - [ ] **Step 4: Implement the delayed fixture server**
 
