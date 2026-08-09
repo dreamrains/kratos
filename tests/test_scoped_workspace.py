@@ -104,6 +104,56 @@ def _install_unsafe_classified_reader(
     )
 
 
+def test_group_aggregate_returns_bounded_inline_result_when_derived_storage_is_scoped_out():
+    """Removing the inline fallback recreates the real-provider failure where
+    the prompt requires group analysis but execution scope rejects save_as."""
+    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    from data_agent.tools.data_transform import transform_data
+
+    store = Workspace()
+    store.add(
+        "main",
+        pd.DataFrame(
+            {
+                "segment": ["A", "A", "B"],
+                "revenue": [10, 30, 20],
+                "cost": [4, 12, 7],
+            }
+        ),
+    )
+    ctx = AgentContext(session_id="group_inline", workspace=store)
+    scope = WorkspaceScopeSnapshot(
+        phase="execution",
+        allowed_datasets=frozenset({"main"}),
+    )
+
+    with use_agent_context(ctx):
+        with ctx.bind_workspace_scope(scope):
+            result = json.loads(
+                transform_data(
+                    name="main",
+                    operation="group_aggregate",
+                    group_by=["segment"],
+                    aggregations=[
+                        {"column": "revenue", "functions": ["sum", "mean"]},
+                        {"column": "cost", "functions": ["mean"]},
+                    ],
+                    save_as="segment_stats",
+                )
+            )
+
+    assert "error" not in result
+    assert result["persisted"] is False
+    assert result["rows"] == 2
+    assert result["columns"] == ["segment", "revenue_sum", "revenue_mean", "cost_mean"]
+    assert result["records"] == [
+        {"segment": "A", "revenue_sum": 40, "revenue_mean": 20.0, "cost_mean": 8.0},
+        {"segment": "B", "revenue_sum": 20, "revenue_mean": 20.0, "cost_mean": 7.0},
+    ]
+    assert result["records_truncated"] is False
+    assert store.get("segment_stats") is None
+
+
 def test_workspace_scope_snapshot_is_immutable_and_stably_fingerprinted():
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
 

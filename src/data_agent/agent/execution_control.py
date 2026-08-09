@@ -41,6 +41,22 @@ _ASSURANCE_META_TOOLS: set[str] = {
     "ask_user_question",
 }
 
+_FALLBACK_RESOLUTION_TOOLS = frozenset({
+    "record_evidence_record",
+    "record_analysis_spec",
+    "record_analysis_plan",
+    "record_data_requirement",
+    "record_insight_record",
+    "task_update",
+    "ask_user_question",
+})
+
+
+def fallback_resolution_tools() -> frozenset[str]:
+    """Return the canonical actions that resolve a successful fallback run."""
+
+    return _FALLBACK_RESOLUTION_TOOLS
+
 
 @dataclass
 class ToolExecutionBudget:
@@ -97,6 +113,7 @@ class TurnExecutionState:
     chart_calls: int = 0
     fallback_calls: int = 0
     consecutive_errors: int = 0
+    consecutive_error_recovery_attempted: bool = False
     repeated_errors: dict[str, int] = field(default_factory=dict)
     seen_calls: dict[str, int] = field(default_factory=dict)
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
@@ -181,6 +198,38 @@ class TurnExecutionState:
         overflow = amount - accepted
         if overflow:
             self.phase_overflow_tokens[phase] = self.phase_overflow_tokens.get(phase, 0) + overflow
+
+    def reclassify_phase_usage(
+        self,
+        amount: int,
+        *,
+        source_phase: str,
+        target_phase: str,
+    ) -> int:
+        """Move already-accounted output between assurance phases.
+
+        The provider response type is known only after a round completes.  A
+        synthesis-guided response that contains tool calls is still execution,
+        so its accepted tokens must not consume the final-answer reserve.  The
+        total runtime estimate is unchanged; only phase ownership moves.
+        """
+
+        requested = max(0, int(amount or 0))
+        source_used = self.phase_token_usage.get(source_phase, 0)
+        moved = min(requested, source_used)
+        if not moved or source_phase == target_phase:
+            return 0
+        self.phase_token_usage[source_phase] = source_used - moved
+        target_used = self.phase_token_usage.get(target_phase, 0)
+        target_limit = self.phase_token_limit(target_phase)
+        accepted = min(moved, max(0, target_limit - target_used))
+        self.phase_token_usage[target_phase] = target_used + accepted
+        overflow = moved - accepted
+        if overflow:
+            self.phase_overflow_tokens[target_phase] = (
+                self.phase_overflow_tokens.get(target_phase, 0) + overflow
+            )
+        return moved
 
     def record_prompt_assembly(
         self,
@@ -289,7 +338,7 @@ class TurnExecutionState:
             key = self._error_key(tool_name, args)
             if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
-            if self.consecutive_errors >= self.budget.max_consecutive_errors:
+            if not self._allow_changed_error_recovery(key):
                 raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
             return
 
@@ -317,8 +366,28 @@ class TurnExecutionState:
             python_errors = sum(1 for err in self.tool_errors if err.get("tool_name") == "run_python")
             if python_errors >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded("Repeated run_python failure; use structured tools or ask the user.")
-        if self.consecutive_errors >= self.budget.max_consecutive_errors:
+        if not self._allow_changed_error_recovery(key):
             raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
+
+    def _allow_changed_error_recovery(self, key: str) -> bool:
+        """Allow one changed call after a burst, never an unbounded retry loop.
+
+        Parallel tool calls are recorded sequentially.  Three independent
+        validation errors in one assistant response can therefore trip the
+        consecutive-error breaker before the model has seen any result and
+        had a chance to correct its arguments.  Permit exactly one previously
+        unseen signature to prove recovery; success resets the burst, while a
+        failed recovery leaves the breaker closed.
+        """
+
+        if self.consecutive_errors < self.budget.max_consecutive_errors:
+            return True
+        if self.repeated_errors.get(key, 0) > 0:
+            return False
+        if self.consecutive_error_recovery_attempted:
+            return False
+        self.consecutive_error_recovery_attempted = True
+        return True
 
     def record_tool_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         if tool_name not in _META_TOOLS:
@@ -330,12 +399,14 @@ class TurnExecutionState:
             self.chart_calls += 1
         if tool_name == "run_python":
             self.fallback_calls += 1
+
+    def record_tool_success(self, tool_name: str = "") -> None:
+        self.consecutive_errors = 0
+        self.consecutive_error_recovery_attempted = False
+        if tool_name == "run_python":
             self.pending_fallback_resolution = True
         elif tool_name in self._fallback_resolution_tools():
             self.pending_fallback_resolution = False
-
-    def record_tool_success(self) -> None:
-        self.consecutive_errors = 0
 
     def record_requirement_failure(
         self,
@@ -430,6 +501,14 @@ class TurnExecutionState:
         hints = []
         if self.tool_calls == 0 and not self.exploration_budget_exhausted:
             return ""
+        if self.pending_fallback_resolution:
+            allowed = ", ".join(sorted(self._fallback_resolution_tools()))
+            hints.append(
+                "The previous run_python result is pending resolution. Before any "
+                "additional analysis tool, resolve it with exactly one allowed "
+                f"evidence, limitation, task, or user-confirmation action: {allowed}. "
+                "Do not call run_python again yet."
+            )
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             hints.append("Execution budget reached. Stop calling tools and summarize evidence, limits, and next steps.")
         if self.exploration_budget_exhausted:
@@ -464,15 +543,7 @@ class TurnExecutionState:
 
     @staticmethod
     def _fallback_resolution_tools() -> set[str]:
-        return {
-            "record_evidence_record",
-            "record_analysis_spec",
-            "record_analysis_plan",
-            "record_data_requirement",
-            "record_insight_record",
-            "task_update",
-            "ask_user_question",
-        }
+        return set(fallback_resolution_tools())
 
     @staticmethod
     def _args_hash(args: dict[str, Any]) -> str:

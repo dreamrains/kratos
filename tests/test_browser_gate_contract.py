@@ -32,6 +32,7 @@ from scripts.acceptance.run_web_sse_fixture import (
     DelayedAuditedLoop,
     ScriptedManager,
     ScriptedProvider,
+    _install_scripted_provider_boundaries,
     build_fixture_app,
     make_observed_event_queue,
     shutdown_fixture_app,
@@ -41,6 +42,18 @@ from scripts.acceptance.run_web_sse_fixture import (
 
 
 EXPECTED_DIGEST = "sha256:" + "a" * 64
+
+
+class _ZeroCallProvider:
+    """Fail loudly if a fixture leaks into a pre-existing provider client."""
+
+    def __init__(self, boundary: str):
+        self.boundary = boundary
+        self.calls = 0
+
+    def chat(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError(f"fixture called external {self.boundary} provider")
 
 
 def _valid_observation() -> dict:
@@ -196,7 +209,7 @@ def test_browser_receipt_rejects_stale_source_or_malformed_timing():
     assert "invalid_browser_timing" in result.reason_codes
 
 
-def test_browser_receipt_rejects_server_event_after_browser_observation():
+def test_browser_receipt_accepts_independent_browser_and_server_clock_origins():
     receipt = _valid_observation()
     item = next(
         item
@@ -210,8 +223,8 @@ def test_browser_receipt_rejects_server_event_after_browser_observation():
         expected_source_digest=EXPECTED_DIGEST,
     )
 
-    assert result.status == "FAIL"
-    assert "server_event_after_browser_observation" in result.reason_codes
+    assert result.status == "PASS"
+    assert result.reason_codes == ()
 
 
 @pytest.mark.parametrize(
@@ -526,6 +539,17 @@ def test_control_paths_suspend_resume_and_error_without_blank_turn():
         list(loop.stream_turn(ERROR_PROMPT))
 
 
+def test_suspend_fixture_emits_web_renderable_option_objects():
+    loop = DelayedAuditedLoop(_AuditedInner())
+
+    suspended = list(loop.stream_turn(SUSPEND_PROMPT))[0]
+
+    assert suspended["options"] == [
+        {"label": "继续", "value": "继续", "description": ""}
+    ]
+    assert suspended["allow_free_text"] is False
+
+
 def test_delayed_loop_interrupts_during_chunk_delay_with_nonblank_error():
     loop = DelayedAuditedLoop(_AuditedInner())
     stream = loop.stream_turn(BROWSER_NORMAL_PROMPT)
@@ -570,20 +594,23 @@ def test_observed_event_queue_records_only_event_timing_and_session(tmp_path):
 
 def test_fixture_app_uses_real_page_routes_and_isolated_roots(tmp_path, monkeypatch):
     import data_agent.config
-    from data_agent.agent import llm_intent
+    from data_agent.agent import llm_intent, llm_playbook
     from data_agent.web.blueprints import chat as chat_blueprint
 
     monkeypatch.setenv("MCP_ENABLED", "false")
     monkeypatch.setenv("SKILL_AUTO_DISCOVER", "false")
     monkeypatch.setattr(data_agent.config, "_config", None)
-    previous_intent_client = object()
+    previous_intent_client = _ZeroCallProvider("intent")
+    previous_playbook_client = _ZeroCallProvider("playbook")
     monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
     previous_event_queue = chat_blueprint.EventQueue
     fixture_csv = write_browser_fixture_csv(tmp_path)
     app = build_fixture_app(tmp_path)
     app.testing = True
     try:
         assert llm_intent._client is not previous_intent_client
+        assert llm_playbook._client is not previous_playbook_client
         assert fixture_csv == tmp_path / "browser_fixture.csv"
         rows = fixture_csv.read_text(encoding="utf-8-sig").splitlines()
         assert rows[0] == "日期,收入,成本,渠道"
@@ -614,15 +641,45 @@ def test_fixture_app_uses_real_page_routes_and_isolated_roots(tmp_path, monkeypa
     finally:
         shutdown_fixture_app(app)
     assert llm_intent._client is previous_intent_client
+    assert llm_playbook._client is previous_playbook_client
+    assert previous_intent_client.calls == 0
+    assert previous_playbook_client.calls == 0
     assert chat_blueprint.EventQueue is previous_event_queue
     assert data_agent.config._config is None
+
+
+def test_scripted_provider_boundaries_restore_nested_installations(monkeypatch):
+    from data_agent.agent import llm_intent, llm_playbook
+
+    previous_intent_client = _ZeroCallProvider("intent")
+    previous_playbook_client = _ZeroCallProvider("playbook")
+    monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
+
+    restore_first = _install_scripted_provider_boundaries()
+    first_intent_client = llm_intent._client
+    first_playbook_client = llm_playbook._client
+    restore_second = _install_scripted_provider_boundaries()
+    try:
+        assert llm_intent._client is not first_intent_client
+        assert llm_playbook._client is not first_playbook_client
+    finally:
+        restore_second()
+    assert llm_intent._client is first_intent_client
+    assert llm_playbook._client is first_playbook_client
+
+    restore_first()
+    assert llm_intent._client is previous_intent_client
+    assert llm_playbook._client is previous_playbook_client
+    assert previous_intent_client.calls == 0
+    assert previous_playbook_client.calls == 0
 
 
 def test_fixture_forces_optional_integrations_off_and_restores_process_globals(
     tmp_path, monkeypatch
 ):
     import data_agent.config
-    from data_agent.agent import llm_intent
+    from data_agent.agent import llm_intent, llm_playbook
     from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
     from data_agent.web.blueprints import chat as chat_blueprint
 
@@ -631,8 +688,10 @@ def test_fixture_forces_optional_integrations_off_and_restores_process_globals(
     monkeypatch.setenv("WORKSPACE_DIR", "inherited-workspace")
     monkeypatch.setenv("SESSIONS_DIR", "inherited-sessions")
     monkeypatch.setattr(data_agent.config, "_config", None)
-    previous_intent_client = object()
+    previous_intent_client = _ZeroCallProvider("intent")
+    previous_playbook_client = _ZeroCallProvider("playbook")
     monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
     previous_event_queue = chat_blueprint.EventQueue
     set_interaction_mode("cli")
 
@@ -650,6 +709,9 @@ def test_fixture_forces_optional_integrations_off_and_restores_process_globals(
     assert os.environ["SESSIONS_DIR"] == "inherited-sessions"
     assert data_agent.config._config is None
     assert llm_intent._client is previous_intent_client
+    assert llm_playbook._client is previous_playbook_client
+    assert previous_intent_client.calls == 0
+    assert previous_playbook_client.calls == 0
     assert chat_blueprint.EventQueue is previous_event_queue
     assert get_interaction_mode() == "cli"
 
@@ -661,15 +723,17 @@ def test_build_fixture_app_unwinds_process_globals_on_failure(
     import data_agent.config
     import data_agent.lifecycle
     import data_agent.web.app as web_app
-    from data_agent.agent import llm_intent
+    from data_agent.agent import llm_intent, llm_playbook
     from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
     from data_agent.web.blueprints import chat as chat_blueprint
 
     previous_config = object()
-    previous_intent_client = object()
+    previous_intent_client = _ZeroCallProvider("intent")
+    previous_playbook_client = _ZeroCallProvider("playbook")
     previous_event_queue = chat_blueprint.EventQueue
     monkeypatch.setattr(data_agent.config, "_config", previous_config)
     monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
     monkeypatch.setenv("MCP_ENABLED", "true")
     monkeypatch.setenv("SKILL_AUTO_DISCOVER", "true")
     monkeypatch.setenv("WORKSPACE_DIR", "before-workspace")
@@ -714,6 +778,9 @@ def test_build_fixture_app_unwinds_process_globals_on_failure(
     assert lifecycle.shutdown_calls == 1
     assert data_agent.config._config is previous_config
     assert llm_intent._client is previous_intent_client
+    assert llm_playbook._client is previous_playbook_client
+    assert previous_intent_client.calls == 0
+    assert previous_playbook_client.calls == 0
     assert chat_blueprint.EventQueue is previous_event_queue
     assert get_interaction_mode() == "cli"
     assert os.environ["MCP_ENABLED"] == "true"
@@ -726,15 +793,17 @@ def test_shutdown_fixture_app_restores_globals_when_lifecycle_shutdown_raises(
     tmp_path, monkeypatch
 ):
     import data_agent.config
-    from data_agent.agent import llm_intent
+    from data_agent.agent import llm_intent, llm_playbook
     from data_agent.agent.loop import get_interaction_mode, set_interaction_mode
     from data_agent.web.blueprints import chat as chat_blueprint
 
     monkeypatch.setenv("MCP_ENABLED", "true")
     monkeypatch.setenv("SKILL_AUTO_DISCOVER", "true")
     monkeypatch.setattr(data_agent.config, "_config", None)
-    previous_intent_client = object()
+    previous_intent_client = _ZeroCallProvider("intent")
+    previous_playbook_client = _ZeroCallProvider("playbook")
     monkeypatch.setattr(llm_intent, "_client", previous_intent_client)
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
     previous_event_queue = chat_blueprint.EventQueue
     set_interaction_mode("cli")
     app = build_fixture_app(tmp_path)
@@ -751,6 +820,9 @@ def test_shutdown_fixture_app_restores_globals_when_lifecycle_shutdown_raises(
     assert os.environ["SKILL_AUTO_DISCOVER"] == "true"
     assert data_agent.config._config is None
     assert llm_intent._client is previous_intent_client
+    assert llm_playbook._client is previous_playbook_client
+    assert previous_intent_client.calls == 0
+    assert previous_playbook_client.calls == 0
     assert chat_blueprint.EventQueue is previous_event_queue
     assert get_interaction_mode() == "cli"
 
@@ -903,10 +975,13 @@ def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
 ):
     import data_agent.config
     import data_agent.llm.client
+    from data_agent.agent import llm_playbook
 
     monkeypatch.setenv("MCP_ENABLED", "false")
     monkeypatch.setenv("SKILL_AUTO_DISCOVER", "false")
     monkeypatch.setattr(data_agent.config, "_config", None)
+    previous_playbook_client = _ZeroCallProvider("playbook")
+    monkeypatch.setattr(llm_playbook, "_client", previous_playbook_client)
     monkeypatch.setattr(
         data_agent.llm.client,
         "completion",
@@ -1019,5 +1094,6 @@ def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
     assert loop.messages[-1]["content"] == publication
     assert loop.inner._turn_last_final_audit["status"] == "pass"
     assert loop.inner._turn_last_final_audit["public_text"] == publication
+    assert previous_playbook_client.calls == 0
     trace = Path(app.config["fixture_event_trace"]).read_text(encoding="utf-8")
     assert BROWSER_FINAL_DRAFT not in trace

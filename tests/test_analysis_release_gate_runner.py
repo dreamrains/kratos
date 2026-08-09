@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -50,6 +51,11 @@ def test_release_critical_web_nodeids_are_in_collect_only():
     result = run_pytest_collect_only("tests/test_web_sse_contract.py")
     assert result.returncode == 0, result.stderr
     assert "test_real_chat_route_streams_progress_before_text_and_turn_end" in result.stdout
+
+
+def test_gate_a_executes_background_session_ownership_regressions(tmp_path):
+    commands = dict(release_gates._declared_commands(tmp_path)["A"])
+    assert "tests/test_web_resume_ownership.py" in commands["collected_web_contracts"]
 
 
 def test_deterministic_profile_does_not_claim_browser_pass():
@@ -236,11 +242,51 @@ def _passing_browser_receipt() -> dict:
     }
 
 
+def _passing_live_run(index: int) -> dict:
+    return {
+        "run_id": f"live_{index}",
+        "status": "PASS",
+        "reason_codes": [],
+        "upload_contract_active": True,
+        "tool_calls": 8,
+        "data_quality_computations": 1,
+        "structured_computations": 3,
+        "projected_evidence": 2,
+        "final_audit_status": "pass",
+        "publication_actions": {"claim_1": "verified"},
+        "publication_length": 1200,
+        "publication_language": "zh",
+        "has_findings": True,
+        "has_recommendations": True,
+        "has_limitations": True,
+        "generic_warning_present": False,
+        "progress_before_final": True,
+        "persisted_matches_streamed": True,
+        "repeated_failure_max": 1,
+        "unresolved_fallback_blocked_calls": 0,
+        "verified_material_claims": 1,
+        "measurement_bookkeeping_scheduled_analysis": False,
+        "requirements": {
+            "data_quality": "satisfied",
+            "descriptive": "satisfied",
+            "relationship": "satisfied",
+            "limitations": "satisfied",
+        },
+    }
+
+
 def _passing_live_receipt() -> dict:
     return {
         "contract_version": "analysis_live_provider_gate.v1",
         "status": "PASS",
+        "reason_codes": [],
+        "accepted": True,
+        "overall_status": "PASS",
+        "live_provider_status": "PASS",
         "source_digest": SOURCE_DIGEST,
+        "source_commit": "a" * 40,
+        "provider_model": "configured-model",
+        "runs": [_passing_live_run(index) for index in range(1, 4)],
     }
 
 
@@ -266,35 +312,52 @@ def test_product_gate_rejects_missing_or_stale_receipt(gate, receipt):
     assert report["gates"][gate]["status"] in {"FAIL", "BLOCKED"}
 
 
-@pytest.mark.parametrize(
-    "live_receipt",
-    [
-        {
-            "contract_version": "analysis_live_provider_gate.v1",
-            "status": "PASS",
-            "source_digest": SOURCE_DIGEST,
-        },
-        {
-            "contract_version": "analysis_live_provider_gate.v1",
-            "status": "PASS",
-            "source_digest": SOURCE_DIGEST,
-            "provider_model": "forged-model",
-            "runs": [{"status": "PASS"} for _index in range(3)],
-        },
-    ],
-)
-def test_product_gate_blocks_live_pass_until_real_validator_exists(live_receipt):
+def test_product_gate_accepts_complete_source_bound_live_pass():
     report = build_product_report_for_test(
         browser_receipt=_passing_browser_receipt(),
-        live_receipt=live_receipt,
+        live_receipt=_passing_live_receipt(),
         expected_source_digest=SOURCE_DIGEST,
     )
-    assert report["overall_status"] == "FAIL"
-    assert report["product_release_passed"] is False
+    assert report["overall_status"] == "PASS"
+    assert report["product_release_passed"] is True
     assert report["gates"]["F"] == {
-        "status": "BLOCKED",
-        "reason_codes": ["live_provider_pass_not_yet_acceptable"],
+        "status": "PASS",
+        "reason_codes": [],
     }
+
+
+def test_product_gate_rejects_incomplete_or_inconsistent_live_pass():
+    cases = []
+    missing_runs = _passing_live_receipt()
+    missing_runs["runs"] = missing_runs["runs"][:2]
+    cases.append((missing_runs, "live_run_count_mismatch"))
+
+    duplicate_ids = _passing_live_receipt()
+    duplicate_ids["runs"][2]["run_id"] = "live_2"
+    cases.append((duplicate_ids, "invalid_live_run_ids"))
+
+    shallow_run = _passing_live_receipt()
+    shallow_run["runs"][1]["structured_computations"] = 1
+    cases.append((shallow_run, "invalid_live_run_contract"))
+
+    inconsistent = _passing_live_receipt()
+    inconsistent["accepted"] = False
+    cases.append((inconsistent, "inconsistent_live_provider_status"))
+
+    missing_provider = _passing_live_receipt()
+    missing_provider["provider_model"] = ""
+    cases.append((missing_provider, "live_provider_model_missing"))
+
+    for receipt, expected_reason in cases:
+        report = build_product_report_for_test(
+            browser_receipt=_passing_browser_receipt(),
+            live_receipt=copy.deepcopy(receipt),
+            expected_source_digest=SOURCE_DIGEST,
+        )
+        assert report["overall_status"] == "FAIL"
+        assert report["product_release_passed"] is False
+        assert report["gates"]["F"]["status"] == "FAIL"
+        assert expected_reason in report["gates"]["F"]["reason_codes"]
 
 
 def test_pure_product_status_requires_all_a_through_f_pass():
@@ -310,6 +373,10 @@ def test_product_gate_preserves_source_bound_live_blocked_status():
     live = _passing_live_receipt()
     live["status"] = "BLOCKED"
     live["reason_codes"] = ["provider_credentials_unavailable"]
+    live["accepted"] = False
+    live["overall_status"] = "BLOCKED"
+    live["live_provider_status"] = "BLOCKED"
+    live["runs"] = []
     report = build_product_report_for_test(
         browser_receipt=_passing_browser_receipt(),
         live_receipt=live,

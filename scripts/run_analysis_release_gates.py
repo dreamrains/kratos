@@ -25,12 +25,15 @@ for _candidate in (ROOT, ROOT / "src", ROOT / "tests"):
 from scripts.acceptance.browser_gate_contract import (  # noqa: E402
     validate_browser_gate_receipt,
 )
+from scripts.acceptance.live_provider_gate_contract import (  # noqa: E402
+    LIVE_PROVIDER_GATE_VERSION,
+    validate_live_provider_gate_receipt,
+)
 from scripts.acceptance.release_source import release_source_digest  # noqa: E402
 
 
 RELEASE_CONTRACT_VERSION = "analysis_reliability_release.v1"
 FAILURE_CONTRACT_VERSION = "analysis_gate_failure.v1"
-LIVE_PROVIDER_GATE_VERSION = "analysis_live_provider_gate.v1"
 VALID_GATE_STATUSES = {"PASS", "FAIL", "NOT_RUN", "BLOCKED"}
 DETERMINISTIC_REQUIRED = ("A", "B", "C", "D")
 PRODUCT_REQUIRED = ("A", "B", "C", "D", "E", "F")
@@ -230,6 +233,7 @@ def _declared_commands(replay_root: Path) -> dict[str, list[tuple[str, list[str]
                 _pytest_command(
                     "tests/test_web_sse_contract.py",
                     "tests/test_web_sse_reactivity_contract.py",
+                    "tests/test_web_resume_ownership.py",
                     "tests/test_analysis_progress_streaming.py",
                     "tests/test_analysis_release_gate_runner.py",
                 ),
@@ -426,31 +430,14 @@ def _validate_receipt(
             "status": validation.status,
             "reason_codes": list(validation.reason_codes),
         }
-    reasons: list[str] = []
-    if receipt.get("contract_version") != LIVE_PROVIDER_GATE_VERSION:
-        reasons.append("invalid_live_provider_contract_version")
-    raw_status = receipt.get("status")
-    if raw_status not in VALID_GATE_STATUSES:
-        reasons.append("invalid_live_provider_status")
-    if receipt.get("source_digest") != expected_source_digest:
-        reasons.append("stale_live_provider_receipt")
-    if reasons:
-        return {"status": "FAIL", "reason_codes": reasons}
-    if raw_status == "PASS":
-        return {
-            "status": "BLOCKED",
-            "reason_codes": ["live_provider_pass_not_yet_acceptable"],
-        }
-    receipt_reasons = receipt.get("reason_codes") or []
-    if not (
-        isinstance(receipt_reasons, list)
-        and all(isinstance(reason, str) for reason in receipt_reasons)
-    ):
-        return {
-            "status": "FAIL",
-            "reason_codes": ["invalid_live_provider_reason_codes"],
-        }
-    return {"status": raw_status, "reason_codes": receipt_reasons}
+    validation = validate_live_provider_gate_receipt(
+        receipt,
+        expected_source_digest=expected_source_digest,
+    )
+    return {
+        "status": validation.status,
+        "reason_codes": list(validation.reason_codes),
+    }
 
 
 def _read_receipt(path: Path | None, *, gate: str) -> tuple[Any, list[str]]:

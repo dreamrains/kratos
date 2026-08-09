@@ -142,6 +142,7 @@ def computation_env(tmp_path, monkeypatch):
                     "design": "independent_groups",
                     "reason": "The fixture is sufficient only for demonstrating the binding contract.",
                 },
+                "allowed_claim_class": "inferential_associations",
             },
         ),
         parameters={
@@ -156,6 +157,7 @@ def computation_env(tmp_path, monkeypatch):
             evidence_fields=[
                 "effective_sample_size",
                 "effect_estimate",
+                "effect_estimate.value",
                 "confidence_interval",
                 "assumptions",
                 "denominator",
@@ -832,6 +834,43 @@ def test_structured_output_is_checked_server_side_and_completes_matching_task(co
     assert task["status"] == "completed"
     assert task["satisfied_claim_keys"] == ["group_revenue_difference"]
     assert set(task["satisfied_analysis_requirement_ids"]) == set(evidence["requirement_ids"])
+
+
+def test_auto_projected_evidence_advances_canonical_task_without_model_bookkeeping(
+    computation_env,
+):
+    """The automatic projection path must own workflow progress too.
+
+    Calling ``record_evidence_record`` solely to complete a task recreates the
+    chicken-and-egg failure seen in live sessions: the model becomes a state
+    bookkeeper and workspace scope can enter a no-current-task error between
+    analytical steps.
+    """
+
+    computation_env["state"].dataset_contracts[0]["dataset_id"] = (
+        computation_env["active"]["dataset_id"]
+    )
+    step = computation_env["state"].analysis_plan["method_plan"][0]
+    step["requirement_ids"] = [
+        item["id"]
+        for item in computation_env["state"].analysis_plan["analysis_requirements"][
+            "step_compare"
+        ]
+    ]
+    _execute_computation(computation_env)
+
+    projection_diagnostics = [
+        item
+        for item in computation_env["state"].turn_diagnostics
+        if str(item.get("event") or "").startswith("evidence_")
+    ]
+    assert computation_env["state"].evidence_records, projection_diagnostics
+    evidence = computation_env["state"].evidence_records[-1]
+    tasks = computation_env["manager"].list_active_for_scope(session_id="s1")
+    task = next(item for item in tasks if item["step_id"] == "step_compare")
+    assert evidence["claim_key"] == "group_revenue_difference"
+    assert task["status"] == "completed"
+    assert task["completed_by"] == "evidence"
 
 
 def test_structured_checked_trusts_only_capability_declared_fields(computation_env, monkeypatch):

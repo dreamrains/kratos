@@ -3,6 +3,8 @@ import sys
 import uuid
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -39,10 +41,13 @@ def test_budget_soft_and_hard_thresholds():
 
     state.record_tool_call("list_data", {})
     state.record_tool_call("describe_dataset", {})
-    # run_python counts toward tool_calls and sets pending_fallback_resolution
+    # run_python counts toward tool_calls; pending state starts only on success.
     state.record_tool_call("run_python", {})
-    # record_evidence_record is meta, does NOT count toward tool_calls, but resolves fallback
+    state.record_tool_success("run_python")
+    # record_evidence_record is meta, does NOT count toward tool_calls, and
+    # resolves a successful fallback only after its own success.
     state.record_tool_call("record_evidence_record", {})
+    state.record_tool_success("record_evidence_record")
 
     assert state.tool_calls == 3  # list_data + describe_dataset + run_python
     assert state.pending_fallback_resolution is False
@@ -138,7 +143,7 @@ def test_run_python_success_requires_resolution_before_more_exploration():
 
     state.ensure_can_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
     state.record_tool_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
-    state.record_tool_success()
+    state.record_tool_success("run_python")
 
     try:
         state.ensure_can_call("preview_data", {"name": "main"})
@@ -148,6 +153,59 @@ def test_run_python_success_requires_resolution_before_more_exploration():
         raise AssertionError("expected fallback result to require evidence or limitation resolution")
 
     state.ensure_can_call("record_evidence_record", {"record_json": "{}"})
+
+
+def test_failed_run_python_does_not_create_pending_fallback():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
+    args = {"purpose": "custom check", "code": "raise ValueError('x')"}
+
+    state.record_tool_call("run_python", args)
+    state.record_tool_error("run_python", args, '{"error":"x"}')
+
+    assert state.pending_fallback_resolution is False
+
+
+def test_successful_run_python_sets_pending_and_prompt_names_resolution():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
+    args = {"purpose": "custom check", "code": "print(1)"}
+
+    state.record_tool_call("run_python", args)
+    state.record_tool_success("run_python")
+
+    hint = state.prompt_hint()
+    assert state.pending_fallback_resolution is True
+    assert "pending resolution" in hint
+    assert "record_evidence_record" in hint
+    assert "Do not call run_python again" in hint
+    budget_index = hint.find("Execution budget")
+    assert budget_index == -1 or hint.index("pending resolution") < budget_index
+
+
+def test_failed_resolution_does_not_clear_pending_fallback():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
+    state.record_tool_call("run_python", {"purpose": "check", "code": "print(1)"})
+    state.record_tool_success("run_python")
+
+    resolution = {"record_json": "{}"}
+    state.record_tool_call("record_evidence_record", resolution)
+    state.record_tool_error(
+        "record_evidence_record",
+        resolution,
+        '{"error":"invalid record"}',
+    )
+
+    assert state.pending_fallback_resolution is True
+
+
+def test_successful_resolution_clears_pending_fallback():
+    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
+    state.record_tool_call("run_python", {"purpose": "check", "code": "print(1)"})
+    state.record_tool_success("run_python")
+
+    state.record_tool_call("record_evidence_record", {"record_json": "{}"})
+    state.record_tool_success("record_evidence_record")
+
+    assert state.pending_fallback_resolution is False
 
 
 def test_repeated_tool_error_is_blocked_after_two_failures():
@@ -163,6 +221,53 @@ def test_repeated_tool_error_is_blocked_after_two_failures():
         assert "repeated tool error" in str(exc).lower()
     else:
         raise AssertionError("expected repeated forecast error to be blocked")
+
+
+def test_consecutive_error_burst_allows_one_changed_recovery_call():
+    """A corrected call must remain possible after one parallel error burst."""
+
+    state = TurnExecutionState(ToolExecutionBudget(max_consecutive_errors=3))
+    for index in range(3):
+        state.record_tool_error(
+            "create_chart",
+            {"purpose": "analysis", "chart": index},
+            '{"error":"invalid chart purpose"}',
+        )
+
+    corrected = {"purpose": "evidence", "chart": 0}
+    state.ensure_can_call("create_chart", corrected)
+    state.record_tool_call("create_chart", corrected)
+    state.record_tool_success()
+
+    assert state.consecutive_errors == 0
+    state.ensure_can_call("create_chart", {"purpose": "evidence", "chart": 1})
+
+
+def test_consecutive_error_burst_blocks_a_second_failed_recovery():
+    """The recovery allowance is bounded rather than a new retry loop."""
+
+    state = TurnExecutionState(ToolExecutionBudget(max_consecutive_errors=3))
+    for index in range(3):
+        state.record_tool_error(
+            "record_evidence_record",
+            {"record": index},
+            '{"error":"missing dataset"}',
+        )
+
+    recovery = {"record": "corrected-once"}
+    state.ensure_can_call("record_evidence_record", recovery)
+    state.record_tool_call("record_evidence_record", recovery)
+    state.record_tool_error(
+        "record_evidence_record",
+        recovery,
+        '{"error":"still invalid"}',
+    )
+
+    with pytest.raises(BudgetExceeded, match="Consecutive tool errors"):
+        state.ensure_can_call(
+            "record_evidence_record",
+            {"record": "different-but-second-recovery"},
+        )
 
 
 def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
@@ -1045,3 +1150,40 @@ def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monke
     assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
     assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
     assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()
+
+
+def test_completion_guard_names_planned_structured_tools_not_requirement_hashes():
+    from data_agent.agent.loop import _capability_hint_for_unmet
+
+    decision = type("Decision", (), {
+        "recoverable_requirement_ids": (
+            "req_distribution_sample_size",
+            "req_relationship_correlation_method",
+        ),
+    })()
+    plan = {
+        "method_plan": [
+            {
+                "step_id": "step_distribution",
+                "method": "distribution_analysis",
+                "required_capability": "analysis.distribution",
+                "requirement_ids": ["req_distribution_sample_size"],
+                "combination_mode": "independent",
+            },
+            {
+                "step_id": "step_relationship",
+                "method": "correlation_analysis",
+                "required_capability": "analysis.correlation",
+                "requirement_ids": ["req_relationship_correlation_method"],
+                "combination_mode": "independent",
+            },
+        ],
+    }
+
+    hint = _capability_hint_for_unmet(decision, plan=plan)
+
+    assert "step_distribution" in hint
+    assert "distribution_analysis" in hint
+    assert "step_relationship" in hint
+    assert "correlation_analysis" in hint
+    assert "req_distribution_sample_size" not in hint

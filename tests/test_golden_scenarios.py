@@ -285,6 +285,11 @@ def revenue_decline_case() -> ScenarioCase:
                 "Conclusion: paid channel appears to be the largest contributor. "
                 "Limitation: this is descriptive attribution, not proof of causality. Confidence: medium."
             ),
+            text_response(
+                "Conclusion: paid channel appears to be the largest contributor. "
+                "Limitation: no additional structured computation was completed, so this remains "
+                "descriptive attribution rather than proof of causality. Confidence: exploratory."
+            ),
         ],
     )
 
@@ -329,6 +334,11 @@ def funnel_case() -> ScenarioCase:
             ),
             text_response(
                 "The largest visible drop is signup to trial. Limitation: aggregate counts do not prove user-level paths. Confidence: medium."
+            ),
+            text_response(
+                "The largest visible drop is signup to trial. Limitation: no additional structured "
+                "computation was completed and aggregate counts do not prove user-level paths. "
+                "Confidence: exploratory."
             ),
         ],
     )

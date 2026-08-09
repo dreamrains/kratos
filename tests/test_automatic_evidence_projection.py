@@ -97,6 +97,59 @@ def test_bound_structured_computation_auto_projects_v2_evidence(context):
     assert f"dataset_versions={DATASET_VERSION}" in catalog
 
 
+def test_data_quality_projection_emits_nested_missingness_and_duplicate_measurements(context):
+    capability = {
+        "capability_id": "data.quality",
+        "risk_level": "low",
+        "evidence_fields": [
+            "sample_size",
+            "missingness",
+            "duplicates",
+            "outliers",
+            "limitations",
+            "allowed_claim_class",
+        ],
+    }
+    output = {
+        "summary": "quality result",
+        "data": {
+            "sample_size": 125,
+            "missingness": [
+                {"column": "revenue", "count": 3, "percentage": 2.4},
+                {"column": "cost", "count": 2, "percentage": 1.6},
+            ],
+            "duplicates": {"count": 5, "percentage": 4.0},
+            "outliers": [],
+            "limitations": ["IQR rule"],
+            "allowed_claim_class": "descriptive",
+        },
+    }
+
+    result = project_real_correlation(
+        context,
+        output=output,
+        capability=capability,
+    )
+
+    assert result.projected is True
+    projected = {
+        (
+            measurement["metric"],
+            measurement["identity"]["metric_label"],
+            measurement["value"],
+            measurement["unit"],
+        )
+        for measurement in result.record["measurements"]
+    }
+    assert ("sample_size", "sample size", 125.0, "value") in projected
+    assert ("missingness.count", "revenue count", 3.0, "count") in projected
+    assert ("missingness.percentage", "revenue percentage", 2.4, "percent") in projected
+    assert ("missingness.count", "cost count", 2.0, "count") in projected
+    assert ("missingness.percentage", "cost percentage", 1.6, "percent") in projected
+    assert ("duplicates.count", "duplicates count", 5.0, "count") in projected
+    assert ("duplicates.percentage", "duplicates percentage", 4.0, "percent") in projected
+
+
 def test_measurement_key_is_stable_and_changes_with_metric_or_version(context):
     first = project_real_correlation(context)
     second = project_real_correlation(context)
@@ -542,3 +595,128 @@ def test_catalog_never_exceeds_max_chars_when_first_entry_is_too_long(context):
 
     assert catalog == header
     assert len(catalog) <= len(header)
+
+
+def test_bounded_alias_catalog_emits_ready_markers_and_exact_map(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    record = project_real_correlation(context).record
+    catalog = build_bounded_evidence_alias_catalog(
+        [record], max_records=8, max_chars=2000
+    )
+
+    first_key = record["measurements"][0]["identity"]["measurement_key"]
+    second_key = record["measurements"][1]["identity"]["measurement_key"]
+    assert "marker=[[evidence:ae01#am01]]" in catalog.text
+    assert "marker=[[evidence:ae01#am02]]" in catalog.text
+    assert (
+        "required_verified_core_copy=已验证核心："
+        "revenue cost correlation = 0.4 [[evidence:ae01#am01]]。"
+    ) in catalog.text
+    assert catalog.text.count("required_verified_core_copy=") == 1
+    assert catalog.aliases[:2] == (
+        ("ae01", "am01", record["id"], first_key),
+        ("ae01", "am02", record["id"], second_key),
+    )
+
+
+def test_alias_map_contains_only_entries_emitted_within_bound(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    record = project_real_correlation(context).record
+    bounded = build_bounded_evidence_alias_catalog(
+        [record], max_records=1, max_chars=2000
+    )
+
+    first_key = record["measurements"][0]["identity"]["measurement_key"]
+    assert bounded.aliases == (("ae01", "am01", record["id"], first_key),)
+    assert "ae01#am01" in bounded.text
+    assert "ae01#am02" not in bounded.text
+
+
+def test_alias_catalog_does_not_authorize_unbound_measurement(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    record = project_real_correlation(context).record
+    record["measurements"][0].pop("identity")
+
+    catalog = build_bounded_evidence_alias_catalog(
+        [record], max_records=8, max_chars=2000
+    )
+
+    assert "unbound_measurement=" in catalog.text
+    bound_keys = {
+        measurement["identity"]["measurement_key"]
+        for measurement in record["measurements"]
+        if isinstance(measurement.get("identity"), dict)
+    }
+    assert {alias[3] for alias in catalog.aliases} == bound_keys
+
+
+def test_alias_catalog_without_bound_measurement_has_no_required_core_copy(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    record = project_real_correlation(context).record
+    for measurement in record["measurements"]:
+        measurement.pop("identity", None)
+
+    catalog = build_bounded_evidence_alias_catalog(
+        [record], max_records=8, max_chars=2000
+    )
+
+    assert catalog.aliases == ()
+    assert "required_verified_core_copy=" not in catalog.text
+
+
+def test_alias_catalog_prioritizes_bound_measurements_over_unbound_diagnostics(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    bound = project_real_correlation(context).record
+    bound["step_order"] = 2
+    unbound = {
+        "id": "legacy_unbound",
+        "step_order": 1,
+        "claim_key": "legacy_note",
+        "verification_level": "legacy_unbound",
+        "measurements": [],
+    }
+
+    catalog = build_bounded_evidence_alias_catalog(
+        [unbound, bound], max_records=1, max_chars=2000
+    )
+
+    first_key = bound["measurements"][0]["identity"]["measurement_key"]
+    assert catalog.aliases == (("ae01", "am01", bound["id"], first_key),)
+    assert "marker=[[evidence:ae01#am01]]" in catalog.text
+    assert "legacy_note" not in catalog.text
+
+
+def test_alias_catalog_round_robins_bound_records_before_second_measurement(context):
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
+
+    first = project_real_correlation(context).record
+    second = copy.deepcopy(first)
+    second["id"] = "evidence_second_step"
+    first["step_order"] = 1
+    second["step_order"] = 2
+
+    catalog = build_bounded_evidence_alias_catalog(
+        [first, second], max_records=2, max_chars=2000
+    )
+
+    assert {alias[2] for alias in catalog.aliases} == {
+        first["id"],
+        second["id"],
+    }

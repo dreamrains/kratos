@@ -226,6 +226,43 @@ def test_nearly_empty_exploration_switches_to_reserved_synthesis_before_draft(
     assert turn.phase_token_usage["synthesis"] > 0
 
 
+def test_synthesis_instructed_tool_round_does_not_consume_final_answer_reserve():
+    """A model may call one more analysis tool after synthesis guidance.
+
+    That tool-bearing round is execution, not the final answer.  Charging it
+    to the synthesis reserve recreated the live 14-token final response.
+    """
+    from data_agent.llm.client import Response, StreamComplete, ToolCall
+
+    class _ToolRoundClient:
+        max_tokens = 8_000
+
+        def stream_chat_structured(self, **_kwargs):
+            yield StreamComplete(Response(tool_calls=[
+                ToolCall("tc_quality", "detect_data_quality", {"name": "main"}),
+            ]))
+
+    loop = AgentLoop(client=_ToolRoundClient(), session_id="tool_round_budget")
+    turn = TurnExecutionState(ToolExecutionBudget(
+        token_budget=1_000,
+        synthesis_reserve_tokens=180,
+        audit_reserve_tokens=120,
+        revision_reserve_tokens=100,
+    ))
+    loop.context.turn_state = turn
+    loop._turn_synthesis_policy_instruction = (
+        "<synthesis_policy>use current evidence</synthesis_policy>"
+    )
+    loop._get_system_prompt = lambda: ""
+
+    events = list(loop._stream_llm_round(1))
+
+    assert events[-1]["response"].has_tool_calls is True
+    assert turn.phase_token_usage.get("synthesis", 0) == 0
+    assert turn.phase_token_usage.get("exploration", 0) > 0
+    assert turn.remaining_phase_tokens("synthesis") == 180
+
+
 def test_llm_client_forwards_the_bounded_output_limit_to_provider(monkeypatch):
     from data_agent.llm import client as client_module
 
@@ -361,6 +398,39 @@ def test_llm_stream_retry_reduces_the_provider_limit_by_emitted_output(monkeypat
     assert limits == [20, 15]
     assert events[-1].response.text == "x" * 20
     assert events[-1].response.unreported_output_tokens == 0
+
+
+def test_llm_stream_preserves_provider_length_finish_reason(monkeypatch):
+    from data_agent.llm import client as client_module
+
+    def fake_completion(**_kwargs):
+        def stream():
+            yield SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(
+                    content="partial answer",
+                    reasoning_content=None,
+                    tool_calls=None,
+                ),
+                finish_reason=None,
+            )])
+            yield SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content=None,
+                    tool_calls=None,
+                ),
+                finish_reason="length",
+            )])
+
+        return stream()
+
+    monkeypatch.setattr(client_module, "completion", fake_completion)
+    client = client_module.LLMClient(model_id="test/model", max_tokens=100)
+
+    events = list(client.stream_chat_structured(messages=[], max_tokens=20))
+
+    assert events[-1].response.text == "partial answer"
+    assert events[-1].response.finish_reason == "length"
 
 
 def test_successful_stream_retry_charges_prior_hidden_usage_to_turn(monkeypatch):

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from data_agent.agent.answer_quality import (
 from data_agent.agent.analysis_requirements import compile_analysis_requirements
 from data_agent.agent.evidence_contracts import (
     computation_ref_key,
+    expand_evidence_alias_markers,
     measurement_key_for,
     validate_evidence_record,
 )
@@ -362,6 +364,38 @@ def _audit_with_exact_marker(identity_evidence, *, measurement_binding_mode):
     )
 
 
+def test_exact_alias_expands_to_full_measurement_marker(identity_evidence):
+    key = identity_evidence["measurements"][0]["identity"]["measurement_key"]
+    expanded = expand_evidence_alias_markers(
+        "Revenue increased 12% [[evidence:ae01#am01]].",
+        (("ae01", "am01", identity_evidence["id"], key),),
+    )
+
+    assert expanded == (
+        "Revenue increased 12% "
+        f"[[evidence:{identity_evidence['id']}#{key}]]."
+    )
+
+
+def test_unknown_or_stale_alias_is_not_expanded():
+    source = "Revenue increased 12% [[evidence:ae99#am99]]."
+
+    assert expand_evidence_alias_markers(source, ()) == source
+
+
+def test_alias_cannot_cross_bind_equal_value_metric(identity_evidence):
+    key = identity_evidence["measurements"][0]["identity"]["measurement_key"]
+    expanded = expand_evidence_alias_markers(
+        "Profit increased 12% [[evidence:ae01#am01]].",
+        (("ae01", "am01", identity_evidence["id"], key),),
+    )
+
+    audit = _identity_audit(expanded, identity_evidence)
+
+    assert audit["status"] == "blocked"
+    assert "measurement_metric_mismatch" in audit["claim_checks"][0]["reason_codes"]
+
+
 def test_soft_mode_downgrades_exact_markerless_candidate(identity_evidence):
     audit = _audit(
         "Revenue increased 12% in 2026-05 for new users.\n"
@@ -601,6 +635,51 @@ def test_extractor_retains_measurement_grain_reference():
     }]
     assert claims[0]["evidence_ids"] == ["ev_revenue"]
     assert "[[evidence:" not in claims[0]["text"]
+
+
+def test_extractor_does_not_treat_markdown_structure_numbers_as_measurements():
+    claims = extract_material_claims(
+        "## 1️⃣ 数据质量检查\n"
+        "1. 建议先清理重复记录。\n"
+        "- 平均收入为 514 元。"
+    )
+
+    assert claims[0]["text"] == "数据质量检查"
+    assert claims[0]["material"] is False
+    assert claims[0]["quantities"] == []
+    assert claims[1]["claim_type"] == "recommendation"
+    assert claims[1]["quantities"] == []
+    assert claims[2]["quantities"] == [
+        {"raw": "514 元", "value": 514.0, "unit": "元"},
+    ]
+
+
+def test_extractor_treats_recommendation_section_heading_as_structure():
+    claims = extract_material_claims(
+        "## 六、行动建议\n"
+        "建议补充时间字段并通过 A/B 测试验证策略效果。"
+    )
+
+    assert claims[0]["text"] == "六、行动建议"
+    assert claims[0]["claim_type"] == "recommendation"
+    assert claims[0]["material"] is False
+    assert claims[0]["requires_evidence"] is False
+    assert claims[1]["claim_type"] == "recommendation"
+    assert claims[1]["material"] is True
+    assert claims[1]["requires_evidence"] is True
+
+
+def test_extractor_recognizes_row_and_count_units():
+    claims = extract_material_claims(
+        "revenue 缺失 3 行。\nduplicates count is 5 rows."
+    )
+
+    assert claims[0]["quantities"] == [
+        {"raw": "3 行", "value": 3.0, "unit": "行"},
+    ]
+    assert claims[1]["quantities"] == [
+        {"raw": "5 rows", "value": 5.0, "unit": "rows"},
+    ]
 
 
 def test_exact_measurement_marker_verifies_revenue_claim(identity_evidence):
@@ -1606,6 +1685,76 @@ def test_runtime_persists_full_audit_and_keeps_only_compact_ref_in_state(tmp_pat
 
     artifact["status"] = "blocked"
     Path(ref["artifact_path"]).write_text(json.dumps(artifact), encoding="utf-8")
+    assert runtime.hydrate_final_answer_audit_ref(ref) is None
+
+
+def test_runtime_expands_current_alias_before_unchanged_audit(tmp_path, monkeypatch):
+    from tests.fixtures.measurement_identity import (
+        DATASET_VERSION,
+        build_projection_context,
+        project_real_correlation,
+    )
+
+    context = build_projection_context(tmp_path)
+    evidence = project_real_correlation(context).record
+    key = evidence["measurements"][0]["identity"]["measurement_key"]
+    state = SimpleNamespace(
+        session_id=context.session_id,
+        analysis_plan=context.plan,
+        evidence_records=[evidence],
+        route_proposals=[],
+        cleaning_logs=[],
+        verification_reports=[],
+        save=lambda: None,
+    )
+    monkeypatch.setattr(runtime, "_sessions_root", lambda: context.sessions_root)
+    monkeypatch.setattr(
+        runtime,
+        "_active_dataset_versions",
+        lambda: [DATASET_VERSION],
+    )
+
+    ref = runtime.audit_final_answer_draft(
+        "The revenue cost correlation is 0.4 "
+        "[[evidence:ae01#am01]].\n"
+        "Limitation: this is a descriptive association, not a causal effect.",
+        state,
+        evidence_aliases=(("ae01", "am01", evidence["id"], key),),
+    )
+    artifact = json.loads(Path(ref["artifact_path"]).read_text(encoding="utf-8"))
+
+    assert artifact["status"] == "pass", [
+        check.get("reason_codes") for check in artifact["claim_checks"]
+    ]
+    assert artifact["claim_checks"][0]["evidence_id"] == evidence["id"]
+    assert artifact["claim_checks"][0]["measurement_key"] == key
+    assert "[[evidence:" not in artifact["public_text"]
+
+
+def test_runtime_rejects_digest_valid_structurally_incomplete_audit(tmp_path):
+    artifact = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_incomplete",
+        "status": "pass",
+        "public_text": "Revenue increased 12%.",
+        "claims": [{
+            "id": "claim_revenue",
+            "text": "Revenue increased 12%.",
+            "claim_type": "comparison",
+            "material": True,
+        }],
+        "claim_checks": [],
+    }
+    path = tmp_path / "audit_incomplete.json"
+    artifact_bytes = json.dumps(artifact).encode("utf-8")
+    path.write_bytes(artifact_bytes)
+    ref = {
+        "contract_version": "final_answer_audit.v1",
+        "id": artifact["id"],
+        "artifact_path": str(path),
+        "artifact_digest": hashlib.sha256(artifact_bytes).hexdigest(),
+    }
+
     assert runtime.hydrate_final_answer_audit_ref(ref) is None
 
 

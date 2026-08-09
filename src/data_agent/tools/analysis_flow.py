@@ -395,10 +395,12 @@ def record_analysis_plan(plan: dict[str, Any]) -> str:
 
 
 def _persist_analysis_plan_payload(payload: dict[str, Any]) -> str:
-    required = ["goal", "method_plan", "visualization_strategy"]
+    required = ["goal", "method_plan"]
     missing = [k for k in required if k not in payload]
     if missing:
         return json.dumps({"error": f"AnalysisPlan missing fields: {missing}"}, ensure_ascii=False)
+    payload = dict(payload)
+    payload.setdefault("visualization_strategy", [])
 
     state = _current_state()
     from data_agent.agent.analysis_plan_contracts import normalize_analysis_plan_contract
@@ -475,6 +477,23 @@ def record_evidence_record(record_json: str) -> str:
     if state is not None and isinstance(getattr(state, "analysis_plan", None), dict):
         current_plan_id = str(state.analysis_plan.get("id") or "")
 
+    # Legacy/manual records predate computation-bound evidence projection.
+    # When the active workspace has exactly one dataset, its identity is
+    # deterministic and the server can safely fill the omitted field.  Never
+    # guess when zero or multiple datasets are available.
+    if not str(payload.get("dataset") or "").strip():
+        from data_agent.agent.context import get_current_context
+
+        context = get_current_context()
+        workspace = getattr(context, "workspace", None) if context is not None else None
+        dataset_names = (
+            list((workspace.list_datasets() or {}).keys())
+            if workspace is not None
+            else []
+        )
+        if len(dataset_names) == 1:
+            payload["dataset"] = str(dataset_names[0])
+
     is_stage3c0b_evidence = (
         "plan_id" in payload
         or "step_id" in payload
@@ -529,7 +548,15 @@ def record_evidence_record(record_json: str) -> str:
         return json.dumps({"error": f"EvidenceRecord 缺少字段: {missing}"}, ensure_ascii=False)
 
     allowed_confidence = {"high", "medium", "low", "speculative"}
-    confidence = str(payload.get("confidence", "")).strip().lower()
+    confidence_aliases = {
+        "高": "high",
+        "中": "medium",
+        "低": "low",
+        "推测": "speculative",
+        "探索性": "speculative",
+    }
+    confidence_raw = str(payload.get("confidence", "")).strip()
+    confidence = confidence_aliases.get(confidence_raw, confidence_raw.lower())
     if confidence not in allowed_confidence:
         return json.dumps({
             "error": f"Invalid confidence level: {payload.get('confidence')}",

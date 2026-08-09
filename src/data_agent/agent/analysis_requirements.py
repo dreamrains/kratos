@@ -62,6 +62,21 @@ _ROUTE_REQUIREMENT_INPUTS = {
 }
 _DEFAULT_ROUTE_REQUIREMENT_INPUTS = ("method", "sample_size", "limitations")
 _CAPABILITY_REQUIREMENT_INPUTS = {
+    "analysis.distribution": (
+        "distribution",
+        "sample_size",
+        "limitations",
+    ),
+    "analysis.segmentation": (
+        "sample_size",
+        "limitations",
+    ),
+    "analysis.correlation": (
+        "variables",
+        "correlation_method",
+        "sample_size",
+        "limitations",
+    ),
     "analysis.experiment": (
         *_COMPARISON_REQUIREMENT_INPUTS,
         "effect_size",
@@ -437,6 +452,13 @@ def requirement_ids_for_route(route: Any) -> list[str]:
     return result
 
 
+def is_canonical_analysis_requirement_input(value: Any) -> bool:
+    """Return whether an LLM-supplied requirement name is compiler-known."""
+
+    name = _name(value)
+    return bool(name and name in _REQUIREMENT_DEFINITIONS)
+
+
 def _mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -490,7 +512,13 @@ def _step_for_external_input(
     return steps[0][0]
 
 
-def _validate_requirement(requirement: Any) -> None:
+def validate_analysis_requirement(requirement: Any) -> None:
+    """Validate one compiled AnalysisRequirement contract.
+
+    This is intentionally public because the state-owned plan projection path
+    must validate persisted compiler output without invoking the compiler a
+    second time with potentially different runtime inputs.
+    """
     if not isinstance(requirement, dict):
         raise ValueError("AnalysisRequirement must be an object.")
     if requirement.get("contract_version") != ANALYSIS_REQUIREMENT_CONTRACT_VERSION:
@@ -513,6 +541,12 @@ def _validate_requirement(requirement: Any) -> None:
                 raise ValueError(f"AnalysisRequirement {field} must be a list of strings.")
     if not isinstance(requirement.get("reason"), str):
         raise ValueError("AnalysisRequirement reason must be text.")
+
+
+def _validate_requirement(requirement: Any) -> None:
+    """Backward-compatible internal alias for existing compiler call sites."""
+
+    validate_analysis_requirement(requirement)
 
 
 def _has_field(record: dict[str, Any], path: str) -> bool:

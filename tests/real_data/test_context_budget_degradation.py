@@ -48,10 +48,19 @@ class _BudgetClient:
 
 
 def _evidence(computation_ref, *, measurement_value=0.12):
+    requirement_ids = [
+        str(item)
+        for item in computation_ref.get("requirement_ids") or []
+        if str(item)
+    ]
+    if len(requirement_ids) != 1:
+        raise AssertionError(
+            "context-budget evidence requires one canonical requirement binding"
+        )
     bound_ref = {
         **computation_ref,
         "claim_key": "revenue_change",
-        "requirement_ids": ["req_revenue_change"],
+        "requirement_ids": requirement_ids,
     }
     record = {
         "id": "ev_revenue_real",
@@ -71,7 +80,7 @@ def _evidence(computation_ref, *, measurement_value=0.12):
         "metric_delta": {"value": measurement_value, "unit": "ratio"},
         "limitations": ["descriptive only"],
         "confidence": "medium",
-        "evidence_requirement": "req_revenue_change",
+        "evidence_requirement": requirement_ids[0],
         "measurements": [{
             "metric": "revenue_change",
             "definition": "May revenue change versus April revenue.",
@@ -129,32 +138,19 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
             "dataset_inputs": ["orders"],
             "dataset_contract_ids": ["contract_orders"],
             "required_claim_keys": ["revenue_change"],
-            "requirement_ids": ["req_revenue_change"],
+            "evidence_requirements": ["metric_delta"],
         }],
-        "analysis_requirements": {
-            "step_compare": [{
-                "contract_version": "analysis_requirement.v1",
-                "id": "req_revenue_change",
-                "step_id": "step_compare",
-                "name": "metric_delta",
-                "trigger": "Revenue comparison requires canonical measurement evidence.",
-                "category": "measurement",
-                "necessity": "required",
-                "status": "pending",
-                "required_evidence_fields": ["metric_delta"],
-                "assumption_checks": [],
-                "unmet_action": "disclose",
-                "evidence_ids": [],
-                "reason": "",
-            }],
-        },
     }
-    state.analysis_plan = plan
     state.dataset_contracts = [{
         "id": "contract_orders",
         "dataset": "orders",
         "quality_status": "ready",
     }]
+    plan = state.set_analysis_plan(plan)
+    compiled_requirements = plan["analysis_requirements"]["step_compare"]
+    assert len(compiled_requirements) == 1
+    canonical_requirement_id = compiled_requirements[0]["id"]
+    plan["method_plan"][0]["requirement_ids"] = [canonical_requirement_id]
     state.data_requirements = [{"id": "req_explain_calculation"}]
     loop.context.analysis_state = state
     loop.context.user_quality_requirements = state.explicit_user_requirements
@@ -182,7 +178,7 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
         output={
             "summary": "April revenue=400; May revenue=448; increase=12%.",
             "data": {
-                "effect_estimate": {
+                "metric_delta": {
                     "metric": "revenue_change",
                     "value": 0.12,
                     "unit": "ratio",
@@ -194,8 +190,13 @@ def _run_budget_scenario(tmp_path, level, token_budget, usage_ratio):
         plan_digest=analysis_plan_semantic_digest(plan),
         step_digest=analysis_step_semantic_digest(plan["method_plan"][0]),
         capability_id="analysis.period_compare",
-        evidence_fields=["effect_estimate"],
+        evidence_fields=["metric_delta"],
     )
+    computation_ref = {
+        **computation_ref,
+        "claim_key": "revenue_change",
+        "requirement_ids": [canonical_requirement_id],
+    }
     state.computation_refs = [computation_ref]
     state.evidence_records = [_evidence(computation_ref)]
     evidence = state.evidence_records[0]

@@ -247,12 +247,9 @@ AGENT_ANALYSIS = """\
 ## 任务规划与执行
 - 简单查询（1-2步）：直接执行
 - 中等分析（3步）：用户要求多维度时规划
-- 复杂分析（4+步）：先用 task_create 规划，将分析拆分为多个独立子任务
-- 批量创建/更新任务，不要逐个调用
-- **执行约束（强制）**：
-  - 开始执行 task 的分析步骤前，调用 task_update 将状态改为 in_progress
-  - 完成一个 task 后，必须调用 task_update(status='completed', result_summary='...')
-  - 不要创建不打算完成的 task
+- 复杂分析（4+步）：先用 record_analysis_plan 记录 canonical plan；该工具会自动创建并激活规范工作流任务，不要再用 task_create 重复创建同一批步骤
+- canonical plan 的任务生命周期由服务端按计划依赖与合格证据确定性推进；不要调用 task_list/task_update 做分析记账
+- task_create/task_update 仅用于用户明确要求维护的普通任务或旧工作流，不用于 canonical analysis plan
 - 所有任务完成后必须输出综合回应
 
 {_strategy_shared}

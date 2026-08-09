@@ -380,6 +380,29 @@ def transform_data(
 
     add_result = workspace.add(target_name, result)
     if str(add_result).startswith("Error:"):
+        scoped_storage_errors = {
+            "Error: dataset_outside_current_task_scope",
+            "Error: derived_scope_not_registered",
+        }
+        if operation == "group_aggregate" and str(add_result) in scoped_storage_errors:
+            inline_limit = 50
+            records = json.loads(
+                result.head(inline_limit).to_json(
+                    orient="records",
+                    date_format="iso",
+                    force_ascii=False,
+                )
+            )
+            return json.dumps({
+                "dataset": target_name,
+                "operation": operation,
+                "rows": len(result),
+                "columns": list(result.columns),
+                "records": records,
+                "records_truncated": len(result) > inline_limit,
+                "persisted": False,
+                "storage_reason": "scoped_inline_result",
+            }, ensure_ascii=False, indent=2)
         return json.dumps({"error": str(add_result)}, ensure_ascii=False)
     # 记录变换血缘
     workspace.log_transform(name, operation, target_name, json.dumps({k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")}, ensure_ascii=False) if p else "")

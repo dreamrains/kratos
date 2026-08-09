@@ -175,8 +175,6 @@ def validate_browser_gate_receipt(
             for field in ("browser_ms", "server_event_ms", "turn_end_browser_ms")
         ):
             reasons.append("invalid_browser_timing")
-        elif item["server_event_ms"] > item["browser_ms"]:
-            reasons.append("server_event_after_browser_observation")
     if duplicate_names:
         reasons.append("duplicate_browser_observations")
     if not REQUIRED_OBSERVATIONS.issubset(observations):

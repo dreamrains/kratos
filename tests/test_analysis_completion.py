@@ -558,6 +558,20 @@ def test_quality_guard_allows_only_one_recoverable_continuation(turn_state):
     assert turn_state.consume_quality_continuation(reason="missing_stability_check") is False
 
 
+def test_quality_guard_requires_one_listed_tool_attempt_before_final_answer():
+    from data_agent.agent.loop import _ANALYSIS_QUALITY_CONTINUATION_TEMPLATE
+
+    instruction = _ANALYSIS_QUALITY_CONTINUATION_TEMPLATE.format(
+        status="complete_with_limits",
+        reason="recoverable_unmet_requirements",
+        missing="req_quality",
+        capability_hint="step_quality: use detect_data_quality (data.quality)",
+    )
+
+    assert "MUST call at least one listed structured analysis tool" in instruction
+    assert "Do not return a final answer before that attempt" in instruction
+
+
 def test_one_substantive_tool_does_not_complete_six_step_factor_plan(factor_plan, factor_completion_case):
     case = factor_completion_case(
         plan=factor_plan,

@@ -511,6 +511,43 @@ def distribution_analysis(name: str, columns: str = "") -> str:
 
         result[col] = col_result
 
+    result["sample_size"] = max(
+        (item.get("count", 0) for item in result.values() if isinstance(item, dict)),
+        default=0,
+    )
+    metric_definitions = {
+        "mean": "Arithmetic mean over non-missing rows.",
+        "std": "Population standard deviation over non-missing rows.",
+        "skewness": "Sample skewness over non-missing rows.",
+        "kurtosis": "Excess kurtosis over non-missing rows.",
+        "normality_p_value": "Shapiro-Wilk normality-test p-value.",
+        "count": "Number of non-missing rows.",
+    }
+    measurements = []
+    for metric in metric_definitions:
+        for col, col_result in result.items():
+            if not isinstance(col_result, dict):
+                continue
+            value = (
+                col_result.get("normality_test", {}).get("p_value")
+                if metric == "normality_p_value"
+                else col_result.get(metric)
+            )
+            if value is None:
+                continue
+            measurements.append({
+                "column": col,
+                "metric": metric,
+                "value": value,
+                "unit": "count" if metric == "count" else "value",
+                "definition": metric_definitions[metric],
+            })
+    result["measurements"] = measurements
+    result["limitations"] = [
+        "各列样本量按非缺失值分别计算，变量间联合分析需使用成对完整样本。",
+        "Shapiro-Wilk 与偏度/峰度只描述分布形态，不证明业务因果关系。",
+    ]
+    result["allowed_claim_class"] = "descriptive"
     result["_suggested_next"] = [
         "correlation_analysis 检查变量间相关性",
         "segmentation_analysis 基于分布特征进行分群",
@@ -555,6 +592,10 @@ def segmentation_analysis(name: str, features: str, n_clusters: int = 3) -> str:
         "n_clusters": n_clusters,
         "total_samples": len(data),
         "clusters": [],
+        "limitations": [
+            "KMeans 分群依赖所选特征、标准化方式与预设聚类数，仅用于探索性分群。",
+        ],
+        "allowed_claim_class": "exploratory_association",
     }
 
     for i in range(n_clusters):

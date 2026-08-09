@@ -30,6 +30,12 @@ def _audit(status, *, reason_codes=None, public_text="Audited result."):
         "id": f"audit_{status}",
         "status": status,
         "public_text": public_text,
+        "claims": [{
+            "id": "claim_1",
+            "text": public_text,
+            "claim_type": "comparison",
+            "material": True,
+        }],
         "claim_checks": [{
             "claim_id": "claim_1",
             "claim": "Raw result.",
@@ -96,12 +102,145 @@ def test_passed_audit_publishes_stripped_text_and_replaces_raw_history(monkeypat
     assert not any("final_answer_audit_repair" in str(message) for message in loop.messages)
 
 
+def test_gate_passes_only_current_turn_alias_map_to_audit(monkeypatch):
+    loop = _analysis_loop()
+    aliases = (("ae01", "am01", "ev_1", "m_1"),)
+    loop._turn_synthesis_evidence_aliases = aliases
+    captured = {}
+    audit = _audit("pass", public_text="Audited result.")
+    ref = {
+        "contract_version": "final_answer_audit.v1",
+        "id": audit["id"],
+        "status": audit["status"],
+        "artifact_path": "fixture.json",
+        "artifact_digest": "0" * 64,
+    }
+
+    def audit_draft(_text, _state, *, evidence_aliases=(), **_kwargs):
+        captured["aliases"] = evidence_aliases
+        return ref
+
+    monkeypatch.setattr(runtime, "audit_final_answer_draft", audit_draft)
+    monkeypatch.setattr(runtime, "hydrate_final_answer_audit_ref", lambda _ref: audit)
+
+    result = loop._gate_final_analysis_answer(
+        "analyze",
+        "Raw result [[evidence:ae01#am01]].",
+    )
+
+    assert result["action"] == "publish"
+    assert captured["aliases"] == aliases
+
+
+def test_turn_reset_discards_prior_synthesis_aliases():
+    loop = _analysis_loop()
+    loop._turn_synthesis_evidence_aliases = (("ae01", "am01", "ev_1", "m_1"),)
+
+    loop._reset_turn_tracking()
+
+    assert loop._turn_synthesis_evidence_aliases == ()
+
+
+def test_passed_audit_cannot_publish_process_narration_as_comprehensive_report(monkeypatch):
+    """Evidence correctness alone does not make an unfinished process note a
+    complete answer.  The runtime gets one synthesis-only repair, never more
+    analysis tools, even when the claim audit itself passed."""
+    loop = _analysis_loop()
+    loop._last_turn_intent = _intent("comprehensive_report")
+    process_note = "现在继续执行 Python 分析：验证成本结构、偏相关与分群净效应。"
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit("pass", public_text=process_note),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", process_note)
+
+    assert result == {"action": "continue", "mode": "synthesis"}
+    assert loop._turn_final_audit_revision_used is True
+    assert 'mode="synthesis"' in loop._turn_final_audit_instruction
+    assert "analysis_answer_incomplete" in loop._turn_final_audit_instruction
+    assert "Do not call tools" in loop._turn_final_audit_instruction
+    assert not any(message.get("role") == "assistant" for message in loop.messages)
+
+
 def test_internal_evidence_markers_are_stripped_from_intermediate_analysis_text():
     loop = _analysis_loop()
 
     public = loop._public_intermediate_text("Working [[evidence:ev_1]] on the next step.")
 
     assert public == "Working on the next step."
+
+
+def test_unknown_alias_marker_is_stripped_from_public_intermediate_text():
+    loop = _analysis_loop()
+
+    public = loop._public_intermediate_text(
+        "Working [[evidence:ae99#am99]] on the next step."
+    )
+
+    assert public == "Working on the next step."
+
+
+def test_current_alias_and_markerless_claim_publish_as_mixed_tiers(
+    tmp_path,
+    monkeypatch,
+):
+    from tests.fixtures.measurement_identity import (
+        DATASET_VERSION,
+        build_projection_context,
+        project_real_correlation,
+    )
+
+    context = build_projection_context(tmp_path)
+    evidence = project_real_correlation(context).record
+    key = evidence["measurements"][0]["identity"]["measurement_key"]
+    state = SimpleNamespace(
+        session_id=context.session_id,
+        analysis_plan=context.plan,
+        evidence_records=[evidence],
+        route_proposals=[],
+        cleaning_logs=[],
+        verification_reports=[],
+        turn_diagnostics=[],
+        append_turn_diagnostic=lambda item: state.turn_diagnostics.append(item),
+        save=lambda: None,
+    )
+    loop = _analysis_loop()
+    loop.context.analysis_state = state
+    monkeypatch.setattr(
+        loop,
+        "_evaluate_turn_completion",
+        lambda: SimpleNamespace(status="complete_with_limits"),
+    )
+    loop._turn_synthesis_evidence_aliases = (
+        ("ae01", "am01", evidence["id"], key),
+    )
+    draft = (
+        "The revenue cost correlation is 0.4 [[evidence:ae01#am01]].\n"
+        "Profit increased 25%.\n"
+        "Limitation: this is descriptive analysis and the profit claim is not independently verified."
+    )
+    loop.messages = [{"role": "assistant", "content": draft}]
+    monkeypatch.setattr(runtime, "_sessions_root", lambda: context.sessions_root)
+    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: [DATASET_VERSION])
+
+    result = loop._gate_final_analysis_answer(
+        "analyze the relationship",
+        draft,
+        allow_repair=False,
+    )
+
+    assert result["action"] == "fallback"
+    assert "The revenue cost correlation is 0.4" in result["text"]
+    assert "Profit increased 25%" not in result["text"]
+    assert "无法发布" in result["text"]
+    assert "[[evidence:" not in result["text"]
+    actions = state.turn_diagnostics[-1]["actions"]
+    assert "verified" in actions.values(), [
+        (check.get("claim_id"), check.get("status"), check.get("reason_codes"))
+        for check in loop._turn_last_final_audit["claim_checks"]
+    ]
+    assert "unsupported" in actions.values()
 
 
 def test_gate_runs_real_persisted_audit_before_tiered_publication(
@@ -155,7 +294,9 @@ def test_gate_runs_real_persisted_audit_before_tiered_publication(
 
     assert result["action"] == "fallback"
     assert "[[evidence:" not in result["text"]
-    assert "Revenue increased 12%" not in result["text"]
+    assert "Revenue increased 12%" in result["text"]
+    assert "探索性，未经独立校验" in result["text"]
+    assert "无法发布" not in result["text"]
     assert state.verification_reports[-1]["contract_version"] == "final_answer_audit.v1"
 
 
@@ -188,6 +329,9 @@ def test_measurement_identity_missing_gets_at_most_one_synthesis_only_revision(
     monkeypatch,
 ):
     loop = _analysis_loop()
+    loop._turn_synthesis_evidence_aliases = (
+        ("ae01", "am01", "ev_1", "m_1"),
+    )
     _patch_runtime_audit(
         monkeypatch,
         _audit("blocked", reason_codes=["measurement_identity_missing"]),
@@ -209,16 +353,51 @@ def test_measurement_identity_missing_gets_at_most_one_synthesis_only_revision(
     assert 'mode="analysis"' not in loop._turn_final_audit_instruction
 
 
+def test_missing_evidence_identity_with_failed_check_gets_synthesis_revision(
+    monkeypatch,
+):
+    """The verifier emits ``evidence_check_failed`` as the generic companion
+    to the actionable missing-identity code.  That companion must not suppress
+    the one bounded synthesis repair which can copy current short aliases."""
+
+    loop = _analysis_loop()
+    loop._turn_synthesis_evidence_aliases = (
+        ("ae01", "am01", "ev_1", "m_1"),
+    )
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit(
+            "blocked",
+            reason_codes=["missing_evidence_identity", "evidence_check_failed"],
+        ),
+    )
+
+    result = loop._gate_final_analysis_answer("analyze", "Markerless result.")
+
+    assert result == {"action": "continue", "mode": "synthesis"}
+    assert loop._turn_final_audit_revision_used is True
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert "[[evidence:aeNN#amNN]]" in loop._turn_final_audit_instruction
+    assert "record_id#measurement_key" not in loop._turn_final_audit_instruction
+    assert "exact metric_label and value" in loop._turn_final_audit_instruction
+    assert "Do not translate or round" in loop._turn_final_audit_instruction
+    assert "standalone verified-core sentence" in loop._turn_final_audit_instruction
+    assert "required_verified_core_copy=" in loop._turn_final_audit_instruction
+    assert "Begin the revised answer by copying only its value verbatim" in (
+        loop._turn_final_audit_instruction
+    )
+
+
 @pytest.mark.parametrize(
     ("reason_code", "expected_action"),
     [
         ("measurement_marker_invalid", "continue"),
         ("measurement_not_found", "fallback"),
-        ("measurement_metric_mismatch", "fallback"),
+        ("measurement_metric_mismatch", "continue"),
         ("measurement_claim_key_mismatch", "fallback"),
         ("measurement_scope_mismatch", "fallback"),
         ("measurement_dataset_version_mismatch", "fallback"),
-        ("measurement_ambiguous", "fallback"),
+        ("measurement_ambiguous", "continue"),
     ],
 )
 def test_measurement_bookkeeping_never_requests_analysis_retry(
@@ -227,6 +406,9 @@ def test_measurement_bookkeeping_never_requests_analysis_retry(
     expected_action,
 ):
     loop = _analysis_loop()
+    loop._turn_synthesis_evidence_aliases = (
+        ("ae01", "am01", "ev_1", "m_1"),
+    )
     _patch_runtime_audit(
         monkeypatch,
         _audit("blocked", reason_codes=[reason_code]),
@@ -238,6 +420,41 @@ def test_measurement_bookkeeping_never_requests_analysis_retry(
     assert result.get("mode") != "analysis"
     assert loop._turn_final_audit_analysis_retry_used is False
     assert 'mode="analysis"' not in loop._turn_final_audit_instruction
+
+
+def test_live_provider_copy_failures_get_one_synthesis_revision(monkeypatch):
+    loop = _analysis_loop()
+    loop._turn_synthesis_evidence_aliases = (
+        ("ae01", "am01", "ev_1", "m_1"),
+    )
+    _patch_runtime_audit(
+        monkeypatch,
+        _audit(
+            "blocked",
+            reason_codes=[
+                "evidence_check_failed",
+                "measurement_ambiguous",
+                "measurement_metric_mismatch",
+                "missing_evidence_identity",
+                "numeric_mismatch",
+                "unit_mismatch",
+            ],
+        ),
+    )
+
+    first = loop._gate_final_analysis_answer("analyze", "Imprecise result.")
+
+    assert first == {"action": "continue", "mode": "synthesis"}
+    assert loop._turn_final_audit_revision_used is True
+    assert loop._turn_final_audit_analysis_retry_used is False
+    assert "required_verified_core_copy=" in loop._turn_final_audit_instruction
+    assert 'mode="analysis"' not in loop._turn_final_audit_instruction
+
+    loop.messages.append({"role": "assistant", "content": "Still imprecise."})
+    second = loop._gate_final_analysis_answer("analyze", "Still imprecise.")
+
+    assert second["action"] == "fallback"
+    assert loop._turn_final_audit_analysis_retry_used is False
 
 
 def test_measurement_contradiction_suppresses_mixed_generic_analysis_retry(
@@ -274,6 +491,20 @@ def test_downgraded_measurement_bookkeeping_suppresses_failed_claim_retry(
         "id": "audit_two_checks",
         "status": "blocked",
         "public_text": "Measured result. Unsupported result.",
+        "claims": [
+            {
+                "id": "claim_measurement",
+                "text": "Measured result.",
+                "claim_type": "comparison",
+                "material": True,
+            },
+            {
+                "id": "claim_unsupported",
+                "text": "Unsupported result.",
+                "claim_type": "comparison",
+                "material": True,
+            },
+        ],
         "claim_checks": [
             {
                 "claim_id": "claim_measurement",
@@ -458,6 +689,72 @@ def test_streaming_analysis_buffers_raw_deltas_until_audit_passes(monkeypatch):
 
     assert text == "AUDITED PUBLIC"
     assert "UNAUDITED RAW" not in text
+
+
+def test_streaming_length_truncation_gets_one_complete_revision_before_audit(monkeypatch):
+    class Client:
+        max_tokens = 8_000
+
+        def __init__(self):
+            self.round = 0
+            self.system_prompts = []
+
+        def stream_chat_structured(self, **kwargs):
+            self.round += 1
+            self.system_prompts.append(kwargs.get("system", ""))
+            if self.round == 1:
+                yield StreamTextDelta("TRUNCATED DRAFT")
+                yield StreamComplete(Response(
+                    text="TRUNCATED DRAFT",
+                    finish_reason="length",
+                ))
+                return
+            complete = "发现：收入存在分群差异。\n建议：验证定价策略。\n局限：仅为描述性分析。"
+            yield StreamTextDelta(complete)
+            yield StreamComplete(Response(text=complete, finish_reason="stop"))
+
+    client = Client()
+    loop = AgentLoop(client=client, session_id="publish_gate_truncation")
+    loop._get_system_prompt = lambda: getattr(loop, "_turn_final_audit_instruction", "")
+    loop._prepare_analysis_turn = lambda _user_input: setattr(
+        loop,
+        "_last_turn_intent",
+        _intent("comprehensive_report"),
+    ) or []
+    loop._maybe_auto_suspend_for_required_question = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._maybe_inject_synthesis_policy = lambda _user_input: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    loop.context.analysis_state = _state()
+    loop.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+        token_budget=40_000,
+        synthesis_reserve_tokens=8_000,
+        audit_reserve_tokens=4_000,
+        revision_reserve_tokens=8_000,
+    ))
+    audited = []
+
+    def publish(_user_input, text, **_kwargs):
+        audited.append(text)
+        loop._turn_final_audit_instruction = ""
+        return {"action": "publish", "text": "AUDITED COMPLETE"}
+
+    monkeypatch.setattr(loop, "_gate_final_analysis_answer", publish)
+
+    events = list(loop.stream_turn("analyze comprehensively"))
+    text = "".join(
+        event.get("text", "")
+        for event in events
+        if event["type"] == "text_delta"
+    )
+
+    assert client.round == 2
+    assert "provider_output_truncated" in client.system_prompts[-1]
+    assert audited == ["发现：收入存在分群差异。\n建议：验证定价策略。\n局限：仅为描述性分析。"]
+    assert text == "AUDITED COMPLETE"
+    assert "TRUNCATED DRAFT" not in text
 
 
 def test_streaming_result_followup_hides_tool_call_claims_until_terminal_audit(monkeypatch):

@@ -2854,6 +2854,33 @@ def _projected_measurements_from_output(
 
     base_limitation = ["Server-projected structured computation; no model-authored interpretation."]
     measurements: list[dict[str, Any]] = []
+
+    def append_measurement(
+        *,
+        declared_field: str,
+        value: Any,
+        item: dict[str, Any] | None,
+        unit: str = "value",
+    ) -> None:
+        measurement = _claim_neutral_measurement(
+            metric=declared_field,
+            value=float(value),
+            method_label=method_label,
+            limitation=base_limitation,
+            unit=unit,
+        )
+        _attach_projected_measurement_identity(
+            measurement,
+            declared_field=declared_field,
+            item=item,
+            computation_ref=computation_ref,
+            binding=binding,
+            plan=plan,
+            plan_id=plan_id,
+            allowed_claim_class=allowed_claim_class,
+        )
+        measurements.append(measurement)
+
     for field in _capability_evidence_fields(capability):
         head = field.split(".", 1)[0]
         tail = field.split(".", 1)[1] if "." in field else ""
@@ -2866,43 +2893,48 @@ def _projected_measurements_from_output(
                     value = _resolve_dotted_evidence_field(item, tail)
                     if not _finite_number(value):
                         continue
-                    measurement = _claim_neutral_measurement(
-                        metric=field,
-                        value=float(value),
-                        method_label=method_label,
-                        limitation=base_limitation,
-                    )
-                    _attach_projected_measurement_identity(
-                        measurement,
+                    append_measurement(
                         declared_field=field,
+                        value=value,
                         item=item,
-                        computation_ref=computation_ref,
-                        binding=binding,
-                        plan=plan,
-                        plan_id=plan_id,
-                        allowed_claim_class=allowed_claim_class,
                     )
-                    measurements.append(measurement)
+                continue
+        elif isinstance(output_data, dict):
+            container = output_data.get(head)
+            structured_items = (
+                [item for item in container if isinstance(item, dict)]
+                if isinstance(container, list)
+                else [container] if isinstance(container, dict) else []
+            )
+            for item in structured_items:
+                identity_item = item
+                if not any(_text(item.get(key)) for key in _METRIC_CONTEXT_FIELDS):
+                    identity_item = {"metric": head, **item}
+                for leaf, nested_value in item.items():
+                    if not _finite_number(nested_value):
+                        continue
+                    leaf_name = _text(leaf)
+                    append_measurement(
+                        declared_field=f"{field}.{leaf_name}",
+                        value=nested_value,
+                        item=identity_item,
+                        unit=(
+                            "percent"
+                            if leaf_name.casefold() in {"percent", "percentage", "pct"}
+                            else "count"
+                            if leaf_name.casefold() in {"count", "rows", "columns"}
+                            else "value"
+                        ),
+                    )
+            if structured_items:
                 continue
         value = _resolve_dotted_evidence_field(output_data, field)
         if _finite_number(value):
-            measurement = _claim_neutral_measurement(
-                metric=field,
-                value=float(value),
-                method_label=method_label,
-                limitation=base_limitation,
-            )
-            _attach_projected_measurement_identity(
-                measurement,
+            append_measurement(
                 declared_field=field,
+                value=value,
                 item=None,
-                computation_ref=computation_ref,
-                binding=binding,
-                plan=plan,
-                plan_id=plan_id,
-                allowed_claim_class=allowed_claim_class,
             )
-            measurements.append(measurement)
     if not measurements:
         measurements.append(_claim_neutral_measurement(
             metric="structured_computation",
@@ -2919,12 +2951,13 @@ def _claim_neutral_measurement(
     value: float,
     method_label: str,
     limitation: list[str],
+    unit: str = "value",
 ) -> dict[str, Any]:
     return {
         "metric": metric,
         "definition": "Server-projected structured computation field.",
         "value": value,
-        "unit": "value",
+        "unit": unit,
         "direction": "",
         "grain": "structured_field",
         "population_scope": "as computed by tool",
@@ -3557,6 +3590,159 @@ def _format_unbound_measurement_for_catalog(measurement: dict[str, Any]) -> str:
     return f"{metric}={rendered}" if metric else rendered
 
 
+@dataclass(frozen=True)
+class _EvidenceCatalogCandidate:
+    record_id: str
+    reference: tuple[str, str] | None
+    parts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BoundedEvidenceAliasCatalog:
+    text: str
+    aliases: tuple[tuple[str, str, str, str], ...] = ()
+
+
+def _evidence_catalog_candidates(
+    evidence_records: Sequence[dict[str, Any]],
+) -> list[_EvidenceCatalogCandidate]:
+    records = (
+        evidence_records
+        if isinstance(evidence_records, list)
+        else list(evidence_records or [])
+    )
+
+    def sort_key(record: dict[str, Any]) -> tuple[Any, str]:
+        order = record.get("step_order")
+        if isinstance(order, bool) or not isinstance(order, (int, float)):
+            order = 0
+        return (order, _text(record.get("id")))
+
+    candidates: list[_EvidenceCatalogCandidate] = []
+    seen_references: set[tuple[str, str]] = set()
+    for record in sorted(records, key=sort_key):
+        if not isinstance(record, dict):
+            continue
+        claim_class = (
+            _text(record.get("allowed_claim_class"))
+            or _text(record.get("claim_class"))
+            or _text(record.get("claim_type"))
+        )
+        dataset_versions = record.get("dataset_versions")
+        if isinstance(dataset_versions, list):
+            version_text = ",".join(
+                _text(item) for item in dataset_versions if _text(item)
+            )
+        elif isinstance(dataset_versions, str):
+            version_text = _text(dataset_versions)
+        else:
+            version_text = _text(record.get("dataset_id"))
+        limitations = record.get("limitations")
+        if isinstance(limitations, list):
+            limitation_text = "; ".join(
+                _text(item) for item in limitations if _text(item)
+            )
+        else:
+            limitation_text = _text(limitations)
+        record_id = _text(record.get("id"))
+        common_parts: list[str] = []
+        if claim_class:
+            common_parts.append(f"claim_class={claim_class}")
+        if version_text:
+            common_parts.append(f"dataset_versions={version_text}")
+        if _text(record.get("verification_level")):
+            common_parts.append(
+                f"verification_level={_text(record.get('verification_level'))}"
+            )
+        if limitation_text:
+            common_parts.append(f"limitations={limitation_text}")
+
+        measurements = record.get("measurements")
+        if not isinstance(measurements, list) or not measurements:
+            candidates.append(_EvidenceCatalogCandidate(
+                record_id=record_id,
+                reference=None,
+                parts=tuple([
+                    *common_parts,
+                    f"claim_key={_text(record.get('claim_key'))}",
+                ]),
+            ))
+            continue
+
+        emitted_for_record = False
+        for measurement in measurements:
+            if not isinstance(measurement, dict):
+                continue
+            identity = measurement.get("identity")
+            try:
+                validation = validate_measurement_identity(identity)
+            except Exception:
+                validation = None
+            if record_id and validation is not None and validation.ok:
+                validated_identity = validation.record
+                measurement_key = _text(validated_identity.get("measurement_key"))
+                reference: tuple[str, str] | None = (record_id, measurement_key)
+                if reference in seen_references:
+                    continue
+                seen_references.add(reference)
+                parts = [
+                    *common_parts,
+                    f"measurement_key={measurement_key}",
+                    f"metric_key={_text(validated_identity.get('metric_key'))}",
+                    f"metric_label={_text(validated_identity.get('metric_label'))}",
+                    f"claim_key={_text(validated_identity.get('claim_key'))}",
+                    f"value={_format_measurement_value(measurement)}",
+                ]
+            else:
+                reference = None
+                parts = [
+                    *common_parts,
+                    f"claim_key={_text(record.get('claim_key'))}",
+                    "unbound_measurement="
+                    f"{_format_unbound_measurement_for_catalog(measurement)}",
+                ]
+            candidates.append(_EvidenceCatalogCandidate(
+                record_id=record_id,
+                reference=reference,
+                parts=tuple(parts),
+            ))
+            emitted_for_record = True
+        if not emitted_for_record:
+            candidates.append(_EvidenceCatalogCandidate(
+                record_id=record_id,
+                reference=None,
+                parts=tuple([
+                    *common_parts,
+                    f"claim_key={_text(record.get('claim_key'))}",
+                ]),
+            ))
+    return candidates
+
+
+def _evidence_catalog_header(candidate_count: int) -> str:
+    return (
+        f"可用证据测量：{candidate_count} 条。请基于现有计算诊断说明局限，"
+        "不要重新运行工具来制造证据。"
+    )
+
+
+def _bounded_catalog_text(lines: Sequence[str], *, max_chars: int) -> str:
+    limit = max(0, int(max_chars))
+    if not lines:
+        return ""
+    header = lines[0]
+    if len(header) > limit:
+        return header[:limit]
+    emitted = [header]
+    used_chars = len(header)
+    for line in lines[1:]:
+        if used_chars + 1 + len(line) > limit:
+            break
+        emitted.append(line)
+        used_chars += 1 + len(line)
+    return "\n".join(emitted)
+
+
 def build_bounded_evidence_catalog(
     evidence_records: Sequence[dict[str, Any]],
     *,
@@ -3574,119 +3760,141 @@ def build_bounded_evidence_catalog(
     (and never triggers a tool ritual to manufacture evidence).
     """
 
-    if not isinstance(evidence_records, list):
-        evidence_records = list(evidence_records or [])
-
-    def _sort_key(record: dict[str, Any]) -> tuple[Any, str]:
-        order = record.get("step_order")
-        if isinstance(order, bool) or not isinstance(order, (int, float)):
-            order = 0
-        return (order, _text(record.get("id")))
-
-    def _format_line(
-        record: dict[str, Any],
-    ) -> list[tuple[tuple[str, str] | None, str]]:
-        claim_class = (
-            _text(record.get("allowed_claim_class"))
-            or _text(record.get("claim_class"))
-            or _text(record.get("claim_type"))
-        )
-        dataset_versions = record.get("dataset_versions")
-        if isinstance(dataset_versions, list):
-            version_text = ",".join(
-                _text(item) for item in dataset_versions if _text(item)
-            )
-        elif isinstance(record.get("dataset_versions"), str):
-            version_text = _text(record.get("dataset_versions"))
-        else:
-            version_text = _text(record.get("dataset_id"))
-        limitations = record.get("limitations")
-        if isinstance(limitations, list):
-            limitation_text = "; ".join(_text(item) for item in limitations if _text(item))
-        else:
-            limitation_text = _text(limitations)
-        record_id = _text(record.get("id"))
-        common_parts = [f"id={record_id}"]
-        if claim_class:
-            common_parts.append(f"claim_class={claim_class}")
-        if version_text:
-            common_parts.append(f"dataset_versions={version_text}")
-        if _text(record.get("verification_level")):
-            common_parts.append(
-                f"verification_level={_text(record.get('verification_level'))}"
-            )
-        if limitation_text:
-            common_parts.append(f"limitations={limitation_text}")
-
-        measurements = record.get("measurements")
-        if not isinstance(measurements, list) or not measurements:
-            return [(None, "- " + " | ".join([
-                *common_parts,
-                f"claim_key={_text(record.get('claim_key'))}",
-            ]))]
-
-        catalog_lines: list[tuple[tuple[str, str] | None, str]] = []
-        for measurement in measurements:
-            if not isinstance(measurement, dict):
-                continue
-            identity = measurement.get("identity")
-            try:
-                validation = validate_measurement_identity(identity)
-            except Exception:
-                validation = None
-            if record_id and validation is not None and validation.ok:
-                validated_identity = validation.record
-                measurement_key = _text(validated_identity.get("measurement_key"))
-                parts = [
-                    *common_parts,
-                    f"measurement_key={measurement_key}",
-                    f"metric_key={_text(validated_identity.get('metric_key'))}",
-                    f"metric_label={_text(validated_identity.get('metric_label'))}",
-                    f"claim_key={_text(validated_identity.get('claim_key'))}",
-                    f"value={_format_measurement_value(measurement)}",
-                ]
-                reference: tuple[str, str] | None = (record_id, measurement_key)
-            else:
-                parts = [
-                    *common_parts,
-                    f"claim_key={_text(record.get('claim_key'))}",
-                    "unbound_measurement="
-                    f"{_format_unbound_measurement_for_catalog(measurement)}",
-                ]
-                reference = None
-            catalog_lines.append((reference, "- " + " | ".join(parts)))
-        return catalog_lines or [(None, "- " + " | ".join([
-            *common_parts,
-            f"claim_key={_text(record.get('claim_key'))}",
-        ]))]
-
-    sorted_records = sorted(evidence_records, key=_sort_key)
-    candidates: list[str] = []
-    seen_references: set[tuple[str, str]] = set()
-    for record in sorted_records:
-        if not isinstance(record, dict):
-            continue
-        for reference, line in _format_line(record):
-            if reference is not None:
-                if reference in seen_references:
-                    continue
-                seen_references.add(reference)
-            candidates.append(line)
-
-    header = (
-        f"可用证据测量：{len(candidates)} 条。请基于现有计算诊断说明局限，"
-        "不要重新运行工具来制造证据。"
-    )
-    limit = max(0, int(max_chars))
-    if len(header) > limit:
-        return header[:limit]
-
-    lines: list[str] = [header]
-    used_chars = len(header)
+    candidates = _evidence_catalog_candidates(evidence_records)
     max_entries = max(0, int(max_records))
-    for line in candidates[:max_entries]:
+    lines = [_evidence_catalog_header(len(candidates))]
+    lines.extend(
+        "- " + " | ".join([f"id={candidate.record_id}", *candidate.parts])
+        for candidate in candidates[:max_entries]
+    )
+    return _bounded_catalog_text(lines, max_chars=max_chars)
+
+
+def build_bounded_evidence_alias_catalog(
+    evidence_records: Sequence[dict[str, Any]],
+    *,
+    max_records: int = 12,
+    max_chars: int = 6000,
+) -> BoundedEvidenceAliasCatalog:
+    """Build ready-to-copy, turn-local aliases for emitted measurements."""
+
+    candidates = _evidence_catalog_candidates(evidence_records)
+    max_entries = max(0, int(max_records))
+    limit = max(0, int(max_chars))
+    header = _evidence_catalog_header(len(candidates))
+    if len(header) > limit:
+        return BoundedEvidenceAliasCatalog(text=header[:limit])
+
+    lines = [header]
+    used_chars = len(header)
+    aliases: list[tuple[str, str, str, str]] = []
+    record_aliases: dict[str, str] = {}
+    emitted_measurements: dict[str, int] = {}
+    # This synthesis catalog exists primarily to expose exact, citable
+    # measurement identities. Keep deterministic source order within each
+    # tier, but do not let legacy/unbound diagnostics consume the entry budget
+    # before current bound measurements receive aliases.
+    bound_groups: dict[str, list[_EvidenceCatalogCandidate]] = {}
+    unbound_candidates: list[_EvidenceCatalogCandidate] = []
+    for candidate in candidates:
+        if candidate.reference is None:
+            unbound_candidates.append(candidate)
+            continue
+        bound_groups.setdefault(candidate.record_id, []).append(candidate)
+    ordered_candidates: list[_EvidenceCatalogCandidate] = []
+    measurement_index = 0
+    while True:
+        emitted = False
+        for group in bound_groups.values():
+            if measurement_index < len(group):
+                ordered_candidates.append(group[measurement_index])
+                emitted = True
+        if not emitted:
+            break
+        measurement_index += 1
+    ordered_candidates.extend(unbound_candidates)
+    for candidate in ordered_candidates[:max_entries]:
+        measurement_index = emitted_measurements.get(candidate.record_id, 0) + 1
+        parts = [
+            part
+            for part in candidate.parts
+            if not part.startswith("measurement_key=")
+        ]
+        pending_alias: tuple[str, str, str, str] | None = None
+        if candidate.reference is not None:
+            evidence_alias = record_aliases.get(candidate.record_id)
+            if evidence_alias is None:
+                evidence_alias = f"ae{len(record_aliases) + 1:02d}"
+            measurement_alias = f"am{measurement_index:02d}"
+            marker = f"[[evidence:{evidence_alias}#{measurement_alias}]]"
+            parts.insert(
+                0,
+                f"marker={marker}",
+            )
+            if not aliases:
+                metric_label = next(
+                    (
+                        part.removeprefix("metric_label=")
+                        for part in candidate.parts
+                        if part.startswith("metric_label=")
+                    ),
+                    "",
+                )
+                value = next(
+                    (
+                        part.removeprefix("value=")
+                        for part in candidate.parts
+                        if part.startswith("value=")
+                    ),
+                    "",
+                )
+                if metric_label and value:
+                    parts.insert(
+                        1,
+                        "required_verified_core_copy=已验证核心："
+                        f"{metric_label} = {value} {marker}。",
+                    )
+            pending_alias = (
+                evidence_alias,
+                measurement_alias,
+                candidate.reference[0],
+                candidate.reference[1],
+            )
+        line = "- " + " | ".join(parts)
         if used_chars + 1 + len(line) > limit:
             break
         lines.append(line)
         used_chars += 1 + len(line)
-    return "\n".join(lines)
+        emitted_measurements[candidate.record_id] = measurement_index
+        if pending_alias is not None:
+            record_aliases.setdefault(candidate.record_id, pending_alias[0])
+            aliases.append(pending_alias)
+    return BoundedEvidenceAliasCatalog(
+        text="\n".join(lines),
+        aliases=tuple(aliases),
+    )
+
+
+_EVIDENCE_ALIAS_MARKER = re.compile(
+    r"\[\[evidence:(ae[0-9]{2,})#(am[0-9]{2,})\]\]"
+)
+
+
+def expand_evidence_alias_markers(
+    answer_text: str,
+    aliases: Sequence[tuple[str, str, str, str]],
+) -> str:
+    """Expand only exact aliases emitted in the current synthesis prompt."""
+
+    alias_map = {
+        (alias_evidence, alias_measurement): (evidence_id, measurement_key)
+        for alias_evidence, alias_measurement, evidence_id, measurement_key in aliases
+    }
+
+    def replace(match: re.Match[str]) -> str:
+        target = alias_map.get((match.group(1), match.group(2)))
+        if target is None:
+            return match.group(0)
+        return f"[[evidence:{target[0]}#{target[1]}]]"
+
+    return _EVIDENCE_ALIAS_MARKER.sub(replace, answer_text or "")

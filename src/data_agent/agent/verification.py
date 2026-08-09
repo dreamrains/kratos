@@ -643,6 +643,8 @@ def _unit_family(unit: Any) -> str:
         return "cny"
     if normalized in {"usd", "$"}:
         return "usd"
+    if normalized in {"count", "row", "rows", "行", "条", "人", "次", "件", "个"}:
+        return "count"
     return normalized
 
 
@@ -823,6 +825,7 @@ def _metric_base_identity_issues(
         "estimate",
         "effect",
         "metric",
+        "measurements",
         "pair",
         "pairs",
         "rate",

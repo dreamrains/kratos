@@ -364,35 +364,25 @@ def test_unicode_progress_replay_survives_cp936_and_keeps_browser_unicode(tmp_pa
     assert "⚠️" in result.streamed_text
 
 
-def test_live_replay_without_provider_is_blocked(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        replay_analysis_reliability,
-        "get_config",
-        lambda: SimpleNamespace(api_key=None, model_id="gpt-4o"),
-        raising=False,
-    )
-    summary = run_release_replay(tmp_path, mode="live")
-    assert summary["accepted"] is False
-    assert summary["overall_status"] == "BLOCKED"
-    assert summary["live_provider_status"] == "BLOCKED"
-    assert summary["reason"] == "provider_credentials_unavailable"
-
-
-def test_live_replay_with_provider_is_blocked_until_real_runner_exists(
+def test_live_replay_delegates_to_real_three_run_acceptance(
     monkeypatch,
     tmp_path,
 ):
+    receipt = {
+        "contract_version": "analysis_live_provider_gate.v1",
+        "status": "PASS",
+        "reason_codes": [],
+        "runs": [{"status": "PASS"}] * 3,
+    }
     monkeypatch.setattr(
         replay_analysis_reliability,
-        "get_config",
-        lambda: SimpleNamespace(api_key="configured", model_id="gpt-4o"),
-        raising=False,
+        "run_live_provider_acceptance",
+        lambda output_dir, *, runs: receipt,
     )
-    summary = run_release_replay(tmp_path, mode="live")
-    assert summary["accepted"] is False
-    assert summary["overall_status"] == "BLOCKED"
-    assert summary["live_provider_status"] == "BLOCKED"
-    assert summary["reason"] == "live_provider_runner_not_implemented"
+
+    summary = run_release_replay(tmp_path, mode="live", runs=3)
+
+    assert summary is receipt
 
 
 def test_deterministic_replay_never_uses_global_selection_providers(

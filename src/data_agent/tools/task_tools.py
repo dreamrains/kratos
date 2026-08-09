@@ -219,13 +219,32 @@ def _ensure_llm_plan_for_batch(task_list_data: list, current_plan: dict, active_
 def create_workflow_tasks_from_plan(plan: dict) -> dict:
     from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
-    return project_plan_to_workflow_tasks(
+    result = project_plan_to_workflow_tasks(
         task_manager,
         plan,
         session_id=_session_id(),
         project_name=_project_name(),
         source="analysis_plan",
     )
+    task_ids = [int(task_id) for task_id in result.get("task_ids") or []]
+    tasks = [task_manager.get(task_id) for task_id in task_ids]
+    tasks = [task for task in tasks if isinstance(task, dict)]
+    if tasks and not any(task.get("status") == "in_progress" for task in tasks):
+        first_runnable = next(
+            (
+                task
+                for task in tasks
+                if task.get("status") == "pending"
+                and not (task.get("blockedBy") or [])
+                and task.get("combination_mode") != "synthesis"
+            ),
+            None,
+        )
+        if first_runnable is not None:
+            activated = task_manager.update(first_runnable["id"], status="in_progress")
+            if activated is not None:
+                result["activated_task_id"] = activated["id"]
+    return result
 
 
 def create_workflow_tasks_from_spec(spec: dict) -> dict:
@@ -318,6 +337,29 @@ def task_create(
             return json.dumps({"error": "tasks 必须是有效的 JSON 数组"}, ensure_ascii=False)
         if not isinstance(task_list_data, list):
             return json.dumps({"error": "tasks 必须是 JSON 数组"}, ensure_ascii=False)
+
+        canonical_plan_active = (
+            current_plan.get("review_status") == "executable"
+            and isinstance(current_plan.get("method_plan"), list)
+            and bool(current_plan.get("method_plan"))
+        )
+        incoming_workflow_fields = {
+            "plan_id",
+            "plan_version",
+            "plan_status",
+            "analysis_plan_id",
+            "step_id",
+            "dataset_inputs",
+            "combination_mode",
+        }
+        if canonical_plan_active and not any(
+            isinstance(task_data, dict)
+            and incoming_workflow_fields.intersection(task_data)
+            for task_data in task_list_data
+        ):
+            projected = create_workflow_tasks_from_plan(current_plan)
+            projected["delegated_to_canonical_workflow"] = True
+            return json.dumps(projected, ensure_ascii=False, indent=2)
 
         for index, task_data in enumerate(task_list_data):
             if not isinstance(task_data, dict) or "required_claim_keys" not in task_data:

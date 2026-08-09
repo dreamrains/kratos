@@ -491,6 +491,10 @@ def _validate_chart_spec(
         "data_json": {"description": "JSON 格式数据（funnel 必须用此参数）"},
         "aggregation": {"description": "重复分组的聚合方式", "enum": ["", "sum", "mean", "median", "count"]},
         "scale_mode": {"description": "多指标尺度处理", "enum": ["", "raw", "normalize"]},
+        "purpose": {
+            "description": "图表用途；无证据绑定时使用 exploratory",
+            "enum": ["exploratory", "evidence", "insight"],
+        },
     },
 )
 def create_chart(
@@ -578,6 +582,10 @@ def create_chart(
         if metadata is not None:
             allowed_purposes = {"exploratory", "evidence", "insight"}
             normalized_purpose = (purpose or "exploratory").strip().lower()
+            normalized_purpose = {
+                "analysis": "exploratory",
+                "analytical": "exploratory",
+            }.get(normalized_purpose, normalized_purpose)
             if normalized_purpose not in allowed_purposes:
                 return _chart_error(
                     f"invalid chart purpose: {purpose}",

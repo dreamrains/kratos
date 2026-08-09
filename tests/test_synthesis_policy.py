@@ -129,11 +129,47 @@ def test_synthesis_instruction_requires_exact_internal_evidence_markers():
     instruction = build_synthesis_instruction(policy)
 
     assert policy.allowed_evidence_ids == ("ev_1",)
-    assert "[[evidence:<EvidenceRecord ID>#<measurement_key>]]" in instruction
-    assert "[[evidence:<EvidenceRecord ID>]] markers" not in instruction
-    assert "ev_1" in instruction
-    assert "Do not invent or substitute evidence IDs" in instruction
+    assert "[[evidence:aeNN#amNN]]" in instruction
+    assert "[[evidence:<EvidenceRecord ID>#<measurement_key>]]" not in instruction
+    assert "Do not invent or substitute evidence aliases" in instruction
+    assert "copy the exact metric_label and value" in instruction
+    assert "Do not translate or round" in instruction
+    assert "at least one standalone verified-core sentence" in instruction
+    assert "exactly one catalog measurement" in instruction
+    assert "begin the final answer by copying only the value after" in instruction
+    assert "required_verified_core_copy=" in instruction
     assert "removed before publication" in instruction
+
+
+def test_synthesis_instruction_emits_ready_alias_without_full_identity(tmp_path):
+    from tests.fixtures.measurement_identity import (
+        build_projection_context,
+        project_real_correlation,
+    )
+
+    context = build_projection_context(tmp_path)
+    record = project_real_correlation(context).record
+    state = AnalysisSessionState(session_id=context.session_id)
+    state.analysis_plan = context.plan
+    state.evidence_records = [record]
+
+    policy = _policy(
+        intent=_intent(),
+        state=state,
+        user_input="analyze the revenue and cost relationship",
+    )
+    instruction = build_synthesis_instruction(policy)
+
+    full_key = record["measurements"][0]["identity"]["measurement_key"]
+    assert policy.evidence_aliases[0] == (
+        "ae01",
+        "am01",
+        record["id"],
+        full_key,
+    )
+    assert "[[evidence:ae01#am01]]" in instruction
+    assert record["id"] not in instruction
+    assert full_key not in instruction
 
 
 def test_ltv_followup_gets_standard_cautious_advisory_policy():

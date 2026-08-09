@@ -713,6 +713,19 @@ class TestPhase4Proficiency:
 class TestPhase4ParallelExecution:
     """Phase 4.5: Parallel execution of read-only tools."""
 
+    @pytest.fixture(autouse=True)
+    def _isolated_task_manager(self, monkeypatch, tmp_path):
+        """Keep fixed test session IDs independent of persisted local tasks."""
+
+        import data_agent.session.task_manager as task_manager_module
+        from data_agent.session.task_manager import TaskManager
+
+        monkeypatch.setattr(
+            task_manager_module,
+            "task_manager",
+            TaskManager(tmp_path / "tasks"),
+        )
+
     def test_read_only_set_completeness(self):
         """Verify key tools are correctly classified via auto-derivation."""
         from data_agent.tools.registry import registry, get_read_only_tools

@@ -31,6 +31,9 @@ def test_send_message_passes_current_reactive_turn():
 def test_current_turn_mutations_publish_reactive_array_updates():
     block = _method_block("_handleEvent(type, data, turn, state, sessionId)", "// --- Helpers ---")
     assert "this._renderMessages()" not in block
+    assert "let isCurrentSession = this._ownsSessionState(sessionId, state);" in block
+    migration = block[block.index("case 'turn_start':") : block.index("case 'llm_call_start':")]
+    assert "isCurrentSession = this._ownsSessionState(sessionId, state);" in migration
     expected = "if (isCurrentSession) this.turns = [...state.turns];"
     events = (
         ("analysis_progress", "text_delta"),
@@ -46,27 +49,43 @@ def test_current_turn_mutations_publish_reactive_array_updates():
         assert expected in case, event
 
     text = block[block.index("case 'text_delta':") : block.index("case 'tool_call':")]
-    assert text.index(expected) < text.index("this._scrollToBottom();")
+    assert text.index(expected) < text.index("this._scrollToBottom(")
 
 
 def test_resume_uses_reactive_new_turn():
     block = _method_block("async resumeConfirmation", "_submitConfirmation(turn)")
+    ownership = "const ownsOrigin = () => this._ownsSessionState(sseSessionId, state);"
     publish = "this.turns = [...state.turns];"
     synchronize = "state.turns = this.turns;"
     selected = "const newTurn = this.turns[this.turns.length - 1];"
     process = "await this._processSSE(response, newTurn, state, sseSessionId);"
+    assert ownership in block
     assert block.index(publish) < block.index(synchronize) < block.index(selected) < block.index(process)
+
+
+def test_session_ownership_helper_requires_expected_id_and_originating_state():
+    helper = _method_block("_ownsSessionState(sessionId, state)", "// Save current reactive")
+    assert "this.currentSessionId === sessionId" in helper
+    assert "this._sessionStates[sessionId] === state" in helper
+
+    send = _method_block("async sendMessage()", "// --- Confirmation helpers ---")
+    assert "this._ownsSessionState(this.currentSessionId, state)" in send
 
 
 def test_background_migrated_send_cannot_publish_or_save_active_session_state():
     block = _method_block("async sendMessage()", "// --- Confirmation helpers ---")
     finally_block = block[block.index("} finally {") :]
-    current_origin = "const isOriginCurrent = this._sessionStates[this.currentSessionId] === state;"
-    assert current_origin in finally_block
-    guard = finally_block[finally_block.index(current_origin) :]
-    assert guard.index("if (isOriginCurrent)") < guard.index("this.turns = [...state.turns];")
-    assert guard.index("if (isOriginCurrent)") < guard.index("this._saveCurrentState();")
-    assert guard.index("if (isOriginCurrent)") < guard.index("requestAnimationFrame")
+    ownership = (
+        "const ownsOrigin = () => "
+        "this._ownsSessionState(this.currentSessionId, state);"
+    )
+    assert ownership in block
+    assert "const isOriginCurrent" not in finally_block
+    assert finally_block.index("if (ownsOrigin())") < finally_block.index(
+        "this.turns = [...state.turns];"
+    )
+    assert "ownsSession: ownsOrigin" in finally_block
+    assert "this._queueMermaidRenderIfOwned(ownsOrigin);" in finally_block
 
 
 def test_background_sse_side_effects_are_session_scoped():
@@ -74,18 +93,41 @@ def test_background_sse_side_effects_are_session_scoped():
     llm = event_block[
         event_block.index("case 'llm_call_start':") : event_block.index("case 'analysis_progress':")
     ]
-    assert "if (isCurrentSession) this._startThinkingCycle(turn);" in llm
+    assert "if (isCurrentSession) {" in llm
+    assert "this._startThinkingCycle(turn, sessionId, state);" in llm
 
     process = _method_block("async _processSSE(response, turn, state, sessionId)", "_handleEvent(type, data, turn, state, sessionId)")
-    current_stream = "const isCurrentStreamSession = () => ("
+    current_stream = (
+        "const isCurrentStreamSession = () => "
+        "this._ownsSessionState(effectiveSid, state);"
+    )
     assert current_stream in process
-    for side_effect in ("this.connectionError =", "this._stopThinkingCycle();"):
-        assert process.index("if (isCurrentStreamSession())") < process.index(side_effect)
+    assert process.index("if (isCurrentStreamSession())") < process.index(
+        "this.connectionError ="
+    )
+    assert process.count(
+        "this._stopThinkingCycle(effectiveSid, state, turn);"
+    ) == 2
 
     artifacts = _method_block("async loadSessionArtifacts", "async deleteArtifactFromModal")
     assignment = "this.sessionArtifacts = artifacts;"
-    assert artifacts.index("if (sessionId === this.currentSessionId) {") < artifacts.index(assignment)
+    assert "const ownsTarget = () => this._ownsSessionState(sessionId, state);" in artifacts
+    assert artifacts.index("if (ownsTarget()) {") < artifacts.index(assignment)
     assert "if (isCurrentSession) this.loadSessionArtifacts(sessionId);" in event_block
+
+
+def test_turn_end_trust_and_mermaid_use_exact_origin_ownership():
+    block = _method_block(
+        "_handleEvent(type, data, turn, state, sessionId)",
+        "// --- Helpers ---",
+    )
+    turn_end = block[block.index("case 'turn_end':") : block.index("case 'error':")]
+    assert "this._stopThinkingCycle(sessionId, state, turn);" in turn_end
+    assert "this.loadTrustView(sessionId, state);" in turn_end
+    assert "this._queueMermaidRenderIfOwned(" in turn_end
+
+    trust = _method_block("async loadTrustView", "multifileWorkbench()")
+    assert "this._ownsSessionState(sessionId, state)" in trust
 
 
 def test_reactivity_contract_nodeid_is_collected():

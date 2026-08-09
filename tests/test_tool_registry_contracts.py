@@ -194,8 +194,15 @@ def test_record_analysis_plan_exposes_object_not_opaque_json_string():
     assert schema["properties"]["plan"]["required"] == [
         "goal",
         "method_plan",
-        "visualization_strategy",
     ]
+    step_schema = schema["properties"]["plan"]["properties"]["method_plan"]["items"]
+    assert {
+        "goal",
+        "dataset_inputs",
+        "combination_mode",
+        "expected_output",
+        "evidence_requirements",
+    }.issubset(step_schema["properties"])
     assert "plan" in schema["required"]
     assert "plan_json" not in schema["properties"]
 

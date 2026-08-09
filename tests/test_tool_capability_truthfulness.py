@@ -15,7 +15,11 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from data_agent.tools.eda import correlation_analysis, contribute_decomposition
+from data_agent.tools.eda import (
+    correlation_analysis,
+    contribute_decomposition,
+    distribution_analysis,
+)
 from data_agent.tools.data_understand import quick_profile as _quick_profile  # noqa: F401
 from data_agent.tools.registry import registry, validate_capability_output
 from data_agent.tools.statistics import factor_relationship_analysis
@@ -66,6 +70,29 @@ def test_correlation_returns_structured_insufficient_data_error(workspace):
         payload["pairs"][0].get("p_value") is None
         and payload["pairs"][0].get("correlation") is None
     )
+
+
+def test_distribution_emits_claim_neutral_measurements(workspace):
+    """Removing the structured measurement rows would make descriptive
+    distribution results impossible to cite even though the tool computed
+    them."""
+
+    payload = json.loads(distribution_analysis(
+        "factors",
+        columns="目标值,活跃度",
+    ))
+
+    projected = {
+        (item["column"], item["metric"]): (item["value"], item["unit"])
+        for item in payload["measurements"]
+    }
+    assert projected[("目标值", "count")] == (32, "count")
+    assert projected[("目标值", "mean")][1] == "value"
+    assert projected[("活跃度", "mean")][1] == "value"
+    assert projected[("活跃度", "normality_p_value")][1] == "value"
+
+    capability = registry.capability_for("distribution_analysis")
+    assert validate_capability_output(capability, payload) == []
 
 
 def test_factor_relationship_emits_inferential_diagnostics(workspace):
@@ -138,8 +165,15 @@ def test_decomposition_rejects_invalid_or_over_ceiling_claim_attestation(
 
 @pytest.mark.parametrize(("tool_name", "arguments"), [
     ("quick_profile", {"name": "factors"}),
+    ("detect_data_quality", {"name": "factors"}),
     ("quick_profile", {"name": "factors", "compact": True}),
     ("correlation_analysis", {"name": "factors", "columns": "目标值,活跃度"}),
+    ("distribution_analysis", {"name": "factors", "columns": "目标值,活跃度"}),
+    ("segmentation_analysis", {
+        "name": "factors",
+        "features": "目标值,活跃度",
+        "n_clusters": 3,
+    }),
     ("factor_relationship_analysis", {
         "name": "factors",
         "target_col": "目标值",

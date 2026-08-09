@@ -125,6 +125,10 @@ def _build_safe_globals(preloaded: dict[str, object] | None = None) -> dict:
         "max": max, "min": min, "print": print, "range": range, "round": round,
         "set": set, "sorted": sorted, "str": str, "sum": sum, "tuple": tuple,
         "type": type, "zip": zip, "True": True, "False": False, "None": None,
+        "Exception": Exception, "ImportError": ImportError,
+        "ValueError": ValueError, "TypeError": TypeError, "KeyError": KeyError,
+        "AttributeError": AttributeError, "RuntimeError": RuntimeError,
+        "ZeroDivisionError": ZeroDivisionError,
     }
 
     if preloaded is None:

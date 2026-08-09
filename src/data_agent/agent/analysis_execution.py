@@ -235,8 +235,15 @@ def _dataset_inputs_match(step: dict[str, Any], dataset_names: Sequence[str]) ->
 
 def _claim_key_for(step: dict[str, Any], capability: dict[str, Any] | None) -> str:
     cap_id = _text(capability.get("capability_id")) if capability else ""
+    required_claim_keys = step.get("required_claim_keys")
+    exact_required_claim = (
+        _text(required_claim_keys[0])
+        if isinstance(required_claim_keys, list) and len(required_claim_keys) == 1
+        else ""
+    )
     return (
         _text(step.get("claim_type"))
+        or exact_required_claim
         or cap_id
         or _text(step.get("expected_output"))
         or _text(step.get("step_id"))

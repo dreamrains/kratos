@@ -15,10 +15,15 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import io
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +48,7 @@ from data_agent.agent.evidence_contracts import (  # noqa: E402
     analysis_plan_semantic_digest,
     analysis_step_semantic_digest,
 )
+from data_agent.agent.execution_control import fallback_resolution_tools  # noqa: E402
 from data_agent.config import AgentConfig, get_config  # noqa: E402
 from data_agent.llm.client import Response, ToolCall  # noqa: E402
 from data_agent.session.task_manager import task_manager  # noqa: E402
@@ -53,6 +59,13 @@ from tests.fixtures.analysis_reliability import (  # noqa: E402
     build_factor_relationship_frame,
     factor_relationship_prompt,
 )
+from acceptance.live_provider_gate_contract import (  # noqa: E402
+    LIVE_PROVIDER_GATE_VERSION,
+    build_live_provider_gate_receipt,
+    evaluate_live_provider_run,
+    validate_live_provider_gate_receipt,
+)
+from acceptance.release_source import release_source_digest  # noqa: E402
 
 
 TERMINAL_STATES = {
@@ -64,6 +77,47 @@ TERMINAL_STATES = {
 }
 _REPLAY_CSV_PLACEHOLDER = "__REPLAY_CSV_PATH__"
 _FACTOR_MARKER_TOKEN = "__FACTOR_MEASUREMENT_MARKER__"
+LIVE_PROVIDER_PROMPT = (
+    "请对上传数据进行完整分析：先检查数据质量，再分析收入和成本的总体分布、"
+    "分群差异及二者关系，明确哪些结论只是描述或相关性，并给出行动建议与局限。"
+)
+_LIVE_REQUIREMENT_GROUPS = (
+    "data_quality",
+    "descriptive",
+    "relationship",
+    "limitations",
+)
+_LIVE_DATA_QUALITY_TOOLS = frozenset(
+    {"quick_profile", "detect_data_quality", "assess_readiness"}
+)
+_LIVE_DESCRIPTIVE_TOOLS = frozenset(
+    {
+        "quick_profile",
+        "describe_dataset",
+        "distribution_analysis",
+        "segmentation_analysis",
+        "top_n",
+    }
+)
+_LIVE_RELATIONSHIP_TOOLS = frozenset(
+    {
+        "correlation_analysis",
+        "factor_relationship_analysis",
+        "regression_analysis",
+    }
+)
+_MEASUREMENT_BOOKKEEPING_CODES = frozenset(
+    {
+        "measurement_identity_missing",
+        "measurement_marker_invalid",
+        "measurement_not_found",
+        "measurement_metric_mismatch",
+        "measurement_claim_key_mismatch",
+        "measurement_scope_mismatch",
+        "measurement_dataset_version_mismatch",
+        "measurement_ambiguous",
+    }
+)
 
 # Canonical analysis checkpoint codes attached to substantive tool
 # capabilities. Derived from ``PLAYBOOKS["factor_relationship"].method_plan``;
@@ -1097,6 +1151,704 @@ def run_unicode_replay(root: Path, *, console_encoding: str = "cp936") -> Replay
 
 
 # ---------------------------------------------------------------------------
+# Real-provider release gate
+# ---------------------------------------------------------------------------
+
+
+class ProviderConfigurationUnavailable(RuntimeError):
+    """The configured provider cannot be attempted without user configuration."""
+
+
+class _ObservedLiveClient:
+    """Record provider exceptions that ``AgentLoop`` intentionally contains."""
+
+    def __init__(self):
+        from data_agent.llm.client import LLMClient
+
+        self._client = LLMClient()
+        self.errors: list[BaseException] = []
+
+    def chat(self, *args, **kwargs):
+        try:
+            return self._client.chat(*args, **kwargs)
+        except BaseException as exc:
+            self.errors.append(exc)
+            raise
+
+    def stream_chat_structured(self, *args, **kwargs):
+        try:
+            yield from self._client.stream_chat_structured(*args, **kwargs)
+        except BaseException as exc:
+            self.errors.append(exc)
+            raise
+
+
+def _current_git_commit() -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+
+
+def _write_live_provider_csv(root: Path, run_index: int) -> Path:
+    """Create a fixed, privacy-safe factor dataset with known quality defects."""
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    segments = ("新客", "常客", "高价值")
+    channels = ("网站", "门店", "合作渠道")
+    rows: list[dict[str, Any]] = []
+    for index in range(120):
+        segment = segments[index % len(segments)]
+        channel = channels[(index // 2) % len(channels)]
+        orders = 1 + index % 8
+        segment_effect = {"新客": 40, "常客": 125, "高价值": 260}[segment]
+        channel_effect = {"网站": 25, "门店": 70, "合作渠道": 110}[channel]
+        noise = ((index * 17 + run_index * 11) % 37) - 18
+        cost = 65 + orders * 31 + (index % 5) * 8
+        revenue = round(cost * 1.42 + segment_effect + channel_effect + noise, 2)
+        rows.append(
+            {
+                "customer_id": f"C{index + 1:03d}",
+                "segment": segment,
+                "channel": channel,
+                "orders": orders,
+                "revenue": revenue,
+                "cost": float(cost),
+                "returned": int(index % 13 == 0),
+            }
+        )
+    for missing_index in (11, 47, 83):
+        rows[missing_index]["revenue"] = None
+    for missing_index in (29, 91):
+        rows[missing_index]["cost"] = None
+    rows.extend(copy.deepcopy(rows[index]) for index in range(5))
+    path = root / "live_provider_fixture.csv"
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig")
+    return path
+
+
+@contextmanager
+def _live_run_config(root: Path, session_id: str) -> Iterator[AgentConfig]:
+    """Isolate persistence while preserving the exact configured provider."""
+
+    from data_agent.agent import llm_intent, llm_playbook
+
+    configured = get_config()
+    old_cfg = _config._config
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    old_intent_client = llm_intent._client
+    old_playbook_client = llm_playbook._client
+    isolated = AgentConfig(
+        MODEL_ID=configured.model_id,
+        API_BASE=configured.api_base,
+        API_KEY=configured.api_key,
+        MAX_TOKENS=configured.max_tokens,
+        QUALITY_JUDGE_MODEL=configured.quality_judge_model,
+        PROJECT_DIR=Path(root) / "workspace",
+        SESSIONS_DIR=Path(root) / "sessions",
+        SIGNIFICANCE_LEVEL=configured.significance_level,
+        TOKEN_THRESHOLD=configured.token_threshold,
+        LOG_LEVEL=configured.log_level,
+        MCP_ENABLED=False,
+        SKILL_AUTO_DISCOVER=False,
+        ASSURANCE_PUBLICATION_MODE=configured.assurance_publication_mode,
+        MEASUREMENT_EVIDENCE_BINDING_MODE=(
+            configured.measurement_evidence_binding_mode
+        ),
+        AUTO_EVIDENCE_PROJECTION_ENABLED=(
+            configured.auto_evidence_projection_enabled
+        ),
+        ANALYSIS_LIVE_PROGRESS_ENABLED=configured.analysis_live_progress_enabled,
+    )
+    _config._config = isolated
+    task_manager._dir = Path(root) / "tasks"
+    task_manager._next_id_val = 0
+    # These clients cache provider settings. Rebuild them inside the isolated
+    # configuration rather than reusing a client from a previous test/session.
+    llm_intent._client = None
+    llm_playbook._client = None
+    try:
+        yield isolated
+    finally:
+        _config._config = old_cfg
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+        llm_intent._client = old_intent_client
+        llm_playbook._client = old_playbook_client
+
+
+def _provider_error_category(exc: BaseException) -> str:
+    name = type(exc).__name__.casefold()
+    message = str(exc).casefold()
+    if (
+        "authentication" in name
+        or "permission" in name
+        or any(
+            token in message
+            for token in (
+                "api key",
+                "api_key",
+                "authentication",
+                "credential",
+                "missing key",
+                "key is required",
+            )
+        )
+    ):
+        return "provider_credentials_unavailable"
+    if "ratelimit" in name or "rate limit" in message or "429" in message:
+        return "provider_rate_limit"
+    if "timeout" in name or "timed out" in message:
+        return "provider_timeout"
+    if any(token in name for token in ("connection", "serviceunavailable")):
+        return "provider_network_error"
+    if any(token in message for token in ("connection refused", "connection error")):
+        return "provider_network_error"
+    return "provider_response_error"
+
+
+def _latest_final_audit(state: Any) -> dict[str, Any]:
+    for report in reversed(getattr(state, "verification_reports", []) or []):
+        if (
+            isinstance(report, dict)
+            and report.get("contract_version") == "final_answer_audit.v1"
+        ):
+            if isinstance(report.get("claims"), list) and isinstance(
+                report.get("claim_checks"), list
+            ):
+                return report
+            from data_agent.agent.trust_workflow_runtime import (
+                hydrate_final_answer_audit_ref,
+            )
+
+            hydrated = hydrate_final_answer_audit_ref(report)
+            if isinstance(hydrated, dict):
+                return hydrated
+            return report
+    return {}
+
+
+def _latest_publication_actions(state: Any) -> dict[str, str]:
+    for diagnostic in reversed(getattr(state, "turn_diagnostics", []) or []):
+        if (
+            isinstance(diagnostic, dict)
+            and diagnostic.get("event") == "claim_tier_publication"
+        ):
+            actions = diagnostic.get("actions")
+            if isinstance(actions, dict):
+                return {
+                    str(key): str(value)
+                    for key, value in actions.items()
+                    if str(key) and str(value)
+                }
+    return {}
+
+
+def _material_publication_actions(
+    audit: Any,
+    publication_actions: Any,
+) -> dict[str, str]:
+    """Retain only actions for claims the audit declares material."""
+
+    claims = audit.get("claims") if isinstance(audit, dict) else None
+    actions = publication_actions if isinstance(publication_actions, dict) else {}
+    material_claim_ids = {
+        str(claim.get("id") or "")
+        for claim in claims or []
+        if isinstance(claim, dict)
+        and claim.get("material") is True
+        and str(claim.get("id") or "")
+    }
+    return {
+        str(claim_id): str(action)
+        for claim_id, action in actions.items()
+        if str(claim_id) in material_claim_ids
+    }
+
+
+def _verified_material_claim_count(
+    audit: Any,
+    publication_actions: Any,
+) -> int:
+    """Count only audit-declared material claims published as verified."""
+
+    return sum(
+        action == "verified"
+        for action in _material_publication_actions(
+            audit,
+            publication_actions,
+        ).values()
+    )
+
+
+def _choose_live_confirmation_answer(event: dict[str, Any]) -> Any:
+    options = event.get("options") if isinstance(event.get("options"), list) else []
+    normalized: list[tuple[str, str]] = []
+    for option in options:
+        if isinstance(option, dict):
+            value = str(option.get("value") or option.get("label") or "").strip()
+            label = str(option.get("label") or value).strip()
+        else:
+            value = label = str(option or "").strip()
+        if value:
+            normalized.append((value, label))
+    preferred = ("approve", "continue", "confirm", "继续", "确认", "批准", "同意")
+    chosen = next(
+        (
+            value
+            for value, label in normalized
+            if any(token in f"{value} {label}".casefold() for token in preferred)
+        ),
+        normalized[0][0] if normalized else "继续",
+    )
+    return [chosen] if event.get("multi_select") else chosen
+
+
+def _strip_publication_markers(text: str) -> str:
+    from data_agent.agent.answer_quality import strip_internal_evidence_markers
+
+    return strip_internal_evidence_markers(text or "").strip()
+
+
+def _session_tool_outcomes(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reconstruct all tool outcomes across initial and resumed stream segments."""
+
+    tool_calls: dict[str, tuple[str, str]] = {}
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            function = function if isinstance(function, dict) else {}
+            call_id = str(tool_call.get("id") or "")
+            if call_id:
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    try:
+                        canonical_arguments = json.loads(arguments)
+                    except (TypeError, json.JSONDecodeError):
+                        canonical_arguments = {"raw": arguments}
+                elif isinstance(arguments, dict):
+                    canonical_arguments = arguments
+                elif arguments is None:
+                    canonical_arguments = {}
+                else:
+                    canonical_arguments = {"raw": str(arguments or "")}
+                raw = json.dumps(
+                    canonical_arguments,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+                arguments_hash = hashlib.sha1(
+                    raw.encode("utf-8")
+                ).hexdigest()[:12]
+                tool_calls[call_id] = (
+                    str(function.get("name") or ""),
+                    arguments_hash,
+                )
+
+    outcomes: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        content = str(message.get("content") or "")
+        stripped = content.lstrip()
+        payload_text = stripped.split(" [detail:", 1)[0]
+        try:
+            payload = json.loads(payload_text)
+        except (TypeError, json.JSONDecodeError):
+            payload = None
+        is_error = (
+            isinstance(payload, dict) and "error" in payload
+        ) or stripped.casefold().startswith("error")
+        error_type = (
+            str(payload.get("error_type") or "tool_error")
+            if isinstance(payload, dict) and is_error
+            else ""
+        )
+        tool_name, arguments_hash = tool_calls.get(
+            str(message.get("tool_call_id") or ""),
+            ("", ""),
+        )
+        outcomes.append(
+            {
+                "tool_name": tool_name,
+                "success": not is_error,
+                "error_category": error_type,
+                "arguments_hash": arguments_hash,
+                "fallback_resolution_blocked": is_error and (
+                    "Fallback Python result must be resolved into evidence, "
+                    "limitations, task state, or user confirmation before more "
+                    "exploration."
+                ) in content,
+            }
+        )
+    return outcomes
+
+
+def _repeated_failure_max(outcomes: list[dict[str, Any]]) -> int:
+    failures: dict[tuple[str, str, str], int] = {}
+    for outcome in outcomes:
+        if not isinstance(outcome, dict) or outcome.get("success"):
+            continue
+        key = (
+            str(outcome.get("tool_name") or ""),
+            str(outcome.get("error_category") or "tool_error"),
+            str(outcome.get("arguments_hash") or ""),
+        )
+        failures[key] = failures.get(key, 0) + 1
+    return max(failures.values(), default=0)
+
+
+def _unresolved_fallback_blocked_calls(outcomes: list[dict[str, Any]]) -> int:
+    """Count only fallback blocks that were not later resolved successfully.
+
+    A blocked exploratory call is a recoverable control event, not itself a
+    cascade.  The execution controller keeps the fallback pending until one of
+    its canonical resolution actions succeeds; mirror that state transition so
+    Gate F does not report a recovered block as an unresolved failure.
+    """
+
+    unresolved = 0
+    resolution_tools = fallback_resolution_tools()
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        if outcome.get("fallback_resolution_blocked"):
+            unresolved += 1
+            continue
+        if (
+            outcome.get("success")
+            and str(outcome.get("tool_name") or "") in resolution_tools
+        ):
+            unresolved = 0
+    return unresolved
+
+
+def _run_one_live_provider_analysis(root: Path, run_index: int) -> dict[str, Any]:
+    """Run one fresh real-provider session and return bounded observables only."""
+
+    root = Path(root)
+    session_id = f"live_provider_{run_index}_{uuid.uuid4().hex[:8]}"
+    csv_path = _write_live_provider_csv(root, run_index)
+    client: _ObservedLiveClient | None = None
+    try:
+        with _live_run_config(root, session_id) as cfg:
+            inbox_path = cfg.inbox_dir / csv_path.name
+            shutil.copyfile(csv_path, inbox_path)
+            client = _ObservedLiveClient()
+            loop = AgentLoop(
+                client=client,
+                session_id=session_id,
+                project_name=f"live_provider_gate_{run_index}",
+            )
+            prompt = f"{LIVE_PROVIDER_PROMPT}\n分析文件: {csv_path.name}"
+            events: list[dict[str, Any]] = []
+            generator = loop.stream_turn(prompt)
+            for resume_index in range(4):
+                batch = [event for event in generator if isinstance(event, dict)]
+                events.extend(batch)
+                suspended = next(
+                    (event for event in reversed(batch) if event.get("type") == "suspended"),
+                    None,
+                )
+                if suspended is None:
+                    break
+                answer = _choose_live_confirmation_answer(suspended)
+                generator = loop.resume_turn_streaming(
+                    str(
+                        suspended.get("confirmation_id")
+                        or suspended.get("suspension_id")
+                        or ""
+                    ),
+                    answer,
+                    expected_version=int(suspended.get("version") or 1),
+                    idempotency_key=(
+                        f"live-gate-{run_index}-{resume_index}-{uuid.uuid4().hex}"
+                    ),
+                )
+            loop._auto_save()
+
+            provider_error = client.errors[-1] if client.errors else None
+            text_indexes = [
+                index
+                for index, event in enumerate(events)
+                if event.get("type") == "text_delta" and str(event.get("text") or "")
+            ]
+            audit_progress_indexes = [
+                index
+                for index, event in enumerate(events)
+                if event.get("type") == "analysis_progress"
+                and event.get("code") == "audit_started"
+            ]
+            publication_start = audit_progress_indexes[-1] if audit_progress_indexes else -1
+            final_streamed = "".join(
+                str(event.get("text") or "")
+                for index, event in enumerate(events)
+                if index > publication_start and event.get("type") == "text_delta"
+            )
+            if not final_streamed and text_indexes:
+                final_streamed = "".join(
+                    str(events[index].get("text") or "") for index in text_indexes
+                )
+            persisted_memory = _last_assistant_text(loop.messages)
+            from data_agent.session.history import load_session
+
+            persisted_session = load_session(session_id) or {}
+            persisted_disk = _last_assistant_text(
+                list(persisted_session.get("messages") or [])
+            )
+            streamed_public = _strip_publication_markers(final_streamed)
+            persisted_public = _strip_publication_markers(
+                persisted_disk or persisted_memory
+            )
+
+            if provider_error is not None and not persisted_public:
+                category = _provider_error_category(provider_error)
+                if category == "provider_credentials_unavailable":
+                    raise ProviderConfigurationUnavailable(category)
+                return {
+                    "run_id": f"live_{run_index}",
+                    "status": "FAIL",
+                    "reason_codes": [category],
+                }
+
+            state = getattr(loop.context, "analysis_state", None)
+            outcomes = _session_tool_outcomes(loop.messages)
+            successful_tools = [
+                str(outcome.get("tool_name") or "")
+                for outcome in outcomes
+                if isinstance(outcome, dict) and outcome.get("success")
+            ]
+            evidence_records = list(getattr(state, "evidence_records", []) or [])
+            audit = _latest_final_audit(state)
+            audit_reason_codes = {
+                str(code)
+                for check in audit.get("claim_checks") or []
+                if isinstance(check, dict)
+                for code in check.get("reason_codes") or []
+                if str(code)
+            }
+            publication_actions = _material_publication_actions(
+                audit,
+                _latest_publication_actions(state),
+            )
+            unresolved_fallback_blocked_calls = (
+                _unresolved_fallback_blocked_calls(outcomes)
+            )
+            verified_material_claims = _verified_material_claim_count(
+                audit,
+                publication_actions,
+            )
+            first_final_index = next(
+                (index for index in text_indexes if index > publication_start),
+                text_indexes[0] if text_indexes else -1,
+            )
+            progress_before_final = first_final_index >= 0 and any(
+                event.get("type") == "analysis_progress"
+                for event in events[:first_final_index]
+            )
+            has_findings = bool(re.search(r"发现|结论|结果", persisted_public))
+            has_recommendations = bool(re.search(r"建议|行动|下一步", persisted_public))
+            has_limitations = bool(re.search(r"局限|限制", persisted_public))
+            data_quality_count = sum(
+                tool in _LIVE_DATA_QUALITY_TOOLS for tool in successful_tools
+            )
+            descriptive_count = sum(
+                tool in _LIVE_DESCRIPTIVE_TOOLS - _LIVE_DATA_QUALITY_TOOLS
+                for tool in successful_tools
+            )
+            relationship_count = sum(
+                tool in _LIVE_RELATIONSHIP_TOOLS for tool in successful_tools
+            )
+            upload_contract_active = bool(
+                "load_data" in successful_tools
+                and getattr(state, "dataset_contracts", None)
+            )
+            requirements = {
+                "data_quality": (
+                    "satisfied"
+                    if upload_contract_active and data_quality_count >= 1
+                    else "missing"
+                ),
+                "descriptive": "satisfied" if descriptive_count >= 1 else "missing",
+                "relationship": "satisfied" if relationship_count >= 1 else "missing",
+                "limitations": "satisfied" if has_limitations else "missing",
+            }
+            return {
+                "run_id": f"live_{run_index}",
+                "status": "PASS" if persisted_public else "FAIL",
+                "reason_codes": [] if persisted_public else ["empty_publication"],
+                "upload_contract_active": upload_contract_active,
+                "tool_calls": len(outcomes),
+                "data_quality_computations": data_quality_count,
+                "structured_computations": descriptive_count + relationship_count,
+                "projected_evidence": len(evidence_records),
+                "final_audit_status": str(audit.get("status") or ""),
+                "publication_actions": publication_actions,
+                "publication_length": len(re.sub(r"\s+", "", persisted_public)),
+                "publication_language": _detect_language(persisted_public),
+                "has_findings": has_findings,
+                "has_recommendations": has_recommendations,
+                "has_limitations": has_limitations,
+                "generic_warning_present": (
+                    "Some requested analysis claims" in persisted_public
+                ),
+                "progress_before_final": progress_before_final,
+                "persisted_matches_streamed": persisted_public == streamed_public,
+                "repeated_failure_max": _repeated_failure_max(outcomes),
+                "unresolved_fallback_blocked_calls": (
+                    unresolved_fallback_blocked_calls
+                ),
+                "verified_material_claims": verified_material_claims,
+                "measurement_bookkeeping_scheduled_analysis": bool(
+                    audit_reason_codes & _MEASUREMENT_BOOKKEEPING_CODES
+                    and getattr(loop, "_turn_final_audit_analysis_retry_used", False)
+                ),
+                "requirements": requirements,
+            }
+    except ProviderConfigurationUnavailable:
+        raise
+    except BaseException as exc:
+        category = _provider_error_category(exc)
+        if category == "provider_credentials_unavailable":
+            raise ProviderConfigurationUnavailable(category) from exc
+        return {
+            "run_id": f"live_{run_index}",
+            "status": "FAIL",
+            "reason_codes": [category],
+        }
+
+
+def _evaluate_live_run(run: dict[str, Any]) -> dict[str, Any]:
+    return evaluate_live_provider_run(run)
+
+
+def build_live_provider_receipt(
+    *,
+    source_digest: str,
+    source_commit: str,
+    provider_model: str,
+    runs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return build_live_provider_gate_receipt(
+        source_digest=source_digest,
+        source_commit=source_commit,
+        provider_model=provider_model,
+        runs=runs,
+    )
+
+
+def _blocked_live_receipt(
+    *,
+    reason: str,
+    source_digest: str,
+    source_commit: str,
+    provider_model: str,
+) -> dict[str, Any]:
+    return {
+        "contract_version": LIVE_PROVIDER_GATE_VERSION,
+        "status": "BLOCKED",
+        "reason_codes": [reason],
+        "accepted": False,
+        "overall_status": "BLOCKED",
+        "live_provider_status": "BLOCKED",
+        "source_digest": source_digest,
+        "source_commit": source_commit,
+        "provider_model": provider_model,
+        "runs": [],
+    }
+
+
+def run_live_provider_acceptance(
+    output_dir: Path,
+    *,
+    runs: int = 3,
+) -> dict[str, Any]:
+    if runs != 3:
+        raise ValueError("live provider gate requires exactly three runs")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    digest = release_source_digest(ROOT)
+    commit = _current_git_commit()
+    try:
+        configured = get_config()
+        provider_model = str(configured.model_id)
+    except BaseException:
+        return _blocked_live_receipt(
+            reason="provider_configuration_unavailable",
+            source_digest=digest,
+            source_commit=commit,
+            provider_model="",
+        )
+
+    outcomes: list[dict[str, Any]] = []
+    for index in range(1, 4):
+        try:
+            outcomes.append(
+                _run_one_live_provider_analysis(output_dir / f"run_{index}", index)
+            )
+        except ProviderConfigurationUnavailable as exc:
+            return _blocked_live_receipt(
+                reason=str(exc) or "provider_credentials_unavailable",
+                source_digest=digest,
+                source_commit=commit,
+                provider_model=provider_model,
+            )
+        except BaseException:
+            outcomes.append(
+                {
+                    "run_id": f"live_{index}",
+                    "status": "FAIL",
+                    "reason_codes": ["live_runner_internal_error"],
+                }
+            )
+    return build_live_provider_receipt(
+        source_digest=digest,
+        source_commit=commit,
+        provider_model=provider_model,
+        runs=outcomes,
+    )
+
+
+def write_live_provider_receipt(receipt: dict[str, Any], path: Path) -> Path:
+    """Atomically persist a bounded receipt with no prompt or raw data rows."""
+
+    expected_digest = str(receipt.get("source_digest") or "")
+    validation = validate_live_provider_gate_receipt(
+        receipt,
+        expected_source_digest=expected_digest,
+    )
+    raw_reasons = receipt.get("reason_codes")
+    expected_reasons = tuple(raw_reasons) if isinstance(raw_reasons, list) else ()
+    if (
+        validation.status != receipt.get("status")
+        or validation.reason_codes != expected_reasons
+    ):
+        raise ValueError(",".join(validation.reason_codes))
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
+# ---------------------------------------------------------------------------
 # Suite + CLI
 # ---------------------------------------------------------------------------
 
@@ -1107,7 +1859,7 @@ def run_release_replay(
     mode: str,
     runs: int | None = None,
 ) -> dict[str, Any]:
-    """Run deterministic replay or report why live execution is blocked."""
+    """Run the deterministic suite or the real three-run provider gate."""
 
     if mode not in {"deterministic", "live"}:
         raise ValueError("mode must be deterministic or live")
@@ -1119,25 +1871,7 @@ def run_release_replay(
     if mode == "live":
         if runs != 3:
             raise ValueError("live mode requires --runs 3")
-        try:
-            cfg = get_config()
-            provider_ready = bool(
-                getattr(cfg, "api_key", "")
-                and getattr(cfg, "model_id", "")
-            )
-        except Exception:
-            provider_ready = False
-        return {
-            "accepted": False,
-            "overall_status": "BLOCKED",
-            "mode": "live",
-            "live_provider_status": "BLOCKED",
-            "reason": (
-                "live_provider_runner_not_implemented"
-                if provider_ready
-                else "provider_credentials_unavailable"
-            ),
-        }
+        return run_live_provider_acceptance(output_dir, runs=runs)
 
     factor_root = output_dir / "factor"
     sandbox_root = output_dir / "sandbox"
@@ -1279,10 +2013,20 @@ def main() -> int:
     parser.add_argument("--mode", choices=["deterministic", "live"], default="deterministic")
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        help="Live-mode receipt path (defaults inside --output-dir).",
+    )
     args = parser.parse_args()
     if args.mode == "live" and args.runs != 3:
         parser.error("live mode requires --runs 3")
     summary = replay_suite(mode=args.mode, runs=args.runs, output_dir=args.output_dir)
+    if args.mode == "live":
+        receipt_path = args.receipt or (
+            args.output_dir / "analysis_live_provider_gate.v1.json"
+        )
+        write_live_provider_receipt(summary, receipt_path)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if summary.get("accepted") else 1
 

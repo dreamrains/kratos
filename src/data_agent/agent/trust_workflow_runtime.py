@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from data_agent.agent.answer_quality import build_final_answer_audit
+from data_agent.agent.answer_quality import (
+    build_final_answer_audit,
+    validate_final_answer_audit_structure,
+)
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.intent_refinement import refine_intent_with_data
 from data_agent.agent.verification import verify_analysis_claims
@@ -24,8 +27,13 @@ def audit_final_answer_draft(
     state: Any,
     *,
     llm_critique: dict[str, Any] | None = None,
+    evidence_aliases: tuple[tuple[str, str, str, str], ...] = (),
 ) -> dict[str, Any]:
     """Persist a deterministic audit of the actual synthesis draft."""
+
+    from data_agent.agent.evidence_contracts import expand_evidence_alias_markers
+
+    answer_text = expand_evidence_alias_markers(answer_text, evidence_aliases)
 
     current_plan_id = _current_analysis_plan_id(state)
     evidence_records = _current_plan_records(
@@ -102,7 +110,11 @@ def hydrate_final_answer_audit_ref(ref: dict[str, Any]) -> dict[str, Any] | None
         audit = json.loads(artifact_bytes.decode("utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(audit, dict) or audit.get("id") != ref.get("id"):
+    if (
+        not isinstance(audit, dict)
+        or audit.get("id") != ref.get("id")
+        or not validate_final_answer_audit_structure(audit)
+    ):
         return None
     return audit
 

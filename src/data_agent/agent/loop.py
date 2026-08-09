@@ -98,10 +98,13 @@ _ANALYSIS_QUALITY_CONTINUATION_TEMPLATE = (
     "Requirement-based completion evaluator: status={status}, reason={reason}.\n"
     "Missing requirements: {missing}.\n"
     "Allowed capability/fallback: {capability_hint}.\n"
-    "Do ONE more round: attempt the named missing requirement using a structured "
-    "tool, record evidence, and disclose any limitation. Do not Strengthen the "
-    "claim class. After this round, synthesize the final answer with explicit "
-    "limitations even if the requirement remains unmet.\n"
+    "Do ONE bounded round: you MUST call at least one listed structured analysis tool, "
+    "using at most three distinct structured analysis tools in total. Do not return a "
+    "final answer before that attempt; if the attempted tool fails, disclose that exact limitation. "
+    "The server auto-projects eligible structured results; do not call task tools "
+    "or record_evidence_record merely for bookkeeping. Do not strengthen the claim "
+    "class. After this round, synthesize the final answer with explicit limitations "
+    "even if a requirement remains unmet.\n"
     "</analysis_quality_guard>"
 )
 
@@ -128,12 +131,25 @@ _MEASUREMENT_BOOKKEEPING_CODES = {
 }
 
 _SYNTHESIS_MEASUREMENT_REPAIR_CODES = {
+    # ``verify_analysis_claims`` adds this generic companion to the actionable
+    # missing-marker codes below.  Treating it as an independent hard blocker
+    # accidentally skipped the one bounded synthesis-only repair.
+    "evidence_check_failed",
     "measurement_identity_missing",
     "measurement_marker_invalid",
+    # These failures describe a draft that did not faithfully copy a current
+    # bounded-catalog measurement.  They are repairable by the same one-shot
+    # synthesis rewrite: copy the exact alias label/value/marker, then let the
+    # unchanged audit verify the revised claim.  They must not trigger another
+    # computation round.
+    "measurement_ambiguous",
+    "measurement_metric_mismatch",
+    "numeric_mismatch",
+    "unit_mismatch",
 }
 
 
-def _capability_hint_for_unmet(decision) -> str:
+def _capability_hint_for_unmet(decision, *, plan: dict[str, Any] | None = None) -> str:
     """Render a compact, requirement-aware capability hint for the guard.
 
     Looked up from the recoverable requirement ids in the decision; never
@@ -143,6 +159,46 @@ def _capability_hint_for_unmet(decision) -> str:
     recoverable = list(getattr(decision, "recoverable_requirement_ids", ()) or ())
     if not recoverable:
         return "use the next planned analysis step or downgrade the claim"
+    recoverable_set = {str(item) for item in recoverable}
+    method_plan = plan.get("method_plan") if isinstance(plan, dict) else None
+    structured_hints: list[str] = []
+    known_tool_names = (
+        "detect_data_quality",
+        "distribution_analysis",
+        "transform_data",
+        "segmentation_analysis",
+        "correlation_analysis",
+        "factor_relationship_analysis",
+        "regression_analysis",
+        "compare_periods",
+        "analyze_time_series",
+        "top_n",
+    )
+    for step in method_plan if isinstance(method_plan, list) else []:
+        if not isinstance(step, dict) or step.get("combination_mode") == "synthesis":
+            continue
+        requirement_ids = {
+            str(item) for item in step.get("requirement_ids") or [] if str(item)
+        }
+        if not requirement_ids.intersection(recoverable_set):
+            continue
+        capability = str(step.get("required_capability") or "").strip()
+        method = str(step.get("method") or "")
+        tools = [name for name in known_tool_names if name in method]
+        if capability:
+            tools.extend(registry.tools_for_capability(capability))
+        tools = list(dict.fromkeys(tools))
+        if not tools:
+            continue
+        step_id = str(step.get("step_id") or "planned_step")
+        structured_hints.append(
+            f"{step_id}: use {', '.join(tools[:2])} ({capability or 'planned capability'})"
+        )
+        if len(structured_hints) >= 3:
+            break
+    if structured_hints:
+        return "; ".join(structured_hints)
+
     head = recoverable[0]
     head_text = str(head)
     # The requirement id encodes the missing method input (e.g.
@@ -1181,6 +1237,34 @@ class AgentLoop:
             turn_state.record_token_usage(residual, phase=phase)
         self._persist_budget_diagnostics(turn_state)
 
+    def _reclassify_synthesis_tool_round_budget(
+        self,
+        response: Any,
+        *,
+        phase: str,
+        phase_usage_before: int,
+    ) -> None:
+        """Keep tool-bearing rounds out of the final synthesis reserve."""
+
+        if (
+            phase != "synthesis"
+            or response is None
+            or not getattr(response, "has_tool_calls", False)
+            or self._synthesis_audit_revision_active()
+        ):
+            return
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            return
+        used_after = int(turn_state.phase_token_usage.get("synthesis", 0) or 0)
+        moved = turn_state.reclassify_phase_usage(
+            max(0, used_after - max(0, int(phase_usage_before or 0))),
+            source_phase="synthesis",
+            target_phase="exploration",
+        )
+        if moved:
+            self._persist_budget_diagnostics(turn_state)
+
     def _llm_output_limit_kwargs(self, method: Any, *, phase: str) -> dict[str, int]:
         turn_state = getattr(self.context, "turn_state", None)
         if turn_state is None:
@@ -1773,17 +1857,31 @@ class AgentLoop:
                 sessions_root=get_config().sessions_resolved,
             )
             if result.projected:
-                state.upsert_evidence_record(result.record)
+                projected_record = state.upsert_evidence_record(result.record)
+                # Automatic evidence must own canonical workflow progress as
+                # well as persistence. Requiring the model to replay the same
+                # record through ``record_evidence_record`` reintroduces a
+                # bookkeeping ritual and can leave workspace scope with no
+                # current task between analytical steps.
+                from data_agent.session.task_manager import task_manager
+
+                completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
+                    session_id=state.session_id,
+                    evidence=projected_record,
+                    analysis_spec_id="",
+                )
                 # Invalidate the synthesis-policy cache so the next prompt
                 # rebuilds the bounded evidence catalog with this record.
                 self._turn_synthesis_policy_injected = False
                 self._turn_synthesis_policy_instruction = ""
+                self._turn_synthesis_evidence_aliases = ()
                 state.append_turn_diagnostic({
                     "event": "evidence_projected",
                     "tool_call_id": str(ref.get("tool_call_id") or ""),
                     "plan_id": str(ref.get("plan_id") or ""),
                     "step_id": str(ref.get("step_id") or ""),
                     "claim_key": str(ref.get("claim_key") or ""),
+                    "completed_task_ids": list(completed_task_ids or []),
                 })
                 return
             state.append_turn_diagnostic({
@@ -2052,10 +2150,12 @@ class AgentLoop:
         self._turn_verification_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
+        self._turn_synthesis_evidence_aliases = ()
         self._turn_final_audit_revision_used = False
         self._turn_final_audit_analysis_retry_used = False
         self._turn_final_audit_instruction = ""
         self._turn_last_final_audit = None
+        self._turn_provider_truncation_repair_used = False
         self._turn_resumed_from_confirmation = False
 
     # --- Safe live analysis progress narration -----------------------------
@@ -2263,6 +2363,7 @@ class AgentLoop:
             proficiency=self.context.user_proficiency,
         )
         self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
+        self._turn_synthesis_evidence_aliases = tuple(policy.evidence_aliases)
         self._turn_synthesis_policy_injected = True
 
     def _is_final_answer_audit_candidate(self) -> bool:
@@ -2330,12 +2431,36 @@ class AgentLoop:
     ) -> None:
         self._discard_last_answer_candidate()
         if mode == "synthesis":
-            instruction = (
-                "Revise the synthesis only. Do not call tools. Use only current allowed measurement-grain "
-                "[[evidence:record_id#measurement_key]] markers, "
-                "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
-                "the internal evidence markers for re-audit. This is the only synthesis revision attempt."
-            )
+            if "provider_output_truncated" in reason_codes:
+                instruction = (
+                    "The provider stopped the previous final draft at its output limit. Rewrite it as one "
+                    "complete self-contained answer; do not continue from the cutoff and do not call tools. "
+                    "Keep the visible answer within 2400 Chinese characters and prioritize the answer over "
+                    "process narration. It must contain explicit findings, actionable recommendations, and "
+                    "limitations. Copy only exact current short measurement aliases from "
+                    "bounded_evidence_catalog using [[evidence:aeNN#amNN]] markers and copy the exact metric_label "
+                    "and value from the same entry without translating or rounding those identity tokens; "
+                    "when required_verified_core_copy= is present, begin the revised answer by copying only its "
+                    "value verbatim, including the marker; "
+                    "include at least one standalone verified-core sentence with exactly one catalog measurement; "
+                    "downgrade unsupported claims, and keep "
+                    "the internal evidence markers for re-audit. This is the only truncation repair attempt."
+                )
+            else:
+                instruction = (
+                    "Revise the synthesis only. Do not call tools. Copy the exact current short measurement "
+                    "aliases shown in bounded_evidence_catalog, using [[evidence:aeNN#amNN]] markers; "
+                    "for each cited measurement copy the exact metric_label and value from the same entry. "
+                    "Do not translate or round those identity tokens; add Chinese explanation around them. "
+                    "When required_verified_core_copy= is present, Begin the revised answer by copying only its "
+                    "value verbatim, including the marker. "
+                    "Include at least one standalone verified-core sentence using exactly one catalog measurement, "
+                    "its exact metric_label/value, and its marker, with no unrelated quantity in that sentence. "
+                    "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
+                    "the internal evidence markers for re-audit. Return a complete answer, not process narration; "
+                    "for a comprehensive report include findings, recommendations, and limitations with enough "
+                    "supporting context to stand alone. This is the only synthesis revision attempt."
+                )
         else:
             instruction = (
                 "Do not merely rephrase the blocked draft. Continue the required analysis with available tools, "
@@ -2348,6 +2473,42 @@ class AgentLoop:
             f"{instruction}</final_answer_audit_repair>"
         )
         self._prompt_cache_dirty = True
+
+    def _maybe_repair_truncated_analysis_response(self, response: Any) -> bool:
+        """Use one revision-reserve round for a provider-truncated final draft."""
+
+        finish_reason = str(getattr(response, "finish_reason", "") or "").casefold()
+        if finish_reason not in {"length", "max_tokens", "max_output_tokens"}:
+            return False
+        if getattr(response, "has_tool_calls", False):
+            return False
+        if not self._is_final_answer_audit_candidate():
+            return False
+        if getattr(self, "_turn_provider_truncation_repair_used", False):
+            return False
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is not None and not turn_state.claim_revision_attempt():
+            return False
+        self._turn_provider_truncation_repair_used = True
+        # The final-audit revision flag shares the same single revision
+        # reserve.  A truncation rewrite must not be followed by another
+        # stylistic rewrite that silently exceeds the agreed budget.
+        self._turn_final_audit_revision_used = True
+        self._inject_final_answer_audit_repair(
+            mode="synthesis",
+            reason_codes=["provider_output_truncated"],
+        )
+        state = getattr(self.context, "analysis_state", None)
+        if state is not None:
+            try:
+                state.append_turn_diagnostic({
+                    "event": "provider_output_truncation",
+                    "finish_reason": finish_reason,
+                    "action": "bounded_synthesis_revision",
+                })
+            except Exception:
+                pass
+        return True
 
     def _publication_mode(self) -> str:
         from data_agent.config import get_config
@@ -2426,9 +2587,10 @@ class AgentLoop:
         """Render a draft answer under claim-tier publication rules.
 
         Always publishes deterministically — never triggers another analysis
-        tool call. When ``audit`` is missing (audit failure) every material
-        claim is downgraded to exploratory so the published text cannot
-        strengthen an unsupported claim even when the audit itself failed.
+        tool call. When ``audit`` is missing or invalid (audit infrastructure
+        failure), every material claim is replaced with a deterministic
+        diagnostic; an exploratory disclaimer cannot authorize unaudited
+        analytical assertions.
         """
 
         from data_agent.agent.answer_quality import (
@@ -2485,7 +2647,13 @@ class AgentLoop:
             return {"action": "fallback", "text": rendered}
 
         try:
-            ref = audit_final_answer_draft(final_text, state)
+            ref = audit_final_answer_draft(
+                final_text,
+                state,
+                evidence_aliases=tuple(
+                    getattr(self, "_turn_synthesis_evidence_aliases", ()) or ()
+                ),
+            )
             audit = hydrate_final_answer_audit_ref(ref)
             turn_state = getattr(self.context, "turn_state", None)
             if turn_state is not None:
@@ -2499,8 +2667,8 @@ class AgentLoop:
             audit = None
         if not isinstance(audit, dict):
             # Audit failed closed. Publish deterministically via the renderer
-            # with a missing audit so every material claim is downgraded to
-            # exploratory. Never trigger another analysis tool call from this
+            # with a missing audit so every material claim is replaced by a
+            # diagnostic. Never trigger another analysis tool call from this
             # path — the renderer is read-only.
             rendered = self._render_audited_publication(final_text, None)
             self._replace_last_answer_candidate(rendered)
@@ -2512,6 +2680,20 @@ class AgentLoop:
         status = str(audit.get("status") or "blocked")
         if status == "pass":
             public_text = str(audit.get("public_text") or "")
+            incomplete_codes = self._analysis_answer_incomplete_reasons(public_text)
+            turn_state = getattr(self.context, "turn_state", None)
+            if (
+                incomplete_codes
+                and allow_repair
+                and not self._turn_final_audit_revision_used
+                and (turn_state is None or turn_state.claim_revision_attempt())
+            ):
+                self._turn_final_audit_revision_used = True
+                self._inject_final_answer_audit_repair(
+                    mode="synthesis",
+                    reason_codes=incomplete_codes,
+                )
+                return {"action": "continue", "mode": "synthesis"}
             # Record the publication diagnostic on the pass path too — the
             # publication still happened, so observability must be consistent
             # with the fallback and revise paths. The published text is the
@@ -2536,9 +2718,13 @@ class AgentLoop:
             if str(code)
         ))
         evidence_available = bool(getattr(state, "evidence_records", None))
+        evidence_aliases_available = bool(
+            getattr(self, "_turn_synthesis_evidence_aliases", ()) or ()
+        )
         synthesis_repairable = status == "revise" or (
             status == "blocked"
             and evidence_available
+            and evidence_aliases_available
             and bool(failed_codes)
             and set(failed_codes) <= {
                 "missing_evidence_identity",
@@ -2593,6 +2779,44 @@ class AgentLoop:
         self._replace_last_answer_candidate(rendered)
         self._turn_final_audit_instruction = ""
         return {"action": "fallback", "text": rendered}
+
+    def _analysis_answer_incomplete_reasons(self, text: str) -> list[str]:
+        """Detect an unfinished analysis response without judging its claims.
+
+        Claim audit answers "is this statement supported?"; it cannot decide
+        whether a comprehensive answer exists at all.  This bounded check is
+        intentionally structural and intent-aware so a concise directed
+        answer is not forced into a long report.
+        """
+
+        intent = getattr(self, "_last_turn_intent", None)
+        intent_type = str(getattr(intent, "intent_type", "") or "")
+        compact = "".join(str(text or "").split())
+        process_markers = (
+            "现在继续执行",
+            "接下来执行",
+            "将继续分析",
+            "正在继续分析",
+            "continue the analysis",
+        )
+        section_groups = (
+            ("发现", "结论", "结果"),
+            ("建议", "行动", "下一步"),
+            ("局限", "限制"),
+        )
+        has_all_sections = all(
+            any(marker in text for marker in group)
+            for group in section_groups
+        )
+        reasons: list[str] = []
+        if any(marker.casefold() in compact.casefold() for marker in process_markers) and not has_all_sections:
+            reasons.append("analysis_answer_incomplete")
+        if intent_type == "comprehensive_report":
+            if len(compact) < 600:
+                reasons.append("analysis_answer_too_short")
+            if not has_all_sections:
+                reasons.append("analysis_answer_sections_missing")
+        return list(dict.fromkeys(reasons))
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._maybe_continue_for_analysis_quality(user_input, final_text) is not None
@@ -2745,7 +2969,7 @@ class AgentLoop:
             status=decision.status,
             reason=decision.reason_code,
             missing=missing,
-            capability_hint=_capability_hint_for_unmet(decision),
+            capability_hint=_capability_hint_for_unmet(decision, plan=plan),
         )
         self._record_completion_diagnostic(
             status=decision.status,
@@ -3356,6 +3580,12 @@ class AgentLoop:
         used_sync_fallback = False
         stream_requested_limit = 0
         phase = self._current_prompt_phase()
+        turn_state = getattr(self.context, "turn_state", None)
+        phase_usage_before = (
+            int(turn_state.phase_token_usage.get(phase, 0) or 0)
+            if turn_state is not None
+            else 0
+        )
 
         # Defensive: repair any broken tool_call sequences from prior turns
         self._repair_broken_tool_sequence()
@@ -3428,6 +3658,11 @@ class AgentLoop:
             response,
             phase=phase,
             pre_recorded_tokens=(0 if used_sync_fallback else streamed_tokens),
+        )
+        self._reclassify_synthesis_tool_round_budget(
+            response,
+            phase=phase,
+            phase_usage_before=phase_usage_before,
         )
         yield {"type": "_response", "response": response, "streamed_text": streamed_text}
 
@@ -3551,7 +3786,7 @@ class AgentLoop:
                 tool_msg_content = registry.format_result(tc.name, tool_result)
 
             elif turn_state is not None:
-                turn_state.record_tool_success()
+                turn_state.record_tool_success(tc.name)
 
             self._record_turn_tool_result(tc.name, tool_msg_content)
             self._auto_track_task_progress(tc.name, not tool_failed)
@@ -3727,6 +3962,9 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    continue
+                if self._maybe_repair_truncated_analysis_response(response):
+                    yield from self._emit_progress_stream("tool_recovery")
                     continue
                 # The requirement-based completion evaluator ran inside
                 # ``_should_continue_for_analysis_quality``; emit the
@@ -3933,6 +4171,9 @@ class AgentLoop:
                 self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
                     continue
+                if self._maybe_repair_truncated_analysis_response(response):
+                    yield from self._emit_progress_stream("tool_recovery")
+                    continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
@@ -4119,7 +4360,7 @@ class AgentLoop:
             tool_msg_content = registry.format_result(tc.name, tool_result)
             logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": tool_msg_content[:200]}})
         elif turn_state is not None:
-            turn_state.record_tool_success()
+            turn_state.record_tool_success(tc.name)
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
         self._auto_track_task_progress(tc.name, not tool_failed)
@@ -4206,7 +4447,7 @@ class AgentLoop:
                         turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                     tool_msg_content = registry.format_result(tc.name, tool_result)
                 elif turn_state is not None:
-                    turn_state.record_tool_success()
+                    turn_state.record_tool_success(tc.name)
 
                 return (tc, tool_msg_content, None)
             except Exception as e:
@@ -4274,6 +4515,12 @@ class AgentLoop:
             self._repair_broken_tool_sequence()
 
             phase = self._current_prompt_phase()
+            turn_state = getattr(self.context, "turn_state", None)
+            phase_usage_before = (
+                int(turn_state.phase_token_usage.get(phase, 0) or 0)
+                if turn_state is not None
+                else 0
+            )
             system_prompt = self._get_system_prompt()
             output_limit = self._llm_output_limit_kwargs(
                 self.client.chat,
@@ -4288,6 +4535,11 @@ class AgentLoop:
             self._record_llm_response_budget(
                 response,
                 phase=phase,
+            )
+            self._reclassify_synthesis_tool_round_budget(
+                response,
+                phase=phase,
+                phase_usage_before=phase_usage_before,
             )
 
             response_text = response.text or ""
@@ -4321,6 +4573,9 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    continue
+                if self._maybe_repair_truncated_analysis_response(response):
+                    self._record_progress("tool_recovery")
                     continue
                 # Sync mirror of completion/audit/recovery progress signals.
                 self._record_progress("completion_evaluated")

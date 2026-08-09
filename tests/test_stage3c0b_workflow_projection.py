@@ -66,6 +66,45 @@ def test_projector_carries_stage3c0b_bindings(tmp_path):
     ]
 
 
+def test_projector_activates_exactly_one_first_ready_canonical_task(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    tasks = [manager.get(task_id) for task_id in projected["task_ids"]]
+    banner = next(task for task in tasks if task["step_id"] == "step_banner")
+    synthesis = next(task for task in tasks if task["step_id"] == "step_synthesis")
+    assert banner["status"] == "in_progress"
+    assert synthesis["status"] == "pending"
+    assert [task["id"] for task in tasks if task["status"] == "in_progress"] == [
+        banner["id"]
+    ]
+
+
+def test_projector_preserves_state_owned_compiler_snapshot(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    plan["analysis_requirements"]["step_banner"][0]["trigger"] = (
+        "profile-derived compiler snapshot"
+    )
+
+    result = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    assert "error" not in result
+    assert result["created"] == 2
+
+
 def test_projected_task_requires_each_exact_claim_key_before_completion(tmp_path):
     manager = TaskManager(tasks_dir=tmp_path)
     plan = _validated_plan()
@@ -100,7 +139,7 @@ def test_projected_task_requires_each_exact_claim_key_before_completion(tmp_path
 
     assert first == []
     assert masquerading == []
-    assert manager.get(banner["id"])["status"] == "pending"
+    assert manager.get(banner["id"])["status"] == "in_progress"
     assert manager.get(banner["id"])["satisfied_claim_keys"] == ["impressions"]
 
     completed = manager.complete_matching_tasks_from_evidence(
@@ -110,6 +149,12 @@ def test_projected_task_requires_each_exact_claim_key_before_completion(tmp_path
 
     assert completed == [banner["id"]]
     assert manager.get(banner["id"])["satisfied_claim_keys"] == ["impressions", "click_rate"]
+    synthesis = next(
+        task
+        for task in manager.list_active_for_scope(session_id="s1", project_name="p1")
+        if task["step_id"] == "step_synthesis"
+    )
+    assert manager.get(synthesis["id"])["status"] == "in_progress"
 
 
 def test_projected_task_requires_canonical_requirement_ids_when_present(tmp_path):

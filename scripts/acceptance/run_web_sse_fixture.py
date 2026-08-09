@@ -214,15 +214,33 @@ class _ScriptedIntentProvider:
         )
 
 
-def _install_scripted_provider_boundaries() -> Callable[[], None]:
-    from data_agent.agent import llm_intent
+class _ScriptedPlaybookProvider:
+    """Keep optional playbook selection offline without overriding fallback rules."""
 
-    previous = llm_intent._client
-    scripted = _ScriptedIntentProvider()
-    llm_intent._client = scripted
+    def chat(self, messages, system=None):
+        del messages, system
+        from data_agent.llm.client import Response
+
+        return Response(text="")
+
+
+def _install_scripted_provider_boundaries() -> Callable[[], None]:
+    from data_agent.agent import llm_intent, llm_playbook
+
+    previous_intent = llm_intent._client
+    previous_playbook = llm_playbook._client
+    llm_intent._client = _ScriptedIntentProvider()
+    try:
+        llm_playbook._client = _ScriptedPlaybookProvider()
+    except BaseException:
+        llm_intent._client = previous_intent
+        raise
 
     def restore() -> None:
-        llm_intent._client = previous
+        try:
+            llm_playbook._client = previous_playbook
+        finally:
+            llm_intent._client = previous_intent
 
     return restore
 
@@ -346,7 +364,9 @@ class DelayedAuditedLoop:
             "suspension_id": record["confirmation_id"],
             "version": record["version"],
             "question": "是否继续暂停验收？",
-            "options": ["继续"],
+            "options": [
+                {"label": "继续", "value": "继续", "description": ""}
+            ],
             "context": {"fixture_id": FIXTURE_ID},
             "multi_select": False,
             "allow_free_text": False,

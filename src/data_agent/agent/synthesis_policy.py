@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from html import escape as html_escape
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from data_agent.agent.evidence_contracts import BoundedEvidenceAliasCatalog
 
 # Canonical Chinese exploratory suffix reused by claim-tier publication
 # (``answer_quality.render_audited_analysis_answer``). The synthesis prompt
@@ -30,6 +33,7 @@ class SynthesisPolicy:
     reason: str
     allowed_evidence_ids: tuple[str, ...] = ()
     evidence_catalog: str = ""
+    evidence_aliases: tuple[tuple[str, str, str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -82,7 +86,8 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason="Direct or terse request; suppressing business translation.",
                 allowed_evidence_ids=_evidence_ids(evidence),
-                evidence_catalog=evidence_catalog,
+                evidence_catalog=evidence_catalog.text,
+                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
@@ -99,7 +104,8 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason="No evidence records are available, so synthesis stays exploratory.",
                 allowed_evidence_ids=(),
-                evidence_catalog=evidence_catalog,
+                evidence_catalog=evidence_catalog.text,
+                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
@@ -135,7 +141,8 @@ def derive_synthesis_policy(
                 wording_style=wording_style,
                 reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
                 allowed_evidence_ids=_evidence_ids(evidence),
-                evidence_catalog=evidence_catalog,
+                evidence_catalog=evidence_catalog.text,
+                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
@@ -162,7 +169,8 @@ def derive_synthesis_policy(
             wording_style=wording_style,
             reason=_reason(reasons, "Evidence supports a light analytical synthesis."),
             allowed_evidence_ids=_evidence_ids(evidence),
-            evidence_catalog=evidence_catalog,
+            evidence_catalog=evidence_catalog.text,
+            evidence_aliases=evidence_catalog.aliases,
         ),
         verification_status,
     )
@@ -171,17 +179,19 @@ def derive_synthesis_policy(
 def _build_catalog_for_plan(
     evidence_records: list[Any],
     plan: Any,
-) -> str:
+) -> BoundedEvidenceAliasCatalog:
     """Build the bounded synthesis-time evidence catalog.
 
     Auto-projected records carry ``plan_id``; we filter to the current plan,
     annotate each record with ``step_order`` from the plan's ``method_plan``,
-    and forward to ``build_bounded_evidence_catalog``. When the plan is empty
+    and forward to ``build_bounded_evidence_alias_catalog``. When the plan is empty
     we still emit the catalog so the synthesis instruction always carries the
     no-ritual reminder.
     """
 
-    from data_agent.agent.evidence_contracts import build_bounded_evidence_catalog
+    from data_agent.agent.evidence_contracts import (
+        build_bounded_evidence_alias_catalog,
+    )
 
     plan_id = ""
     method_plan: list[dict[str, Any]] = []
@@ -210,7 +220,7 @@ def _build_catalog_for_plan(
         if step_id in step_order:
             annotated_record["step_order"] = step_order[step_id]
         annotated.append(annotated_record)
-    return build_bounded_evidence_catalog(annotated)
+    return build_bounded_evidence_alias_catalog(annotated)
 
 
 def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
@@ -224,9 +234,9 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
     required = ",".join(_escape_prompt_value(move) for move in policy.required_moves)
     suppressed = ",".join(_escape_prompt_value(move) for move in policy.suppressed_moves)
     reason = _escape_prompt_value(policy.reason)
-    allowed_evidence_ids = ",".join(
-        _escape_prompt_value(evidence_id)
-        for evidence_id in policy.allowed_evidence_ids
+    allowed_evidence_aliases = ",".join(
+        _escape_prompt_value(f"[[evidence:{item[0]}#{item[1]}]]")
+        for item in policy.evidence_aliases
     )
     catalog_text = policy.evidence_catalog or ""
     catalog_block = _escape_prompt_value(catalog_text)
@@ -240,13 +250,19 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         f"<required_moves>{required}</required_moves>"
         f"<suppressed_moves>{suppressed}</suppressed_moves>"
         f"<reason>{reason}</reason>"
-        f"<allowed_evidence_ids>{allowed_evidence_ids}</allowed_evidence_ids>"
+        f"<allowed_evidence_aliases>{allowed_evidence_aliases}</allowed_evidence_aliases>"
         "</synthesis_policy>"
         "<internal_evidence_markers>"
         "Every material claim that uses a catalog measurement must end with the exact "
-        "[[evidence:<EvidenceRecord ID>#<measurement_key>]] marker shown for that measurement. "
-        "Do not combine an EvidenceRecord ID with a different measurement key. "
-        "Do not invent or substitute evidence IDs. These markers are internal and removed before publication."
+        "[[evidence:aeNN#amNN]] marker shown for that measurement. "
+        "In that claim, copy the exact metric_label and value from the same catalog entry. "
+        "Do not translate or round those identity tokens; add reader-friendly Chinese explanation around them. "
+        "When bounded_evidence_catalog contains required_verified_core_copy=, begin the final answer by copying only the value after "
+        "that prefix verbatim, including its exact metric_label, value, and marker. "
+        "When aliases are available, include at least one standalone verified-core sentence using exactly one "
+        "catalog measurement, its exact metric_label/value, and its marker; put no unrelated quantity in that sentence. "
+        "Do not combine aliases from different catalog entries. "
+        "Do not invent or substitute evidence aliases. These markers are internal and removed before publication."
         "</internal_evidence_markers>"
         "<bounded_evidence_catalog>"
         f"{catalog_block}"

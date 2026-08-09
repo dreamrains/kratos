@@ -286,6 +286,44 @@ class TaskManager:
         task = self._normalize(dict(task))
         return task.get("status") == "pending" and not task.get("blockedBy")
 
+    def activate_next_ready_plan_task(
+        self,
+        *,
+        session_id: str,
+        project_name: str = "",
+        plan_id: str = "",
+    ) -> int | None:
+        """Activate exactly one ready canonical task when none is running.
+
+        Canonical workflow bookkeeping is server-owned.  The model should
+        choose and execute analytical tools, not maintain the transient
+        ``pending -> in_progress`` invariant required by workspace scoping.
+        Legacy/user-authored tasks remain untouched.
+        """
+
+        tasks = [
+            task
+            for task in self.list_active_for_scope(
+                session_id=session_id,
+                project_name=project_name,
+            )
+            if task.get("task_kind") == "plan_task"
+            and (not plan_id or task.get("plan_id") == plan_id)
+            and self._is_stage3c0b_scoped_task(task)
+        ]
+        current = [task for task in tasks if task.get("status") == "in_progress"]
+        if current:
+            return int(sorted(current, key=lambda task: int(task.get("id") or 0))[0]["id"])
+
+        ready = sorted(
+            (task for task in tasks if self.is_ready(task)),
+            key=lambda task: int(task.get("id") or 0),
+        )
+        if not ready:
+            return None
+        activated = self.update(ready[0]["id"], status="in_progress")
+        return int(activated["id"]) if activated else None
+
     def _active_plans_path(self) -> Path:
         return self.dir / "active_plans.json"
 
@@ -765,6 +803,22 @@ class TaskManager:
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
+            activated_scopes: set[tuple[str, str]] = set()
+            for task in active_tasks:
+                if task.get("id") not in completed:
+                    continue
+                scope_key = (
+                    str(task.get("project_name") or ""),
+                    str(task.get("plan_id") or ""),
+                )
+                if scope_key in activated_scopes:
+                    continue
+                activated_scopes.add(scope_key)
+                self.activate_next_ready_plan_task(
+                    session_id=session_id,
+                    project_name=scope_key[0],
+                    plan_id=scope_key[1],
+                )
             return completed
 
         evidence_text = self._evidence_text(evidence)

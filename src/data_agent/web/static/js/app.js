@@ -106,6 +106,7 @@ function chatApp() {
         _thinkingStates: ['思考中...', '分析数据...', '生成洞察...', '处理结果...', '整理分析...', '调用工具中...'],
         _thinkingStateIndex: 0,
         _thinkingTimer: null,
+        _thinkingTimerOwner: null,
 
         // ── Per-session state ──────────────────────
         // Stores: { turns, isLoading, tokenPct, isCompact, activeSteps, _interrupted }
@@ -135,6 +136,19 @@ function chatApp() {
                 this._sessionStates[sid] = this._emptySessionState();
             }
             return this._sessionStates[sid];
+        },
+
+        _ownsSessionState(sessionId, state) {
+            return this.currentSessionId === sessionId
+                && this._sessionStates[sessionId] === state;
+        },
+
+        _queueMermaidRenderIfOwned(ownsSession) {
+            requestAnimationFrame(() => {
+                if (!ownsSession()) return;
+                const el = document.getElementById('messages-container');
+                if (el) this._renderMermaidInElement(el);
+            });
         },
 
         // Save current reactive properties into per-session state
@@ -794,13 +808,20 @@ function chatApp() {
 
         // --- Sessions ---
 
-        async loadSessions({ preserveConnectionError = false } = {}) {
+        async loadSessions({
+            preserveConnectionError = false,
+            ownsSession = null,
+        } = {}) {
+            const mayUpdateConnectionError = () => (
+                !preserveConnectionError
+                && (!ownsSession || ownsSession())
+            );
             try {
                 const res = await fetch('/api/sessions');
                 this.sessions = await res.json();
-                if (!preserveConnectionError) this.connectionError = '';
+                if (mayUpdateConnectionError()) this.connectionError = '';
             } catch (e) {
-                if (!preserveConnectionError) this.connectionError = '加载会话失败';
+                if (mayUpdateConnectionError()) this.connectionError = '加载会话失败';
             }
         },
 
@@ -907,20 +928,32 @@ function chatApp() {
             this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, 3000);
         },
 
-        _startThinkingCycle(turn) {
+        _startThinkingCycle(turn, sessionId, state) {
             this._stopThinkingCycle();
             this._thinkingStateIndex = 0;
+            this._thinkingTimerOwner = { sessionId, state, turn };
             this._thinkingTimer = setInterval(() => {
                 this._thinkingStateIndex = (this._thinkingStateIndex + 1) % this._thinkingStates.length;
                 turn.thinkingText = this._thinkingStates[this._thinkingStateIndex];
             }, 2000);
         },
 
-        _stopThinkingCycle() {
+        _stopThinkingCycle(sessionId = null, state = null, turn = null) {
+            const targeted = sessionId !== null || state !== null || turn !== null;
+            if (targeted) {
+                const owner = this._thinkingTimerOwner;
+                if (!owner
+                    || owner.sessionId !== sessionId
+                    || owner.state !== state
+                    || owner.turn !== turn) {
+                    return;
+                }
+            }
             if (this._thinkingTimer) {
                 clearInterval(this._thinkingTimer);
                 this._thinkingTimer = null;
             }
+            this._thinkingTimerOwner = null;
         },
 
         async newSession() {
@@ -951,15 +984,16 @@ function chatApp() {
 
             // Load fresh data from backend if not already loaded
             const state = this._getSessionState(sessionId);
+            const ownsTarget = () => this._ownsSessionState(sessionId, state);
             if (state.turns.length === 0) {
                 try {
                     const res = await fetch(`/api/sessions/${sessionId}`);
                     const data = await res.json();
                     if (data.messages) {
                         state.turns = this._reconstructTurns(data.messages);
-                        this.turns = state.turns;
+                        if (ownsTarget()) this.turns = state.turns;
                     }
-                    this.activeProjectName = data.project_name || '';
+                    if (ownsTarget()) this.activeProjectName = data.project_name || '';
                     if (data.token_usage) {
                         state.tokenPct = data.token_usage.pct || 0;
                         state.tokenSupported = true;
@@ -967,31 +1001,37 @@ function chatApp() {
                         state.tokenPct = 0;
                         state.tokenSupported = false;
                     }
-                    this.tokenPct = state.tokenPct;
-                    this.tokenSupported = state.tokenSupported;
-                    this.connectionError = '';
+                    if (ownsTarget()) {
+                        this.tokenPct = state.tokenPct;
+                        this.tokenSupported = state.tokenSupported;
+                        this.connectionError = '';
+                    }
                 } catch {
-                    this.connectionError = '加载会话失败';
+                    if (ownsTarget()) this.connectionError = '加载会话失败';
                 }
             } else {
                 // Find activeProjectName from sessions list
                 const sess = this.sessions.find(s => s.session_id === sessionId);
-                if (sess) this.activeProjectName = sess.project_name || '';
+                if (sess && ownsTarget()) this.activeProjectName = sess.project_name || '';
             }
             try {
                 const confirmationRes = await fetch(`/api/sessions/${sessionId}`);
                 const data = await confirmationRes.json();
                 const activeConfirmation = this._confirmationFromPayload(data.active_confirmation);
-                this._restoreActiveConfirmation(state, activeConfirmation);
-                this.turns = state.turns;
+                if (this._sessionStates[sessionId] === state) {
+                    this._restoreActiveConfirmation(state, activeConfirmation);
+                    if (ownsTarget()) this.turns = state.turns;
+                }
             } catch {}
             await Promise.all([
-                this.loadAnalysisState(sessionId),
-                this.loadTrustView(sessionId),
-                this.loadSessionArtifacts(sessionId),
+                this.loadAnalysisState(sessionId, state),
+                this.loadTrustView(sessionId, state),
+                this.loadSessionArtifacts(sessionId, state),
                 this.loadTasks(),
             ]);
-            this._scrollToBottom();
+            this._scrollToBottom(
+                () => this._ownsSessionState(sessionId, state),
+            );
         },
 
         async deleteSession(sessionId) {
@@ -1151,20 +1191,28 @@ function chatApp() {
             }
         },
 
-        async loadSessionArtifacts(sessionId = this.currentSessionId) {
-            if (!sessionId || sessionId === '_pending_') {
-                if (sessionId === this.currentSessionId) this.sessionArtifacts = [];
+        async loadSessionArtifacts(
+            sessionId = this.currentSessionId,
+            state = this._sessionStates[sessionId],
+        ) {
+            const ownsTarget = () => this._ownsSessionState(sessionId, state);
+            if (!sessionId) {
+                if (!this.currentSessionId) this.sessionArtifacts = [];
+                return;
+            }
+            if (sessionId === '_pending_') {
+                if (ownsTarget()) this.sessionArtifacts = [];
                 return;
             }
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/artifacts-list`);
                 const artifacts = res.ok ? await res.json() : [];
-                if (sessionId === this.currentSessionId) {
+                if (ownsTarget()) {
                     this.sessionArtifacts = artifacts;
                     this.turns = [...this.turns];
                 }
             } catch {
-                if (sessionId === this.currentSessionId) this.sessionArtifacts = [];
+                if (ownsTarget()) this.sessionArtifacts = [];
             }
         },
 
@@ -1183,27 +1231,50 @@ function chatApp() {
             await this.exportConversation(format, sessionId);
         },
 
-        async loadAnalysisState(sessionId = this.currentSessionId) {
-            if (!sessionId || sessionId === '_pending_') {
-                this.analysisState = null;
+        async loadAnalysisState(
+            sessionId = this.currentSessionId,
+            state = this._sessionStates[sessionId],
+        ) {
+            const ownsTarget = () => this._ownsSessionState(sessionId, state);
+            if (!sessionId) {
+                if (!this.currentSessionId) this.analysisState = null;
+                return;
+            }
+            if (sessionId === '_pending_') {
+                if (ownsTarget()) this.analysisState = null;
                 return;
             }
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/analysis`);
-                this.analysisState = res.ok ? await res.json() : null;
+                const data = res.ok ? await res.json() : null;
+                if (ownsTarget()) this.analysisState = data;
             } catch {
-                this.analysisState = null;
+                if (ownsTarget()) this.analysisState = null;
             }
         },
 
-        async loadTrustView(sessionId = this.currentSessionId) {
-            if (!sessionId || sessionId === '_pending_') {
-                this.trustView = null;
-                this.trustLoading = false;
-                this.trustError = '';
+        async loadTrustView(
+            sessionId = this.currentSessionId,
+            state = this._sessionStates[sessionId],
+        ) {
+            const ownsTarget = () => this._ownsSessionState(sessionId, state);
+            if (!sessionId) {
+                if (!this.currentSessionId) {
+                    this.trustView = null;
+                    this.trustLoading = false;
+                    this.trustError = '';
+                }
                 return;
             }
-            if (sessionId !== this.currentSessionId) return;
+            if (sessionId === '_pending_') {
+                if (ownsTarget()) {
+                    this.trustView = null;
+                    this.trustLoading = false;
+                    this.trustError = '';
+                }
+                return;
+            }
+            if (!ownsTarget()) return;
             this.trustView = null;
             this.trustLoading = true;
             this.trustError = '';
@@ -1211,17 +1282,17 @@ function chatApp() {
                 const res = await fetch(`/api/sessions/${sessionId}/trust`);
                 if (!res.ok) throw new Error('Trust inspector load failed');
                 const data = await res.json();
-                if (sessionId === this.currentSessionId) {
+                if (ownsTarget()) {
                     this.trustView = data;
                     this.trustError = '';
                 }
             } catch {
-                if (sessionId === this.currentSessionId) {
+                if (ownsTarget()) {
                     this.trustView = null;
                     this.trustError = 'Trust status unavailable';
                 }
             } finally {
-                if (sessionId === this.currentSessionId) {
+                if (ownsTarget()) {
                     this.trustLoading = false;
                 }
             }
@@ -1555,6 +1626,7 @@ function chatApp() {
             // Save state before modifying (in case we switch away during SSE)
             this._saveCurrentState();
             const state = this._getSessionState(this.currentSessionId);
+            const ownsOrigin = () => this._ownsSessionState(this.currentSessionId, state);
             state._interrupted = false;
 
             state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) + 1 });
@@ -1566,7 +1638,7 @@ function chatApp() {
             state.turns = this.turns;
             const turn = this.turns[this.turns.length - 1];
             this.isLoading = true;
-            this._scrollToBottom();
+            this._scrollToBottom(ownsOrigin);
 
             // Capture session ID for this SSE connection
             const sseSessionId = this.currentSessionId;
@@ -1588,26 +1660,25 @@ function chatApp() {
             } catch (e) {
                 turn.isThinking = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
-                if (this._sessionStates[this.currentSessionId] === state) {
+                if (ownsOrigin()) {
                     this.connectionError = e.message;
                 }
             } finally {
-                const isOriginCurrent = this._sessionStates[this.currentSessionId] === state;
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    if (isOriginCurrent) {
+                    if (ownsOrigin()) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
                         this._saveCurrentState();
                     }
                 }
-                await this.loadSessions({ preserveConnectionError: !isOriginCurrent });
+                await this.loadSessions({
+                    preserveConnectionError: !ownsOrigin(),
+                    ownsSession: ownsOrigin,
+                });
                 await this.loadTasks();
-                if (isOriginCurrent) {
-                    requestAnimationFrame(() => {
-                        const el = document.getElementById('messages-container');
-                        if (el) this._renderMermaidInElement(el);
-                    });
+                if (ownsOrigin()) {
+                    this._queueMermaidRenderIfOwned(ownsOrigin);
                 }
             }
         },
@@ -1709,8 +1780,8 @@ function chatApp() {
                 turn.confirmation._error = '';
             }
             state._interrupted = false;
-            let newTurn = null;
             const sseSessionId = this.currentSessionId;
+            const ownsOrigin = () => this._ownsSessionState(sseSessionId, state);
 
             try {
                 const response = await fetch('/api/chat/resume', {
@@ -1732,7 +1803,7 @@ function chatApp() {
                         turn.confirmation._error = errData.error || 'Confirmation failed. Please retry.';
                     }
                     state._resuming = false;
-                    this.turns = [...state.turns];
+                    if (ownsOrigin()) this.turns = [...state.turns];
                     return;
                 }
                 if (turn) turn.confirmation = null;
@@ -1745,36 +1816,43 @@ function chatApp() {
                     role: 'assistant', content: '', toolCalls: [], artifacts: [],
                     confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
                 });
-                this.turns = [...state.turns];
-                state.turns = this.turns;
-                const newTurn = this.turns[this.turns.length - 1];
-                this._scrollToBottom();
-                await this._processSSE(response, newTurn, state, sseSessionId);
+                if (ownsOrigin()) {
+                    this.turns = [...state.turns];
+                    state.turns = this.turns;
+                    const newTurn = this.turns[this.turns.length - 1];
+                    this._scrollToBottom(ownsOrigin);
+                    await this._processSSE(response, newTurn, state, sseSessionId);
+                } else {
+                    const newTurn = state.turns[state.turns.length - 1];
+                    await this._processSSE(response, newTurn, state, sseSessionId);
+                }
             } catch (e) {
                 const last = state.turns[state.turns.length - 1];
                 if (last) {
                     last.isThinking = false;
                     last.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 }
-                if (this.currentSessionId === sseSessionId) {
+                if (ownsOrigin()) {
                     this.connectionError = e.message;
+                    this.turns = [...state.turns];
                 }
             } finally {
                 state._resuming = false;
                 if (!state._interrupted) {
                     state.isLoading = false;
-                    if (this.currentSessionId === sseSessionId) {
+                    if (ownsOrigin()) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
+                        this._saveCurrentState();
                     }
                 }
-                await this.loadSessions();
+                await this.loadSessions({
+                    preserveConnectionError: !ownsOrigin(),
+                    ownsSession: ownsOrigin,
+                });
                 await this.loadTasks();
-                if (this.currentSessionId === sseSessionId) {
-                    requestAnimationFrame(() => {
-                        const el = document.getElementById('messages-container');
-                        if (el) this._renderMermaidInElement(el);
-                    });
+                if (ownsOrigin()) {
+                    this._queueMermaidRenderIfOwned(ownsOrigin);
                 }
             }
         },
@@ -2307,19 +2385,16 @@ function chatApp() {
             let buffer = '';
             // Track the effective sessionId — updated when turn_start migrates _pending_
             let effectiveSid = sessionId;
-            const isCurrentStreamSession = () => (
-                this.currentSessionId === effectiveSid
-                && this._sessionStates[effectiveSid] === state
-            );
+            const isCurrentStreamSession = () => this._ownsSessionState(effectiveSid, state);
             while (true) {
                 let result;
                 try { result = await reader.read(); } catch {
                     turn.isThinking = false;
                     if (!turn.content) turn.content = '**连接已断开。**';
+                    this._stopThinkingCycle(effectiveSid, state, turn);
                     if (isCurrentStreamSession()) {
                         this.connectionError = '连接已断开';
                         this.turns = [...state.turns];
-                        this._stopThinkingCycle();
                     }
                     return;
                 }
@@ -2343,33 +2418,39 @@ function chatApp() {
             }
             turn.isThinking = false;
             state.isLoading = false;
+            this._stopThinkingCycle(effectiveSid, state, turn);
             if (isCurrentStreamSession()) {
                 this.isLoading = false;
-                this._stopThinkingCycle();
                 this.connectionError = '';
                 this.turns = [...state.turns];
             }
         },
 
         _handleEvent(type, data, turn, state, sessionId) {
-            let isCurrentSession = (this.currentSessionId === sessionId);
+            let isCurrentSession = this._ownsSessionState(sessionId, state);
             // Return value: new sessionId if migrated from _pending_, else undefined
             let migratedSid;
 
             switch (type) {
                 case 'turn_start':
                     if (data.session_id && sessionId === '_pending_') {
-                        // Migrate _pending_ state to real session ID
-                        const oldState = this._sessionStates['_pending_'];
-                        delete this._sessionStates['_pending_'];
-                        this._sessionStates[data.session_id] = oldState || state;
-                        if (this.currentSessionId === '_pending_') {
-                            this.currentSessionId = data.session_id;
+                        // Only the stream that still owns _pending_ may migrate it.
+                        const ownsPendingState = (
+                            this._sessionStates['_pending_'] === state
+                        );
+                        if (ownsPendingState) {
+                            delete this._sessionStates['_pending_'];
+                            this._sessionStates[data.session_id] = state;
+                            if (this.currentSessionId === '_pending_') {
+                                this.currentSessionId = data.session_id;
+                            }
                         }
                         sessionId = data.session_id;
                         migratedSid = sessionId;
-                        state = this._sessionStates[sessionId];
-                        isCurrentSession = (this.currentSessionId === sessionId);
+                        if (ownsPendingState) {
+                            state = this._sessionStates[sessionId];
+                        }
+                        isCurrentSession = this._ownsSessionState(sessionId, state);
                     }
                     if (data.pct !== undefined) {
                         state.tokenPct = data.pct;
@@ -2380,7 +2461,9 @@ function chatApp() {
                 case 'llm_call_start':
                     turn.isThinking = true;
                     turn.thinkingText = this._thinkingStates[0];
-                    if (isCurrentSession) this._startThinkingCycle(turn);
+                    if (isCurrentSession) {
+                        this._startThinkingCycle(turn, sessionId, state);
+                    }
                     if (data.pct !== undefined) {
                         state.tokenPct = data.pct;
                         state.tokenSupported = true;
@@ -2408,7 +2491,9 @@ function chatApp() {
                     turn.content = (turn.content || '') + data.text;
                     if (isCurrentSession) this.turns = [...state.turns];
                     if (isCurrentSession) {
-                        this._scrollToBottom();
+                        this._scrollToBottom(
+                            () => this._ownsSessionState(sessionId, state),
+                        );
                     }
                     break;
                 case 'tool_call':
@@ -2469,16 +2554,18 @@ function chatApp() {
                 case 'turn_end':
                     turn.isThinking = false;
                     state.isLoading = false;
+                    this._stopThinkingCycle(sessionId, state, turn);
                     this._debouncedLoadTasks();
                     if (isCurrentSession) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
-                        this.loadTrustView();
-                        this._scrollToBottom();
-                        requestAnimationFrame(() => {
-                            const el = document.getElementById('messages-container');
-                            if (el) this._renderMermaidInElement(el);
-                        });
+                        this.loadTrustView(sessionId, state);
+                        this._scrollToBottom(
+                            () => this._ownsSessionState(sessionId, state),
+                        );
+                        this._queueMermaidRenderIfOwned(
+                            () => this._ownsSessionState(sessionId, state),
+                        );
                     }
                     if (data.pct !== undefined) {
                         state.tokenPct = data.pct;
@@ -2541,8 +2628,9 @@ function chatApp() {
             return turns;
         },
 
-        _scrollToBottom() {
+        _scrollToBottom(ownsSession = null) {
             requestAnimationFrame(() => {
+                if (ownsSession && !ownsSession()) return;
                 const el = document.getElementById('messages-container');
                 if (el) el.scrollTop = el.scrollHeight;
             });
@@ -2570,7 +2658,11 @@ function chatApp() {
                     if (needsRender) break;
                 }
                 if (needsRender) {
-                    requestAnimationFrame(() => self._renderMermaidInElement(container));
+                    const sessionId = self.currentSessionId;
+                    const state = self._sessionStates[sessionId];
+                    self._queueMermaidRenderIfOwned(
+                        () => self._ownsSessionState(sessionId, state),
+                    );
                 }
             });
             observer.observe(container, { childList: true, subtree: true });

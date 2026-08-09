@@ -17,11 +17,14 @@ from data_agent.agent.verification import verify_analysis_claims
 
 ClaimAction = Literal["verified", "exploratory", "unsupported"]
 PublicationMode = Literal["tiered", "strict"]
+FINAL_ANSWER_AUDIT_CHECK_STATUSES = frozenset({"passed", "downgraded", "failed"})
 
-# Local suffix appended to current traceable computations that cannot be
-# published as verified (e.g. completion is ``complete_with_limits``). Kept
-# Chinese-only because the published answer is Chinese; a parallel English
-# suffix would weaken the signal.
+# Local suffix appended to claims that the final audit explicitly downgrades
+# or cannot cover. Whole-plan completion limits do not override a passed
+# per-claim audit: a current, fully verified core remains verified even when
+# other requested analysis remains exploratory. Kept Chinese-only because the
+# published answer is Chinese; a parallel English suffix would weaken the
+# signal.
 EXPLORATORY_CLAIM_SUFFIX = "（探索性，未经独立校验）"
 
 # Strict-mode fail-safe banner. When the tiered renderer cannot safely
@@ -61,6 +64,24 @@ _UNSUPPORTED_DIAGNOSTICS: dict[str, str] = {
     "unsupported_claim": "无法发布该结论：缺少当前证据支撑",
 }
 _UNSUPPORTED_DEFAULT_DIAGNOSTIC = "无法发布该结论：缺少当前证据支撑"
+
+# A failed audit check can retain a local exploratory label only when the
+# check still points to a traceable evidence record and every failure is an
+# identity/completeness gap. Without that traceable reference, the same codes
+# mean that an uncomputed assertion reached publication and must fail closed.
+_EXPLORATORY_TRACEABLE_FAILURE_CODES = frozenset({
+    "missing_evidence_identity",
+    "measurement_identity_missing",
+    "evidence_check_failed",
+    "incomplete_evidence_record",
+})
+_EXPLORATORY_TRACEABLE_PRIMARY_FAILURE_CODES = (
+    _EXPLORATORY_TRACEABLE_FAILURE_CODES - {"evidence_check_failed"}
+)
+_EXPLORATORY_MARKERLESS_RECOMMENDATION_FAILURE_CODES = frozenset({
+    "missing_evidence_identity",
+    "evidence_check_failed",
+})
 
 SOFT_DIMENSIONS: dict[str, dict[str, str]] = {
     "rigor": {
@@ -111,6 +132,17 @@ SCENARIO_EXTRA_DIMENSIONS: dict[str, dict[str, str]] = {
 }
 
 _SENTENCE_SPLIT = re.compile(r"[^。！？\n]+[。！？]?")
+_MARKDOWN_HEADING_PREFIX = re.compile(r"^\s*#{1,6}\s*")
+_MARKDOWN_LIST_PREFIX = re.compile(
+    r"^\s*(?:(?:\d+\ufe0f?\u20e3)|(?:\d+[.)])|[-*+])\s+"
+)
+_SECTION_ORDINAL_PREFIX = re.compile(
+    r"^\s*(?:[一二三四五六七八九十]+[、.)]|\d+[、.)])\s*"
+)
+_RECOMMENDATION_SECTION_HEADING = re.compile(
+    r"^(?:行动建议|下一步建议|建议)(?:[（(][^）)]*[）)])?[：:]?$",
+    re.IGNORECASE,
+)
 # Terms that, when present, make a sentence a "material" claim.
 _MATERIAL_HINTS = re.compile(
     r"\d|上升|下降|增长|降低|比|高于|低于|导致|因为|由于|主要|贡献|建议|应该|值得|推荐|"
@@ -129,7 +161,7 @@ _EVIDENCE_MARKER_RUN = re.compile(
 )
 _QUANTITY = re.compile(
     r"(?<![\w.-])([-+]?\d+(?:,\d{3})*(?:\.\d+)?)\s*"
-    r"(%|percent(?:age points?)?|pp|CNY|USD|RMB|元|万元|亿元|人|次|件|个)?",
+    r"(%|percent(?:age points?)?|pp|CNY|USD|RMB|count|rows?|元|万元|亿元|人|次|件|个|行|条)?",
     re.IGNORECASE,
 )
 _TIME_SCOPE = re.compile(r"\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b")
@@ -176,12 +208,15 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
     claims: list[dict[str, Any]] = []
     for index, raw in enumerate(_SENTENCE_SPLIT.findall(answer_text or "")):
         raw_text = raw.strip()
-        text = strip_internal_evidence_markers(raw_text)
+        text = _semantic_claim_text(strip_internal_evidence_markers(raw_text))
         if not text:
             continue
         claim_type = _claim_type(text)
         non_positive = claim_type in {"diagnostic", "limitation"}
-        material = non_positive or bool(_MATERIAL_HINTS.search(text))
+        presentation_only = _is_presentation_only_heading(raw_text, text)
+        material = False if presentation_only else (
+            non_positive or bool(_MATERIAL_HINTS.search(text))
+        )
         marker_pairs = list(dict.fromkeys(_EVIDENCE_MARKER.findall(raw_text)))
         evidence_refs = [
             {"evidence_id": evidence_id, "measurement_key": measurement_key}
@@ -211,6 +246,28 @@ def extract_material_claims(answer_text: str) -> list[dict[str, Any]]:
             "confidence_assertion": "high" if _HIGH_CONFIDENCE_CLAIM.search(text) else "",
         })
     return claims
+
+
+def _semantic_claim_text(text: str) -> str:
+    """Remove Markdown-only numbering before classifying claim semantics.
+
+    Section/list ordinals are presentation structure, not measurements.  The
+    remaining prose still carries recommendation and numeric semantics, so a
+    numbered recommendation stays material while its ordinal is ignored.
+    """
+
+    semantic = _MARKDOWN_HEADING_PREFIX.sub("", text or "", count=1)
+    semantic = _MARKDOWN_LIST_PREFIX.sub("", semantic, count=1)
+    return semantic.strip()
+
+
+def _is_presentation_only_heading(raw_text: str, semantic_text: str) -> bool:
+    """Recognize recommendation section labels without bypassing real claims."""
+
+    if not _MARKDOWN_HEADING_PREFIX.match(raw_text or ""):
+        return False
+    label = _SECTION_ORDINAL_PREFIX.sub("", semantic_text or "", count=1).strip()
+    return bool(_RECOMMENDATION_SECTION_HEADING.fullmatch(label))
 
 
 def strip_internal_evidence_markers(answer_text: str) -> str:
@@ -537,19 +594,46 @@ def _diagnostic_for_reason_codes(reason_codes: Sequence[str]) -> str:
     return _UNSUPPORTED_DEFAULT_DIAGNOSTIC
 
 
-def _completion_status_value(completion: Any) -> str:
-    if completion is None:
-        return ""
-    for attr in ("status", "completion_status"):
-        value = getattr(completion, attr, None)
-        if value:
-            return str(value)
-    if isinstance(completion, dict):
-        for key in ("status", "completion_status"):
-            value = completion.get(key)
-            if value:
-                return str(value)
-    return ""
+def _failed_claim_action(
+    check: dict[str, Any],
+    claim: dict[str, Any] | None = None,
+) -> ClaimAction:
+    reason_codes = {
+        str(code).strip()
+        for code in check.get("reason_codes") or []
+        if str(code).strip()
+    }
+    evidence_ids = {
+        str(item).strip()
+        for item in check.get("evidence_ids") or []
+        if str(item).strip()
+    }
+    evidence_id = str(check.get("evidence_id") or "").strip()
+    traceable = bool(evidence_id or evidence_ids)
+    if (
+        traceable
+        and reason_codes
+        and reason_codes.issubset(_EXPLORATORY_TRACEABLE_FAILURE_CODES)
+        and bool(reason_codes & _EXPLORATORY_TRACEABLE_PRIMARY_FAILURE_CODES)
+    ):
+        return "exploratory"
+    claim = claim if isinstance(claim, dict) else {}
+    claim_text = _claim_text(claim)
+    markerless_nonnumeric_recommendation = (
+        not traceable
+        and str(claim.get("claim_type") or "").strip() == "recommendation"
+        and not (claim.get("quantities") or _extract_quantities(claim_text))
+        and not bool(claim.get("confidence_assertion"))
+        and claim.get("verification_overclaim") is not True
+        and reason_codes
+        and reason_codes.issubset(
+            _EXPLORATORY_MARKERLESS_RECOMMENDATION_FAILURE_CODES
+        )
+        and "missing_evidence_identity" in reason_codes
+    )
+    if markerless_nonnumeric_recommendation:
+        return "exploratory"
+    return "unsupported"
 
 
 def _claim_material_flag(claim: dict[str, Any]) -> bool:
@@ -565,12 +649,63 @@ def _claim_material_flag(claim: dict[str, Any]) -> bool:
     return bool(_MATERIAL_HINTS.search(text))
 
 
+def _claim_requires_evidence_flag(claim: dict[str, Any]) -> bool:
+    value = claim.get("requires_evidence")
+    if isinstance(value, bool):
+        return value
+    claim_type = str(claim.get("claim_type") or "").strip()
+    return _claim_material_flag(claim) and claim_type not in {
+        "diagnostic",
+        "limitation",
+    }
+
+
 def _claim_text(claim: dict[str, Any]) -> str:
     return str(claim.get("text") or claim.get("claim") or "").strip()
 
 
 def _claim_identifier(claim: dict[str, Any]) -> str:
     return str(claim.get("id") or claim.get("claim_id") or claim.get("claim_key") or "").strip()
+
+
+def validate_final_answer_audit_structure(audit: Any) -> bool:
+    """Return whether ``audit`` satisfies the ``final_answer_audit.v1`` shape."""
+
+    if (
+        not isinstance(audit, dict)
+        or audit.get("contract_version") != "final_answer_audit.v1"
+    ):
+        return False
+
+    claims = audit.get("claims")
+    claim_checks = audit.get("claim_checks")
+    if not isinstance(claims, list) or not isinstance(claim_checks, list):
+        return False
+
+    claim_ids: list[str] = []
+    for claim in claims:
+        if not isinstance(claim, dict):
+            return False
+        claim_id = str(claim.get("id") or "").strip()
+        if not claim_id:
+            return False
+        claim_ids.append(claim_id)
+    if len(claim_ids) != len(set(claim_ids)):
+        return False
+
+    check_ids: list[str] = []
+    for check in claim_checks:
+        if not isinstance(check, dict):
+            return False
+        claim_id = str(check.get("claim_id") or "").strip()
+        status = str(check.get("status") or "").strip()
+        if not claim_id or status not in FINAL_ANSWER_AUDIT_CHECK_STATUSES:
+            return False
+        check_ids.append(claim_id)
+    if len(check_ids) != len(set(check_ids)):
+        return False
+
+    return set(check_ids) == set(claim_ids)
 
 
 def _find_unconsumed_span(
@@ -603,17 +738,19 @@ def render_audited_analysis_answer(
     The renderer is deterministic and never calls another tool. It uses the
     existing audit (claims + claim_checks) to decide per-claim actions:
 
-    * ``verified`` — claim passed audit and the completion status is
-      ``complete``. Original text is retained.
-    * ``exploratory`` — claim passed but completion is limited, or audit
-      status is ``downgraded``, or the audit itself is missing. The claim
-      text is retained and the local suffix ``（探索性，未经独立校验）`` is
-      appended for material claims.
-    * ``unsupported`` — claim failed the audit (any reason code in the
-      deterministic blocker set, including fabricated values, contradictory
-      directions, stale dataset evidence, cross-scope evidence, and causal
-      upgrades). The claim span is replaced in place with a Chinese
-      diagnostic naming the missing evidence, method, or data.
+    * ``verified`` — claim passed the current deterministic audit. Original
+      text is retained even when other plan requirements remain incomplete.
+    * ``exploratory`` — audit status is ``downgraded``, or a failed check
+      contains only identity/completeness gaps and still names a traceable
+      evidence record.
+      The claim text is retained and the local suffix
+      ``（探索性，未经独立校验）`` is appended for material claims.
+    * ``unsupported`` — the audit is unavailable or structurally invalid, a
+      failed audit check contains a deterministic hard
+      blocker (including fabricated values, contradictory directions, stale
+      or cross-scope evidence, invalid measurement identity, and causal
+      upgrades), an unknown failure code, or no reason code. The claim span
+      is replaced in place with a Chinese diagnostic.
 
     Headings, tables, non-claim prose, method, and limitations stay in their
     original order. The five deterministic blockers fire in BOTH modes; the
@@ -635,33 +772,33 @@ def render_audited_analysis_answer(
 
     draft_text = strip_internal_evidence_markers(draft or "")
     public_text = draft_text
-    audit_present = isinstance(audit, dict)
-    if audit_present:
-        audited_public = str(audit.get("public_text") or "").strip()
+    audit_mapping = audit if isinstance(audit, dict) else None
+    audit_present = validate_final_answer_audit_structure(audit_mapping)
+    if audit_present and audit_mapping is not None:
+        audited_public = str(audit_mapping.get("public_text") or "").strip()
         if audited_public:
             public_text = audited_public
 
-    completion_status = _completion_status_value(completion)
-    # An answer published without an audit must not claim ``verified`` —
-    # force ``complete`` to False so every material claim downgrades to
-    # exploratory. This matches the docstring of the loop's
-    # ``_render_audited_publication`` and is the safer behavior.
-    complete = completion_status == "complete" and audit_present
-
     raw_audit_claims: list[dict[str, Any]] = []
     audit_claims_provided = False
-    if audit_present:
+    if audit_present and audit_mapping is not None:
         raw_audit_claims = [
-            claim for claim in (audit.get("claims") or [])
+            claim for claim in (audit_mapping.get("claims") or [])
             if isinstance(claim, dict)
         ]
         audit_claims_provided = bool(raw_audit_claims)
     if not raw_audit_claims:
         raw_audit_claims = extract_material_claims(public_text)
 
+    # Claims re-derived from the draft were not covered by the audit, even
+    # when an otherwise valid audit legitimately contains no claims. Audit
+    # infrastructure failure must not publish analytical assertions, so these
+    # claims fail closed as unsupported rather than relying on a disclaimer.
+    audited_claims_available = audit_present and audit_claims_provided
+
     checks_by_id: dict[str, dict[str, Any]] = {}
-    if isinstance(audit, dict):
-        for check in audit.get("claim_checks") or []:
+    if audit_present and audit_mapping is not None:
+        for check in audit_mapping.get("claim_checks") or []:
             if not isinstance(check, dict):
                 continue
             claim_id = str(check.get("claim_id") or "").strip()
@@ -681,14 +818,19 @@ def render_audited_analysis_answer(
         claim_text = _claim_text(claim)
         check = checks_by_id.get(claim_id, {})
         status = str(check.get("status") or "").strip()
-        if status == "failed":
-            action: ClaimAction = "unsupported"
-        elif status == "downgraded" or not complete:
-            action = "exploratory"
-        else:
-            action = "verified"
-        actions[claim_id] = action
         material = _claim_material_flag(claim)
+        requires_evidence = _claim_requires_evidence_flag(claim)
+        if not audited_claims_available:
+            action: ClaimAction = (
+                "unsupported" if requires_evidence else "exploratory"
+            )
+        elif status == "failed":
+            action = _failed_claim_action(check, claim)
+        elif status == "passed" and audited_claims_available:
+            action = "verified"
+        else:
+            action = "exploratory"
+        actions[claim_id] = action
         diagnostics.append({
             "claim_id": claim_id,
             "action": action,
@@ -706,7 +848,7 @@ def render_audited_analysis_answer(
                 claim_id,
                 action,
                 check,
-                material,
+                material and requires_evidence,
             ))
             consumed.append((match_index, match_index + len(claim_text)))
             consumed.sort()

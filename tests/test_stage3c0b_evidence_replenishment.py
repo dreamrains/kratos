@@ -28,7 +28,7 @@ def test_synthesis_instruction_injects_bounded_catalog_without_tool_ritual():
     instruction = build_synthesis_instruction(policy)
 
     assert "bounded_evidence_catalog" in instruction
-    assert "可用证据：" in instruction
+    assert "可用证据测量：" in instruction
     assert "do not read raw datasets during synthesis" in instruction.lower()
     # The old ritual that asked for tool calls during synthesis is gone.
     assert "bounded_evidence_replenishment" not in instruction

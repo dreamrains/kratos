@@ -107,6 +107,32 @@ def test_public_attribute_imports_from_allowed_roots_still_succeed(code):
     assert payload["success"] is True
 
 
+@pytest.mark.parametrize(
+    "handler",
+    ["Exception", "ValueError", "ImportError"],
+)
+def test_common_exception_handlers_are_available_in_sandbox(handler):
+    if handler == "ImportError":
+        code = (
+            "try:\n"
+            "    raise ImportError('optional dependency unavailable')\n"
+            "except ImportError:\n"
+            "    result = 'handled'"
+        )
+    else:
+        code = (
+            "try:\n"
+            "    int('not-a-number')\n"
+            f"except {handler}:\n"
+            "    result = 'handled'"
+        )
+
+    payload = json.loads(run_python(code))
+
+    assert payload["success"] is True
+    assert payload["result"] == "handled"
+
+
 def test_get_dataset_missing_name_is_structured_and_never_none(workspace):
     payload = json.loads(
         run_python("df = get_dataset('missing')\nresult = df['x'].sum()")

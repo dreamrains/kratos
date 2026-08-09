@@ -348,6 +348,62 @@ def test_streaming_tool_guard_blocks_before_registry_execution(tmp_path, monkeyp
     assert payload["error_type"] == "dataset_outside_current_task_scope"
 
 
+def test_record_analysis_plan_survives_post_tool_scope_refresh(tmp_path, monkeypatch):
+    """A successful plan mutation must establish, not violate, current scope."""
+
+    import data_agent.agent.loop as loop_module
+    import data_agent.session.task_manager as task_manager_module
+    from types import SimpleNamespace
+    from data_agent.tools import analysis_flow, task_tools  # noqa: F401
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    cfg = loop_module.get_config()
+    monkeypatch.setattr(cfg, "sessions_dir", tmp_path / "sessions")
+    monkeypatch.setattr(cfg, "skill_auto_discover", False)
+
+    loop = AgentLoop(client=object(), session_id="plan_scope_refresh")
+    loop.context.workspace.add("banner", pd.DataFrame({"revenue": [10, 12]}))
+    state = AnalysisSessionState(session_id="plan_scope_refresh")
+    state.dataset_contracts = [{
+        "id": "contract_banner",
+        "dataset": "banner",
+        "quality_status": "ready",
+    }]
+    loop.context.analysis_state = state
+    loop._flow_controller = SimpleNamespace(
+        check_tool_regression=lambda *args, **kwargs: None
+    )
+    call = ToolCall(
+        id="tc_plan",
+        name="record_analysis_plan",
+        arguments={
+            "plan": {
+                "goal": "Analyze banner revenue",
+                "method_plan": [{
+                    "task": "Check data quality",
+                    "method": "detect_data_quality",
+                    "output": "Quality findings",
+                    "evidence_requirements": ["data quality status"],
+                }],
+            }
+        },
+    )
+
+    events = list(
+        loop._process_tool_calls(Response(tool_calls=[call]), round_num=1)
+    )
+
+    errors = [event for event in events if event.get("type") == "error"]
+    assert errors == []
+    payload = json.loads(loop.messages[-1]["content"])
+    assert "error" not in payload
+    tasks = manager.list_active_for_scope(session_id="plan_scope_refresh")
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "in_progress"
+    assert tasks[0]["dataset_inputs"] == ["banner"]
+
+
 def test_parallel_guard_validates_every_dataset_argument(tmp_path, monkeypatch):
     import data_agent.session.task_manager as task_manager_module
 

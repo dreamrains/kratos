@@ -12,7 +12,10 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from data_agent.agent.answer_quality import render_audited_analysis_answer
+from data_agent.agent.answer_quality import (
+    build_final_answer_audit,
+    render_audited_analysis_answer,
+)
 from data_agent.config import AgentConfig
 
 
@@ -22,8 +25,12 @@ from data_agent.config import AgentConfig
 
 
 def limited_completion():
-    """A CompletionDecision shape where current evidence cannot fully satisfy
-    the requested claim class — claims get the exploratory suffix."""
+    """A terminal answer whose overall plan still has disclosed limits.
+
+    Claim-tier publication must continue to trust the final audit for each
+    individual claim: a passed current-evidence claim remains verified while
+    other claims may be exploratory or unsupported.
+    """
 
     return SimpleNamespace(
         status="complete_with_limits",
@@ -81,7 +88,7 @@ def mixed_audit():
             {
                 "claim_id": "claim_unsupported",
                 "status": "failed",
-                "reason_codes": ["missing_evidence_identity"],
+                "reason_codes": ["numeric_mismatch"],
             },
         ],
     }
@@ -96,7 +103,7 @@ _BLOCKER_CLAIM_TEXTS = {
 }
 
 _BLOCKER_REASON_CODES = {
-    "fabricated_value": ["missing_evidence_identity"],
+    "fabricated_value": ["numeric_mismatch"],
     "contradictory_direction": ["direction_mismatch"],
     "stale_dataset": ["stale_dataset_evidence"],
     "cross_scope_evidence": ["evidence_outside_current_plan"],
@@ -127,6 +134,34 @@ def audit_for(name: str) -> dict:
             },
         ],
     }
+
+
+def test_failed_missing_identity_cannot_publish_uncomputed_number_as_exploratory():
+    claim_text = "利润在2026-05增长99%。"
+    audit = build_final_answer_audit(
+        claim_text,
+        evidence_records=[],
+        current_plan_id="plan_current",
+        current_dataset_versions=["dataset_current_v1"],
+        measurement_binding_mode="soft",
+    )
+
+    assert audit["status"] == "blocked"
+    assert audit["claim_checks"][0]["status"] == "failed"
+    assert audit["claim_checks"][0]["evidence_ids"] == []
+
+    result = render_audited_analysis_answer(
+        draft=claim_text,
+        audit=audit,
+        completion=limited_completion(),
+        mode="tiered",
+    )
+
+    assert result.actions == {"claim_1": "unsupported"}
+    assert claim_text not in result.text
+    assert "99%" not in result.text
+    assert "无法发布" in result.text
+    assert "探索性，未经独立校验" not in result.text
 
 
 @pytest.fixture
@@ -169,7 +204,8 @@ def test_tiered_mode_preserves_headings_tables_and_supported_findings():
     )
     assert "# 结论" in result.text
     assert "已验证发现" in result.text
-    assert "探索性，未经独立校验" in result.text
+    assert result.actions["claim_verified"] == "verified"
+    assert "已验证发现（探索性，未经独立校验）" not in result.text
     assert "无法发布该数值" in result.text
     assert "Some requested analysis claims" not in result.text
 
@@ -186,20 +222,163 @@ def test_strict_mode_still_blocks_only_claims_not_whole_answer():
     assert result.actions["claim_unsupported"] == "unsupported"
 
 
-def test_verified_claim_keeps_original_text_when_completion_is_complete():
-    """When the completion is fully complete and the claim passes audit, the
-    renderer must NOT append the exploratory suffix."""
+@pytest.mark.parametrize("completion", [complete_decision(), limited_completion()])
+def test_verified_claim_keeps_original_text_for_terminal_completion(completion):
+    """Whole-plan limits cannot downgrade a claim that passed final audit."""
 
     draft = "已验证发现"
     result = render_audited_analysis_answer(
         draft=draft,
         audit=mixed_audit(),
-        completion=complete_decision(),
+        completion=completion,
         mode="tiered",
     )
     assert "已验证发现" in result.text
     assert "探索性，未经独立校验" not in result.text
     assert result.actions["claim_verified"] == "verified"
+
+
+def _structural_audit(*, claims=None, claim_checks=None) -> dict:
+    public_text = "Revenue increased 12%."
+    return {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_structural_contract",
+        "status": "pass",
+        "public_text": public_text,
+        "claims": claims if claims is not None else [{
+            "id": "claim_revenue",
+            "text": public_text,
+            "claim_type": "comparison",
+            "material": True,
+        }],
+        "claim_checks": claim_checks if claim_checks is not None else [{
+            "claim_id": "claim_revenue",
+            "status": "passed",
+            "reason_codes": [],
+        }],
+    }
+
+
+@pytest.mark.parametrize(
+    "audit",
+    [
+        pytest.param(
+            _structural_audit(claim_checks=[]),
+            id="missing-check",
+        ),
+        pytest.param(
+            _structural_audit(claim_checks=[
+                {"claim_id": "claim_revenue", "status": "passed"},
+                {"claim_id": "claim_revenue", "status": "passed"},
+            ]),
+            id="duplicate-check",
+        ),
+        pytest.param(
+            _structural_audit(claim_checks=[
+                {"claim_id": "claim_revenue", "status": "passed"},
+                {"claim_id": "claim_orphan", "status": "passed"},
+            ]),
+            id="orphan-check",
+        ),
+        pytest.param(
+            _structural_audit(claims=[
+                {
+                    "id": "claim_revenue",
+                    "text": "Revenue increased 12%.",
+                    "claim_type": "comparison",
+                    "material": True,
+                },
+                {
+                    "id": "claim_revenue",
+                    "text": "Revenue increased 12%.",
+                    "claim_type": "comparison",
+                    "material": True,
+                },
+            ]),
+            id="duplicate-claim-id",
+        ),
+        pytest.param(
+            _structural_audit(claim_checks=[{
+                "claim_id": "claim_revenue",
+                "status": "unknown",
+            }]),
+            id="unknown-check-status",
+        ),
+        pytest.param(
+            _structural_audit(
+                claims=[{"id": " ", "text": "Revenue increased 12%."}],
+                claim_checks=[{"claim_id": " ", "status": "passed"}],
+            ),
+            id="blank-claim-id",
+        ),
+        pytest.param(
+            _structural_audit(claim_checks=[{
+                "claim_id": " ",
+                "status": "passed",
+            }]),
+            id="blank-check-claim-id",
+        ),
+    ],
+)
+def test_structurally_invalid_audit_never_verifies_claims(audit):
+    result = render_audited_analysis_answer(
+        draft="Revenue increased 12%.",
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "Revenue increased 12%." not in result.text
+    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert set(result.actions.values()) == {"unsupported"}
+
+
+def test_structurally_valid_audit_still_verifies_complete_claim():
+    result = render_audited_analysis_answer(
+        draft="Revenue increased 12%.",
+        audit=_structural_audit(),
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.text == "Revenue increased 12%.\n"
+    assert result.actions == {"claim_revenue": "verified"}
+
+
+def test_structurally_invalid_audit_cannot_replace_draft_public_text():
+    audit = _structural_audit(claim_checks=[])
+    audit["public_text"] = "Malformed audit replacement 99%."
+
+    result = render_audited_analysis_answer(
+        draft="# Conclusion\n\nRevenue increased 12%.\n\n## Limitations\n\nDescriptive only.",
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.text.startswith("# Conclusion")
+    assert "Revenue increased 12%." not in result.text
+    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert "## Limitations" in result.text
+    assert "Descriptive only." in result.text
+    assert "Malformed audit replacement" not in result.text
+    assert "verified" not in result.actions.values()
+
+
+def test_empty_valid_audit_cannot_verify_claim_rederived_from_draft():
+    audit = _structural_audit(claims=[], claim_checks=[])
+    audit["public_text"] = ""
+
+    result = render_audited_analysis_answer(
+        draft="Revenue increased 12%.",
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "Revenue increased 12%." not in result.text
+    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert set(result.actions.values()) == {"unsupported"}
 
 
 def test_missing_measurement_identity_keeps_complete_answer_structure():
@@ -269,6 +448,157 @@ def test_minimum_blockers_apply_in_both_modes(claim_fixture, request):
         assert "无法发布" in result.text
 
 
+def test_missing_evidence_identity_is_published_as_exploratory_in_both_modes():
+    """Missing projection is a confidence limitation, not proof that the
+    claim is false; hard numeric contradictions remain covered above."""
+    claim_text = "收入均值为 514.5 元。"
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_missing_identity",
+        "status": "blocked",
+        "public_text": claim_text,
+        "claims": [{
+            "id": "claim_mean",
+            "text": claim_text,
+            "claim_type": "numeric",
+            "material": True,
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_mean",
+            "status": "failed",
+            "evidence_id": "ev_traceable_mean",
+            "evidence_ids": ["ev_traceable_mean"],
+            "reason_codes": ["missing_evidence_identity", "evidence_check_failed"],
+        }],
+    }
+
+    for mode in ("tiered", "strict"):
+        result = render_audited_analysis_answer(
+            draft=claim_text,
+            audit=audit,
+            completion=complete_decision(),
+            mode=mode,
+        )
+        assert claim_text in result.text
+        assert "探索性，未经独立校验" in result.text
+        assert "无法发布" not in result.text
+        assert result.actions["claim_mean"] == "exploratory"
+
+
+def test_generic_failed_check_with_evidence_id_is_not_exploratory():
+    """A generic failure code is not proof of a safe identity-only gap."""
+
+    claim_text = "Revenue increased 91%."
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_generic_failure",
+        "status": "blocked",
+        "public_text": claim_text,
+        "claims": [{
+            "id": "claim_revenue",
+            "text": claim_text,
+            "claim_type": "numeric",
+            "material": True,
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_revenue",
+            "status": "failed",
+            "evidence_id": "ev_present_but_unresolved",
+            "evidence_ids": ["ev_present_but_unresolved"],
+            "reason_codes": ["evidence_check_failed"],
+        }],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=claim_text,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.actions == {"claim_revenue": "unsupported"}
+    assert claim_text not in result.text
+
+
+def test_markerless_nonnumeric_recommendation_is_exploratory():
+    claim_text = "建议补充时间字段并通过 A/B 测试验证策略效果。"
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_markerless_recommendation",
+        "status": "blocked",
+        "public_text": claim_text,
+        "claims": [{
+            "id": "claim_recommendation",
+            "text": claim_text,
+            "claim_type": "recommendation",
+            "material": True,
+            "requires_evidence": True,
+            "quantities": [],
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_recommendation",
+            "status": "failed",
+            "evidence_id": None,
+            "evidence_ids": [],
+            "reason_codes": [
+                "missing_evidence_identity",
+                "evidence_check_failed",
+            ],
+        }],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=claim_text,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.actions == {"claim_recommendation": "exploratory"}
+    assert claim_text in result.text
+    assert "探索性，未经独立校验" in result.text
+    assert "无法发布" not in result.text
+
+
+def test_markerless_numeric_recommendation_remains_unsupported():
+    claim_text = "建议将预算提高 91%。"
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_markerless_numeric_recommendation",
+        "status": "blocked",
+        "public_text": claim_text,
+        "claims": [{
+            "id": "claim_recommendation",
+            "text": claim_text,
+            "claim_type": "recommendation",
+            "material": True,
+            "requires_evidence": True,
+            "quantities": [{"raw": "91%", "value": 91.0, "unit": "%"}],
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_recommendation",
+            "status": "failed",
+            "evidence_id": None,
+            "evidence_ids": [],
+            "reason_codes": [
+                "missing_evidence_identity",
+                "evidence_check_failed",
+            ],
+        }],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=claim_text,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.actions == {"claim_recommendation": "unsupported"}
+    assert claim_text not in result.text
+    assert "无法发布" in result.text
+
+
 def test_publication_mode_has_no_off_value():
     with pytest.raises(ValidationError):
         AgentConfig(ASSURANCE_PUBLICATION_MODE="off", _env_file=None)
@@ -308,7 +638,7 @@ def _unmatched_unsupported_audit() -> dict:
             {
                 "claim_id": "claim_unmatched",
                 "status": "failed",
-                "reason_codes": ["missing_evidence_identity"],
+                "reason_codes": ["numeric_mismatch"],
             },
         ],
     }
@@ -402,10 +732,13 @@ def test_strict_no_banner_when_recovery_is_clean():
     assert strict_result.actions["claim_1"] == "unsupported"
 
 
-def test_audit_missing_downgrades_to_exploratory_not_verified():
-    """Regression for the audit-None docstring: when the audit is missing,
-    a material claim must NOT stay ``verified`` even if completion is
-    ``complete`` — it downgrades to ``exploratory`` and gets the suffix."""
+def test_audit_missing_removes_unaudited_material_claim():
+    """Audit infrastructure failure must not publish analytical assertions.
+
+    An exploratory disclaimer cannot make an unaudited number safe.  The
+    renderer preserves the surrounding answer structure, but replaces every
+    re-derived material claim with a deterministic diagnostic.
+    """
 
     draft = "本月收入增长了 5%。"
     for mode in ("tiered", "strict"):
@@ -415,7 +748,7 @@ def test_audit_missing_downgrades_to_exploratory_not_verified():
             completion=complete_decision(),
             mode=mode,
         )
-        # Re-derived claim downgrades to exploratory; the suffix appears on
-        # the material claim and no action is "verified".
-        assert "探索性，未经独立校验" in result.text
-        assert "verified" not in result.actions.values()
+        assert "本月收入增长了 5%" not in result.text
+        assert "无法发布该结论：缺少当前证据支撑" in result.text
+        assert "探索性，未经独立校验" not in result.text
+        assert set(result.actions.values()) == {"unsupported"}

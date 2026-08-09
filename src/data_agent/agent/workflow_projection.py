@@ -6,6 +6,7 @@ from typing import Any
 from data_agent.agent.analysis_plan_contracts import (
     ANALYSIS_PLAN_CONTRACT_VERSION,
     analysis_plan_id_from_mapping,
+    validate_compiled_analysis_plan_for_projection,
     validate_analysis_plan_contract,
 )
 from data_agent.session.task_manager import TaskManager
@@ -96,7 +97,18 @@ def project_plan_to_workflow_tasks(
             "task_ids": [],
             "error": "unsupported_contract_version",
         }
-    validation = validate_analysis_plan_contract(plan)
+    if (
+        plan.get("contract_version") == ANALYSIS_PLAN_CONTRACT_VERSION
+        and plan.get("review_status") == "executable"
+        and isinstance(plan.get("analysis_requirements"), dict)
+    ):
+        # This plan is already the state-owned compiler output. Recompiling it
+        # without the original dataset-profile inputs can manufacture a false
+        # conflict as profiles evolve during the turn. Projection validates
+        # the executable shape while preserving the compiler-owned snapshot.
+        validation = validate_compiled_analysis_plan_for_projection(plan)
+    else:
+        validation = validate_analysis_plan_contract(plan)
     if not validation.ok:
         return {
             "created": 0,
@@ -251,6 +263,12 @@ def project_plan_to_workflow_tasks(
             manager.update(task["id"], addBlockedBy=dependency_ids)
             for dependency_id in dependency_ids:
                 manager.update(dependency_id, addBlocks=[task["id"]])
+
+    manager.activate_next_ready_plan_task(
+        session_id=session_id,
+        project_name=project_name,
+        plan_id=plan_record["id"],
+    )
 
     return {
         "workflow_id": workflow_id,

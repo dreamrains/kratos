@@ -361,7 +361,8 @@ class TestThinkingAnimation:
         assert "_stopThinkingCycle" in js
 
     def test_thinking_cycle_on_llm_call_start(self, js):
-        assert "_startThinkingCycle(turn)" in js
+        assert "_startThinkingCycle(turn, sessionId, state)" in js
+        assert "_thinkingTimerOwner" in js
 
     def test_thinking_cycle_stops_on_sse_end(self, js):
         assert "_stopThinkingCycle()" in js

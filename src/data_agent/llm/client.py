@@ -217,6 +217,7 @@ class LLMClient:
         # Accumulate full response parts
         full_text = ""
         reasoning_text = ""
+        finish_reason = "stop"
         # tool_calls accumulation: index -> {id, name, arguments_str}
         tc_accum: dict[int, dict[str, str]] = {}
 
@@ -225,6 +226,9 @@ class LLMClient:
                 for chunk in completion(**kwargs):
                     choice = chunk.choices[0]
                     delta = choice.delta
+                    provider_finish_reason = getattr(choice, "finish_reason", None)
+                    if provider_finish_reason:
+                        finish_reason = str(provider_finish_reason)
 
                     # Text content
                     if delta.content:
@@ -274,6 +278,7 @@ class LLMClient:
                 response = Response(
                     text=full_text,
                     tool_calls=tool_calls,
+                    finish_reason=finish_reason,
                     reasoning_content=reasoning_text,
                     unreported_output_tokens=aggregate_unreported_tokens,
                 )
@@ -291,6 +296,7 @@ class LLMClient:
                     # Reset accumulators for retry
                     full_text = ""
                     reasoning_text = ""
+                    finish_reason = "stop"
                     tc_accum.clear()
                 else:
                     attach_unreported_usage(exc)
@@ -305,6 +311,7 @@ class LLMClient:
                     kwargs["max_tokens"] = remaining
                     full_text = ""
                     reasoning_text = ""
+                    finish_reason = "stop"
                     tc_accum.clear()
                 else:
                     attach_unreported_usage(exc)

@@ -126,6 +126,59 @@ def test_real_computation_projects_and_publishes_exact_measurement(
     assert "[[evidence:" not in publication.text
 
 
+def test_projected_distribution_measurement_can_verify_exact_metric(
+    projection_context,
+):
+    """The generic list-container name must not make an otherwise exact,
+    server-projected distribution measurement fail semantic verification."""
+
+    output = {
+        "summary": "Distribution result",
+        "data": {
+            "sample_size": 100,
+            "measurements": [{
+                "column": "revenue",
+                "metric": "mean",
+                "value": 125.5,
+                "unit": "value",
+                "definition": "Arithmetic mean over non-missing rows.",
+            }],
+            "limitations": ["Descriptive only."],
+            "allowed_claim_class": "descriptive",
+        },
+    }
+    capability = {
+        "capability_id": "analysis.distribution",
+        "category": "distribution",
+        "evidence_fields": [
+            "sample_size",
+            "measurements.value",
+            "limitations",
+            "allowed_claim_class",
+        ],
+    }
+    evidence = project_real_correlation(
+        projection_context,
+        output=output,
+        capability=capability,
+    ).record
+    measurement = next(
+        item
+        for item in evidence["measurements"]
+        if item["metric"] == "measurements.value"
+    )
+    identity = measurement["identity"]
+
+    audit = _audit_with_marker(
+        projection_context,
+        evidence,
+        measurement_key=identity["measurement_key"],
+        claim="mean revenue value is 125.5",
+    )
+
+    assert audit["status"] == "pass"
+
+
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     [
