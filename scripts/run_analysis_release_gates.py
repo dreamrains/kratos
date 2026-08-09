@@ -63,6 +63,65 @@ _MAX_CAPTURE_CHARS = 4000
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
+def _same_or_descendant(candidate: Path, protected: Path) -> bool:
+    candidate = Path(candidate).resolve()
+    protected = Path(protected).resolve()
+    return candidate == protected or protected in candidate.parents
+
+
+def build_isolated_runtime_environment(
+    *,
+    repository_root: Path,
+    state_root: Path,
+    base_environment: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Build child-process state roots that cannot touch interactive runtime.
+
+    Release subprocesses import module-level state managers.  Their paths must
+    therefore be fixed in the environment before Python imports application
+    modules; changing a singleton after startup is too late.
+    """
+
+    repository_root = Path(repository_root).resolve()
+    state_root = Path(state_root).resolve()
+    workspace_root = state_root / "workspace"
+    sessions_root = state_root / "sessions"
+    protected_roots = (
+        repository_root / "workspace",
+        repository_root / "sessions",
+    )
+    candidates = (state_root, workspace_root, sessions_root)
+    if any(
+        _same_or_descendant(candidate, protected)
+        for candidate in candidates
+        for protected in protected_roots
+    ):
+        raise ValueError("interactive_runtime_state roots are forbidden")
+
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    sessions_root.mkdir(parents=True, exist_ok=True)
+    environment = dict(base_environment or {})
+    environment["DATA_AGENT_TEST_STATE_ROOT"] = str(state_root)
+    environment["WORKSPACE_DIR"] = str(workspace_root)
+    environment["SESSIONS_DIR"] = str(sessions_root)
+    source_paths = (
+        str(repository_root / "src"),
+        str(repository_root / "tests"),
+        str(repository_root),
+    )
+    inherited_pythonpath = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (*source_paths, *([inherited_pythonpath] if inherited_pythonpath else []))
+    )
+    return environment, {
+        "name": "runtime_state_isolation",
+        "status": "PASS",
+        "state_isolated": True,
+        "source_import_isolated": True,
+        "source_root": str(repository_root / "src"),
+    }
+
+
 def build_gate_report(
     *,
     profile: str,
@@ -200,6 +259,11 @@ def inspect_test_harness(conftest: Path) -> dict[str, Any]:
     release_critical = sorted(ignored_names & _RELEASE_CRITICAL_IGNORED)
     if release_critical:
         reasons.append("release_critical_collect_ignore")
+    unowned_ignored = sorted(
+        name for name in ignored_names if name not in _DIRECT_RUNNERS
+    )
+    if unowned_ignored:
+        reasons.append("unowned_collect_ignore")
     direct_runners = sorted(
         path
         for name, path in _DIRECT_RUNNERS.items()
@@ -208,6 +272,7 @@ def inspect_test_harness(conftest: Path) -> dict[str, Any]:
     return {
         "status": "PASS" if not reasons else "FAIL",
         "release_critical_ignored": release_critical,
+        "unowned_ignored": unowned_ignored,
         "required_direct_runners": direct_runners,
         "reason_codes": list(dict.fromkeys(reasons)),
     }
@@ -329,13 +394,6 @@ def run_declared_deterministic_gates(
     """Run A-D and retain exact per-command exit codes in the JSON report."""
 
     root = Path(root).resolve()
-    environment = os.environ.copy()
-    environment["PYTHONPATH"] = os.pathsep.join(
-        (str(root / "src"), str(root / "tests"), str(root))
-    )
-    environment["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
-    environment["PYTHONUTF8"] = "1"
-    environment["PYTHONIOENCODING"] = "utf-8"
     harness = harness_result or inspect_test_harness(root / "tests" / "conftest.py")
     gate_checks: dict[str, list[dict[str, Any]]] = {
         gate: [] for gate in DETERMINISTIC_REQUIRED
@@ -344,6 +402,7 @@ def run_declared_deterministic_gates(
         "name": "test_harness_inspection",
         "status": harness["status"],
         "release_critical_ignored": harness.get("release_critical_ignored", []),
+        "unowned_ignored": harness.get("unowned_ignored", []),
         "required_direct_runners": harness.get("required_direct_runners", []),
         "reason_codes": harness.get("reason_codes", []),
     }
@@ -353,11 +412,21 @@ def run_declared_deterministic_gates(
             "gate": "A",
             "check": "test_harness_inspection",
             "exit_code": None,
-        }
+    }
     gate_checks["A"].append(harness_check)
 
     with tempfile.TemporaryDirectory(prefix="data-agent-release-gates-") as tmp:
-        commands = _declared_commands(Path(tmp) / "deterministic-replay")
+        gate_root = Path(tmp)
+        environment, isolation_check = build_isolated_runtime_environment(
+            repository_root=root,
+            state_root=gate_root / "runtime-state",
+            base_environment=os.environ.copy(),
+        )
+        environment["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
+        environment["PYTHONUTF8"] = "1"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        gate_checks["A"].append(isolation_check)
+        commands = _declared_commands(gate_root / "deterministic-replay")
         for gate in DETERMINISTIC_REQUIRED:
             for name, command in commands[gate]:
                 try:

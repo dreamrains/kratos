@@ -453,7 +453,9 @@ def resolve_date_col(df: pd.DataFrame, date_col: str = "") -> tuple[str, str | N
     dt_cols = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
     if not dt_cols:
         for c in df.columns:
-            if df[c].dtype == object:
+            if pd.api.types.is_object_dtype(df[c]) or pd.api.types.is_string_dtype(
+                df[c]
+            ):
                 try:
                     pd.to_datetime(df[c].dropna().head(20))
                     dt_cols.append(c)

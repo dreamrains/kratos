@@ -43,11 +43,24 @@ def _create_context_state_registry():
     class ManagerCapabilities:
         """Immutable, closure-private view of the manager operations we trust."""
 
-        __slots__ = ("_get_active_plan_id", "_list_all")
+        __slots__ = (
+            "_get_active_plan_id",
+            "_list_all",
+            "_get_analysis_run_scope",
+        )
 
         def __init__(self, manager):
             object.__setattr__(self, "_get_active_plan_id", manager.get_active_plan_id)
             object.__setattr__(self, "_list_all", manager.list_all)
+            object.__setattr__(
+                self,
+                "_get_analysis_run_scope",
+                getattr(
+                    manager,
+                    "get_analysis_run_scope",
+                    lambda *_args, **_kwargs: None,
+                ),
+            )
 
         def __setattr__(self, name, value):
             raise AttributeError("Manager capabilities are immutable")
@@ -57,6 +70,9 @@ def _create_context_state_registry():
 
         def list_all(self, *args, **kwargs):
             return self._list_all(*args, **kwargs)
+
+        def get_analysis_run_scope(self, *args, **kwargs):
+            return self._get_analysis_run_scope(*args, **kwargs)
 
     def bind_owner(owner):
         from data_agent.session.task_manager import task_manager
@@ -140,6 +156,7 @@ def _create_context_state_registry():
 
         access_rank = {
             "synthesis": 0,
+            "terminal": 0,
             "error": 0,
             "planning": 1,
             "execution": 2,

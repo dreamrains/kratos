@@ -65,6 +65,27 @@ _UNSUPPORTED_DIAGNOSTICS: dict[str, str] = {
 }
 _UNSUPPORTED_DEFAULT_DIAGNOSTIC = "无法发布该结论：缺少当前证据支撑"
 
+_UNSUPPORTED_LIMITATIONS: dict[str, str] = {
+    "missing_evidence_identity": "缺少对应的当前计算证据标识。",
+    "numeric_mismatch": "数值与当前计算证据不一致。",
+    "unit_mismatch": "单位或指标口径与当前证据不一致。",
+    "direction_mismatch": "变化方向与当前证据不一致。",
+    "time_scope_mismatch": "时间范围与当前证据不一致。",
+    "population_scope_mismatch": "分析人群或样本范围与当前证据不一致。",
+    "confidence_mismatch": "置信度表述超出当前证据。",
+    "verification_level_overclaim": "证据核验等级不足以支撑原表述。",
+    "stale_dataset_evidence": "引用的数据版本已过期。",
+    "stale_plan_evidence": "引用的证据属于历史分析计划。",
+    "evidence_outside_current_plan": "引用的证据不在当前分析范围内。",
+    "evidence_identity_not_found": "当前计划中找不到引用的证据。",
+    "causal_claim_not_identified": "当前方法不满足因果识别要求。",
+    "unmet_block_claim_requirement": "所需的统计分析保证尚未满足。",
+    "claim_guard_blocked": "声明性保证检查未通过。",
+    "computation_integrity_failure": "计算完整性校验未通过。",
+    "unsupported_claim": "当前证据不足以支撑原结论。",
+}
+_UNSUPPORTED_DEFAULT_LIMITATION = "当前证据不足以支撑原结论。"
+
 # A failed audit check can retain a local exploratory label only when the
 # check still points to a traceable evidence record and every failure is an
 # identity/completeness gap. Without that traceable reference, the same codes
@@ -575,7 +596,8 @@ class PublicationResult:
     """Result of claim-tier publication rendering.
 
     ``text`` is the published answer with verified/exploratory findings kept
-    and unsupported claims replaced in place by Chinese diagnostics.
+    and unsupported claims omitted from the body. Their distinct blockers are
+    consolidated into one user-readable evidence-limit section.
     ``actions`` maps each audit claim id to its publication action. ``diagnostics``
     carries per-claim audit metadata for turn diagnostics; it never re-derives
     a publication decision on its own.
@@ -592,6 +614,37 @@ def _diagnostic_for_reason_codes(reason_codes: Sequence[str]) -> str:
         if text:
             return text
     return _UNSUPPORTED_DEFAULT_DIAGNOSTIC
+
+
+def _limitation_for_reason_codes(reason_codes: Sequence[str]) -> str:
+    for code in reason_codes or ():
+        text = _UNSUPPORTED_LIMITATIONS.get(str(code))
+        if text:
+            return text
+    return _UNSUPPORTED_DEFAULT_LIMITATION
+
+
+def _unsupported_span(
+    text: str,
+    start: int,
+    end: int,
+    claim_text: str,
+) -> tuple[int, int]:
+    """Expand a standalone Markdown claim to its whole line.
+
+    Removing the entire list item/table row avoids leaving broken bullets or
+    diagnostic text in analytical tables. Mixed prose on the same line keeps
+    its surrounding content and removes only the unsupported claim span.
+    """
+
+    line_start = text.rfind("\n", 0, start) + 1
+    next_newline = text.find("\n", end)
+    line_end = len(text) if next_newline < 0 else next_newline + 1
+    line = text[line_start:(len(text) if next_newline < 0 else next_newline)]
+    semantic = _semantic_claim_text(line.strip()).strip().strip("|").strip()
+    if "|" in line or semantic == claim_text.strip():
+        return line_start, line_end
+    return start, end
 
 
 def _failed_claim_action(
@@ -842,9 +895,18 @@ def render_audited_analysis_answer(
             continue
         match_index = _find_unconsumed_span(public_text, claim_text, consumed)
         if match_index >= 0:
+            span_start = match_index
+            span_end = match_index + len(claim_text)
+            if action == "unsupported":
+                span_start, span_end = _unsupported_span(
+                    public_text,
+                    span_start,
+                    span_end,
+                    claim_text,
+                )
             spans.append((
-                match_index,
-                match_index + len(claim_text),
+                span_start,
+                span_end,
                 claim_id,
                 action,
                 check,
@@ -858,6 +920,8 @@ def render_audited_analysis_answer(
     spans.sort(key=lambda item: (item[0], item[1]))
 
     pieces: list[str] = []
+    unsupported_limitations: list[str] = []
+    unsupported_count = 0
     cursor = 0
     for start, end, _claim_id, action, check, material in spans:
         if start < cursor:
@@ -871,17 +935,30 @@ def render_audited_analysis_answer(
             if material:
                 pieces.append(EXPLORATORY_CLAIM_SUFFIX)
         else:
-            pieces.append(_diagnostic_for_reason_codes(check.get("reason_codes") or []))
+            unsupported_count += 1
+            unsupported_limitations.append(
+                _limitation_for_reason_codes(check.get("reason_codes") or [])
+            )
         cursor = end
     pieces.append(public_text[cursor:])
 
     if unmatched_unsupported:
-        pieces.append("\n\n")
         for _claim_id, check in unmatched_unsupported:
-            pieces.append(_diagnostic_for_reason_codes(check.get("reason_codes") or []))
-            pieces.append("\n")
+            unsupported_count += 1
+            unsupported_limitations.append(
+                _limitation_for_reason_codes(check.get("reason_codes") or [])
+            )
 
-    text = "".join(pieces).rstrip()
+    text = re.sub(r"\n{3,}", "\n\n", "".join(pieces)).rstrip()
+    if unsupported_count:
+        distinct_limits = list(dict.fromkeys(unsupported_limitations))
+        limit_lines = [
+            "## 证据限制",
+            "",
+            f"- {unsupported_count} 项结论未纳入发布内容（无法发布），以避免呈现未经支持的数值或判断。",
+            *[f"- {item}" for item in distinct_limits],
+        ]
+        text = (text + "\n\n" if text else "") + "\n".join(limit_lines)
 
     # Strict-only fail-safe rollback net. When the tiered renderer cannot
     # safely recover — (a) an unsupported claim could not be cleanly replaced

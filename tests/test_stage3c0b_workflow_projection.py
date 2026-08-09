@@ -3,6 +3,7 @@ from data_agent.agent.analysis_plan_contracts import (
     validate_analysis_plan_contract,
 )
 from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
+from data_agent.agent.execution_scope import resolve_workspace_scope
 from data_agent.session.task_manager import TaskManager
 
 
@@ -85,6 +86,54 @@ def test_projector_activates_exactly_one_first_ready_canonical_task(tmp_path):
     assert [task["id"] for task in tasks if task["status"] == "in_progress"] == [
         banner["id"]
     ]
+    assert projected["analysis_run"]["run_id"]
+
+
+def test_legacy_task_json_cannot_overwrite_transactional_current_scope(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    tasks = [manager.get(task_id) for task_id in projected["task_ids"]]
+    banner = next(task for task in tasks if task["step_id"] == "step_banner")
+    synthesis = next(task for task in tasks if task["step_id"] == "step_synthesis")
+
+    manager.update(banner["id"], status="pending")
+    manager.update(synthesis["id"], status="in_progress")
+    scope = resolve_workspace_scope(manager, "s1", "p1")
+
+    assert scope.phase == "execution"
+    assert scope.task_id == banner["id"]
+    assert scope.step_id == "step_banner"
+    assert scope.allowed_datasets == frozenset({"banner"})
+
+
+def test_completed_transactional_run_resolves_terminal_scope_without_error(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    plan["method_plan"] = [plan["method_plan"][0]]
+    plan["analysis_requirements"] = {
+        "step_banner": plan["analysis_requirements"]["step_banner"]
+    }
+    projected = project_plan_to_workflow_tasks(
+        manager,
+        plan,
+        session_id="s1",
+        project_name="p1",
+    )
+    task = manager.get(projected["task_ids"][0])
+    manager.update(task["id"], status="completed")
+
+    scope = resolve_workspace_scope(manager, "s1", "p1")
+
+    assert scope.phase == "terminal"
+    assert scope.error_type == ""
+    assert scope.active is True
+    assert scope.allowed_datasets == frozenset()
 
 
 def test_projector_preserves_state_owned_compiler_snapshot(tmp_path):

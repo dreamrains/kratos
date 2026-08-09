@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,3 +49,25 @@ def test_local_vendor_assets_exist() -> None:
         path = STATIC_ROOT / asset
         assert path.is_file(), f"Missing local vendor asset: {asset}"
         assert path.stat().st_size > 0
+
+
+def test_first_party_assets_use_content_bound_cache_keys() -> None:
+    from data_agent.web.app import static_asset_version
+
+    html = _base_html()
+    assert "asset_version('js/app.js')" in html
+    assert "asset_version('css/app.css')" in html
+    for asset in ("js/app.js", "css/app.css"):
+        version = static_asset_version(STATIC_ROOT, asset)
+        assert re.fullmatch(r"[0-9a-f]{12}", version)
+
+
+def test_asset_version_changes_with_content(tmp_path) -> None:
+    from data_agent.web.app import static_asset_version
+
+    asset = tmp_path / "app.js"
+    asset.write_text("first", encoding="utf-8")
+    first = static_asset_version(tmp_path, "app.js")
+    asset.write_text("second", encoding="utf-8")
+    second = static_asset_version(tmp_path, "app.js")
+    assert first != second

@@ -43,6 +43,11 @@ from data_agent.agent.execution_control import (
 )
 from data_agent.session.workspace import Workspace, workspace
 from data_agent.agent.progress import build_analysis_progress
+from data_agent.agent.tool_outcome import (
+    committed_tool_outcome,
+    render_committed_tool_content,
+    with_workflow_warning,
+)
 
 logger = get_logger("loop")
 
@@ -1800,6 +1805,56 @@ class AgentLoop:
             )
             return None
 
+    def _analysis_run_binding(self, step_binding):
+        from data_agent.session.task_manager import task_manager
+
+        resolver = getattr(task_manager, "get_analysis_run_tool_binding", None)
+        if not callable(resolver):
+            return None
+        external_step_id = str(
+            getattr(step_binding, "step_id", "")
+            or getattr(self.context.workspace_scope, "step_id", "")
+            or ""
+        )
+        try:
+            return resolver(
+                session_id=self.session_id,
+                project_name=self.context.project_name or "",
+                external_step_id=external_step_id,
+            )
+        except Exception:
+            return None
+
+    def _persist_analysis_run_outcome(self, tc, binding, outcome):
+        if not binding:
+            return outcome
+        from data_agent.session.task_manager import task_manager
+
+        try:
+            task_manager.record_analysis_tool_outcome(
+                session_id=self.session_id,
+                binding=binding,
+                tool_call_id=str(tc.id or ""),
+                tool_name=tc.name,
+                state=outcome.state.value,
+                artifact_ids=outcome.artifact_ids,
+                warning=(
+                    {
+                        "error_type": outcome.warning.error_type,
+                        "message": outcome.warning.message,
+                    }
+                    if outcome.warning is not None
+                    else None
+                ),
+            )
+            return outcome
+        except Exception:
+            return with_workflow_warning(
+                outcome,
+                error_type="tool_outcome_persistence_failed",
+                message="The tool result committed, but its workflow outcome could not be persisted.",
+            )
+
     def _maybe_project_structured_evidence(
         self,
         *,
@@ -1856,8 +1911,9 @@ class AgentLoop:
                 current_turn_id=turn_id,
                 sessions_root=get_config().sessions_resolved,
             )
+
             if result.projected:
-                projected_record = state.upsert_evidence_record(result.record)
+                projected_records = tuple(result.records or (result.record,))
                 # Automatic evidence must own canonical workflow progress as
                 # well as persistence. Requiring the model to replay the same
                 # record through ``record_evidence_record`` reintroduces a
@@ -1865,11 +1921,18 @@ class AgentLoop:
                 # current task between analytical steps.
                 from data_agent.session.task_manager import task_manager
 
-                completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
-                    session_id=state.session_id,
-                    evidence=projected_record,
-                    analysis_spec_id="",
-                )
+                completed_task_ids: list[int] = []
+                stored_records: list[dict[str, Any]] = []
+                for record in projected_records:
+                    projected_record = state.upsert_evidence_record(record)
+                    stored_records.append(projected_record)
+                    completed_task_ids.extend(
+                        task_manager.complete_matching_tasks_from_evidence(
+                            session_id=state.session_id,
+                            evidence=projected_record,
+                            analysis_spec_id="",
+                        ) or []
+                    )
                 # Invalidate the synthesis-policy cache so the next prompt
                 # rebuilds the bounded evidence catalog with this record.
                 self._turn_synthesis_policy_injected = False
@@ -1880,8 +1943,15 @@ class AgentLoop:
                     "tool_call_id": str(ref.get("tool_call_id") or ""),
                     "plan_id": str(ref.get("plan_id") or ""),
                     "step_id": str(ref.get("step_id") or ""),
-                    "claim_key": str(ref.get("claim_key") or ""),
-                    "completed_task_ids": list(completed_task_ids or []),
+                    "claim_keys": [
+                        str(record.get("claim_key") or "")
+                        for record in stored_records
+                    ],
+                    "evidence_ids": [
+                        str(record.get("id") or "")
+                        for record in stored_records
+                    ],
+                    "completed_task_ids": list(dict.fromkeys(completed_task_ids)),
                 })
                 return
             state.append_turn_diagnostic({
@@ -1896,6 +1966,33 @@ class AgentLoop:
                 exc,
                 extra={"extra_data": {"tool": str(ref.get("tool_name") or ""), "error": str(exc)}},
             )
+
+    def _fallback_resolution_for_tool_call(self, tool_call: Any) -> str:
+        """Return a server-persisted fallback resolution for this call.
+
+        A successful ``run_python`` result is never promoted to structured
+        evidence. Once its traceable computation reference has been stored,
+        the server can deterministically resolve the control gate as a
+        computation-only limitation instead of asking the model to perform a
+        bookkeeping tool call.
+        """
+
+        if str(getattr(tool_call, "name", "") or "") != "run_python":
+            return ""
+        state = getattr(self.context, "analysis_state", None)
+        refs = getattr(state, "computation_refs", None)
+        if not isinstance(refs, list):
+            return ""
+        call_id = str(getattr(tool_call, "id", "") or "")
+        for ref in reversed(refs):
+            if not isinstance(ref, dict):
+                continue
+            if str(ref.get("tool_call_id") or "") != call_id:
+                continue
+            if not bool(ref.get("success")):
+                return ""
+            return str(ref.get("fallback_resolution") or "")
+        return ""
 
     def _compact_tool_output(self, tool_result, tc, step_binding=None) -> str:
         """Compact tool output for LLM context. Persist data/details to disk, return concise summary.
@@ -1946,6 +2043,11 @@ class AgentLoop:
                 plan_id = str(getattr(step_binding, "plan_id", "") or "")
                 step_id = str(getattr(step_binding, "step_id", "") or "")
                 claim_key = str(getattr(step_binding, "claim_key", "") or "")
+                claim_keys = [
+                    str(item)
+                    for item in (getattr(step_binding, "claim_keys", ()) or ())
+                    if str(item)
+                ] or ([claim_key] if claim_key else [])
                 requirement_ids = [
                     str(item)
                     for item in (getattr(step_binding, "requirement_ids", ()) or ())
@@ -1957,6 +2059,7 @@ class AgentLoop:
                 plan_id = ""
                 step_id = ""
                 claim_key = ""
+                claim_keys = []
                 requirement_ids = []
                 if step_binding is not None:
                     binding_error_type = str(getattr(step_binding, "error_type", "") or "")
@@ -2004,8 +2107,15 @@ class AgentLoop:
                     evidence_fields=list(getattr(capability, "evidence_fields", []) or []),
                 )
                 ref["claim_key"] = claim_key
+                ref["claim_keys"] = claim_keys
                 ref["requirement_ids"] = requirement_ids
                 ref["binding_error_type"] = binding_error_type
+                if tc.name == "run_python" and success:
+                    ref["fallback_resolution"] = "computation_only_limitation"
+                    ref["limitations"] = [
+                        "Free-form Python output is traceable computation only; "
+                        "it is not automatically promoted to verified evidence."
+                    ]
                 if binding_candidate_step_ids:
                     ref["binding_candidate_step_ids"] = binding_candidate_step_ids
                 if state is not None:
@@ -2157,6 +2267,8 @@ class AgentLoop:
         self._turn_last_final_audit = None
         self._turn_provider_truncation_repair_used = False
         self._turn_resumed_from_confirmation = False
+        self._turn_last_round_budget: dict[str, Any] | None = None
+        self._turn_final_answer_candidates: list[dict[str, str]] = []
 
     # --- Safe live analysis progress narration -----------------------------
     # ``_progress_payload`` returns the wire dict for a closed-vocabulary
@@ -2489,6 +2601,10 @@ class AgentLoop:
         turn_state = getattr(self.context, "turn_state", None)
         if turn_state is not None and not turn_state.claim_revision_attempt():
             return False
+        self._remember_final_answer_candidate(
+            str(getattr(response, "text", "") or ""),
+            reason="provider_output_truncated",
+        )
         self._turn_provider_truncation_repair_used = True
         # The final-audit revision flag shares the same single revision
         # reserve.  A truncation rewrite must not be followed by another
@@ -2509,6 +2625,113 @@ class AgentLoop:
             except Exception:
                 pass
         return True
+
+    def _remember_round_budget(self, *, phase: str, usage_before: int) -> None:
+        """Remember the accepted phase usage of the just-finished LLM round."""
+
+        turn_state = getattr(self.context, "turn_state", None)
+        if turn_state is None:
+            self._turn_last_round_budget = None
+            return
+        usage_after = int(turn_state.phase_token_usage.get(phase, 0) or 0)
+        self._turn_last_round_budget = {
+            "phase": str(phase or ""),
+            "tokens": max(0, usage_after - max(0, int(usage_before or 0))),
+        }
+
+    def _reclassify_discarded_candidate_budget(self, *, reason: str) -> int:
+        """Free final-synthesis reserve when a candidate is discarded for more analysis.
+
+        The provider usage remains in ``approximate_runtime_tokens_used``. Only
+        phase ownership moves to exploration, so assurance diagnostics remain
+        truthful while the final synthesis reserve is not consumed by text the
+        runtime deliberately removed from the conversation.
+        """
+
+        budget = getattr(self, "_turn_last_round_budget", None)
+        turn_state = getattr(self.context, "turn_state", None)
+        if not isinstance(budget, dict) or turn_state is None:
+            return 0
+        phase = str(budget.get("phase") or "")
+        tokens = max(0, int(budget.get("tokens") or 0))
+        if phase != "synthesis" or tokens <= 0:
+            return 0
+        moved = turn_state.reclassify_phase_usage(
+            tokens,
+            source_phase="synthesis",
+            target_phase="exploration",
+        )
+        budget["tokens"] = max(0, tokens - moved)
+        if moved:
+            self._persist_budget_diagnostics(turn_state)
+            state = getattr(self.context, "analysis_state", None)
+            append = getattr(state, "append_turn_diagnostic", None)
+            if callable(append):
+                append({
+                    "event": "discarded_candidate_budget_reclassified",
+                    "reason": str(reason or ""),
+                    "source_phase": "synthesis",
+                    "target_phase": "exploration",
+                    "tokens": moved,
+                })
+        return moved
+
+    def _remember_final_answer_candidate(self, text: str, *, reason: str) -> None:
+        candidate = str(text or "")
+        if not candidate.strip():
+            return
+        candidates = list(getattr(self, "_turn_final_answer_candidates", []) or [])
+        candidates.append({"text": candidate, "reason": str(reason or "")})
+        self._turn_final_answer_candidates = candidates[-3:]
+
+    def _final_answer_candidate_score(self, text: str) -> tuple[int, int, int, int]:
+        """Return a deterministic structural score; it never judges truth."""
+
+        value = str(text or "")
+        compact = "".join(value.split())
+        section_groups = (
+            ("发现", "结论", "结果"),
+            ("建议", "行动", "下一步"),
+            ("局限", "限制"),
+        )
+        section_count = sum(
+            any(marker in value for marker in group)
+            for group in section_groups
+        )
+        evidence_markers = value.count("[[evidence:")
+        incomplete = bool(self._analysis_answer_incomplete_reasons(value))
+        return (
+            0 if incomplete else 1,
+            section_count,
+            evidence_markers,
+            min(len(compact), 4_000),
+        )
+
+    def _select_best_final_answer_candidate(self, current_text: str) -> str:
+        """Keep a prior truncated draft when the single revision is worse."""
+
+        current = str(current_text or "")
+        candidates = list(getattr(self, "_turn_final_answer_candidates", []) or [])
+        if not candidates or not self._analysis_answer_incomplete_reasons(current):
+            return current
+        best = max(
+            candidates,
+            key=lambda item: self._final_answer_candidate_score(str(item.get("text") or "")),
+        )
+        selected = str(best.get("text") or "")
+        if self._final_answer_candidate_score(selected) <= self._final_answer_candidate_score(current):
+            return current
+        state = getattr(self.context, "analysis_state", None)
+        append = getattr(state, "append_turn_diagnostic", None)
+        if callable(append):
+            append({
+                "event": "final_answer_candidate_fallback",
+                "selected_reason": str(best.get("reason") or ""),
+                "rejected_length": len("".join(current.split())),
+                "selected_length": len("".join(selected.split())),
+            })
+        self._replace_last_answer_candidate(selected)
+        return selected
 
     def _publication_mode(self) -> str:
         from data_agent.config import get_config
@@ -2611,12 +2834,23 @@ class AgentLoop:
     def _synthesis_audit_revision_active(self) -> bool:
         return 'mode="synthesis"' in getattr(self, "_turn_final_audit_instruction", "")
 
-    def _reject_synthesis_revision_tool_calls(self) -> str:
+    def _reject_synthesis_revision_tool_calls(self, user_input: str = "") -> str:
         draft_text = ""
         if self.messages and self.messages[-1].get("role") == "assistant":
             draft_text = str(self.messages[-1].get("content") or "")
             self.messages.pop()
         audit = getattr(self, "_turn_last_final_audit", None)
+        if not isinstance(audit, dict) and getattr(
+            self, "_turn_final_answer_candidates", None
+        ):
+            selected = self._select_best_final_answer_candidate(draft_text)
+            gate = self._gate_final_analysis_answer(
+                user_input,
+                selected,
+                allow_repair=False,
+            )
+            self._turn_final_audit_instruction = ""
+            return gate["text"]
         rendered = self._render_audited_publication(
             draft_text, audit if isinstance(audit, dict) else None,
         )
@@ -2633,6 +2867,22 @@ class AgentLoop:
     ) -> dict[str, str]:
         if not self._is_final_answer_audit_candidate():
             return {"action": "publish", "text": final_text}
+
+        final_text = self._select_best_final_answer_candidate(final_text)
+        incomplete_codes = self._analysis_answer_incomplete_reasons(final_text)
+        turn_state = getattr(self.context, "turn_state", None)
+        if (
+            incomplete_codes
+            and allow_repair
+            and not self._turn_final_audit_revision_used
+            and (turn_state is None or turn_state.claim_revision_attempt())
+        ):
+            self._turn_final_audit_revision_used = True
+            self._inject_final_answer_audit_repair(
+                mode="synthesis",
+                reason_codes=incomplete_codes,
+            )
+            return {"action": "continue", "mode": "synthesis"}
 
         from data_agent.agent.trust_workflow_runtime import (
             audit_final_answer_draft,
@@ -2664,6 +2914,12 @@ class AgentLoop:
                 "Final answer audit failed closed",
                 extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
             )
+            append = getattr(state, "append_turn_diagnostic", None)
+            if callable(append):
+                append({
+                    "event": "final_answer_audit_runtime_failure",
+                    "exception_type": type(exc).__name__,
+                })
             audit = None
         if not isinstance(audit, dict):
             # Audit failed closed. Publish deterministically via the renderer
@@ -2797,6 +3053,10 @@ class AgentLoop:
             "接下来执行",
             "将继续分析",
             "正在继续分析",
+            "现在做最后一步",
+            "接下来做最后一步",
+            "复核完成",
+            "图表已生成",
             "continue the analysis",
         )
         section_groups = (
@@ -3403,6 +3663,21 @@ class AgentLoop:
                 extra_meta=self._build_session_meta(),
             )
 
+    def _stream_checkpoint(self) -> None:
+        """Persist newly appended messages while a Web turn is still running."""
+
+        with self.__context_operation("use"):
+            from data_agent.session.history import checkpoint_session
+
+            checkpoint_session(
+                self.messages,
+                self.session_id,
+                start_index=self._last_jsonl_idx,
+                data_file=self._last_data_file,
+                extra_meta=self._build_session_meta(),
+            )
+            self._last_jsonl_idx = len(self.messages)
+
     def _build_session_meta(self) -> dict:
         """构建丰富的 session 元数据。"""
         from data_agent.session.workspace import workspace
@@ -3664,6 +3939,10 @@ class AgentLoop:
             phase=phase,
             phase_usage_before=phase_usage_before,
         )
+        self._remember_round_budget(
+            phase=phase,
+            usage_before=phase_usage_before,
+        )
         yield {"type": "_response", "response": response, "streamed_text": streamed_text}
 
     def _process_tool_calls(
@@ -3719,6 +3998,7 @@ class AgentLoop:
             # method (e.g. ``正在评估变量关系``) ahead of the generic
             # ``正在运行分析工具``. Compute once and reuse for compaction.
             step_binding = self._bind_tool_call(tc)
+            analysis_run_binding = self._analysis_run_binding(step_binding)
             if step_binding is not None and step_binding.ok and step_binding.step_id:
                 yield from self._emit_progress_stream(
                     "analysis_step_started", step_id=step_binding.step_id
@@ -3746,6 +4026,7 @@ class AgentLoop:
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
                 post_scope = self.__context_operation("refresh")
+                committed_outcome = committed_tool_outcome(tool_result, post_scope)
             except UserConfirmationRequired as ucc:
                 susp = self._suspend_for_confirmation_request(
                     ucc,
@@ -3760,22 +4041,6 @@ class AgentLoop:
                 yield self._suspended_event(susp)
                 return  # stop processing further tool calls
 
-            if post_scope.phase == "error":
-                scope_error = json.dumps(
-                    {"error": post_scope.message, "error_type": post_scope.error_type},
-                    ensure_ascii=False,
-                )
-                if turn_state is not None:
-                    turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                self._record_turn_tool_result(tc.name, scope_error)
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": scope_error,
-                })
-                yield {"type": "error", "message": scope_error}
-                continue
-
             duration_ms = int((time.monotonic() - t0) * 1000)
             tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
             tool_failed = self._tool_content_is_error(tool_msg_content)
@@ -3785,8 +4050,18 @@ class AgentLoop:
                     turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                 tool_msg_content = registry.format_result(tc.name, tool_result)
 
-            elif turn_state is not None:
-                turn_state.record_tool_success(tc.name)
+            else:
+                committed_outcome = self._persist_analysis_run_outcome(
+                    tc, analysis_run_binding, committed_outcome
+                )
+                tool_msg_content = render_committed_tool_content(
+                    tool_msg_content, committed_outcome
+                )
+                if turn_state is not None:
+                    turn_state.record_tool_success(
+                        tc.name,
+                        fallback_resolution=self._fallback_resolution_for_tool_call(tc),
+                    )
 
             self._record_turn_tool_result(tc.name, tool_msg_content)
             self._auto_track_task_progress(tc.name, not tool_failed)
@@ -3952,7 +4227,7 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if response.has_tool_calls and self._synthesis_audit_revision_active():
-                final_text = self._reject_synthesis_revision_tool_calls()
+                final_text = self._reject_synthesis_revision_tool_calls(user_input)
                 if final_text:
                     yield {"type": "text_delta", "text": final_text, "turn_id": None}
                 self._maybe_archive(user_input, final_text)
@@ -3962,6 +4237,9 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._reclassify_discarded_candidate_budget(
+                        reason="analysis_quality_continuation",
+                    )
                     continue
                 if self._maybe_repair_truncated_analysis_response(response):
                     yield from self._emit_progress_stream("tool_recovery")
@@ -4160,7 +4438,7 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if response.has_tool_calls and self._synthesis_audit_revision_active():
-                final_text = self._reject_synthesis_revision_tool_calls()
+                final_text = self._reject_synthesis_revision_tool_calls(resumed_input)
                 if final_text:
                     yield {"type": "text_delta", "text": final_text, "turn_id": None}
                 self._maybe_archive(resumed_input, final_text)
@@ -4170,6 +4448,9 @@ class AgentLoop:
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
+                    self._reclassify_discarded_candidate_budget(
+                        reason="analysis_quality_continuation",
+                    )
                     continue
                 if self._maybe_repair_truncated_analysis_response(response):
                     yield from self._emit_progress_stream("tool_recovery")
@@ -4298,6 +4579,7 @@ class AgentLoop:
         # A substantive tool that binds to a canonical step narrates the
         # step-specific method before the generic ``tool_started`` breadcrumb.
         step_binding = self._bind_tool_call(tc)
+        analysis_run_binding = self._analysis_run_binding(step_binding)
         if step_binding is not None and step_binding.ok and step_binding.step_id:
             self._record_progress(
                 "analysis_step_started", step_id=step_binding.step_id
@@ -4323,6 +4605,7 @@ class AgentLoop:
             with self.__context_operation("use"):
                 tool_result = registry.execute(tc.name, tc.arguments)
             post_scope = self.__context_operation("refresh")
+            committed_outcome = committed_tool_outcome(tool_result, post_scope)
         except UserConfirmationRequired as ucc:
             susp = self._suspend_for_confirmation_request(
                 ucc,
@@ -4336,21 +4619,6 @@ class AgentLoop:
             self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
             return susp
 
-        if post_scope.phase == "error":
-            scope_error = json.dumps(
-                {"error": post_scope.message, "error_type": post_scope.error_type},
-                ensure_ascii=False,
-            )
-            if turn_state is not None:
-                turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-            self._record_turn_tool_result(tc.name, scope_error)
-            self.messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": scope_error,
-            })
-            return None
-
         tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
         tool_failed = self._tool_content_is_error(tool_msg_content)
 
@@ -4359,8 +4627,18 @@ class AgentLoop:
                 turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
             tool_msg_content = registry.format_result(tc.name, tool_result)
             logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": tool_msg_content[:200]}})
-        elif turn_state is not None:
-            turn_state.record_tool_success(tc.name)
+        else:
+            committed_outcome = self._persist_analysis_run_outcome(
+                tc, analysis_run_binding, committed_outcome
+            )
+            tool_msg_content = render_committed_tool_content(
+                tool_msg_content, committed_outcome
+            )
+            if turn_state is not None:
+                turn_state.record_tool_success(
+                    tc.name,
+                    fallback_resolution=self._fallback_resolution_for_tool_call(tc),
+                )
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
         self._auto_track_task_progress(tc.name, not tool_failed)
@@ -4418,6 +4696,10 @@ class AgentLoop:
         # the canonical ``StepBindingResult`` into compaction without each
         # worker touching ``state.analysis_plan`` concurrently.
         bindings = {tc.id: self._bind_tool_call(tc) for tc in tool_calls}
+        analysis_run_bindings = {
+            tc.id: self._analysis_run_binding(bindings.get(tc.id))
+            for tc in tool_calls
+        }
 
         def _run_tool(tc):
             try:
@@ -4428,14 +4710,7 @@ class AgentLoop:
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
                 post_scope = self.__context_operation("refresh")
-                if post_scope.phase == "error":
-                    scope_error = json.dumps(
-                        {"error": post_scope.message, "error_type": post_scope.error_type},
-                        ensure_ascii=False,
-                    )
-                    if turn_state is not None:
-                        turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                    return (tc, scope_error, post_scope)
+                committed_outcome = committed_tool_outcome(tool_result, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(
                     tool_result, tc, bindings.get(tc.id)
@@ -4446,10 +4721,26 @@ class AgentLoop:
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                     tool_msg_content = registry.format_result(tc.name, tool_result)
-                elif turn_state is not None:
-                    turn_state.record_tool_success(tc.name)
+                else:
+                    committed_outcome = self._persist_analysis_run_outcome(
+                        tc,
+                        analysis_run_bindings.get(tc.id),
+                        committed_outcome,
+                    )
+                    tool_msg_content = render_committed_tool_content(
+                        tool_msg_content, committed_outcome
+                    )
+                    if turn_state is not None:
+                        turn_state.record_tool_success(
+                            tc.name,
+                            fallback_resolution=self._fallback_resolution_for_tool_call(tc),
+                        )
 
-                return (tc, tool_msg_content, None)
+                return (
+                    tc,
+                    tool_msg_content,
+                    post_scope if committed_outcome.warning is not None else None,
+                )
             except Exception as e:
                 error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
                 if turn_state is not None:
@@ -4541,6 +4832,10 @@ class AgentLoop:
                 phase=phase,
                 phase_usage_before=phase_usage_before,
             )
+            self._remember_round_budget(
+                phase=phase,
+                usage_before=phase_usage_before,
+            )
 
             response_text = response.text or ""
             if response.has_tool_calls and self._is_final_answer_audit_candidate():
@@ -4567,12 +4862,15 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if response.has_tool_calls and self._synthesis_audit_revision_active():
-                fallback = self._reject_synthesis_revision_tool_calls()
+                fallback = self._reject_synthesis_revision_tool_calls(user_input)
                 return FinalResponse(content=fallback)
 
             if not response.has_tool_calls:
                 self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._reclassify_discarded_candidate_budget(
+                        reason="analysis_quality_continuation",
+                    )
                     continue
                 if self._maybe_repair_truncated_analysis_response(response):
                     self._record_progress("tool_recovery")

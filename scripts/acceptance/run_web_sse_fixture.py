@@ -12,11 +12,20 @@ import argparse
 import csv
 import json
 import os
+import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_ROOT = REPO_ROOT / "src"
+for source_path in (str(REPO_ROOT), str(SOURCE_ROOT)):
+    if source_path in sys.path:
+        sys.path.remove(source_path)
+    sys.path.insert(0, source_path)
 
 
 FIXTURE_ID = "web_sse_fixture_v1"

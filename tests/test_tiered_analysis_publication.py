@@ -195,7 +195,7 @@ def causal_upgrade():
 
 
 def test_tiered_mode_preserves_headings_tables_and_supported_findings():
-    draft = "# 结论\n\n- 已验证发现\n- 未验证数字 99%\n\n## 局限\n\n原有局限"
+    draft = "# 结论\n\n- 已验证发现\n- unsupported exact claim\n\n## 局限\n\n原有局限"
     result = render_audited_analysis_answer(
         draft=draft,
         audit=mixed_audit(),
@@ -206,7 +206,7 @@ def test_tiered_mode_preserves_headings_tables_and_supported_findings():
     assert "已验证发现" in result.text
     assert result.actions["claim_verified"] == "verified"
     assert "已验证发现（探索性，未经独立校验）" not in result.text
-    assert "无法发布该数值" in result.text
+    assert "## 证据限制" in result.text
     assert "Some requested analysis claims" not in result.text
 
 
@@ -329,7 +329,7 @@ def test_structurally_invalid_audit_never_verifies_claims(audit):
     )
 
     assert "Revenue increased 12%." not in result.text
-    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert "当前证据不足以支撑原结论" in result.text
     assert set(result.actions.values()) == {"unsupported"}
 
 
@@ -358,7 +358,7 @@ def test_structurally_invalid_audit_cannot_replace_draft_public_text():
 
     assert result.text.startswith("# Conclusion")
     assert "Revenue increased 12%." not in result.text
-    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert "当前证据不足以支撑原结论" in result.text
     assert "## Limitations" in result.text
     assert "Descriptive only." in result.text
     assert "Malformed audit replacement" not in result.text
@@ -377,7 +377,7 @@ def test_empty_valid_audit_cannot_verify_claim_rederived_from_draft():
     )
 
     assert "Revenue increased 12%." not in result.text
-    assert "无法发布该结论：缺少当前证据支撑" in result.text
+    assert "当前证据不足以支撑原结论" in result.text
     assert set(result.actions.values()) == {"unsupported"}
 
 
@@ -749,6 +749,70 @@ def test_audit_missing_removes_unaudited_material_claim():
             mode=mode,
         )
         assert "本月收入增长了 5%" not in result.text
-        assert "无法发布该结论：缺少当前证据支撑" in result.text
+        assert "当前证据不足以支撑原结论" in result.text
         assert "探索性，未经独立校验" not in result.text
         assert set(result.actions.values()) == {"unsupported"}
+
+
+def test_unsupported_claims_are_omitted_and_consolidated_into_one_limit_section():
+    draft = (
+        "# 核心结论\n\n"
+        "- 已验证发现。\n"
+        "- 未支持数值 91%。\n"
+        "- 另一个未支持数值 88%。\n\n"
+        "## 方法说明\n\n使用结构化分析工具。"
+    )
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_consolidated_limits",
+        "status": "blocked",
+        "public_text": draft,
+        "claims": [
+            {
+                "id": "claim_verified",
+                "text": "已验证发现。",
+                "claim_type": "descriptive",
+                "material": True,
+            },
+            {
+                "id": "claim_bad_1",
+                "text": "未支持数值 91%。",
+                "claim_type": "numeric",
+                "material": True,
+            },
+            {
+                "id": "claim_bad_2",
+                "text": "另一个未支持数值 88%。",
+                "claim_type": "numeric",
+                "material": True,
+            },
+        ],
+        "claim_checks": [
+            {"claim_id": "claim_verified", "status": "passed", "reason_codes": []},
+            {
+                "claim_id": "claim_bad_1",
+                "status": "failed",
+                "reason_codes": ["numeric_mismatch"],
+            },
+            {
+                "claim_id": "claim_bad_2",
+                "status": "failed",
+                "reason_codes": ["missing_evidence_identity"],
+            },
+        ],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "已验证发现。" in result.text
+    assert "91%" not in result.text
+    assert "88%" not in result.text
+    assert result.text.count("## 证据限制") == 1
+    assert "2 项结论未纳入发布内容" in result.text
+    assert "无法发布该" not in result.text
+    assert "## 方法说明" in result.text

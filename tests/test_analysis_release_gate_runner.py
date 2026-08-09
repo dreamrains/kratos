@@ -135,6 +135,20 @@ def test_harness_inspection_classifies_the_direct_tool_runner(tmp_path):
     ]
 
 
+def test_harness_inspection_rejects_unowned_ignored_test(tmp_path):
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        'collect_ignore = ["test_old_system.py"]\n',
+        encoding="utf-8",
+    )
+
+    result = inspect_test_harness(conftest)
+
+    assert result["status"] == "FAIL"
+    assert result["unowned_ignored"] == ["test_old_system.py"]
+    assert "unowned_collect_ignore" in result["reason_codes"]
+
+
 def test_harness_inspection_does_not_treat_comments_as_collect_ignore(tmp_path):
     conftest = tmp_path / "conftest.py"
     conftest.write_text(
