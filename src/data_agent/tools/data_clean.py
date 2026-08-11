@@ -810,7 +810,12 @@ def _apply_type_conversion_impl(
     affected_row_count = 0
     information_loss = False
     conversion_errors: list[dict[str, str]] = []
-    requires_confirmation = bool(auto)
+    # ``auto`` is a batch request, not a risk signal: a derived/versioned
+    # dataset whose raw is retained by copy-on-write lineage is non-destructive
+    # when none of the per-operation risk signals fire. Confirmation is gated
+    # on real risk (new nulls, cardinality loss, partial conversion, low
+    # confidence, type mismatch, suffix parsing), not on the batch flag.
+    requires_confirmation = False
 
     columns_and_targets: list[tuple[str, str, dict[str, Any]]] = []
     if auto:
@@ -846,8 +851,7 @@ def _apply_type_conversion_impl(
 
         candidate[candidate_column] = converted
         operation_requires_confirmation = (
-            auto
-            or suggested == "numeric_with_suffix"
+            suggested == "numeric_with_suffix"
             or partial
             or new_nulls > 0
             or cardinality_loss > 0

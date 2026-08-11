@@ -126,3 +126,88 @@ def test_out_of_scope_dataset_is_allowed_with_warning(tmp_path):
         and w["dataset"] == "out_of_scope"
         for w in workspace_warnings
     )
+
+
+# ── Task 3: non-destructive derived versions apply without a confirmation receipt ──
+
+def _versioned_dataset_store(frame):
+    """Build a workspace backed by a registered raw snapshot + analysis copy."""
+    import pandas as pd
+    from data_agent.agent.data_lineage import frame_fingerprint
+    from data_agent.session.workspace import Workspace
+
+    store = Workspace()
+    raw_info = store.register_raw_snapshot("orders", frame, frame_fingerprint(frame))
+    active_info = store.promote_analysis_copy(
+        "orders", frame.copy(), raw_info["dataset_id"], {"id": "prepare"}
+    )
+    return store, raw_info, active_info
+
+
+def test_non_destructive_derived_version_applies_without_confirmation(monkeypatch):
+    """A copy-on-write derived version with no risk signals (no new nulls,
+    no cardinality loss, no partial conversion, high confidence, no type
+    mismatch) applies directly without an approved confirmation receipt.
+
+    This covers the auto-mode batch path that previously initialized
+    ``requires_confirmation = bool(auto)``, hanging the live session
+    fee2e889e37f on a "creates a new analysis dataset version" prompt even
+    when every conversion was benign. Raw is retained by the existing
+    copy-on-write lineage, so the operation is non-destructive.
+    """
+    import json
+    import pandas as pd
+    from data_agent.tools import data_clean
+
+    # Two columns, both safe to convert: percentage strings and numeric strings.
+    # Neither introduces nulls, cardinality loss, or a partial conversion.
+    store, raw_info, first = _versioned_dataset_store(
+        pd.DataFrame({"rate": ["10%", "20%", "30%"], "id": ["1", "2", "3"]})
+    )
+    monkeypatch.setattr(data_clean, "workspace", store)
+
+    result = json.loads(
+        data_clean._apply_type_conversion_impl("orders", auto=True)
+    )
+
+    # Non-destructive: applies without a receipt...
+    assert result["status"] == "applied"
+    assert result.get("error_type", "") in (None, "")
+    assert "confirmation_id" not in result
+    assert "confirmation_required" not in json.dumps(result)
+    # ...a new derived version was promoted...
+    assert result["dataset_id"] != first["dataset_id"]
+    assert result["parent_dataset_id"] == first["dataset_id"]
+    # ...and the conversion actually happened.
+    assert store.get("orders")["rate"].tolist() == [0.1, 0.2, 0.3]
+    assert store.get("orders")["id"].tolist() == [1, 2, 3]
+    # Raw snapshot is retained unchanged (copy-on-write lineage).
+    assert store.get_raw_snapshot(raw_info["dataset_id"])["rate"].tolist() == ["10%", "20%", "30%"]
+
+
+def test_destructive_cleaning_still_requires_confirmation(monkeypatch):
+    """A meaning-changing conversion (cardinality loss) still requires an
+    approved confirmation receipt. The non-destructive carve-out must not
+    weaken the gate for genuinely destructive operations.
+    """
+    import json
+    import pandas as pd
+    from data_agent.tools import data_clean
+
+    # "1", "01", "2" -> 1, 1, 2 collapses cardinality (3 distinct -> 2).
+    store, raw_info, first = _versioned_dataset_store(
+        pd.DataFrame({"code": ["1", "01", "2"]})
+    )
+    monkeypatch.setattr(data_clean, "workspace", store)
+
+    result = json.loads(
+        data_clean._apply_type_conversion_impl(
+            "orders", column="code", target_type="numeric", _approved_confirmation_id=""
+        )
+    )
+
+    assert result["status"] == "confirmation_required"
+    assert "confirmation_id" in result
+    # No mutation occurred: active version unchanged, raw retained.
+    assert store.get_active_version_info("orders")["dataset_id"] == first["dataset_id"]
+    assert store.get("orders")["code"].tolist() == ["1", "01", "2"]
