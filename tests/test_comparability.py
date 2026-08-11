@@ -215,3 +215,17 @@ def test_compare_periods_preserves_legacy_result_keys(comparison_dataset):
     assert {"period_a", "period_b", "diff", "change_pct"} <= result["metrics"][
         "revenue"
     ].keys()
+    assert result["metric_delta"] == {
+        "value": result["metrics"]["revenue"]["diff"],
+        "metric": "revenue",
+        "unit": "unspecified",
+        "contrast": "period_b_minus_period_a",
+        "aggregation": "sum",
+    }
+    assert result["multiplicity_handling"] == {
+        "strategy": "not_applicable",
+        "comparison_count": 1,
+        "status": "not_applicable",
+    }
+    assert result["allowed_claim_class"] == "descriptive"
+    assert result["limitations"]

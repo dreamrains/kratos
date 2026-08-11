@@ -38,21 +38,43 @@ class AnalysisFlowController:
         if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
-        # Capture whether an explicit executable plan (e.g. from
-        # ``record_analysis_plan``) was already in place before the auto
-        # envelope runs. Workflow projection is only invoked for explicit
-        # plans; the auto envelope exists to give computations plan/step
-        # identity, not to commit the model to a workflow it never affirmed.
-        explicit_executable_plan = bool(
-            isinstance(state.analysis_plan, dict)
-            and state.analysis_plan.get("review_status") == "executable"
-        )
         if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
             self.ensure_canonical_execution_envelope(state, intent, user_input)
+        if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
+            executable_plan = bool(
+                isinstance(state.analysis_plan, dict)
+                and state.analysis_plan.get("review_status") == "executable"
+            )
+            if executable_plan:
+                projection = self.ensure_workflow_tasks(state)
+                projection_ok = not (
+                    projection.get("error") or projection.get("display_only")
+                )
+                state.append_turn_diagnostic({
+                    "event": "workflow_projection",
+                    "ok": projection_ok,
+                    "error_type": str(
+                        projection.get("error_type")
+                        or projection.get("error")
+                        or projection.get("reason")
+                        or ""
+                    ),
+                    "analysis_plan_id": str(
+                        projection.get("analysis_plan_id")
+                        or state.analysis_plan.get("id")
+                        or ""
+                    ),
+                    "created": int(projection.get("created") or 0),
+                    "reused": int(projection.get("reused") or 0),
+                    "task_ids": list(projection.get("task_ids") or []),
+                })
+                if projection_ok:
+                    # A server-compiled executable plan is the workflow
+                    # commitment. Materialize its canonical tasks before any
+                    # tool can execute, then repair only computations that
+                    # were previously committed during a temporary desync.
+                    self.reconcile_replayable_computations(state)
         if intent.intent_type == "directed_analysis" and state.analysis_plan:
-            if explicit_executable_plan:
-                self.ensure_workflow_tasks(state)
-                self.reconcile_replayable_computations(state)
             self.ensure_confirmation_task(state)
         self.restore_committed_run_artifacts(state)
         state.save()

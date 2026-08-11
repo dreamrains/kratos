@@ -337,6 +337,7 @@ def _cap(
     requires_confirmation: bool = False,
     dependencies: list[str] | None = None,
     fallback_tools: list[str] | None = None,
+    input_contract: dict[str, Any] | None = None,
     output_contract: dict[str, Any] | None = None,
 ) -> ToolCapability:
     return ToolCapability(
@@ -348,6 +349,7 @@ def _cap(
         requires_confirmation=requires_confirmation,
         dependencies=dependencies or [],
         fallback_tools=fallback_tools or [],
+        input_contract=input_contract or {},
         output_contract=output_contract or {},
     )
 
@@ -416,6 +418,7 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
             "time_frequency", "missing_intervals", "window_comparability",
             "multiplicity_handling",
         ],
+        output_contract={"allowed_claim_class_ceiling": "descriptive"},
     ),
     "analyze_time_series": _cap(
         "analysis.time_series",
@@ -520,7 +523,13 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
         fallback_tools=["regression_analysis"],
     ),
     "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "features"], risk_level="medium", requires_confirmation=True),
-    "run_python": _cap("fallback.python", "fallback", ["custom"], risk_level="medium"),
+    "run_python": _cap(
+        "fallback.python",
+        "fallback",
+        ["custom"],
+        risk_level="medium",
+        input_contract={"dataset_binding": "runtime_discovered"},
+    ),
     "ask_user_question": _cap("interaction.confirmation", "confirmation", ["confirmation"], risk_level="low"),
     "record_data_requirement": _cap("artifact.data_requirement", "analysis_artifact", ["planning"], evidence_fields=["required_data", "limitations"]),
     "record_analysis_spec": _cap("artifact.analysis_spec", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "limitations"]),
@@ -534,6 +543,36 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "generate_formal_report": _cap("report.formal", "report", ["report"], evidence_fields=["evidence_records", "chart_artifacts", "limitations"]),
     "export_conversation": _cap("report.conversation_export", "report", ["export"], evidence_fields=["conversation"]),
     "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
+}
+
+
+# Canonical capabilities that may own an executable analysis-plan step. Keep
+# tool names and capability IDs together here so provider shorthand, plan
+# validation, and runtime binding cannot silently grow separate enums.
+ANALYSIS_PLAN_CAPABILITY_CATEGORIES = frozenset({
+    "attribution",
+    "causal",
+    "data_view",
+    "decomposition",
+    "distribution",
+    "evidence",
+    "experiment",
+    "fallback",
+    "funnel",
+    "modeling",
+    "prediction",
+    "profile",
+    "quality",
+    "relationship",
+    "retention",
+    "segmentation",
+    "trend",
+    "visualization",
+})
+ANALYSIS_PLAN_TOOL_CAPABILITIES = {
+    tool_name: capability.capability_id
+    for tool_name, capability in DEFAULT_TOOL_CAPABILITIES.items()
+    if capability.category in ANALYSIS_PLAN_CAPABILITY_CATEGORIES
 }
 
 

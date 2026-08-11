@@ -216,7 +216,7 @@ def test_resolver_preserves_exact_nonblank_session_and_project_identity(tmp_path
     assert scope.task_id == task["id"]
 
 
-def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
+def test_active_stage3c0b_plan_recovers_unique_ready_task(tmp_path):
     from data_agent.agent.execution_scope import resolve_workspace_scope
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
@@ -225,10 +225,12 @@ def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
     scope = resolve_workspace_scope(manager, "s1", "")
 
     assert scope.plan_id == manager.get_active_plan_id("s1", "")
-    assert scope.phase == "error"
-    assert scope.task_id == 0
-    assert scope.error_type == "stage3c0b_current_task_missing"
-    assert task["id"]
+    assert scope.phase == "execution"
+    assert scope.task_id == task["id"]
+    assert scope.step_id == "step_1"
+    assert scope.allowed_datasets == frozenset({"bound"})
+    assert scope.error_type == ""
+    assert manager.get(task["id"])["status"] == "in_progress"
 
 
 def test_active_analysis_plan_without_task_records_fails_closed(tmp_path):

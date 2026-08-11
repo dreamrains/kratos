@@ -2,8 +2,10 @@ import json
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+from data_agent.agent.analysis_execution import bind_tool_call_to_plan_step
 from data_agent.agent.analysis_state import AnalysisSessionState, STAGES
 from data_agent.agent.intent import TurnIntent, plan_turn_intent
 from data_agent.agent.method_playbooks import (
@@ -512,7 +514,8 @@ def test_controller_keeps_generated_playbook_plan_display_only(tmp_path):
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_controller_materializes_executable_envelope_when_dataset_contract_exists(tmp_path):
+@pytest.mark.parametrize("intent_type", ["directed_analysis", "comprehensive_report"])
+def test_controller_materializes_executable_envelope_when_dataset_contract_exists(tmp_path, intent_type):
     """When a dataset contract is present, prepare_turn must materialize the
     canonical executable envelope before any substantive tool call."""
 
@@ -521,24 +524,39 @@ def test_controller_materializes_executable_envelope_when_dataset_contract_exist
     task_manager._dir = tmp_path / "tasks"
     task_manager._next_id_val = 0
     try:
-        state = AnalysisSessionState(session_id="controller_envelope", project_name=None)
+        session_id = f"controller_envelope_{intent_type}"
+        state = AnalysisSessionState(session_id=session_id, project_name=None)
         state.dataset_contracts = [{
             "id": "duc_orders_v1",
             "dataset": "orders",
             "quality_status": "ready",
         }]
         intent = plan_turn_intent("why did revenue decline", _loaded_context())
-        intent.intent_type = "directed_analysis"
+        intent.intent_type = intent_type
         intent.data_state = "data_loaded"
 
-        controller = AnalysisFlowController("controller_envelope")
+        controller = AnalysisFlowController(session_id)
         controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
 
         plan = state.analysis_plan
+        first_tasks = task_manager.list_for_scope(session_id=session_id)
+        controller.prepare_turn(
+            state,
+            intent,
+            user_input="why did revenue decline",
+            dataset_profile=_loaded_context(),
+        )
+        second_tasks = task_manager.list_for_scope(session_id=session_id)
         assert plan is not None
         assert plan["review_status"] == "executable"
         assert all(step["dataset_inputs"] == ["orders"] for step in plan["method_plan"])
         assert all(step["requirement_ids"] for step in plan["method_plan"])
+        assert len(first_tasks) == len(plan["method_plan"])
+        assert [task["step_id"] for task in first_tasks] == [
+            step["step_id"] for step in plan["method_plan"]
+        ]
+        assert sum(task["status"] == "in_progress" for task in first_tasks) == 1
+        assert second_tasks == first_tasks
         assert state.turn_diagnostics
         envelope_diag = next(
             (item for item in state.turn_diagnostics if item.get("event") == "execution_envelope"),
@@ -547,6 +565,75 @@ def test_controller_materializes_executable_envelope_when_dataset_contract_exist
         assert envelope_diag is not None
         assert envelope_diag["ok"] is True
         assert envelope_diag["plan_id"] == plan["id"]
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_real_user_funnel_prompt_materializes_active_step_before_tool_execution(tmp_path):
+    """The Gate F funnel journey must have a canonical step before tools run."""
+
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+    try:
+        session_id = "gate_f_funnel_envelope"
+        prompt = (
+            "请分析游戏互推的曝光→有效点击→二次确认漏斗并对比内部与外部游戏；"
+            "先处理数值异常，报告加权 CTR、点击后二次确认率和质量问题，不做因果推断。"
+        )
+        profile = (
+            "- game_promo: 1985 rows x 8 cols, columns: 日期, 流量主游戏, "
+            "广告主游戏, 公司, 卖量收入, 曝光次数, 有效点击次数, 二次确认次数"
+        )
+        state = AnalysisSessionState(session_id=session_id, project_name=None)
+        state.dataset_contracts = [{
+            "id": "duc_game_promo_v1",
+            "dataset": "game_promo",
+            "quality_status": "ready",
+        }]
+        intent = plan_turn_intent(prompt, profile)
+        intent.intent_type = "directed_analysis"
+        intent.data_state = "data_loaded"
+
+        AnalysisFlowController(session_id).prepare_turn(
+            state,
+            intent,
+            user_input=prompt,
+            dataset_profile=profile,
+        )
+
+        plan = state.analysis_plan or {}
+        tasks = task_manager.list_for_scope(session_id=session_id)
+        funnel_step = next(
+            step
+            for step in plan.get("method_plan", [])
+            if step.get("required_capability") == "analysis.funnel"
+        )
+        semantic_binding = bind_tool_call_to_plan_step(
+            plan=plan,
+            tool_name="funnel_analysis",
+            capability=registry.capability_for("funnel_analysis"),
+            dataset_names=["game_promo"],
+            preferred_step_id=funnel_step["step_id"],
+        )
+        run_binding = task_manager.get_analysis_run_tool_binding(
+            session_id=session_id,
+            project_name="",
+            external_step_id=funnel_step["step_id"],
+        )
+
+        assert plan["review_status"] == "executable"
+        assert plan["playbook_id"] == "funnel_conversion"
+        assert [task["step_id"] for task in tasks] == [
+            step["step_id"] for step in plan["method_plan"]
+        ]
+        assert semantic_binding.ok is True
+        assert semantic_binding.step_id == funnel_step["step_id"]
+        assert run_binding is not None
+        assert run_binding["external_step_id"] == funnel_step["step_id"]
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id

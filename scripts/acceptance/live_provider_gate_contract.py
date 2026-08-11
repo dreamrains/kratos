@@ -7,8 +7,18 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from scripts.acceptance.browser_gate_contract import (
+    validate_browser_user_journey_receipt,
+)
+from scripts.acceptance.real_user_journey_oracles import (
+    scenario_oracle_names,
+    scenario_prompt_digest,
+    scenario_risk_selection,
+)
+
 
 LIVE_PROVIDER_GATE_VERSION = "analysis_live_provider_gate.v1"
+LIVE_USER_JOURNEY_GATE_VERSION = "analysis_live_user_journey.v2"
 LIVE_REQUIREMENT_GROUPS = (
     "data_quality",
     "descriptive",
@@ -61,6 +71,35 @@ _REQUIREMENT_VALUES = frozenset({"satisfied", "limited", "missing"})
 _CLAIM_ID_RE = re.compile(r"^claim_[A-Za-z0-9_.:-]{1,80}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
+_SCENARIO_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,79}$")
+_V2_TOP_LEVEL_FIELDS = frozenset({
+    "contract_version",
+    "status",
+    "reason_codes",
+    "accepted",
+    "source_digest",
+    "source_commit",
+    "provider_model",
+    "selection",
+    "authorization",
+    "runs",
+})
+_V2_RUN_FIELDS = frozenset({
+    "scenario_id",
+    "status",
+    "provider_session_index",
+    "browser_journey",
+    "human_review",
+})
+_V2_SELECTION_FIELDS = frozenset({"risk_class", "required_scenario_ids"})
+_V2_AUTHORIZATION_FIELDS = frozenset({"max_sessions", "used_sessions", "policy"})
+_V2_HUMAN_REVIEW_FIELDS = frozenset({
+    "question_understood",
+    "method_appropriate",
+    "claim_strength_appropriate",
+    "limitations_material",
+})
+_RISK_SCENARIOS = scenario_risk_selection()
 
 
 @dataclass(frozen=True)
@@ -326,3 +365,159 @@ def validate_live_provider_gate_receipt(
         str(raw_status),
         tuple(raw_reason_codes or []),
     )
+
+
+def validate_live_user_journey_receipt(
+    receipt: Any,
+    *,
+    expected_source_digest: str,
+) -> LiveProviderGateValidation:
+    """Validate Gate F v2 as risk-selected real Web user journeys."""
+
+    if not isinstance(receipt, dict):
+        return LiveProviderGateValidation("FAIL", ("invalid_live_user_journey_receipt",))
+
+    reasons: list[str] = []
+    if set(receipt) - _V2_TOP_LEVEL_FIELDS:
+        reasons.append("unsafe_live_user_journey_field")
+    if receipt.get("contract_version") != LIVE_USER_JOURNEY_GATE_VERSION:
+        reasons.append("invalid_live_user_journey_contract_version")
+    status = receipt.get("status")
+    if status not in {"PASS", "FAIL", "BLOCKED"}:
+        reasons.append("invalid_live_user_journey_status")
+    source_digest = receipt.get("source_digest")
+    if not isinstance(source_digest, str) or not _SHA256_RE.fullmatch(source_digest):
+        reasons.append("invalid_live_user_journey_source_digest")
+    if source_digest != expected_source_digest:
+        reasons.append("stale_live_user_journey_receipt")
+    source_commit = receipt.get("source_commit")
+    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        reasons.append("invalid_live_user_journey_source_commit")
+    provider_model = receipt.get("provider_model")
+    if not isinstance(provider_model, str) or not _MODEL_RE.fullmatch(provider_model):
+        reasons.append("invalid_live_user_journey_model")
+
+    raw_reason_codes = receipt.get("reason_codes")
+    if not isinstance(raw_reason_codes, list) or any(
+        not isinstance(code, str) or not code for code in raw_reason_codes
+    ):
+        reasons.append("invalid_live_user_journey_reason_codes")
+        raw_reason_codes = []
+    if receipt.get("accepted") is not (status == "PASS"):
+        reasons.append("inconsistent_live_user_journey_status")
+
+    selection = receipt.get("selection")
+    if not isinstance(selection, dict):
+        selection = {}
+        reasons.append("invalid_live_user_journey_selection")
+    risk_class = selection.get("risk_class")
+    expected_scenarios = _RISK_SCENARIOS.get(risk_class)
+    required_scenarios = selection.get("required_scenario_ids")
+    if expected_scenarios is None or required_scenarios != list(expected_scenarios or ()):
+        reasons.append("invalid_live_user_journey_selection")
+    if isinstance(selection, dict) and set(selection) - _V2_SELECTION_FIELDS:
+        reasons.append("unsafe_live_user_journey_selection_field")
+
+    authorization = receipt.get("authorization")
+    if not isinstance(authorization, dict):
+        authorization = {}
+        reasons.append("invalid_live_user_journey_authorization")
+    max_sessions = _integer(authorization.get("max_sessions"))
+    used_sessions = _integer(authorization.get("used_sessions"))
+    if (
+        max_sessions < 0
+        or used_sessions < 0
+        or used_sessions > max_sessions
+        or authorization.get("policy") != "fail_fast"
+    ):
+        reasons.append("invalid_live_user_journey_authorization")
+    if isinstance(authorization, dict) and set(authorization) - _V2_AUTHORIZATION_FIELDS:
+        reasons.append("unsafe_live_user_journey_authorization_field")
+
+    runs = receipt.get("runs")
+    if not isinstance(runs, list):
+        runs = []
+        reasons.append("invalid_live_user_journey_runs")
+    if used_sessions >= 0 and len(runs) != used_sessions:
+        reasons.append("live_user_journey_session_count_mismatch")
+
+    observed_scenarios: list[str] = []
+    fixture_digests: list[str] = []
+    prompt_digests: list[str] = []
+    oracle_digests: list[str] = []
+    for index, run in enumerate(runs, start=1):
+        if not isinstance(run, dict) or set(run) - _V2_RUN_FIELDS:
+            reasons.append("unsafe_live_user_journey_run_field")
+            continue
+        scenario_id = run.get("scenario_id")
+        if not isinstance(scenario_id, str) or not _SCENARIO_RE.fullmatch(scenario_id):
+            reasons.append("invalid_live_user_journey_scenario")
+        else:
+            observed_scenarios.append(scenario_id)
+        if run.get("provider_session_index") != index:
+            reasons.append("invalid_live_user_journey_session_index")
+        if run.get("status") != "PASS":
+            reasons.append("live_user_journey_run_failed")
+
+        journey = run.get("browser_journey")
+        journey_validation = validate_browser_user_journey_receipt(
+            journey,
+            expected_source_digest=expected_source_digest,
+        )
+        if journey_validation.status != "PASS":
+            reasons.append("invalid_live_browser_user_journey")
+            reasons.extend(journey_validation.reason_codes)
+        elif isinstance(journey, dict) and journey.get("scenario_id") != scenario_id:
+            reasons.append("live_user_journey_scenario_mismatch")
+        if isinstance(journey, dict) and isinstance(scenario_id, str):
+            try:
+                expected_prompt_digest = scenario_prompt_digest(scenario_id)
+                required_oracles = set(scenario_oracle_names(scenario_id))
+            except KeyError:
+                reasons.append("unknown_live_user_journey_scenario")
+            else:
+                if journey.get("prompt_digest") != expected_prompt_digest:
+                    reasons.append("live_user_journey_prompt_mismatch")
+                observed_oracles = {
+                    item.get("name")
+                    for item in journey.get("oracle_assertions") or []
+                    if isinstance(item, dict) and item.get("passed") is True
+                }
+                if not required_oracles.issubset(observed_oracles):
+                    reasons.append("live_user_journey_oracles_incomplete")
+            fixture_digests.append(str(journey.get("fixture_digest") or ""))
+            prompt_digests.append(str(journey.get("prompt_digest") or ""))
+            oracle_digests.append(str(journey.get("oracle_digest") or ""))
+
+        human_review = run.get("human_review")
+        required_review_fields = (
+            "question_understood",
+            "method_appropriate",
+            "claim_strength_appropriate",
+            "limitations_material",
+        )
+        if not isinstance(human_review, dict) or any(
+            human_review.get(field) is not True for field in required_review_fields
+        ):
+            reasons.append("live_user_journey_human_review_failed")
+        if isinstance(human_review, dict) and set(human_review) - _V2_HUMAN_REVIEW_FIELDS:
+            reasons.append("unsafe_live_user_journey_human_review_field")
+
+    if len(set(observed_scenarios)) != len(observed_scenarios):
+        reasons.append("duplicate_live_user_journey_scenarios")
+    if len(observed_scenarios) > 1 and any(
+        len(set(values)) != len(values)
+        for values in (fixture_digests, prompt_digests, oracle_digests)
+    ):
+        reasons.append("duplicate_live_user_journey_identity")
+    if status == "PASS":
+        if raw_reason_codes:
+            reasons.append("passing_live_user_journey_has_reasons")
+        if expected_scenarios is not None and observed_scenarios != list(expected_scenarios):
+            reasons.append("required_live_user_journey_scenarios_missing")
+    elif status in {"FAIL", "BLOCKED"} and not raw_reason_codes:
+        reasons.append("nonpassing_live_user_journey_missing_reasons")
+
+    if reasons:
+        return LiveProviderGateValidation("FAIL", tuple(dict.fromkeys(reasons)))
+    return LiveProviderGateValidation(str(status), tuple(raw_reason_codes))

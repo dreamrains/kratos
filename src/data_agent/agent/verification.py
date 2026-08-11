@@ -633,7 +633,7 @@ def _numeric_evidence_items(
 
 def _unit_family(unit: Any) -> str:
     normalized = str(unit or "").strip().lower()
-    if normalized in {"value", "unitless"}:
+    if normalized in {"value", "unitless", "unspecified", "unknown"}:
         return ""
     if normalized in {"%", "percent", "percentage", "ratio", "proportion"}:
         return "ratio"
@@ -822,6 +822,7 @@ def _metric_base_identity_issues(
         "change",
         "coefficients",
         "correlation",
+        "delta",
         "estimate",
         "effect",
         "metric",
@@ -847,21 +848,21 @@ def _metric_base_identity_issues(
             if str(item or "").strip()
         ],
     ]
-    for label in trusted_labels:
-        normalized_label = _normalize_text(label)
-        label_tokens = set(normalized_label.split())
-        if not all(
-            token in label_tokens
+    if not any(
+        all(
+            token in (label_tokens := set(_normalize_text(label).split()))
             or (
                 re.search(r"[\u4e00-\u9fff]", token)
-                and token in normalized_label
+                and token in _normalize_text(label)
             )
             for token in authoritative_tokens
-        ):
-            return [(
-                "measurement_metric_mismatch",
-                "Trusted metric wording is inconsistent with its authoritative base metric.",
-            )]
+        )
+        for label in trusted_labels
+    ):
+        return [(
+            "measurement_metric_mismatch",
+            "Trusted metric wording is inconsistent with its authoritative base metric.",
+        )]
     return []
 
 

@@ -16,7 +16,7 @@ from data_agent.agent.analysis_quality_rubric import score_analysis_quality
 from data_agent.agent.verification import verify_analysis_claims
 
 ClaimAction = Literal["verified", "exploratory", "unsupported"]
-PublicationMode = Literal["tiered", "strict"]
+PublicationMode = Literal["transparent", "tiered", "strict"]
 FINAL_ANSWER_AUDIT_CHECK_STATUSES = frozenset({"passed", "downgraded", "failed"})
 
 # Local suffix appended to claims that the final audit explicitly downgrades
@@ -26,6 +26,42 @@ FINAL_ANSWER_AUDIT_CHECK_STATUSES = frozenset({"passed", "downgraded", "failed"}
 # published answer is Chinese; a parallel English suffix would weaken the
 # signal.
 EXPLORATORY_CLAIM_SUFFIX = "（探索性，未经独立校验）"
+
+# Transparent publication footer. Non-destructive mode (the production default)
+# relays the draft verbatim and appends this footer only when the audit flagged
+# material claims, so the reader sees the limitation without losing the
+# analysis. This is the Phase 0 unblock for the post-July publication paralysis
+# where the destructive tiered/strict renderer replaced coherent answers with
+# repeated 无法发布 diagnostics.
+TRANSPARENCY_FOOTER_HEADER = "## 局限说明"
+TRANSPARENCY_FOOTER_INTRO = (
+    "> 以下结论与当前计算证据存在冲突或口径不一致，请重点核对："
+)
+TRANSPARENCY_MISSING_AUDIT_NOTE = (
+    "本次回答未经独立证据复核，结论请结合原始数据审慎解读。"
+)
+# Substantive audit failures = the claim actually CONTRADICTS current computed
+# evidence (wrong number / direction / unit / scope, fabricated, stale,
+# causal-invalid, integrity failure). These genuinely warrant a reader-facing
+# note. Pure bookkeeping failures (missing_evidence_identity,
+# evidence_check_failed, *_not_found / *_not_bound) mean the audit could not
+# BIND a measurement marker — the expected situation when plan-step binding is
+# unreliable — and must NOT be surfaced as "未通过核验" in transparent mode,
+# because they are not a quality signal about the answer.
+_TRANSPARENT_SUBSTANTIVE_FAILURE_CODES = frozenset({
+    "numeric_mismatch",
+    "unit_mismatch",
+    "direction_mismatch",
+    "time_scope_mismatch",
+    "population_scope_mismatch",
+    "confidence_mismatch",
+    "verification_level_overclaim",
+    "stale_dataset_evidence",
+    "causal_claim_not_identified",
+    "computation_integrity_failure",
+    "unmet_block_claim_requirement",
+    "claim_guard_blocked",
+})
 
 # Strict-mode fail-safe banner. When the tiered renderer cannot safely
 # recover (an unsupported claim could not be cleanly replaced in place, or
@@ -930,12 +966,128 @@ def _has_substantive_published_answer(text: str) -> bool:
     return False
 
 
+def _has_material_body_line(text: str) -> bool:
+    """Return whether ``text`` has any non-heading, non-rule body line."""
+
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or _MARKDOWN_HEADING_PREFIX.match(stripped)
+            or _MARKDOWN_HORIZONTAL_RULE.match(stripped)
+        ):
+            continue
+        return True
+    return False
+
+
+def _append_transparency_footer(body: str, notes: Sequence[str]) -> str:
+    """Append a reader-friendly limitations footer to ``body``.
+
+    The footer surfaces what the audit could not fully verify without removing
+    any analysis from the body. ``notes`` are deduplicated in insertion order.
+    """
+
+    distinct = list(dict.fromkeys(notes))
+    lines = [TRANSPARENCY_FOOTER_HEADER, "", TRANSPARENCY_FOOTER_INTRO]
+    lines.extend(f"- {note}" for note in distinct)
+    return (body.rstrip() + "\n\n" + "\n".join(lines))
+
+
+def _render_transparent_publication(
+    *,
+    draft: str,
+    audit: dict[str, Any] | None,
+) -> PublicationResult:
+    """Non-destructive publication: relay the draft and label limitations.
+
+    The audit is used only to compute per-claim actions (for observability) and
+    to collect limitation notes; it never deletes a claim, substitutes a
+    diagnostic span, or injects the empty-body placeholder. This is the Phase 0
+    unblock for the post-July publication paralysis: the audit becomes a
+    scoring/labeling layer rather than a censor.
+    """
+
+    body = strip_internal_evidence_markers(draft or "")
+    audit_mapping = audit if isinstance(audit, dict) else None
+    audit_present = validate_final_answer_audit_structure(audit_mapping)
+    raw_claims: list[dict[str, Any]] = []
+    if audit_present and audit_mapping is not None:
+        raw_claims = [
+            claim
+            for claim in (audit_mapping.get("claims") or [])
+            if isinstance(claim, dict)
+        ]
+    actions: dict[str, ClaimAction] = {}
+    diagnostics: list[dict[str, Any]] = []
+    notes: list[str] = []
+    if raw_claims:
+        checks_by_id: dict[str, dict[str, Any]] = {}
+        if audit_present and audit_mapping is not None:
+            for check in audit_mapping.get("claim_checks") or []:
+                if not isinstance(check, dict):
+                    continue
+                claim_id = str(check.get("claim_id") or "").strip()
+                if claim_id:
+                    checks_by_id[claim_id] = check
+        for claim in raw_claims:
+            claim_id = _claim_identifier(claim)
+            if not claim_id:
+                continue
+            check = checks_by_id.get(claim_id, {})
+            status = str(check.get("status") or "").strip()
+            material = _claim_material_flag(claim)
+            if status == "passed":
+                action: ClaimAction = "verified"
+            elif status == "failed":
+                action = _failed_claim_action(check, claim)
+            else:
+                action = "exploratory"
+            actions[claim_id] = action
+            diagnostics.append({
+                "claim_id": claim_id,
+                "action": action,
+                "audit_status": status,
+                "material": material,
+                "reason_codes": list(check.get("reason_codes") or []),
+            })
+            if action != "verified" and material:
+                # Only substantive failures (the claim contradicts computed
+                # evidence) become a reader-facing note. Bookkeeping failures
+                # (missing marker identity, unbound step) are not a quality
+                # signal in transparent mode and are intentionally suppressed.
+                reason_codes = [
+                    str(code) for code in (check.get("reason_codes") or [])
+                ]
+                if any(
+                    code in _TRANSPARENT_SUBSTANTIVE_FAILURE_CODES
+                    for code in reason_codes
+                ):
+                    notes.append(_limitation_for_reason_codes(reason_codes))
+    text = body
+    if notes:
+        text = _append_transparency_footer(text, notes)
+    elif not audit_present and _has_material_body_line(body):
+        # Audit infrastructure unavailable (e.g. a swallowed failure): relay the
+        # draft and surface one honest blockquote note so the reader knows it
+        # was not independently re-verified. Never replace the body, never leak
+        # internal reason codes, and never emit a vacuous "未通过核验" footer.
+        text = body.rstrip() + "\n\n> " + TRANSPARENCY_MISSING_AUDIT_NOTE
+    if text:
+        text = text + "\n"
+    return PublicationResult(
+        text=text,
+        actions=actions,
+        diagnostics=tuple(diagnostics),
+    )
+
+
 def render_audited_analysis_answer(
     *,
     draft: str,
     audit: dict[str, Any] | None,
     completion: Any,
-    mode: PublicationMode = "tiered",
+    mode: PublicationMode = "transparent",
 ) -> PublicationResult:
     """Render ``draft`` under claim-tier publication rules.
 
@@ -973,6 +1125,11 @@ def render_audited_analysis_answer(
     is clean, but observably more cautious when it is not. The legacy
     whole-answer English fallback must not appear in either mode.
     """
+
+    if mode == "transparent":
+        # Non-destructive publication path (production default). Relays the
+        # draft verbatim and surfaces audit limitations as an appended note.
+        return _render_transparent_publication(draft=draft, audit=audit)
 
     draft_text = strip_internal_evidence_markers(draft or "")
     public_text = draft_text

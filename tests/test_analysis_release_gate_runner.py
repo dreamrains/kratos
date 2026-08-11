@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -17,6 +18,10 @@ from scripts.run_analysis_release_gates import (
     build_product_report_for_test,
     inspect_test_harness,
     run_declared_deterministic_gates,
+)
+from scripts.acceptance.real_user_journey_oracles import (
+    scenario_oracle_names,
+    scenario_prompt_digest,
 )
 
 
@@ -199,7 +204,7 @@ def test_harness_inspection_rejects_dynamic_collection_controls(
     assert reason in result["reason_codes"]
 
 
-def _passing_browser_receipt() -> dict:
+def _legacy_browser_receipt() -> dict:
     return {
         "contract_version": "analysis_browser_gate.v1",
         "status": "PASS",
@@ -289,7 +294,7 @@ def _passing_live_run(index: int) -> dict:
     }
 
 
-def _passing_live_receipt() -> dict:
+def _legacy_live_receipt() -> dict:
     return {
         "contract_version": "analysis_live_provider_gate.v1",
         "status": "PASS",
@@ -301,6 +306,59 @@ def _passing_live_receipt() -> dict:
         "source_commit": "a" * 40,
         "provider_model": "configured-model",
         "runs": [_passing_live_run(index) for index in range(1, 4)],
+    }
+
+
+def _passing_live_receipt() -> dict:
+    scenarios = ["cross_promo_funnel_v1", "card_multifile_paired_v1"]
+    runs = []
+    for index, scenario_id in enumerate(scenarios, start=1):
+        journey = copy.deepcopy(_passing_browser_receipt())
+        session_id = f"live-session-{index}"
+        journey["scenario_id"] = scenario_id
+        journey["fixture_digest"] = "sha256:" + hashlib.sha256(
+            f"fixture:{scenario_id}".encode()
+        ).hexdigest()
+        journey["prompt_digest"] = scenario_prompt_digest(scenario_id)
+        journey["oracle_digest"] = "sha256:" + hashlib.sha256(
+            f"oracle:{scenario_id}".encode()
+        ).hexdigest()
+        journey["oracle_assertions"] = [
+            {"name": name, "passed": True}
+            for name in scenario_oracle_names(scenario_id)
+        ]
+        journey["session_id"] = session_id
+        journey["refresh"]["session_id"] = session_id
+        runs.append({
+            "scenario_id": scenario_id,
+            "status": "PASS",
+            "provider_session_index": index,
+            "browser_journey": journey,
+            "human_review": {
+                "question_understood": True,
+                "method_appropriate": True,
+                "claim_strength_appropriate": True,
+                "limitations_material": True,
+            },
+        })
+    return {
+        "contract_version": "analysis_live_user_journey.v2",
+        "status": "PASS",
+        "reason_codes": [],
+        "accepted": True,
+        "source_digest": SOURCE_DIGEST,
+        "source_commit": "a" * 40,
+        "provider_model": "configured-model",
+        "selection": {
+            "risk_class": "task_evidence_recovery",
+            "required_scenario_ids": scenarios,
+        },
+        "authorization": {
+            "max_sessions": 2,
+            "used_sessions": 2,
+            "policy": "fail_fast",
+        },
+        "runs": runs,
     }
 
 
@@ -340,27 +398,93 @@ def test_product_gate_accepts_complete_source_bound_live_pass():
     }
 
 
+def _passing_browser_receipt() -> dict:
+    return {
+        "contract_version": "analysis_browser_user_journey.v2",
+        "status": "PASS",
+        "observer": "in_app_browser",
+        "entrypoint": "web",
+        "scenario_id": "lifecycle_canary_v1",
+        "source_digest": SOURCE_DIGEST,
+        "source_commit": "a" * 40,
+        "fixture_digest": "sha256:" + "b" * 64,
+        "prompt_digest": "sha256:" + "c" * 64,
+        "oracle_digest": "sha256:" + "d" * 64,
+        "url": "http://127.0.0.1:5013",
+        "session_id": "session-canary",
+        "tasks": {
+            "total": 2,
+            "completed": 2,
+            "terminal": 2,
+            "max_in_progress": 1,
+            "monotonic": True,
+        },
+        "computations": {"bound": 1, "orphan": 0},
+        "evidence": {"bound": 1, "orphan": 0, "legacy_unbound": 0},
+        "oracle_assertions": [
+            {"name": "row_count", "passed": True},
+            {"name": "amount_sum", "passed": True},
+        ],
+        "answer": {
+            "useful": True,
+            "complete_before_turn_end": True,
+            "forbidden_markers": [],
+            "empty_structures": 0,
+            "progress_visible": True,
+            "content_digest": "sha256:" + "e" * 64,
+        },
+        "refresh": {
+            "session_id": "session-canary",
+            "task_total": 2,
+            "task_completed": 2,
+            "evidence_bound": 1,
+            "answer_restored": True,
+            "answer_digest": "sha256:" + "e" * 64,
+        },
+        "session_isolation": {"passed": True},
+        "elapsed_ms": 4200,
+        "first_failure_stage": "",
+    }
+
+
+def test_product_gate_rejects_legacy_transport_only_browser_receipt():
+    legacy = _legacy_browser_receipt()
+    assert legacy["contract_version"] == "analysis_browser_gate.v1"
+
+    report = build_product_report_for_test(
+        browser_receipt=legacy,
+        live_receipt=_passing_live_receipt(),
+        expected_source_digest=SOURCE_DIGEST,
+    )
+
+    assert report["gates"]["E"]["status"] == "FAIL"
+    assert "invalid_user_journey_contract_version" in report["gates"]["E"]["reason_codes"]
+
+
 def test_product_gate_rejects_incomplete_or_inconsistent_live_pass():
     cases = []
     missing_runs = _passing_live_receipt()
-    missing_runs["runs"] = missing_runs["runs"][:2]
-    cases.append((missing_runs, "live_run_count_mismatch"))
+    missing_runs["runs"] = missing_runs["runs"][:1]
+    missing_runs["authorization"]["used_sessions"] = 1
+    cases.append((missing_runs, "required_live_user_journey_scenarios_missing"))
 
     duplicate_ids = _passing_live_receipt()
-    duplicate_ids["runs"][2]["run_id"] = "live_2"
-    cases.append((duplicate_ids, "invalid_live_run_ids"))
+    duplicate_ids["runs"][1]["scenario_id"] = "cross_promo_funnel_v1"
+    duplicate_ids["runs"][1]["browser_journey"]["scenario_id"] = "cross_promo_funnel_v1"
+    cases.append((duplicate_ids, "duplicate_live_user_journey_scenarios"))
 
     shallow_run = _passing_live_receipt()
-    shallow_run["runs"][1]["structured_computations"] = 1
-    cases.append((shallow_run, "invalid_live_run_contract"))
+    shallow_run["runs"][1]["browser_journey"]["evidence"]["bound"] = 0
+    shallow_run["runs"][1]["browser_journey"]["refresh"]["evidence_bound"] = 0
+    cases.append((shallow_run, "missing_bound_user_journey_evidence"))
 
     inconsistent = _passing_live_receipt()
     inconsistent["accepted"] = False
-    cases.append((inconsistent, "inconsistent_live_provider_status"))
+    cases.append((inconsistent, "inconsistent_live_user_journey_status"))
 
     missing_provider = _passing_live_receipt()
     missing_provider["provider_model"] = ""
-    cases.append((missing_provider, "live_provider_model_missing"))
+    cases.append((missing_provider, "invalid_live_user_journey_model"))
 
     for receipt, expected_reason in cases:
         report = build_product_report_for_test(
@@ -372,6 +496,17 @@ def test_product_gate_rejects_incomplete_or_inconsistent_live_pass():
         assert report["product_release_passed"] is False
         assert report["gates"]["F"]["status"] == "FAIL"
         assert expected_reason in report["gates"]["F"]["reason_codes"]
+
+
+def test_product_gate_rejects_legacy_three_run_provider_receipt():
+    report = build_product_report_for_test(
+        browser_receipt=_passing_browser_receipt(),
+        live_receipt=_legacy_live_receipt(),
+        expected_source_digest=SOURCE_DIGEST,
+    )
+
+    assert report["gates"]["F"]["status"] == "FAIL"
+    assert "invalid_live_user_journey_contract_version" in report["gates"]["F"]["reason_codes"]
 
 
 def test_pure_product_status_requires_all_a_through_f_pass():
@@ -388,8 +523,7 @@ def test_product_gate_preserves_source_bound_live_blocked_status():
     live["status"] = "BLOCKED"
     live["reason_codes"] = ["provider_credentials_unavailable"]
     live["accepted"] = False
-    live["overall_status"] = "BLOCKED"
-    live["live_provider_status"] = "BLOCKED"
+    live["authorization"]["used_sessions"] = 0
     live["runs"] = []
     report = build_product_report_for_test(
         browser_receipt=_passing_browser_receipt(),

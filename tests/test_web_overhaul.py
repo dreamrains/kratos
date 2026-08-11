@@ -238,10 +238,6 @@ class TestRewindUI:
     def test_rewind_button_in_topbar(self, html):
         assert "showRewindDialog()" in html
 
-    def test_rewind_button_on_user_messages(self, html):
-        # Old direct rewindToRound replaced with showRewindDialog
-        assert "showRewindDialog()" in html
-
     def test_rewind_info_endpoint_exists(self, client, sessions):
         if not sessions:
             pytest.skip("Need a session")

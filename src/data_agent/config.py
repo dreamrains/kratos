@@ -36,14 +36,18 @@ class AgentConfig(BaseSettings):
     mcp_enabled: bool = Field(alias="MCP_ENABLED", default=True)
     skill_auto_discover: bool = Field(alias="SKILL_AUTO_DISCOVER", default=True)
 
-    # Analysis publication controls. The Literal deliberately omits ``off``:
-    # production cannot disable deterministic claim-tier publication. The
-    # projection and progress flags remain additive — disabling them keeps the
-    # completion status ``complete_with_limits``/exploratory and never weakens
-    # a deterministic blocker.
-    assurance_publication_mode: Literal["tiered", "strict"] = Field(
+    # Analysis publication controls. The production default is ``transparent``:
+    # the audit runs as a scoring/labeling layer and the draft is relayed
+    # verbatim with an appended limitations note — it never deletes a claim or
+    # injects a placeholder (the behavior that caused the post-July analysis
+    # paralysis). ``tiered``/``strict`` retain the original destructive
+    # claim-tier rendering and can be opted into for hardened release gating.
+    # The Literal deliberately omits ``off``: deterministic audit never silently
+    # disables. The projection and progress flags remain additive — disabling
+    # them keeps the completion status ``complete_with_limits``/exploratory.
+    assurance_publication_mode: Literal["transparent", "tiered", "strict"] = Field(
         alias="ASSURANCE_PUBLICATION_MODE",
-        default="tiered",
+        default="transparent",
     )
     measurement_evidence_binding_mode: Literal[
         "shadow", "soft", "enforced"

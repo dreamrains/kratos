@@ -10,6 +10,7 @@ from data_agent.agent.analysis_execution import (
     bind_tool_call_to_plan_step,
     ensure_canonical_execution_envelope,
 )
+from data_agent.agent.analysis_plan_contracts import normalize_analysis_plan_contract
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 from data_agent.tools.registry import registry
@@ -237,6 +238,113 @@ def test_preferred_step_id_binds_when_compatible(envelope):
     )
     assert binding.ok is True
     assert binding.step_id == correlation_step_id
+
+
+@pytest.mark.parametrize("provider_label", ["python", "run_python"])
+def test_provider_python_capability_alias_uses_registry_identity(provider_label):
+    result = normalize_analysis_plan_contract(
+        {
+            "goal": "run a custom calculation",
+            "method_plan": [
+                {
+                    "step_id": "step_python",
+                    "goal": "calculate a metric not covered by a structured tool",
+                    "required_capability": provider_label,
+                    "dataset_inputs": ["factors"],
+                    "expected_output": "custom calculation",
+                    "evidence_requirements": ["limitations"],
+                }
+            ],
+        },
+        dataset_contracts=[dataset_contract("factors")],
+        require_executable=True,
+    )
+
+    assert result.ok is True
+    assert result.plan["method_plan"][0]["required_capability"] == "fallback.python"
+
+
+def test_executable_plan_rejects_unregistered_required_capability():
+    result = normalize_analysis_plan_contract(
+        {
+            "goal": "run an unavailable method",
+            "method_plan": [
+                {
+                    "step_id": "step_unknown",
+                    "goal": "invoke an unavailable method",
+                    "required_capability": "analysis.not_registered",
+                    "dataset_inputs": ["factors"],
+                    "expected_output": "unknown output",
+                    "evidence_requirements": ["limitations"],
+                }
+            ],
+        },
+        dataset_contracts=[dataset_contract("factors")],
+        require_executable=True,
+    )
+
+    assert result.ok is False
+    assert result.error_type == "unsupported_required_capability"
+    assert result.details["step_id"] == "step_unknown"
+
+
+def test_preferred_run_python_step_binds_before_runtime_dataset_discovery():
+    plan = {
+        "id": "plan_runtime_dataset",
+        "method_plan": [
+            {
+                "step_id": "step_python",
+                "required_capability": "fallback.python",
+                "dataset_inputs": ["factors"],
+                "required_claim_keys": ["custom_metric"],
+            }
+        ],
+    }
+
+    binding = bind_tool_call_to_plan_step(
+        plan=plan,
+        tool_name="run_python",
+        capability=registry.capability_for("run_python"),
+        dataset_names=[],
+        preferred_step_id="step_python",
+    )
+
+    assert binding.ok is True
+    assert binding.step_id == "step_python"
+    assert binding.claim_keys == ("custom_metric",)
+
+
+def test_runtime_discovered_dataset_binding_still_requires_current_step_identity():
+    plan = {
+        "id": "plan_runtime_dataset",
+        "method_plan": [
+            {
+                "step_id": "step_python",
+                "required_capability": "fallback.python",
+                "dataset_inputs": ["factors"],
+            }
+        ],
+    }
+
+    unscoped = bind_tool_call_to_plan_step(
+        plan=plan,
+        tool_name="run_python",
+        capability=registry.capability_for("run_python"),
+        dataset_names=[],
+        preferred_step_id="",
+    )
+    conflicting = bind_tool_call_to_plan_step(
+        plan=plan,
+        tool_name="run_python",
+        capability=registry.capability_for("run_python"),
+        dataset_names=["other"],
+        preferred_step_id="step_python",
+    )
+
+    assert unscoped.ok is False
+    assert unscoped.error_type == "analysis_step_not_found"
+    assert conflicting.ok is False
+    assert conflicting.error_type == "analysis_step_not_found"
 
 
 def test_step_binding_result_is_frozen(envelope):

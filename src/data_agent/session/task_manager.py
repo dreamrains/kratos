@@ -275,6 +275,10 @@ class TaskManager:
             run_id,
             session_id=session_id,
         )
+        active_run = coordinator.store.get_active_run(session_id)
+        binding_is_active = bool(
+            active_run is not None and active_run.run_id == run_id
+        )
         bound_step = next(
             (step for step in run_before.steps if step.step_id == step_id),
             None,
@@ -295,6 +299,17 @@ class TaskManager:
             and self._evidence_id(record)
             and str(record.get("claim_key") or "")
         ]
+        committed_ref = dict(computation_ref)
+        if not binding_is_active:
+            # The tool started under a run that was superseded while it was
+            # executing (for example, record_analysis_plan replaces an
+            # auto-compiled envelope). Preserve the computation for audit and
+            # deterministic replay, but never let a stale receipt advance the
+            # terminated run, publish evidence, or restore its legacy tasks.
+            committed_ref["projection_status"] = "pending_binding"
+            committed_ref["binding_error_type"] = "analysis_run_superseded"
+            evidence_links = []
+            complete_step = False
         receipt = coordinator.commit_computation_projection(
             run_id=run_id,
             session_id=session_id,
@@ -303,23 +318,25 @@ class TaskManager:
             tool_name=tool_name,
             tool_state=tool_state,
             capability=capability,
-            computation=dict(computation_ref),
+            computation=committed_ref,
             evidence_links=evidence_links,
             complete_step=complete_step,
             idempotency_key=f"computation:{tool_call_id}",
         )
         receipt = dict(receipt)
         receipt["legacy_task_id"] = legacy_task_id
+        receipt["stale_binding"] = not binding_is_active
         run_after = coordinator.store.get_run(
             run_id,
             session_id=session_id,
         )
-        self._apply_analysis_run_projection(run_after)
-        self._apply_projection_metadata_to_legacy_task(
-            legacy_task_id,
-            evidence_records,
-            completed=complete_step,
-        )
+        if binding_is_active:
+            self._apply_analysis_run_projection(run_after)
+            self._apply_projection_metadata_to_legacy_task(
+                legacy_task_id,
+                evidence_records,
+                completed=complete_step,
+            )
         return receipt
 
     def reconcile_analysis_computation_projection(

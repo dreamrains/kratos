@@ -11,6 +11,7 @@ from data_agent.agent.analysis_requirements import (
     requirement_ids_for_route,
     validate_analysis_requirement,
 )
+from data_agent.tools.registry import ANALYSIS_PLAN_TOOL_CAPABILITIES
 
 
 ANALYSIS_PLAN_CONTRACT_VERSION = "analysis_plan.v1"
@@ -184,18 +185,7 @@ def _enrich_executable_plan_shorthand(
         "当前数据",
         "当前数据集",
     }
-    method_capabilities = (
-        ("factor_relationship_analysis", "analysis.factor_relationship"),
-        ("correlation_analysis", "analysis.correlation"),
-        ("regression_analysis", "analysis.regression"),
-        ("distribution_analysis", "analysis.distribution"),
-        ("segmentation_analysis", "analysis.segmentation"),
-        ("group_aggregate", "analysis.group_compare"),
-        ("detect_data_quality", "data.quality"),
-        ("describe_dataset", "data.describe"),
-        ("quick_profile", "data.profile"),
-        ("top_n", "analysis.top_n"),
-    )
+    method_capabilities = tuple(ANALYSIS_PLAN_TOOL_CAPABILITIES.items())
     capability_aliases = {
         "quality_check": "data.quality",
         "data_quality_check": "data.quality",
@@ -226,6 +216,9 @@ def _enrich_executable_plan_shorthand(
         "profile": "data.profile",
         "data_profile": "data.profile",
         "data.profile": "data.profile",
+        "python": "fallback.python",
+        "chart": "visual.chart",
+        "visualization": "visual.chart",
         "synthesis": "synthesis",
     }
     # Tool names are another common provider shorthand for the capability
@@ -234,6 +227,7 @@ def _enrich_executable_plan_shorthand(
     # separate hidden enums.
     for tool_name, capability in method_capabilities:
         capability_aliases.setdefault(tool_name.casefold(), capability)
+        capability_aliases.setdefault(capability.casefold(), capability)
     natural_language_capabilities = (
         (
             ("数据质量", "缺失值", "缺失率", "重复值", "异常值", "data quality"),
@@ -648,6 +642,17 @@ def _validate_executable_plan(
             return _error("missing_step_goal", "Every AnalysisPlan step needs a goal.", step_id=step_id)
         if not _text(step.get("expected_output")):
             return _error("missing_expected_output", "Every AnalysisPlan step needs expected_output.", step_id=step_id)
+        required_capability = _text(step.get("required_capability"))
+        supported_capabilities = set(ANALYSIS_PLAN_TOOL_CAPABILITIES.values()) | {
+            "synthesis"
+        }
+        if required_capability and required_capability not in supported_capabilities:
+            return _error(
+                "unsupported_required_capability",
+                "AnalysisPlan step requires a capability that no executable tool provides.",
+                step_id=step_id,
+                required_capability=required_capability,
+            )
         if not _text_list(step.get("evidence_requirements")):
             return _error(
                 "missing_evidence_requirements",

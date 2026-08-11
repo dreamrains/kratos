@@ -106,6 +106,33 @@ def test_init_restores_latest_session_when_no_remembered_session_exists():
     }
 
 
+def test_workbench_identity_distinguishes_session_from_project_binding():
+    result = _run_node(r"""
+(() => {
+  const app = chatApp();
+  app.currentSessionId = 'session-without-project';
+  app.activeProjectName = '';
+  const sessionLabel = app.workbenchIdentityLabel();
+  app.activeProjectName = 'retention-project';
+  const projectLabel = app.workbenchIdentityLabel();
+  app.activeProjectName = '';
+  app.currentSessionId = '_pending_';
+  const pendingLabel = app.workbenchIdentityLabel();
+  process.stdout.write(JSON.stringify({ sessionLabel, projectLabel, pendingLabel }));
+})();
+""")
+
+    template = (ROOT / "src/data_agent/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    assert result == {
+        "sessionLabel": "会话：session-without-project",
+        "projectLabel": "项目：retention-project",
+        "pendingLabel": "未绑定会话",
+    }
+    assert 'x-text="workbenchIdentityLabel()"' in template
+
+
 def test_new_session_identity_immediately_binds_workbench_and_persists_choice():
     result = _run_node(r"""
 (() => {
@@ -241,6 +268,29 @@ def test_task_progress_moves_from_zero_to_complete_for_one_session():
 """)
 
     assert result == {"initial": "0/2", "completed": "2/2"}
+
+
+def test_task_progress_excludes_superseded_plan_history_after_refresh():
+    result = _run_node(r"""
+(() => {
+  const app = chatApp();
+  app.currentSessionId = 'A';
+  app.tasks = [
+    { id: 1, session_id: 'A', status: 'superseded', plan_status: 'superseded' },
+    { id: 2, session_id: 'A', status: 'superseded', plan_status: 'superseded' },
+    { id: 3, session_id: 'A', status: 'completed', plan_status: 'superseded' },
+    { id: 4, session_id: 'A', status: 'archived', plan_status: 'completed' },
+    { id: 5, session_id: 'A', status: 'completed', plan_status: 'active' },
+    { id: 6, session_id: 'A', status: 'completed', plan_status: 'active' },
+  ];
+  process.stdout.write(JSON.stringify({
+    progress: app.taskProgress,
+    activeIds: app.activeTasks.map(task => task.id),
+  }));
+})();
+""")
+
+    assert result == {"progress": "2/2", "activeIds": [5, 6]}
 
 
 def test_background_task_response_cannot_replace_foreground_session_tasks():

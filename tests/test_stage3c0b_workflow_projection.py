@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from data_agent.agent.analysis_plan_contracts import (
     ANALYSIS_PLAN_CONTRACT_VERSION,
     validate_analysis_plan_contract,
@@ -448,6 +450,34 @@ def test_projector_reuses_existing_tasks_for_same_stage3c0b_plan(tmp_path):
     tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
     assert len(tasks) == 2
     assert len([task for task in tasks if task["task_kind"] == "plan_task"]) == 2
+
+
+def test_projector_does_not_resurrect_tasks_from_superseded_analysis_run(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    first_plan = _validated_plan()
+    first = project_plan_to_workflow_tasks(
+        manager,
+        first_plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    second_plan = deepcopy(first_plan)
+    second_plan["id"] = "plan_explicit_replacement"
+    for step in second_plan["method_plan"]:
+        step["plan_id"] = second_plan["id"]
+    second = project_plan_to_workflow_tasks(
+        manager,
+        second_plan,
+        session_id="s1",
+        project_name="p1",
+    )
+
+    old_tasks = [manager.get(task_id) for task_id in first["task_ids"]]
+    active_tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    assert all(task["status"] == "superseded" for task in old_tasks)
+    assert all(task["plan_status"] == "superseded" for task in old_tasks)
+    assert [task["id"] for task in active_tasks] == second["task_ids"]
 
 
 def test_projector_rejects_malformed_stage3c0b_without_superseding_active_plan(tmp_path):

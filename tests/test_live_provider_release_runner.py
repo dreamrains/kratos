@@ -21,6 +21,11 @@ import replay_analysis_reliability  # noqa: E402
 from acceptance.live_provider_gate_contract import (  # noqa: E402
     evaluate_live_provider_run,
     validate_live_provider_gate_receipt,
+    validate_live_user_journey_receipt,
+)
+from acceptance.real_user_journey_oracles import (  # noqa: E402
+    scenario_oracle_names,
+    scenario_prompt_digest,
 )
 from data_agent.agent.answer_quality import render_audited_analysis_answer  # noqa: E402
 from replay_analysis_reliability import (  # noqa: E402
@@ -77,6 +82,164 @@ def _passing_receipt() -> dict:
         provider_model="configured-model",
         runs=[_passing_run(index) for index in range(1, 4)],
     )
+
+
+def _passing_v2_journey(scenario_id: str, session_id: str) -> dict:
+    fixture_digest = "sha256:" + hashlib.sha256(
+        f"fixture:{scenario_id}".encode()
+    ).hexdigest()
+    oracle_digest = "sha256:" + hashlib.sha256(
+        f"oracle:{scenario_id}".encode()
+    ).hexdigest()
+    return {
+        "contract_version": "analysis_browser_user_journey.v2",
+        "status": "PASS",
+        "observer": "in_app_browser",
+        "entrypoint": "web",
+        "scenario_id": scenario_id,
+        "source_digest": "sha256:" + "a" * 64,
+        "source_commit": "a" * 40,
+        "fixture_digest": fixture_digest,
+        "prompt_digest": scenario_prompt_digest(scenario_id),
+        "oracle_digest": oracle_digest,
+        "url": "http://127.0.0.1:5013",
+        "session_id": session_id,
+        "tasks": {
+            "total": 2, "completed": 2, "terminal": 2,
+            "max_in_progress": 1, "monotonic": True,
+        },
+        "computations": {"bound": 1, "orphan": 0},
+        "evidence": {"bound": 1, "orphan": 0, "legacy_unbound": 0},
+        "oracle_assertions": [
+            {"name": name, "passed": True}
+            for name in scenario_oracle_names(scenario_id)
+        ],
+        "answer": {
+            "useful": True, "complete_before_turn_end": True,
+            "forbidden_markers": [], "empty_structures": 0,
+            "progress_visible": True,
+            "content_digest": "sha256:" + "e" * 64,
+        },
+        "refresh": {
+            "session_id": session_id, "task_total": 2, "task_completed": 2,
+            "evidence_bound": 1, "answer_restored": True,
+            "answer_digest": "sha256:" + "e" * 64,
+        },
+        "session_isolation": {"passed": True},
+        "elapsed_ms": 5000,
+        "first_failure_stage": "",
+    }
+
+
+def _passing_v2_receipt() -> dict:
+    scenarios = ["cross_promo_funnel_v1", "card_multifile_paired_v1"]
+    return {
+        "contract_version": "analysis_live_user_journey.v2",
+        "status": "PASS",
+        "reason_codes": [],
+        "accepted": True,
+        "source_digest": "sha256:" + "a" * 64,
+        "source_commit": "a" * 40,
+        "provider_model": "configured-model",
+        "selection": {
+            "risk_class": "task_evidence_recovery",
+            "required_scenario_ids": scenarios,
+        },
+        "authorization": {"max_sessions": 2, "used_sessions": 2, "policy": "fail_fast"},
+        "runs": [
+            {
+                "scenario_id": scenario_id,
+                "status": "PASS",
+                "provider_session_index": index,
+                "browser_journey": _passing_v2_journey(scenario_id, f"session-{index}"),
+                "human_review": {
+                    "question_understood": True,
+                    "method_appropriate": True,
+                    "claim_strength_appropriate": True,
+                    "limitations_material": True,
+                },
+            }
+            for index, scenario_id in enumerate(scenarios, start=1)
+        ],
+    }
+
+
+def test_live_user_journey_v2_accepts_risk_selected_web_scenarios():
+    result = validate_live_user_journey_receipt(
+        _passing_v2_receipt(),
+        expected_source_digest="sha256:" + "a" * 64,
+    )
+
+    assert result.status == "PASS"
+    assert result.reason_codes == ()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda receipt: receipt["runs"][1].update(
+                scenario_id="cross_promo_funnel_v1"
+            ),
+            "duplicate_live_user_journey_scenarios",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"].update(entrypoint="backend"),
+            "invalid_live_browser_user_journey",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"]["oracle_assertions"][0].update(passed=False),
+            "failed_user_journey_oracle",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"].update(
+                prompt_digest="sha256:" + "f" * 64
+            ),
+            "live_user_journey_prompt_mismatch",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"].update(
+                oracle_assertions=receipt["runs"][0]["browser_journey"][
+                    "oracle_assertions"
+                ][:2]
+            ),
+            "live_user_journey_oracles_incomplete",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"]["tasks"].update(completed=0),
+            "incomplete_user_journey_tasks",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["browser_journey"]["refresh"].update(task_completed=1),
+            "refresh_user_journey_mismatch",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["human_review"].update(method_appropriate=False),
+            "live_user_journey_human_review_failed",
+        ),
+        (
+            lambda receipt: receipt["authorization"].update(max_sessions=1),
+            "invalid_live_user_journey_authorization",
+        ),
+        (
+            lambda receipt: receipt["runs"][0]["human_review"].update(
+                reviewer_notes="looked fine"
+            ),
+            "unsafe_live_user_journey_human_review_field",
+        ),
+    ],
+)
+def test_live_user_journey_v2_rejects_old_gate_f_false_greens(mutate, reason):
+    receipt = _passing_v2_receipt()
+    mutate(receipt)
+
+    result = validate_live_user_journey_receipt(
+        receipt,
+        expected_source_digest="sha256:" + "a" * 64,
+    )
+
+    assert result.status == "FAIL"
+    assert reason in result.reason_codes
 
 
 def test_mixed_tier_limited_completion_retains_verified_core_for_gate_f():

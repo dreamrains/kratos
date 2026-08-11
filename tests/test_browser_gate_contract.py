@@ -22,21 +22,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.acceptance.browser_gate_contract import (
     validate_browser_gate_receipt,
+    validate_browser_user_journey_receipt,
     write_browser_gate_receipt,
+    write_browser_user_journey_receipt,
 )
 from scripts.acceptance.release_source import release_source_digest
 from scripts.acceptance.run_web_sse_fixture import (
     BROWSER_FINAL_DRAFT,
+    BROWSER_USER_JOURNEY_FINAL_DRAFT,
+    BROWSER_USER_JOURNEY_PROMPT,
     BROWSER_NORMAL_PROMPT,
     CONFIRMATION_ID,
     CONFIRMATION_VERSION,
     ERROR_PROMPT,
     SUSPEND_PROMPT,
     DelayedAuditedLoop,
+    LifecycleCanaryManager,
     ScriptedManager,
     ScriptedProvider,
     _install_scripted_provider_boundaries,
     build_fixture_app,
+    build_user_journey_fixture_app,
     make_observed_event_queue,
     shutdown_fixture_app,
     split_audited_fixture_text,
@@ -166,6 +172,166 @@ def _valid_observation() -> dict:
             },
         ],
     }
+
+
+def _valid_user_journey_observation() -> dict:
+    return {
+        "contract_version": "analysis_browser_user_journey.v2",
+        "status": "PASS",
+        "observer": "in_app_browser",
+        "entrypoint": "web",
+        "scenario_id": "lifecycle_canary_v1",
+        "source_digest": EXPECTED_DIGEST,
+        "source_commit": "a" * 40,
+        "fixture_digest": "sha256:" + "b" * 64,
+        "prompt_digest": "sha256:" + "c" * 64,
+        "oracle_digest": "sha256:" + "d" * 64,
+        "url": "http://127.0.0.1:5013",
+        "session_id": "session-canary",
+        "tasks": {
+            "total": 2,
+            "completed": 2,
+            "terminal": 2,
+            "max_in_progress": 1,
+            "monotonic": True,
+        },
+        "computations": {"bound": 1, "orphan": 0},
+        "evidence": {"bound": 1, "orphan": 0, "legacy_unbound": 0},
+        "oracle_assertions": [
+            {"name": "row_count", "passed": True},
+            {"name": "amount_sum", "passed": True},
+        ],
+        "answer": {
+            "useful": True,
+            "complete_before_turn_end": True,
+            "forbidden_markers": [],
+            "empty_structures": 0,
+            "progress_visible": True,
+            "content_digest": "sha256:" + "e" * 64,
+        },
+        "refresh": {
+            "session_id": "session-canary",
+            "task_total": 2,
+            "task_completed": 2,
+            "evidence_bound": 1,
+            "answer_restored": True,
+            "answer_digest": "sha256:" + "e" * 64,
+        },
+        "session_isolation": {"passed": True},
+        "elapsed_ms": 4200,
+        "first_failure_stage": "",
+    }
+
+
+def test_browser_user_journey_v2_accepts_semantic_lifecycle_receipt():
+    result = validate_browser_user_journey_receipt(
+        _valid_user_journey_observation(),
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "PASS"
+    assert result.reason_codes == ()
+
+
+def test_browser_user_journey_v2_rejects_unbound_or_unsafe_oracle_identity():
+    missing = _valid_user_journey_observation()
+    missing.pop("oracle_digest")
+    missing_result = validate_browser_user_journey_receipt(
+        missing,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+    assert missing_result.status == "FAIL"
+    assert "invalid_user_journey_oracle_digest" in missing_result.reason_codes
+
+    unsafe = _valid_user_journey_observation()
+    unsafe["oracle_assertions"][0]["raw_rows"] = [{"email": "customer@example.com"}]
+    unsafe_result = validate_browser_user_journey_receipt(
+        unsafe,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+    assert unsafe_result.status == "FAIL"
+    assert "unsafe_user_journey_oracle_field" in unsafe_result.reason_codes
+
+
+def test_browser_user_journey_writer_validates_v2_before_persistence(tmp_path):
+    path = tmp_path / "analysis_browser_user_journey.v2.json"
+    receipt = _valid_user_journey_observation()
+
+    write_browser_user_journey_receipt(
+        path,
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == receipt
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda receipt: receipt["tasks"].update(completed=0, terminal=0),
+            "incomplete_user_journey_tasks",
+        ),
+        (
+            lambda receipt: receipt["evidence"].update(orphan=1),
+            "orphan_user_journey_evidence",
+        ),
+        (
+            lambda receipt: receipt["evidence"].update(legacy_unbound=1),
+            "legacy_unbound_user_journey_evidence",
+        ),
+        (
+            lambda receipt: receipt.update(oracle_assertions=[]),
+            "missing_user_journey_oracles",
+        ),
+        (
+            lambda receipt: receipt["oracle_assertions"][0].update(passed=False),
+            "failed_user_journey_oracle",
+        ),
+        (
+            lambda receipt: receipt["answer"].update(
+                useful=False,
+                forbidden_markers=["generic_failure"],
+            ),
+            "unusable_user_journey_answer",
+        ),
+        (
+            lambda receipt: receipt["refresh"].update(task_completed=1),
+            "refresh_user_journey_mismatch",
+        ),
+        (
+            lambda receipt: receipt["refresh"].update(
+                answer_digest="sha256:" + "f" * 64,
+            ),
+            "refresh_user_journey_mismatch",
+        ),
+    ],
+)
+def test_browser_user_journey_v2_rejects_false_green_states(mutate, reason):
+    receipt = _valid_user_journey_observation()
+    mutate(receipt)
+
+    result = validate_browser_user_journey_receipt(
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "FAIL"
+    assert reason in result.reason_codes
+
+
+def test_browser_user_journey_v2_rejects_deprecated_workbench_observation():
+    receipt = _valid_user_journey_observation()
+    receipt["workbench_session_id"] = receipt["session_id"]
+
+    result = validate_browser_user_journey_receipt(
+        receipt,
+        expected_source_digest=EXPECTED_DIGEST,
+    )
+
+    assert result.status == "FAIL"
+    assert "unsafe_user_journey_field" in result.reason_codes
 
 
 def test_browser_receipt_accepts_complete_actual_browser_observation():
@@ -1176,3 +1342,119 @@ def test_real_chat_route_runs_real_agent_tools_audit_and_sse(
     assert previous_playbook_client.calls == 0
     trace = Path(app.config["fixture_event_trace"]).read_text(encoding="utf-8")
     assert BROWSER_FINAL_DRAFT not in trace
+
+
+def test_gate_e_v2_fixture_finishes_canonical_tasks_and_bound_evidence(
+    tmp_path, monkeypatch, request
+):
+    import data_agent.config
+    import data_agent.llm.client
+    from data_agent.session.task_manager import task_manager
+
+    monkeypatch.setenv("MCP_ENABLED", "false")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "false")
+    monkeypatch.setattr(data_agent.config, "_config", None)
+    monkeypatch.setattr(
+        data_agent.llm.client,
+        "completion",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("lifecycle canary made an unscripted provider call")
+        ),
+    )
+    app = build_user_journey_fixture_app(tmp_path)
+    request.addfinalizer(lambda: shutdown_fixture_app(app))
+    app.testing = True
+    assert isinstance(app.config["agent_manager"], LifecycleCanaryManager)
+    client = app.test_client()
+    fixture_csv = Path(app.config["fixture_csv"])
+    upload = client.post(
+        "/api/upload",
+        data={"file": (io.BytesIO(fixture_csv.read_bytes()), fixture_csv.name)},
+        content_type="multipart/form-data",
+    )
+    assert upload.status_code == 200
+
+    session_id = "fixture_user_journey_v2"
+    response = client.post(
+        "/api/chat",
+        json={"message": BROWSER_USER_JOURNEY_PROMPT, "session_id": session_id},
+        buffered=False,
+    )
+    events = list(_parse_sse(response.response))
+    assert events[-1] == (
+        "turn_end",
+        {
+            "session_id": session_id,
+            "turn_id": events[-1][1]["turn_id"],
+            "status": "completed",
+        },
+    )
+
+    loop = app.config["agent_manager"].get(session_id)
+    assert loop is not None
+    state = loop.context.analysis_state
+    historical_tasks = task_manager.list_for_scope(
+        session_id=session_id,
+        project_name="",
+    )
+    tasks = task_manager.list_active_for_scope(
+        session_id=session_id,
+        project_name="",
+    )
+    assert tasks
+    assert all(task["status"] == "completed" for task in tasks)
+    assert all(
+        task["status"] == "superseded"
+        for task in historical_tasks
+        if task["plan_id"] != tasks[0]["plan_id"]
+    )
+
+    plan_capabilities = {
+        step["required_capability"] for step in state.analysis_plan["method_plan"]
+    }
+    analysis_refs = [
+        ref
+        for ref in state.computation_refs
+        if ref.get("success") and ref.get("capability_id") in plan_capabilities
+    ]
+    assert analysis_refs
+    assert all(ref.get("step_id") for ref in analysis_refs)
+    assert all(not ref.get("binding_error_type") for ref in analysis_refs)
+    assert state.evidence_records
+    assert all(record.get("provenance_status") == "bound" for record in state.evidence_records)
+    assert all(record.get("computation_refs") for record in state.evidence_records)
+
+    from data_agent.agent.analysis_requirements import evaluate_requirement_satisfaction
+
+    requirements = [
+        requirement
+        for group in state.analysis_plan.get("analysis_requirements", {}).values()
+        for requirement in group
+    ]
+    evaluated_requirements = evaluate_requirement_satisfaction(
+        requirements,
+        state.evidence_records,
+    )
+    assert not [
+        requirement["name"]
+        for requirement in evaluated_requirements
+        if requirement.get("status") == "unmet"
+        and requirement.get("unmet_action") == "block_claim"
+    ]
+
+    publication = "".join(
+        payload["text"] for name, payload in events if name == "text_delta"
+    )
+    final_audit = loop._turn_last_final_audit
+    assert final_audit["status"] == "pass", {
+        "checks": {
+            index: {
+                "reason_codes": check.get("reason_codes"),
+                "issues": check.get("issues"),
+            }
+            for index, check in enumerate(final_audit["claim_checks"])
+            if check.get("status") != "passed"
+        }
+    }
+    assert publication == BROWSER_USER_JOURNEY_FINAL_DRAFT
+    assert all(value in publication for value in ("120", "27737"))

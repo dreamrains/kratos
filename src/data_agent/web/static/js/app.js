@@ -325,13 +325,26 @@ function chatApp() {
 
         get activeTasks() {
             if (!this.currentSessionId) return [];
-            return this.tasks.filter(t => t.status !== 'deleted' && t.session_id === this.currentSessionId);
+            const historicalStatuses = new Set(['deleted', 'archived', 'superseded']);
+            return this.tasks.filter(t => (
+                t.session_id === this.currentSessionId
+                && !historicalStatuses.has(t.status)
+                && t.plan_status !== 'superseded'
+            ));
         },
 
         get taskProgress() {
             const active = this.activeTasks;
             const done = active.filter(t => t.status === 'completed').length;
             return `${done}/${active.length}`;
+        },
+
+        workbenchIdentityLabel() {
+            if (this.activeProjectName) return `项目：${this.activeProjectName}`;
+            if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                return `会话：${this.currentSessionId}`;
+            }
+            return '未绑定会话';
         },
 
         get analysisSummary() {

@@ -115,6 +115,38 @@ def _get_dataset(name: str) -> pd.DataFrame:
     return frame
 
 
+def _preloaded_runtime_importer(preloaded: dict[str, object]):
+    """Resolve only already-loaded internals of preloaded libraries.
+
+    Some NumPy/Pandas operations call ``__import__`` from the caller's
+    builtins for lazy formatting helpers. User-authored imports are removed or
+    rejected before execution and direct ``__import__`` calls are rejected by
+    the AST validator. This importer therefore exists only for library code
+    and never loads a new module or crosses a preloaded module root.
+    """
+
+    allowed_roots = {name.split(".", 1)[0] for name in preloaded}
+
+    def _runtime_import(
+        name: str,
+        globals: dict | None = None,
+        locals: dict | None = None,
+        fromlist: tuple | list = (),
+        level: int = 0,
+    ):
+        del globals, locals
+        module_name = str(name or "")
+        root = module_name.split(".", 1)[0]
+        if level != 0 or root not in allowed_roots or module_name not in sys.modules:
+            raise ImportError(f"sandbox runtime import not preloaded: {module_name}")
+        module = sys.modules[module_name]
+        if fromlist:
+            return module
+        return sys.modules.get(root, module)
+
+    return _runtime_import
+
+
 def _build_safe_globals(preloaded: dict[str, object] | None = None) -> dict:
     """构建受限的全局命名空间。"""
 
@@ -133,6 +165,11 @@ def _build_safe_globals(preloaded: dict[str, object] | None = None) -> dict:
 
     if preloaded is None:
         preloaded = _preload_map()
+
+    # The name remains unavailable to user source: validate_python_code blocks
+    # direct calls and dunder access. It is present for NumPy/Pandas internals
+    # that consult the caller's builtins while formatting or dispatching.
+    safe_builtins["__import__"] = _preloaded_runtime_importer(preloaded)
 
     return {
         "__builtins__": safe_builtins,

@@ -1333,6 +1333,44 @@ def test_material_semantic_mismatches_block(draft, reason_code):
     assert reason_code in audit["claim_checks"][0]["reason_codes"]
 
 
+def test_unspecified_evidence_unit_allows_unitless_numeric_claim():
+    evidence = _evidence(measurements=[{
+        **_evidence()["measurements"][0],
+        "value": 12,
+        "unit": "unspecified",
+        "direction": "",
+    }])
+
+    audit = _audit(
+        "Revenue difference was 12 [[evidence:ev_revenue]]. "
+        "Limitations: descriptive comparison only.",
+        evidence=[evidence],
+    )
+
+    assert audit["status"] == "pass", [
+        (check.get("status"), check.get("reason_codes"))
+        for check in audit["claim_checks"]
+    ]
+    assert audit["claim_checks"][0]["status"] == "passed"
+
+
+def test_unspecified_evidence_unit_rejects_claimed_currency_unit():
+    evidence = _evidence(measurements=[{
+        **_evidence()["measurements"][0],
+        "value": 12,
+        "unit": "unspecified",
+        "direction": "",
+    }])
+
+    audit = _audit(
+        "Revenue difference was 12 CNY [[evidence:ev_revenue]].",
+        evidence=[evidence],
+    )
+
+    assert audit["status"] == "blocked"
+    assert "unit_mismatch" in audit["claim_checks"][0]["reason_codes"]
+
+
 def test_later_revision_findings_cannot_weaken_a_deterministic_block():
     audit = _audit(
         "Revenue increased 21% [[evidence:ev_revenue]].",

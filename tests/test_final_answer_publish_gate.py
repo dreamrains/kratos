@@ -68,6 +68,12 @@ def _analysis_loop():
     loop.messages = [{"role": "assistant", "content": "Raw result [[evidence:ev_1]]."}]
     loop._reset_turn_tracking()
     loop._last_turn_intent = _intent()
+    # This file exercises the tiered publication gate (revision loops, persisted
+    # audit, mixed tiers, streaming buffering). The production default is now
+    # ``transparent``, so pin the mode back to ``tiered`` to keep testing that
+    # machinery. The default-config behavior is covered in
+    # test_tiered_analysis_publication.py.
+    loop._publication_mode = lambda: "tiered"
     return loop
 
 
