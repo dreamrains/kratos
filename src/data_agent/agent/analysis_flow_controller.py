@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from data_agent.agent.analysis_state import (
     AnalysisSessionState,
     analysis_state_summary,
@@ -212,6 +214,262 @@ class AnalysisFlowController:
             task_kind="confirmation",
             source="system_confirmation",
         )
+
+    def resolve_confirmation_and_activate(
+        self,
+        state: AnalysisSessionState,
+        *,
+        confirmation_id: str,
+        answer: str,
+        intent: TurnIntent,
+        user_input: str = "",
+        related_plan_id: str = "",
+    ) -> dict:
+        """Resolve an analysis gate and reconcile it to one executable task.
+
+        Confirmation state and the legacy task projection live in separate
+        stores, so this entry point is deliberately idempotent: a retry
+        reconciles the same resolved confirmation, executable plan, and
+        ``AnalysisRun`` instead of creating a second workflow.  The run
+        coordinator remains the authority for the unique current step.
+        """
+
+        confirmation = self._confirmation_for_resolution(
+            state,
+            confirmation_id=confirmation_id,
+            related_plan_id=related_plan_id,
+        )
+        if confirmation is None:
+            return {
+                "ok": False,
+                "error_type": "confirmation_not_found",
+                "confirmation_id": confirmation_id,
+            }
+
+        working_state = deepcopy(state)
+        working_confirmation = self._confirmation_for_resolution(
+            working_state,
+            confirmation_id=confirmation_id,
+            related_plan_id=related_plan_id,
+        )
+        if working_confirmation is None:
+            return {
+                "ok": False,
+                "error_type": "confirmation_not_found",
+                "confirmation_id": confirmation_id,
+            }
+
+        state_confirmation_id = str(
+            working_confirmation.get("id")
+            or working_confirmation.get("suspension_id")
+            or ""
+        )
+        state_updates = working_confirmation.get("state_updates")
+        method_update = (
+            state_updates.get("method_confirmation")
+            if isinstance(state_updates, dict)
+            else None
+        )
+        allowed_actions = (
+            list(method_update.get("allowed_actions") or [])
+            if isinstance(method_update, dict)
+            else []
+        )
+        if allowed_actions and answer not in allowed_actions:
+            return {
+                "ok": False,
+                "error_type": "invalid_confirmation_answer",
+                "confirmation_id": state_confirmation_id,
+            }
+        resolved = working_state.resolve_confirmation(state_confirmation_id, answer)
+        if resolved is None:
+            return {
+                "ok": False,
+                "error_type": "confirmation_not_found",
+                "confirmation_id": confirmation_id,
+            }
+
+        resolved_plan_id = (
+            related_plan_id
+            or str(working_confirmation.get("related_plan_id") or "")
+            or str(working_confirmation.get("related_spec_id") or "")
+        )
+
+        # Scope clarification is a successful resolution of this gate, but it
+        # intentionally creates another gate rather than executable work.
+        if self.has_pending_confirmation(working_state):
+            confirmation_task_ids = self._close_confirmation_tasks(
+                working_state,
+                confirmation_ids={confirmation_id, state_confirmation_id},
+                answer=answer,
+                related_plan_id=resolved_plan_id,
+            )
+            self._replace_state(state, working_state)
+            state.save()
+            return {
+                "ok": True,
+                "activated": False,
+                "confirmation_id": state_confirmation_id,
+                "confirmation_task_ids": confirmation_task_ids,
+                "reason": "confirmation_still_required",
+            }
+
+        envelope = self.ensure_canonical_execution_envelope(
+            working_state,
+            intent,
+            user_input or working_state.goal,
+        )
+        if envelope is None or not envelope.ok:
+            return {
+                "ok": False,
+                "error_type": (
+                    envelope.error_type
+                    if envelope is not None
+                    else "analysis_dataset_identity_missing"
+                ),
+                "confirmation_id": state_confirmation_id,
+                "confirmation_task_ids": [],
+            }
+
+        projection = self.ensure_workflow_tasks(working_state)
+        if projection.get("error") or projection.get("display_only"):
+            return {
+                "ok": False,
+                "error_type": str(
+                    projection.get("error_type")
+                    or projection.get("error")
+                    or projection.get("reason")
+                    or "analysis_workflow_projection_failed"
+                ),
+                "confirmation_id": state_confirmation_id,
+                "confirmation_task_ids": [],
+                "projection": projection,
+            }
+
+        project_name = self.project_name or working_state.project_name or ""
+        run_scope = task_manager.get_analysis_run_scope(
+            self.session_id,
+            project_name,
+        )
+        active_task_id = int((run_scope or {}).get("task_id") or 0)
+        if not active_task_id:
+            return {
+                "ok": False,
+                "error_type": "analysis_run_current_step_missing",
+                "confirmation_id": state_confirmation_id,
+                "confirmation_task_ids": [],
+                "projection": projection,
+            }
+
+        confirmation_task_ids = self._close_confirmation_tasks(
+            working_state,
+            confirmation_ids={confirmation_id, state_confirmation_id},
+            answer=answer,
+            related_plan_id=resolved_plan_id,
+        )
+        self._replace_state(state, working_state)
+        state.save()
+        return {
+            "ok": True,
+            "activated": True,
+            "confirmation_id": state_confirmation_id,
+            "confirmation_task_ids": confirmation_task_ids,
+            "analysis_plan_id": str(
+                (working_state.analysis_plan or {}).get("id") or ""
+            ),
+            "active_task_id": active_task_id,
+            "projection": projection,
+        }
+
+    @staticmethod
+    def _replace_state(
+        target: AnalysisSessionState,
+        source: AnalysisSessionState,
+    ) -> None:
+        target.__dict__.clear()
+        target.__dict__.update(deepcopy(source.__dict__))
+
+    def _confirmation_for_resolution(
+        self,
+        state: AnalysisSessionState,
+        *,
+        confirmation_id: str,
+        related_plan_id: str,
+    ) -> dict | None:
+        confirmations = [
+            item
+            for item in (state.pending_confirmations or [])
+            if isinstance(item, dict)
+        ]
+        direct = next((
+            item
+            for item in confirmations
+            if confirmation_id in {
+                str(item.get("id") or ""),
+                str(item.get("suspension_id") or ""),
+            }
+        ), None)
+        if direct is not None:
+            return direct
+
+        # The durable confirmation service owns a generated confirmation ID,
+        # while AnalysisSessionState historically retained the plan-bound ID.
+        # Relate those identities only through the exact plan reference.
+        if related_plan_id:
+            matches = [
+                item
+                for item in confirmations
+                if related_plan_id in {
+                    str(item.get("related_plan_id") or ""),
+                    str(item.get("related_spec_id") or ""),
+                }
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        return None
+
+    def _close_confirmation_tasks(
+        self,
+        state: AnalysisSessionState,
+        *,
+        confirmation_ids: set[str],
+        answer: str,
+        related_plan_id: str,
+    ) -> list[int]:
+        project_name = self.project_name or state.project_name or ""
+        normalized_ids = {item for item in confirmation_ids if item}
+        closed: list[int] = []
+        for task in task_manager.list_all(include_stale=True):
+            if task.get("session_id") != self.session_id:
+                continue
+            if str(task.get("project_name") or "") != project_name:
+                continue
+            if task.get("task_kind") != "confirmation" and task.get("node_type") != "confirmation":
+                continue
+            task_confirmation_ids = {
+                str(item)
+                for item in (task.get("confirmation_ids") or [])
+                if str(item)
+            }
+            plan_matches = bool(
+                related_plan_id
+                and analysis_plan_id_from_mapping(task) == related_plan_id
+            )
+            if not (normalized_ids.intersection(task_confirmation_ids) or plan_matches):
+                continue
+            task_id = int(task.get("id") or 0)
+            if not task_id:
+                continue
+            if task.get("status") != "completed":
+                task_manager.update(
+                    task_id,
+                    status="completed",
+                    completed_by="confirmation",
+                    confirmation_ids=sorted(task_confirmation_ids | normalized_ids),
+                    result_summary=f"User confirmation resolved: {answer}",
+                )
+            closed.append(task_id)
+        return sorted(set(closed))
 
     def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
         plan = state.analysis_plan or {}

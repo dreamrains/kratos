@@ -185,6 +185,27 @@ def resolve_workspace_scope(manager, session_id: str, project_name: str = "") ->
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
 
     in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+    if not in_progress:
+        activate_next = getattr(manager, "activate_next_ready_plan_task", None)
+        if callable(activate_next):
+            activated_task_id = activate_next(
+                session_id=session,
+                project_name=project,
+                plan_id=plan_id,
+            )
+            if activated_task_id:
+                tasks = [
+                    task
+                    for task in manager.list_all(include_stale=True)
+                    if _identity(task.get("session_id")) == session
+                    and _identity(task.get("project_name")) == project
+                    and _identity(task.get("plan_id")) == plan_id
+                    and task.get("status") not in {"deleted", "archived", "superseded"}
+                ]
+                stage_tasks = [task for task in tasks if _is_stage3c0b_task(task)]
+                in_progress = [
+                    task for task in stage_tasks if task.get("status") == "in_progress"
+                ]
     if len(in_progress) != 1:
         error_type = (
             "multiple_in_progress_tasks"
@@ -492,6 +513,29 @@ def _create_scope_enforcement_chain(
             return snapshot_type(session_id=session, project_name=project)
 
         in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+        if not in_progress:
+            activate_next = getattr(manager, "activate_next_ready_plan_task", None)
+            if callable(activate_next):
+                activated_task_id = activate_next(
+                    session_id=session,
+                    project_name=project,
+                    plan_id=plan_id,
+                )
+                if activated_task_id:
+                    tasks = [
+                        task
+                        for task in manager.list_all(include_stale=True)
+                        if normalize_identity(task.get("session_id")) == session
+                        and normalize_identity(task.get("project_name")) == project
+                        and normalize_identity(task.get("plan_id")) == plan_id
+                        and task.get("status") not in {"deleted", "archived", "superseded"}
+                    ]
+                    stage_tasks = [task for task in tasks if is_stage_task(task)]
+                    in_progress = [
+                        task
+                        for task in stage_tasks
+                        if task.get("status") == "in_progress"
+                    ]
         if len(in_progress) != 1:
             multiple = len(in_progress) > 1
             return snapshot_type(

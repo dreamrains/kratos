@@ -336,6 +336,48 @@ def _apply_state_update_action(
     from data_agent.agent.analysis_state import load_analysis_state
 
     state = load_analysis_state(context.session_id)
+    if isinstance(updates.get("method_confirmation"), dict):
+        from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+        from data_agent.agent.intent import TurnIntent
+
+        controller = AnalysisFlowController(
+            context.session_id,
+            state.project_name,
+        )
+        transition = controller.resolve_confirmation_and_activate(
+            state,
+            confirmation_id=context.confirmation_id,
+            answer=str(answer or ""),
+            intent=TurnIntent(
+                intent_type="directed_analysis",
+                clarity="clear",
+                data_state=state.data_state,
+                analysis_stage="plan",
+                recommended_action="run_analysis",
+                execution_readiness=(
+                    "ready" if state.data_state == "data_loaded" else "missing_data"
+                ),
+                disallowed_claim_types=list(
+                    (state.analysis_plan or {}).get("disallowed_claim_types") or []
+                ),
+            ),
+            user_input=state.goal,
+            related_plan_id=str(context.parameters.get("related_spec_id") or ""),
+        )
+        if not transition.get("ok"):
+            raise RuntimeError(
+                str(
+                    transition.get("error_type")
+                    or "analysis_confirmation_transition_failed"
+                )
+            )
+        return {
+            "confirmation_id": context.confirmation_id,
+            "applied": sorted(updates),
+            "answer": answer,
+            "transition": transition,
+        }
+
     state.apply_state_updates(updates, answer=answer)
     state.save()
     return {

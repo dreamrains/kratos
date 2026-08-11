@@ -1383,7 +1383,11 @@ class AgentLoop:
             "blocking_reason": str(pending_data.get("blocking_reason") or question_data.get("reason") or ""),
             "state_updates": state_updates_text,
             "related_task_id": int(pending_data.get("related_task_id") or 0),
-            "related_spec_id": str(pending_data.get("related_spec_id") or ""),
+            "related_spec_id": str(
+                pending_data.get("related_spec_id")
+                or pending_data.get("related_plan_id")
+                or ""
+            ),
         }
         susp = self._suspend_for_required_question_payload(
             payload,
@@ -3516,6 +3520,18 @@ class AgentLoop:
             )
             self._prompt_cache_dirty = True
 
+        if resolved.resolution_action == "confirm_method":
+            from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+
+            controller = AnalysisFlowController(
+                self.session_id,
+                self.context.project_name,
+            )
+            self._flow_controller = controller
+            self.context.analysis_state = controller.load_state()
+            self.__context_operation("refresh")
+            self._prompt_cache_dirty = True
+
         return confirmation_record_to_loop_result(
             resolved,
             {"messages": self._serialize_messages()},
@@ -3825,10 +3841,58 @@ class AgentLoop:
             try:
                 from data_agent.agent.analysis_state import current_analysis_state
                 state = current_analysis_state()
-                if state is not None:
+                is_method_confirmation = susp.confirmation_type == "method_confirmation"
+                if state is not None and is_method_confirmation:
+                    from data_agent.agent.analysis_flow_controller import AnalysisFlowController
+                    from data_agent.agent.intent import TurnIntent
+
+                    controller = AnalysisFlowController(
+                        self.session_id,
+                        self.context.project_name,
+                    )
+                    intent = (
+                        getattr(self, "_last_turn_intent", None)
+                        or getattr(self.context, "turn_intent", None)
+                        or TurnIntent(
+                            intent_type="directed_analysis",
+                            clarity="clear",
+                            data_state=state.data_state,
+                            analysis_stage="plan",
+                            recommended_action="run_analysis",
+                            execution_readiness=(
+                                "ready"
+                                if state.data_state == "data_loaded"
+                                else "missing_data"
+                            ),
+                            disallowed_claim_types=list(
+                                (state.analysis_plan or {}).get(
+                                    "disallowed_claim_types"
+                                )
+                                or []
+                            ),
+                        )
+                    )
+                    transition = controller.resolve_confirmation_and_activate(
+                        state,
+                        confirmation_id=susp.suspension_id,
+                        answer=answer,
+                        intent=intent,
+                        user_input=self._last_external_user_message() or state.goal,
+                        related_plan_id=susp.related_spec_id,
+                    )
+                    if transition.get("ok"):
+                        self._flow_controller = controller
+                        self.__context_operation("refresh")
+                        self._prompt_cache_dirty = True
+                    else:
+                        logger.warning(
+                            "Analysis confirmation transition failed",
+                            extra={"extra_data": transition},
+                        )
+                elif state is not None:
                     state.resolve_confirmation(susp.suspension_id, answer)
                     state.save()
-                if susp.related_task_id:
+                if susp.related_task_id and not is_method_confirmation:
                     from data_agent.session.task_manager import task_manager
                     task_manager.update(
                         susp.related_task_id,
