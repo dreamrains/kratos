@@ -23,6 +23,35 @@ from data_agent.utils.logging import get_logger
 logger = get_logger("workspace")
 
 
+# M1 D7 advisory scope warnings. Out-of-scope writes are logged and allowed
+# rather than aborting the operation. The symbol is retained for M2
+# observability; ``consume_scope_advisory_warnings`` drains the buffer.
+_SCOPE_ADVISORY_WARNINGS: list[dict[str, Any]] = []
+_SCOPE_ADVISORY_SYMBOL = "dataset_outside_current_task_scope"
+
+
+def record_scope_advisory_warning(dataset: str) -> None:
+    """Record that an out-of-scope workspace write was allowed (advisory)."""
+    if not dataset:
+        return
+    _SCOPE_ADVISORY_WARNINGS.append(
+        {"warning": _SCOPE_ADVISORY_SYMBOL, "dataset": str(dataset)}
+    )
+    logger.warning(
+        "%s (advisory): write to dataset '%s' allowed despite not being in the "
+        "current task scope.",
+        _SCOPE_ADVISORY_SYMBOL,
+        dataset,
+    )
+
+
+def consume_scope_advisory_warnings() -> list[dict[str, Any]]:
+    """Return and clear accumulated workspace scope advisory warnings."""
+    drained = list(_SCOPE_ADVISORY_WARNINGS)
+    _SCOPE_ADVISORY_WARNINGS.clear()
+    return drained
+
+
 def _create_workspace_context_sync(current_context_getter):
     """Capture the trusted getter used by legacy raw-storage project updates."""
 
@@ -549,7 +578,14 @@ def _create_workspace_registry(
         if scope.phase in {"synthesis", "error"}:
             return f"Error: {scope.phase}_cannot_mutate_raw_data"
         if scope.phase == "execution" and name not in scope.allowed_datasets:
-            return "Error: derived_scope_not_registered" if derived else "Error: dataset_outside_current_task_scope"
+            # D7: execution scope is advisory for out-of-scope datasets. The
+            # ``derived_scope_not_registered`` guard remains a legitimate hard
+            # block (genuinely unregistered derived datasets), but an ordinary
+            # out-of-scope write is logged and allowed so a normal analysis
+            # turn is never truncated by the overlay.
+            if derived:
+                return "Error: derived_scope_not_registered"
+            record_scope_advisory_warning(name)
         return ""
 
     def operate(token, operation, *args):
@@ -813,7 +849,12 @@ class WorkspaceProxy:
         if scope.phase in {"synthesis", "error"}:
             return f"Error: {scope.phase}_cannot_mutate_raw_data"
         if scope.phase == "execution" and name not in scope.allowed_datasets:
-            return "Error: derived_scope_not_registered" if derived else "Error: dataset_outside_current_task_scope"
+            # D7: advisory for ordinary out-of-scope writes; keep the
+            # ``derived_scope_not_registered`` hard block for genuinely
+            # unregistered derived datasets.
+            if derived:
+                return "Error: derived_scope_not_registered"
+            record_scope_advisory_warning(name)
         return ""
 
     def get(self, name: str) -> Optional[pd.DataFrame]:

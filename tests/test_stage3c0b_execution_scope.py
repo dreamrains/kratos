@@ -135,18 +135,30 @@ def test_scope_isolated_by_session_and_project(tmp_path):
     assert scope.step_id == "step_banner"
 
 
-def test_dataset_guard_blocks_unbound_dataset_and_allows_bound_dataset(tmp_path):
-    from data_agent.agent.execution_scope import ensure_dataset_allowed_for_current_task
+def test_dataset_guard_advises_on_unbound_dataset_and_allows_bound_dataset(tmp_path):
+    from data_agent.agent.execution_scope import (
+        consume_advisory_scope_warnings,
+        ensure_dataset_allowed_for_current_task,
+    )
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager)
+    consume_advisory_scope_warnings()  # drain warnings from prior tests
 
-    blocked = ensure_dataset_allowed_for_current_task(manager, "s1", dataset="iap")
+    advised = ensure_dataset_allowed_for_current_task(manager, "s1", dataset="iap")
     allowed = ensure_dataset_allowed_for_current_task(manager, "s1", dataset=" banner ")
 
-    assert blocked.allowed is False
-    assert blocked.error_type == "dataset_outside_current_task_scope"
+    # D7: execution scope is advisory — an unbound dataset is allowed (not blocked),
+    # with a recorded warning. A bound dataset is allowed as before.
     assert allowed.allowed is True
+    assert advised.allowed is True
+    assert advised.error_type == ""
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["dataset"] == "iap"
+        and w["warning"] == "dataset_outside_current_task_scope"
+        for w in warnings
+    )
 
 
 def test_dataset_guard_blocks_synthesis_from_raw_dataset(tmp_path):
@@ -171,14 +183,20 @@ def test_run_python_get_dataset_cannot_read_unbound_dataset(tmp_path, monkeypatc
     ws = Workspace()
     ws.add("banner", pd.DataFrame({"value": [1]}))
     ws.add("iap", pd.DataFrame({"secret": [9876]}))
-    monkeypatch.setattr(sandbox, "workspace", ws)
+    # Do NOT replace sandbox.workspace with the raw store: under the advisory
+    # scope (D7) the loop-level guard no longer blocks, so data isolation for
+    # unbound datasets is enforced by the scope-aware proxy (workspace.get →
+    # None → dataset_not_found), which is the production access path.
     ctx = AgentContext(session_id="s1", workspace=ws)
 
     with use_agent_context(ctx):
         payload = json.loads(sandbox.run_python("get_dataset('iap')['secret'].iloc[0]"))
 
-    assert payload["error_type"] == "sandbox_execution_error"
-    assert "dataset_outside_current_task_scope" in payload["error"]
+    # The advisory scope guard no longer blocks the call; data isolation for
+    # the unbound dataset is enforced by the scope-aware proxy, which hides
+    # "iap" (returns None → dataset_not_found).
+    assert payload["error_type"] == "dataset_not_found"
+    assert "dataset_outside_current_task_scope" not in payload["error"]
     assert "9876" not in payload.get("result", "")
 
 
@@ -296,12 +314,14 @@ def test_interpret_dataset_keeps_relationships_within_allowed_scope(tmp_path, mo
     )
 
 
-def test_single_tool_guard_blocks_before_registry_execution(tmp_path, monkeypatch):
+def test_single_tool_guard_runs_advisory_before_registry_execution(tmp_path, monkeypatch):
     import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager)
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    consume_advisory_scope_warnings()
     called = []
     capability = ToolCapability("data.test_read", category="data_view")
     _install_tool(
@@ -316,18 +336,25 @@ def test_single_tool_guard_blocks_before_registry_execution(tmp_path, monkeypatc
 
     result = loop._execute_single_tool(tc, [tc], 0)
 
+    # D7: advisory — the tool executes (not blocked); a warning is recorded.
     assert result is None
-    assert called == []
-    payload = json.loads(loop.messages[-1]["content"])
-    assert payload["error_type"] == "dataset_outside_current_task_scope"
+    assert called == ["iap"]
+    assert loop.messages[-1]["content"] == "executed"
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["dataset"] == "iap" and w["warning"] == "dataset_outside_current_task_scope"
+        for w in warnings
+    )
 
 
-def test_streaming_tool_guard_blocks_before_registry_execution(tmp_path, monkeypatch):
+def test_streaming_tool_guard_runs_advisory_before_registry_execution(tmp_path, monkeypatch):
     import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager)
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    consume_advisory_scope_warnings()
     called = []
     capability = ToolCapability("data.test_stream_read", category="data_view")
     _install_tool(
@@ -343,9 +370,13 @@ def test_streaming_tool_guard_blocks_before_registry_execution(tmp_path, monkeyp
 
     list(loop._process_tool_calls(Response(tool_calls=[tc]), round_num=1))
 
-    assert called == []
-    payload = json.loads(loop.messages[-1]["content"])
-    assert payload["error_type"] == "dataset_outside_current_task_scope"
+    # D7: advisory — the streaming path also runs the tool (not blocked).
+    assert called == ["iap"]
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["dataset"] == "iap" and w["warning"] == "dataset_outside_current_task_scope"
+        for w in warnings
+    )
 
 
 def test_record_analysis_plan_survives_post_tool_scope_refresh(tmp_path, monkeypatch):
@@ -406,10 +437,12 @@ def test_record_analysis_plan_survives_post_tool_scope_refresh(tmp_path, monkeyp
 
 def test_parallel_guard_validates_every_dataset_argument(tmp_path, monkeypatch):
     import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager, datasets=["banner"])
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    consume_advisory_scope_warnings()
     called = []
     capability = ToolCapability("analysis.test_compare", category="relationship")
     _install_tool(
@@ -441,14 +474,25 @@ def test_parallel_guard_validates_every_dataset_argument(tmp_path, monkeypatch):
 
     results = loop._execute_tools_parallel(calls)
 
-    assert called == [("banner", "banner")]
-    assert json.loads(results[0][1])["error_type"] == "dataset_outside_current_task_scope"
+    # D7: advisory — both calls execute; the out-of-scope "iap" reference is
+    # allowed with a recorded warning instead of aborting the parallel call.
+    # (Order is non-deterministic under parallel execution.)
+    assert len(called) == 2
+    assert set(called) == {("banner", "iap"), ("banner", "banner")}
+    assert results[0][1] == "executed"
     assert results[1][1] == "executed"
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["dataset"] == "iap" and w["warning"] == "dataset_outside_current_task_scope"
+        for w in warnings
+    )
 
 
-def test_tool_guard_checks_all_references_even_when_first_is_blocked(tmp_path, monkeypatch):
+def test_tool_guard_checks_all_references_even_when_first_is_advised(tmp_path, monkeypatch):
     import data_agent.agent.execution_scope as execution_scope
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
 
+    consume_advisory_scope_warnings()
     capability = ToolCapability("analysis.test_compare", category="relationship")
     _install_tool(
         monkeypatch,
@@ -489,9 +533,17 @@ def test_tool_guard_checks_all_references_even_when_first_is_blocked(tmp_path, m
         {"left": "iap", "right": "banner"},
     )
 
-    assert result.allowed is False
-    assert result.error_type == "dataset_outside_current_task_scope"
+    # D7: advisory — the guard still inspects every dataset reference (the
+    # scope is resolved exactly once), but the out-of-scope "iap" is allowed
+    # with a recorded warning rather than blocking the tool call.
+    assert result.allowed is True
+    assert result.error_type == ""
     assert tracking_manager.list_calls == 1
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["dataset"] == "iap" and w["warning"] == "dataset_outside_current_task_scope"
+        for w in warnings
+    )
 
 
 def test_legacy_native_dataset_reader_is_classified_without_capability(monkeypatch):
@@ -542,18 +594,20 @@ def test_unrelated_tool_with_name_argument_is_not_falsely_guarded(tmp_path, monk
         ),
     ],
 )
-def test_real_dataset_output_tools_block_unbound_datasets(
+def test_real_dataset_output_tools_run_advisory_on_unbound_datasets(
     tmp_path,
     monkeypatch,
     tool_name,
     arguments,
 ):
     import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
     from data_agent.tools import data_io, visualization  # noqa: F401
 
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager)
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
+    consume_advisory_scope_warnings()
     executed = []
     monkeypatch.setattr(
         registry,
@@ -565,10 +619,25 @@ def test_real_dataset_output_tools_block_unbound_datasets(
 
     loop._execute_single_tool(tc, [tc], 0)
 
-    assert executed == []
-    assert json.loads(loop.messages[-1]["content"])["error_type"] == (
-        "dataset_outside_current_task_scope"
+    # D7: advisory — the scope guard records a warning for the unbound dataset
+    # reference instead of blocking on ``dataset_outside_current_task_scope``.
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "iap"
+        for w in warnings
     )
+    if tool_name == "export_output":
+        # No further guard → the tool executes.
+        assert len(executed) == 1
+        assert executed[0][0] == tool_name
+    else:
+        # create_chart still hits the separate ``current_task_dataset_unavailable``
+        # guard (a different, pre-existing check unrelated to this advisory
+        # change), so it does not execute.
+        assert executed == []
+        assert (
+            "current_task_dataset_unavailable" in loop.messages[-1]["content"]
+        )
 
 
 def test_create_chart_without_dataset_is_forced_to_unique_current_scope_dataset(

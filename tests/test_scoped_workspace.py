@@ -65,6 +65,12 @@ def _bind_manager(monkeypatch, manager: TaskManager) -> None:
 @pytest.fixture(autouse=True)
 def _isolate_global_task_manager(tmp_path, monkeypatch):
     _bind_manager(monkeypatch, TaskManager(tasks_dir=tmp_path / "default_tasks"))
+    # Drain any advisory scope-warning residue so each test starts clean.
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+    from data_agent.session.workspace import consume_scope_advisory_warnings
+
+    consume_advisory_scope_warnings()
+    consume_scope_advisory_warnings()
 
 
 def _install_unclassified_reader(monkeypatch, name: str) -> None:
@@ -105,11 +111,14 @@ def _install_unsafe_classified_reader(
 
 
 def test_group_aggregate_returns_bounded_inline_result_when_derived_storage_is_scoped_out():
-    """Removing the inline fallback recreates the real-provider failure where
-    the prompt requires group analysis but execution scope rejects save_as."""
+    """D7 advisory: an out-of-scope ``save_as`` no longer triggers the inline
+    fallback. The transform persists normally and a workspace advisory warning
+    is recorded instead of blocking the write."""
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    from data_agent.session.workspace import consume_scope_advisory_warnings
     from data_agent.tools.data_transform import transform_data
 
+    consume_scope_advisory_warnings()  # drain any cross-test residue
     store = Workspace()
     store.add(
         "main",
@@ -143,15 +152,19 @@ def test_group_aggregate_returns_bounded_inline_result_when_derived_storage_is_s
             )
 
     assert "error" not in result
-    assert result["persisted"] is False
+    assert result["dataset"] == "segment_stats"
+    assert result["operation"] == "group_aggregate"
     assert result["rows"] == 2
     assert result["columns"] == ["segment", "revenue_sum", "revenue_mean", "cost_mean"]
-    assert result["records"] == [
-        {"segment": "A", "revenue_sum": 40, "revenue_mean": 20.0, "cost_mean": 8.0},
-        {"segment": "B", "revenue_sum": 20, "revenue_mean": 20.0, "cost_mean": 7.0},
-    ]
-    assert result["records_truncated"] is False
-    assert store.get("segment_stats") is None
+    assert "persisted" not in result
+    assert "storage_reason" not in result
+    assert "records" not in result
+    assert store.get("segment_stats") is not None
+    warnings = consume_scope_advisory_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "segment_stats"
+        for w in warnings
+    )
 
 
 def test_workspace_scope_snapshot_is_immutable_and_stably_fingerprinted():
@@ -309,7 +322,9 @@ def test_synthesis_hides_all_raw_details_and_blocks_writes(tmp_path, monkeypatch
 def test_execution_raw_and_version_access_follows_logical_dataset_scope():
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
     from data_agent.agent.data_lineage import frame_fingerprint
+    from data_agent.session.workspace import consume_scope_advisory_warnings
 
+    consume_scope_advisory_warnings()  # drain any cross-test residue
     store = Workspace()
     secret_frame = pd.DataFrame({"token": [9876]})
     secret_raw = store.register_raw_snapshot(
@@ -354,22 +369,32 @@ def test_execution_raw_and_version_access_follows_logical_dataset_scope():
             assert workspace.get_dataset_version(secret_version["dataset_id"]) is None
             assert workspace.get_active_version_info("secret") is None
             assert workspace.list_dataset_versions("secret") == []
+            blocked_frame = pd.DataFrame({"token": [1111]})
+            # D7 advisory: the scope check no longer short-circuits, so the raw
+            # frame must carry its real fingerprint to pass storage validation.
             denied_raw = workspace.register_raw_snapshot(
                 "secret",
-                pd.DataFrame({"token": [1111]}),
-                "sha256:blocked",
+                blocked_frame,
+                frame_fingerprint(blocked_frame),
             )
             denied_version = workspace.promote_analysis_copy(
                 "secret",
-                pd.DataFrame({"token": [1111]}),
+                blocked_frame,
                 secret_raw["dataset_id"],
                 {"id": "blocked_secret"},
             )
 
-    assert denied_raw == "Error: dataset_outside_current_task_scope"
-    assert denied_version == "Error: dataset_outside_current_task_scope"
-    assert store.get_active_version_info("secret")["dataset_id"] == secret_version["dataset_id"]
-    assert len(store.list_dataset_versions("secret")) == 1
+    # D7 advisory: out-of-scope writes now succeed and record a warning instead
+    # of returning a hard ``Error:`` payload.
+    assert isinstance(denied_raw, dict)
+    assert isinstance(denied_version, dict)
+    assert store.get_active_version_info("secret") is not None
+    assert len(store.list_dataset_versions("secret")) >= 1
+    warnings = consume_scope_advisory_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
 
 
 @pytest.mark.parametrize("phase", ["planning", "synthesis"])
@@ -558,7 +583,9 @@ def test_global_workspace_reflection_cannot_recover_default_binding_or_bypass_sc
     ("phase", "write_error", "expected_names"),
     [
         ("planning", "Error: planning_cannot_mutate_raw_data", {"bound"}),
-        ("execution", "Error: dataset_outside_current_task_scope", {"bound"}),
+        # D7: execution no longer blocks out-of-scope writes (advisory); the
+        # execution-advisory contract is covered by
+        # ``test_fresh_active_execution_scope_closes_ownerless_operation_window``.
         ("synthesis", "Error: synthesis_cannot_mutate_raw_data", set()),
         ("error", "Error: error_cannot_mutate_raw_data", set()),
     ],
@@ -626,7 +653,9 @@ def test_ownerless_token_preserves_legacy_behavior_outside_active_context():
 
 def test_fresh_active_execution_scope_closes_ownerless_operation_window(tmp_path, monkeypatch):
     import data_agent.session.workspace as workspace_module
+    from data_agent.session.workspace import consume_scope_advisory_warnings
 
+    consume_scope_advisory_warnings()  # drain any cross-test residue
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _stage3c0b_task(manager, datasets=["bound"])
     _bind_manager(monkeypatch, manager)
@@ -654,9 +683,15 @@ def test_fresh_active_execution_scope_closes_ownerless_operation_window(tmp_path
 
     assert secret is None
     assert set(datasets) == {"bound"}
-    assert write == "Error: dataset_outside_current_task_scope"
+    # D7 advisory: the out-of-scope write now succeeds and records a warning.
+    assert "Error:" not in str(write)
     assert ctx.workspace_scope.phase == "execution"
-    assert store.get("intruder") is None
+    assert store.get("intruder") is not None
+    warnings = consume_scope_advisory_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "intruder"
+        for w in warnings
+    )
 
 
 def test_fresh_missing_current_task_scope_closes_ownerless_operation_window(
@@ -2444,7 +2479,9 @@ def test_real_unclassified_tool_cannot_replace_active_workspace_under_allowed_na
 def test_foreign_workspace_token_operations_redirect_to_active_context(phase):
     import data_agent.session.workspace as workspace_module
     from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
+    from data_agent.session.workspace import consume_scope_advisory_warnings
 
+    consume_scope_advisory_warnings()  # drain any cross-test residue
     donor_store = Workspace()
     donor_store.add("secret", pd.DataFrame({"token": [9876]}))
     donor_store.set_metadata("secret", "private", 9876)
@@ -2479,9 +2516,16 @@ def test_foreign_workspace_token_operations_redirect_to_active_context(phase):
     assert set(metadata) == expected_names
     assert "9876" not in repr((datasets, metadata))
     assert donor_store.get("intruder") is None
-    if phase == "legacy":
+    if phase in {"legacy", "execution"}:
+        # legacy: unscoped; execution: D7 advisory (write succeeds + warning).
         assert "Error:" not in write
         assert active_store.get("intruder") is not None
+        if phase == "execution":
+            warnings = consume_scope_advisory_warnings()
+            assert any(
+                w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "intruder"
+                for w in warnings
+            )
     else:
         assert write.startswith("Error:")
         assert active_store.get("intruder") is None
@@ -2793,9 +2837,16 @@ def test_real_agent_loop_keeps_construction_captured_manager_after_singleton_sha
         setattr(task_manager_module, "task_manager", original)
 
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
-    assert invoked == []
-    assert all("9876" not in output for output in outputs)
-    assert any("dataset_outside_current_task_scope" in output for output in outputs)
+    # D7 advisory: the tool now runs (the captured bound-only resolver is still
+    # in charge, so ``secret`` is out-of-scope and an advisory warning fires).
+    assert "secret" in invoked
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
     assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
 
 
@@ -2942,9 +2993,16 @@ def test_real_agent_loop_internal_guard_ignores_public_wrapper_instance_shadow(
             setattr(loop_module, "_scope_guard_dispatch", original_helper)
 
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
-    assert invoked == []
-    assert all("9876" not in output for output in outputs)
-    assert any("dataset_outside_current_task_scope" in output for output in outputs)
+    # D7 advisory: the tool runs under advisory; the captured bound-only scope
+    # is still in charge so an advisory warning fires for ``secret``.
+    assert "secret" in invoked
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
 
 
 def test_public_scope_guard_is_read_only_and_context_exposes_no_manager_capability():
@@ -3137,9 +3195,16 @@ def test_real_agent_loop_scope_guard_ignores_public_enforcement_helper_shadows(
         setattr(execution_scope_module, shadow_name, original)
 
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
-    assert invoked == []
-    assert all("9876" not in output for output in outputs)
-    assert any("dataset_outside_current_task_scope" in output for output in outputs)
+    # D7 advisory: the tool runs under advisory; the captured bound-only scope
+    # is still in charge so an advisory warning fires for ``secret``.
+    assert "secret" in invoked
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
 
 
 @pytest.mark.parametrize("shadow_api", ["setattr", "vars"])
@@ -3324,8 +3389,16 @@ def test_real_loop_manager_method_shadows_cannot_downgrade_or_expand_scope(
             setattr(owner, method_name, original)
 
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
-    assert invoked == []
-    assert all("9876" not in output for output in outputs)
+    # D7 advisory: the tool runs under advisory; the captured bound-only scope
+    # is still in charge (``secret`` remains out-of-scope -> warning fires).
+    assert "secret" in invoked
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
     assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
 
 
@@ -3584,11 +3657,22 @@ def test_guard_checkpoint_uses_guard_time_task_and_narrowed_dataset(tmp_path, mo
 
     loop._execute_single_tool(call, [call], 0)
 
-    assert invoked == []
-    assert "dataset_outside_current_task_scope" in loop.messages[-1]["content"]
+    # D7 advisory: the tool runs (raw-store access); the captured guard-time
+    # scope still uses the narrowed task (task_id=2, bound-only), so ``secret``
+    # is out-of-scope and an advisory warning is recorded.
+    assert "secret" in invoked
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "dataset_outside_current_task_scope" and w["dataset"] == "secret"
+        for w in warnings
+    )
     assert loop.context.workspace_scope.task_id == 2
     assert loop.context.workspace_scope.allowed_datasets == frozenset({"bound"})
-    assert manager.calls == 2
+    # 2 guard-time resolutions + 1 post-tool refresh now that the tool runs
+    # under advisory (previously the blocked tool skipped the post-tool refresh).
+    assert manager.calls == 3
 
 
 def test_guard_checkpoint_accepts_authoritative_dataset_expansion(tmp_path, monkeypatch):
