@@ -313,3 +313,79 @@ def test_task_manager_facade_projects_transaction_back_to_legacy_tasks(tmp_path)
         "result_summary": "group difference is 3.5",
         "confidence": "medium",
     }]
+
+
+def test_stale_tool_binding_cannot_resurrect_superseded_plan_tasks(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    old_plan = manager.create_plan(
+        session_id="session-a",
+        project_name="project-a",
+        goal="auto compiled plan",
+        source="analysis_plan",
+    )
+    old_task = manager.create(
+        "old step",
+        session_id="session-a",
+        project_name="project-a",
+        plan_id=old_plan["id"],
+        plan_version=old_plan["version"],
+        task_kind="plan_task",
+        analysis_plan_id="analysis-plan-old",
+        step_id="old-step",
+    )
+    manager.materialize_analysis_run(
+        session_id="session-a",
+        project_name="project-a",
+        plan_id=old_plan["id"],
+        tasks=[old_task],
+    )
+    stale_binding = manager.get_analysis_run_tool_binding(
+        session_id="session-a",
+        project_name="project-a",
+        external_step_id="old-step",
+    )
+
+    replacement = manager.create_plan(
+        session_id="session-a",
+        project_name="project-a",
+        goal="explicit replacement plan",
+        source="analysis_plan",
+    )
+    replacement_task = manager.create(
+        "replacement step",
+        session_id="session-a",
+        project_name="project-a",
+        plan_id=replacement["id"],
+        plan_version=replacement["version"],
+        task_kind="plan_task",
+        analysis_plan_id="analysis-plan-replacement",
+        step_id="replacement-step",
+    )
+    manager.materialize_analysis_run(
+        session_id="session-a",
+        project_name="project-a",
+        plan_id=replacement["id"],
+        tasks=[replacement_task],
+    )
+
+    receipt = manager.commit_analysis_computation_projection(
+        session_id="session-a",
+        binding=stale_binding,
+        tool_call_id="stale-tool-call",
+        tool_name="record_analysis_plan",
+        tool_state="committed",
+        capability="artifact.analysis_plan",
+        computation_ref={
+            "computation_ref_id": "cr_stale",
+            "artifact_path": "sessions/session-a/stale-tool-call.json",
+            "binding_error_type": "analysis_step_not_found",
+            "projection_status": "pending_binding",
+        },
+        evidence_records=[],
+        complete_step=False,
+    )
+
+    assert receipt is not None
+    assert manager.get(old_task["id"])["status"] == "superseded"
+    assert manager.get(old_task["id"])["plan_status"] == "superseded"
+    assert manager.get(replacement_task["id"])["status"] == "in_progress"

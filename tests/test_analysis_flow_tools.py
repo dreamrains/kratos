@@ -436,11 +436,11 @@ class TestRecordAnalysisPlan:
                 "expected_output": "distribution findings",
             },
             {
-                "step_id": "groups",
-                "goal": "compare groups",
-                "required_capability": "group_aggregate",
+                "step_id": "ranking",
+                "goal": "rank groups",
+                "required_capability": "top_n",
                 "dataset_inputs": ["banner"],
-                "expected_output": "group findings",
+                "expected_output": "ranking findings",
             },
             {
                 "step_id": "relationship",
@@ -472,7 +472,7 @@ class TestRecordAnalysisPlan:
         assert capabilities == {
             "quality": "data.quality",
             "distribution": "analysis.distribution",
-            "groups": "analysis.group_compare",
+            "ranking": "analysis.top_n",
             "relationship": "analysis.correlation",
             "synthesis": "synthesis",
         }

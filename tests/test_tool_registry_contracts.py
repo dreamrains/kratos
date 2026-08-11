@@ -8,12 +8,31 @@ import pytest
 
 import data_agent.tools.registry as registry_module
 from data_agent.tools import discover_tools
-from data_agent.tools.registry import ToolDefinition, _build_schema, registry
+from data_agent.tools.registry import (
+    ANALYSIS_PLAN_TOOL_CAPABILITIES,
+    ToolDefinition,
+    _build_schema,
+    registry,
+)
 
 
 class _Mode(Enum):
     SAFE = "safe"
     FAST = "fast"
+
+
+def test_analysis_plan_capabilities_include_executable_evidence_step():
+    discover_tools()
+
+    definition = registry.get("record_evidence_record")
+
+    assert definition is not None
+    assert definition.capability is not None
+    assert definition.capability.capability_id == "artifact.evidence_record"
+    assert (
+        ANALYSIS_PLAN_TOOL_CAPABILITIES["record_evidence_record"]
+        == "artifact.evidence_record"
+    )
 
 
 def test_registry_resolves_postponed_integer_annotation():

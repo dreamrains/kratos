@@ -183,6 +183,41 @@ class TaskManager:
         self._apply_analysis_run_projection(run)
         return run
 
+    def advance_active_step_on_tool_execution(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_succeeded: bool,
+        expected_active_step_id: str = "",
+    ):
+        """Advance the active analysis-run step after a non-error tool call.
+
+        Execution-driven counterpart to the binder-gated commit path. When a
+        tool executes successfully against the active step but capability
+        binding failed (``analysis_step_not_found``), this still advances the
+        task list so the workbench ``任务 N/M`` indicator reflects real tool
+        execution instead of staying pinned at 0/N forever.
+
+        ``expected_active_step_id`` is the store-level step identity from
+        ``analysis_run_binding["step_id"]``. When supplied, the coordinator
+        skips advancement if the binder-gated path already moved the active
+        pointer (no double-advance). Returns the updated run (or ``None`` if
+        there is no active run).
+        """
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return None
+        run = coordinator.advance_active_step_on_tool_execution(
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            tool_succeeded=tool_succeeded,
+            expected_active_step_id=expected_active_step_id,
+        )
+        if run is not None:
+            self._apply_analysis_run_projection(run)
+        return run
+
     def get_analysis_run_tool_binding(
         self,
         *,
@@ -275,6 +310,10 @@ class TaskManager:
             run_id,
             session_id=session_id,
         )
+        active_run = coordinator.store.get_active_run(session_id)
+        binding_is_active = bool(
+            active_run is not None and active_run.run_id == run_id
+        )
         bound_step = next(
             (step for step in run_before.steps if step.step_id == step_id),
             None,
@@ -295,6 +334,17 @@ class TaskManager:
             and self._evidence_id(record)
             and str(record.get("claim_key") or "")
         ]
+        committed_ref = dict(computation_ref)
+        if not binding_is_active:
+            # The tool started under a run that was superseded while it was
+            # executing (for example, record_analysis_plan replaces an
+            # auto-compiled envelope). Preserve the computation for audit and
+            # deterministic replay, but never let a stale receipt advance the
+            # terminated run, publish evidence, or restore its legacy tasks.
+            committed_ref["projection_status"] = "pending_binding"
+            committed_ref["binding_error_type"] = "analysis_run_superseded"
+            evidence_links = []
+            complete_step = False
         receipt = coordinator.commit_computation_projection(
             run_id=run_id,
             session_id=session_id,
@@ -303,23 +353,25 @@ class TaskManager:
             tool_name=tool_name,
             tool_state=tool_state,
             capability=capability,
-            computation=dict(computation_ref),
+            computation=committed_ref,
             evidence_links=evidence_links,
             complete_step=complete_step,
             idempotency_key=f"computation:{tool_call_id}",
         )
         receipt = dict(receipt)
         receipt["legacy_task_id"] = legacy_task_id
+        receipt["stale_binding"] = not binding_is_active
         run_after = coordinator.store.get_run(
             run_id,
             session_id=session_id,
         )
-        self._apply_analysis_run_projection(run_after)
-        self._apply_projection_metadata_to_legacy_task(
-            legacy_task_id,
-            evidence_records,
-            completed=complete_step,
-        )
+        if binding_is_active:
+            self._apply_analysis_run_projection(run_after)
+            self._apply_projection_metadata_to_legacy_task(
+                legacy_task_id,
+                evidence_records,
+                completed=complete_step,
+            )
         return receipt
 
     def reconcile_analysis_computation_projection(
@@ -1161,7 +1213,13 @@ class TaskManager:
         completed: list[int] = []
         if has_scoped_stage3c0b_tasks:
             for task in active_tasks:
-                if task.get("status") not in ("pending", "in_progress"):
+                # Allow "completed" tasks through so evidence metadata
+                # (evidence_ids, satisfied_claim_keys, requirement IDs) still
+                # attaches when the task was already completed by the M1
+                # execution-driven advancement. The inner method only returns
+                # a task_id for *newly* completed tasks, so the completed list
+                # (and downstream run advancement) is unaffected.
+                if task.get("status") not in ("pending", "in_progress", "completed"):
                     continue
                 if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
                     continue

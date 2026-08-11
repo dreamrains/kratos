@@ -16,6 +16,7 @@ from data_agent.agent.analysis_plan_contracts import (
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
+from data_agent.session.analysis_run_models import RunStatus, StepStatus
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
 
@@ -38,21 +39,43 @@ class AnalysisFlowController:
         if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
-        # Capture whether an explicit executable plan (e.g. from
-        # ``record_analysis_plan``) was already in place before the auto
-        # envelope runs. Workflow projection is only invoked for explicit
-        # plans; the auto envelope exists to give computations plan/step
-        # identity, not to commit the model to a workflow it never affirmed.
-        explicit_executable_plan = bool(
-            isinstance(state.analysis_plan, dict)
-            and state.analysis_plan.get("review_status") == "executable"
-        )
         if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
             self.ensure_canonical_execution_envelope(state, intent, user_input)
+        if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
+            executable_plan = bool(
+                isinstance(state.analysis_plan, dict)
+                and state.analysis_plan.get("review_status") == "executable"
+            )
+            if executable_plan:
+                projection = self.ensure_workflow_tasks(state)
+                projection_ok = not (
+                    projection.get("error") or projection.get("display_only")
+                )
+                state.append_turn_diagnostic({
+                    "event": "workflow_projection",
+                    "ok": projection_ok,
+                    "error_type": str(
+                        projection.get("error_type")
+                        or projection.get("error")
+                        or projection.get("reason")
+                        or ""
+                    ),
+                    "analysis_plan_id": str(
+                        projection.get("analysis_plan_id")
+                        or state.analysis_plan.get("id")
+                        or ""
+                    ),
+                    "created": int(projection.get("created") or 0),
+                    "reused": int(projection.get("reused") or 0),
+                    "task_ids": list(projection.get("task_ids") or []),
+                })
+                if projection_ok:
+                    # A server-compiled executable plan is the workflow
+                    # commitment. Materialize its canonical tasks before any
+                    # tool can execute, then repair only computations that
+                    # were previously committed during a temporary desync.
+                    self.reconcile_replayable_computations(state)
         if intent.intent_type == "directed_analysis" and state.analysis_plan:
-            if explicit_executable_plan:
-                self.ensure_workflow_tasks(state)
-                self.reconcile_replayable_computations(state)
             self.ensure_confirmation_task(state)
         self.restore_committed_run_artifacts(state)
         state.save()
@@ -119,6 +142,15 @@ class AnalysisFlowController:
         if coordinator is None:
             return {"reconciled": 0, "remaining": 0, "computation_ids": []}
         run = coordinator.store.get_active_run(self.session_id)
+        if run is None:
+            # Execution-driven advancement (M1, Task 4) can complete a
+            # single-step run before reconciliation runs. Fall back to the
+            # latest run so its replayable computations can still be
+            # recovered. Terminated (superseded) runs are skipped: a
+            # replacement run always supersedes them and owns the workflow.
+            latest = coordinator.store.get_latest_run(self.session_id)
+            if latest is not None and latest.status != RunStatus.TERMINATED:
+                run = latest
         if run is None:
             return {"reconciled": 0, "remaining": 0, "computation_ids": []}
         replayable = coordinator.store.list_replayable_computations(
@@ -253,6 +285,13 @@ class AnalysisFlowController:
                 expected_claims.issubset(projected_claims)
                 and expected_requirements.issubset(projected_requirements)
             )
+            # If the active step has already been completed (for example by the
+            # M1 execution-driven advancement that fires when capability
+            # binding failed), don't try to finish it again — the store would
+            # reject the transition. Recovery only needs to attach the rebound
+            # computation and its evidence links to the already-completed step.
+            if run_step is not None and run_step.status == StepStatus.COMPLETED:
+                complete_step = False
             receipt = task_manager.reconcile_analysis_computation_projection(
                 session_id=self.session_id,
                 binding={"run_id": run.run_id, "step_id": run_step.step_id},

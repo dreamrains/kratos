@@ -147,6 +147,30 @@ def test_get_dataset_missing_name_is_structured_and_never_none(workspace):
     assert payload["safe_alternatives"]
 
 
+def test_numeric_dtype_introspection_does_not_require_user_runtime_import(workspace):
+    """NumPy may resolve an already-loaded private formatter internally.
+
+    The sandbox must support that library-internal lookup without exposing a
+    general importer to user code. This exact operation failed in the real
+    savings-card journey before any substantive analysis could run.
+    """
+
+    payload = json.loads(
+        run_python("df = get_dataset('orders')\nresult = str(df['x'].dtype)")
+    )
+
+    assert payload["success"] is True
+    assert payload["result"] == "int64"
+    assert "__import__" not in json.dumps(payload)
+
+
+def test_user_code_cannot_call_runtime_importer():
+    payload = json.loads(run_python("result = __import__('os')"))
+
+    assert payload["success"] is False
+    assert payload["error_type"] == "sandbox_violation"
+
+
 def test_identical_sandbox_failure_is_blocked_after_first_corrected_retry(turn_state):
     fingerprint = turn_state.record_requirement_failure(
         requirement_id="req_step_python",

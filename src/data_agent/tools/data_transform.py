@@ -380,8 +380,10 @@ def transform_data(
 
     add_result = workspace.add(target_name, result)
     if str(add_result).startswith("Error:"):
+        # D7: ``dataset_outside_current_task_scope`` is now advisory (workspace
+        # writes through and records a warning), so only the legitimate
+        # ``derived_scope_not_registered`` hard block can reach this branch.
         scoped_storage_errors = {
-            "Error: dataset_outside_current_task_scope",
             "Error: derived_scope_not_registered",
         }
         if operation == "group_aggregate" and str(add_result) in scoped_storage_errors:

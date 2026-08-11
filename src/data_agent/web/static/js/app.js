@@ -325,13 +325,26 @@ function chatApp() {
 
         get activeTasks() {
             if (!this.currentSessionId) return [];
-            return this.tasks.filter(t => t.status !== 'deleted' && t.session_id === this.currentSessionId);
+            const historicalStatuses = new Set(['deleted', 'archived', 'superseded']);
+            return this.tasks.filter(t => (
+                t.session_id === this.currentSessionId
+                && !historicalStatuses.has(t.status)
+                && t.plan_status !== 'superseded'
+            ));
         },
 
         get taskProgress() {
             const active = this.activeTasks;
             const done = active.filter(t => t.status === 'completed').length;
             return `${done}/${active.length}`;
+        },
+
+        workbenchIdentityLabel() {
+            if (this.activeProjectName) return `项目：${this.activeProjectName}`;
+            if (this.currentSessionId && this.currentSessionId !== '_pending_') {
+                return `会话：${this.currentSessionId}`;
+            }
+            return '未绑定会话';
         },
 
         get analysisSummary() {
@@ -2432,6 +2445,15 @@ function chatApp() {
             try {
                 const doc = iframe.contentDocument;
                 if (!doc) return;
+                // Plotly chart containers use height:100%; the iframe body has no
+                // height by default, so the chart collapses to 0 (blank). Give the
+                // iframe document a full-height layout so the chart fills the frame.
+                if (!doc.getElementById('da-chart-fill-height')) {
+                    const style = doc.createElement('style');
+                    style.id = 'da-chart-fill-height';
+                    style.textContent = 'html,body{height:100%;margin:0;}';
+                    doc.head.appendChild(style);
+                }
                 // Skip if Plotly script already included (new charts with include_plotlyjs)
                 if (doc.querySelector('script[src*="plotly"]')) return;
                 // Only process chart iframes that need Plotly

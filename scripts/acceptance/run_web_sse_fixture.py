@@ -29,7 +29,12 @@ for source_path in (str(REPO_ROOT), str(SOURCE_ROOT)):
 
 
 FIXTURE_ID = "web_sse_fixture_v1"
+BROWSER_USER_JOURNEY_FIXTURE_ID = "browser_lifecycle_canary_v2"
 BROWSER_NORMAL_PROMPT = "运行流式显示验收"
+BROWSER_USER_JOURNEY_PROMPT = (
+    "请描述上传数据的结构和可分析方向，并检查两个预定义时间段；"
+    "只做描述性分析并说明局限。"
+)
 SUSPEND_PROMPT = "触发暂停验收"
 ERROR_PROMPT = "触发错误验收"
 CONTROL_PROMPTS = frozenset({SUSPEND_PROMPT, ERROR_PROMPT})
@@ -43,6 +48,46 @@ BROWSER_FINAL_DRAFT = (
     "| 数据质量 | 已检查 |\n| 分析流程 | 已完成 |\n\n"
     "## 局限\n\n此页面只验证合成数据的流式显示。"
 )
+BROWSER_USER_JOURNEY_FINAL_DRAFT = (
+    "# 描述性分析结果\n\n"
+    "- 两个预定义窗口覆盖的有效样本量为 120 个时间点。\n"
+    "- 第二窗口的收入合计比第一窗口高 27737。\n\n"
+    "## 局限\n\n"
+    "这是确定性生命周期 canary，只验证描述性计算、证据和发布链路，"
+    "不作因果或预测解释。"
+)
+
+
+def build_lifecycle_canary_final_text(state: Any) -> str:
+    """Attach exact evidence identities to the two public canary oracles."""
+
+    markers: dict[str, str] = {}
+    for record in getattr(state, "evidence_records", []) or []:
+        if not isinstance(record, dict):
+            continue
+        evidence_id = str(record.get("id") or "")
+        for measurement in record.get("measurements") or []:
+            identity = measurement.get("identity") if isinstance(measurement, dict) else None
+            if not isinstance(identity, dict):
+                continue
+            metric_key = str(identity.get("metric_key") or "")
+            measurement_key = str(identity.get("measurement_key") or "")
+            if not evidence_id or not measurement_key:
+                continue
+            marker = f"[[evidence:{evidence_id}#{measurement_key}]]"
+            if metric_key.startswith("effective_sample_size.total"):
+                markers["sample"] = marker
+            elif metric_key.startswith("metric_delta.value"):
+                markers["delta"] = marker
+    if set(markers) != {"sample", "delta"}:
+        raise AssertionError("lifecycle canary evidence identities are incomplete")
+    return BROWSER_USER_JOURNEY_FINAL_DRAFT.replace(
+        "有效样本量为 120 个时间点。",
+        f"有效样本量为 120 个时间点{markers['sample']}。",
+    ).replace(
+        "收入合计比第一窗口高 27737。",
+        f"收入合计比第一窗口高 27737{markers['delta']}。",
+    )
 
 
 def split_audited_fixture_text(text: str) -> tuple[str, str, str]:
@@ -185,6 +230,120 @@ class ScriptedProvider:
                 ]
             )
         return Response(text=BROWSER_FINAL_DRAFT)
+
+    def stream_chat_structured(
+        self,
+        messages,
+        tools=None,
+        system=None,
+        max_tokens=None,
+    ) -> Iterator[Any]:
+        from data_agent.llm.client import StreamComplete, StreamTextDelta
+
+        response = self._response()
+        if response.text:
+            yield StreamTextDelta(response.text)
+        yield StreamComplete(response)
+
+    def chat(self, messages, tools=None, system=None, max_tokens=None):
+        return self._response()
+
+
+class LifecycleCanaryProvider:
+    """Drive every step of the canonical data-understanding plan naturally."""
+
+    def __init__(self, fixture_source: Path):
+        self.fixture_source = Path(fixture_source)
+        self.calls = 0
+        self._state_provider: Callable[[], Any] | None = None
+
+    def bind_state_provider(self, provider: Callable[[], Any]) -> None:
+        self._state_provider = provider
+
+    def _response(self):
+        from data_agent.llm.client import Response, ToolCall
+
+        self.calls += 1
+        calls: dict[int, ToolCall] = {
+            1: ToolCall(
+                "canary_load",
+                "load_data",
+                {"source": str(self.fixture_source), "name": "browser_fixture"},
+            ),
+            3: ToolCall(
+                "canary_profile",
+                "quick_profile",
+                {"name": "browser_fixture"},
+            ),
+            4: ToolCall(
+                "canary_period_compare",
+                "compare_periods",
+                {
+                    "name": "browser_fixture",
+                    "date_col": "日期",
+                    "metrics": "收入",
+                    "period_a": "2026-01-01~2026-02-28",
+                    "period_b": "2026-03-01~2026-05-08",
+                    "agg_func": "sum",
+                },
+            ),
+        }
+        if self.calls == 2:
+            state = self._state_provider() if self._state_provider is not None else None
+            selected_plan = getattr(state, "analysis_plan", None)
+            if not isinstance(selected_plan, dict) or not selected_plan.get("method_plan"):
+                raise AssertionError("lifecycle canary has no executable analysis plan")
+            plan = dict(selected_plan)
+            for transient in ("id", "created_at", "analysis_requirements", "review_status"):
+                plan.pop(transient, None)
+            plan.update({
+                "playbook_id": "lifecycle_canary",
+                "supporting_playbook_ids": [],
+                "playbook_stack": ["lifecycle_canary"],
+                "method_plan": [
+                    {
+                        "step": "profile the uploaded lifecycle fixture",
+                        "goal": "establish the dataset grain and missingness",
+                        "node_type": "data_check",
+                        "required_capability": "data.profile",
+                        "dataset_inputs": ["browser_fixture"],
+                        "expected_output": "dataset profile and quality summary",
+                        "evidence_requirements": ["missingness", "schema"],
+                    },
+                    {
+                        "step": "compare the two predefined date windows",
+                        "goal": "compute a bounded descriptive period comparison",
+                        "node_type": "method",
+                        "required_capability": "analysis.period_compare",
+                        "dataset_inputs": ["browser_fixture"],
+                        "expected_output": "period totals and descriptive delta",
+                        "evidence_requirements": [
+                            "period_definition",
+                            "metric_delta",
+                            "effective_sample_size",
+                            "denominator",
+                            "missingness",
+                            "estimand",
+                            "effect_estimate",
+                            "assumptions",
+                        ],
+                    },
+                ],
+            })
+            return Response(
+                tool_calls=[
+                    ToolCall(
+                        "canary_record_plan",
+                        "record_analysis_plan",
+                        {"plan_json": json.dumps(plan, ensure_ascii=False)},
+                    )
+                ]
+            )
+        tool_call = calls.get(self.calls)
+        if tool_call is not None:
+            return Response(tool_calls=[tool_call])
+        state = self._state_provider() if self._state_provider is not None else None
+        return Response(text=build_lifecycle_canary_final_text(state))
 
     def stream_chat_structured(
         self,
@@ -473,6 +632,46 @@ class ScriptedManager:
             self._loops.pop(session_id, None)
 
 
+class LifecycleCanaryManager:
+    """Own unwrapped production loops for the Gate E v2 lifecycle canary."""
+
+    def __init__(self, fixture_source: Path):
+        self.fixture_source = Path(fixture_source)
+        self._loops: dict[str, Any] = {}
+        self._lock = threading.Lock()
+
+    def get_or_create(
+        self,
+        session_id: str | None = None,
+        model_id: str | None = None,
+    ):
+        del model_id
+        sid = session_id or uuid.uuid4().hex[:12]
+        with self._lock:
+            existing = self._loops.get(sid)
+            if existing is not None:
+                return existing
+        from data_agent.agent.loop import AgentLoop, set_interaction_mode
+
+        set_interaction_mode("web")
+        client = LifecycleCanaryProvider(self.fixture_source)
+        loop = AgentLoop(
+            client=client,
+            session_id=sid,
+        )
+        client.bind_state_provider(lambda: loop.context.analysis_state)
+        with self._lock:
+            self._loops[sid] = loop
+        return loop
+
+    def get(self, session_id: str):
+        return self._loops.get(session_id)
+
+    def remove(self, session_id: str) -> None:
+        with self._lock:
+            self._loops.pop(session_id, None)
+
+
 def _configure_isolated_roots(output_dir: Path) -> Callable[[], None]:
     keys = (
         "WORKSPACE_DIR",
@@ -483,17 +682,27 @@ def _configure_isolated_roots(output_dir: Path) -> Callable[[], None]:
     )
     previous_environment = {key: os.environ.get(key) for key in keys}
     import data_agent.config
+    from data_agent.session.task_manager import task_manager
 
     previous_config = data_agent.config._config
+    previous_task_dir = task_manager._dir
+    previous_next_task_id = task_manager._next_id_val
+    previous_analysis_run_coordinator = task_manager._analysis_run_coordinator_instance
     os.environ["WORKSPACE_DIR"] = str(output_dir / "workspace")
     os.environ["SESSIONS_DIR"] = str(output_dir / "sessions")
     os.environ["MCP_ENABLED"] = "false"
     os.environ["SKILL_AUTO_DISCOVER"] = "false"
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     data_agent.config._config = None
+    task_manager._dir = output_dir / "tasks"
+    task_manager._next_id_val = 0
+    task_manager._analysis_run_coordinator_instance = None
 
     def restore() -> None:
         data_agent.config._config = previous_config
+        task_manager._dir = previous_task_dir
+        task_manager._next_id_val = previous_next_task_id
+        task_manager._analysis_run_coordinator_instance = previous_analysis_run_coordinator
         for key, value in previous_environment.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -532,7 +741,7 @@ def _run_fixture_cleanups(
         raise first_error
 
 
-def build_fixture_app(output_dir: Path):
+def _build_fixture_app(output_dir: Path, *, manager_type):
     """Create the normal Flask app after isolating every persistent root."""
 
     output_dir = Path(output_dir).resolve()
@@ -556,7 +765,7 @@ def build_fixture_app(output_dir: Path):
         from data_agent.config import get_config
 
         uploaded_fixture = get_config().inbox_dir / fixture_csv.name
-        app.config["agent_manager"] = ScriptedManager(uploaded_fixture)
+        app.config["agent_manager"] = manager_type(uploaded_fixture)
         app.config["lifecycle"] = lifecycle
 
         trace_path = output_dir / "browser_fixture_events.jsonl"
@@ -573,11 +782,28 @@ def build_fixture_app(output_dir: Path):
         app.config["fixture_event_trace"] = str(trace_path)
         app.config["fixture_output_dir"] = str(output_dir)
         app.config["fixture_csv"] = str(fixture_csv)
+        app.config["fixture_id"] = FIXTURE_ID
+        app.config["fixture_prompt"] = BROWSER_NORMAL_PROMPT
         app.config["fixture_cleanup_callbacks"] = cleanups
         return app
     except BaseException:
         _run_fixture_cleanups(cleanups, raise_errors=False)
         raise
+
+
+def build_fixture_app(output_dir: Path):
+    """Build the legacy Web/SSE transport regression fixture."""
+
+    return _build_fixture_app(output_dir, manager_type=ScriptedManager)
+
+
+def build_user_journey_fixture_app(output_dir: Path):
+    """Build the natural, unwrapped Gate E v2 lifecycle canary fixture."""
+
+    app = _build_fixture_app(output_dir, manager_type=LifecycleCanaryManager)
+    app.config["fixture_id"] = BROWSER_USER_JOURNEY_FIXTURE_ID
+    app.config["fixture_prompt"] = BROWSER_USER_JOURNEY_PROMPT
+    return app
 
 
 def shutdown_fixture_app(app) -> None:
@@ -594,6 +820,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5013)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("transport", "user-journey"),
+        default="transport",
+    )
     return parser
 
 
@@ -604,10 +835,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not 1 <= args.port <= 65535:
         raise SystemExit("fixture port must be between 1 and 65535")
 
-    app = build_fixture_app(args.output_dir)
-    print(f"fixture_id={FIXTURE_ID}")
+    app = (
+        build_user_journey_fixture_app(args.output_dir)
+        if args.mode == "user-journey"
+        else build_fixture_app(args.output_dir)
+    )
+    print(f"fixture_id={app.config['fixture_id']}")
     print(f"url=http://127.0.0.1:{args.port}")
     print(f"fixture_csv={app.config['fixture_csv']}")
+    print(f"fixture_prompt={app.config['fixture_prompt']}")
     print(f"event_trace={app.config['fixture_event_trace']}")
     try:
         app.run(

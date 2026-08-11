@@ -2830,6 +2830,16 @@ _METRIC_CONTEXT_FIELDS = (
     "term",
 )
 
+_STRUCTURED_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "effective_sample_size": (
+        "effective sample size",
+        "sample size",
+        "有效样本量",
+        "有效样本数",
+    ),
+    "sample_size": ("sample size", "样本量", "样本数"),
+}
+
 
 def _structured_metric_identity(
     *,
@@ -2874,6 +2884,10 @@ def _structured_metric_identity(
     metric_key += "::" + "|".join(metric_context)
     label = " ".join([*context, tail]).strip()
     aliases = [label]
+    metric_name = _text(item.get("metric")) if isinstance(item, dict) else ""
+    if metric_name:
+        aliases.append(metric_name)
+    aliases.extend(_STRUCTURED_METRIC_ALIASES.get(declared_field.split(".", 1)[0], ()))
     if len(variable_context) == 2:
         aliases.append(" ".join([
             variable_context[1],
@@ -3033,7 +3047,21 @@ def _projected_measurements_from_output(
                             "percent"
                             if leaf_name.casefold() in {"percent", "percentage", "pct"}
                             else "count"
-                            if leaf_name.casefold() in {"count", "rows", "columns"}
+                            if (
+                                field.casefold() in {
+                                    "effective_sample_size",
+                                    "sample_size",
+                                }
+                                or leaf_name.casefold()
+                                in {
+                                    "count",
+                                    "rows",
+                                    "columns",
+                                    "sample_size",
+                                    "observed_rows",
+                                    "unique_time_points",
+                                }
+                            )
                             else "value"
                         ),
                     )
@@ -3234,6 +3262,32 @@ def _project_requirement_semantics(
                     and _text(item.get("name"))
                 ],
             }
+        return semantics
+
+    if capability_id == "analysis.period_compare":
+        for field_name in (
+            "effective_sample_size",
+            "denominator",
+            "missingness",
+            "estimand",
+            "effect_estimate",
+            "period_definition",
+            "periods",
+            "period_comparability",
+            "sample_adequacy",
+            "time_frequency",
+            "missing_intervals",
+            "window_comparability",
+            "assumptions",
+            "multiplicity_handling",
+        ):
+            value = output_data.get(field_name)
+            if _structured_field_valid(field_name, value):
+                semantics[field_name] = value
+        metric_delta = output_data.get("metric_delta")
+        if _structured_field_valid("effect_estimate", metric_delta):
+            semantics["metric_delta"] = metric_delta
+            semantics.setdefault("effect_estimate", metric_delta)
         return semantics
 
     if capability_id == "analysis.correlation":

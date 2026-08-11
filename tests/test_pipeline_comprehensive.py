@@ -854,11 +854,12 @@ class TestAnalysisFlowTools:
         r4 = record_evidence_record(evidence)
         parsed = json.loads(r4)
         assert "saved" in str(parsed)
-        assert parsed.get("completed_task_ids") == [workflow_task_id], {
-            "result": parsed,
-            "task": task_manager.get(workflow_task_id),
-            "evidence": ctx.analysis_state.evidence_records[-1],
-        }
+        # Task 4 (M1): substantive tool execution advances the active step on
+        # its own (independent of capability binding), so the workflow task is
+        # already ``completed`` by the time ``record_evidence_record`` runs.
+        # The evidence tool no longer reports a new completion here; it only
+        # attaches evidence metadata. The task-state assertions below verify
+        # the pipeline still produced a completed task with satisfied claims.
         completed_task = task_manager.get(workflow_task_id)
         assert completed_task["status"] == "completed"
         assert completed_task["satisfied_claim_keys"] == ["arpu_change"]

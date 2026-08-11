@@ -18,13 +18,20 @@ python main.py
 # Web GUI (Flask, port 5001)
 python -m data_agent.web.entry
 
-# Run all tests
-uv run pytest tests/ -v
+# Fast feature loop: run the owning contract file or one test first
+uv run pytest tests/test_web_overhaul.py -q
+uv run pytest tests/test_interaction.py::test_function_name -q
 
-# Run a single test
-uv run pytest tests/test_web_gui.py -v
-uv run pytest tests/test_interaction.py::test_function_name -v
+# Full deterministic pytest suite (release/regression use, not every edit)
+uv run pytest tests/ -q
+
+# Analysis release contracts, including the retained direct tool runner
+uv run python scripts/run_analysis_release_gates.py --profile deterministic
 ```
+
+See `tests/README.md` for the authoritative test layers and coverage map. Normal
+pytest runs are offline; real-provider and actual-browser acceptance require
+their explicit release-gate workflows.
 
 ## Architecture
 

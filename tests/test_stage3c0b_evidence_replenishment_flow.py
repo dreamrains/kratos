@@ -253,8 +253,11 @@ def test_bounded_replenishment_loop_projects_independent_task_and_completes_from
         dataset="retention",
     )
     assert allowed.allowed is True
-    assert outside_scope.allowed is False
-    assert outside_scope.error_type == "dataset_outside_current_task_scope"
+    # D7: execution scope is advisory — an out-of-scope dataset is allowed
+    # (not blocked) with a recorded warning, so the replenishment loop is never
+    # truncated by the overlay.
+    assert outside_scope.allowed is True
+    assert outside_scope.error_type == ""
 
     current_step = state.analysis_plan["method_plan"][0]
     ref = persist_computation_output(

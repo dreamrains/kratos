@@ -7,6 +7,10 @@ import hashlib
 import json
 from typing import Any
 
+from data_agent.utils.logging import get_logger
+
+logger = get_logger("execution_scope")
+
 
 @dataclass(frozen=True)
 class ExecutionScope:
@@ -84,6 +88,43 @@ class ScopeGuardResult:
     allowed: bool
     error_type: str = ""
     message: str = ""
+
+
+# Advisory scope-warning registry (M1 D7).
+#
+# ``dataset_outside_current_task_scope`` is advisory: an out-of-scope dataset
+# is logged and allowed rather than aborting the tool call. The symbol is
+# retained here so M2 observability can still observe how often the overlay
+# relaxed the boundary. Warnings accumulate per-process and are drained through
+# ``consume_advisory_scope_warnings``.
+_ADVISORY_SCOPE_WARNINGS: list[dict[str, Any]] = []
+_ADVISORY_SCOPE_WARNING_SYMBOL = "dataset_outside_current_task_scope"
+
+
+def record_advisory_scope_warning(dataset: str, *, task_id: int = 0) -> None:
+    """Record that ``dataset`` was allowed despite being outside the task scope."""
+    normalized = _text(dataset)
+    if not normalized:
+        return
+    _ADVISORY_SCOPE_WARNINGS.append(
+        {
+            "warning": _ADVISORY_SCOPE_WARNING_SYMBOL,
+            "dataset": normalized,
+            "task_id": task_id,
+        }
+    )
+    logger.warning(
+        "%s (advisory): dataset '%s' allowed despite not being in the current task scope.",
+        _ADVISORY_SCOPE_WARNING_SYMBOL,
+        normalized,
+    )
+
+
+def consume_advisory_scope_warnings() -> list[dict[str, Any]]:
+    """Return and clear accumulated advisory scope warnings (M2 observability)."""
+    drained = list(_ADVISORY_SCOPE_WARNINGS)
+    _ADVISORY_SCOPE_WARNINGS.clear()
+    return drained
 
 
 _DATASET_ARGUMENT_NAMES = frozenset({
@@ -344,11 +385,9 @@ def ensure_dataset_allowed_for_current_task(
 
     normalized_dataset = _text(dataset)
     if normalized_dataset not in scope.allowed_datasets:
-        return ScopeGuardResult(
-            False,
-            "dataset_outside_current_task_scope",
-            f"Dataset '{normalized_dataset}' is outside the current task scope.",
-        )
+        # D7: execution scope is advisory — record the warning and allow the
+        # dataset so a normal analysis turn is never truncated by the overlay.
+        record_advisory_scope_warning(normalized_dataset, task_id=scope.task_id)
     return ScopeGuardResult(True)
 
 
@@ -467,6 +506,7 @@ def _create_scope_enforcement_chain(
     guard_result_type,
     dataset_argument_names,
     legacy_dataset_arguments,
+    advisory_recorder,
 ):
     """Capture every callable link used by authoritative scope enforcement."""
 
@@ -598,11 +638,8 @@ def _create_scope_enforcement_chain(
             )
         normalized_dataset = normalize_text(dataset)
         if normalized_dataset not in scope.allowed_datasets:
-            return guard_result_type(
-                False,
-                "dataset_outside_current_task_scope",
-                f"Dataset '{normalized_dataset}' is outside the current task scope.",
-            )
+            # D7: advisory — log + allow, never block a tool call.
+            advisory_recorder(normalized_dataset, task_id=scope.task_id)
         return guard_result_type(True)
 
     def ensure_dataset_for_snapshot(scope, dataset: str):
@@ -618,11 +655,8 @@ def _create_scope_enforcement_chain(
             )
         normalized_dataset = normalize_text(dataset)
         if normalized_dataset not in scope.allowed_datasets:
-            return guard_result_type(
-                False,
-                "dataset_outside_current_task_scope",
-                f"Dataset '{normalized_dataset}' is outside the current task scope.",
-            )
+            # D7: advisory — log + allow, never block a tool call.
+            advisory_recorder(normalized_dataset, task_id=scope.task_id)
         return guard_result_type(True)
 
     def dataset_arguments(registry, tool_name: str, arguments: dict[str, Any]):
@@ -798,6 +832,7 @@ def _create_scope_enforcement_chain(
     ScopeGuardResult,
     _DATASET_ARGUMENT_NAMES,
     _LEGACY_DATASET_ARGUMENTS,
+    record_advisory_scope_warning,
 )
 del _create_scope_enforcement_chain
 

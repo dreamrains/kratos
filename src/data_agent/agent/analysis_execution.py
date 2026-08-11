@@ -234,6 +234,16 @@ def _dataset_inputs_match(step: dict[str, Any], dataset_names: Sequence[str]) ->
     return all(name in tool_datasets for name in declared)
 
 
+def _uses_runtime_dataset_discovery(capability: dict[str, Any] | None) -> bool:
+    if not capability:
+        return False
+    input_contract = capability.get("input_contract")
+    return (
+        isinstance(input_contract, dict)
+        and input_contract.get("dataset_binding") == "runtime_discovered"
+    )
+
+
 def _claim_keys_for(
     step: dict[str, Any], capability: dict[str, Any] | None
 ) -> tuple[str, ...]:
@@ -295,6 +305,7 @@ def bind_tool_call_to_plan_step(
     if not isinstance(method_plan, list):
         return StepBindingResult(ok=False, plan_id=plan_id, error_type="analysis_step_not_found")
 
+    preferred = _text(preferred_step_id)
     candidates: list[dict[str, Any]] = []
     legacy_candidates: list[dict[str, Any]] = []
     for raw_step in method_plan:
@@ -303,7 +314,14 @@ def bind_tool_call_to_plan_step(
         step_id = _text(raw_step.get("step_id"))
         if not step_id:
             continue
-        if not _dataset_inputs_match(raw_step, dataset_names):
+        datasets_match = _dataset_inputs_match(raw_step, dataset_names)
+        runtime_discovery_match = (
+            not datasets_match
+            and not any(_text(name) for name in dataset_names)
+            and preferred == step_id
+            and _uses_runtime_dataset_discovery(capability)
+        )
+        if not datasets_match and not runtime_discovery_match:
             continue
         if _capability_matches_step(capability, raw_step):
             candidates.append(raw_step)
@@ -336,7 +354,6 @@ def bind_tool_call_to_plan_step(
                 candidate_step_ids=tuple(candidate_ids),
             )
 
-    preferred = _text(preferred_step_id)
     if preferred:
         for step in candidates:
             if _text(step.get("step_id")) == preferred:

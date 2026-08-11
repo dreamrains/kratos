@@ -1,0 +1,75 @@
+{
+  "contract_version": "analysis_user_journey_scenarios.v1",
+  "risk_selection": {
+    "provider_runtime": [
+      "cross_promo_funnel_v1"
+    ],
+    "task_evidence_recovery": [
+      "cross_promo_funnel_v1",
+      "card_multifile_paired_v1"
+    ],
+    "release_candidate": [
+      "retention_descriptive_v1",
+      "cross_promo_funnel_v1",
+      "card_multifile_paired_v1"
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario_id": "retention_descriptive_v1",
+      "fixture_files": [
+        "游戏B留存.xlsx"
+      ],
+      "prompt": "请仅做描述性留存分析，不做因果、预测或 ROI。说明日期范围、末端 30 天留存为 0 的观察窗截尾风险，并给出有证据的结论。",
+      "expected_confirmation": false,
+      "oracle": {
+        "row_count": 62,
+        "date_min": "2020-07-01",
+        "date_max": "2020-08-31",
+        "trailing_30d_zero_rows": 6
+      }
+    },
+    {
+      "scenario_id": "cross_promo_funnel_v1",
+      "fixture_files": [
+        "游戏互推.xlsx"
+      ],
+      "prompt": "请分析游戏互推的曝光→有效点击→二次确认漏斗并对比内部与外部游戏；先处理数值异常，报告加权 CTR、点击后二次确认率和质量问题，不做因果推断。",
+      "expected_confirmation": false,
+      "oracle": {
+        "row_count": 1985,
+        "total_exposure": 430785712,
+        "total_clicks": 5217534,
+        "total_confirms": 4033546,
+        "internal_ctr": 0.01343287648120616,
+        "external_ctr": 0.0105181653705129,
+        "internal_confirm_rate": 0.7846067480369169,
+        "external_confirm_rate": 0.7553128505546554,
+        "invalid_revenue_rows": 59,
+        "zero_exposure_rows": 18,
+        "confirm_gt_click_rows": 1,
+        "click_gt_exposure_rows": 19
+      }
+    },
+    {
+      "scenario_id": "card_multifile_paired_v1",
+      "fixture_files": [
+        "省钱卡订单.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
+        "省钱卡代金券明细订单.xlsx",
+        "省钱卡购卡前后订单.xlsx"
+      ],
+      "prompt": "请联合分析这 4 个省钱卡工作簿：检查订单去重、用户聚合、完整配对的购卡前后描述性差异，以及代金券和用户覆盖质量；不要给出因果结论。",
+      "expected_confirmation": false,
+      "oracle": {
+        "payment_rows": 13757,
+        "payment_unique_orders": 13025,
+        "before_after_rows": 7206,
+        "before_after_dedup_rows": 6738,
+        "before_after_users": 62,
+        "complete_pairs": 61,
+        "wilcoxon_two_sided_p": 0.03089433390916337
+      }
+    }
+  ]
+}

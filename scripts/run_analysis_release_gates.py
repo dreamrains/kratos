@@ -23,11 +23,10 @@ for _candidate in (ROOT, ROOT / "src", ROOT / "tests"):
         sys.path.insert(0, str(_candidate))
 
 from scripts.acceptance.browser_gate_contract import (  # noqa: E402
-    validate_browser_gate_receipt,
+    validate_browser_user_journey_receipt,
 )
 from scripts.acceptance.live_provider_gate_contract import (  # noqa: E402
-    LIVE_PROVIDER_GATE_VERSION,
-    validate_live_provider_gate_receipt,
+    validate_live_user_journey_receipt,
 )
 from scripts.acceptance.release_source import release_source_digest  # noqa: E402
 
@@ -491,7 +490,7 @@ def _validate_receipt(
     if not isinstance(receipt, dict):
         return {"status": "FAIL", "reason_codes": ["invalid_receipt"]}
     if gate == "E":
-        validation = validate_browser_gate_receipt(
+        validation = validate_browser_user_journey_receipt(
             receipt,
             expected_source_digest=expected_source_digest,
         )
@@ -499,7 +498,7 @@ def _validate_receipt(
             "status": validation.status,
             "reason_codes": list(validation.reason_codes),
         }
-    validation = validate_live_provider_gate_receipt(
+    validation = validate_live_user_journey_receipt(
         receipt,
         expected_source_digest=expected_source_digest,
     )

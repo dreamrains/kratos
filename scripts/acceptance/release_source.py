@@ -10,7 +10,9 @@ from pathlib import Path, PurePosixPath
 _GENERATED_RECEIPT_NAMES = frozenset(
     {
         "analysis_browser_gate.v1.json",
+        "analysis_browser_user_journey.v2.json",
         "analysis_live_provider_gate.v1.json",
+        "analysis_live_user_journey.v2.json",
         "analysis_reliability_release.v1.json",
     }
 )

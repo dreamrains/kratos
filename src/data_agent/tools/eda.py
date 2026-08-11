@@ -827,6 +827,11 @@ def compare_periods(
             **({"dates": struct_b["dates"]} if "dates" in struct_b else {}),
         },
         "comparability": comparability,
+        "allowed_claim_class": "descriptive",
+        "limitations": [
+            "Period comparisons are descriptive and do not establish causality.",
+            "Ordered observations may be serially dependent; no generic independent-group inference is made.",
+        ],
     }
 
     time_profile = build_time_series_analysis_profile(df[[date_col]], date_col)
@@ -1011,12 +1016,26 @@ def compare_periods(
         "unit": "unspecified",
         "aggregation": agg_func,
     }
-    comparison_count = len(result.get("comparisons") or [])
+    result["metric_delta"] = {
+        "value": round(float(effect_value), 4),
+        "metric": metric_cols[0],
+        "unit": "unspecified",
+        "contrast": "period_b_minus_period_a",
+        "aggregation": agg_func,
+    }
+    segment_count = len(result.get("comparisons") or []) or 1
+    comparison_count = segment_count * len(metric_cols)
     if comparison_count > 1:
         result["multiplicity_handling"] = {
             "strategy": "exploratory_label",
             "comparison_count": comparison_count,
             "status": "exploratory",
+        }
+    else:
+        result["multiplicity_handling"] = {
+            "strategy": "not_applicable",
+            "comparison_count": comparison_count,
+            "status": "not_applicable",
         }
 
     return json.dumps(result, ensure_ascii=False, indent=2)

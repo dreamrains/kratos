@@ -6,7 +6,10 @@ import hashlib
 from typing import Any, Sequence
 
 from data_agent.session.analysis_run_models import AnalysisRun, StepSpec, StepStatus
-from data_agent.session.analysis_run_store import AnalysisRunStore
+from data_agent.session.analysis_run_store import (
+    AnalysisRunConflictError,
+    AnalysisRunStore,
+)
 
 
 class AnalysisRunCoordinator:
@@ -179,6 +182,59 @@ class AnalysisRunCoordinator:
             )
             transition += 1
         return run
+
+    def advance_active_step_on_tool_execution(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_succeeded: bool,
+        expected_active_step_id: str = "",
+    ) -> AnalysisRun | None:
+        """Advance the active plan step after a non-error tool execution.
+
+        Decouples task progress from capability-binding success. The active
+        step is the first incomplete step in plan order (``run.current_step``):
+        when a tool has executed against it and produced a non-error result,
+        mark it complete and activate the next step. This is the M1 advancement
+        path — it ignores ``bind_tool_call_to_plan_step``'s ``ok`` flag
+        entirely. Fixing the binder itself is M2; this method only changes how
+        *advancement* reacts to tool execution.
+
+        ``expected_active_step_id`` is the store-level step identity the tool
+        was bound to (typically ``analysis_run_binding["step_id"]``). When
+        supplied, advancement only proceeds if the current active step still
+        matches: the binder-gated path runs first and may already have
+        completed this step (current_step has moved on to the next step). The
+        guard prevents a second step from being skipped. Empty string means
+        "trust the active pointer" (no guard) and is only safe when the caller
+        knows no parallel binder-gated transaction has run.
+
+        Idempotent on ``tool_call_id``: a replayed or resumed turn does not
+        advance twice.
+        """
+        run = self.store.get_active_run(session_id)
+        if run is None or run.current_step is None:
+            return run
+        if not tool_succeeded:
+            return run
+        active_step_id = run.current_step.step_id
+        if expected_active_step_id and active_step_id != expected_active_step_id:
+            # The binder-gated path already advanced past the step this tool
+            # call was bound to. Don't double-advance.
+            return run
+        try:
+            return self.store.complete_and_activate_next(
+                run_id=run.run_id,
+                step_id=active_step_id,
+                session_id=session_id,
+                idempotency_key=f"tool-exec:{tool_call_id}",
+            )
+        except AnalysisRunConflictError:
+            # The active step transitioned between our read and the transaction
+            # (race with another committer). Refetch so callers see the current
+            # state without raising.
+            return self.store.get_active_run(session_id)
 
     def commit_computation_projection(
         self,

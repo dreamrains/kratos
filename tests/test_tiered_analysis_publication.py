@@ -604,11 +604,174 @@ def test_publication_mode_has_no_off_value():
         AgentConfig(ASSURANCE_PUBLICATION_MODE="off", _env_file=None)
 
 
-def test_publication_mode_defaults_to_tiered():
+def test_publication_mode_defaults_to_transparent():
+    """Phase 0 unblock: the production default is the non-destructive
+    transparent mode. tiered/strict remain available but must be opted into."""
+
     cfg = AgentConfig(_env_file=None)
-    assert cfg.assurance_publication_mode == "tiered"
+    assert cfg.assurance_publication_mode == "transparent"
     assert cfg.auto_evidence_projection_enabled is True
     assert cfg.analysis_live_progress_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# transparent mode — non-destructive publication (Phase 0 unblock)
+#
+# The post-July paralysis was caused by the publication renderer deleting any
+# claim the strict audit could not bind to a measurement identity and injecting
+# a placeholder when the body emptied. Transparent mode turns the audit into a
+# scoring/labeling layer: the draft is relayed verbatim (evidence markers
+# stripped) and the audit's limitations are surfaced as an appended note. No
+# claim is ever deleted and the 无法发布 / 当前可追踪证据不足 placeholders never
+# appear. tiered/strict retain their original destructive behavior.
+# ---------------------------------------------------------------------------
+
+
+def test_transparent_mode_relays_draft_verbatim_without_deleting_claims():
+    """Transparent mode keeps every claim in the body — even one the audit
+    marks unsupported. Nothing is removed."""
+
+    draft = "# 结论\n\n本月收入增长了 99%。\n\n另一段普通描述。"
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit_for("fabricated_value"),
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    # The "unsupported" claim text is still present (not deleted)...
+    assert "本月收入增长了 99%" in result.text
+    # ...and unrelated prose is untouched.
+    assert "另一段普通描述" in result.text
+
+
+def test_transparent_mode_never_injects_placeholder_or_strict_banner():
+    """Transparent mode must not inject the 无法发布 diagnostic strings, the
+    empty-body placeholder preamble, or the strict recovery banner."""
+
+    draft = "# 结论\n\n本月收入增长了 99%。"
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit_for("fabricated_value"),
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    assert "无法发布" not in result.text
+    assert "当前可追踪证据不足" not in result.text
+    assert "严格发布模式" not in result.text
+
+
+def test_transparent_mode_appends_limitations_note_for_unverified_claims():
+    """Transparent mode surfaces the audit's limitations as a gentle appended
+    note (reusing the limitation wording), not as inline replacement."""
+
+    draft = "# 结论\n\n本月收入增长了 99%。"
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit_for("fabricated_value"),
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    # The draft body is intact...
+    assert "本月收入增长了 99%" in result.text
+    # ...and the limitation is surfaced as a reader-friendly note.
+    assert "数值与当前计算证据不一致" in result.text
+
+
+def test_transparent_mode_no_footer_for_bookkeeping_only_failures():
+    """A claim flagged ONLY for missing evidence identity (the audit could not
+    bind a marker — the expected situation when plan-step binding is unreliable)
+    must NOT produce a '未通过核验' footer in transparent mode.
+
+    This is the bug observed in the live Phase-0 validation: every claim was
+    flagged missing_evidence_identity because tool calls never bound to plan
+    steps, and the footer leaked the internal reason code as a vacuous
+    '缺少对应的当前计算证据标识' note. Bookkeeping failures are not a quality
+    signal in transparent mode, so no footer is appended."""
+
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_bookkeeping",
+        "status": "blocked",
+        "public_text": "",
+        "claims": [
+            {"id": "claim_x", "text": "本月收入增长了 5%。", "claim_type": "numeric", "material": True},
+        ],
+        "claim_checks": [
+            {"claim_id": "claim_x", "status": "failed", "reason_codes": ["missing_evidence_identity"]},
+        ],
+    }
+    result = render_audited_analysis_answer(
+        draft="# 结论\n\n本月收入增长了 5%。",
+        audit=audit,
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    # The body is relayed verbatim...
+    assert "本月收入增长了 5%" in result.text
+    # ...no footer at all (bookkeeping failures are not surfaced)...
+    assert "局限说明" not in result.text
+    assert "缺少对应的当前计算证据标识" not in result.text
+    assert "未通过" not in result.text
+    # ...but the audit verdict is still recorded for observability.
+    assert result.actions.get("claim_x") == "unsupported"
+
+
+def test_transparent_mode_adds_no_footer_when_all_claims_verified():
+    """A fully verified answer in transparent mode is relayed with no
+    limitations footer."""
+
+    verified_audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_verified",
+        "status": "pass",
+        "public_text": "",
+        "claims": [
+            {"id": "claim_ok", "text": "本月收入增长了 5%。", "claim_type": "comparison", "material": True},
+        ],
+        "claim_checks": [
+            {"claim_id": "claim_ok", "status": "passed", "reason_codes": []},
+        ],
+    }
+    result = render_audited_analysis_answer(
+        draft="# 结论\n\n本月收入增长了 5%。",
+        audit=verified_audit,
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    assert "本月收入增长了 5%" in result.text
+    assert "局限说明" not in result.text
+
+
+def test_transparent_mode_relays_draft_when_audit_is_missing():
+    """The fail-closed path (audit missing) must still relay the draft in
+    transparent mode — no placeholder, no whole-answer deletion. This is the
+    exact path that produced the post-July placeholders when the audit infra
+    threw and was swallowed."""
+
+    draft = "# 结论\n\n本月收入增长了 5%。经回归分析，影响显著。"
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=None,
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    assert "本月收入增长了 5%" in result.text
+    assert "经回归分析" in result.text
+    assert "无法发布" not in result.text
+    assert "当前可追踪证据不足" not in result.text
+
+
+def test_transparent_mode_still_records_actions_for_observability():
+    """Transparent mode keeps computing per-claim actions/diagnostics so the
+    audit verdict remains observable; only the published text is uncensored."""
+
+    result = render_audited_analysis_answer(
+        draft="# 结论\n\n本月收入增长了 99%。",
+        audit=audit_for("fabricated_value"),
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    assert result.actions.get("claim_1") == "unsupported"
 
 
 # ---------------------------------------------------------------------------
