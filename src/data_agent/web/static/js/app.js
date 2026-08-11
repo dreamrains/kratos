@@ -2445,6 +2445,15 @@ function chatApp() {
             try {
                 const doc = iframe.contentDocument;
                 if (!doc) return;
+                // Plotly chart containers use height:100%; the iframe body has no
+                // height by default, so the chart collapses to 0 (blank). Give the
+                // iframe document a full-height layout so the chart fills the frame.
+                if (!doc.getElementById('da-chart-fill-height')) {
+                    const style = doc.createElement('style');
+                    style.id = 'da-chart-fill-height';
+                    style.textContent = 'html,body{height:100%;margin:0;}';
+                    doc.head.appendChild(style);
+                }
                 // Skip if Plotly script already included (new charts with include_plotlyjs)
                 if (doc.querySelector('script[src*="plotly"]')) return;
                 // Only process chart iframes that need Plotly
