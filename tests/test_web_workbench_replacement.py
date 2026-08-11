@@ -21,28 +21,22 @@ def test_current_analysis_uses_two_equal_tabs_unified_cards_and_chinese_system_l
     js = _app_js()
     css = _app_css()
 
+    # After the M1 recovery surgery, the 当前分析 tab keeps only 结论.
+    # Assertions on the deleted uncertain / next_steps / trust-basis / 数据理解 /
+    # 数据关系 markup were dropped; this test now covers the surviving
+    # two-equal-tabs layout, the confirmed-block formatter call, and the
+    # JS-side helper + translation contract.
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in css
     assert "formatWorkbenchText(c.confidence, 'confidence')" in html
-    assert "formatWorkbenchText(u.label, 'risk')" in html
-    assert "formatWorkbenchText(u.reason, 'kind')" in html
-    assert "formatWorkbenchText(n.direction, 'route')" in html
-    assert "formatWorkbenchText(n.kind, 'kind')" in html
-    assert "formatWorkbenchText(actionBoard().trust_basis.verification_status || 'not_run', 'verification')" in html
-    assert ">数据理解<" in html
-    assert ">数据关系<" in html
-    assert "暂无数据理解摘要。" in html
-    assert "暂无数据关系信息。" in html
     assert "formatWorkbenchText(value, category = '')" in js
     for translation in ("高置信度", "中等置信度", "趋势分析", "周期对比", "相关性分析", "比率分析", "数据缺口", "尚未验证"):
         assert translation in js
 
 
-def test_current_panel_uses_multifile_workbench_as_primary_surface():
-    html = _index_html()
-
-    assert "multifile-data-understanding" in html
-    assert "multifile-relationships" in html
-    assert html.count("workbench-primary-section") == 4
+# Removed: test_current_panel_uses_multifile_workbench_as_primary_surface
+# — its three positive assertions (multifile-data-understanding,
+# multifile-relationships, workbench-primary-section count == 4) all targeted
+# sections deleted in the M1 recovery surgery (当前分析 → 结论 only).
 
 
 def test_old_trust_technical_sections_are_not_primary_current_panel():
@@ -90,25 +84,21 @@ def test_workbench_removes_trust_inspector_residue_and_raw_artifact_text():
 def test_action_board_is_primary_surface_with_helpers():
     html = _index_html()
     js = _app_js()
+    # After the M1 recovery surgery the action board keeps only 结论;
+    # assertions on the removed action-board-uncertain / action-board-next-steps
+    # testids were dropped.
     assert 'data-testid="action-board"' in html
     assert 'data-testid="action-board-confirmed"' in html
-    assert 'data-testid="action-board-uncertain"' in html
-    assert 'data-testid="action-board-next-steps"' in html
     assert "actionBoard()" in js and "workbench?.action_board" in js
 
 
-def test_full_answer_block_uses_markdown_render():
-    html = _index_html()
-    js = _app_js()
-    assert 'data-testid="workbench-full-answer"' in html
-    assert "fullAnswer()" in js and "workbench?.full_answer" in js
-    assert "renderMarkdown(fullAnswer()" in html
+# Removed: test_full_answer_block_uses_markdown_render
+# — its HTML assertions targeted the deleted workbench-full-answer section
+# (M1 recovery surgery); the surviving JS-only check would be vacuous without
+# the template reference.
 
 
-def test_two_sections_in_drill_down():
-    html = _index_html()
-    assert 'data-testid="workbench-breakdown"' in html
-    for testid in ("multifile-data-understanding", "multifile-relationships"):
-        assert f'data-testid="{testid}"' in html
-    assert 'data-testid="multifile-analysis-directions"' not in html
-    assert 'data-testid="multifile-answer-coverage"' not in html
+# Removed: test_two_sections_in_drill_down
+# — its positive assertions targeted the deleted workbench-breakdown <details>
+# and its two nested multifile sections; the remaining negative assertions
+# (analysis-directions / answer-coverage not in html) were vacuous.
