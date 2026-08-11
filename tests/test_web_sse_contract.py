@@ -50,6 +50,11 @@ class FailingLoop(ScriptedLoop):
         raise RuntimeError("scripted SSE failure")
 
 
+class UnsavableLoop(ScriptedLoop):
+    def _auto_save(self):
+        raise OSError("disk unavailable")
+
+
 class ScriptedManager:
     def __init__(self, loop):
         self.loop = loop
@@ -131,6 +136,7 @@ def assert_success_stream_contract(events):
         "analysis_progress",
         "text_delta",
         "text_delta",
+        "turn_persisted",
         "turn_end",
     ]
 
@@ -144,6 +150,12 @@ def assert_success_stream_contract(events):
     assert [delta["text"] for delta in deltas] == ["first segment", "second segment"]
     assert all(delta["turn_id"] == turn_id for delta in deltas)
 
+    persisted = events[-2][1]
+    assert persisted == {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "status": "persisted",
+    }
     terminal = events[-1][1]
     assert terminal["status"] == "completed"
     assert terminal["session_id"] == session_id
@@ -161,6 +173,10 @@ def test_success_stream_contract_rejects_blank_text_or_mismatched_terminal_ident
         (
             "text_delta",
             {"text": "second segment", "session_id": "sse_contract", "turn_id": "t_123"},
+        ),
+        (
+            "turn_persisted",
+            {"session_id": "sse_contract", "turn_id": "t_123", "status": "persisted"},
         ),
         (
             "turn_end",
@@ -254,9 +270,11 @@ def test_feed_events_serializes_generator_error_then_closes_and_autosaves():
     assert [event for event, _data in events] == [
         "analysis_progress",
         "error",
+        "turn_persisted",
         "turn_end",
     ]
-    assert events[-2][1] == {"message": "scripted SSE failure"}
+    assert events[-3][1] == {"message": "scripted SSE failure"}
+    assert events[-2][1]["status"] == "persisted"
     assert events[-1][1]["status"] == "error"
     assert queue._closed is True
     assert list(queue.iter()) == []
@@ -281,6 +299,43 @@ def test_turn_end_is_enqueued_only_after_final_session_save():
     _feed_events(queue, loop, "t_saved_first", loop.stream_turn("finish"))
 
     assert queue.saved_when_terminal_was_enqueued == 1
+
+
+def test_turn_persisted_is_observable_before_the_terminal_event():
+    from data_agent.web.blueprints.chat import _feed_events
+    from data_agent.web.event_bus import EventQueue
+
+    loop = ScriptedLoop()
+    queue = EventQueue()
+    _feed_events(queue, loop, "t_persisted", loop.stream_turn("finish"))
+    events = list(parse_sse_chunks(queue.iter()))
+
+    assert [event for event, _data in events][-2:] == [
+        "turn_persisted",
+        "turn_end",
+    ]
+    assert events[-2][1] == {
+        "session_id": loop.session_id,
+        "turn_id": "t_persisted",
+        "status": "persisted",
+    }
+
+
+def test_persistence_failure_is_terminal_and_does_not_claim_completion():
+    from data_agent.web.blueprints.chat import _feed_events
+    from data_agent.web.event_bus import EventQueue
+
+    loop = UnsavableLoop()
+    queue = EventQueue()
+    _feed_events(queue, loop, "t_unsaved", loop.stream_turn("finish"))
+    events = list(parse_sse_chunks(queue.iter()))
+
+    assert [event for event, _data in events][-2:] == [
+        "turn_persisted",
+        "turn_end",
+    ]
+    assert events[-2][1]["status"] == "failed"
+    assert events[-1][1]["status"] == "persistence_error"
 
 
 def test_running_session_is_listed_and_reloadable_before_turn_end(app):

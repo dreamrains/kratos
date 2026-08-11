@@ -944,6 +944,7 @@ def test_real_control_routes_suspend_resume_replay_and_error(
     assert [name for name, _payload in suspended_events] == [
         "turn_start",
         "suspended",
+        "turn_persisted",
         "turn_end",
     ]
     suspended = suspended_events[1][1]
@@ -967,6 +968,7 @@ def test_real_control_routes_suspend_resume_replay_and_error(
     assert [name for name, _payload in resumed_events] == [
         "turn_start",
         "text_delta",
+        "turn_persisted",
         "turn_end",
     ]
     assert resumed_events[1][1]["text"].strip() == "恢复后内容"
@@ -997,6 +999,7 @@ def test_real_control_routes_suspend_resume_replay_and_error(
     assert [name for name, _payload in error_events] == [
         "turn_start",
         "error",
+        "turn_persisted",
         "turn_end",
     ]
     assert error_events[1][1]["message"] == "synthetic_acceptance_error"

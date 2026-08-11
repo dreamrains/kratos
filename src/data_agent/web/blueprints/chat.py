@@ -43,10 +43,19 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                 loop._auto_save()
             elif hasattr(loop, "_stream_checkpoint"):
                 loop._stream_checkpoint()
+            return True
         except Exception:
             # Persistence failures must not strand the SSE lifecycle, but they
             # remain visible in server diagnostics.
             logger.exception("Failed to checkpoint streaming session")
+            return False
+
+    def _persisted_event(*, persisted: bool):
+        eq.put(SSEEvent("turn_persisted", {
+            "session_id": loop.session_id,
+            "turn_id": turn_id,
+            "status": "persisted" if persisted else "failed",
+        }))
 
     try:
         for event in gen:
@@ -105,30 +114,33 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "related_task_id": event.get("related_task_id"),
                     "related_spec_id": event.get("related_spec_id"),
                 }))
-                _checkpoint(final=True)
+                persisted = _checkpoint(final=True)
+                _persisted_event(persisted=persisted)
                 eq.put(SSEEvent("turn_end", {
                     "session_id": loop.session_id,
                     "turn_id": turn_id,
-                    "status": "suspended",
+                    "status": "suspended" if persisted else "persistence_error",
                     **_pct_payload(),
                 }))
                 return
             elif etype == "error":
                 eq.put(SSEEvent("error", {"message": event["message"]}))
-        _checkpoint(final=True)
+        persisted = _checkpoint(final=True)
+        _persisted_event(persisted=persisted)
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
             "turn_id": turn_id,
-            "status": "completed",
+            "status": "completed" if persisted else "persistence_error",
             **_pct_payload(),
         }))
     except Exception as e:
         eq.put(SSEEvent("error", {"message": str(e)}))
-        _checkpoint(final=True)
+        persisted = _checkpoint(final=True)
+        _persisted_event(persisted=persisted)
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
             "turn_id": turn_id,
-            "status": "error",
+            "status": "error" if persisted else "persistence_error",
         }))
     finally:
         eq.close()

@@ -148,6 +148,36 @@ function chatApp() {
                 && this._sessionStates[sessionId] === state;
         },
 
+        _rememberSession(sessionId) {
+            if (typeof localStorage === 'undefined') return;
+            if (sessionId && sessionId !== '_pending_') {
+                localStorage.setItem('data-agent.current-session', sessionId);
+            } else {
+                localStorage.removeItem('data-agent.current-session');
+            }
+        },
+
+        _rememberedSession() {
+            if (typeof localStorage === 'undefined') return '';
+            return localStorage.getItem('data-agent.current-session') || '';
+        },
+
+        _bindMigratedSession(sessionId, state) {
+            this._rememberSession(sessionId);
+            // Bind every session-owned view as soon as the server supplies
+            // the real identity. Each loader retains its ownership guard, so
+            // a later sidebar switch cannot publish stale results.
+            this.loadAnalysisState(sessionId, state);
+            this.loadTrustView(sessionId, state);
+            this.loadSessionArtifacts(sessionId, state);
+            this.loadTasks(sessionId, state);
+            const ownsMigrated = () => this._ownsSessionState(sessionId, state);
+            this.loadSessions({
+                preserveConnectionError: !ownsMigrated(),
+                ownsSession: ownsMigrated,
+            });
+        },
+
         _queueMermaidRenderIfOwned(ownsSession) {
             requestAnimationFrame(() => {
                 if (!ownsSession()) return;
@@ -236,6 +266,15 @@ function chatApp() {
                 this.loadModelInfo(),
                 this.loadTasks(),
             ]);
+            if (!this.currentSessionId && this.sessions.length) {
+                const remembered = this._rememberedSession();
+                const target = this.sessions.some(
+                    session => session.session_id === remembered
+                )
+                    ? remembered
+                    : this.sessions[0].session_id;
+                if (target) await this.switchSession(target);
+            }
             document.addEventListener('click', (e) => {
                 if (this.activePopover && !e.target.closest('[data-popover]')) {
                     this.activePopover = null;
@@ -982,6 +1021,7 @@ function chatApp() {
             if (this.isLoading && !(await this._confirmAction('任务正在运行，确认新建会话？'))) return;
             this._saveCurrentState();
             this.currentSessionId = null;
+            this._rememberSession(null);
             this.activeProjectName = '';
             this.analysisState = null;
             this.trustView = null;
@@ -1000,6 +1040,7 @@ function chatApp() {
             // Save current session state (allows background SSE to keep running)
             this._saveCurrentState();
             this.currentSessionId = sessionId;
+            this._rememberSession(sessionId);
             this._restoreState(sessionId);
             this.activeProjectName = '';
             this.lastWorkbenchResult = null;
@@ -1064,6 +1105,7 @@ function chatApp() {
             delete this._sessionStates[sessionId];
             if (this.currentSessionId === sessionId) {
                 this.currentSessionId = null;
+                this._rememberSession(null);
                 this.turns = [];
                 this.isLoading = false;
                 this.tokenPct = 0;
@@ -1531,11 +1573,20 @@ function chatApp() {
 
         // --- Tasks ---
 
-        async loadTasks() {
+        async loadTasks(
+            sessionId = this.currentSessionId,
+            state = this._sessionStates[sessionId],
+        ) {
+            const ownsTarget = () => sessionId
+                ? this._ownsSessionState(sessionId, state)
+                : !this.currentSessionId;
             try {
-                const query = this.currentSessionId && this.currentSessionId !== '_pending_' ? `?session_id=${encodeURIComponent(this.currentSessionId)}` : '';
+                const query = sessionId && sessionId !== '_pending_'
+                    ? `?session_id=${encodeURIComponent(sessionId)}`
+                    : '';
                 const res = await fetch('/api/tasks' + query);
                 const newTasks = await res.json();
+                if (!ownsTarget()) return;
                 this.tasks = [...newTasks];
                 if (this.activeTasks.some(t => t.status === 'in_progress')) {
                     this.tasksExpanded = true;
@@ -2492,6 +2543,7 @@ function chatApp() {
                         migratedSid = sessionId;
                         if (ownsPendingState) {
                             state = this._sessionStates[sessionId];
+                            this._bindMigratedSession(sessionId, state);
                         }
                         isCurrentSession = this._ownsSessionState(sessionId, state);
                     }
@@ -2616,11 +2668,25 @@ function chatApp() {
                         state.tokenSupported = true;
                         if (isCurrentSession) { this.tokenPct = data.pct; this.tokenSupported = true; }
                     }
+                    if (data.status === 'persistence_error') {
+                        turn.persistenceError = true;
+                        if (isCurrentSession) {
+                            this.connectionError = '回答已显示，但会话保存失败；刷新前请重试。';
+                        }
+                    }
+                    break;
+                case 'turn_persisted':
+                    turn.persisted = data.status === 'persisted';
+                    if (isCurrentSession) this.turns = [...state.turns];
                     break;
                 case 'error':
                     turn.isThinking = false;
-                    turn.content += `\n\n**Error:** ${data.message}`; // i18n: Error
+                    turn.runtimeError = data.message || 'runtime_error';
+                    if (!turn.content) {
+                        turn.content = '**分析未能完成。请重试，或检查连接与运行状态。**';
+                    }
                     if (isCurrentSession) {
+                        this.connectionError = data.message || '分析运行失败';
                         this.turns = [...state.turns];
                     }
                     break;
