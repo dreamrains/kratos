@@ -17,7 +17,11 @@ from data_agent.agent.analysis_plan_contracts import (
     normalize_analysis_plan_contract,
 )
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.intent import TurnIntent
+from data_agent.agent.intent import (
+    TurnIntent,
+    parse_disallowed_claim_types,
+    strip_disallowed_claim_terms,
+)
 
 
 @dataclass(frozen=True)
@@ -603,6 +607,20 @@ def list_playbooks() -> list[MethodPlaybook]:
     return list(PLAYBOOKS.values())
 
 
+def _playbook_conflicts_with_constraints(
+    playbook_id: str,
+    disallowed_claim_types: list[str],
+) -> bool:
+    disallowed = set(disallowed_claim_types)
+    if playbook_id == "evaluation_causal" and "causal" in disallowed:
+        return True
+    if playbook_id == "forecast_decision_simulation" and disallowed.intersection(
+        {"predictive", "roi"}
+    ):
+        return True
+    return False
+
+
 def select_playbooks(
     user_input: str,
     intent: TurnIntent,
@@ -610,16 +628,21 @@ def select_playbooks(
     dataset_profile: str = "",
 ) -> PlaybookSelection:
     text = (user_input or "").lower()
+    disallowed_claim_types = list(
+        getattr(intent, "disallowed_claim_types", None)
+        or parse_disallowed_claim_types(user_input)
+    )
+    routing_text = strip_disallowed_claim_terms(text, disallowed_claim_types)
     has_data = intent.data_state == "data_loaded" or bool(dataset_profile.strip())
 
     # Try LLM selection first for non-trivial inputs; fall back to keyword
     llm_supporting: list[str] = []
     primary: str | None = None
-    if len(text.strip()) >= 8:
+    if len(routing_text.strip()) >= 8:
         try:
             from data_agent.agent.llm_playbook import select_playbook_llm
             llm_result = select_playbook_llm(
-                user_input=text,
+                user_input=routing_text,
                 data_features=dataset_profile,
             )
             if llm_result and llm_result.get("primary"):
@@ -627,17 +650,31 @@ def select_playbooks(
                 llm_supporting = llm_result.get("supporting", [])
         except Exception:
             pass
+    if primary and _playbook_conflicts_with_constraints(primary, disallowed_claim_types):
+        primary = None
+        llm_supporting = []
 
     if not primary:
-        primary = _choose_primary(text, intent, has_data)
+        primary = _choose_primary(routing_text, intent, has_data)
 
     # Use LLM supporting if available, otherwise fall back to keyword-based
-    supporting = llm_supporting if llm_supporting else _choose_supporting(text, primary)
+    supporting = llm_supporting if llm_supporting else _choose_supporting(routing_text, primary)
+    supporting = [
+        playbook_id
+        for playbook_id in supporting
+        if playbook_id in PLAYBOOKS
+        and not _playbook_conflicts_with_constraints(playbook_id, disallowed_claim_types)
+    ]
     playbook = PLAYBOOKS[primary]
 
     recommended_paths = _recommended_paths(primary, supporting)
     requirement = _build_data_requirement(playbook, user_input, supporting)
-    analysis_plan = _build_analysis_plan(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
+    analysis_plan = _build_analysis_plan(
+        playbook,
+        user_input,
+        supporting,
+        disallowed_claim_types=disallowed_claim_types,
+    ) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
 
     if not has_data or intent.intent_type == "data_requirement":
         analysis_plan = None
@@ -649,7 +686,11 @@ def select_playbooks(
         recommended_paths=recommended_paths,
         data_requirement=requirement,
         analysis_plan=analysis_plan,
-        requires_confirmation=bool(playbook.confirmation_policy.get("requires_confirmation")),
+        requires_confirmation=bool(
+            (analysis_plan or {}).get("confirmation_policy", playbook.confirmation_policy).get(
+                "requires_confirmation"
+            )
+        ),
     )
 
 
@@ -695,7 +736,7 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
                         "method_confirmation": {
                             "playbook_id": selection.primary_playbook_id,
                             "analysis_plan_id": analysis_plan.get("id", ""),
-                            "allowed_actions": ["confirm_method", "clarify_method_scope"],
+                            "allowed_actions": ["confirm_method", "clarify_method_scope", "descriptive_only"],
                         },
                     },
                     ensure_ascii=False,
@@ -725,6 +766,11 @@ def _method_confirmation_options() -> list[dict[str, str]]:
             "label": "先补充目标口径",
             "value": "clarify_method_scope",
             "description": "暂停执行，先说明目标指标、时间窗口或比较对象。",
+        },
+        {
+            "label": "仅做描述性探索",
+            "value": "descriptive_only",
+            "description": "重新编译为描述性计划，不输出因果、预测或 ROI 结论。",
         },
     ]
 
@@ -954,16 +1000,85 @@ def _build_data_requirement(playbook: MethodPlaybook, user_input: str, supportin
     }
 
 
-def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: list[str]) -> dict[str, Any]:
-    steps = [dict(step) for step in playbook.method_plan_template]
+def _step_conflicts_with_constraints(
+    step: dict[str, Any],
+    disallowed_claim_types: list[str],
+) -> bool:
+    disallowed = set(disallowed_claim_types)
+    capability = str(step.get("required_capability") or "").strip().lower()
+    claim_type = str(step.get("claim_type") or "").strip().lower()
+    step_text = " ".join(
+        str(step.get(key) or "").casefold()
+        for key in ("step", "goal", "expected_output")
+    )
+    requirements = {
+        str(value).strip().lower().replace(" ", "_")
+        for value in (step.get("evidence_requirements") or [])
+        if str(value).strip()
+    }
+    if "causal" in disallowed and (
+        capability in {"analysis.causal", "analysis.experiment"}
+        or claim_type.startswith("causal")
+    ):
+        return True
+    if "predictive" in disallowed and (
+        capability in {"analysis.forecast", "analysis.classification"}
+        or claim_type in {"prediction", "predictive", "predictive_importance"}
+        or any(marker in step_text for marker in ("forecast", "predict", "model churn", "预测"))
+    ):
+        return True
+    if "roi" in disallowed and (
+        "roi" in step_text
+        or {"cost", "benefit"}.issubset(requirements)
+    ):
+        return True
+    return False
+
+
+def _statistical_requirement_allowed(
+    requirement: str,
+    disallowed_claim_types: list[str],
+) -> bool:
+    name = str(requirement or "").strip().lower().replace(" ", "_")
+    disallowed = set(disallowed_claim_types)
+    if "predictive" in disallowed and name in {
+        "forecast_window", "training_window", "validation", "validation_metric",
+    }:
+        return False
+    if "roi" in disallowed and name in {"cost", "benefit", "cost_assumptions"}:
+        return False
+    if "causal" in disallowed and name in {
+        "design_type", "identification_status", "overlap_diagnostics", "parallel_trends",
+    }:
+        return False
+    return True
+
+
+def _build_analysis_plan(
+    playbook: MethodPlaybook,
+    user_input: str,
+    supporting: list[str],
+    *,
+    disallowed_claim_types: list[str] | None = None,
+) -> dict[str, Any]:
+    disallowed_claim_types = list(disallowed_claim_types or [])
+    steps = [
+        dict(step)
+        for step in playbook.method_plan_template
+        if not _step_conflicts_with_constraints(step, disallowed_claim_types)
+    ]
     for sid in supporting[:2]:
-        steps.append({
+        supporting_step = {
             "step": f"supporting check: {PLAYBOOKS[sid].name}",
             "node_type": "method",
             "required_capability": PLAYBOOKS[sid].method_plan_template[0].get("required_capability", ""),
             "expected_output": PLAYBOOKS[sid].description,
             "evidence_requirements": PLAYBOOKS[sid].evidence_policy.get("required_evidence", [])[:2],
-        })
+        }
+        if not _step_conflicts_with_constraints(supporting_step, disallowed_claim_types):
+            steps.append(supporting_step)
+    if not steps:
+        steps = [dict(step) for step in PLAYBOOKS["metric_overview"].method_plan_template]
     metrics = _infer_metrics(user_input)
     dimensions = _infer_dimensions(user_input)
     output_policies = [playbook.output_policy] + [PLAYBOOKS[sid].output_policy for sid in supporting if sid in PLAYBOOKS]
@@ -982,6 +1097,7 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
         item
         for policy in output_policies
         for item in (policy.get("statistical_requirements") or [])
+        if _statistical_requirement_allowed(item, disallowed_claim_types)
     })
     output_sections = []
     for policy in output_policies:
@@ -989,6 +1105,15 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
             if section not in output_sections:
                 output_sections.append(section)
     playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
+    confirmation_policy = dict(playbook.confirmation_policy)
+    if disallowed_claim_types and not any(
+        bool((step.get("confirmation_policy") or {}).get("requires_confirmation"))
+        or step.get("required_capability") in {
+            "analysis.causal", "analysis.experiment", "analysis.forecast", "analysis.classification",
+        }
+        for step in steps
+    ):
+        confirmation_policy["requires_confirmation"] = False
     plan = {
         "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
         "review_status": "display_only",
@@ -1013,18 +1138,35 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
         "method_plan": steps,
         "limitations": playbook.limitation_policy.get("required_limitations", []),
         "evidence_policy": playbook.evidence_policy,
-        "confirmation_policy": playbook.confirmation_policy,
+        "confirmation_policy": confirmation_policy,
         "visualization_strategy": visualization_strategy,
         "statistical_requirements": statistical_requirements,
         "statistical_validation_plan": statistical_requirements,
         "output_sections": output_sections,
         "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
+    if disallowed_claim_types:
+        plan["disallowed_claim_types"] = list(disallowed_claim_types)
+    if set(disallowed_claim_types) == {"causal", "predictive", "roi"}:
+        plan["maximum_claim_class"] = "descriptive"
     plan["id"] = _analysis_plan_id(plan)
     validation = normalize_analysis_plan_contract(plan, require_executable=False)
     if not validation.ok:
         raise ValueError(validation.message)
     return validation.plan
+
+
+def recompile_descriptive_only_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Replace a high-risk plan with a canonical descriptive-only plan."""
+
+    goal = str((plan or {}).get("goal") or "Describe the loaded data")
+    disallowed = ["causal", "predictive", "roi"]
+    return _build_analysis_plan(
+        PLAYBOOKS["metric_overview"],
+        goal,
+        supporting=[],
+        disallowed_claim_types=disallowed,
+    )
 
 
 def _analysis_plan_id(plan: dict[str, Any]) -> str:

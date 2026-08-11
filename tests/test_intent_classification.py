@@ -49,7 +49,7 @@ class TestTurnIntentDataclass:
         expected = {
             "intent_type", "clarity", "data_state",
             "analysis_stage", "recommended_action", "execution_readiness",
-            "reason", "ambiguities",
+            "reason", "ambiguities", "disallowed_claim_types",
         }
         actual = {f.name for f in fields(TurnIntent)}
         assert actual == expected
@@ -72,6 +72,7 @@ class TestTurnIntentDataclass:
         assert d["execution_readiness"] == "missing_data"
         assert d["reason"] == ""
         assert d["ambiguities"] == []
+        assert d["disallowed_claim_types"] == []
 
     def test_to_dict_with_ambiguities(self):
         ti = TurnIntent(
@@ -108,6 +109,19 @@ class TestTurnIntentDataclass:
             reason="问候或致谢",
         )
         assert ti.reason == "问候或致谢"
+
+    @pytest.mark.parametrize(
+        "user_input",
+        [
+            "仅做描述性分析，不做因果、预测或 ROI",
+            "Run descriptive analysis only; no causal, predictive, or ROI analysis.",
+        ],
+    )
+    def test_explicit_negative_claim_constraints_are_structured(self, user_input):
+        intent = plan_turn_intent(user_input, DATA_LOADED_CTX)
+
+        assert intent.disallowed_claim_types == ["causal", "predictive", "roi"]
+        assert intent.to_dict()["disallowed_claim_types"] == ["causal", "predictive", "roi"]
 
 
 # ══════════════════════════════════════════════════════════════

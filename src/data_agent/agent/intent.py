@@ -11,6 +11,7 @@ Two-layer architecture:
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
@@ -51,6 +52,7 @@ class TurnIntent:
     execution_readiness: ExecutionReadiness = "missing_data"
     reason: str = ""
     ambiguities: list[dict] = field(default_factory=list)
+    disallowed_claim_types: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -119,6 +121,71 @@ _GUIDANCE_KEYWORDS = (
     "有什么可以分析", "帮我分析", "看看数据",
 )
 
+_CLAIM_TYPE_ORDER = ("causal", "predictive", "roi")
+_CLAIM_TYPE_KEYWORDS = {
+    "causal": (
+        "causal", "causality", "cause", "experiment", "a/b", "ab test",
+        "uplift", "因果", "实验", "归因",
+    ),
+    "predictive": (
+        "predict", "prediction", "predictive", "forecast", "simulate",
+        "预测", "预估", "模拟",
+    ),
+    "roi": ("roi", "投资回报"),
+}
+_NEGATED_CLAIM_MARKERS = (
+    "不做", "不要", "无需", "不需要", "禁止", "排除",
+    "do not", "don't", "dont", "without", "exclude", "avoid",
+)
+_DESCRIPTIVE_ONLY_MARKERS = (
+    "仅做描述", "只做描述", "仅限描述", "描述性分析即可",
+    "descriptive only", "only descriptive",
+)
+_CLAIM_SCOPE_SPLIT_RE = re.compile(
+    r"(?:但(?:是)?|不过|然而|而是|\bbut\b|\bhowever\b|\binstead\b|[。；;])",
+    re.IGNORECASE,
+)
+
+
+def parse_disallowed_claim_types(user_input: str) -> list[str]:
+    """Extract explicit user prohibitions into one canonical claim constraint.
+
+    The parser is intentionally narrow: it only records explicit negation or a
+    descriptive-only instruction. Positive mentions remain available to route
+    selection and high-risk confirmation.
+    """
+
+    text = (user_input or "").casefold()
+    disallowed: set[str] = set()
+    if any(marker in text for marker in _DESCRIPTIVE_ONLY_MARKERS):
+        disallowed.update(_CLAIM_TYPE_ORDER)
+    for segment in _CLAIM_SCOPE_SPLIT_RE.split(text):
+        if not segment.strip():
+            continue
+        has_explicit_negation = any(marker in segment for marker in _NEGATED_CLAIM_MARKERS)
+        has_no_scope = bool(re.search(r"\b(?:no|not)\b", segment))
+        if not has_explicit_negation and not has_no_scope:
+            continue
+        for claim_type, keywords in _CLAIM_TYPE_KEYWORDS.items():
+            if any(keyword in segment for keyword in keywords):
+                disallowed.add(claim_type)
+    return [claim_type for claim_type in _CLAIM_TYPE_ORDER if claim_type in disallowed]
+
+
+def strip_disallowed_claim_terms(text: str, disallowed_claim_types: list[str]) -> str:
+    """Remove prohibited claim terms from routing input, preserving the request."""
+
+    routed = (text or "").casefold()
+    for claim_type in disallowed_claim_types:
+        for keyword in _CLAIM_TYPE_KEYWORDS.get(claim_type, ()):
+            routed = routed.replace(keyword, " ")
+    return " ".join(routed.split())
+
+
+def _with_claim_constraints(intent: TurnIntent, constraints: list[str]) -> TurnIntent:
+    intent.disallowed_claim_types = list(constraints)
+    return intent
+
 
 # ── Legacy compatibility ──────────────────────────────────
 
@@ -177,6 +244,7 @@ def infer_execution_readiness(user_input: str, session_context: str = "") -> Exe
 def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
     """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
+    claim_constraints = parse_disallowed_claim_types(user_input)
     data_state = infer_data_state(session_context)
     readiness = infer_execution_readiness(user_input, session_context)
 
@@ -185,7 +253,7 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
 
     # If fast path is confident, return immediately (no LLM cost)
     if fast_result is not None and fast_result.clarity == "clear":
-        return fast_result
+        return _with_claim_constraints(fast_result, claim_constraints)
 
     # ── Layer 2: LLM semantic classification ──
     # Triggered when fast path returns nothing or returns vague result
@@ -201,20 +269,21 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
             execution_readiness=readiness,
             reason="LLM语义分类",
             ambiguities=ambiguities,
+            disallowed_claim_types=claim_constraints,
         )
 
     # ── Layer 3: Fallback ──
     # Use fast path vague result if available, otherwise default
     if fast_result is not None:
-        return fast_result
+        return _with_claim_constraints(fast_result, claim_constraints)
     fallback_intent = "analysis_consultation" if data_state == "data_loaded" else "intent_negotiation"
-    return _make(
+    return _with_claim_constraints(_make(
         fallback_intent,
         "vague", data_state,
         "discover" if data_state == "data_loaded" else "scope",
         "guide_analysis" if data_state == "data_loaded" else "ask_question",
         "默认按分析咨询处理",
-    )
+    ), claim_constraints)
 
 
 def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadiness) -> TurnIntent | None:
@@ -419,5 +488,6 @@ def classify_intent(user_input: str, data_loaded: bool = False) -> TurnIntent:
             execution_readiness=readiness,
             reason="factor-relationship question routed to directed analysis",
             ambiguities=intent.ambiguities,
+            disallowed_claim_types=list(intent.disallowed_claim_types),
         )
     return intent

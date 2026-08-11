@@ -529,6 +529,34 @@ def test_high_risk_predictive_analysis_requires_method_confirmation():
     assert gate["blocking_surfaces"] == ["analysis_execution", "report_generation"]
 
 
+@pytest.mark.parametrize(
+    "user_input",
+    [
+        "仅做描述性分析，不做因果、预测或 ROI",
+        "Run descriptive analysis only; no causal, predictive, or ROI analysis.",
+    ],
+)
+def test_explicit_descriptive_only_constraints_do_not_trigger_method_confirmation(user_input):
+    gate = detect_question_need(user_input, _intent(), _state())
+
+    assert gate["status"] == "clear"
+    assert gate["question_type"] != "method_confirmation"
+
+
+@pytest.mark.parametrize(
+    "user_input",
+    [
+        "不做因果，但需要预测下月收入",
+        "No causal analysis, but forecast next month revenue.",
+    ],
+)
+def test_negated_claim_type_does_not_hide_a_separate_positive_high_risk_request(user_input):
+    gate = detect_question_need(user_input, _intent(), _state())
+
+    assert gate["status"] == "hard_question"
+    assert gate["question_type"] == "method_confirmation"
+
+
 def test_confirmed_matching_high_risk_plan_skips_generic_gate_but_changed_request_does_not():
     state = _state()
     state.set_analysis_plan({

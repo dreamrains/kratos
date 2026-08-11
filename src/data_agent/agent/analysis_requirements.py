@@ -8,6 +8,22 @@ from typing import Any
 
 
 ANALYSIS_REQUIREMENT_CONTRACT_VERSION = "analysis_requirement.v1"
+_DISALLOWED_REQUIREMENT_NAMES = {
+    "causal": {
+        "design_type",
+        "identification_status",
+        "overlap_diagnostics",
+        "parallel_trends",
+        "randomization_integrity",
+    },
+    "predictive": {
+        "forecast_window",
+        "training_window",
+        "validation",
+        "validation_metric",
+    },
+    "roi": {"cost", "benefit", "cost_assumptions"},
+}
 ALLOWED_REQUIREMENT_CATEGORIES = frozenset({
     "assumption",
     "data",
@@ -1209,6 +1225,23 @@ def compile_analysis_requirements(
     _allow_legacy_unknown: bool = False,
 ) -> list[dict[str, Any]]:
     plan_value = plan if isinstance(plan, dict) else {}
+    disallowed_claim_types = {
+        _name(value)
+        for value in (plan_value.get("disallowed_claim_types") or [])
+        if _name(value) in _DISALLOWED_REQUIREMENT_NAMES
+    }
+    if isinstance(user_intent, dict):
+        disallowed_claim_types.update(
+            _name(value)
+            for value in (user_intent.get("disallowed_claim_types") or [])
+            if _name(value) in _DISALLOWED_REQUIREMENT_NAMES
+        )
+    else:
+        disallowed_claim_types.update(
+            _name(value)
+            for value in (getattr(user_intent, "disallowed_claim_types", None) or [])
+            if _name(value) in _DISALLOWED_REQUIREMENT_NAMES
+        )
     provided = plan_value.get("analysis_requirements")
     provided_by_step_name: dict[str, dict[str, dict[str, Any]]] = {}
     if provided is not None:
@@ -1285,6 +1318,17 @@ def compile_analysis_requirements(
     for name, origin in external_inputs:
         step_id = _step_for_external_input(name, steps, inputs_by_step)
         inputs_by_step[step_id].setdefault(name, set()).add(origin)
+
+    blocked_requirement_names = {
+        name
+        for claim_type in disallowed_claim_types
+        for name in _DISALLOWED_REQUIREMENT_NAMES[claim_type]
+    }
+    if blocked_requirement_names:
+        for step_inputs in inputs_by_step.values():
+            for name in list(step_inputs):
+                if name in blocked_requirement_names:
+                    step_inputs.pop(name, None)
 
     compiled: list[dict[str, Any]] = []
     for step_id, _ in steps:

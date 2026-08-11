@@ -139,6 +139,38 @@ def test_compiler_owns_merged_plan_route_and_playbook_inputs():
     assert len({item["name"] for item in compiled}) == len(compiled)
 
 
+def test_compiler_drops_hard_requirements_for_explicitly_disallowed_claim_types():
+    plan = {
+        "id": "plan_descriptive_only",
+        "goal": "describe revenue without causal, predictive, or ROI analysis",
+        "disallowed_claim_types": ["causal", "predictive", "roi"],
+        "method_plan": [{
+            "step_id": "step_1",
+            "goal": "describe the observed revenue",
+            "node_type": "analysis",
+            "claim_type": "descriptive",
+            "evidence_requirements": [
+                "sample_size",
+                "forecast_window",
+                "training_window",
+                "validation",
+                "cost",
+                "benefit",
+            ],
+        }],
+    }
+
+    compiled = compile_analysis_requirements(
+        plan=plan,
+        route=None,
+        playbook=None,
+        dataset_contracts=[],
+        user_intent={"disallowed_claim_types": ["causal", "predictive", "roi"]},
+    )
+
+    assert {item["name"] for item in compiled} == {"sample_size"}
+
+
 def test_every_current_playbook_requirement_input_has_one_compiler_definition():
     for playbook in PLAYBOOKS.values():
         plan = {

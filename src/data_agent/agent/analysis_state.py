@@ -733,6 +733,21 @@ class AnalysisSessionState:
                     "state_updates": {"method_confirmation": dict(confirmation)},
                     "source": "method_scope_clarification",
                 })
+        elif action == "descriptive_only":
+            from data_agent.agent.method_playbooks import recompile_descriptive_only_plan
+
+            prior_plan_id = analysis_plan_id
+            plan = recompile_descriptive_only_plan(plan)
+            analysis_plan_id = _text(plan.get("id"))
+            playbook_id = _text(plan.get("playbook_id"))
+            resolution = {
+                "analysis_plan_id": analysis_plan_id,
+                "playbook_id": playbook_id,
+                "request_identity": _material_request_identity(plan.get("goal")),
+                "status": "descriptive_only",
+                "supersedes_analysis_plan_id": prior_plan_id,
+            }
+            self.stage = "plan"
         else:
             return
         plan["method_confirmation"] = resolution

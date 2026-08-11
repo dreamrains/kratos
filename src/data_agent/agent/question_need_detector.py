@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from data_agent.agent.intent import parse_disallowed_claim_types
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
 from data_agent.agent.trust_contracts import route_evidence_requirements
 
@@ -33,6 +34,24 @@ _HIGH_RISK_KEYWORDS = (
     "效果",
     "归因",
 )
+_HIGH_RISK_KEYWORD_CLAIM_TYPES = {
+    "predict": "predictive",
+    "forecast": "predictive",
+    "simulate": "predictive",
+    "预测": "predictive",
+    "causal": "causal",
+    "causality": "causal",
+    "effect": "causal",
+    "experiment": "causal",
+    "ab test": "causal",
+    "a/b": "causal",
+    "uplift": "causal",
+    "因果": "causal",
+    "实验": "causal",
+    "效果": "causal",
+    "归因": "causal",
+    "roi": "roi",
+}
 _PERIOD_KEYWORDS = ("compare", "comparison", "period", "环比", "同比", "对比", "比较", "前后")
 _WINDOW_KEYWORDS = (
     "today",
@@ -157,7 +176,7 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 affected_routes=[_route_direction(route)],
             )
 
-    if _is_high_risk_request(text) and not _has_confirmed_high_risk_plan(text, state):
+    if _is_high_risk_request(text, intent) and not _has_confirmed_high_risk_plan(text, state):
         missing_design_facts = _missing_material_design_facts(state)
         if missing_design_facts:
             return _hard_gate(
@@ -516,8 +535,14 @@ def _estimand_confirmation_required(route: dict[str, Any], text: str) -> bool:
     return not any(marker in text for marker in explicit_markers)
 
 
-def _is_high_risk_request(text: str) -> bool:
-    return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
+def _is_high_risk_request(text: str, intent: Any = None) -> bool:
+    structured = getattr(intent, "disallowed_claim_types", None)
+    disallowed = set(structured or parse_disallowed_claim_types(text))
+    return any(
+        keyword in text
+        and _HIGH_RISK_KEYWORD_CLAIM_TYPES.get(keyword) not in disallowed
+        for keyword in _HIGH_RISK_KEYWORDS
+    )
 
 
 def _high_risk_design_step(state: Any) -> dict[str, Any] | None:

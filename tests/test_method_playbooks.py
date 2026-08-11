@@ -169,7 +169,7 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
         assert updates["method_confirmation"] == {
             "playbook_id": "forecast_decision_simulation",
             "analysis_plan_id": state.analysis_plan["id"],
-            "allowed_actions": ["confirm_method", "clarify_method_scope"],
+            "allowed_actions": ["confirm_method", "clarify_method_scope", "descriptive_only"],
         }
 
         result = state.resolve_confirmation(confirmation["id"], answer)
@@ -178,6 +178,76 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
         assert result["status"] == "resolved"
         assert state.stage in STAGES
         assert state.active_scope["active_mode"] in {"consulting", "data_loaded", "analysis", "artifact_review"}
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_explicit_disallowed_claim_types_are_structured_on_the_persisted_plan():
+    state = AnalysisSessionState(session_id="descriptive_claim_constraints", data_state="data_loaded")
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+
+    selection = select_playbooks(
+        "仅做描述性分析，不做因果、预测或 ROI",
+        intent,
+        state,
+        _loaded_context("date, revenue, cost"),
+    )
+    apply_selection_to_state(state, selection)
+
+    assert state.analysis_plan is not None
+    assert state.analysis_plan["disallowed_claim_types"] == ["causal", "predictive", "roi"]
+    assert selection.requires_confirmation is False
+    assert not any(
+        step.get("required_capability") in {"analysis.causal", "analysis.forecast"}
+        for step in state.analysis_plan["method_plan"]
+    )
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_descriptive_only_resolution_recompiles_high_risk_plan_and_requirements():
+    state = AnalysisSessionState(session_id="descriptive_method_resolution", data_state="data_loaded")
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="plan",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+    selection = choose_playbook("forecast revenue and ROI next quarter", intent, has_data=True)
+    apply_selection_to_state(state, selection)
+    confirmation = next(item for item in state.pending_confirmations if item["status"] == "pending")
+
+    assert "descriptive_only" in {option["value"] for option in confirmation["options"]}
+
+    state.resolve_confirmation(confirmation["id"], "descriptive_only")
+
+    assert state.analysis_plan is not None
+    assert state.analysis_plan["method_confirmation"]["status"] == "descriptive_only"
+    assert state.analysis_plan["disallowed_claim_types"] == ["causal", "predictive", "roi"]
+    assert not any(
+        step.get("required_capability") in {"analysis.causal", "analysis.forecast"}
+        for step in state.analysis_plan["method_plan"]
+    )
+    compiled_names = {
+        requirement["name"]
+        for group in state.analysis_plan["analysis_requirements"].values()
+        for requirement in group
+    }
+    assert compiled_names.isdisjoint({
+        "forecast_window",
+        "training_window",
+        "validation",
+        "validation_metric",
+        "cost",
+        "benefit",
+    })
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
