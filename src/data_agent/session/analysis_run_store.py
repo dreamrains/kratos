@@ -160,11 +160,23 @@ class AnalysisRunStore:
                     computation_id TEXT NOT NULL REFERENCES analysis_computations(computation_id),
                     evidence_id TEXT NOT NULL,
                     claim_key TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     UNIQUE(run_id, evidence_id, claim_key)
                 );
                 """
             )
+            evidence_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(analysis_evidence_links)"
+                ).fetchall()
+            }
+            if "evidence_json" not in evidence_columns:
+                connection.execute(
+                    "ALTER TABLE analysis_evidence_links "
+                    "ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def create_run(
         self,
@@ -500,6 +512,495 @@ class AnalysisRunStore:
                 ),
             )
         return self.get_run(run_id, session_id=session_id)
+
+    @staticmethod
+    def _projection_receipt_from_event(row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"] or "{}")
+        receipt = payload.get("receipt")
+        return dict(receipt) if isinstance(receipt, dict) else None
+
+    def _finish_current_step_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        run_id: str,
+        step_id: str,
+        now: str,
+    ) -> str:
+        current = connection.execute(
+            "SELECT status FROM analysis_steps WHERE step_id = ? AND run_id = ?",
+            (step_id, run_id),
+        ).fetchone()
+        if current is None or current["status"] != StepStatus.IN_PROGRESS:
+            raise AnalysisRunConflictError("step is not the current in-progress step")
+        connection.execute(
+            """UPDATE analysis_steps
+            SET status = 'completed', version = version + 1, updated_at = ?
+            WHERE step_id = ?""",
+            (now, step_id),
+        )
+        next_step = connection.execute(
+            """SELECT step_id FROM analysis_steps
+            WHERE run_id = ? AND status = 'pending'
+            ORDER BY ordinal LIMIT 1""",
+            (run_id,),
+        ).fetchone()
+        next_step_id = next_step["step_id"] if next_step is not None else ""
+        if next_step_id:
+            connection.execute(
+                """UPDATE analysis_steps
+                SET status = 'in_progress', version = version + 1, updated_at = ?
+                WHERE step_id = ?""",
+                (now, next_step_id),
+            )
+        else:
+            connection.execute(
+                """UPDATE analysis_runs
+                SET status = 'completed', version = version + 1, updated_at = ?
+                WHERE run_id = ?""",
+                (now, run_id),
+            )
+        return next_step_id
+
+    @staticmethod
+    def _normalized_evidence_links(
+        evidence_links: Sequence[dict] | None,
+    ) -> list[tuple[str, str, dict]]:
+        normalized: list[tuple[str, str, dict]] = []
+        identities: set[tuple[str, str]] = set()
+        for link in evidence_links or ():
+            if not isinstance(link, dict):
+                raise ValueError("evidence links must be objects")
+            evidence_id = str(link.get("evidence_id") or "").strip()
+            claim_key = str(link.get("claim_key") or "").strip()
+            if not evidence_id or not claim_key:
+                raise ValueError("evidence_id and claim_key are required")
+            identity = (evidence_id, claim_key)
+            if identity in identities:
+                continue
+            evidence = link.get("evidence")
+            normalized.append((
+                evidence_id,
+                claim_key,
+                dict(evidence) if isinstance(evidence, dict) else {},
+            ))
+            identities.add(identity)
+        return normalized
+
+    def commit_computation_projection(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        step_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        tool_state: str,
+        capability: str,
+        computation: dict,
+        evidence_links: Sequence[dict] | None,
+        complete_step: bool,
+        idempotency_key: str,
+    ) -> dict:
+        """Commit one computation, its evidence links, and run advancement.
+
+        The immutable computation artifact is created before this repository
+        call.  This transaction makes the artifact reference, tool outcome,
+        evidence projection identities, and current-step transition visible
+        together.  A computation without evidence remains replayable instead
+        of becoming an orphan or forcing model-authored bookkeeping.
+        """
+
+        if not idempotency_key.strip():
+            raise ValueError("idempotency_key is required")
+        if tool_state not in {
+            "committed",
+            "committed_with_warning",
+            "rejected",
+            "failed",
+        }:
+            raise ValueError("invalid tool outcome state")
+        if not isinstance(computation, dict) or not computation:
+            raise ValueError("computation is required")
+        links = self._normalized_evidence_links(evidence_links)
+        now = _utc_now()
+        with self._transaction() as connection:
+            self._get_run(connection, run_id, session_id)
+            replay = connection.execute(
+                """SELECT payload_json FROM analysis_run_events
+                WHERE run_id = ? AND idempotency_key = ?""",
+                (run_id, idempotency_key),
+            ).fetchone()
+            replay_receipt = self._projection_receipt_from_event(replay)
+            if replay_receipt is not None:
+                return replay_receipt
+            owned_step = connection.execute(
+                "SELECT 1 FROM analysis_steps WHERE run_id = ? AND step_id = ?",
+                (run_id, step_id),
+            ).fetchone()
+            if owned_step is None:
+                raise AnalysisRunOwnershipError(
+                    "computation step belongs to another analysis run"
+                )
+
+            computation_id = uuid.uuid4().hex
+            outcome_id = uuid.uuid4().hex
+            projection_status = str(
+                computation.get("projection_status")
+                or ("projected" if links else "pending_binding")
+            )
+            computation_payload = dict(computation)
+            computation_payload["projection_status"] = projection_status
+            connection.execute(
+                """INSERT INTO analysis_computations
+                (computation_id, run_id, step_id, capability, payload_json,
+                 idempotency_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    computation_id,
+                    run_id,
+                    step_id,
+                    capability,
+                    json.dumps(
+                        computation_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    idempotency_key,
+                    now,
+                ),
+            )
+            artifact_id = str(
+                computation.get("computation_ref_id")
+                or computation.get("artifact_path")
+                or computation_id
+            )
+            connection.execute(
+                """INSERT INTO analysis_tool_outcomes
+                (outcome_id, run_id, step_id, tool_name, state, artifact_id,
+                 payload_json, idempotency_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    outcome_id,
+                    run_id,
+                    step_id,
+                    tool_name,
+                    tool_state,
+                    artifact_id,
+                    json.dumps(
+                        {
+                            "computation_id": computation_id,
+                            "computation_ref_id": computation.get(
+                                "computation_ref_id", ""
+                            ),
+                            "tool_call_id": tool_call_id,
+                            "projection_status": projection_status,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    f"{idempotency_key}:tool-outcome",
+                    now,
+                ),
+            )
+            for evidence_id, claim_key, evidence in links:
+                connection.execute(
+                    """INSERT INTO analysis_evidence_links
+                    (link_id, run_id, step_id, computation_id, evidence_id,
+                     claim_key, evidence_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        run_id,
+                        step_id,
+                        computation_id,
+                        evidence_id,
+                        claim_key,
+                        json.dumps(
+                            evidence,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        now,
+                    ),
+                )
+            next_step_id = (
+                self._finish_current_step_in_transaction(
+                    connection,
+                    run_id=run_id,
+                    step_id=step_id,
+                    now=now,
+                )
+                if complete_step
+                else ""
+            )
+            receipt = {
+                "run_id": run_id,
+                "computation_id": computation_id,
+                "computation_ref_id": str(
+                    computation.get("computation_ref_id") or ""
+                ),
+                "tool_outcome_id": outcome_id,
+                "completed_step_id": step_id if complete_step else "",
+                "next_step_id": next_step_id,
+                "evidence_ids": [item[0] for item in links],
+                "projection_status": projection_status,
+            }
+            connection.execute(
+                """INSERT INTO analysis_run_events
+                (event_id, run_id, step_id, event_type, payload_json,
+                 idempotency_key, created_at)
+                VALUES (?, ?, ?, 'computation_projection_committed', ?, ?, ?)""",
+                (
+                    uuid.uuid4().hex,
+                    run_id,
+                    step_id,
+                    json.dumps(
+                        {"receipt": receipt},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    idempotency_key,
+                    now,
+                ),
+            )
+        return receipt
+
+    def reconcile_computation_projection(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        step_id: str,
+        computation_id: str,
+        computation: dict | None = None,
+        evidence_links: Sequence[dict] | None,
+        complete_step: bool,
+        idempotency_key: str,
+    ) -> dict:
+        """Attach recovered binding/evidence to a committed computation."""
+
+        if not idempotency_key.strip():
+            raise ValueError("idempotency_key is required")
+        links = self._normalized_evidence_links(evidence_links)
+        now = _utc_now()
+        with self._transaction() as connection:
+            self._get_run(connection, run_id, session_id)
+            replay = connection.execute(
+                """SELECT payload_json FROM analysis_run_events
+                WHERE run_id = ? AND idempotency_key = ?""",
+                (run_id, idempotency_key),
+            ).fetchone()
+            replay_receipt = self._projection_receipt_from_event(replay)
+            if replay_receipt is not None:
+                return replay_receipt
+            computation_row = connection.execute(
+                """SELECT * FROM analysis_computations
+                WHERE computation_id = ? AND run_id = ?""",
+                (computation_id, run_id),
+            ).fetchone()
+            if computation_row is None:
+                raise AnalysisRunOwnershipError(
+                    "computation belongs to another analysis run"
+                )
+            owned_step = connection.execute(
+                "SELECT 1 FROM analysis_steps WHERE run_id = ? AND step_id = ?",
+                (run_id, step_id),
+            ).fetchone()
+            if owned_step is None:
+                raise AnalysisRunOwnershipError(
+                    "reconciliation step belongs to another analysis run"
+                )
+            payload = json.loads(computation_row["payload_json"] or "{}")
+            if isinstance(computation, dict):
+                immutable_fields = (
+                    "session_id",
+                    "turn_id",
+                    "tool_call_id",
+                    "tool_name",
+                    "output_digest",
+                    "dataset_versions",
+                )
+                for field_name in immutable_fields:
+                    previous = payload.get(field_name)
+                    recovered = computation.get(field_name)
+                    if previous != recovered:
+                        raise AnalysisRunOwnershipError(
+                            "reconciliation cannot change immutable computation identity"
+                        )
+                if (
+                    computation.get("artifact_path") != payload.get("artifact_path")
+                    and computation.get("source_artifact_path")
+                    != payload.get("artifact_path")
+                ):
+                    raise AnalysisRunOwnershipError(
+                        "reconciliation artifact does not derive from the committed computation"
+                    )
+                payload.update(computation)
+            payload["projection_status"] = "projected"
+            payload["reconciled_step_id"] = step_id
+            connection.execute(
+                """UPDATE analysis_computations
+                SET step_id = ?, payload_json = ? WHERE computation_id = ?""",
+                (
+                    step_id,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    computation_id,
+                ),
+            )
+            for evidence_id, claim_key, evidence in links:
+                connection.execute(
+                    """INSERT OR IGNORE INTO analysis_evidence_links
+                    (link_id, run_id, step_id, computation_id, evidence_id,
+                     claim_key, evidence_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        uuid.uuid4().hex,
+                        run_id,
+                        step_id,
+                        computation_id,
+                        evidence_id,
+                        claim_key,
+                        json.dumps(
+                            evidence,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        now,
+                    ),
+                )
+            next_step_id = (
+                self._finish_current_step_in_transaction(
+                    connection,
+                    run_id=run_id,
+                    step_id=step_id,
+                    now=now,
+                )
+                if complete_step
+                else ""
+            )
+            receipt = {
+                "run_id": run_id,
+                "computation_id": computation_id,
+                "computation_ref_id": str(
+                    payload.get("computation_ref_id") or ""
+                ),
+                "completed_step_id": step_id if complete_step else "",
+                "next_step_id": next_step_id,
+                "evidence_ids": [item[0] for item in links],
+                "projection_status": "projected",
+            }
+            connection.execute(
+                """INSERT INTO analysis_run_events
+                (event_id, run_id, step_id, event_type, payload_json,
+                 idempotency_key, created_at)
+                VALUES (?, ?, ?, 'computation_projection_reconciled', ?, ?, ?)""",
+                (
+                    uuid.uuid4().hex,
+                    run_id,
+                    step_id,
+                    json.dumps(
+                        {"receipt": receipt},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    idempotency_key,
+                    now,
+                ),
+            )
+        return receipt
+
+    def list_replayable_computations(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+    ) -> list[dict]:
+        with self._connect() as connection:
+            self._get_run(connection, run_id, session_id)
+            rows = connection.execute(
+                """SELECT * FROM analysis_computations
+                WHERE run_id = ? ORDER BY created_at, computation_id""",
+                (run_id,),
+            ).fetchall()
+            replayable: list[dict] = []
+            for row in rows:
+                payload = json.loads(row["payload_json"] or "{}")
+                if payload.get("projection_status") not in {
+                    "pending_binding",
+                    "projection_failed",
+                }:
+                    continue
+                item = dict(row)
+                item["payload"] = payload
+                replayable.append(item)
+            return replayable
+
+    def computation_count(self, run_id: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM analysis_computations
+                WHERE run_id = ?""",
+                (run_id,),
+            ).fetchone()
+            return int(row["count"])
+
+    def list_computations(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+    ) -> list[dict]:
+        with self._connect() as connection:
+            self._get_run(connection, run_id, session_id)
+            rows = connection.execute(
+                """SELECT computation_id, payload_json
+                FROM analysis_computations
+                WHERE run_id = ? ORDER BY created_at, computation_id""",
+                (run_id,),
+            ).fetchall()
+            return [
+                {
+                    "computation_id": str(row["computation_id"]),
+                    "payload": json.loads(row["payload_json"] or "{}"),
+                }
+                for row in rows
+            ]
+
+    def list_evidence_records(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+    ) -> list[dict]:
+        with self._connect() as connection:
+            self._get_run(connection, run_id, session_id)
+            rows = connection.execute(
+                """SELECT evidence_id, claim_key, evidence_json
+                FROM analysis_evidence_links
+                WHERE run_id = ? ORDER BY created_at, evidence_id""",
+                (run_id,),
+            ).fetchall()
+            records: list[dict] = []
+            for row in rows:
+                record = json.loads(row["evidence_json"] or "{}")
+                if not isinstance(record, dict):
+                    record = {}
+                record.setdefault("id", str(row["evidence_id"] or ""))
+                record.setdefault("claim_key", str(row["claim_key"] or ""))
+                records.append(record)
+            return records
+
+    def evidence_link_count(self, run_id: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM analysis_evidence_links
+                WHERE run_id = ?""",
+                (run_id,),
+            ).fetchone()
+            return int(row["count"])
 
     def record_tool_outcome(
         self,

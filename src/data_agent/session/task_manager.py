@@ -244,6 +244,200 @@ class TaskManager:
             idempotency_key=f"tool-call:{tool_call_id}",
         )
 
+    def commit_analysis_computation_projection(
+        self,
+        *,
+        session_id: str,
+        binding: dict,
+        tool_call_id: str,
+        tool_name: str,
+        tool_state: str,
+        capability: str,
+        computation_ref: dict,
+        evidence_records: list[dict],
+        complete_step: bool,
+    ) -> dict | None:
+        """Commit the canonical run transaction, then refresh JSON views.
+
+        SQLite owns the computation/evidence/step transition.  Legacy task
+        JSON is updated only after that commit and can be regenerated from the
+        run projection if a view write is interrupted.
+        """
+
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None or not binding:
+            return None
+        run_id = str(binding.get("run_id") or "")
+        step_id = str(binding.get("step_id") or "")
+        if not run_id or not step_id:
+            return None
+        run_before = coordinator.store.get_run(
+            run_id,
+            session_id=session_id,
+        )
+        bound_step = next(
+            (step for step in run_before.steps if step.step_id == step_id),
+            None,
+        )
+        if bound_step is None:
+            return None
+        legacy_task_id = int(
+            bound_step.payload.get("legacy_task_id") or 0
+        )
+        evidence_links = [
+            {
+                "evidence_id": self._evidence_id(record),
+                "claim_key": str(record.get("claim_key") or ""),
+                "evidence": dict(record),
+            }
+            for record in evidence_records
+            if isinstance(record, dict)
+            and self._evidence_id(record)
+            and str(record.get("claim_key") or "")
+        ]
+        receipt = coordinator.commit_computation_projection(
+            run_id=run_id,
+            session_id=session_id,
+            step_id=step_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            tool_state=tool_state,
+            capability=capability,
+            computation=dict(computation_ref),
+            evidence_links=evidence_links,
+            complete_step=complete_step,
+            idempotency_key=f"computation:{tool_call_id}",
+        )
+        receipt = dict(receipt)
+        receipt["legacy_task_id"] = legacy_task_id
+        run_after = coordinator.store.get_run(
+            run_id,
+            session_id=session_id,
+        )
+        self._apply_analysis_run_projection(run_after)
+        self._apply_projection_metadata_to_legacy_task(
+            legacy_task_id,
+            evidence_records,
+            completed=complete_step,
+        )
+        return receipt
+
+    def reconcile_analysis_computation_projection(
+        self,
+        *,
+        session_id: str,
+        binding: dict,
+        computation_id: str,
+        computation_ref: dict | None = None,
+        evidence_records: list[dict],
+        complete_step: bool,
+        idempotency_key: str,
+    ) -> dict | None:
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None or not binding:
+            return None
+        run_id = str(binding.get("run_id") or "")
+        step_id = str(binding.get("step_id") or "")
+        if not run_id or not step_id or not computation_id:
+            return None
+        run_before = coordinator.store.get_run(
+            run_id,
+            session_id=session_id,
+        )
+        bound_step = next(
+            (step for step in run_before.steps if step.step_id == step_id),
+            None,
+        )
+        if bound_step is None:
+            return None
+        legacy_task_id = int(bound_step.payload.get("legacy_task_id") or 0)
+        evidence_links = [
+            {
+                "evidence_id": self._evidence_id(record),
+                "claim_key": str(record.get("claim_key") or ""),
+                "evidence": dict(record),
+            }
+            for record in evidence_records
+            if isinstance(record, dict)
+            and self._evidence_id(record)
+            and str(record.get("claim_key") or "")
+        ]
+        receipt = coordinator.reconcile_computation_projection(
+            run_id=run_id,
+            session_id=session_id,
+            step_id=step_id,
+            computation_id=computation_id,
+            computation=(
+                dict(computation_ref)
+                if isinstance(computation_ref, dict)
+                else None
+            ),
+            evidence_links=evidence_links,
+            complete_step=complete_step,
+            idempotency_key=idempotency_key,
+        )
+        receipt = dict(receipt)
+        receipt["legacy_task_id"] = legacy_task_id
+        run_after = coordinator.store.get_run(
+            run_id,
+            session_id=session_id,
+        )
+        self._apply_analysis_run_projection(run_after)
+        self._apply_projection_metadata_to_legacy_task(
+            legacy_task_id,
+            evidence_records,
+            completed=complete_step,
+        )
+        return receipt
+
+    def _apply_projection_metadata_to_legacy_task(
+        self,
+        legacy_task_id: int,
+        evidence_records: list[dict],
+        *,
+        completed: bool,
+    ) -> None:
+        if not legacy_task_id:
+            return
+        task = self.get(legacy_task_id)
+        if task is None:
+            return
+        evidence_ids = list(task.get("evidence_ids") or [])
+        satisfied_claim_keys = list(task.get("satisfied_claim_keys") or [])
+        satisfied_requirement_ids = list(
+            task.get("satisfied_analysis_requirement_ids") or []
+        )
+        result_summary = str(task.get("result_summary") or "")
+        confidence = str(task.get("confidence") or "")
+        for record in evidence_records:
+            if not isinstance(record, dict):
+                continue
+            evidence_id = self._evidence_id(record)
+            claim_key = str(record.get("claim_key") or "")
+            if evidence_id and evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+            if claim_key and claim_key not in satisfied_claim_keys:
+                satisfied_claim_keys.append(claim_key)
+            for requirement_id in record.get("requirement_ids") or []:
+                normalized = str(requirement_id or "")
+                if normalized and normalized not in satisfied_requirement_ids:
+                    satisfied_requirement_ids.append(normalized)
+            result_summary = str(
+                record.get("result_summary")
+                or record.get("claim")
+                or result_summary
+            )
+            confidence = str(record.get("confidence") or confidence)
+        self.update(
+            legacy_task_id,
+            evidence_ids=evidence_ids,
+            satisfied_claim_keys=satisfied_claim_keys,
+            satisfied_analysis_requirement_ids=satisfied_requirement_ids,
+            result_summary=result_summary,
+            confidence=confidence,
+            completed_by="evidence" if completed else "",
+        )
+
     def _init_next_id(self) -> None:
         if self._next_id_val == 0:
             ids = [int(f.stem.split("_")[1]) for f in self.dir.glob("task_*.json")]

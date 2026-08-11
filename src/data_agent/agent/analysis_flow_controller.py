@@ -52,8 +52,253 @@ class AnalysisFlowController:
         if intent.intent_type == "directed_analysis" and state.analysis_plan:
             if explicit_executable_plan:
                 self.ensure_workflow_tasks(state)
+                self.reconcile_replayable_computations(state)
             self.ensure_confirmation_task(state)
+        self.restore_committed_run_artifacts(state)
         state.save()
+
+    def restore_committed_run_artifacts(
+        self,
+        state: AnalysisSessionState,
+    ) -> dict:
+        """Regenerate session JSON views from the canonical run database."""
+
+        coordinator = task_manager._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return {"computations": 0, "evidence_records": 0}
+        run = coordinator.store.get_latest_run(self.session_id)
+        if run is None:
+            return {"computations": 0, "evidence_records": 0}
+        before_computations = len(state.computation_refs)
+        before_evidence = len(state.evidence_records)
+        for item in coordinator.store.list_computations(
+            run_id=run.run_id,
+            session_id=self.session_id,
+        ):
+            payload = item.get("payload")
+            if isinstance(payload, dict) and payload:
+                state.upsert_computation_ref(payload)
+        for record in coordinator.store.list_evidence_records(
+            run_id=run.run_id,
+            session_id=self.session_id,
+        ):
+            if record:
+                state.upsert_evidence_record(record)
+        restored_computations = max(
+            0,
+            len(state.computation_refs) - before_computations,
+        )
+        restored_evidence = max(0, len(state.evidence_records) - before_evidence)
+        if restored_computations or restored_evidence:
+            state.append_turn_diagnostic({
+                "event": "analysis_run_artifacts_restored",
+                "run_id": run.run_id,
+                "computations": restored_computations,
+                "evidence_records": restored_evidence,
+            })
+        return {
+            "computations": restored_computations,
+            "evidence_records": restored_evidence,
+        }
+
+    def reconcile_replayable_computations(
+        self,
+        state: AnalysisSessionState,
+    ) -> dict:
+        """Rebind committed computations after temporary plan/task desync.
+
+        A successful tool result can outlive a momentary mismatch between the
+        canonical AnalysisRun step and the semantic AnalysisPlan step.  The
+        computation stays committed but cannot advance workflow state until
+        the exact capability, dataset, claim, and requirement identities are
+        available again.  This method performs that deterministic replay; it
+        never infers a step from model prose or changes the original output.
+        """
+
+        coordinator = task_manager._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return {"reconciled": 0, "remaining": 0, "computation_ids": []}
+        run = coordinator.store.get_active_run(self.session_id)
+        if run is None:
+            return {"reconciled": 0, "remaining": 0, "computation_ids": []}
+        replayable = coordinator.store.list_replayable_computations(
+            run_id=run.run_id,
+            session_id=self.session_id,
+        )
+        if not replayable:
+            return {"reconciled": 0, "remaining": 0, "computation_ids": []}
+
+        from data_agent.agent.analysis_execution import bind_tool_call_to_plan_step
+        from data_agent.agent.evidence_contracts import (
+            analysis_plan_semantic_digest,
+            analysis_step_semantic_digest,
+            computation_ref_key,
+            project_structured_computation_evidence,
+            rebind_computation_ref,
+        )
+        from data_agent.config import get_config
+
+        plan = state.analysis_plan if isinstance(state.analysis_plan, dict) else {}
+        method_steps = {
+            str(step.get("step_id") or ""): step
+            for step in (plan.get("method_plan") or [])
+            if isinstance(step, dict) and str(step.get("step_id") or "")
+        }
+        run_steps = {step.step_id: step for step in run.steps}
+        reconciled_ids: list[str] = []
+        diagnostics: list[dict] = []
+
+        for item in replayable:
+            computation_id = str(item.get("computation_id") or "")
+            ref = dict(item.get("payload") or {})
+            run_step = run_steps.get(str(item.get("step_id") or ""))
+            external_step_id = (
+                str(run_step.payload.get("external_step_id") or "")
+                if run_step is not None
+                else ""
+            )
+            semantic_step = method_steps.get(external_step_id)
+            tool_name = str(ref.get("tool_name") or "")
+            capability = registry.capability_for(tool_name)
+            if semantic_step is None or not tool_name or capability is None:
+                diagnostics.append({
+                    "computation_id": computation_id,
+                    "reason": "replay_binding_unavailable",
+                    "step_id": external_step_id,
+                })
+                continue
+            dataset_names = [
+                str(name)
+                for name in (semantic_step.get("dataset_inputs") or [])
+                if str(name)
+            ]
+            binding = bind_tool_call_to_plan_step(
+                plan=plan,
+                tool_name=tool_name,
+                capability=capability,
+                dataset_names=dataset_names,
+                preferred_step_id=external_step_id,
+            )
+            if not binding.ok or binding.step_id != external_step_id:
+                diagnostics.append({
+                    "computation_id": computation_id,
+                    "reason": binding.error_type or "replay_binding_unavailable",
+                    "step_id": external_step_id,
+                })
+                continue
+
+            rebound_ref = rebind_computation_ref(
+                ref,
+                sessions_root=get_config().sessions_resolved,
+                current_session_id=self.session_id,
+                plan_id=binding.plan_id,
+                plan_digest=analysis_plan_semantic_digest(plan),
+                step_id=binding.step_id,
+                step_digest=analysis_step_semantic_digest(semantic_step),
+            )
+            rebound_ref.update({
+                "claim_key": binding.claim_key,
+                "claim_keys": list(binding.claim_keys),
+                "requirement_ids": list(binding.requirement_ids),
+                "binding_error_type": "",
+                "binding_candidate_step_ids": [],
+                "projection_status": "projected",
+                "reconciled_from_binding_error_type": str(
+                    ref.get("binding_error_type") or ""
+                ),
+            })
+            # The bound reference is a new semantic revision of the same
+            # immutable computation row. Recompute its provenance key while
+            # retaining the stable AnalysisRun computation_id.
+            rebound_ref["computation_ref_id"] = computation_ref_key(rebound_ref)
+            projection = project_structured_computation_evidence(
+                computation_ref=rebound_ref,
+                binding=binding,
+                plan=plan,
+                capability=capability,
+                dataset_contracts=list(state.dataset_contracts or []),
+                current_session_id=self.session_id,
+                current_turn_id=str(rebound_ref.get("turn_id") or ""),
+                sessions_root=get_config().sessions_resolved,
+            )
+            if not projection.projected:
+                diagnostics.append({
+                    "computation_id": computation_id,
+                    "reason": projection.reason or "replay_projection_failed",
+                    "diagnostics": list(projection.diagnostics or []),
+                })
+                continue
+
+            records = [
+                dict(record)
+                for record in (projection.records or (projection.record,))
+                if isinstance(record, dict)
+            ]
+            expected_claims = {str(value) for value in binding.claim_keys if str(value)}
+            expected_requirements = {
+                str(value) for value in binding.requirement_ids if str(value)
+            }
+            projected_claims = {
+                str(record.get("claim_key") or "")
+                for record in records
+                if str(record.get("claim_key") or "")
+            }
+            projected_requirements = {
+                str(requirement_id)
+                for record in records
+                for requirement_id in (record.get("requirement_ids") or [])
+                if str(requirement_id)
+            }
+            complete_step = bool(expected_claims) and (
+                expected_claims.issubset(projected_claims)
+                and expected_requirements.issubset(projected_requirements)
+            )
+            receipt = task_manager.reconcile_analysis_computation_projection(
+                session_id=self.session_id,
+                binding={"run_id": run.run_id, "step_id": run_step.step_id},
+                computation_id=computation_id,
+                computation_ref=rebound_ref,
+                evidence_records=records,
+                complete_step=complete_step,
+                idempotency_key=(
+                    f"reconcile:{computation_id}:"
+                    f"{rebound_ref['plan_digest']}:{binding.step_id}"
+                ),
+            )
+            if receipt is None:
+                diagnostics.append({
+                    "computation_id": computation_id,
+                    "reason": "replay_transaction_unavailable",
+                })
+                continue
+            state.upsert_computation_ref(rebound_ref)
+            for record in records:
+                state.upsert_evidence_record(record)
+            state.append_turn_diagnostic({
+                "event": "computation_projection_reconciled",
+                "computation_id": computation_id,
+                "computation_ref_id": rebound_ref["computation_ref_id"],
+                "plan_id": binding.plan_id,
+                "step_id": binding.step_id,
+                "evidence_ids": [str(record.get("id") or "") for record in records],
+                "completed_task_ids": (
+                    [int(receipt.get("legacy_task_id") or 0)]
+                    if receipt.get("completed_step_id")
+                    and int(receipt.get("legacy_task_id") or 0)
+                    else []
+                ),
+            })
+            reconciled_ids.append(computation_id)
+
+        if reconciled_ids:
+            state.save()
+        remaining = len(replayable) - len(reconciled_ids)
+        return {
+            "reconciled": len(reconciled_ids),
+            "remaining": remaining,
+            "computation_ids": reconciled_ids,
+            "diagnostics": diagnostics,
+        }
 
     def ensure_canonical_execution_envelope(
         self,

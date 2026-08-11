@@ -180,6 +180,22 @@ class AnalysisRunCoordinator:
             transition += 1
         return run
 
+    def commit_computation_projection(
+        self,
+        **transaction,
+    ) -> dict:
+        """Commit one server-owned computation/evidence workflow transaction."""
+
+        return self.store.commit_computation_projection(**transaction)
+
+    def reconcile_computation_projection(
+        self,
+        **transaction,
+    ) -> dict:
+        """Replay a previously unbound computation into its recovered step."""
+
+        return self.store.reconcile_computation_projection(**transaction)
+
     def advance_terminal_task(
         self,
         *,

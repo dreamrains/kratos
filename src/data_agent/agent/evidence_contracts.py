@@ -1363,6 +1363,73 @@ def hydrate_computation_ref(
     return output
 
 
+def rebind_computation_ref(
+    ref: dict[str, Any],
+    *,
+    sessions_root: Path,
+    current_session_id: str,
+    plan_id: str,
+    plan_digest: str,
+    step_id: str,
+    step_digest: str,
+) -> dict[str, Any]:
+    """Create a verified semantic-binding artifact for an existing result.
+
+    The original tool output artifact is immutable and may have been written
+    while plan/task identity was temporarily unavailable.  Reconciliation
+    therefore writes a deterministic derived envelope containing the exact
+    same arguments and output digests with only the server-verified semantic
+    binding changed.  The original artifact remains the audit source.
+    """
+
+    hydrate_computation_ref(
+        ref,
+        sessions_root=sessions_root,
+        current_session_id=current_session_id,
+    )
+    source_path = _resolve_artifact_path(
+        ref.get("artifact_path"),
+        Path(sessions_root),
+        session_id=current_session_id,
+    )
+    if source_path is None:
+        raise ValueError("computation artifact is unavailable")
+    try:
+        envelope = json.loads(source_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("computation artifact is invalid") from exc
+    rebound_envelope = dict(envelope)
+    rebound_envelope.update({
+        "plan_id": str(plan_id or ""),
+        "plan_digest": str(plan_digest or ""),
+        "step_id": str(step_id or ""),
+        "step_digest": str(step_digest or ""),
+    })
+    binding_digest = computation_digest({
+        "plan_id": rebound_envelope["plan_id"],
+        "plan_digest": rebound_envelope["plan_digest"],
+        "step_id": rebound_envelope["step_id"],
+        "step_digest": rebound_envelope["step_digest"],
+    })[:16]
+    rebound_path = source_path.with_name(
+        f"{source_path.stem}_binding_{binding_digest}{source_path.suffix}"
+    )
+    rebound_path.write_text(
+        json.dumps(rebound_envelope, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    rebound = dict(ref)
+    rebound.update({
+        "source_artifact_path": str(source_path),
+        "artifact_path": str(rebound_path),
+        "plan_id": rebound_envelope["plan_id"],
+        "plan_digest": rebound_envelope["plan_digest"],
+        "step_id": rebound_envelope["step_id"],
+        "step_digest": rebound_envelope["step_digest"],
+    })
+    return rebound
+
+
 def _required_statistical_support(requirements: list[dict[str, Any]]) -> set[str]:
     return {
         support_name

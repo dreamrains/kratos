@@ -584,6 +584,7 @@ class AgentLoop:
         self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
         self._computation_ref_lock = threading.Lock()
+        self._transactional_tool_receipts: dict[str, dict[str, Any]] = {}
         self._compact_state = CompactState()
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
 
@@ -1830,6 +1831,21 @@ class AgentLoop:
             return None
 
     def _persist_analysis_run_outcome(self, tc, binding, outcome):
+        transactional_receipt = self._transactional_tool_receipts.get(
+            str(tc.id or "")
+        )
+        if transactional_receipt:
+            from dataclasses import replace
+
+            artifact_ids = tuple(dict.fromkeys([
+                *outcome.artifact_ids,
+                str(transactional_receipt.get("computation_ref_id") or ""),
+                str(transactional_receipt.get("computation_id") or ""),
+            ]))
+            return replace(
+                outcome,
+                artifact_ids=tuple(item for item in artifact_ids if item),
+            )
         if not binding:
             return outcome
         from data_agent.session.task_manager import task_manager
@@ -1864,9 +1880,11 @@ class AgentLoop:
         *,
         ref: dict[str, Any],
         step_binding: Any,
+        analysis_run_binding: dict | None,
+        tool_state: str,
         plan: dict[str, Any],
         capability: Any,
-    ) -> None:
+    ) -> bool:
         """Auto-project a successful structured computation into v2 evidence.
 
         Reuses ``project_structured_computation_evidence``: on success it
@@ -1885,9 +1903,9 @@ class AgentLoop:
 
             state = getattr(self.context, "analysis_state", None)
             if state is None:
-                return
+                return False
             if step_binding is None or not getattr(step_binding, "ok", False):
-                return
+                return False
             capability_payload: dict[str, Any] | None = None
             if capability is not None:
                 if isinstance(capability, dict):
@@ -1927,16 +1945,77 @@ class AgentLoop:
 
                 completed_task_ids: list[int] = []
                 stored_records: list[dict[str, Any]] = []
+                transaction_receipt = None
+                if analysis_run_binding:
+                    expected_claim_keys = {
+                        str(item)
+                        for item in (
+                            getattr(step_binding, "claim_keys", ()) or ()
+                        )
+                        if str(item)
+                    }
+                    expected_requirement_ids = {
+                        str(item)
+                        for item in (
+                            getattr(step_binding, "requirement_ids", ()) or ()
+                        )
+                        if str(item)
+                    }
+                    projected_claim_keys = {
+                        str(record.get("claim_key") or "")
+                        for record in projected_records
+                        if isinstance(record, dict)
+                        and str(record.get("claim_key") or "")
+                    }
+                    projected_requirement_ids = {
+                        str(requirement_id)
+                        for record in projected_records
+                        if isinstance(record, dict)
+                        for requirement_id in (record.get("requirement_ids") or [])
+                        if str(requirement_id)
+                    }
+                    complete_step = bool(expected_claim_keys) and (
+                        expected_claim_keys.issubset(projected_claim_keys)
+                        and expected_requirement_ids.issubset(
+                            projected_requirement_ids
+                        )
+                    )
+                    transaction_receipt = (
+                        task_manager.commit_analysis_computation_projection(
+                            session_id=state.session_id,
+                            binding=analysis_run_binding,
+                            tool_call_id=str(ref.get("tool_call_id") or ""),
+                            tool_name=str(ref.get("tool_name") or ""),
+                            tool_state=tool_state,
+                            capability=str(ref.get("capability_id") or ""),
+                            computation_ref=ref,
+                            evidence_records=[
+                                dict(record) for record in projected_records
+                            ],
+                            complete_step=complete_step,
+                        )
+                    )
+                    if transaction_receipt:
+                        self._transactional_tool_receipts[
+                            str(ref.get("tool_call_id") or "")
+                        ] = transaction_receipt
                 for record in projected_records:
                     projected_record = state.upsert_evidence_record(record)
                     stored_records.append(projected_record)
-                    completed_task_ids.extend(
-                        task_manager.complete_matching_tasks_from_evidence(
-                            session_id=state.session_id,
-                            evidence=projected_record,
-                            analysis_spec_id="",
-                        ) or []
+                    if transaction_receipt is None:
+                        completed_task_ids.extend(
+                            task_manager.complete_matching_tasks_from_evidence(
+                                session_id=state.session_id,
+                                evidence=projected_record,
+                                analysis_spec_id="",
+                            ) or []
+                        )
+                if transaction_receipt:
+                    legacy_task_id = int(
+                        transaction_receipt.get("legacy_task_id") or 0
                     )
+                    if transaction_receipt.get("completed_step_id") and legacy_task_id:
+                        completed_task_ids.append(legacy_task_id)
                 # Invalidate the synthesis-policy cache so the next prompt
                 # rebuilds the bounded evidence catalog with this record.
                 self._turn_synthesis_policy_injected = False
@@ -1957,19 +2036,23 @@ class AgentLoop:
                     ],
                     "completed_task_ids": list(dict.fromkeys(completed_task_ids)),
                 })
-                return
+                return transaction_receipt is not None
             state.append_turn_diagnostic({
                 "event": "evidence_projection_skipped",
                 "tool_call_id": str(ref.get("tool_call_id") or ""),
                 "reason": str(result.reason or ""),
                 "diagnostics": list(result.diagnostics or []),
             })
+            ref["projection_status"] = "projection_failed"
+            return False
         except Exception as exc:
+            ref["projection_status"] = "projection_failed"
             logger.warning(
                 "Structured evidence projection skipped: %s",
                 exc,
                 extra={"extra_data": {"tool": str(ref.get("tool_name") or ""), "error": str(exc)}},
             )
+            return False
 
     def _fallback_resolution_for_tool_call(self, tool_call: Any) -> str:
         """Return a server-persisted fallback resolution for this call.
@@ -1998,7 +2081,14 @@ class AgentLoop:
             return str(ref.get("fallback_resolution") or "")
         return ""
 
-    def _compact_tool_output(self, tool_result, tc, step_binding=None) -> str:
+    def _compact_tool_output(
+        self,
+        tool_result,
+        tc,
+        step_binding=None,
+        analysis_run_binding=None,
+        tool_state="committed",
+    ) -> str:
         """Compact tool output for LLM context. Persist data/details to disk, return concise summary.
 
         ``step_binding`` is the canonical ``StepBindingResult`` for this tool
@@ -2024,6 +2114,7 @@ class AgentLoop:
             from data_agent.agent.evidence_contracts import (
                 analysis_plan_semantic_digest,
                 analysis_step_semantic_digest,
+                computation_ref_key,
             )
 
             dataset_names = dataset_arguments_for_tool(
@@ -2114,6 +2205,7 @@ class AgentLoop:
                 ref["claim_keys"] = claim_keys
                 ref["requirement_ids"] = requirement_ids
                 ref["binding_error_type"] = binding_error_type
+                ref["computation_ref_id"] = computation_ref_key(ref)
                 if tc.name == "run_python" and success:
                     ref["fallback_resolution"] = "computation_only_limitation"
                     ref["limitations"] = [
@@ -2123,7 +2215,6 @@ class AgentLoop:
                 if binding_candidate_step_ids:
                     ref["binding_candidate_step_ids"] = binding_candidate_step_ids
                 if state is not None:
-                    state.upsert_computation_ref(ref)
                     state.append_turn_diagnostic({
                         "event": "tool_binding",
                         "tool_call_id": tc.id,
@@ -2133,12 +2224,38 @@ class AgentLoop:
                         "step_id": step_id,
                         "error_type": binding_error_type,
                     })
-                    self._maybe_project_structured_evidence(
+                    transaction_committed = self._maybe_project_structured_evidence(
                         ref=ref,
                         step_binding=step_binding,
+                        analysis_run_binding=analysis_run_binding,
+                        tool_state=tool_state,
                         plan=plan or {},
                         capability=capability,
                     )
+                    if success and analysis_run_binding and not transaction_committed:
+                        from data_agent.session.task_manager import task_manager
+
+                        ref["projection_status"] = (
+                            "pending_binding"
+                            if not binding_active
+                            else str(ref.get("projection_status") or "projection_failed")
+                        )
+                        receipt = task_manager.commit_analysis_computation_projection(
+                            session_id=state.session_id,
+                            binding=analysis_run_binding,
+                            tool_call_id=str(ref.get("tool_call_id") or ""),
+                            tool_name=str(ref.get("tool_name") or ""),
+                            tool_state=tool_state,
+                            capability=str(ref.get("capability_id") or ""),
+                            computation_ref=ref,
+                            evidence_records=[],
+                            complete_step=False,
+                        )
+                        if receipt:
+                            self._transactional_tool_receipts[
+                                str(ref.get("tool_call_id") or "")
+                            ] = receipt
+                    state.upsert_computation_ref(ref)
                     state.save()
         except Exception as exc:
             logger.warning(
@@ -2273,6 +2390,7 @@ class AgentLoop:
         self._turn_resumed_from_confirmation = False
         self._turn_last_round_budget: dict[str, Any] | None = None
         self._turn_final_answer_candidates: list[dict[str, str]] = []
+        self._transactional_tool_receipts = {}
 
     # --- Safe live analysis progress narration -----------------------------
     # ``_progress_payload`` returns the wire dict for a closed-vocabulary
@@ -4106,7 +4224,13 @@ class AgentLoop:
                 return  # stop processing further tool calls
 
             duration_ms = int((time.monotonic() - t0) * 1000)
-            tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
+            tool_msg_content = self._compact_tool_output(
+                tool_result,
+                tc,
+                step_binding,
+                analysis_run_binding,
+                committed_outcome.state.value,
+            )
             tool_failed = self._tool_content_is_error(tool_msg_content)
 
             if tool_failed:
@@ -4683,7 +4807,13 @@ class AgentLoop:
             self._fill_remaining_tool_responses(tool_calls, index + 1, "Suspended for user confirmation")
             return susp
 
-        tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
+        tool_msg_content = self._compact_tool_output(
+            tool_result,
+            tc,
+            step_binding,
+            analysis_run_binding,
+            committed_outcome.state.value,
+        )
         tool_failed = self._tool_content_is_error(tool_msg_content)
 
         if tool_failed:
@@ -4777,7 +4907,11 @@ class AgentLoop:
                 committed_outcome = committed_tool_outcome(tool_result, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(
-                    tool_result, tc, bindings.get(tc.id)
+                    tool_result,
+                    tc,
+                    bindings.get(tc.id),
+                    analysis_run_bindings.get(tc.id),
+                    committed_outcome.state.value,
                 )
                 tool_failed = self._tool_content_is_error(tool_msg_content)
 

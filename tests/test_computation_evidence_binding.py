@@ -913,6 +913,148 @@ def test_auto_projection_persists_all_claims_and_completes_multi_claim_task(
     assert updated["satisfied_claim_keys"] == claim_keys
 
 
+def test_auto_projection_commits_run_computation_evidence_and_next_task(
+    computation_env,
+    monkeypatch,
+):
+    manager = computation_env["manager"]
+    first = next(
+        item
+        for item in manager.list_active_for_scope(session_id="s1")
+        if item["step_id"] == "step_compare"
+    )
+    second = manager.create(
+        "Summarize the comparison",
+        session_id="s1",
+        plan_id=first["plan_id"],
+        plan_version=first["plan_version"],
+        task_kind="plan_task",
+        analysis_plan_id="plan_compare",
+        step_id="step_summary",
+        dataset_inputs=["orders"],
+    )
+    manager.materialize_analysis_run(
+        session_id="s1",
+        project_name="",
+        plan_id=first["plan_id"],
+        tasks=[first, second],
+    )
+    computation_env["state"].dataset_contracts[0]["dataset_id"] = (
+        computation_env["active"]["dataset_id"]
+    )
+    step = computation_env["state"].analysis_plan["method_plan"][0]
+    step["requirement_ids"] = [
+        item["id"]
+        for item in computation_env["state"].analysis_plan[
+            "analysis_requirements"
+        ]["step_compare"]
+    ]
+
+    ref = _execute_computation(computation_env)
+
+    coordinator = manager._analysis_run_coordinator(create=False)
+    run = coordinator.store.get_latest_run("s1")
+    assert ref["computation_ref_id"]
+    assert coordinator.store.computation_count(run.run_id) == 1
+    assert coordinator.store.evidence_link_count(run.run_id) == 1
+    assert coordinator.store.tool_outcome_count(run.run_id) == 1
+    assert manager.get(first["id"])["status"] == "completed"
+    assert manager.get(second["id"])["status"] == "in_progress"
+
+    # Simulate a crash after the SQLite transaction but before the session
+    # JSON view was durably written. The next controller pass regenerates the
+    # full computation/evidence view from the canonical run store.
+    computation_env["state"].computation_refs = []
+    computation_env["state"].evidence_records = []
+    import data_agent.agent.analysis_flow_controller as controller_module
+
+    monkeypatch.setattr(controller_module, "task_manager", manager)
+    restored = controller_module.AnalysisFlowController(
+        "s1",
+        "",
+    ).restore_committed_run_artifacts(computation_env["state"])
+
+    assert restored == {"computations": 1, "evidence_records": 1}
+    assert computation_env["state"].computation_refs[0][
+        "computation_ref_id"
+    ] == ref["computation_ref_id"]
+    assert computation_env["state"].evidence_records[0]["claim_key"] == (
+        "group_revenue_difference"
+    )
+
+
+def test_unbound_successful_computation_is_replayable_in_the_current_run(
+    computation_env,
+    monkeypatch,
+):
+    manager = computation_env["manager"]
+    task = next(
+        item
+        for item in manager.list_active_for_scope(session_id="s1")
+        if item["step_id"] == "step_compare"
+    )
+    manager.materialize_analysis_run(
+        session_id="s1",
+        project_name="",
+        plan_id=task["plan_id"],
+        tasks=[task],
+    )
+    current = computation_env["state"].analysis_plan
+    step = dict(current["method_plan"][0])
+    step["required_capability"] = "data.describe"
+    computation_env["state"].set_analysis_plan({
+        **current,
+        "method_plan": [step],
+    })
+
+    ref = _execute_computation(computation_env)
+
+    coordinator = manager._analysis_run_coordinator(create=False)
+    run = coordinator.store.get_latest_run("s1")
+    replayable = coordinator.store.list_replayable_computations(
+        run_id=run.run_id,
+        session_id="s1",
+    )
+    assert ref["plan_id"] == ""
+    assert ref["step_id"] == ""
+    assert ref["binding_error_type"] == "analysis_step_not_found"
+    assert [item["payload"]["computation_ref_id"] for item in replayable] == [
+        ref["computation_ref_id"]
+    ]
+    assert manager.get(task["id"])["status"] == "in_progress"
+
+    import data_agent.agent.analysis_flow_controller as controller_module
+
+    monkeypatch.setattr(controller_module, "task_manager", manager)
+    repaired_plan = computation_env["state"].analysis_plan
+    repaired_step = dict(repaired_plan["method_plan"][0])
+    repaired_step["required_capability"] = "analysis.test_group_comparison"
+    repaired_step["requirement_ids"] = [
+        item["id"]
+        for item in repaired_plan["analysis_requirements"]["step_compare"]
+    ]
+    computation_env["state"].set_analysis_plan({
+        **repaired_plan,
+        "method_plan": [repaired_step],
+    })
+    computation_env["state"].dataset_contracts[0]["dataset_id"] = (
+        computation_env["active"]["dataset_id"]
+    )
+
+    reconciliation = controller_module.AnalysisFlowController(
+        "s1",
+        "",
+    ).reconcile_replayable_computations(computation_env["state"])
+
+    assert reconciliation["reconciled"] == 1, reconciliation
+    assert computation_env["state"].evidence_records
+    assert manager.get(task["id"])["status"] == "completed"
+    assert coordinator.store.list_replayable_computations(
+        run_id=run.run_id,
+        session_id="s1",
+    ) == []
+
+
 def test_structured_checked_trusts_only_capability_declared_fields(computation_env, monkeypatch):
     definition = ToolDefinition(
         name="test_partially_declared_output",

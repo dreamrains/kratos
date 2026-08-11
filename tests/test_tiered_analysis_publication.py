@@ -816,3 +816,170 @@ def test_unsupported_claims_are_omitted_and_consolidated_into_one_limit_section(
     assert "2 项结论未纳入发布内容" in result.text
     assert "无法发布该" not in result.text
     assert "## 方法说明" in result.text
+
+
+def test_traceable_computation_binding_failure_is_published_as_exploratory():
+    claim_text = "完整配对用户为 61，Wilcoxon p=0.030894。"
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_traceable_binding_failure",
+        "status": "blocked",
+        "public_text": claim_text,
+        "claims": [{
+            "id": "claim_paired",
+            "text": claim_text,
+            "claim_type": "comparison",
+            "material": True,
+        }],
+        "claim_checks": [{
+            "claim_id": "claim_paired",
+            "status": "failed",
+            "computation_ref_id": "cr_verified_paired_result",
+            "reason_codes": [
+                "missing_evidence_identity",
+                "analysis_step_not_found",
+            ],
+        }],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=claim_text,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert result.actions == {"claim_paired": "exploratory"}
+    assert claim_text in result.text
+    assert "探索性，未经独立校验" in result.text
+    assert "无法发布" not in result.text
+
+
+def test_publication_repairs_empty_markdown_structures_and_list_numbering():
+    draft = (
+        "# 游戏 B 留存结论\n\n"
+        "1. 已验证：共有 62 天记录。\n"
+        "2. 未支持：次日留存均值 91%。\n"
+        "3. 已验证：末 6 天存在观察窗不足风险。\n\n"
+        "## 已被审计清空的表\n\n"
+        "| 指标 | 数值 |\n"
+        "|---|---|\n"
+        "| 未支持指标 | 88% |\n\n"
+        "## 数据支撑\n\n"
+        "**数据支撑：**\n\n"
+        "## 方法与局限\n\n"
+        "仅做描述性分析。"
+    )
+    claims = [
+        ("kept_1", "已验证：共有 62 天记录。", "passed"),
+        ("removed_1", "未支持：次日留存均值 91%。", "failed"),
+        ("kept_2", "已验证：末 6 天存在观察窗不足风险。", "passed"),
+        ("removed_2", "未支持指标 | 88%", "failed"),
+    ]
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_structure_repair",
+        "status": "blocked",
+        "public_text": draft,
+        "claims": [{
+            "id": claim_id,
+            "text": text,
+            "claim_type": "comparison",
+            "material": True,
+        } for claim_id, text, _ in claims],
+        "claim_checks": [{
+            "claim_id": claim_id,
+            "status": status,
+            "reason_codes": [] if status == "passed" else ["numeric_mismatch"],
+        } for claim_id, _text, status in claims],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "1. 已验证：共有 62 天记录。" in result.text
+    assert "2. 已验证：末 6 天存在观察窗不足风险。" in result.text
+    assert "3. 已验证" not in result.text
+    assert "## 已被审计清空的表" not in result.text
+    assert "| 指标 | 数值 |" not in result.text
+    assert "|---|---|" not in result.text
+    assert "## 数据支撑" not in result.text
+    assert "**数据支撑：**" not in result.text
+    assert "## 方法与局限" in result.text
+    assert "仅做描述性分析。" in result.text
+
+
+def test_all_blocked_claims_still_yield_a_direct_publishable_conclusion():
+    result = render_audited_analysis_answer(
+        draft="省钱卡直接带来 91% 的收入增长。",
+        audit=audit_for("causal_upgrade"),
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "## 可发布结论" in result.text
+    assert "不足以可靠回答" in result.text
+    assert "## 证据限制" in result.text
+
+
+def test_incident_baseline_values_remain_visible_when_audit_allows_them():
+    findings = [
+        ("game_b", "游戏 B 共 62 天记录，30 天留存末端有 6 个零值。", "passed", {}),
+        (
+            "cross_promotion",
+            "互推总体加权点击率为 1.2112%。",
+            "failed",
+            {
+                "computation_ref_id": "cr_cross_promotion_weighted",
+                "reason_codes": [
+                    "missing_evidence_identity",
+                    "analysis_step_not_found",
+                ],
+            },
+        ),
+        (
+            "savings_card",
+            "省钱卡完整配对用户为 61，Wilcoxon p=0.030894。",
+            "passed",
+            {},
+        ),
+    ]
+    draft = "# 可发布发现\n\n" + "\n".join(
+        f"- {text}" for _claim_id, text, _status, _extra in findings
+    )
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_incident_baselines",
+        "status": "revise",
+        "public_text": draft,
+        "claims": [{
+            "id": claim_id,
+            "text": text,
+            "claim_type": "comparison",
+            "material": True,
+        } for claim_id, text, _status, _extra in findings],
+        "claim_checks": [{
+            "claim_id": claim_id,
+            "status": status,
+            "reason_codes": [],
+            **extra,
+        } for claim_id, _text, status, extra in findings],
+    }
+
+    result = render_audited_analysis_answer(
+        draft=draft,
+        audit=audit,
+        completion=complete_decision(),
+        mode="tiered",
+    )
+
+    assert "62 天" in result.text
+    assert "6 个零值" in result.text
+    assert "1.2112%" in result.text
+    assert "完整配对用户为 61" in result.text
+    assert "p=0.030894" in result.text
+    assert result.actions["cross_promotion"] == "exploratory"

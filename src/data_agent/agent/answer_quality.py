@@ -99,6 +99,13 @@ _EXPLORATORY_TRACEABLE_FAILURE_CODES = frozenset({
 _EXPLORATORY_TRACEABLE_PRIMARY_FAILURE_CODES = (
     _EXPLORATORY_TRACEABLE_FAILURE_CODES - {"evidence_check_failed"}
 )
+_EXPLORATORY_COMPUTATION_BINDING_FAILURE_CODES = frozenset({
+    "analysis_step_not_found",
+    "ambiguous_analysis_step",
+    "analysis_step_not_bound",
+    "stage3c0b_current_task_missing",
+    "computation_projection_failed",
+})
 _EXPLORATORY_MARKERLESS_RECOMMENDATION_FAILURE_CODES = frozenset({
     "missing_evidence_identity",
     "evidence_check_failed",
@@ -662,11 +669,24 @@ def _failed_claim_action(
         if str(item).strip()
     }
     evidence_id = str(check.get("evidence_id") or "").strip()
-    traceable = bool(evidence_id or evidence_ids)
+    computation_ref_ids = {
+        str(item).strip()
+        for item in check.get("computation_ref_ids") or []
+        if str(item).strip()
+    }
+    computation_ref_id = str(check.get("computation_ref_id") or "").strip()
+    evidence_traceable = bool(evidence_id or evidence_ids)
+    computation_traceable = bool(computation_ref_id or computation_ref_ids)
+    traceable = evidence_traceable or computation_traceable
+    exploratory_failure_codes = set(_EXPLORATORY_TRACEABLE_FAILURE_CODES)
+    if computation_traceable:
+        exploratory_failure_codes.update(
+            _EXPLORATORY_COMPUTATION_BINDING_FAILURE_CODES
+        )
     if (
         traceable
         and reason_codes
-        and reason_codes.issubset(_EXPLORATORY_TRACEABLE_FAILURE_CODES)
+        and reason_codes.issubset(exploratory_failure_codes)
         and bool(reason_codes & _EXPLORATORY_TRACEABLE_PRIMARY_FAILURE_CODES)
     ):
         return "exploratory"
@@ -777,6 +797,137 @@ def _find_unconsumed_span(
         if all(end <= c_start or idx >= c_end for c_start, c_end in consumed):
             return idx
         start = idx + 1
+
+
+_MARKDOWN_TABLE_SEPARATOR = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
+)
+_MARKDOWN_ORDERED_ITEM = re.compile(r"^(\s*)(\d+)([.)])(\s+)(.*)$")
+_MARKDOWN_HORIZONTAL_RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+_MARKDOWN_STANDALONE_LABEL = re.compile(
+    r"^\s*\*\*[^*]+[：:]\*\*\s*$"
+)
+
+
+def _is_markdown_table_line(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _repair_markdown_structure(text: str) -> str:
+    """Remove audit-created empty structures and restore ordered lists."""
+
+    lines = text.splitlines()
+    repaired: list[str] = []
+    index = 0
+    while index < len(lines):
+        if not _is_markdown_table_line(lines[index]):
+            repaired.append(lines[index])
+            index += 1
+            continue
+        end = index
+        while end < len(lines) and _is_markdown_table_line(lines[end]):
+            end += 1
+        block = lines[index:end]
+        separators = [
+            position
+            for position, line in enumerate(block)
+            if _MARKDOWN_TABLE_SEPARATOR.match(line)
+        ]
+        has_data_row = bool(
+            separators
+            and any(
+                position > separators[0]
+                and not _MARKDOWN_TABLE_SEPARATOR.match(line)
+                for position, line in enumerate(block)
+            )
+        )
+        if has_data_row:
+            repaired.extend(block)
+        index = end
+
+    lines = repaired
+    changed = True
+    while changed:
+        changed = False
+        drop: set[int] = set()
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            # Keep the document H1 as a stable answer title even when every
+            # claim in its first section is removed. Empty subordinate
+            # sections are the structures that become misleading/orphaned.
+            is_heading = bool(re.match(r"^\s*#{2,6}\s+", stripped))
+            is_label = bool(_MARKDOWN_STANDALONE_LABEL.match(stripped))
+            if not (is_heading or is_label):
+                continue
+            cursor = index + 1
+            meaningful = False
+            while cursor < len(lines):
+                candidate = lines[cursor].strip()
+                if _MARKDOWN_HEADING_PREFIX.match(candidate):
+                    break
+                if not candidate or _MARKDOWN_HORIZONTAL_RULE.match(candidate):
+                    cursor += 1
+                    continue
+                if _MARKDOWN_STANDALONE_LABEL.match(candidate):
+                    cursor += 1
+                    continue
+                meaningful = True
+                break
+            if not meaningful:
+                drop.add(index)
+                changed = True
+        if drop:
+            lines = [line for index, line in enumerate(lines) if index not in drop]
+
+    compacted: list[str] = []
+    previous_rule = False
+    for line in lines:
+        is_rule = bool(_MARKDOWN_HORIZONTAL_RULE.match(line.strip()))
+        if is_rule and (not any(item.strip() for item in compacted) or previous_rule):
+            continue
+        compacted.append(line)
+        previous_rule = is_rule
+    while compacted and (
+        not compacted[-1].strip()
+        or _MARKDOWN_HORIZONTAL_RULE.match(compacted[-1].strip())
+    ):
+        compacted.pop()
+
+    next_ordinal: dict[str, int] = {}
+    renumbered: list[str] = []
+    for line in compacted:
+        match = _MARKDOWN_ORDERED_ITEM.match(line)
+        if match:
+            indent, _number, delimiter, spacing, body = match.groups()
+            ordinal = next_ordinal.get(indent, 1)
+            renumbered.append(
+                f"{indent}{ordinal}{delimiter}{spacing}{body}"
+            )
+            next_ordinal[indent] = ordinal + 1
+            for deeper in [key for key in next_ordinal if len(key) > len(indent)]:
+                next_ordinal.pop(deeper, None)
+        elif line.strip():
+            next_ordinal.clear()
+            renumbered.append(line)
+        else:
+            renumbered.append(line)
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(renumbered)).strip()
+
+
+def _has_substantive_published_answer(text: str) -> bool:
+    body = text.split("## 证据限制", 1)[0]
+    for line in body.splitlines():
+        stripped = line.strip()
+        if (
+            not stripped
+            or _MARKDOWN_HEADING_PREFIX.match(stripped)
+            or _MARKDOWN_HORIZONTAL_RULE.match(stripped)
+        ):
+            continue
+        return True
+    return False
 
 
 def render_audited_analysis_answer(
@@ -959,6 +1110,15 @@ def render_audited_analysis_answer(
             *[f"- {item}" for item in distinct_limits],
         ]
         text = (text + "\n\n" if text else "") + "\n".join(limit_lines)
+
+    text = _repair_markdown_structure(text)
+    if not _has_substantive_published_answer(text):
+        direct_conclusion = (
+            "## 可发布结论\n\n"
+            "当前可追踪证据不足以可靠回答该分析问题，"
+            "因此不能给出数值判断；具体缺口见下方证据限制。"
+        )
+        text = direct_conclusion + ("\n\n" + text if text else "")
 
     # Strict-only fail-safe rollback net. When the tiered renderer cannot
     # safely recover — (a) an unsupported claim could not be cleanly replaced
