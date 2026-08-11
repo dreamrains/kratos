@@ -183,6 +183,41 @@ class TaskManager:
         self._apply_analysis_run_projection(run)
         return run
 
+    def advance_active_step_on_tool_execution(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_succeeded: bool,
+        expected_active_step_id: str = "",
+    ):
+        """Advance the active analysis-run step after a non-error tool call.
+
+        Execution-driven counterpart to the binder-gated commit path. When a
+        tool executes successfully against the active step but capability
+        binding failed (``analysis_step_not_found``), this still advances the
+        task list so the workbench ``任务 N/M`` indicator reflects real tool
+        execution instead of staying pinned at 0/N forever.
+
+        ``expected_active_step_id`` is the store-level step identity from
+        ``analysis_run_binding["step_id"]``. When supplied, the coordinator
+        skips advancement if the binder-gated path already moved the active
+        pointer (no double-advance). Returns the updated run (or ``None`` if
+        there is no active run).
+        """
+        coordinator = self._analysis_run_coordinator(create=False)
+        if coordinator is None:
+            return None
+        run = coordinator.advance_active_step_on_tool_execution(
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            tool_succeeded=tool_succeeded,
+            expected_active_step_id=expected_active_step_id,
+        )
+        if run is not None:
+            self._apply_analysis_run_projection(run)
+        return run
+
     def get_analysis_run_tool_binding(
         self,
         *,
@@ -1178,7 +1213,13 @@ class TaskManager:
         completed: list[int] = []
         if has_scoped_stage3c0b_tasks:
             for task in active_tasks:
-                if task.get("status") not in ("pending", "in_progress"):
+                # Allow "completed" tasks through so evidence metadata
+                # (evidence_ids, satisfied_claim_keys, requirement IDs) still
+                # attaches when the task was already completed by the M1
+                # execution-driven advancement. The inner method only returns
+                # a task_id for *newly* completed tasks, so the completed list
+                # (and downstream run advancement) is unaffected.
+                if task.get("status") not in ("pending", "in_progress", "completed"):
                     continue
                 if analysis_spec_id and task.get("analysis_spec_id") != analysis_spec_id:
                     continue

@@ -2294,12 +2294,36 @@ class AgentLoop:
         except Exception:
             return persist_large_output(self.session_id, tc.id, summary)
 
-    def _auto_track_task_progress(self, tool_name: str, success: bool) -> None:
+    def _auto_track_task_progress(
+        self,
+        tool_name: str,
+        success: bool,
+        tool_call_id: str = "",
+        bound_step_id: str = "",
+        binding_attempted: bool = False,
+    ) -> None:
         """Auto-update in_progress tasks when tools execute successfully.
 
-        If there are in_progress tasks for this session, mark the first one
-        as completed when a tool succeeds. This provides basic progress tracking
-        even when the LLM forgets to call task_update.
+        Covers two paths:
+        - Legacy tasks (no analysis_plan_id): mark the first in_progress task
+          as completed when a tool succeeds. Basic progress tracking for
+          non-canonical workflows.
+        - Canonical analysis-run tasks: advance the active step on non-error
+          tool execution, independent of capability binding. The binder-gated
+          commit path (``commit_analysis_computation_projection`` with
+          ``complete_step=True``) runs earlier in the turn; this is the M1
+          fallback for the common case where binding failed
+          (``analysis_step_not_found``) but the tool still produced a non-error
+          result against the active step. Fixes the ``任务 N/M`` indicator
+          staying pinned at 0/N forever.
+
+        ``binding_attempted`` must be True for the execution-driven
+        advancement to fire. It signals that the tool carries capability
+        metadata (so ``_bind_tool_call`` returned a non-None binding result,
+        even if ``ok=False``). Setup and metadata tools without capability
+        metadata (``record_analysis_plan``, ``record_evidence_record``, task
+        tools, etc.) never participate in plan/step identity and must not
+        auto-advance the active step they just materialized.
         """
         try:
             from data_agent.session.task_manager import task_manager
@@ -2314,6 +2338,24 @@ class AgentLoop:
             ]
             if legacy_in_progress and success:
                 task_manager.update(legacy_in_progress[0]["id"], status="completed")
+            # Execution-driven advancement of canonical analysis-run tasks.
+            # Skip when the binder-gated transaction already completed the
+            # step (its receipt carries ``completed_step_id``); otherwise a
+            # non-error tool execution against the active step advances it.
+            # Only fire for substantive analytical tools (binding was
+            # attempted), never for capability-less setup/metadata tools.
+            if success and tool_call_id and binding_attempted:
+                receipt = self._transactional_tool_receipts.get(tool_call_id)
+                already_advanced = bool(
+                    receipt and receipt.get("completed_step_id")
+                )
+                if not already_advanced:
+                    task_manager.advance_active_step_on_tool_execution(
+                        session_id=self.session_id,
+                        tool_call_id=tool_call_id,
+                        tool_succeeded=True,
+                        expected_active_step_id=bound_step_id,
+                    )
         except Exception:
             pass
 
@@ -4246,7 +4288,13 @@ class AgentLoop:
                     )
 
             self._record_turn_tool_result(tc.name, tool_msg_content)
-            self._auto_track_task_progress(tc.name, not tool_failed)
+            self._auto_track_task_progress(
+                tc.name,
+                not tool_failed,
+                str(tc.id or ""),
+                str((analysis_run_binding or {}).get("step_id") or ""),
+                step_binding is not None,
+            )
 
             # Phase 3: check for stage regression after tool execution
             if self.context.analysis_state is not None:
@@ -4829,7 +4877,13 @@ class AgentLoop:
                 )
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
-        self._auto_track_task_progress(tc.name, not tool_failed)
+        self._auto_track_task_progress(
+            tc.name,
+            not tool_failed,
+            str(tc.id or ""),
+            str((analysis_run_binding or {}).get("step_id") or ""),
+            step_binding is not None,
+        )
         if not tool_failed:
             # Sync mirror of the streaming ``tool_succeeded`` event; only
             # fires on a successful execution, never on errors.
@@ -5120,7 +5174,9 @@ class AgentLoop:
                     for tc, tool_msg_content in results:
                         self._record_turn_tool_result(tc.name, tool_msg_content)
                         succeeded = not self._tool_content_is_error(tool_msg_content)
-                        self._auto_track_task_progress(tc.name, succeeded)
+                        self._auto_track_task_progress(
+                            tc.name, succeeded, str(tc.id or "")
+                        )
                         if succeeded:
                             self._record_progress("tool_succeeded", status="completed")
                         self.messages.append({

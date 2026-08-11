@@ -1021,7 +1021,11 @@ def test_unbound_successful_computation_is_replayable_in_the_current_run(
     assert [item["payload"]["computation_ref_id"] for item in replayable] == [
         ref["computation_ref_id"]
     ]
-    assert manager.get(task["id"])["status"] == "in_progress"
+    # Task 4 (M1): a non-error tool execution advances the active step
+    # independent of capability binding, so the workbench ``任务 N/M``
+    # indicator is not pinned at 0/N forever. The computation stays
+    # replayable for evidence recovery even though the step is now complete.
+    assert manager.get(task["id"])["status"] == "completed"
 
     import data_agent.agent.analysis_flow_controller as controller_module
 

@@ -16,6 +16,7 @@ from data_agent.agent.analysis_plan_contracts import (
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
+from data_agent.session.analysis_run_models import RunStatus, StepStatus
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
 
@@ -141,6 +142,15 @@ class AnalysisFlowController:
         if coordinator is None:
             return {"reconciled": 0, "remaining": 0, "computation_ids": []}
         run = coordinator.store.get_active_run(self.session_id)
+        if run is None:
+            # Execution-driven advancement (M1, Task 4) can complete a
+            # single-step run before reconciliation runs. Fall back to the
+            # latest run so its replayable computations can still be
+            # recovered. Terminated (superseded) runs are skipped: a
+            # replacement run always supersedes them and owns the workflow.
+            latest = coordinator.store.get_latest_run(self.session_id)
+            if latest is not None and latest.status != RunStatus.TERMINATED:
+                run = latest
         if run is None:
             return {"reconciled": 0, "remaining": 0, "computation_ids": []}
         replayable = coordinator.store.list_replayable_computations(
@@ -275,6 +285,13 @@ class AnalysisFlowController:
                 expected_claims.issubset(projected_claims)
                 and expected_requirements.issubset(projected_requirements)
             )
+            # If the active step has already been completed (for example by the
+            # M1 execution-driven advancement that fires when capability
+            # binding failed), don't try to finish it again — the store would
+            # reject the transition. Recovery only needs to attach the rebound
+            # computation and its evidence links to the already-completed step.
+            if run_step is not None and run_step.status == StepStatus.COMPLETED:
+                complete_step = False
             receipt = task_manager.reconcile_analysis_computation_projection(
                 session_id=self.session_id,
                 binding={"run_id": run.run_id, "step_id": run_step.step_id},
