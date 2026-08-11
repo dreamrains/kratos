@@ -2929,26 +2929,20 @@ class AgentLoop:
         draft: str,
         audit: dict[str, Any] | None,
     ) -> str:
-        """Render a draft answer under claim-tier publication rules.
-
-        Always publishes deterministically — never triggers another analysis
-        tool call. When ``audit`` is missing or invalid (audit infrastructure
-        failure), every material claim is replaced with a deterministic
-        diagnostic; an exploratory disclaimer cannot authorize unaudited
-        analytical assertions.
-        """
+        """Render a draft answer. Publication is ALWAYS non-destructive
+        (transparent): relay the draft and annotate. The configured
+        ``assurance_publication_mode`` is consulted only for the observability
+        diagnostic, never to select a destructive renderer."""
 
         from data_agent.agent.answer_quality import (
             PublicationResult,
-            render_audited_analysis_answer,
+            _render_transparent_publication,
         )
 
         completion = self._evaluate_turn_completion()
-        rendered: PublicationResult = render_audited_analysis_answer(
+        rendered: PublicationResult = _render_transparent_publication(
             draft=draft,
             audit=audit if isinstance(audit, dict) else None,
-            completion=completion,
-            mode=self._publication_mode(),
         )
         self._record_publication_diagnostic(rendered)
         return rendered.text

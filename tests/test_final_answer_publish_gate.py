@@ -278,8 +278,12 @@ def test_current_alias_and_markerless_claim_publish_as_mixed_tiers(
 
     assert result["action"] == "fallback"
     assert "The revenue cost correlation is 0.4" in result["text"]
-    assert "Profit increased 25%" not in result["text"]
-    assert "无法发布" in result["text"]
+    # Task 1 (M1): the loop now always publishes transparently regardless of
+    # the configured mode. The markerless claim is relayed (NOT deleted) and no
+    # "无法发布" placeholder is emitted; the audit only records per-claim
+    # actions for diagnostics.
+    assert "Profit increased 25%" in result["text"]
+    assert "无法发布" not in result["text"]
     assert "[[evidence:" not in result["text"]
     actions = state.turn_diagnostics[-1]["actions"]
     assert "verified" in actions.values(), [
@@ -341,7 +345,11 @@ def test_gate_runs_real_persisted_audit_before_tiered_publication(
     assert result["action"] == "fallback"
     assert "[[evidence:" not in result["text"]
     assert "Revenue increased 12%" in result["text"]
-    assert "探索性，未经独立校验" in result["text"]
+    # Task 1 (M1): transparent publication relays the draft without the
+    # per-claim exploratory suffix; the draft's own limitation disclosure is
+    # preserved verbatim.
+    assert "探索性，未经独立校验" not in result["text"]
+    assert "Limitation: descriptive only." in result["text"]
     assert "无法发布" not in result["text"]
     assert state.verification_reports[-1]["contract_version"] == "final_answer_audit.v1"
 
@@ -361,11 +369,11 @@ def test_revise_gets_one_synthesis_only_retry_then_bounded_fallback(monkeypatch)
     second = loop._gate_final_analysis_answer("analyze", "Still incomplete [[evidence:ev_1]].")
 
     # Old behavior emitted a generic English "could not be published" fallback
-    # that destroyed useful structure. The new renderer publishes the audit's
-    # public_text with downgraded claims kept (no whole-answer wipe), and
-    # strips internal evidence markers.
+    # that destroyed useful structure. Task 1 (M1): transparent publication
+    # relays the draft verbatim (no whole-answer wipe) and strips internal
+    # evidence markers; the audit only records per-claim actions for diagnostics.
     assert second["action"] == "fallback"
-    assert "Audited result" in second["text"]
+    assert "Still incomplete" in second["text"]
     assert "could not be published" not in second["text"]
     assert "[[evidence:" not in second["text"]
     assert loop._turn_final_audit_instruction == ""
@@ -691,18 +699,22 @@ def test_synthesis_only_revision_cannot_escape_into_tool_execution():
         "revise",
         reason_codes=["missing_limitation"],
     )
-    loop.client = SimpleNamespace(chat=lambda **_kwargs: Response(tool_calls=[
-        ToolCall(id="forbidden", name="run_python", arguments={"code": "print(1)"}),
-    ]))
+    loop.client = SimpleNamespace(chat=lambda **_kwargs: Response(
+        text="Synthesis draft answer.",
+        tool_calls=[
+            ToolCall(id="forbidden", name="run_python", arguments={"code": "print(1)"}),
+        ],
+    ))
     loop._get_system_prompt = lambda: ""
     loop._runtime_confirmation_checkpoint = lambda: None
 
     result = loop._loop_impl("analyze")
 
-    # The tool call is rejected and the audit's public_text is published via
-    # claim-tier rendering. The legacy English "could not be published" wording
-    # is gone — that is the regression we are guarding against.
-    assert "Audited result" in result.content
+    # The tool call is rejected and the draft is published via transparent
+    # rendering (Task 1 / M1: the loop never selects a destructive renderer).
+    # The legacy English "could not be published" wording is gone — that is the
+    # regression we are guarding against.
+    assert "Synthesis draft answer" in result.content
     assert "could not be published" not in result.content
     assert not any(message.get("tool_calls") for message in loop.messages)
     assert loop._turn_final_audit_instruction == ""
