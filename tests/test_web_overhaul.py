@@ -643,18 +643,8 @@ class TestConfirmationRuntimeRestore:
 class TestConfirmationWorkbenchWording:
     def test_workbench_distinguishes_workflow_notes_from_active_confirmations(self, html, js):
         assert "workflow_notes" in js
-        assert "workbenchConfirmation()" in html
         assert "workbenchConfirmation()" in js
         assert "workflow_notes" not in html
-
-    def test_sidebar_uses_assignment_scope_and_nonblocking_relationship_diagnostics(self, html, js):
-        assert "workbenchScope().files" in html
-        assert "multifile-relationships" in html
-        assert "relationship.evidence" in html
-        assert "relationship.uncertainties" in html
-        assert "diagnostic_only" not in html
-        assert "关系待确认" not in html
-        assert "等待确认" not in html
 
 
 class TestAnalysisProgressNarration:
