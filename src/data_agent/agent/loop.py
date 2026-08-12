@@ -2711,31 +2711,18 @@ class AgentLoop:
                 instruction = (
                     "The provider stopped the previous final draft at its output limit. Rewrite it as one "
                     "complete self-contained answer; do not continue from the cutoff and do not call tools. "
-                    "Keep the visible answer within 2400 Chinese characters and prioritize the answer over "
-                    "process narration. It must contain explicit findings, actionable recommendations, and "
-                    "limitations. Copy only exact current short measurement aliases from "
-                    "bounded_evidence_catalog using [[evidence:aeNN#amNN]] markers and copy the exact metric_label "
-                    "and value from the same entry without translating or rounding those identity tokens; "
-                    "when required_verified_core_copy= is present, begin the revised answer by copying only its "
-                    "value verbatim, including the marker; "
-                    "include at least one standalone verified-core sentence with exactly one catalog measurement; "
-                    "downgrade unsupported claims, and keep "
-                    "the internal evidence markers for re-audit. This is the only truncation repair attempt."
+                    "It must contain explicit findings, actionable recommendations, and limitations. "
+                    "Where you cite a catalog measurement, carry its [[evidence:aeNN#amNN]] marker; "
+                    "downgrade unsupported claims, and keep the internal evidence markers for re-audit. "
+                    "This is the only truncation repair attempt."
                 )
             else:
                 instruction = (
-                    "Revise the synthesis only. Do not call tools. Copy the exact current short measurement "
-                    "aliases shown in bounded_evidence_catalog, using [[evidence:aeNN#amNN]] markers; "
-                    "for each cited measurement copy the exact metric_label and value from the same entry. "
-                    "Do not translate or round those identity tokens; add Chinese explanation around them. "
-                    "When required_verified_core_copy= is present, Begin the revised answer by copying only its "
-                    "value verbatim, including the marker. "
-                    "Include at least one standalone verified-core sentence using exactly one catalog measurement, "
-                    "its exact metric_label/value, and its marker, with no unrelated quantity in that sentence. "
-                    "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
-                    "the internal evidence markers for re-audit. Return a complete answer, not process narration; "
-                    "for a comprehensive report include findings, recommendations, and limitations with enough "
-                    "supporting context to stand alone. This is the only synthesis revision attempt."
+                    "Revise the synthesis only. Do not call tools. Where you cite a catalog measurement, "
+                    "carry its [[evidence:aeNN#amNN]] marker and keep the exact identity tokens. "
+                    "Downgrade or remove unsupported claims, add required limitations/exploratory labels, "
+                    "and keep the internal evidence markers for re-audit. Return a complete answer with "
+                    "findings, recommendations, and limitations. This is the only synthesis revision attempt."
                 )
         else:
             instruction = (

@@ -128,17 +128,44 @@ def test_synthesis_instruction_requires_exact_internal_evidence_markers():
 
     instruction = build_synthesis_instruction(policy)
 
+    # Marker system kept: markers required on catalog-measurement claims,
+    # aliases must not be invented, markers stripped before publication.
     assert policy.allowed_evidence_ids == ("ev_1",)
     assert "[[evidence:aeNN#amNN]]" in instruction
     assert "[[evidence:<EvidenceRecord ID>#<measurement_key>]]" not in instruction
     assert "Do not invent or substitute evidence aliases" in instruction
-    assert "copy the exact metric_label and value" in instruction
-    assert "Do not translate or round" in instruction
-    assert "at least one standalone verified-core sentence" in instruction
-    assert "exactly one catalog measurement" in instruction
-    assert "begin the final answer by copying only the value after" in instruction
-    assert "required_verified_core_copy=" in instruction
-    assert "removed before publication" in instruction
+    assert "stripped before publication" in instruction
+    # Rigid marker ceremony dropped (M2-A Task 1).
+    assert "copy the exact metric_label and value" not in instruction
+    assert "Do not translate or round" not in instruction
+    assert "at least one standalone verified-core sentence" not in instruction
+    assert "exactly one catalog measurement" not in instruction
+    assert "begin the final answer by copying only the value after" not in instruction
+    assert "required_verified_core_copy" not in instruction
+    # Data-grounded rule replaced the partial-answer directive.
+    assert "return a partial answer with" not in instruction
+    assert "partial answer with missing-evidence limitations" not in instruction
+    assert "超出数据范围" in instruction or "基于已加载数据" in instruction
+
+
+def test_synthesis_instruction_is_data_grounded_and_marker_light():
+    from data_agent.agent.synthesis_policy import SynthesisPolicy, build_synthesis_instruction
+    policy = SynthesisPolicy(
+        answer_mode="analytical", insight_depth="light", business_translation="cautious",
+        risk_boundary="descriptive", required_moves=["core_answer"], suppressed_moves=[],
+        wording_style="balanced", reason="test",
+    )
+    instr = build_synthesis_instruction(policy)
+    # D1: data-grounded rule present; "partial answer" directive gone
+    assert "超出数据范围" in instr or "数据为本" in instr or "基于已加载数据" in instr
+    assert "return a partial answer with" not in instr
+    assert "partial answer with missing-evidence limitations" not in instr
+    # D2: marker ceremony softened - keep the marker system, drop the rigid verbatim rules
+    assert "[[evidence:aeNN#amNN]]" in instr          # markers kept
+    assert "required_verified_core_copy" not in instr  # rigid open-copy rule gone
+    assert "at least one standalone verified-core sentence" not in instr
+    # Sound rules kept
+    assert "do not call any analysis" in instr or "不要调用" in instr or "do not call" in instr
 
 
 def test_synthesis_instruction_emits_ready_alias_without_full_identity(tmp_path):

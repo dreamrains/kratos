@@ -412,7 +412,7 @@ def test_missing_evidence_identity_with_failed_check_gets_synthesis_revision(
 ):
     """The verifier emits ``evidence_check_failed`` as the generic companion
     to the actionable missing-identity code.  That companion must not suppress
-    the one bounded synthesis repair which can copy current short aliases."""
+    the one bounded synthesis repair which can carry current catalog markers."""
 
     loop = _analysis_loop()
     loop._turn_synthesis_evidence_aliases = (
@@ -433,12 +433,54 @@ def test_missing_evidence_identity_with_failed_check_gets_synthesis_revision(
     assert loop._turn_final_audit_analysis_retry_used is False
     assert "[[evidence:aeNN#amNN]]" in loop._turn_final_audit_instruction
     assert "record_id#measurement_key" not in loop._turn_final_audit_instruction
-    assert "exact metric_label and value" in loop._turn_final_audit_instruction
-    assert "Do not translate or round" in loop._turn_final_audit_instruction
-    assert "standalone verified-core sentence" in loop._turn_final_audit_instruction
-    assert "required_verified_core_copy=" in loop._turn_final_audit_instruction
-    assert "Begin the revised answer by copying only its value verbatim" in (
-        loop._turn_final_audit_instruction
+    # Sound parts of the synthesis-repair instruction are retained: the marker
+    # is carried with its identity tokens, unsupported claims are downgraded,
+    # the answer stays complete with findings/recommendations/limitations, and
+    # the repair calls no tools.
+    assert "exact identity tokens" in loop._turn_final_audit_instruction
+    assert "exploratory" in loop._turn_final_audit_instruction
+    assert "Do not call tools" in loop._turn_final_audit_instruction
+    assert "findings" in loop._turn_final_audit_instruction
+    assert "recommendations" in loop._turn_final_audit_instruction
+    assert "limitations" in loop._turn_final_audit_instruction
+    # The rigid marker-regeneration ceremony is gone.
+    assert "required_verified_core_copy" not in loop._turn_final_audit_instruction
+    assert "standalone verified-core sentence" not in loop._turn_final_audit_instruction
+    assert "verbatim" not in loop._turn_final_audit_instruction
+
+
+def test_audit_repair_instruction_has_no_char_cap_and_no_rigid_ceremony(monkeypatch):
+    """The audit-repair instruction must not cap answer length and must not
+    force the rigid marker-regeneration ceremony that choked the draft.
+
+    The 2400-char cap directly explained the ~2318-char M1 answer; the
+    verbatim-copy / ``required_verified_core_copy`` / standalone-verified-core
+    rules crowded out content.  Both are removed.  Sound parts stay:
+    a complete answer with findings/limitations, downgrade of unsupported
+    claims, markers retained for re-audit, and (synthesis branch) no tools.
+    """
+
+    loop = _analysis_loop()
+    loop._inject_final_answer_audit_repair(
+        mode="synthesis", reason_codes=["provider_output_truncated"]
+    )
+    instr = loop._turn_final_audit_instruction
+    # D3: 2400-char cap removed
+    assert "2400" not in instr
+    assert "within 2400" not in instr
+    # D4: rigid marker ceremony removed
+    assert "required_verified_core_copy" not in instr
+    assert "standalone verified-core sentence" not in instr
+    # Sound parts kept
+    assert "findings" in instr and "limitations" in instr  # complete answer
+    assert "downgrade" in instr or "unsupported" in instr.lower()  # downgrade
+    # synthesis branch keeps no-tools
+    loop._inject_final_answer_audit_repair(
+        mode="synthesis", reason_codes=["missing_evidence_identity"]
+    )
+    assert (
+        "Do not call tools" in loop._turn_final_audit_instruction
+        or "do not call" in loop._turn_final_audit_instruction.lower()
     )
 
 
@@ -501,7 +543,9 @@ def test_live_provider_copy_failures_get_one_synthesis_revision(monkeypatch):
     assert first == {"action": "continue", "mode": "synthesis"}
     assert loop._turn_final_audit_revision_used is True
     assert loop._turn_final_audit_analysis_retry_used is False
-    assert "required_verified_core_copy=" in loop._turn_final_audit_instruction
+    assert "[[evidence:aeNN#amNN]]" in loop._turn_final_audit_instruction
+    assert "Do not call tools" in loop._turn_final_audit_instruction
+    assert "required_verified_core_copy" not in loop._turn_final_audit_instruction
     assert 'mode="analysis"' not in loop._turn_final_audit_instruction
 
     loop.messages.append({"role": "assistant", "content": "Still imprecise."})
