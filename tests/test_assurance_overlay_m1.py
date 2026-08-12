@@ -128,6 +128,75 @@ def test_out_of_scope_dataset_is_allowed_with_warning(tmp_path):
     )
 
 
+def test_unavailable_dataset_is_advisory_not_blocking(tmp_path, monkeypatch):
+    """M2-B Task 1: when the scope layer believes a dataset is 'bound to the
+    current task but not loaded' (the stale-binding race on terminal task
+    state), the guard must ALLOW access with a recorded warning, not block —
+    so mid-analysis tool calls (e.g. create_chart) don't abort the turn.
+
+    Mirrors ``test_out_of_scope_dataset_is_allowed_with_warning`` (M1 D7) but
+    triggers the separate ``current_task_dataset_unavailable`` path: the task
+    scope STILL lists the dataset as bound, but the workspace no longer reports
+    it as loaded.
+    """
+    import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.session.task_manager import TaskManager
+    from data_agent.tools import visualization  # noqa: F401  -- registers create_chart
+
+    # Drain any warnings left by prior tests so the assertion below is precise.
+    consume_advisory_scope_warnings()
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = manager.create_plan(
+        session_id="s1",
+        project_name="",
+        goal="Analyze banner",
+        source="analysis_plan",
+    )
+    task = manager.create(
+        "Analyze banner",
+        session_id="s1",
+        project_name="",
+        plan_id=plan["id"],
+        plan_version=plan["version"],
+        analysis_plan_id="analysis_plan_banner",
+        step_id="step_banner",
+        dataset_inputs=["banner"],
+        dataset_contract_ids=["contract_banner"],
+        combination_mode="single",
+    )
+    manager.update(task["id"], status="in_progress")
+    # Bind the manager as the process-global task_manager so the loop's
+    # authoritative scope resolver sees the staged task. This mirrors
+    # ``test_create_chart_cannot_fall_back_when_scoped_dataset_unavailable``.
+    monkeypatch.setattr(task_manager_module, "task_manager", manager)
+
+    # Stale-binding race: task scope says "banner" is bound, but the loop's
+    # workspace (the default empty workspace from the test isolation fixture)
+    # does NOT have it loaded. ``create_chart`` references it by name.
+    loop = AgentLoop(client=object(), session_id="s1")
+
+    with use_agent_context(loop.context):
+        error = loop._current_task_scope_guard(
+            "create_chart",
+            {"chart_type": "bar", "data": "banner"},
+        )
+
+    # Advisory contract: the guard returns "" (allowed) instead of the
+    # blocking JSON error, and records a warning with the
+    # ``current_task_dataset_unavailable`` symbol for observability.
+    assert error == ""
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "current_task_dataset_unavailable"
+        and w["dataset"] == "banner"
+        for w in warnings
+    )
+
+
 # ── Task 3: non-destructive derived versions apply without a confirmation receipt ──
 
 def _versioned_dataset_store(frame):

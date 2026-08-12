@@ -631,12 +631,15 @@ def test_real_dataset_output_tools_run_advisory_on_unbound_datasets(
         assert len(executed) == 1
         assert executed[0][0] == tool_name
     else:
-        # create_chart still hits the separate ``current_task_dataset_unavailable``
-        # guard (a different, pre-existing check unrelated to this advisory
-        # change), so it does not execute.
-        assert executed == []
-        assert (
-            "current_task_dataset_unavailable" in loop.messages[-1]["content"]
+        # M2-B Task 1: ``current_task_dataset_unavailable`` is advisory too, so
+        # create_chart runs (the dataset reference is recorded as a warning
+        # rather than blocking the call mid-analysis).
+        assert len(executed) == 1
+        assert executed[0][0] == tool_name
+        assert any(
+            w["warning"] == "current_task_dataset_unavailable"
+            and w["dataset"] == "iap"
+            for w in warnings
         )
 
 
@@ -682,13 +685,24 @@ def test_create_chart_auto_read_fails_closed_without_unique_scope_dataset(
     assert "data" not in arguments
 
 
-def test_create_chart_cannot_fall_back_when_scoped_dataset_is_unavailable(
+def test_create_chart_proceeds_advisory_when_scoped_dataset_unavailable(
     tmp_path,
     monkeypatch,
 ):
+    """M2-B Task 1: ``current_task_dataset_unavailable`` is advisory.
+
+    When the scope layer believes the dataset is bound to the active task but
+    the workspace no longer reports it as loaded (the stale-binding race on
+    terminal task state), the guard must ALLOW the call and record a warning
+    instead of blocking — so a stale binding never aborts a mid-analysis
+    create_chart. Mirrors M1 D7's advisory treatment of
+    ``dataset_outside_current_task_scope``.
+    """
     import data_agent.session.task_manager as task_manager_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
     from data_agent.tools import visualization  # noqa: F401
 
+    consume_advisory_scope_warnings()
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _scoped_task(manager, datasets=["banner"])
     monkeypatch.setattr(task_manager_module, "task_manager", manager)
@@ -701,7 +715,15 @@ def test_create_chart_cannot_fall_back_when_scoped_dataset_is_unavailable(
             {"chart_type": "bar", "data": "banner"},
         )
 
-    assert json.loads(error)["error_type"] == "current_task_dataset_unavailable"
+    # Advisory contract: scope guard returns "" (allowed); the previously
+    # blocking ``current_task_dataset_unavailable`` is now a recorded warning.
+    assert error == ""
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "current_task_dataset_unavailable"
+        and w["dataset"] == "banner"
+        for w in warnings
+    )
 
 
 def test_streaming_create_chart_cannot_auto_read_during_synthesis(tmp_path, monkeypatch):
