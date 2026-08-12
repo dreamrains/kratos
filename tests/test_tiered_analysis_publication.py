@@ -716,6 +716,41 @@ def test_transparent_mode_no_footer_for_bookkeeping_only_failures():
     assert result.actions.get("claim_x") == "unsupported"
 
 
+def test_transparent_mode_no_footer_for_requirement_guard_failures():
+    """A claim flagged ONLY for an unmet block-claim requirement or a claim
+    guard (binding-dependent guards, NOT real contradictions) must NOT produce
+    a footer in transparent mode. These fire when the broken binding cannot
+    evidence a requirement — not when the analysis is wrong — so surfacing them
+    is the same kind of meaningless noise the user flagged."""
+
+    audit = {
+        "contract_version": "final_answer_audit.v1",
+        "id": "audit_reqguard",
+        "status": "blocked",
+        "public_text": "",
+        "claims": [
+            {"id": "claim_r", "text": "营销活动导致人均确认提升 15%。", "claim_type": "causal", "material": True},
+        ],
+        "claim_checks": [
+            {"claim_id": "claim_r", "status": "failed", "reason_codes": ["unmet_block_claim_requirement"]},
+        ],
+    }
+    result = render_audited_analysis_answer(
+        draft="# 结论\n\n营销活动导致人均确认提升 15%。",
+        audit=audit,
+        completion=complete_decision(),
+        mode="transparent",
+    )
+    # The claim is relayed, not deleted...
+    assert "营销活动导致人均确认提升 15%" in result.text
+    # ...no footer (requirement-guard failures are binding-dependent, not real
+    # contradictions)...
+    assert "局限说明" not in result.text
+    assert "所需的统计分析保证" not in result.text
+    # ...but the audit verdict is still recorded for observability.
+    assert result.actions.get("claim_r") == "unsupported"
+
+
 def test_transparent_mode_adds_no_footer_when_all_claims_verified():
     """A fully verified answer in transparent mode is relayed with no
     limitations footer."""
