@@ -38,7 +38,11 @@ def test_factor_questions_select_factor_relationship_not_period_driver(text):
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
 def test_significance_plan_contains_required_depth_and_no_causal_upgrade():
     plan = build_plan("哪些因素显著影响目标值", dataset="factors")
-    codes = [step["analysis_code"] for step in plan["method_plan"]]
+    # The plan also carries an appended ``visual.chart`` step for
+    # method-completeness (no ``analysis_code`` — charting is visualization,
+    # not analysis depth). Filter to the analysis-coded steps so this test
+    # keeps pinning the canonical six-step factor-relationship sequence.
+    codes = [step["analysis_code"] for step in plan["method_plan"] if "analysis_code" in step]
     assert codes == [
         "grain_and_missingness_checked",
         "univariate_relationship_checked",
