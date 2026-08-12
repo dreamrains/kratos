@@ -59,8 +59,12 @@ _TRANSPARENT_SUBSTANTIVE_FAILURE_CODES = frozenset({
     "stale_dataset_evidence",
     "causal_claim_not_identified",
     "computation_integrity_failure",
-    "unmet_block_claim_requirement",
-    "claim_guard_blocked",
+    # NOTE: ``unmet_block_claim_requirement`` and ``claim_guard_blocked`` are
+    # intentionally EXCLUDED. They are requirement/guard failures that fire
+    # whenever the broken plan-step binding cannot evidence a requirement —
+    # binding-dependent, not a real contradiction. Surfacing them produces the
+    # meaningless ``局限说明`` footer the user flagged; they stay in
+    # ``actions``/``diagnostics`` for observability only.
 })
 
 # Strict-mode fail-safe banner. When the tiered renderer cannot safely
