@@ -92,30 +92,60 @@ class ScopeGuardResult:
 
 # Advisory scope-warning registry (M1 D7).
 #
-# ``dataset_outside_current_task_scope`` is advisory: an out-of-scope dataset
-# is logged and allowed rather than aborting the tool call. The symbol is
-# retained here so M2 observability can still observe how often the overlay
-# relaxed the boundary. Warnings accumulate per-process and are drained through
+# Each entry records the warning symbol, the dataset name, and the task id so
+# M2 observability can still observe how often the overlay relaxed the
+# boundary. Warnings accumulate per-process and are drained through
 # ``consume_advisory_scope_warnings``.
+#
+# Symbols:
+#   * ``dataset_outside_current_task_scope`` (M1 D7): an out-of-scope dataset
+#     reference. Allowed because truncating an analysis turn mid-flight is
+#     worse than the scope drift; the warning is the audit trail.
+#   * ``current_task_dataset_unavailable`` (M2-B Task 1): the scope layer
+#     believes the dataset is bound to the active task but the workspace no
+#     longer reports it as loaded (the stale-binding race on terminal task
+#     state). The dataset is typically still present (the binding is stale,
+#     not the data), so the call is allowed with a warning rather than
+#     aborting mid-analysis tool calls (e.g. create_chart).
 _ADVISORY_SCOPE_WARNINGS: list[dict[str, Any]] = []
 _ADVISORY_SCOPE_WARNING_SYMBOL = "dataset_outside_current_task_scope"
+_UNAVAILABLE_DATASET_SYMBOL = "current_task_dataset_unavailable"
+_VALID_ADVISORY_SCOPE_SYMBOLS = frozenset(
+    {_ADVISORY_SCOPE_WARNING_SYMBOL, _UNAVAILABLE_DATASET_SYMBOL}
+)
 
 
-def record_advisory_scope_warning(dataset: str, *, task_id: int = 0) -> None:
-    """Record that ``dataset`` was allowed despite being outside the task scope."""
+def record_advisory_scope_warning(
+    dataset: str,
+    *,
+    task_id: int = 0,
+    symbol: str = _ADVISORY_SCOPE_WARNING_SYMBOL,
+) -> None:
+    """Record that ``dataset`` was allowed despite a relaxed scope boundary.
+
+    The default ``symbol`` is the M1 D7 ``dataset_outside_current_task_scope``
+    boundary. M2-B Task 1 added ``current_task_dataset_unavailable`` for the
+    stale-binding race on terminal task state. Both symbols are advisory —
+    access proceeds, the warning is the audit trail.
+    """
+    if symbol not in _VALID_ADVISORY_SCOPE_SYMBOLS:
+        raise ValueError(
+            f"Unknown advisory scope warning symbol: {symbol!r}. "
+            f"Expected one of {sorted(_VALID_ADVISORY_SCOPE_SYMBOLS)}."
+        )
     normalized = _text(dataset)
     if not normalized:
         return
     _ADVISORY_SCOPE_WARNINGS.append(
         {
-            "warning": _ADVISORY_SCOPE_WARNING_SYMBOL,
+            "warning": symbol,
             "dataset": normalized,
             "task_id": task_id,
         }
     )
     logger.warning(
-        "%s (advisory): dataset '%s' allowed despite not being in the current task scope.",
-        _ADVISORY_SCOPE_WARNING_SYMBOL,
+        "%s (advisory): dataset '%s' allowed despite scope boundary.",
+        symbol,
         normalized,
     )
 
@@ -456,10 +486,13 @@ def _prepare_create_chart_dataset(
         from data_agent.session.workspace import workspace
 
         if dataset not in workspace.list_datasets():
-            return ScopeGuardResult(
-                False,
-                "current_task_dataset_unavailable",
-                f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+            # M2-B Task 1: advisory — record the warning and let the caller
+            # proceed so a stale binding on terminal task state never aborts a
+            # mid-analysis tool call (e.g. create_chart).
+            record_advisory_scope_warning(
+                dataset,
+                task_id=scope.task_id,
+                symbol=_UNAVAILABLE_DATASET_SYMBOL,
             )
     return None
 
@@ -715,10 +748,13 @@ def _create_scope_enforcement_chain(
             from data_agent.session.workspace import workspace
 
             if dataset not in workspace.list_datasets():
-                return guard_result_type(
-                    False,
-                    "current_task_dataset_unavailable",
-                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                # M2-B Task 1: advisory — record the warning and let the caller
+                # proceed so a stale binding on terminal task state never
+                # aborts a mid-analysis create_chart call.
+                advisory_recorder(
+                    dataset,
+                    task_id=scope.task_id,
+                    symbol="current_task_dataset_unavailable",
                 )
         return None
 
@@ -779,10 +815,14 @@ def _create_scope_enforcement_chain(
                     or "data" not in properties
                 )
             ):
-                return guard_result_type(
-                    False,
-                    "current_task_dataset_unavailable",
-                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                # M2-B Task 1: advisory — record the warning and allow the call
+                # so a stale binding (or a shadowed tool schema) never aborts a
+                # mid-analysis create_chart. Mirrors M1 D7's treatment of
+                # ``dataset_outside_current_task_scope``.
+                advisory_recorder(
+                    dataset,
+                    task_id=scope.task_id,
+                    symbol="current_task_dataset_unavailable",
                 )
         return guard_result_type(True)
 
@@ -796,10 +836,14 @@ def _create_scope_enforcement_chain(
             from data_agent.session.workspace import workspace
 
             if dataset not in workspace.list_datasets():
-                return guard_result_type(
-                    False,
-                    "current_task_dataset_unavailable",
-                    f"Dataset '{dataset}' is bound to the current task but is not loaded.",
+                # M2-B Task 1: advisory — record the warning and let the
+                # snapshot result (already allowed) stand so a stale binding
+                # on terminal task state never aborts a mid-analysis
+                # create_chart call.
+                advisory_recorder(
+                    dataset,
+                    task_id=scope.task_id,
+                    symbol="current_task_dataset_unavailable",
                 )
         return result
 

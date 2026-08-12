@@ -3213,8 +3213,22 @@ def test_real_agent_loop_create_chart_guard_ignores_public_preparation_shadow(
     monkeypatch,
     shadow_api,
 ):
-    import data_agent.agent.execution_scope as execution_scope_module
+    """M2-B Task 1: ``current_task_dataset_unavailable`` is advisory.
 
+    Shadowing the PUBLIC ``_prepare_create_chart_dataset`` symbol still does
+    not bypass the closure-captured authoritative scope guard — the inner
+    ``ensure_tool_for_snapshot`` runs regardless and records a
+    ``current_task_dataset_unavailable`` warning when the (malformed) chart
+    tool definition is used. Previously that warning was a blocking error;
+    M2-B Task 1 made it advisory so a stale binding on terminal task state
+    can never abort a mid-analysis create_chart. The contract preserved here
+    is "the inner authoritative check still runs through the shadow" — the
+    shadow cannot silence the warning.
+    """
+    import data_agent.agent.execution_scope as execution_scope_module
+    from data_agent.agent.execution_scope import consume_advisory_scope_warnings
+
+    consume_advisory_scope_warnings()
     manager = TaskManager(tasks_dir=tmp_path / "tasks")
     _stage3c0b_task(manager, datasets=["bound"])
     _bind_manager(monkeypatch, manager)
@@ -3268,10 +3282,23 @@ def test_real_agent_loop_create_chart_guard_ignores_public_preparation_shadow(
     finally:
         setattr(execution_scope_module, "_prepare_create_chart_dataset", original)
 
+    # Advisory contract: the inner authoritative check STILL ran (the shadow
+    # did not bypass it) — proven by the recorded warning — and the call is
+    # allowed rather than aborted mid-analysis. The chart body does not run
+    # here only because the intentionally malformed ``create_chart`` schema
+    # (``properties={}``) then rejects the auto-bound ``data`` argument via
+    # standard tool-argument validation; that is orthogonal to the scope
+    # guard, which is the contract under test.
+    warnings = consume_advisory_scope_warnings()
+    assert any(
+        w["warning"] == "current_task_dataset_unavailable"
+        and w["dataset"] == "bound"
+        for w in warnings
+    )
     outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
+    assert all("current_task_dataset_unavailable" not in output for output in outputs)
     assert invoked == []
     assert all("9876" not in output for output in outputs)
-    assert any("current_task_dataset_unavailable" in output for output in outputs)
 
 
 def test_synthesis_system_prompt_omits_dataset_names_and_schema(tmp_path, monkeypatch):
