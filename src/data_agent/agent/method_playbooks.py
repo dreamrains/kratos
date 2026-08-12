@@ -1077,6 +1077,28 @@ def _build_analysis_plan(
         }
         if not _step_conflicts_with_constraints(supporting_step, disallowed_claim_types):
             steps.append(supporting_step)
+    # Charting is part of method-completeness: create_chart maps to
+    # ``visual.chart`` and the validator/binder already accept it, but the
+    # plan needs an explicit step or the enforcing completeness check makes
+    # create_chart unreachable.  Append the step here (after supporting
+    # checks and before the empty-fallback) so it is always present; the
+    # executable normalizer assigns ``dataset_inputs`` and ``requirement_ids``
+    # generically (see analysis_plan_contracts._enrich_executable_plan_shorthand
+    # and compile_analysis_requirements).
+    chart_step = {
+        "step": "visualize key findings",
+        "node_type": "method",
+        "required_capability": "visual.chart",
+        "expected_output": "chart artifact(s) for the headline findings",
+        # ``limitations`` is a canonical AnalysisRequirement input (category
+        # "limitation"); ``chart`` is not registered, so the live-plan
+        # compiler would reject it.  A chart step contributes disclosure of
+        # what the visualization cannot show, which is exactly the
+        # limitation-category evidence the compiled requirement enforces.
+        "evidence_requirements": ["limitations"],
+    }
+    if not _step_conflicts_with_constraints(chart_step, disallowed_claim_types):
+        steps.append(chart_step)
     if not steps:
         steps = [dict(step) for step in PLAYBOOKS["metric_overview"].method_plan_template]
     metrics = _infer_metrics(user_input)

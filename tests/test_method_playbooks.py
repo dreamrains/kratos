@@ -374,6 +374,40 @@ def test_selector_maps_common_questions_to_playbooks():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
+def test_analysis_plan_includes_visualization_step():
+    """Every analysis method plan ends with a visual.chart step so the agent
+    generates charts as part of method-completeness (create_chart maps to
+    visual.chart).  This guards against the M2-C regression where plan
+    completeness was enforced without a chart step, so create_chart was
+    never reachable."""
+    intent = plan_turn_intent("why did revenue decline", _loaded_context())
+    intent.intent_type = "directed_analysis"
+    intent.data_state = "data_loaded"
+    selection = select_playbooks(
+        "why did revenue decline",
+        intent,
+        AnalysisSessionState(session_id="chart_step"),
+        _loaded_context(),
+    )
+
+    plan = selection.analysis_plan
+    assert plan is not None
+
+    chart_steps = [
+        step
+        for step in plan["method_plan"]
+        if step.get("required_capability") == "visual.chart"
+    ]
+    assert chart_steps, "method_plan must include a visual.chart step"
+    chart_step = chart_steps[-1]
+    assert chart_step.get("expected_output"), "visual.chart step needs expected_output"
+    assert chart_step.get("evidence_requirements"), (
+        "visual.chart step needs evidence_requirements so the executable "
+        "normalizer can compile requirement_ids onto it"
+    )
+
+
+@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
 def test_business_playbook_analysis_plan_contains_visualization_strategy_and_stats():
     ctx = _loaded_context("user_id, revenue, pay_time, feature_type, period")
     intent = plan_turn_intent("分析功能效果和收益", ctx)
