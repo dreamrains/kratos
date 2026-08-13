@@ -66,8 +66,11 @@ def test_release_matrix_has_unique_scenarios_and_all_seven_layers():
     assert all(item.forbidden_behaviors for item in matrix.scenarios)
     assert all(item.required_interactions for item in matrix.scenarios)
     unified = next(item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry")
+    assert unified.entry == "/v2-workbench"
     assert "stop" in unified.required_interactions
     assert "draft_while_running" in unified.required_interactions
+    assert "turn_interrupted" in unified.required_semantic_events
+    assert "turn_completed_after_interrupt" in unified.forbidden_behaviors
 
 
 def test_browser_pass_cannot_stand_in_for_other_layers():

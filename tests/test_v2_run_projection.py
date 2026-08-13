@@ -67,6 +67,34 @@ def test_matching_finding_computes_supported_outcome():
     assert result.publishable is True
 
 
+def test_user_interrupt_overrides_a_partial_matching_finding():
+    finding = Finding(
+        finding_id="f_partial",
+        commitment_id="c_core",
+        finding_kind=FindingKind.ESTIMATE,
+        dataset_version_ids=("dv_sales",),
+        metric_identity="sales.mean",
+        method_capability="analysis.describe",
+        estimate=120.0,
+        maximum_claim_class=ClaimClass.DESCRIPTIVE,
+        computation_ref="comp_partial",
+    )
+    interrupted = ExecutionEvent(
+        event_id="ev_interrupted",
+        run_id="run_1",
+        commitment_id="c_core",
+        event_type=EventType.USER_INTERRUPTED,
+        tool_name="v2.run_control",
+        capability="control.interrupt",
+        dataset_version_ids=("dv_sales",),
+    )
+
+    result = project_run([_core()], [interrupted], [finding])
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.INTERRUPTED
+    assert result.publishable is False
+
+
 def test_null_result_is_a_publishable_analysis_outcome():
     result = project_run(
         commitments=[_core()],

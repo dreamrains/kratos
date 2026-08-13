@@ -56,3 +56,9 @@ def v2_multi_canary():
 def v2_python_canary():
     """Isolated Slice 4E exploratory-Python browser canary."""
     return render_template("v2_python_canary.html")
+
+
+@pages_bp.route("/v2-workbench")
+def v2_workbench():
+    """Unified V2 analysis workbench; root cutover remains a separate decision."""
+    return render_template("v2_workbench.html")

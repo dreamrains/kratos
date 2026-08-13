@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,13 @@ from data_agent.v2.models import (
 
 class FactConflictError(RuntimeError):
     """Raised when an existing immutable fact ID is reused with new content."""
+
+
+class TurnPublicationBlocked(RuntimeError):
+    """Raised when a durable stop request wins before final publication."""
+
+
+_STORE_WRITE_LOCK = threading.RLock()
 
 
 def _json_line(value: dict[str, Any]) -> str:
@@ -138,19 +146,68 @@ class V2FactStore:
         ]
 
     def _append_immutable(self, path: Path, id_field: str, record: dict[str, Any]) -> bool:
-        fact_id = str(record.get(id_field) or "")
-        canonical = _json_line(record)
-        for existing in _read_jsonl(path):
-            if existing.get(id_field) != fact_id:
-                continue
-            if _json_line(existing) == canonical:
-                return False
-            raise FactConflictError(f"immutable fact conflict for {fact_id}")
-        with path.open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(canonical + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        return True
+        with _STORE_WRITE_LOCK:
+            fact_id = str(record.get(id_field) or "")
+            canonical = _json_line(record)
+            for existing in _read_jsonl(path):
+                if existing.get(id_field) != fact_id:
+                    continue
+                if _json_line(existing) == canonical:
+                    return False
+                raise FactConflictError(f"immutable fact conflict for {fact_id}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(canonical + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return True
+
+    def _turn_path(self, turn_id: str) -> Path:
+        return self.root / "turns" / f"{require_storage_id(turn_id, 'turn_id')}.json"
+
+    def _turn_control_path(self, turn_id: str) -> Path:
+        return self.root / "turn_controls" / f"{require_storage_id(turn_id, 'turn_id')}.json"
+
+    def read_turn_control(self, turn_id: str) -> dict[str, str]:
+        path = self._turn_control_path(turn_id)
+        if not path.exists():
+            return {}
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("invalid V2 turn control payload")
+        return {str(key): str(item) for key, item in value.items()}
+
+    def request_turn_interrupt(self, turn_id: str, run_id: str) -> str:
+        """Atomically reserve interrupted as the only remaining legal terminal state."""
+
+        safe_turn_id = require_storage_id(turn_id, "turn_id")
+        safe_run_id = require_storage_id(run_id, "run_id")
+        with _STORE_WRITE_LOCK:
+            turn_path = self._turn_path(safe_turn_id)
+            if turn_path.exists():
+                turn = json.loads(turn_path.read_text(encoding="utf-8"))
+                status = str(turn.get("status") or "")
+                if status == "finalized":
+                    return "completed"
+                if status == "failed":
+                    return "failed"
+                if status == "interrupted":
+                    return "interrupted"
+            control_path = self._turn_control_path(safe_turn_id)
+            if control_path.exists():
+                control = json.loads(control_path.read_text(encoding="utf-8"))
+                if control.get("run_id") != safe_run_id:
+                    raise FactConflictError("turn control belongs to a different run")
+                return str(control.get("status") or "stop_requested")
+            _atomic_write_json(
+                control_path,
+                {
+                    "turn_id": safe_turn_id,
+                    "run_id": safe_run_id,
+                    "status": "stop_requested",
+                },
+            )
+            return "stop_requested"
 
     def append_event(self, event: ExecutionEvent) -> bool:
         return self._append_immutable(
@@ -337,7 +394,7 @@ class V2FactStore:
         request_context: dict[str, str] | None = None,
     ) -> None:
         safe_turn_id = require_storage_id(turn_id, "turn_id")
-        if status not in {"draft", "finalized", "failed"}:
+        if status not in {"draft", "finalized", "failed", "interrupted"}:
             raise ValueError("invalid turn status")
         safe_artifact_ids = tuple(
             require_storage_id(item, "chart_id") for item in artifact_ids
@@ -388,21 +445,44 @@ class V2FactStore:
             for key, value in raw_context.items()
             if str(value or "").strip()
         }
-        _atomic_write_json(
-            self.root / "turns" / f"{safe_turn_id}.json",
-            {
-                "turn_id": safe_turn_id,
-                "status": status,
-                "blocks": [asdict(item) for item in blocks],
-                "artifact_ids": list(safe_artifact_ids),
-                "supplemental_artifact_ids": list(safe_supplemental_ids),
-                "request_context": normalized_context,
-            },
-        )
+        with _STORE_WRITE_LOCK:
+            control_path = self._turn_control_path(safe_turn_id)
+            control = (
+                json.loads(control_path.read_text(encoding="utf-8"))
+                if control_path.exists()
+                else {}
+            )
+            if status != "interrupted" and control.get("status") in {
+                "stop_requested",
+                "interrupted",
+            }:
+                raise TurnPublicationBlocked(
+                    f"turn {safe_turn_id} was interrupted before status write"
+                )
+            _atomic_write_json(
+                self._turn_path(safe_turn_id),
+                {
+                    "turn_id": safe_turn_id,
+                    "status": status,
+                    "blocks": [asdict(item) for item in blocks],
+                    "artifact_ids": list(safe_artifact_ids),
+                    "supplemental_artifact_ids": list(safe_supplemental_ids),
+                    "request_context": normalized_context,
+                },
+            )
+            if status == "interrupted":
+                _atomic_write_json(
+                    control_path,
+                    {
+                        "turn_id": safe_turn_id,
+                        "run_id": str(control.get("run_id") or ""),
+                        "status": "interrupted",
+                    },
+                )
 
     def read_turn_blocks(self, turn_id: str) -> dict[str, Any]:
         safe_turn_id = require_storage_id(turn_id, "turn_id")
-        path = self.root / "turns" / f"{safe_turn_id}.json"
+        path = self._turn_path(safe_turn_id)
         if not path.exists():
             raise KeyError(f"unknown V2 turn {safe_turn_id}")
         value = json.loads(path.read_text(encoding="utf-8"))

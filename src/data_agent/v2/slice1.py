@@ -438,6 +438,7 @@ class Slice1DescriptiveRuntime:
                 "filename": filename,
                 "metric": metric_name,
                 "question": user_question,
+                "analysis_kind": "descriptive",
             },
         )
         for block in compiled.blocks:

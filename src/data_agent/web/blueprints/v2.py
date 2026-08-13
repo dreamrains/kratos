@@ -17,13 +17,55 @@ from data_agent.v2.slice4b import Slice4BTimeSeriesRuntime
 from data_agent.v2.slice4c import Slice4CForecastRuntime
 from data_agent.v2.slice4d import Slice4DMultiFindingRuntime
 from data_agent.v2.slice4e import Slice4EExploratoryRuntime
+from data_agent.v2.models import EventType
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
 from data_agent.v2.recommendation import ActionRisk, RecommendationIntent
+from data_agent.v2.router import AnalysisRouter
+from data_agent.v2.execution_control import (
+    ActiveRunRegistry,
+    StopRequestConflict,
+)
 from data_agent.web.event_bus import EventQueue, SSEEvent
 
 v2_bp = Blueprint("v2", __name__)
+ACTIVE_V2_RUNS = ActiveRunRegistry()
+
+
+def _request_context(payload: dict, analysis_kind: str) -> dict[str, str]:
+    allowed = {
+        "filename",
+        "metric",
+        "target",
+        "features",
+        "analysis_unit",
+        "time_field",
+        "question",
+        "date_column",
+        "group",
+        "recommendation_intent",
+        "action_risk",
+        "reversible",
+        "frequency",
+        "aggregation",
+        "horizon",
+        "purpose",
+    }
+    context = {"analysis_kind": analysis_kind}
+    for key in allowed:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, list):
+            normalized = ",".join(str(item).strip() for item in value if str(item).strip())
+        elif isinstance(value, bool):
+            normalized = str(value).lower()
+        else:
+            normalized = str(value or "").strip()
+        if normalized:
+            context[key] = normalized
+    return context
 
 
 def _sse_response(queue: EventQueue) -> Response:
@@ -36,6 +78,106 @@ def _sse_response(queue: EventQueue) -> Response:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@v2_bp.post("/v2/analyze")
+def analyze_v2() -> Response:
+    """Run one explicitly selected V2 method through the unified envelope."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    cfg = get_config()
+    router = AnalysisRouter(cfg.sessions_resolved, cfg.inbox_dir)
+    try:
+        kind = router.parse_kind(payload.get("analysis_kind", ""))
+        if kind is None:
+            return jsonify({"error": "analysis_kind is required"}), 400
+        session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
+        turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
+        prepared = router.prepare(
+            analysis_kind=kind,
+            session_id=session_id,
+            turn_id=turn_id,
+            payload=payload,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    store = V2FactStore(cfg.sessions_resolved, session_id)
+    try:
+        active = ACTIVE_V2_RUNS.register(
+            store=store,
+            session_id=session_id,
+            turn_id=turn_id,
+            request_context=_request_context(payload, kind.value),
+        )
+    except StopRequestConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in active.stream(prepared.stream()):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {"session_id": session_id, "turn_id": turn_id, "status": "failed",
+                     "error_code": type(exc).__name__, "message": str(exc)},
+                )
+            )
+        finally:
+            ACTIVE_V2_RUNS.unregister(active)
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
+@v2_bp.post("/v2/runs/stop")
+def stop_v2_run() -> Response:
+    """Persist interruption facts, then signal cooperative generator shutdown."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    session_id = str(payload.get("session_id") or "").strip()
+    turn_id = str(payload.get("turn_id") or "").strip()
+    if not session_id or not turn_id:
+        return jsonify({"error": "session_id and turn_id are required"}), 400
+    try:
+        receipt = ACTIVE_V2_RUNS.request_stop(session_id, turn_id)
+    except StopRequestConflict as exc:
+        store = V2FactStore(get_config().sessions_resolved, session_id)
+        try:
+            turn = store.read_turn_blocks(turn_id)
+        except KeyError:
+            return jsonify({"error": str(exc)}), 409
+        if turn.get("status") == "interrupted":
+            control = store.read_turn_control(turn_id)
+            run_id = str(control.get("run_id") or "")
+            commitment_ids = tuple(
+                dict.fromkeys(
+                    item.commitment_id
+                    for item in store.read_events()
+                    if item.run_id == run_id
+                    and item.event_type is EventType.USER_INTERRUPTED
+                )
+            )
+            return jsonify(
+                {
+                    "status": "interrupted",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "run_id": run_id,
+                    "commitment_ids": list(commitment_ids),
+                }
+            ), 202
+        if turn.get("status") == "finalized":
+            return jsonify({"error": "run is already completed"}), 409
+        return jsonify({"error": str(exc)}), 409
+    return jsonify(asdict(receipt)), 202
 
 
 @v2_bp.post("/v2/describe")

@@ -136,6 +136,7 @@ def test_slice1_trend_question_generates_inline_persisted_chart(tmp_path):
         "filename": "trend.csv",
         "metric": "sales",
         "question": "销售额趋势如何？",
+        "analysis_kind": "descriptive",
     }
     assert "/static/js/plotly-3.5.0.min.js" in store.read_chart_html(
         turn["artifacts"][0]["chart_id"]

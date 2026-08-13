@@ -38,6 +38,16 @@ def _project_commitment(
     matched_ids = tuple(item.finding_id for item in matched)
     event_ids = tuple(item.event_id for item in events)
 
+    # Interruption is a run-control fact, not a weaker analytical result.  It
+    # must win even when the current atomic tool left a valid partial Finding.
+    if any(item.event_type is EventType.USER_INTERRUPTED for item in events):
+        return CommitmentOutcome(
+            commitment_id=commitment.commitment_id,
+            status=OutcomeStatus.INTERRUPTED,
+            reason_code="user_interrupted",
+            event_ids=event_ids,
+        )
+
     if any(
         item.finding_kind
         in {
@@ -77,13 +87,6 @@ def _project_commitment(
             commitment_id=commitment.commitment_id,
             status=OutcomeStatus.SYSTEM_FAILED,
             reason_code="system_failed",
-            event_ids=event_ids,
-        )
-    if any(item.event_type is EventType.USER_INTERRUPTED for item in events):
-        return CommitmentOutcome(
-            commitment_id=commitment.commitment_id,
-            status=OutcomeStatus.INTERRUPTED,
-            reason_code="user_interrupted",
             event_ids=event_ids,
         )
     if any(item.event_type is EventType.USER_INPUT_REQUIRED for item in events):
