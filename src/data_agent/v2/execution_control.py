@@ -74,7 +74,8 @@ class ActiveRun:
             if reservation in {"completed", "failed"}:
                 raise StopRequestConflict(f"run is already {reservation}")
             commitments = {
-                item.commitment_id: item for item in self.store.read_commitments()
+                item.commitment_id: item
+                for item in self.store.read_commitments(run_id=self.run_id)
             }
             for commitment_id in self.commitment_ids:
                 commitment = commitments.get(commitment_id)
@@ -115,11 +116,7 @@ class ActiveRun:
             )
 
     def _terminal_events(self) -> Iterator[RuntimeEvent]:
-        projection = project_run(
-            self.store.read_commitments(),
-            self.store.read_events(),
-            self.store.read_findings(),
-        )
+        projection = project_run(*self.store.read_run_facts(self.run_id))
         yield RuntimeEvent(
             "outcome_snapshot",
             {

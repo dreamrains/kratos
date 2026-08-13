@@ -61,4 +61,3 @@ def test_router_requires_method_specific_fields(tmp_path):
 def test_router_does_not_guess_analysis_kind_from_question(tmp_path):
     router = _router(tmp_path)
     assert router.parse_kind("") is None
-

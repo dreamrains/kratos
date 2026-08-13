@@ -63,7 +63,7 @@ def test_completed_turn_wins_atomic_gate_and_rejects_late_stop(tmp_path):
 def test_active_stop_is_durable_and_closes_generator_at_safe_boundary(tmp_path):
     store = V2FactStore(tmp_path, "session_active")
     commitment = _commitment()
-    store.write_commitments([commitment])
+    store.append_commitments("run_active", "turn_active", [commitment])
     advanced: list[str] = []
 
     def source():
@@ -133,7 +133,7 @@ def test_runtime_status_race_waits_for_durable_interrupt_instead_of_failing(
 ):
     store = V2FactStore(tmp_path, "session_race")
     commitment = _commitment()
-    store.write_commitments([commitment])
+    store.append_commitments("run_race", "turn_race", [commitment])
 
     def source():
         yield RuntimeEvent(

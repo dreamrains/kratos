@@ -61,7 +61,7 @@ def _finding(estimate: float = 120.0) -> Finding:
 
 def test_fact_store_round_trip_recomputes_same_projection(tmp_path):
     store = V2FactStore(tmp_path, "session_1")
-    store.write_commitments([_commitment()])
+    store.append_commitments("run1", "turn1", [_commitment()])
     store.append_event(_event())
     store.append_finding(_finding())
 

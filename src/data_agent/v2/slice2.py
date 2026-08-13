@@ -119,7 +119,7 @@ class Slice2FactorRuntime:
             target_semantics=spec.target,
             visualization_intent="conditional:coefficient_interval",
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
 
         started = ExecutionEvent(
@@ -286,9 +286,7 @@ class Slice2FactorRuntime:
                     },
                 )
 
-        projection = project_run(
-            store.read_commitments(), store.read_events(), store.read_findings()
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",

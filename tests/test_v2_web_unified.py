@@ -110,6 +110,40 @@ def test_unified_api_requires_explicit_kind(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "analysis_kind is required"
 
 
+def test_unified_api_supports_two_sequential_turns_in_one_session(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    common = {
+        "analysis_kind": "descriptive",
+        "session_id": "session_two_turns",
+        "filename": "sales.csv",
+        "metric": "sales",
+    }
+
+    first = client.post(
+        "/api/v2/analyze",
+        json={**common, "turn_id": "turn_one", "question": "第一轮平均值？"},
+    )
+    first_events = _events(first.get_data(as_text=True))
+    second = client.post(
+        "/api/v2/analyze",
+        json={**common, "turn_id": "turn_two", "question": "第二轮平均值？"},
+    )
+    second_events = _events(second.get_data(as_text=True))
+
+    assert first_events[-1][0] == "turn_completed"
+    assert second_events[-1][0] == "turn_completed"
+    assert client.get(
+        "/api/v2/sessions/session_two_turns/turns/turn_one"
+    ).get_json()["status"] == "finalized"
+    assert client.get(
+        "/api/v2/sessions/session_two_turns/turns/turn_two"
+    ).get_json()["status"] == "finalized"
+    store = V2FactStore(tmp_path / "sessions", "session_two_turns")
+    assert len(store.read_commitments()) == 2
+
+
 def test_unified_api_assembles_multiple_findings_and_charts(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     response = client.post(

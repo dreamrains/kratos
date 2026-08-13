@@ -145,7 +145,7 @@ class Slice1DescriptiveRuntime:
                 else ""
             ),
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent(
             "commitment_snapshot",
             {"commitments": [asdict(commitment)]},
@@ -305,11 +305,7 @@ class Slice1DescriptiveRuntime:
                     },
                 )
 
-        projection = project_run(
-            store.read_commitments(),
-            store.read_events(),
-            store.read_findings(),
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",

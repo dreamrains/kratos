@@ -191,7 +191,7 @@ class Slice4CForecastRuntime:
             target_semantics=f"{metric} forecast over {time_field} for {spec.horizon} periods",
             visualization_intent="conditional:forecast_line_interval",
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
         store.append_event(
             ExecutionEvent(
@@ -296,9 +296,7 @@ class Slice4CForecastRuntime:
                     )
                 )
                 yield RuntimeEvent("artifact_failed", {"error_code": type(exc).__name__})
-        projection = project_run(
-            store.read_commitments(), store.read_events(), store.read_findings()
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",

@@ -196,7 +196,7 @@ class Slice4BTimeSeriesRuntime:
             target_semantics=f"{metric} over {time_field}",
             visualization_intent="conditional:time_series_line",
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
         store.append_event(
             ExecutionEvent(
@@ -301,9 +301,7 @@ class Slice4BTimeSeriesRuntime:
                     )
                 )
                 yield RuntimeEvent("artifact_failed", {"error_code": type(exc).__name__})
-        projection = project_run(
-            store.read_commitments(), store.read_events(), store.read_findings()
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",

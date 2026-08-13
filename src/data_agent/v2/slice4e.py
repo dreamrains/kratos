@@ -103,7 +103,7 @@ class Slice4EExploratoryRuntime:
             accepted_method_capabilities=(CORE_CAPABILITY,),
             target_semantics=metric_name,
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
 
         core_call_id = f"tool_{uuid.uuid4().hex}"
@@ -149,7 +149,7 @@ class Slice4EExploratoryRuntime:
         store.append_finding(finding)
         yield RuntimeEvent("tool_finished", {"name": "describe_numeric", "status": "succeeded"})
 
-        projection = project_run([commitment], store.read_events(), [finding])
+        projection = project_run(*store.read_run_facts(run_id))
         yield RuntimeEvent(
             "outcome_snapshot",
             {"publishable": projection.publishable,

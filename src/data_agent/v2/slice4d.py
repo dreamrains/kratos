@@ -252,7 +252,7 @@ class Slice4DMultiFindingRuntime:
                 visualization_intent="conditional:group_boxplot",
             ),
         ]
-        store.write_commitments(commitments)
+        store.append_commitments(run_id, turn_id, commitments)
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(item) for item in commitments]})
 
         findings: list[Finding] = []
@@ -392,7 +392,7 @@ class Slice4DMultiFindingRuntime:
                 )
                 yield RuntimeEvent("artifact_failed", {"analysis": "group_comparison", "error_code": type(exc).__name__})
 
-        projection = project_run(commitments, store.read_events(), findings)
+        projection = project_run(*store.read_run_facts(run_id))
         yield RuntimeEvent(
             "outcome_snapshot",
             {"publishable": projection.publishable, "outcomes": {key: asdict(value) for key, value in projection.outcomes.items()}},

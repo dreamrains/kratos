@@ -118,9 +118,7 @@ class Slice3TransformationRuntime:
         method_narrative: str,
     ) -> Iterator[RuntimeEvent]:
         store.append_finding(finding)
-        projection = project_run(
-            store.read_commitments(), store.read_events(), store.read_findings()
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment.commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",
@@ -151,7 +149,12 @@ class Slice3TransformationRuntime:
                 limitations=finding.limitations,
             ),
         ]
-        compiled = compile_answer(drafts, store.read_findings(), {commitment.commitment_id: outcome})
+        current_findings = store.read_run_facts(run_id)[2]
+        compiled = compile_answer(
+            drafts,
+            current_findings,
+            {commitment.commitment_id: outcome},
+        )
         store.write_turn_blocks(
             turn_id,
             list(compiled.blocks),
@@ -253,7 +256,7 @@ class Slice3TransformationRuntime:
             raw=raw,
             date_column=field_name,
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
         started = self._event(
             run_id=run_id,
@@ -314,9 +317,7 @@ class Slice3TransformationRuntime:
                 message="date order requires user semantic choice",
             )
             store.append_event(waiting)
-            projection = project_run(
-                store.read_commitments(), store.read_events(), store.read_findings()
-            )
+            projection = project_run(*store.read_run_facts(run_id))
             outcome = projection.outcomes[commitment_id]
             context["proposal_id"] = proposal.proposal_id
             store.write_turn_blocks(turn_id, [], status="draft", request_context=context)
@@ -465,7 +466,7 @@ class Slice3TransformationRuntime:
         )
         commitment = next(
             item
-            for item in store.read_commitments()
+            for item in store.read_commitments(run_id=proposal.run_id)
             if item.commitment_id == proposal.commitment_id
         )
         yield RuntimeEvent(

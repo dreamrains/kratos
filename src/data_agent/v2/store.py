@@ -102,7 +102,7 @@ class V2FactStore:
 
     @property
     def _commitments_path(self) -> Path:
-        return self.root / "commitments.json"
+        return self.root / "commitments.jsonl"
 
     @property
     def _events_path(self) -> Path:
@@ -116,16 +116,44 @@ class V2FactStore:
     def _charts_path(self) -> Path:
         return self.root / "charts"
 
-    def write_commitments(self, commitments: list[Commitment]) -> None:
+    def append_commitments(
+        self,
+        run_id: str,
+        turn_id: str,
+        commitments: list[Commitment],
+    ) -> None:
+        safe_run_id = require_storage_id(run_id, "run_id")
+        safe_turn_id = require_storage_id(turn_id, "turn_id")
         ids = [item.commitment_id for item in commitments]
         if len(ids) != len(set(ids)):
             raise ValueError("commitment ids must be unique")
-        _atomic_write_json(self._commitments_path, [asdict(item) for item in commitments])
+        for item in commitments:
+            self._append_immutable(
+                self._commitments_path,
+                "commitment_id",
+                {
+                    "commitment_id": item.commitment_id,
+                    "run_id": safe_run_id,
+                    "turn_id": safe_turn_id,
+                    "commitment": asdict(item),
+                },
+            )
 
-    def read_commitments(self) -> list[Commitment]:
-        if not self._commitments_path.exists():
-            return []
-        values = json.loads(self._commitments_path.read_text(encoding="utf-8"))
+    def read_commitments(
+        self,
+        *,
+        run_id: str | None = None,
+        turn_id: str | None = None,
+    ) -> list[Commitment]:
+        safe_run_id = require_storage_id(run_id, "run_id") if run_id else ""
+        safe_turn_id = require_storage_id(turn_id, "turn_id") if turn_id else ""
+        records = [
+            record
+            for record in _read_jsonl(self._commitments_path)
+            if (not safe_run_id or record.get("run_id") == safe_run_id)
+            and (not safe_turn_id or record.get("turn_id") == safe_turn_id)
+        ]
+        values = [record.get("commitment") or {} for record in records]
         return [
             Commitment(
                 commitment_id=value["commitment_id"],
@@ -144,6 +172,24 @@ class V2FactStore:
             )
             for value in values
         ]
+
+    def read_run_facts(
+        self, run_id: str
+    ) -> tuple[list[Commitment], list[ExecutionEvent], list[Finding]]:
+        safe_run_id = require_storage_id(run_id, "run_id")
+        commitments = self.read_commitments(run_id=safe_run_id)
+        commitment_ids = {item.commitment_id for item in commitments}
+        events = [
+            item
+            for item in self.read_events()
+            if item.run_id == safe_run_id and item.commitment_id in commitment_ids
+        ]
+        findings = [
+            item
+            for item in self.read_findings()
+            if item.commitment_id in commitment_ids
+        ]
+        return commitments, events, findings
 
     def _append_immutable(self, path: Path, id_field: str, record: dict[str, Any]) -> bool:
         with _STORE_WRITE_LOCK:

@@ -179,7 +179,7 @@ class Slice4AGroupComparisonRuntime:
             target_semantics=f"{metric} by {group}",
             visualization_intent="conditional:group_boxplot",
         )
-        store.write_commitments([commitment])
+        store.append_commitments(run_id, turn_id, [commitment])
         yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
         store.append_event(
             ExecutionEvent(
@@ -295,9 +295,7 @@ class Slice4AGroupComparisonRuntime:
                 )
                 yield RuntimeEvent("artifact_failed", {"error_code": type(exc).__name__})
 
-        projection = project_run(
-            store.read_commitments(), store.read_events(), store.read_findings()
-        )
+        projection = project_run(*store.read_run_facts(run_id))
         outcome = projection.outcomes[commitment_id]
         yield RuntimeEvent(
             "outcome_snapshot",
