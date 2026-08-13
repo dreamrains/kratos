@@ -163,6 +163,7 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
+
             except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError) as e:
                 last_error = e
                 if attempt < self._MAX_RETRIES:
@@ -172,6 +173,16 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
+
+    def chat_once(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        system: Optional[str] = None,
+    ) -> Response:
+        """Make exactly one provider request without an implicit retry."""
+
+        return _parse_response(completion(**self._base_kwargs(messages, tools, system)))
 
     def stream_chat_structured(
         self,
