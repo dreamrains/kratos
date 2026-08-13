@@ -27,6 +27,7 @@ from data_agent.v2.execution_control import (
     ActiveRunRegistry,
     StopRequestConflict,
 )
+from data_agent.v2.steer import SteerConflict, SteerStatus, SteerStore
 from data_agent.web.event_bus import EventQueue, SSEEvent
 
 v2_bp = Blueprint("v2", __name__)
@@ -68,6 +69,16 @@ def _request_context(payload: dict, analysis_kind: str) -> dict[str, str]:
     return context
 
 
+def _resume_payload(payload: dict, analysis_kind: str) -> dict:
+    """Freeze method inputs without carrying request routing identities forward."""
+
+    frozen = dict(payload)
+    for key in ("session_id", "turn_id", "steer_id", "client_request_id"):
+        frozen.pop(key, None)
+    frozen["analysis_kind"] = analysis_kind
+    return frozen
+
+
 def _sse_response(queue: EventQueue) -> Response:
     return Response(
         queue.iter(),
@@ -89,30 +100,64 @@ def analyze_v2() -> Response:
         return jsonify({"error": "request body must be a JSON object"}), 400
     cfg = get_config()
     router = AnalysisRouter(cfg.sessions_resolved, cfg.inbox_dir)
+    steer_store = None
+    queued_steer = None
     try:
-        kind = router.parse_kind(payload.get("analysis_kind", ""))
+        requested_steer_id = str(payload.get("steer_id") or "").strip()
+        if requested_steer_id:
+            session_id = str(payload.get("session_id") or "").strip()
+            if not session_id:
+                return jsonify({"error": "session_id is required with steer_id"}), 400
+            steer_store = SteerStore(cfg.sessions_resolved, session_id)
+            queued_steer = steer_store.get(requested_steer_id)
+            if queued_steer.status is not SteerStatus.QUEUED:
+                return jsonify(
+                    {
+                        "error": f"steer is already {queued_steer.status.value}",
+                        "steer": queued_steer.to_dict(),
+                    }
+                ), 409
+            effective_payload = dict(queued_steer.resume_payload)
+            effective_payload["question"] = queued_steer.message
+        else:
+            effective_payload = payload
+            session_id = str(
+                payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}"
+            ).strip()
+        kind = router.parse_kind(effective_payload.get("analysis_kind", ""))
         if kind is None:
             return jsonify({"error": "analysis_kind is required"}), 400
-        session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
         turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
         prepared = router.prepare(
             analysis_kind=kind,
             session_id=session_id,
             turn_id=turn_id,
-            payload=payload,
+            payload=effective_payload,
         )
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     store = V2FactStore(cfg.sessions_resolved, session_id)
+    steer_store = steer_store or SteerStore(cfg.sessions_resolved, session_id)
+    resume_payload = _resume_payload(effective_payload, kind.value)
     try:
         active = ACTIVE_V2_RUNS.register(
             store=store,
+            steer_store=steer_store,
             session_id=session_id,
             turn_id=turn_id,
-            request_context=_request_context(payload, kind.value),
+            request_context=_request_context(effective_payload, kind.value),
+            resume_payload=resume_payload,
         )
     except StopRequestConflict as exc:
         return jsonify({"error": str(exc)}), 409
+    if queued_steer is not None:
+        try:
+            steer_store.consume(queued_steer.steer_id, target_turn_id=turn_id)
+        except SteerConflict as exc:
+            ACTIVE_V2_RUNS.unregister(active)
+            return jsonify({"error": str(exc)}), 409
     queue = EventQueue()
 
     def run() -> None:
@@ -133,6 +178,60 @@ def analyze_v2() -> Response:
 
     threading.Thread(target=run, daemon=True).start()
     return _sse_response(queue)
+
+
+@v2_bp.post("/v2/runs/steer")
+def steer_v2_run() -> Response:
+    """Persist a message for the next turn without mutating the active run."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    session_id = str(payload.get("session_id") or "").strip()
+    turn_id = str(payload.get("turn_id") or "").strip()
+    expected_run_id = str(payload.get("expected_run_id") or "").strip()
+    client_request_id = str(payload.get("client_request_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not all((session_id, turn_id, expected_run_id, client_request_id, message)):
+        return jsonify(
+            {
+                "error": (
+                    "session_id, turn_id, expected_run_id, client_request_id, "
+                    "and message are required"
+                )
+            }
+        ), 400
+    try:
+        store = SteerStore(get_config().sessions_resolved, session_id)
+        existing_steers = store.list_for_turn(turn_id)
+        receipt = ACTIVE_V2_RUNS.request_steer(
+            session_id,
+            turn_id,
+            expected_run_id=expected_run_id,
+            client_request_id=client_request_id,
+            message=message,
+        )
+    except StopRequestConflict as exc:
+        matching = next(
+            (
+                item
+                for item in existing_steers
+                if item.client_request_id == client_request_id
+            ),
+            None,
+        )
+        if (
+            matching is not None
+            and matching.source_run_id == expected_run_id
+            and matching.message == message
+        ):
+            return jsonify(matching.to_dict()), 202
+        return jsonify({"error": str(exc)}), 409
+    except SteerConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(receipt.to_dict()), 202
 
 
 @v2_bp.post("/v2/runs/stop")
@@ -631,7 +730,8 @@ def exploratory_python_v2() -> Response:
 
 @v2_bp.get("/v2/sessions/<session_id>/turns/<turn_id>")
 def get_v2_turn(session_id: str, turn_id: str):
-    store = V2FactStore(get_config().sessions_resolved, session_id)
+    sessions_root = get_config().sessions_resolved
+    store = V2FactStore(sessions_root, session_id)
     try:
         turn = store.read_turn_blocks(turn_id)
     except KeyError:
@@ -649,6 +749,10 @@ def get_v2_turn(session_id: str, turn_id: str):
             }
         except KeyError:
             turn["transformation"] = None
+    turn["steers"] = [
+        item.to_dict()
+        for item in SteerStore(sessions_root, session_id).list_for_turn(turn_id)
+    ]
     return jsonify(turn)
 
 

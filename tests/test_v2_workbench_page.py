@@ -44,3 +44,17 @@ def test_v2_workbench_stop_is_independent_and_does_not_abort_sse_client_side():
     assert "turn_interrupted" in js
     assert "AbortController" not in js
     assert "confirm(" not in js
+
+
+def test_v2_workbench_has_explicit_durable_queued_steer_controls():
+    client = create_app().test_client()
+    html = client.get("/v2-workbench").get_data(as_text=True)
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert 'id="steer"' in html
+    assert 'id="continue-steer"' in html
+    assert "/api/v2/runs/steer" in js
+    assert "steer_received" in js
+    assert "steer_id" in js
+    assert "afterCurrentStreamCloses" in js
+    assert "AbortController" not in js

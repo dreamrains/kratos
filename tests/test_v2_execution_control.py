@@ -17,6 +17,7 @@ from data_agent.v2.models import (
 )
 from data_agent.v2.slice1 import RuntimeEvent
 from data_agent.v2.store import TurnPublicationBlocked, V2FactStore
+from data_agent.v2.steer import SteerStatus, SteerStore
 
 
 def _commitment() -> Commitment:
@@ -191,3 +192,90 @@ def test_runtime_status_race_waits_for_durable_interrupt_instead_of_failing(
     assert terminal_result[0].event == "outcome_snapshot"
     assert next(controlled).event == "turn_interrupted"
     assert store.read_turn_blocks("turn_race")["status"] == "interrupted"
+
+
+def test_active_run_emits_durable_steer_at_safe_boundary_without_mutating_commitment(
+    tmp_path,
+):
+    store = V2FactStore(tmp_path, "session_steer_active")
+    steers = SteerStore(tmp_path, "session_steer_active")
+    commitment = _commitment()
+    store.append_commitments("run_steer", "turn_steer", [commitment])
+
+    def source():
+        yield RuntimeEvent(
+            "turn_started",
+            {
+                "session_id": "session_steer_active",
+                "turn_id": "turn_steer",
+                "run_id": "run_steer",
+            },
+        )
+        yield RuntimeEvent("commitment_snapshot", {"commitments": [asdict(commitment)]})
+        yield RuntimeEvent("tool_started", {"name": "describe_numeric"})
+        yield RuntimeEvent("tool_finished", {"name": "describe_numeric"})
+
+    registry = ActiveRunRegistry()
+    active = registry.register(
+        store=store,
+        steer_store=steers,
+        session_id="session_steer_active",
+        turn_id="turn_steer",
+        request_context={"analysis_kind": "descriptive"},
+        resume_payload={
+            "analysis_kind": "descriptive",
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "原问题",
+        },
+    )
+    controlled = active.stream(source())
+    assert [next(controlled).event for _ in range(3)] == [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+    ]
+
+    receipt = registry.request_steer(
+        "session_steer_active",
+        "turn_steer",
+        expected_run_id="run_steer",
+        client_request_id="client_active",
+        message="下一轮看中位数",
+    )
+    next_event = next(controlled)
+
+    assert receipt.status is SteerStatus.QUEUED
+    assert next_event.event == "steer_received"
+    assert next_event.data["steer_id"] == receipt.steer_id
+    assert next(controlled).event == "tool_finished"
+    assert store.read_commitments(run_id="run_steer") == [commitment]
+
+
+def test_stop_supersedes_queued_steer(tmp_path):
+    store = V2FactStore(tmp_path, "session_stop_steer")
+    steers = SteerStore(tmp_path, "session_stop_steer")
+    commitment = _commitment()
+    store.append_commitments("run_stop_steer", "turn_stop_steer", [commitment])
+    registry = ActiveRunRegistry()
+    active = registry.register(
+        store=store,
+        steer_store=steers,
+        session_id="session_stop_steer",
+        turn_id="turn_stop_steer",
+        request_context={},
+        resume_payload={"analysis_kind": "descriptive"},
+    )
+    active.run_id = "run_stop_steer"
+    active.commitment_ids = (commitment.commitment_id,)
+    queued = registry.request_steer(
+        "session_stop_steer",
+        "turn_stop_steer",
+        expected_run_id="run_stop_steer",
+        client_request_id="client_stop_steer",
+        message="不应继续",
+    )
+
+    registry.request_stop("session_stop_steer", "turn_stop_steer")
+
+    assert steers.get(queued.steer_id).status is SteerStatus.SUPERSEDED

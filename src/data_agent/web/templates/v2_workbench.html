@@ -9,7 +9,7 @@
 </head>
 <body><main>
     <header><div><h1>Data Agent V2 Workbench</h1><p class="subtitle">统一入口连接八类结构化分析。当前阶段由用户显式选择分析类型，系统不会从问题文本猜测方法。</p></div><span class="badge">Unified V2 canary</span></header>
-    <p class="notice">该页面尚未接管主入口。问题输入在运行期间保持可编辑；停止会先持久化中断事实，再在服务端安全边界结束当前运行。</p>
+    <p class="notice">该页面尚未接管主入口。问题输入在运行期间保持可编辑；“发送到下一轮”会持久化排队消息，不会改写当前分析承诺。停止会取消排队消息，并在服务端安全边界结束当前运行。</p>
     <div id="error" class="error" role="alert"></div>
     <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">分析规范</h2><div class="grid">
         <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
@@ -33,9 +33,9 @@
         <div class="field wide" data-kinds="exploratory_python"><label for="code">探索代码（数据副本为 data，输出放入 result）</label><textarea id="code">print("rows", len(data))
 result = data["sales"].median()</textarea></div>
         <div class="wide"><label for="question">问题</label><input id="question" type="text" value="当前数据的核心结论是什么？" autocomplete="off"><div class="hint">运行期间仍可编辑；修改只用于下一轮，当前运行使用提交时快照。</div></div>
-    </div><div class="actions"><button id="run" type="button">开始分析</button><button id="stop" class="stop" type="button" hidden disabled>停止</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
+    </div><div class="actions"><button id="run" type="button">开始分析</button><button id="steer" class="secondary" type="button" hidden disabled>发送到下一轮</button><button id="continue-steer" type="button" hidden disabled>继续排队消息</button><button id="stop" class="stop" type="button" hidden disabled>停止</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
     <section id="confirmation" class="panel" aria-labelledby="confirmation-heading"><h2 id="confirmation-heading">需要确认日期语义</h2><p id="confirmation-message"></p><div id="confirmation-options" class="confirmation-options"></div></section>
     <section class="panel" aria-labelledby="answer-heading"><h2 id="answer-heading">分析结果</h2><div id="answer" class="answer" aria-live="polite"></div></section>
 </main>
 <details id="activity-overlay"><summary>运行动态 <span id="activity-count">0</span></summary><div id="activity-list" class="activity-list" aria-live="polite"></div></details>
-<script src="{{ url_for('static', filename='js/v2_workbench.js', v='slice5b2') }}"></script></body></html>
+<script src="{{ url_for('static', filename='js/v2_workbench.js', v='slice5b3b') }}"></script></body></html>

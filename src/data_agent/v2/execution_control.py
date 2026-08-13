@@ -9,6 +9,7 @@ from data_agent.v2.models import EventType, ExecutionEvent, OutcomeStatus
 from data_agent.v2.projection import project_run
 from data_agent.v2.slice1 import RuntimeEvent
 from data_agent.v2.store import TurnPublicationBlocked, V2FactStore
+from data_agent.v2.steer import SteerRecord, SteerStatus, SteerStore
 
 
 class StopRequestConflict(RuntimeError):
@@ -31,18 +32,23 @@ class ActiveRun:
         self,
         *,
         store: V2FactStore,
+        steer_store: SteerStore,
         session_id: str,
         turn_id: str,
         request_context: dict[str, str],
+        resume_payload: dict,
     ) -> None:
         self.store = store
+        self.steer_store = steer_store
         self.session_id = session_id
         self.turn_id = turn_id
         self.request_context = dict(request_context)
+        self.resume_payload = dict(resume_payload)
         self.run_id = ""
         self.commitment_ids: tuple[str, ...] = ()
         self._stop = threading.Event()
         self._lock = threading.RLock()
+        self._steer_notifications: list[str] = []
 
     @property
     def stop_requested(self) -> bool:
@@ -73,6 +79,9 @@ class ActiveRun:
             reservation = self.store.request_turn_interrupt(self.turn_id, self.run_id)
             if reservation in {"completed", "failed"}:
                 raise StopRequestConflict(f"run is already {reservation}")
+            self.steer_store.supersede_for_run(
+                self.run_id, reason="source_run_interrupted"
+            )
             commitments = {
                 item.commitment_id: item
                 for item in self.store.read_commitments(run_id=self.run_id)
@@ -115,6 +124,48 @@ class ActiveRun:
                 commitment_ids=self.commitment_ids,
             )
 
+    def request_steer(
+        self,
+        *,
+        expected_run_id: str,
+        client_request_id: str,
+        message: str,
+    ) -> SteerRecord:
+        with self._lock:
+            if not self.run_id or expected_run_id != self.run_id:
+                raise StopRequestConflict("steer expected_run_id is stale")
+            if self.stop_requested:
+                raise StopRequestConflict("cannot steer an interrupted run")
+            record = self.steer_store.enqueue(
+                source_turn_id=self.turn_id,
+                source_run_id=self.run_id,
+                client_request_id=client_request_id,
+                message=message,
+                resume_payload=self.resume_payload,
+            )
+            self._steer_notifications.append(record.steer_id)
+            return record
+
+    def _drain_steer_events(self) -> Iterator[RuntimeEvent]:
+        with self._lock:
+            notifications = tuple(self._steer_notifications)
+            self._steer_notifications.clear()
+        for steer_id in notifications:
+            record = self.steer_store.get(steer_id)
+            if record.status is not SteerStatus.QUEUED:
+                continue
+            yield RuntimeEvent(
+                "steer_received",
+                {
+                    "session_id": self.session_id,
+                    "turn_id": self.turn_id,
+                    "run_id": self.run_id,
+                    "steer_id": record.steer_id,
+                    "status": record.status.value,
+                    "message": record.message,
+                },
+            )
+
     def _terminal_events(self) -> Iterator[RuntimeEvent]:
         projection = project_run(*self.store.read_run_facts(self.run_id))
         yield RuntimeEvent(
@@ -140,6 +191,7 @@ class ActiveRun:
         iterator = iter(source)
         try:
             while True:
+                yield from self._drain_steer_events()
                 if self.stop_requested and self.commitment_ids:
                     yield from self._terminal_events()
                     return
@@ -179,9 +231,11 @@ class ActiveRunRegistry:
         self,
         *,
         store: V2FactStore,
+        steer_store: SteerStore | None = None,
         session_id: str,
         turn_id: str,
         request_context: dict[str, str],
+        resume_payload: dict | None = None,
     ) -> ActiveRun:
         with self._lock:
             if any(key[0] == session_id for key in self._runs):
@@ -190,9 +244,11 @@ class ActiveRunRegistry:
                 )
             active = ActiveRun(
                 store=store,
+                steer_store=steer_store or SteerStore.from_v2_root(store.root),
                 session_id=session_id,
                 turn_id=turn_id,
                 request_context=request_context,
+                resume_payload=resume_payload or request_context,
             )
             self._runs[(session_id, turn_id)] = active
             return active
@@ -209,3 +265,22 @@ class ActiveRunRegistry:
         if active is None:
             raise StopRequestConflict("run is not active")
         return active.request_stop()
+
+    def request_steer(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        expected_run_id: str,
+        client_request_id: str,
+        message: str,
+    ) -> SteerRecord:
+        with self._lock:
+            active = self._runs.get((session_id, turn_id))
+        if active is None:
+            raise StopRequestConflict("run is not active")
+        return active.request_steer(
+            expected_run_id=expected_run_id,
+            client_request_id=client_request_id,
+            message=message,
+        )

@@ -11,6 +11,7 @@ from data_agent.web.app import create_app
 from data_agent.v2.execution_control import StopReceipt, StopRequestConflict
 from data_agent.v2.models import EventType, ExecutionEvent
 from data_agent.v2.store import V2FactStore
+from data_agent.v2.steer import SteerStatus, SteerStore
 
 
 def _events(raw: str):
@@ -278,3 +279,149 @@ def test_unified_stop_is_idempotent_after_worker_unregisters(monkeypatch, tmp_pa
         "run_id": "run_stopped",
         "commitment_ids": ["commitment_stopped"],
     }
+
+
+def test_unified_steer_api_persists_through_active_registry(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    steers = SteerStore(tmp_path / "sessions", "session_steer_api")
+
+    class StubRegistry:
+        def request_steer(
+            self,
+            session_id,
+            turn_id,
+            *,
+            expected_run_id,
+            client_request_id,
+            message,
+        ):
+            assert session_id == "session_steer_api"
+            assert turn_id == "turn_steer_api"
+            assert expected_run_id == "run_steer_api"
+            return steers.enqueue(
+                source_turn_id=turn_id,
+                source_run_id=expected_run_id,
+                client_request_id=client_request_id,
+                message=message,
+                resume_payload={
+                    "analysis_kind": "descriptive",
+                    "filename": "sales.csv",
+                    "metric": "sales",
+                    "question": "原问题",
+                },
+            )
+
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "ACTIVE_V2_RUNS", StubRegistry())
+    response = client.post(
+        "/api/v2/runs/steer",
+        json={
+            "session_id": "session_steer_api",
+            "turn_id": "turn_steer_api",
+            "expected_run_id": "run_steer_api",
+            "client_request_id": "client_steer_api",
+            "message": "下一轮看中位数",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["status"] == "queued"
+    assert steers.queued_for_run("run_steer_api") is not None
+
+
+def test_unified_steer_consumption_uses_frozen_server_payload_and_projects_history(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    sessions_root = tmp_path / "sessions"
+    session_id = "session_steer_consume"
+    source_turn_id = "turn_steer_source"
+    target_turn_id = "turn_steer_target"
+    V2FactStore(sessions_root, session_id).write_turn_blocks(
+        source_turn_id,
+        [],
+        status="finalized",
+        request_context={
+            "analysis_kind": "descriptive",
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "原问题",
+        },
+    )
+    steers = SteerStore(sessions_root, session_id)
+    queued = steers.enqueue(
+        source_turn_id=source_turn_id,
+        source_run_id="run_steer_source",
+        client_request_id="client_steer_consume",
+        message="下一轮回答新的问题",
+        resume_payload={
+            "analysis_kind": "descriptive",
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "原问题",
+        },
+    )
+
+    response = client.post(
+        "/api/v2/analyze",
+        json={
+            "session_id": session_id,
+            "turn_id": target_turn_id,
+            "steer_id": queued.steer_id,
+            "analysis_kind": "magic",
+            "metric": "missing_metric",
+            "question": "不得信任消费时 DOM",
+        },
+    )
+    events = _events(response.get_data(as_text=True))
+    target = client.get(
+        f"/api/v2/sessions/{session_id}/turns/{target_turn_id}"
+    ).get_json()
+    source = client.get(
+        f"/api/v2/sessions/{session_id}/turns/{source_turn_id}"
+    ).get_json()
+
+    assert response.status_code == 200
+    assert events[-1][0] == "turn_completed"
+    assert target["request_context"]["analysis_kind"] == "descriptive"
+    assert target["request_context"]["metric"] == "sales"
+    assert target["request_context"]["question"] == "下一轮回答新的问题"
+    assert source["steers"][0]["status"] == "consumed"
+    assert source["steers"][0]["target_turn_id"] == target_turn_id
+    assert steers.get(queued.steer_id).status is SteerStatus.CONSUMED
+
+
+def test_unified_steer_retry_is_idempotent_after_active_worker_unregisters(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    steers = SteerStore(tmp_path / "sessions", "session_steer_retry")
+    queued = steers.enqueue(
+        source_turn_id="turn_steer_retry",
+        source_run_id="run_steer_retry",
+        client_request_id="client_steer_retry",
+        message="持久化后的重试",
+        resume_payload={"analysis_kind": "descriptive"},
+    )
+
+    class InactiveRegistry:
+        def request_steer(self, *args, **kwargs):
+            raise StopRequestConflict("run is not active")
+
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "ACTIVE_V2_RUNS", InactiveRegistry())
+    response = client.post(
+        "/api/v2/runs/steer",
+        json={
+            "session_id": "session_steer_retry",
+            "turn_id": "turn_steer_retry",
+            "expected_run_id": "run_steer_retry",
+            "client_request_id": "client_steer_retry",
+            "message": "持久化后的重试",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["steer_id"] == queued.steer_id
