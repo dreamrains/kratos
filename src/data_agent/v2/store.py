@@ -483,6 +483,7 @@ class V2FactStore:
             "aggregation",
             "horizon",
             "purpose",
+            "plan_id",
         }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")

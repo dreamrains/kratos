@@ -52,12 +52,15 @@ class DatasetColumnContext:
 @dataclass(frozen=True, slots=True)
 class DatasetPlanningContext:
     filename: str
+    source_fingerprint: str
     row_count: int
     columns: tuple[DatasetColumnContext, ...]
 
     def __post_init__(self) -> None:
         if not str(self.filename or "").strip():
             raise ValueError("filename is required")
+        if not str(self.source_fingerprint or "").startswith("sha256:"):
+            raise ValueError("source_fingerprint is required")
         if (
             isinstance(self.row_count, bool)
             or not isinstance(self.row_count, int)
@@ -73,6 +76,7 @@ class DatasetPlanningContext:
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
             "filename": self.filename,
+            "source_fingerprint": self.source_fingerprint,
             "row_count": self.row_count,
             "columns": [asdict(item) for item in self.columns],
         }
@@ -82,12 +86,14 @@ class DatasetPlanningContext:
         cls,
         *,
         filename: str,
+        source_fingerprint: str,
         frame: pd.DataFrame,
     ) -> "DatasetPlanningContext":
         if not isinstance(frame, pd.DataFrame):
             raise ValueError("frame must be a pandas DataFrame")
         return cls(
             filename=filename,
+            source_fingerprint=source_fingerprint,
             row_count=len(frame),
             columns=tuple(
                 DatasetColumnContext(

@@ -21,6 +21,7 @@ from data_agent.v2.router import AnalysisKind
 def _context() -> DatasetPlanningContext:
     return DatasetPlanningContext(
         filename="sales.csv",
+        source_fingerprint="sha256:" + "a" * 64,
         row_count=120,
         columns=(
             DatasetColumnContext("date", "object", ColumnRole.DATETIME),
@@ -187,6 +188,7 @@ def test_planner_rejects_hidden_result_fields_in_tool_arguments():
 def test_planning_context_infers_roles_without_sending_raw_rows():
     context = DatasetPlanningContext.from_frame(
         filename="orders.csv",
+        source_fingerprint="sha256:" + "b" * 64,
         frame=pd.DataFrame(
             {
                 "order_date": ["2026-01-01", "2026-01-02", "2026-01-03"],

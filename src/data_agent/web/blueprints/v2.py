@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 
+import pandas as pd
 from flask import Blueprint, Response, jsonify, request
 
 from data_agent.config import get_config
@@ -18,6 +21,12 @@ from data_agent.v2.slice4c import Slice4CForecastRuntime
 from data_agent.v2.slice4d import Slice4DMultiFindingRuntime
 from data_agent.v2.slice4e import Slice4EExploratoryRuntime
 from data_agent.v2.models import EventType
+from data_agent.v2.plan_store import (
+    DurablePlanStatus,
+    PlanConflict,
+    PlanStore,
+)
+from data_agent.v2.planner import DatasetPlanningContext, StructuredAnalysisPlanner
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
@@ -29,9 +38,14 @@ from data_agent.v2.execution_control import (
 )
 from data_agent.v2.steer import SteerConflict, SteerStatus, SteerStore
 from data_agent.web.event_bus import EventQueue, SSEEvent
+from data_agent.llm.client import LLMClient
 
 v2_bp = Blueprint("v2", __name__)
 ACTIVE_V2_RUNS = ActiveRunRegistry()
+
+
+def V2_PLANNER_FACTORY():
+    return StructuredAnalysisPlanner(LLMClient(temperature=0, timeout=120))
 
 
 def _request_context(payload: dict, analysis_kind: str) -> dict[str, str]:
@@ -52,6 +66,7 @@ def _request_context(payload: dict, analysis_kind: str) -> dict[str, str]:
         "aggregation",
         "horizon",
         "purpose",
+        "plan_id",
     }
     context = {"analysis_kind": analysis_kind}
     for key in allowed:
@@ -79,6 +94,35 @@ def _resume_payload(payload: dict, analysis_kind: str) -> dict:
     return frozen
 
 
+def _planning_source(inbox_root: Path | str, filename: str) -> DatasetPlanningContext:
+    inbox_root = Path(inbox_root)
+    safe_name = str(filename or "").strip()
+    if not safe_name or Path(safe_name).name != safe_name:
+        raise ValueError("filename must be a plain uploaded filename")
+    path = inbox_root / safe_name
+    if not path.is_file():
+        raise FileNotFoundError(f"uploaded file not found: {safe_name}")
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        frame = pd.read_csv(path)
+    elif suffix == ".tsv":
+        frame = pd.read_csv(path, sep="\t")
+    elif suffix in {".xlsx", ".xls"}:
+        frame = pd.read_excel(path)
+    elif suffix in {".json", ".jsonl"}:
+        frame = pd.read_json(path, lines=suffix == ".jsonl")
+    elif suffix == ".parquet":
+        frame = pd.read_parquet(path)
+    else:
+        raise ValueError(f"unsupported planning file type: {suffix}")
+    source_fingerprint = f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    return DatasetPlanningContext.from_frame(
+        filename=safe_name,
+        source_fingerprint=source_fingerprint,
+        frame=frame,
+    )
+
+
 def _sse_response(queue: EventQueue) -> Response:
     return Response(
         queue.iter(),
@@ -102,9 +146,44 @@ def analyze_v2() -> Response:
     router = AnalysisRouter(cfg.sessions_resolved, cfg.inbox_dir)
     steer_store = None
     queued_steer = None
+    plan_store = None
+    ready_plan = None
     try:
         requested_steer_id = str(payload.get("steer_id") or "").strip()
-        if requested_steer_id:
+        requested_plan_id = str(payload.get("plan_id") or "").strip()
+        if requested_steer_id and requested_plan_id:
+            return jsonify({"error": "steer_id and plan_id are mutually exclusive"}), 400
+        if requested_plan_id:
+            session_id = str(payload.get("session_id") or "").strip()
+            if not session_id:
+                return jsonify({"error": "session_id is required with plan_id"}), 400
+            plan_store = PlanStore(cfg.sessions_resolved, session_id)
+            ready_plan = plan_store.get(requested_plan_id)
+            if ready_plan.status is not DurablePlanStatus.READY:
+                return jsonify(
+                    {
+                        "error": f"plan is already {ready_plan.status.value}",
+                        "plan": ready_plan.to_dict(),
+                    }
+                ), 409
+            current_context = _planning_source(
+                cfg.inbox_dir, ready_plan.dataset_context["filename"]
+            )
+            if (
+                current_context.source_fingerprint
+                != ready_plan.dataset_context.get("source_fingerprint")
+            ):
+                return jsonify(
+                    {"error": "planned dataset source has changed; create a new plan"}
+                ), 409
+            effective_payload = {
+                "analysis_kind": ready_plan.analysis_kind,
+                "filename": ready_plan.dataset_context["filename"],
+                "question": ready_plan.question,
+                "plan_id": ready_plan.plan_id,
+                **dict(ready_plan.parameters or {}),
+            }
+        elif requested_steer_id:
             session_id = str(payload.get("session_id") or "").strip()
             if not session_id:
                 return jsonify({"error": "session_id is required with steer_id"}), 400
@@ -158,6 +237,12 @@ def analyze_v2() -> Response:
         except SteerConflict as exc:
             ACTIVE_V2_RUNS.unregister(active)
             return jsonify({"error": str(exc)}), 409
+    if ready_plan is not None:
+        try:
+            plan_store.consume(ready_plan.plan_id, target_turn_id=turn_id)
+        except PlanConflict as exc:
+            ACTIVE_V2_RUNS.unregister(active)
+            return jsonify({"error": str(exc)}), 409
     queue = EventQueue()
 
     def run() -> None:
@@ -178,6 +263,79 @@ def analyze_v2() -> Response:
 
     threading.Thread(target=run, daemon=True).start()
     return _sse_response(queue)
+
+
+@v2_bp.post("/v2/plans")
+def create_v2_plan() -> Response:
+    """Run one explicitly authorized model planning call and persist its result."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    session_id = str(
+        payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}"
+    ).strip()
+    filename = str(payload.get("filename") or "").strip()
+    question = str(payload.get("question") or "").strip()
+    client_request_id = str(payload.get("client_request_id") or "").strip()
+    authorization_ref = str(payload.get("provider_authorization_ref") or "").strip()
+    authorized_calls = payload.get("provider_calls_authorized")
+    if not all((session_id, filename, question, client_request_id, authorization_ref)):
+        return jsonify(
+            {
+                "error": (
+                    "session_id, filename, question, client_request_id, and "
+                    "provider_authorization_ref are required"
+                )
+            }
+        ), 400
+    if isinstance(authorized_calls, bool) or authorized_calls != 1:
+        return jsonify({"error": "provider_calls_authorized must equal 1"}), 400
+    cfg = get_config()
+    try:
+        context = _planning_source(cfg.inbox_dir, filename)
+        planner = V2_PLANNER_FACTORY()
+        store = PlanStore(cfg.sessions_resolved, session_id)
+        existing = store.find_by_client_request(client_request_id)
+        requested = store.request(
+            client_request_id=client_request_id,
+            question=question,
+            dataset_context=context.to_prompt_dict(),
+            provider_authorization_ref=authorization_ref,
+            provider_calls_authorized=authorized_calls,
+        )
+        if existing is not None:
+            restored = store.require_replayable(requested.plan_id)
+            return jsonify(restored.to_dict()), 200
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except PlanConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        result = planner.plan(question, context)
+        completed = store.complete(requested.plan_id, result)
+    except Exception as exc:
+        failed = store.fail(
+            requested.plan_id,
+            error_code=type(exc).__name__,
+            message="planner invocation or contract validation failed",
+        )
+        return jsonify({"error": "planning failed", "plan": failed.to_dict()}), 502
+    return jsonify(completed.to_dict()), 201
+
+
+@v2_bp.get("/v2/sessions/<session_id>/plans/<plan_id>")
+def get_v2_plan(session_id: str, plan_id: str):
+    try:
+        record = PlanStore(get_config().sessions_resolved, session_id).get(plan_id)
+    except KeyError:
+        return jsonify({"error": "V2 plan not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(record.to_dict())
 
 
 @v2_bp.post("/v2/runs/steer")
@@ -753,6 +911,17 @@ def get_v2_turn(session_id: str, turn_id: str):
         item.to_dict()
         for item in SteerStore(sessions_root, session_id).list_for_turn(turn_id)
     ]
+    source_plan = next(
+        (
+            item
+            for item in PlanStore(sessions_root, session_id).list_all()
+            if item.target_turn_id == turn_id
+        ),
+        None,
+    )
+    turn["plan"] = source_plan.to_dict() if source_plan else None
+    if source_plan is not None:
+        turn.setdefault("request_context", {})["plan_id"] = source_plan.plan_id
     return jsonify(turn)
 
 
