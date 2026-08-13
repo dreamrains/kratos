@@ -83,6 +83,17 @@ class TimeSeriesResult:
     limitations: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass(slots=True)
+class PreparedTimeSeries:
+    status: str
+    reason_code: str
+    series: pd.Series
+    source_rows: int
+    valid_rows: int
+    missing_periods: int
+    imputed_periods: int = 0
+
+
 def _periodize(values: pd.Series, frequency: TimeFrequency) -> pd.Series:
     if frequency is TimeFrequency.DAILY:
         return values.dt.floor("D")
@@ -98,6 +109,57 @@ def _expected_index(start: pd.Timestamp, end: pd.Timestamp, frequency: TimeFrequ
         TimeFrequency.MONTHLY: "MS",
     }[frequency]
     return pd.date_range(start, end, freq=alias)
+
+
+def prepare_regular_series(
+    frame: pd.DataFrame,
+    *,
+    time_field: str,
+    metric: str,
+    frequency: TimeFrequency,
+    aggregation: TimeAggregation,
+) -> PreparedTimeSeries:
+    """Build one explicit regular series without guessing or imputing semantics."""
+
+    missing = sorted({time_field, metric} - set(frame.columns))
+    if missing:
+        raise KeyError(f"time-series fields not found: {missing}")
+    if pd.api.types.is_datetime64_any_dtype(frame[time_field]):
+        parsed_time = pd.to_datetime(frame[time_field], errors="coerce")
+    else:
+        date_plan = inspect_date_conversion(frame, time_field)
+        if date_plan.disposition is DateTransformDisposition.NEEDS_INPUT:
+            return PreparedTimeSeries(
+                "limited", "date_semantics_require_confirmation", pd.Series(dtype=float), len(frame), 0, 0
+            )
+        if date_plan.disposition is DateTransformDisposition.UNAVAILABLE:
+            return PreparedTimeSeries(
+                "limited", "time_field_not_losslessly_parseable", pd.Series(dtype=float), len(frame), 0, 0
+            )
+        converted = apply_date_option(frame, time_field, date_plan.options[0])
+        parsed_time = converted[time_field]
+    numeric = pd.to_numeric(frame[metric], errors="coerce")
+    working = pd.DataFrame({"time": parsed_time, "value": numeric}).replace(
+        [np.inf, -np.inf], np.nan
+    ).dropna()
+    valid_rows = len(working)
+    if valid_rows == 0:
+        return PreparedTimeSeries(
+            "limited", "no_valid_time_metric_rows", pd.Series(dtype=float), len(frame), 0, 0
+        )
+    working["period"] = _periodize(working["time"], frequency)
+    grouped = working.groupby("period", sort=True)["value"]
+    series = grouped.sum() if aggregation is TimeAggregation.SUM else grouped.mean()
+    expected = _expected_index(series.index.min(), series.index.max(), frequency)
+    missing_periods = int(len(expected.difference(series.index)))
+    return PreparedTimeSeries(
+        "limited" if missing_periods else "ready",
+        "missing_time_intervals" if missing_periods else "",
+        series,
+        len(frame),
+        valid_rows,
+        missing_periods,
+    )
 
 
 def _base(
@@ -137,46 +199,21 @@ def _base(
 
 
 def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeriesResult:
-    missing = sorted({spec.time_field, spec.metric} - set(frame.columns))
-    if missing:
-        raise KeyError(f"time-series fields not found: {missing}")
-    if pd.api.types.is_datetime64_any_dtype(frame[spec.time_field]):
-        parsed_time = pd.to_datetime(frame[spec.time_field], errors="coerce")
-    else:
-        date_plan = inspect_date_conversion(frame, spec.time_field)
-        if date_plan.disposition is DateTransformDisposition.NEEDS_INPUT:
-            return _base(
-                frame,
-                spec,
-                status="limited",
-                reason_code="date_semantics_require_confirmation",
-            )
-        if date_plan.disposition is DateTransformDisposition.UNAVAILABLE:
-            return _base(
-                frame,
-                spec,
-                status="limited",
-                reason_code="time_field_not_losslessly_parseable",
-            )
-        converted = apply_date_option(frame, spec.time_field, date_plan.options[0])
-        parsed_time = converted[spec.time_field]
-    numeric = pd.to_numeric(frame[spec.metric], errors="coerce")
-    working = pd.DataFrame({"time": parsed_time, "value": numeric}).replace(
-        [np.inf, -np.inf], np.nan
-    ).dropna()
-    valid_rows = len(working)
-    if valid_rows == 0:
+    prepared = prepare_regular_series(
+        frame,
+        time_field=spec.time_field,
+        metric=spec.metric,
+        frequency=spec.frequency,
+        aggregation=spec.aggregation,
+    )
+    if prepared.status == "limited" and prepared.series.empty:
         return _base(
-            frame, spec, status="limited", reason_code="no_valid_time_metric_rows"
+            frame, spec, status="limited", reason_code=prepared.reason_code
         )
-    working["period"] = _periodize(working["time"], spec.frequency)
-    grouped = working.groupby("period", sort=True)["value"]
-    series = grouped.sum() if spec.aggregation is TimeAggregation.SUM else grouped.mean()
+    series = prepared.series
     times = tuple(pd.Timestamp(item).isoformat() for item in series.index)
     values = tuple(float(item) for item in series.to_numpy(dtype=float))
-    expected = _expected_index(series.index.min(), series.index.max(), spec.frequency)
-    missing_periods = int(len(expected.difference(series.index)))
-    if missing_periods:
+    if prepared.missing_periods:
         return _base(
             frame,
             spec,
@@ -184,8 +221,8 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             reason_code="missing_time_intervals",
             times=times,
             values=values,
-            valid_rows=valid_rows,
-            missing_periods=missing_periods,
+            valid_rows=prepared.valid_rows,
+            missing_periods=prepared.missing_periods,
         )
     if len(series) < 6:
         return _base(
@@ -195,7 +232,7 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             reason_code="insufficient_trend_degrees_of_freedom",
             times=times,
             values=values,
-            valid_rows=valid_rows,
+            valid_rows=prepared.valid_rows,
         )
     if float(series.std(ddof=0)) == 0:
         return _base(
@@ -205,7 +242,7 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             reason_code="constant_time_series",
             times=times,
             values=values,
-            valid_rows=valid_rows,
+            valid_rows=prepared.valid_rows,
         )
     trend = np.arange(len(series), dtype=float)
     design = pd.DataFrame({"trend": trend}, index=series.index)
@@ -229,7 +266,7 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             reason_code="insufficient_trend_degrees_of_freedom",
             times=times,
             values=values,
-            valid_rows=valid_rows,
+            valid_rows=prepared.valid_rows,
         )
     x = sm.add_constant(design, has_constant="add")
     hac_lag = max(1, min(len(series) // 4, int(math.floor(4 * (len(series) / 100) ** (2 / 9)))))
@@ -272,7 +309,7 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
         hac_max_lag=hac_lag,
         seasonality_control=seasonality,
         source_rows=len(frame),
-        valid_rows=valid_rows,
+        valid_rows=prepared.valid_rows,
         observed_periods=len(series),
         missing_periods=0,
         imputed_periods=0,

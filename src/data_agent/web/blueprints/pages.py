@@ -38,3 +38,9 @@ def v2_group_canary():
 def v2_time_canary():
     """Isolated Slice 4B historical-trend browser canary."""
     return render_template("v2_time_canary.html")
+
+
+@pages_bp.route("/v2-forecast-canary")
+def v2_forecast_canary():
+    """Isolated Slice 4C backtested-forecast browser canary."""
+    return render_template("v2_forecast_canary.html")

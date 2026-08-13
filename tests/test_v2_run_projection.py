@@ -237,3 +237,29 @@ def test_period_summary_does_not_complete_time_trend_commitment():
 
     assert result.outcomes["c_time"].status is OutcomeStatus.PENDING
     assert result.publishable is False
+
+
+def test_historical_summary_does_not_complete_forecast_commitment():
+    commitment = Commitment(
+        commitment_id="c_forecast",
+        priority=CommitmentPriority.CORE,
+        question="未来七天是多少？",
+        dataset_version_ids=("dv_forecast",),
+        accepted_result_kinds=(FindingKind.FORECAST, FindingKind.LIMITATION),
+        accepted_method_capabilities=("analysis.forecast_baseline",),
+    )
+    history = Finding(
+        finding_id="f_history",
+        commitment_id="c_forecast",
+        finding_kind=FindingKind.ESTIMATE,
+        dataset_version_ids=("dv_forecast",),
+        metric_identity="column:sales:historical_summary",
+        method_capability="analysis.forecast_baseline",
+        maximum_claim_class=ClaimClass.DESCRIPTIVE,
+        computation_ref="comp_forecast",
+    )
+
+    result = project_run([commitment], [], [history])
+
+    assert result.outcomes["c_forecast"].status is OutcomeStatus.PENDING
+    assert result.publishable is False

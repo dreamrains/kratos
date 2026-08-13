@@ -73,6 +73,12 @@ def decide_recommendation(context: RecommendationContext) -> RecommendationDecis
             "historical_trend_requires_driver_validation",
             "可把历史趋势作为调查线索：检查季节、口径变化和同期外部事件，再用低风险、可逆的验证设计评估可干预因素。",
         )
+    if context.finding_kind is FindingKind.FORECAST:
+        return RecommendationDecision(
+            RecommendationMode.INVESTIGATIVE_NEXT_STEP,
+            "forecast_requires_scenario_monitoring",
+            "可把基线预测用于情景规划，但应同时保留区间上下界、设置监控与更新条件；它不证明任何干预会产生预测中的结果。",
+        )
     if context.finding_kind in {
         FindingKind.GROUP_COMPARISON,
         FindingKind.ASSOCIATION,

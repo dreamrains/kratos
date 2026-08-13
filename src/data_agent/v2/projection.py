@@ -46,6 +46,7 @@ def _project_commitment(
             FindingKind.TRANSFORMATION,
             FindingKind.GROUP_COMPARISON,
             FindingKind.TIME_TREND,
+            FindingKind.FORECAST,
         }
         for item in matched
     ):

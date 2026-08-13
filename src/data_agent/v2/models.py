@@ -21,6 +21,7 @@ class FindingKind(StrEnum):
     TRANSFORMATION = "transformation"
     GROUP_COMPARISON = "group_comparison"
     TIME_TREND = "time_trend"
+    FORECAST = "forecast"
 
 
 class ClaimClass(StrEnum):
