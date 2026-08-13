@@ -9,6 +9,7 @@ import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.v2.plan_store import DurablePlanStatus, PlanStore
 from data_agent.v2.planner import AnalysisPlan, AnalysisKind, PlanStatus
+from data_agent.v2.provider_authorization import ProviderAuthorizationStore
 from data_agent.web.app import create_app
 
 
@@ -39,6 +40,29 @@ def _client(monkeypatch, tmp_path):
         AgentConfig(WORKSPACE_DIR=workspace, SESSIONS_DIR=tmp_path / "sessions"),
     )
     return create_app().test_client()
+
+
+def _issue_authorization(
+    client,
+    *,
+    session_id: str,
+    question: str,
+    client_action_id: str,
+) -> str:
+    response = client.post(
+        "/api/v2/provider-authorizations",
+        json={
+            "session_id": session_id,
+            "filename": "sales.csv",
+            "question": question,
+            "client_action_id": client_action_id,
+            "purpose": "analysis_planning",
+            "provider_calls_authorized": 1,
+            "confirm_provider_call": True,
+        },
+    )
+    assert response.status_code == 201
+    return response.get_json()["authorization_id"]
 
 
 class FakePlanner:
@@ -82,21 +106,76 @@ class FakeFailedPlanner:
         raise RuntimeError("provider unavailable")
 
 
-def test_plan_api_requires_exact_single_call_authorization(monkeypatch, tmp_path):
+def test_plan_api_rejects_client_asserted_or_unknown_authorization(
+    monkeypatch, tmp_path
+):
     client = _client(monkeypatch, tmp_path)
-    for value in (None, 0, 2, True):
-        response = client.post(
-            "/api/v2/plans",
-            json={
-                "session_id": "session_plan_auth",
-                "filename": "sales.csv",
-                "question": "平均销售额？",
-                "client_request_id": "client_plan_auth",
-                "provider_calls_authorized": value,
-                "provider_authorization_ref": "user:explicit",
-            },
-        )
-        assert response.status_code == 400
+    asserted = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_plan_auth",
+            "filename": "sales.csv",
+            "question": "平均销售额？",
+            "client_request_id": "client_plan_auth",
+            "provider_calls_authorized": 1,
+            "provider_authorization_ref": "user:explicit",
+        },
+    )
+    unknown = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_plan_auth",
+            "filename": "sales.csv",
+            "question": "平均销售额？",
+            "client_request_id": "client_plan_auth",
+            "provider_authorization_id": "provider_auth_unknown",
+        },
+    )
+
+    assert asserted.status_code == 400
+    assert unknown.status_code == 404
+
+
+def test_authorization_api_is_explicit_idempotent_and_does_not_call_planner(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNER_FACTORY",
+        lambda: (_ for _ in ()).throw(AssertionError("planner must not be created")),
+    )
+    payload = {
+        "session_id": "session_auth_api",
+        "filename": "sales.csv",
+        "question": "平均销售额？",
+        "client_action_id": "action_auth_api",
+        "purpose": "analysis_planning",
+        "provider_calls_authorized": 1,
+        "confirm_provider_call": True,
+    }
+
+    first = client.post("/api/v2/provider-authorizations", json=payload)
+    repeated = client.post("/api/v2/provider-authorizations", json=payload)
+    rejected = client.post(
+        "/api/v2/provider-authorizations",
+        json={
+            **payload,
+            "client_action_id": "action_auth_rejected",
+            "confirm_provider_call": False,
+        },
+    )
+
+    assert first.status_code == 201
+    assert repeated.status_code == 200
+    assert rejected.status_code == 400
+    assert (
+        first.get_json()["authorization_id"]
+        == repeated.get_json()["authorization_id"]
+    )
+    assert first.get_json()["status"] == "issued"
 
 
 def test_plan_api_persists_ready_and_idempotent_retry_does_not_reinvoke(
@@ -107,13 +186,19 @@ def test_plan_api_persists_ready_and_idempotent_retry_does_not_reinvoke(
 
     FakePlanner.calls = 0
     monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakePlanner())
+    question = "平均销售额？"
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_plan_api",
+        question=question,
+        client_action_id="action_plan_api",
+    )
     request = {
         "session_id": "session_plan_api",
         "filename": "sales.csv",
-        "question": "平均销售额？",
+        "question": question,
         "client_request_id": "client_plan_api",
-        "provider_calls_authorized": 1,
-        "provider_authorization_ref": "user:explicit:one",
+        "provider_authorization_id": authorization_id,
     }
     first = client.post("/api/v2/plans", json=request)
     repeated = client.post("/api/v2/plans", json=request)
@@ -249,15 +334,21 @@ def test_plan_api_persists_needs_input_without_creating_executable_route(
     monkeypatch.setattr(
         v2_module, "V2_PLANNER_FACTORY", lambda: FakeNeedsInputPlanner()
     )
+    question = "比较表现"
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_plan_needs_input",
+        question=question,
+        client_action_id="action_plan_needs_input",
+    )
     response = client.post(
         "/api/v2/plans",
         json={
             "session_id": "session_plan_needs_input",
             "filename": "sales.csv",
-            "question": "比较表现",
+            "question": question,
             "client_request_id": "client_plan_needs_input",
-            "provider_calls_authorized": 1,
-            "provider_authorization_ref": "user:explicit:needs-input",
+            "provider_authorization_id": authorization_id,
         },
     )
 
@@ -284,13 +375,19 @@ def test_failed_plan_is_durable_and_same_request_does_not_retry_provider(
 
     FakeFailedPlanner.calls = 0
     monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakeFailedPlanner())
+    question = "平均销售额？"
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_plan_failed",
+        question=question,
+        client_action_id="action_plan_failed",
+    )
     request = {
         "session_id": "session_plan_failed",
         "filename": "sales.csv",
-        "question": "平均销售额？",
+        "question": question,
         "client_request_id": "client_plan_failed",
-        "provider_calls_authorized": 1,
-        "provider_authorization_ref": "user:explicit:failed",
+        "provider_authorization_id": authorization_id,
     }
     failed = client.post("/api/v2/plans", json=request)
     repeated = client.post("/api/v2/plans", json=request)
@@ -308,10 +405,29 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
 ):
     client = _client(monkeypatch, tmp_path)
     source = tmp_path / "workspace" / "inbox" / "sales.csv"
+    question = "平均销售额？"
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_plan_incomplete",
+        question=question,
+        client_action_id="action_plan_incomplete",
+    )
+    ProviderAuthorizationStore(
+        tmp_path / "sessions", "session_plan_incomplete"
+    ).consume(
+        authorization_id,
+        client_request_id="client_plan_incomplete",
+        purpose="analysis_planning",
+        filename="sales.csv",
+        source_fingerprint=(
+            "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+        ),
+        question=question,
+    )
     store = PlanStore(tmp_path / "sessions", "session_plan_incomplete")
     store.request(
         client_request_id="client_plan_incomplete",
-        question="平均销售额？",
+        question=question,
         dataset_context={
             "filename": "sales.csv",
             "source_fingerprint": "sha256:"
@@ -319,7 +435,7 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
             "row_count": 3,
             "columns": [{"name": "sales", "dtype": "int64", "role": "numeric"}],
         },
-        provider_authorization_ref="user:explicit:incomplete",
+        provider_authorization_ref=authorization_id,
         provider_calls_authorized=1,
     )
     import data_agent.web.blueprints.v2 as v2_module
@@ -331,10 +447,9 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
         json={
             "session_id": "session_plan_incomplete",
             "filename": "sales.csv",
-            "question": "平均销售额？",
+            "question": question,
             "client_request_id": "client_plan_incomplete",
-            "provider_calls_authorized": 1,
-            "provider_authorization_ref": "user:explicit:incomplete",
+            "provider_authorization_id": authorization_id,
         },
     )
 

@@ -26,6 +26,10 @@ from data_agent.v2.plan_store import (
     PlanConflict,
     PlanStore,
 )
+from data_agent.v2.provider_authorization import (
+    ProviderAuthorizationConflict,
+    ProviderAuthorizationStore,
+)
 from data_agent.v2.planner import DatasetPlanningContext, StructuredAnalysisPlanner
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
@@ -267,7 +271,7 @@ def analyze_v2() -> Response:
 
 @v2_bp.post("/v2/plans")
 def create_v2_plan() -> Response:
-    """Run one explicitly authorized model planning call and persist its result."""
+    """Consume one server-issued receipt, then run one model planning call."""
 
     payload = request.get_json(force=True)
     if not isinstance(payload, dict):
@@ -278,43 +282,68 @@ def create_v2_plan() -> Response:
     filename = str(payload.get("filename") or "").strip()
     question = str(payload.get("question") or "").strip()
     client_request_id = str(payload.get("client_request_id") or "").strip()
-    authorization_ref = str(payload.get("provider_authorization_ref") or "").strip()
-    authorized_calls = payload.get("provider_calls_authorized")
-    if not all((session_id, filename, question, client_request_id, authorization_ref)):
+    authorization_id = str(payload.get("provider_authorization_id") or "").strip()
+    if not all(
+        (session_id, filename, question, client_request_id, authorization_id)
+    ):
         return jsonify(
             {
                 "error": (
                     "session_id, filename, question, client_request_id, and "
-                    "provider_authorization_ref are required"
+                    "provider_authorization_id are required"
                 )
             }
         ), 400
-    if isinstance(authorized_calls, bool) or authorized_calls != 1:
-        return jsonify({"error": "provider_calls_authorized must equal 1"}), 400
     cfg = get_config()
     try:
         context = _planning_source(cfg.inbox_dir, filename)
-        planner = V2_PLANNER_FACTORY()
         store = PlanStore(cfg.sessions_resolved, session_id)
+        authorization_store = ProviderAuthorizationStore(
+            cfg.sessions_resolved, session_id
+        )
         existing = store.find_by_client_request(client_request_id)
+        if existing is not None:
+            requested = store.request(
+                client_request_id=client_request_id,
+                question=question,
+                dataset_context=context.to_prompt_dict(),
+                provider_authorization_ref=authorization_id,
+                provider_calls_authorized=1,
+            )
+            authorization_store.consume(
+                authorization_id,
+                client_request_id=client_request_id,
+                purpose="analysis_planning",
+                filename=filename,
+                source_fingerprint=context.source_fingerprint,
+                question=question,
+            )
+            restored = store.require_replayable(requested.plan_id)
+            return jsonify(restored.to_dict()), 200
+        authorization_store.consume(
+            authorization_id,
+            client_request_id=client_request_id,
+            purpose="analysis_planning",
+            filename=filename,
+            source_fingerprint=context.source_fingerprint,
+            question=question,
+        )
         requested = store.request(
             client_request_id=client_request_id,
             question=question,
             dataset_context=context.to_prompt_dict(),
-            provider_authorization_ref=authorization_ref,
-            provider_calls_authorized=authorized_calls,
+            provider_authorization_ref=authorization_id,
+            provider_calls_authorized=1,
         )
-        if existing is not None:
-            restored = store.require_replayable(requested.plan_id)
-            return jsonify(restored.to_dict()), 200
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 404
-    except PlanConflict as exc:
+    except (PlanConflict, ProviderAuthorizationConflict) as exc:
         return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
     try:
+        planner = V2_PLANNER_FACTORY()
         result = planner.plan(question, context)
         completed = store.complete(requested.plan_id, result)
     except Exception as exc:
@@ -325,6 +354,57 @@ def create_v2_plan() -> Response:
         )
         return jsonify({"error": "planning failed", "plan": failed.to_dict()}), 502
     return jsonify(completed.to_dict()), 201
+
+
+@v2_bp.post("/v2/provider-authorizations")
+def issue_v2_provider_authorization() -> Response:
+    """Persist one explicit, exact-count permission without calling a Provider."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    session_id = str(payload.get("session_id") or "").strip()
+    filename = str(payload.get("filename") or "").strip()
+    question = str(payload.get("question") or "").strip()
+    client_action_id = str(payload.get("client_action_id") or "").strip()
+    purpose = str(payload.get("purpose") or "").strip()
+    if not all((session_id, filename, question, client_action_id, purpose)):
+        return jsonify(
+            {
+                "error": (
+                    "session_id, filename, question, client_action_id, and "
+                    "purpose are required"
+                )
+            }
+        ), 400
+    cfg = get_config()
+    try:
+        context = _planning_source(cfg.inbox_dir, filename)
+        store = ProviderAuthorizationStore(cfg.sessions_resolved, session_id)
+        existing = next(
+            (
+                item
+                for item in store.list_all()
+                if item.client_action_id == client_action_id
+            ),
+            None,
+        )
+        record = store.issue(
+            client_action_id=client_action_id,
+            purpose=purpose,
+            filename=filename,
+            source_fingerprint=context.source_fingerprint,
+            question=question,
+            provider_calls_authorized=payload.get("provider_calls_authorized"),
+            confirm_provider_call=payload.get("confirm_provider_call"),
+        )
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ProviderAuthorizationConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(record.to_dict()), 200 if existing is not None else 201
 
 
 @v2_bp.get("/v2/sessions/<session_id>/plans/<plan_id>")
