@@ -31,6 +31,7 @@ class ProviderAuthorizationRecord:
     request_fingerprint: str
     provider_calls_authorized: int
     status: ProviderAuthorizationStatus
+    planning_input_id: str = ""
     consumer_request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,11 +64,17 @@ def planning_request_fingerprint(
     filename: str,
     source_fingerprint: str,
     question: str,
+    planning_input_id: str = "",
 ) -> str:
     normalized_purpose = str(purpose or "").strip()
     safe_filename = str(filename or "").strip()
     normalized_source = str(source_fingerprint or "").strip()
     normalized_question = str(question or "").strip()
+    normalized_input = str(planning_input_id or "").strip()
+    if normalized_input:
+        normalized_input = require_storage_id(
+            normalized_input, "planning_input_id"
+        )
     if normalized_purpose != _PLANNING_PURPOSE:
         raise ValueError(f"purpose must equal {_PLANNING_PURPOSE}")
     if not safe_filename or Path(safe_filename).name != safe_filename:
@@ -82,6 +89,7 @@ def planning_request_fingerprint(
             "purpose": normalized_purpose,
             "question": normalized_question,
             "source_fingerprint": normalized_source,
+            "planning_input_id": normalized_input,
         }
     )
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
@@ -164,6 +172,7 @@ class ProviderAuthorizationStore:
                         event.get("provider_calls_authorized") or 0
                     ),
                     status=ProviderAuthorizationStatus.ISSUED,
+                    planning_input_id=str(event.get("planning_input_id") or ""),
                 )
                 order.append(authorization_id)
                 continue
@@ -207,6 +216,7 @@ class ProviderAuthorizationStore:
         question: str,
         provider_calls_authorized: int,
         confirm_provider_call: bool,
+        planning_input_id: str = "",
     ) -> ProviderAuthorizationRecord:
         action_id = require_storage_id(client_action_id, "client_action_id")
         if confirm_provider_call is not True:
@@ -221,9 +231,11 @@ class ProviderAuthorizationStore:
             filename=filename,
             source_fingerprint=source_fingerprint,
             question=question,
+            planning_input_id=planning_input_id,
         )
         normalized_purpose = str(purpose).strip()
         normalized_filename = str(filename).strip()
+        normalized_input = str(planning_input_id or "").strip()
         with _AUTHORIZATION_LOCK:
             existing = next(
                 (
@@ -240,6 +252,7 @@ class ProviderAuthorizationStore:
                     and existing.request_fingerprint == request_fingerprint
                     and existing.provider_calls_authorized
                     == provider_calls_authorized
+                    and existing.planning_input_id == normalized_input
                 )
                 if not same:
                     raise ProviderAuthorizationConflict(
@@ -261,6 +274,7 @@ class ProviderAuthorizationStore:
                     "filename": normalized_filename,
                     "request_fingerprint": request_fingerprint,
                     "provider_calls_authorized": provider_calls_authorized,
+                    "planning_input_id": normalized_input,
                 }
             )
             return self.get(authorization_id)
@@ -274,6 +288,7 @@ class ProviderAuthorizationStore:
         filename: str,
         source_fingerprint: str,
         question: str,
+        planning_input_id: str = "",
     ) -> ProviderAuthorizationRecord:
         safe_id = require_storage_id(authorization_id, "authorization_id")
         consumer_id = require_storage_id(client_request_id, "client_request_id")
@@ -282,6 +297,7 @@ class ProviderAuthorizationStore:
             filename=filename,
             source_fingerprint=source_fingerprint,
             question=question,
+            planning_input_id=planning_input_id,
         )
         with _AUTHORIZATION_LOCK:
             current = self.get(safe_id)

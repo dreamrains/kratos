@@ -31,6 +31,12 @@ from data_agent.v2.provider_authorization import (
     ProviderAuthorizationStore,
 )
 from data_agent.v2.planner import DatasetPlanningContext, StructuredAnalysisPlanner
+from data_agent.v2.planning_input import (
+    PlanningInputConflict,
+    PlanningInputRecord,
+    PlanningInputStore,
+    planning_question_blocks,
+)
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
@@ -125,6 +131,38 @@ def _planning_source(inbox_root: Path | str, filename: str) -> DatasetPlanningCo
         source_fingerprint=source_fingerprint,
         frame=frame,
     )
+
+
+def _planning_input_for_request(
+    *,
+    sessions_root: Path | str,
+    session_id: str,
+    planning_input_id: str,
+    question: str,
+    context: DatasetPlanningContext,
+) -> PlanningInputRecord:
+    planning_input = PlanningInputStore(sessions_root, session_id).get(
+        planning_input_id
+    )
+    source_plan = PlanStore(sessions_root, session_id).get(
+        planning_input.source_plan_id
+    )
+    if source_plan.status is not DurablePlanStatus.NEEDS_INPUT:
+        raise PlanningInputConflict("source plan is not needs_input")
+    if source_plan.question != question:
+        raise PlanningInputConflict("planning input belongs to a different question")
+    if source_plan.dataset_context != context.to_prompt_dict():
+        raise PlanningInputConflict("planning input belongs to a different dataset")
+    expected_questions = tuple(
+        {
+            "question_id": item["question_id"],
+            "text": item["text"],
+        }
+        for item in planning_question_blocks(source_plan.plan_id, source_plan.questions)
+    )
+    if planning_input.questions != expected_questions:
+        raise PlanningInputConflict("planning input questions differ from source plan")
+    return planning_input
 
 
 def _sse_response(queue: EventQueue) -> Response:
@@ -283,6 +321,7 @@ def create_v2_plan() -> Response:
     question = str(payload.get("question") or "").strip()
     client_request_id = str(payload.get("client_request_id") or "").strip()
     authorization_id = str(payload.get("provider_authorization_id") or "").strip()
+    planning_input_id = str(payload.get("planning_input_id") or "").strip()
     if not all(
         (session_id, filename, question, client_request_id, authorization_id)
     ):
@@ -301,6 +340,20 @@ def create_v2_plan() -> Response:
         authorization_store = ProviderAuthorizationStore(
             cfg.sessions_resolved, session_id
         )
+        planning_input = (
+            _planning_input_for_request(
+                sessions_root=cfg.sessions_resolved,
+                session_id=session_id,
+                planning_input_id=planning_input_id,
+                question=question,
+                context=context,
+            )
+            if planning_input_id
+            else None
+        )
+        parent_plan_id = (
+            planning_input.source_plan_id if planning_input is not None else ""
+        )
         existing = store.find_by_client_request(client_request_id)
         if existing is not None:
             requested = store.request(
@@ -309,6 +362,8 @@ def create_v2_plan() -> Response:
                 dataset_context=context.to_prompt_dict(),
                 provider_authorization_ref=authorization_id,
                 provider_calls_authorized=1,
+                parent_plan_id=parent_plan_id,
+                planning_input_id=planning_input_id,
             )
             authorization_store.consume(
                 authorization_id,
@@ -317,6 +372,7 @@ def create_v2_plan() -> Response:
                 filename=filename,
                 source_fingerprint=context.source_fingerprint,
                 question=question,
+                planning_input_id=planning_input_id,
             )
             restored = store.require_replayable(requested.plan_id)
             return jsonify(restored.to_dict()), 200
@@ -327,6 +383,7 @@ def create_v2_plan() -> Response:
             filename=filename,
             source_fingerprint=context.source_fingerprint,
             question=question,
+            planning_input_id=planning_input_id,
         )
         requested = store.request(
             client_request_id=client_request_id,
@@ -334,17 +391,31 @@ def create_v2_plan() -> Response:
             dataset_context=context.to_prompt_dict(),
             provider_authorization_ref=authorization_id,
             provider_calls_authorized=1,
+            parent_plan_id=parent_plan_id,
+            planning_input_id=planning_input_id,
         )
     except (FileNotFoundError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 404
-    except (PlanConflict, ProviderAuthorizationConflict) as exc:
+    except (
+        PlanConflict,
+        PlanningInputConflict,
+        ProviderAuthorizationConflict,
+    ) as exc:
         return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
     try:
         planner = V2_PLANNER_FACTORY()
-        result = planner.plan(question, context)
+        result = (
+            planner.plan(
+                question,
+                context,
+                clarifications=planning_input.clarifications,
+            )
+            if planning_input is not None
+            else planner.plan(question, context)
+        )
         completed = store.complete(requested.plan_id, result)
     except Exception as exc:
         failed = store.fail(
@@ -368,6 +439,7 @@ def issue_v2_provider_authorization() -> Response:
     question = str(payload.get("question") or "").strip()
     client_action_id = str(payload.get("client_action_id") or "").strip()
     purpose = str(payload.get("purpose") or "").strip()
+    planning_input_id = str(payload.get("planning_input_id") or "").strip()
     if not all((session_id, filename, question, client_action_id, purpose)):
         return jsonify(
             {
@@ -380,6 +452,14 @@ def issue_v2_provider_authorization() -> Response:
     cfg = get_config()
     try:
         context = _planning_source(cfg.inbox_dir, filename)
+        if planning_input_id:
+            _planning_input_for_request(
+                sessions_root=cfg.sessions_resolved,
+                session_id=session_id,
+                planning_input_id=planning_input_id,
+                question=question,
+                context=context,
+            )
         store = ProviderAuthorizationStore(cfg.sessions_resolved, session_id)
         existing = next(
             (
@@ -397,10 +477,11 @@ def issue_v2_provider_authorization() -> Response:
             question=question,
             provider_calls_authorized=payload.get("provider_calls_authorized"),
             confirm_provider_call=payload.get("confirm_provider_call"),
+            planning_input_id=planning_input_id,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 404
-    except ProviderAuthorizationConflict as exc:
+    except (PlanningInputConflict, ProviderAuthorizationConflict) as exc:
         return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -416,6 +497,68 @@ def get_v2_plan(session_id: str, plan_id: str):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(record.to_dict())
+
+
+@v2_bp.post("/v2/sessions/<session_id>/plans/<plan_id>/answers")
+def answer_v2_plan(session_id: str, plan_id: str) -> Response:
+    """Persist user answers without reopening a terminal needs_input plan."""
+
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+    client_reply_id = str(payload.get("client_reply_id") or "").strip()
+    answers = payload.get("answers")
+    if not client_reply_id or not isinstance(answers, list):
+        return jsonify({"error": "client_reply_id and answers are required"}), 400
+    cfg = get_config()
+    try:
+        source_plan = PlanStore(cfg.sessions_resolved, session_id).get(plan_id)
+        if source_plan.status is not DurablePlanStatus.NEEDS_INPUT:
+            return jsonify({"error": "only needs_input plans accept answers"}), 409
+        questions = tuple(
+            {
+                "question_id": item["question_id"],
+                "text": item["text"],
+            }
+            for item in planning_question_blocks(
+                source_plan.plan_id, source_plan.questions
+            )
+        )
+        store = PlanningInputStore(cfg.sessions_resolved, session_id)
+        existing = next(
+            (
+                item
+                for item in store.list_all()
+                if item.client_reply_id == client_reply_id
+            ),
+            None,
+        )
+        planning_input = store.record(
+            source_plan_id=source_plan.plan_id,
+            client_reply_id=client_reply_id,
+            questions=questions,
+            answers=answers,
+        )
+    except KeyError:
+        return jsonify({"error": "V2 plan not found"}), 404
+    except PlanningInputConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(planning_input.to_dict()), 200 if existing is not None else 201
+
+
+@v2_bp.get("/v2/sessions/<session_id>/planning-inputs/<planning_input_id>")
+def get_v2_planning_input(session_id: str, planning_input_id: str):
+    try:
+        planning_input = PlanningInputStore(
+            get_config().sessions_resolved, session_id
+        ).get(planning_input_id)
+    except KeyError:
+        return jsonify({"error": "V2 planning input not found"}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(planning_input.to_dict())
 
 
 @v2_bp.post("/v2/runs/steer")

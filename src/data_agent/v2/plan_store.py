@@ -11,6 +11,7 @@ from typing import Any
 
 from data_agent.v2.identity import require_storage_id
 from data_agent.v2.planner import AnalysisPlan, PlanStatus
+from data_agent.v2.planning_input import planning_question_blocks
 
 
 class DurablePlanStatus(StrEnum):
@@ -46,12 +47,19 @@ class DurablePlanRecord:
     target_turn_id: str = ""
     error_code: str = ""
     message: str = ""
+    parent_plan_id: str = ""
+    planning_input_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["status"] = self.status.value
         value["parameters"] = dict(self.parameters or {})
         value["questions"] = list(self.questions)
+        value["message_blocks"] = (
+            list(planning_question_blocks(self.plan_id, self.questions))
+            if self.status is DurablePlanStatus.NEEDS_INPUT
+            else []
+        )
         return value
 
 
@@ -134,6 +142,8 @@ class PlanStore:
                     provider_authorization_ref=event["provider_authorization_ref"],
                     provider_calls_authorized=int(event["provider_calls_authorized"]),
                     status=DurablePlanStatus.REQUESTED,
+                    parent_plan_id=str(event.get("parent_plan_id") or ""),
+                    planning_input_id=str(event.get("planning_input_id") or ""),
                 )
                 order.append(plan_id)
                 continue
@@ -206,6 +216,8 @@ class PlanStore:
         dataset_context: dict[str, Any],
         provider_authorization_ref: str,
         provider_calls_authorized: int,
+        parent_plan_id: str = "",
+        planning_input_id: str = "",
     ) -> DurablePlanRecord:
         client_id = require_storage_id(client_request_id, "client_request_id")
         normalized_question = str(question or "").strip()
@@ -229,6 +241,19 @@ class PlanStore:
             raise ValueError("provider_calls_authorized must equal 1")
         if not authorization_ref:
             raise ValueError("provider_authorization_ref is required")
+        normalized_parent = str(parent_plan_id or "").strip()
+        normalized_input = str(planning_input_id or "").strip()
+        if bool(normalized_parent) != bool(normalized_input):
+            raise ValueError(
+                "parent_plan_id and planning_input_id must be provided together"
+            )
+        if normalized_parent:
+            normalized_parent = require_storage_id(
+                normalized_parent, "parent_plan_id"
+            )
+            normalized_input = require_storage_id(
+                normalized_input, "planning_input_id"
+            )
         plan_id = f"plan_{_digest(client_id)}"
         with _PLAN_LOCK:
             all_records = self.list_all()
@@ -243,6 +268,8 @@ class PlanStore:
                     and existing.provider_authorization_ref == authorization_ref
                     and existing.provider_calls_authorized
                     == provider_calls_authorized
+                    and existing.parent_plan_id == normalized_parent
+                    and existing.planning_input_id == normalized_input
                 )
                 if not same:
                     raise PlanConflict(
@@ -261,6 +288,19 @@ class PlanStore:
                 raise PlanConflict(
                     "provider_authorization_ref was already used by another planning request"
                 )
+            if normalized_input:
+                input_owner = next(
+                    (
+                        item
+                        for item in all_records
+                        if item.planning_input_id == normalized_input
+                    ),
+                    None,
+                )
+                if input_owner is not None:
+                    raise PlanConflict(
+                        "planning_input_id already derived another planning request"
+                    )
             self._append(
                 {
                     "event_id": f"plan_event_{_digest(plan_id + ':requested')}",
@@ -271,6 +311,8 @@ class PlanStore:
                     "dataset_context": normalized_context,
                     "provider_authorization_ref": authorization_ref,
                     "provider_calls_authorized": provider_calls_authorized,
+                    "parent_plan_id": normalized_parent,
+                    "planning_input_id": normalized_input,
                 }
             )
             return self.get(plan_id)

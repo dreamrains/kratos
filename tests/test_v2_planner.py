@@ -128,6 +128,39 @@ def test_planner_needs_input_does_not_create_executable_route():
     assert result.questions == ("每行数据代表一笔订单，还是一个客户？",)
 
 
+def test_planner_receives_clarifications_as_bounded_data():
+    client = FakePlannerClient(
+        {
+            "status": "ready",
+            "analysis_kind": "descriptive",
+            "parameters": {"metric": "sales"},
+            "rationale": "用户确认分析单位后描述销售额。",
+            "questions": [],
+        }
+    )
+
+    result = StructuredAnalysisPlanner(client).plan(
+        "比较表现",
+        _context(),
+        clarifications=(
+            {
+                "question": "每行代表订单还是客户？",
+                "answer": "每行代表订单。",
+            },
+        ),
+    )
+
+    payload = json.loads(client.calls[0]["messages"][0]["content"])
+    assert result.status is PlanStatus.READY
+    assert payload["clarifications"] == [
+        {
+            "question": "每行代表订单还是客户？",
+            "answer": "每行代表订单。",
+        }
+    ]
+    assert "clarifications" in client.calls[0]["system"]
+
+
 def test_planner_can_report_unsupported_without_inventing_a_fallback():
     client = FakePlannerClient(
         {

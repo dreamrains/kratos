@@ -100,6 +100,32 @@ def test_provider_authorization_ref_cannot_fund_two_planning_requests(tmp_path):
         )
 
 
+def test_planning_input_can_derive_only_one_new_plan_request(tmp_path):
+    store = PlanStore(tmp_path, "session_plan_input")
+    first = store.request(
+        client_request_id="client_input_one",
+        question="比较表现",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_input_one",
+        provider_calls_authorized=1,
+        parent_plan_id="plan_needs_input",
+        planning_input_id="planning_input_once",
+    )
+
+    assert first.parent_plan_id == "plan_needs_input"
+    assert first.planning_input_id == "planning_input_once"
+    with pytest.raises(PlanConflict, match="already derived"):
+        store.request(
+            client_request_id="client_input_two",
+            question="比较表现",
+            dataset_context=_context(),
+            provider_authorization_ref="auth_input_two",
+            provider_calls_authorized=1,
+            parent_plan_id="plan_needs_input",
+            planning_input_id="planning_input_once",
+        )
+
+
 def test_ready_plan_consumption_is_target_bound_and_idempotent(tmp_path):
     store = PlanStore(tmp_path, "session_plan_consume")
     requested = store.request(

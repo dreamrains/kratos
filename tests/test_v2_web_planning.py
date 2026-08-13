@@ -48,18 +48,22 @@ def _issue_authorization(
     session_id: str,
     question: str,
     client_action_id: str,
+    planning_input_id: str = "",
 ) -> str:
+    payload = {
+        "session_id": session_id,
+        "filename": "sales.csv",
+        "question": question,
+        "client_action_id": client_action_id,
+        "purpose": "analysis_planning",
+        "provider_calls_authorized": 1,
+        "confirm_provider_call": True,
+    }
+    if planning_input_id:
+        payload["planning_input_id"] = planning_input_id
     response = client.post(
         "/api/v2/provider-authorizations",
-        json={
-            "session_id": session_id,
-            "filename": "sales.csv",
-            "question": question,
-            "client_action_id": client_action_id,
-            "purpose": "analysis_planning",
-            "provider_calls_authorized": 1,
-            "confirm_provider_call": True,
-        },
+        json=payload,
     )
     assert response.status_code == 201
     return response.get_json()["authorization_id"]
@@ -104,6 +108,26 @@ class FakeFailedPlanner:
     def plan(self, question, context):
         type(self).calls += 1
         raise RuntimeError("provider unavailable")
+
+
+class FakeClarifiedPlanner:
+    calls = 0
+    clarifications = ()
+
+    def plan(self, question, context, *, clarifications=()):
+        type(self).calls += 1
+        type(self).clarifications = tuple(clarifications)
+        return AnalysisPlan(
+            status=PlanStatus.READY,
+            user_question=question,
+            analysis_kind=AnalysisKind.DESCRIPTIVE,
+            parameters={"metric": "sales"},
+            rationale="根据用户补充选择描述分析。",
+            questions=(),
+            maximum_claim_class="descriptive",
+            planner_invocations=1,
+            model_id="fake-clarified-planner",
+        )
 
 
 def test_plan_api_rejects_client_asserted_or_unknown_authorization(
@@ -357,6 +381,14 @@ def test_plan_api_persists_needs_input_without_creating_executable_route(
     assert body["status"] == "needs_input"
     assert body["analysis_kind"] == ""
     assert body["parameters"] == {}
+    assert body["message_blocks"] == [
+        {
+            "type": "planning_question",
+            "plan_id": body["plan_id"],
+            "question_id": f"{body['plan_id']}_question_1",
+            "text": "每行代表订单还是客户？",
+        }
+    ]
     blocked = client.post(
         "/api/v2/analyze",
         json={
@@ -365,6 +397,100 @@ def test_plan_api_persists_needs_input_without_creating_executable_route(
         },
     )
     assert blocked.status_code == 409
+
+
+def test_needs_input_answer_is_refreshable_and_derives_new_authorized_plan(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    session_id = "session_plan_answer"
+    question = "比较表现"
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: FakeNeedsInputPlanner()
+    )
+    initial_authorization = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_plan_answer_initial",
+    )
+    needs_input = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": session_id,
+            "filename": "sales.csv",
+            "question": question,
+            "client_request_id": "client_plan_answer_initial",
+            "provider_authorization_id": initial_authorization,
+        },
+    ).get_json()
+    question_block = needs_input["message_blocks"][0]
+
+    answer = client.post(
+        f"/api/v2/sessions/{session_id}/plans/{needs_input['plan_id']}/answers",
+        json={
+            "client_reply_id": "reply_plan_answer",
+            "answers": [
+                {
+                    "question_id": question_block["question_id"],
+                    "answer": "每行代表订单；比较销售额。",
+                }
+            ],
+        },
+    )
+    planning_input = answer.get_json()
+    restored = client.get(
+        f"/api/v2/sessions/{session_id}/planning-inputs/"
+        f"{planning_input['planning_input_id']}"
+    )
+
+    assert answer.status_code == 201
+    assert restored.status_code == 200
+    assert restored.get_json() == planning_input
+    assert PlanStore(tmp_path / "sessions", session_id).get(
+        needs_input["plan_id"]
+    ).status is DurablePlanStatus.NEEDS_INPUT
+
+    FakeClarifiedPlanner.calls = 0
+    FakeClarifiedPlanner.clarifications = ()
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: FakeClarifiedPlanner()
+    )
+    derived_authorization = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_plan_answer_derived",
+        planning_input_id=planning_input["planning_input_id"],
+    )
+    derived_request = {
+        "session_id": session_id,
+        "filename": "sales.csv",
+        "question": question,
+        "client_request_id": "client_plan_answer_derived",
+        "provider_authorization_id": derived_authorization,
+        "planning_input_id": planning_input["planning_input_id"],
+    }
+    derived = client.post("/api/v2/plans", json=derived_request)
+    repeated = client.post("/api/v2/plans", json=derived_request)
+
+    assert derived.status_code == 201
+    assert repeated.status_code == 200
+    assert derived.get_json()["status"] == "ready"
+    assert derived.get_json()["parent_plan_id"] == needs_input["plan_id"]
+    assert (
+        derived.get_json()["planning_input_id"]
+        == planning_input["planning_input_id"]
+    )
+    assert FakeClarifiedPlanner.calls == 1
+    assert FakeClarifiedPlanner.clarifications == (
+        {
+            "question": "每行代表订单还是客户？",
+            "answer": "每行代表订单；比较销售额。",
+        },
+    )
 
 
 def test_failed_plan_is_durable_and_same_request_does_not_retry_provider(

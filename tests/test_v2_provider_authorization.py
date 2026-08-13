@@ -104,3 +104,30 @@ def test_authorization_rejects_changed_question_or_dataset(tmp_path):
             source_fingerprint="sha256:" + "b" * 64,
             question="What is average sales?",
         )
+
+
+def test_authorization_is_bound_to_one_planning_input(tmp_path):
+    store = ProviderAuthorizationStore(tmp_path, "session_auth_input")
+    issued = _issue(store, planning_input_id="planning_input_one")
+
+    with pytest.raises(ProviderAuthorizationConflict, match="different request content"):
+        store.consume(
+            issued.authorization_id,
+            client_request_id="client_plan_input",
+            purpose="analysis_planning",
+            filename="sales.csv",
+            source_fingerprint="sha256:" + "a" * 64,
+            question="What is average sales?",
+            planning_input_id="planning_input_two",
+        )
+
+    consumed = store.consume(
+        issued.authorization_id,
+        client_request_id="client_plan_input",
+        purpose="analysis_planning",
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "a" * 64,
+        question="What is average sales?",
+        planning_input_id="planning_input_one",
+    )
+    assert consumed.planning_input_id == "planning_input_one"
