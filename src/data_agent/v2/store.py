@@ -318,6 +318,8 @@ class V2FactStore:
             "action_risk",
             "reversible",
             "recommendation_mode",
+            "frequency",
+            "aggregation",
         }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")

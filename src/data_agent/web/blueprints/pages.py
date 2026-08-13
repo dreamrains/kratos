@@ -32,3 +32,9 @@ def v2_transform_canary():
 def v2_group_canary():
     """Isolated Slice 4A group-comparison browser canary."""
     return render_template("v2_group_canary.html")
+
+
+@pages_bp.route("/v2-time-canary")
+def v2_time_canary():
+    """Isolated Slice 4B historical-trend browser canary."""
+    return render_template("v2_time_canary.html")

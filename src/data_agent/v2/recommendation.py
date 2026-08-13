@@ -67,6 +67,12 @@ def decide_recommendation(context: RecommendationContext) -> RecommendationDecis
             "action_risk_requires_stronger_evidence",
             "该行动风险较高或不可逆，先用随机化或准实验设计验证干预效果。",
         )
+    if context.finding_kind is FindingKind.TIME_TREND:
+        return RecommendationDecision(
+            RecommendationMode.INVESTIGATIVE_NEXT_STEP,
+            "historical_trend_requires_driver_validation",
+            "可把历史趋势作为调查线索：检查季节、口径变化和同期外部事件，再用低风险、可逆的验证设计评估可干预因素。",
+        )
     if context.finding_kind in {
         FindingKind.GROUP_COMPARISON,
         FindingKind.ASSOCIATION,

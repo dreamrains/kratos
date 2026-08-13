@@ -20,6 +20,7 @@ class FindingKind(StrEnum):
     ASSOCIATION = "association"
     TRANSFORMATION = "transformation"
     GROUP_COMPARISON = "group_comparison"
+    TIME_TREND = "time_trend"
 
 
 class ClaimClass(StrEnum):

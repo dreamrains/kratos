@@ -13,7 +13,9 @@ from data_agent.v2.slice1 import Slice1DescriptiveRuntime
 from data_agent.v2.slice2 import Slice2FactorRuntime
 from data_agent.v2.slice3 import Slice3TransformationRuntime
 from data_agent.v2.slice4a import Slice4AGroupComparisonRuntime
+from data_agent.v2.slice4b import Slice4BTimeSeriesRuntime
 from data_agent.v2.store import V2FactStore
+from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
 from data_agent.v2.recommendation import ActionRisk, RecommendationIntent
 from data_agent.web.event_bus import EventQueue, SSEEvent
@@ -239,6 +241,63 @@ def group_comparison_v2() -> Response:
                 metric=str(payload.get("metric") or ""),
                 group=str(payload.get("group") or ""),
                 analysis_unit=str(payload.get("analysis_unit") or ""),
+                question=str(payload.get("question") or ""),
+                recommendation_intent=intent,
+                action_risk=risk,
+                reversible=raw_reversible,
+            ):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "status": "failed",
+                        "error_code": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            )
+        finally:
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
+@v2_bp.post("/v2/time-trend")
+def time_trend_v2() -> Response:
+    """Run the Slice 4B explicit historical-trend journey."""
+
+    payload = request.get_json(force=True)
+    session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
+    turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
+    try:
+        frequency = TimeFrequency(str(payload.get("frequency") or "daily"))
+        aggregation = TimeAggregation(str(payload.get("aggregation") or "sum"))
+        intent = RecommendationIntent(str(payload.get("recommendation_intent") or "none"))
+        risk = ActionRisk(str(payload.get("action_risk") or "low"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    raw_reversible = payload.get("reversible", True)
+    if not isinstance(raw_reversible, bool):
+        return jsonify({"error": "reversible must be a boolean"}), 400
+    cfg = get_config()
+    runtime = Slice4BTimeSeriesRuntime(cfg.sessions_resolved, cfg.inbox_dir)
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in runtime.stream(
+                session_id=session_id,
+                turn_id=turn_id,
+                filename=str(payload.get("filename") or ""),
+                time_field=str(payload.get("time_field") or ""),
+                metric=str(payload.get("metric") or ""),
+                frequency=frequency,
+                aggregation=aggregation,
                 question=str(payload.get("question") or ""),
                 recommendation_intent=intent,
                 action_risk=risk,

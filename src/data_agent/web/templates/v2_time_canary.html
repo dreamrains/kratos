@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 4B 历史趋势</title>
+    <style>
+        :root { color-scheme:light; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+        * { box-sizing:border-box; } body { margin:0; background:#f4f6f7; color:#20272a; }
+        main { width:min(960px,calc(100% - 32px)); margin:36px auto 72px; }
+        header { display:flex; justify-content:space-between; align-items:flex-start; gap:22px; margin-bottom:22px; }
+        h1 { margin:0 0 8px; font-size:28px; letter-spacing:-.03em; } h2 { margin:0 0 14px; font-size:18px; }
+        .subtitle { margin:0; color:#687277; line-height:1.55; } .badge { white-space:nowrap; border:1px solid #bfd9d5; background:#e9f4f2; color:#276b62; border-radius:999px; padding:7px 11px; font-size:12px; }
+        .panel { margin-bottom:16px; padding:20px; background:#fff; border:1px solid #dde3e4; border-radius:16px; box-shadow:0 12px 30px rgba(30,45,48,.05); }
+        .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+        label { display:block; margin-bottom:7px; color:#596367; font-size:12px; font-weight:700; }
+        input,select,button { font:inherit; } input[type="text"],input[type="file"],select { width:100%; min-height:44px; padding:10px 12px; border:1px solid #cbd4d5; border-radius:10px; background:#fcfdfd; }
+        .wide { grid-column:1/-1; } .check { display:flex; gap:9px; align-items:center; min-height:44px; }
+        .actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:16px; }
+        button { min-height:42px; padding:0 18px; border:0; border-radius:10px; background:#237a6f; color:#fff; font-weight:700; cursor:pointer; }
+        button:disabled { background:#9dacaa; cursor:wait; } .secondary { background:#e9eeee; color:#41504f; }
+        .status,.file-state,.run-id { color:#687277; font-size:12px; overflow-wrap:anywhere; }
+        .progress { display:none; } .progress.visible { display:block; } .progress-list { display:grid; gap:8px; }
+        .progress-item { display:flex; gap:9px; align-items:center; color:#536064; font-size:13px; } .dot { width:8px; height:8px; border-radius:50%; background:#27877b; box-shadow:0 0 0 4px #e4f2f0; }
+        .answer { display:grid; gap:14px; } .answer:empty::before { content:"完成后，历史趋势、图表、稳健不确定性和时间边界会显示在这里。"; color:#858e91; }
+        .answer-block { border-left:3px solid #32877d; padding:4px 0 4px 16px; } .answer-block h2 { margin:0 0 8px; font-size:17px; } .answer-block p { margin:0; line-height:1.7; color:#3d484c; } .answer-block ul { color:#626e72; }
+        .chart-shell { margin:16px 0 6px; border:1px solid #dde3e4; border-radius:12px; overflow:hidden; } .chart-shell figcaption { padding:10px 14px; font-weight:700; font-size:13px; border-bottom:1px solid #e9eeee; } .chart-frame { display:block; width:100%; height:360px; border:0; }
+        .error { display:none; margin-bottom:16px; padding:13px 15px; border:1px solid #f0c6c2; border-radius:12px; background:#fff0ef; color:#8c2d27; } .error.visible { display:block; }
+        @media(max-width:700px){header{flex-direction:column}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+    </style>
+</head>
+<body><main>
+    <header><div><h1>历史趋势分析</h1><p class="subtitle">显式时间粒度与聚合口径，使用 HAC 稳健不确定性；历史趋势不会自动升级为预测或因果行动。</p></div><span class="badge">Time trend canary</span></header>
+    <div id="error" class="error" role="alert"></div>
+    <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">分析规范</h2><div class="grid">
+        <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
+        <div><label for="time-field">时间字段</label><input id="time-field" type="text" value="date"></div>
+        <div><label for="metric">连续指标列</label><input id="metric" type="text" value="sales"></div>
+        <div><label for="frequency">时间粒度</label><select id="frequency"><option value="daily">日</option><option value="weekly">周</option><option value="monthly">月</option></select></div>
+        <div><label for="aggregation">周期聚合</label><select id="aggregation"><option value="sum">求和</option><option value="mean">平均</option></select></div>
+        <div><label for="recommendation-intent">建议意图</label><select id="recommendation-intent"><option value="none">只回答事实，不给建议</option><option value="investigate">给调查建议</option><option value="act">给行动建议</option></select></div>
+        <div><label for="action-risk">行动风险</label><select id="action-risk"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></div>
+        <div class="check"><input id="reversible" type="checkbox" checked><label for="reversible">候选行动可逆</label></div>
+        <div class="wide"><label for="question">问题</label><input id="question" type="text" value="销售在这段历史期间是否存在可靠趋势？"></div>
+    </div><div class="actions"><button id="run" type="button">开始分析</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading"><h2 id="progress-heading">实时进度</h2><div id="progress-list" class="progress-list" aria-live="polite"></div></section>
+    <section class="panel" aria-labelledby="answer-heading"><h2 id="answer-heading">分析结果</h2><div id="answer" class="answer" aria-live="polite"></div></section>
+</main><script src="{{ url_for('static', filename='js/v2_time_canary.js', v='slice4b1') }}"></script></body></html>

@@ -205,3 +205,35 @@ def test_group_means_do_not_complete_group_comparison_commitment():
 
     assert result.outcomes["c_group"].status is OutcomeStatus.RUNNING
     assert result.publishable is False
+
+
+def test_period_summary_does_not_complete_time_trend_commitment():
+    commitment = Commitment(
+        commitment_id="c_time",
+        priority=CommitmentPriority.CORE,
+        question="销售是否随时间变化？",
+        dataset_version_ids=("dv_time",),
+        accepted_result_kinds=(
+            FindingKind.TIME_TREND,
+            FindingKind.NULL_RESULT,
+            FindingKind.LIMITATION,
+        ),
+        accepted_method_capabilities=("analysis.time_trend",),
+    )
+    period_summary = Finding(
+        finding_id="f_period_mean",
+        commitment_id="c_time",
+        finding_kind=FindingKind.ESTIMATE,
+        dataset_version_ids=("dv_time",),
+        metric_identity="column:sales:period_summary",
+        feature_identity="time:date:daily",
+        method_capability="analysis.time_trend",
+        estimate=100,
+        maximum_claim_class=ClaimClass.DESCRIPTIVE,
+        computation_ref="comp_time",
+    )
+
+    result = project_run([commitment], [], [period_summary])
+
+    assert result.outcomes["c_time"].status is OutcomeStatus.PENDING
+    assert result.publishable is False
