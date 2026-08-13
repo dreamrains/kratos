@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import asdict
 
 from flask import Blueprint, Response, jsonify, request
 
 from data_agent.config import get_config
 from data_agent.v2.slice1 import Slice1DescriptiveRuntime
 from data_agent.v2.slice2 import Slice2FactorRuntime
+from data_agent.v2.slice3 import Slice3TransformationRuntime
 from data_agent.v2.store import V2FactStore
+from data_agent.v2.transformation import TransformationStore
 from data_agent.web.event_bus import EventQueue, SSEEvent
 
 v2_bp = Blueprint("v2", __name__)
@@ -117,6 +120,95 @@ def factors_v2() -> Response:
     return _sse_response(queue)
 
 
+@v2_bp.post("/v2/transform-dates")
+def transform_dates_v2() -> Response:
+    """Start the Slice 3 safe date-transformation journey."""
+
+    payload = request.get_json(force=True)
+    session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
+    turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
+    cfg = get_config()
+    runtime = Slice3TransformationRuntime(cfg.sessions_resolved, cfg.inbox_dir)
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in runtime.start(
+                session_id=session_id,
+                turn_id=turn_id,
+                filename=str(payload.get("filename") or ""),
+                date_column=str(payload.get("date_column") or ""),
+                question=str(payload.get("question") or ""),
+            ):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "status": "failed",
+                        "error_code": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            )
+        finally:
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
+@v2_bp.post("/v2/transform-dates/resolve")
+def resolve_transform_dates_v2() -> Response:
+    """Append a bound semantic decision and resume the Slice 3 turn."""
+
+    payload = request.get_json(force=True)
+    session_id = str(payload.get("session_id") or "").strip()
+    turn_id = str(payload.get("turn_id") or "").strip()
+    if not session_id or not turn_id:
+        return jsonify({"error": "session_id and turn_id are required"}), 400
+    cfg = get_config()
+    runtime = Slice3TransformationRuntime(cfg.sessions_resolved, cfg.inbox_dir)
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in runtime.resolve(
+                session_id=session_id,
+                turn_id=turn_id,
+                proposal_id=str(payload.get("proposal_id") or ""),
+                option_key=str(payload.get("option_key") or ""),
+                expected_parent_version_id=str(
+                    payload.get("expected_parent_version_id") or ""
+                ),
+                expected_parent_content_fingerprint=str(
+                    payload.get("expected_parent_content_fingerprint") or ""
+                ),
+            ):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "status": "failed",
+                        "error_code": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            )
+        finally:
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
 @v2_bp.get("/v2/sessions/<session_id>/turns/<turn_id>")
 def get_v2_turn(session_id: str, turn_id: str):
     store = V2FactStore(get_config().sessions_resolved, session_id)
@@ -124,6 +216,19 @@ def get_v2_turn(session_id: str, turn_id: str):
         turn = store.read_turn_blocks(turn_id)
     except KeyError:
         return jsonify({"error": "V2 turn not found"}), 404
+    proposal_id = turn.get("request_context", {}).get("proposal_id", "")
+    if proposal_id:
+        try:
+            state = TransformationStore(
+                get_config().sessions_resolved, session_id
+            ).project(proposal_id)
+            turn["transformation"] = {
+                "status": state.status,
+                "proposal": asdict(state.proposal),
+                "decision": asdict(state.decision) if state.decision else None,
+            }
+        except KeyError:
+            turn["transformation"] = None
     return jsonify(turn)
 
 

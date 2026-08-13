@@ -311,6 +311,8 @@ class V2FactStore:
             "time_field",
             "question",
             "analysis_kind",
+            "date_column",
+            "proposal_id",
         }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")

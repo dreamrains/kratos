@@ -18,6 +18,7 @@ class FindingKind(StrEnum):
     METHOD_DIAGNOSTIC = "method_diagnostic"
     LIMITATION = "limitation"
     ASSOCIATION = "association"
+    TRANSFORMATION = "transformation"
 
 
 class ClaimClass(StrEnum):

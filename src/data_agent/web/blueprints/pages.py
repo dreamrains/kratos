@@ -20,3 +20,9 @@ def v2_canary():
 def v2_factor_canary():
     """Isolated Slice 2 factor-relationship browser canary."""
     return render_template("v2_factor_canary.html")
+
+
+@pages_bp.route("/v2-transform-canary")
+def v2_transform_canary():
+    """Isolated Slice 3 date-transformation browser canary."""
+    return render_template("v2_transform_canary.html")

@@ -253,6 +253,35 @@ class DatasetRegistry:
         self.get_version(dataset_version_id)
         return pd.read_pickle(self._frame_path(dataset_version_id)).copy(deep=True)
 
+    def promote_candidate(
+        self,
+        candidate_version_id: str,
+        *,
+        expected_parent_version_id: str,
+        proposal_id: str,
+        decision_id: str,
+    ) -> DatasetVersion:
+        """Promote a confirmed candidate without mutating either ancestor."""
+
+        candidate = self.get_version(candidate_version_id)
+        if candidate.role is not DatasetRole.CANDIDATE:
+            raise ValueError("only candidate versions can be promoted")
+        if candidate.parent_version_id != expected_parent_version_id:
+            raise ValueError("candidate parent no longer matches the confirmed parent")
+        if not str(proposal_id or "").strip() or not str(decision_id or "").strip():
+            raise ValueError("proposal_id and decision_id are required")
+        return self.derive(
+            parent_version_id=candidate.dataset_version_id,
+            frame=self.get_frame(candidate.dataset_version_id),
+            role=DatasetRole.ANALYSIS,
+            transform={
+                "operation": "promote_candidate",
+                "proposal_id": str(proposal_id),
+                "decision_id": str(decision_id),
+                "confirmed_parent_version_id": expected_parent_version_id,
+            },
+        )
+
     def list_versions(self, logical_dataset_id: str | None = None) -> list[DatasetVersion]:
         if logical_dataset_id is None:
             return list(self._versions)
