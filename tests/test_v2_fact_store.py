@@ -114,13 +114,23 @@ def test_answer_turn_is_persisted_as_blocks_before_completion(tmp_path):
         claim_class=ClaimClass.DESCRIPTIVE,
         canonical_values=(120.0,),
     )
-    store.write_turn_blocks("turn_1", [draft], status="finalized")
+    store.write_turn_blocks(
+        "turn_1",
+        [draft],
+        status="finalized",
+        request_context={
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "平均销售额是多少？",
+        },
+    )
 
     turn = store.read_turn_blocks("turn_1")
 
     assert turn["status"] == "finalized"
     assert turn["blocks"][0]["block_id"] == "b1"
     assert turn["blocks"][0]["support_refs"] == ["f1"]
+    assert turn["request_context"]["question"] == "平均销售额是多少？"
 
 
 @pytest.mark.parametrize("invalid_id", ["..", "session:1", "session 1", "a/b", "a\\b"])

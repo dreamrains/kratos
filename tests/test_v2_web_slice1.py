@@ -89,3 +89,42 @@ def test_v2_failure_has_explicit_terminal_event(monkeypatch, tmp_path):
     assert [name for name, _ in events] == ["turn_failed"]
     assert events[0][1]["status"] == "failed"
     assert events[0][1]["error_code"] == "FileNotFoundError"
+
+
+def test_v2_trend_chart_is_served_and_restored(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    sessions = tmp_path / "sessions"
+    inbox = workspace / "inbox"
+    inbox.mkdir(parents=True)
+    pd.DataFrame(
+        {"date": ["2026-01-01", "2026-01-02", "2026-01-03"], "sales": [100, 150, 200]}
+    ).to_csv(inbox / "trend.csv", index=False)
+    monkeypatch.setattr(
+        config_module,
+        "_config",
+        AgentConfig(WORKSPACE_DIR=workspace, SESSIONS_DIR=sessions),
+    )
+    client = create_app().test_client()
+
+    response = client.post(
+        "/api/v2/describe",
+        json={
+            "session_id": "session_chart",
+            "turn_id": "turn_chart",
+            "filename": "trend.csv",
+            "metric": "sales",
+            "question": "销售额趋势如何？",
+        },
+    )
+    events = _events(response.get_data(as_text=True))
+    refreshed = client.get("/api/v2/sessions/session_chart/turns/turn_chart")
+    payload = refreshed.get_json()
+    chart_id = payload["artifacts"][0]["chart_id"]
+    chart = client.get(f"/api/v2/sessions/session_chart/artifacts/{chart_id}")
+
+    assert "artifact_created" in [name for name, _ in events]
+    assert payload["blocks"][0]["chart_refs"] == [chart_id]
+    assert payload["request_context"]["question"] == "销售额趋势如何？"
+    assert chart.status_code == 200
+    assert chart.mimetype == "text/html"
+    assert "/static/js/plotly-3.5.0.min.js" in chart.get_data(as_text=True)

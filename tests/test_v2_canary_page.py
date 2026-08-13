@@ -23,5 +23,9 @@ def test_v2_canary_javascript_uses_semantic_events_and_block_refresh():
     assert "final_block_delta" in js
     assert "turn_completed" in js
     assert "/api/v2/sessions/" in js
+    assert "artifact_created" in js
+    assert "chart-frame" in js
+    assert "supplemental" in js
+    assert "request_context" in js
     assert "[[chart:" not in js
     assert "[[evidence:" not in js

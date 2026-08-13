@@ -8,6 +8,8 @@ from data_agent.v2.models import (
     AnswerBlock,
     AnswerBlockDraft,
     AnswerBlockType,
+    BlockCalibration,
+    CalibrationAction,
     CommitmentOutcome,
     CompiledAnswer,
     Finding,
@@ -15,7 +17,9 @@ from data_agent.v2.models import (
 
 
 class AnswerCompilationError(ValueError):
-    pass
+    def __init__(self, message: str, *, reason_code: str = "invalid_block") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 _MATERIAL_BLOCKS = frozenset(
@@ -32,6 +36,15 @@ _MATERIAL_BLOCKS = frozenset(
     }
 )
 
+_OPTIONAL_BLOCKS = frozenset(
+    {
+        AnswerBlockType.CHART,
+        AnswerBlockType.RECOMMENDATION,
+        AnswerBlockType.NEXT_INVESTIGATION,
+        AnswerBlockType.SUPPLEMENTAL,
+    }
+)
+
 
 def _same_value(left: object, right: object) -> bool:
     if isinstance(left, (int, float)) and isinstance(right, (int, float)):
@@ -45,7 +58,10 @@ def _validate_draft(
     outcomes: Mapping[str, CommitmentOutcome],
 ) -> None:
     if draft.block_type in _MATERIAL_BLOCKS and not draft.support_refs:
-        raise AnswerCompilationError(f"block {draft.block_id} requires support_refs")
+        raise AnswerCompilationError(
+            f"block {draft.block_id} requires support_refs",
+            reason_code="missing_support_refs",
+        )
 
     supported_findings: list[Finding] = []
     for reference in draft.support_refs:
@@ -53,13 +69,15 @@ def _validate_draft(
             commitment_id = reference.removeprefix("outcome:")
             if commitment_id not in outcomes:
                 raise AnswerCompilationError(
-                    f"block {draft.block_id} references unknown outcome {commitment_id}"
+                    f"block {draft.block_id} references unknown outcome {commitment_id}",
+                    reason_code="unknown_outcome",
                 )
             continue
         finding = finding_by_id.get(reference)
         if finding is None:
             raise AnswerCompilationError(
-                f"block {draft.block_id} references unknown finding {reference}"
+                f"block {draft.block_id} references unknown finding {reference}",
+                reason_code="unknown_finding",
             )
         supported_findings.append(finding)
 
@@ -70,7 +88,8 @@ def _validate_draft(
         )
         if CLAIM_CLASS_RANK[draft.claim_class] > ceiling:
             raise AnswerCompilationError(
-                f"block {draft.block_id} claim class exceeds finding ceiling"
+                f"block {draft.block_id} claim class exceeds finding ceiling",
+                reason_code="claim_class_exceeds_ceiling",
             )
 
     if draft.canonical_values:
@@ -89,11 +108,62 @@ def _validate_draft(
         for value in draft.canonical_values:
             if not any(_same_value(value, supported) for supported in supported_values):
                 raise AnswerCompilationError(
-                    f"block {draft.block_id} canonical value is not supported"
+                    f"block {draft.block_id} canonical value is not supported",
+                    reason_code="canonical_value_mismatch",
                 )
 
     if "[[evidence:" in draft.narrative:
-        raise AnswerCompilationError("internal evidence markers are not valid V2 answer content")
+        raise AnswerCompilationError(
+            "internal evidence markers are not valid V2 answer content",
+            reason_code="internal_protocol_marker",
+        )
+
+
+def _valid_support_refs(
+    draft: AnswerBlockDraft,
+    finding_by_id: Mapping[str, Finding],
+    outcomes: Mapping[str, CommitmentOutcome],
+) -> tuple[str, ...]:
+    valid: list[str] = []
+    for reference in draft.support_refs:
+        if reference in finding_by_id:
+            valid.append(reference)
+        elif reference.startswith("outcome:") and reference.removeprefix("outcome:") in outcomes:
+            valid.append(reference)
+    return tuple(valid)
+
+
+def _diagnostic_narrative(reason_code: str) -> str:
+    messages = {
+        "claim_class_exceeds_ceiling": (
+            "该结论的证据等级超过当前分析结果可支持范围，因此未按原表述发布。"
+        ),
+        "canonical_value_mismatch": (
+            "该结论中的数值与结构化计算结果不一致，因此未按原表述发布。"
+        ),
+        "internal_protocol_marker": (
+            "该结论包含内部协议内容，因此未按原表述发布。"
+        ),
+    }
+    return messages.get(
+        reason_code,
+        "该结论缺少可验证的支撑来源，因此未按原表述发布。",
+    )
+
+
+def _supported_block(draft: AnswerBlockDraft) -> AnswerBlock:
+    return AnswerBlock(
+        block_id=draft.block_id,
+        block_type=draft.block_type,
+        headline=draft.headline,
+        narrative=draft.narrative,
+        support_refs=draft.support_refs,
+        claim_class=draft.claim_class,
+        canonical_values=draft.canonical_values,
+        limitations=draft.limitations,
+        chart_refs=draft.chart_refs,
+        calibration=CalibrationAction.SUPPORTED,
+    )
 
 
 def _render_markdown(blocks: Iterable[AnswerBlock]) -> str:
@@ -125,20 +195,57 @@ def compile_answer(
         raise AnswerCompilationError("answer block ids must be unique")
 
     blocks: list[AnswerBlock] = []
+    calibrations: list[BlockCalibration] = []
     for draft in draft_list:
-        _validate_draft(draft, finding_by_id, outcomes)
-        blocks.append(
-            AnswerBlock(
+        try:
+            _validate_draft(draft, finding_by_id, outcomes)
+        except AnswerCompilationError as exc:
+            if draft.block_type in _OPTIONAL_BLOCKS:
+                calibrations.append(
+                    BlockCalibration(
+                        block_id=draft.block_id,
+                        action=CalibrationAction.OMIT_OPTIONAL,
+                        reason_code=exc.reason_code,
+                        message=str(exc),
+                    )
+                )
+                continue
+            valid_refs = _valid_support_refs(draft, finding_by_id, outcomes)
+            blocks.append(
+                AnswerBlock(
+                    block_id=draft.block_id,
+                    block_type=(
+                        AnswerBlockType.LIMITATION
+                        if valid_refs
+                        else AnswerBlockType.SUPPLEMENTAL
+                    ),
+                    headline="结论已校准",
+                    narrative=_diagnostic_narrative(exc.reason_code),
+                    support_refs=valid_refs,
+                    calibration=CalibrationAction.REPLACE_WITH_DIAGNOSTIC,
+                )
+            )
+            calibrations.append(
+                BlockCalibration(
+                    block_id=draft.block_id,
+                    action=CalibrationAction.REPLACE_WITH_DIAGNOSTIC,
+                    reason_code=exc.reason_code,
+                    message=str(exc),
+                )
+            )
+            continue
+        blocks.append(_supported_block(draft))
+        calibrations.append(
+            BlockCalibration(
                 block_id=draft.block_id,
-                block_type=draft.block_type,
-                headline=draft.headline,
-                narrative=draft.narrative,
-                support_refs=draft.support_refs,
-                claim_class=draft.claim_class,
-                canonical_values=draft.canonical_values,
-                limitations=draft.limitations,
-                chart_refs=draft.chart_refs,
+                action=CalibrationAction.SUPPORTED,
             )
         )
+    if not blocks:
+        raise AnswerCompilationError("no publishable answer blocks remain")
     block_tuple = tuple(blocks)
-    return CompiledAnswer(blocks=block_tuple, markdown=_render_markdown(block_tuple))
+    return CompiledAnswer(
+        blocks=block_tuple,
+        markdown=_render_markdown(block_tuple),
+        calibrations=tuple(calibrations),
+    )

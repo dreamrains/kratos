@@ -12,6 +12,7 @@ from data_agent.v2.models import (
     AnswerBlock,
     AnswerBlockDraft,
     AnswerBlockType,
+    ChartArtifact,
     ClaimClass,
     Commitment,
     CommitmentPriority,
@@ -68,6 +69,20 @@ def _atomic_write_json(path: Path, value: Any) -> None:
         temp_path.unlink(missing_ok=True)
 
 
+def _atomic_write_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 class V2FactStore:
     """Session-local persistence for V2 immutable facts and answer blocks."""
 
@@ -87,6 +102,10 @@ class V2FactStore:
     @property
     def _findings_path(self) -> Path:
         return self.root / "findings.jsonl"
+
+    @property
+    def _charts_path(self) -> Path:
+        return self.root / "charts"
 
     def write_commitments(self, commitments: list[Commitment]) -> None:
         ids = [item.commitment_id for item in commitments]
@@ -192,22 +211,113 @@ class V2FactStore:
             for value in _read_jsonl(self._findings_path)
         ]
 
+    def write_chart_artifact(self, artifact: ChartArtifact, html: str) -> bool:
+        import hashlib
+
+        chart_id = require_storage_id(artifact.chart_id, "chart_id")
+        actual_fingerprint = f"sha256:{hashlib.sha256(html.encode('utf-8')).hexdigest()}"
+        if actual_fingerprint != artifact.content_fingerprint:
+            raise FactConflictError(f"chart content fingerprint mismatch for {chart_id}")
+        expected_relative_path = f"charts/{chart_id}.html"
+        if artifact.relative_path != expected_relative_path:
+            raise ValueError("chart relative_path does not match chart_id")
+        if artifact.purpose in {"evidence", "insight"}:
+            known_findings = {item.finding_id for item in self.read_findings()}
+            missing_findings = set(artifact.finding_refs) - known_findings
+            if missing_findings:
+                raise ValueError(
+                    "chart finding_refs must exist in the session Evidence Ledger"
+                )
+        metadata_path = self._charts_path / f"{chart_id}.json"
+        html_path = self._charts_path / f"{chart_id}.html"
+        metadata = asdict(artifact)
+        if metadata_path.exists() or html_path.exists():
+            if not metadata_path.exists() or not html_path.exists():
+                raise FactConflictError(f"incomplete chart artifact for {chart_id}")
+            existing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if (
+                _json_line(existing_metadata) == _json_line(metadata)
+                and html_path.read_text(encoding="utf-8") == html
+            ):
+                return False
+            raise FactConflictError(f"immutable chart artifact conflict for {chart_id}")
+
+        _atomic_write_text(html_path, html)
+        try:
+            _atomic_write_json(metadata_path, metadata)
+        except Exception:
+            html_path.unlink(missing_ok=True)
+            raise
+        return True
+
+    def read_chart_artifact(self, chart_id: str) -> ChartArtifact:
+        safe_chart_id = require_storage_id(chart_id, "chart_id")
+        path = self._charts_path / f"{safe_chart_id}.json"
+        if not path.exists():
+            raise KeyError(f"unknown V2 chart {safe_chart_id}")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return ChartArtifact(
+            chart_id=value["chart_id"],
+            title=value["title"],
+            chart_type=value["chart_type"],
+            dataset_version_ids=tuple(value.get("dataset_version_ids") or ()),
+            finding_refs=tuple(value.get("finding_refs") or ()),
+            x_field=value["x_field"],
+            y_fields=tuple(value.get("y_fields") or ()),
+            purpose=value["purpose"],
+            relative_path=value["relative_path"],
+            content_fingerprint=value["content_fingerprint"],
+        )
+
+    def read_chart_html(self, chart_id: str) -> str:
+        artifact = self.read_chart_artifact(chart_id)
+        path = self.root / artifact.relative_path
+        if not path.exists():
+            raise KeyError(f"missing V2 chart content {artifact.chart_id}")
+        return path.read_text(encoding="utf-8")
+
     def write_turn_blocks(
         self,
         turn_id: str,
         blocks: list[AnswerBlockDraft | AnswerBlock],
         *,
         status: str,
+        artifact_ids: tuple[str, ...] = (),
+        request_context: dict[str, str] | None = None,
     ) -> None:
         safe_turn_id = require_storage_id(turn_id, "turn_id")
         if status not in {"draft", "finalized", "failed"}:
             raise ValueError("invalid turn status")
+        safe_artifact_ids = tuple(
+            require_storage_id(item, "chart_id") for item in artifact_ids
+        )
+        if len(safe_artifact_ids) != len(set(safe_artifact_ids)):
+            raise ValueError("artifact_ids must be unique")
+        for chart_id in safe_artifact_ids:
+            self.read_chart_artifact(chart_id)
+        referenced_chart_ids = {
+            chart_id for block in blocks for chart_id in block.chart_refs
+        }
+        missing_chart_ids = referenced_chart_ids - set(safe_artifact_ids)
+        if missing_chart_ids:
+            raise ValueError("answer block chart_refs must exist in artifact_ids")
+        raw_context = dict(request_context or {})
+        allowed_context_keys = {"filename", "metric", "question"}
+        if set(raw_context) - allowed_context_keys:
+            raise ValueError("request_context contains unsupported fields")
+        normalized_context = {
+            key: str(value or "").strip()
+            for key, value in raw_context.items()
+            if str(value or "").strip()
+        }
         _atomic_write_json(
             self.root / "turns" / f"{safe_turn_id}.json",
             {
                 "turn_id": safe_turn_id,
                 "status": status,
                 "blocks": [asdict(item) for item in blocks],
+                "artifact_ids": list(safe_artifact_ids),
+                "request_context": normalized_context,
             },
         )
 
@@ -219,4 +329,10 @@ class V2FactStore:
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise ValueError("invalid V2 turn payload")
+        artifact_ids = tuple(value.get("artifact_ids") or ())
+        value["artifact_ids"] = list(artifact_ids)
+        value["request_context"] = dict(value.get("request_context") or {})
+        value["artifacts"] = [
+            asdict(self.read_chart_artifact(chart_id)) for chart_id in artifact_ids
+        ]
         return value

@@ -40,6 +40,8 @@ class EventType(StrEnum):
     TOOL_STARTED = "tool_started"
     TOOL_SUCCEEDED = "tool_succeeded"
     TOOL_FAILED = "tool_failed"
+    ARTIFACT_CREATED = "artifact_created"
+    ARTIFACT_FAILED = "artifact_failed"
     FALLBACK_STARTED = "fallback_started"
     USER_INPUT_REQUIRED = "user_input_required"
     USER_INTERRUPTED = "user_interrupted"
@@ -80,6 +82,14 @@ class AnswerBlockType(StrEnum):
     RECOMMENDATION = "recommendation"
     NEXT_INVESTIGATION = "next_investigation"
     SUPPLEMENTAL = "supplemental"
+
+
+class CalibrationAction(StrEnum):
+    SUPPORTED = "supported"
+    EXPLORATORY = "exploratory"
+    REVISE = "revise"
+    REPLACE_WITH_DIAGNOSTIC = "replace_with_diagnostic"
+    OMIT_OPTIONAL = "omit_optional"
 
 
 def _required(value: str, field_name: str) -> str:
@@ -229,10 +239,57 @@ class AnswerBlock:
     canonical_values: tuple[float | int | str, ...] = ()
     limitations: tuple[str, ...] = ()
     chart_refs: tuple[str, ...] = ()
-    calibration: str = "supported"
+    calibration: CalibrationAction = CalibrationAction.SUPPORTED
+
+
+@dataclass(frozen=True, slots=True)
+class BlockCalibration:
+    block_id: str
+    action: CalibrationAction
+    reason_code: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ChartArtifact:
+    chart_id: str
+    title: str
+    chart_type: str
+    dataset_version_ids: tuple[str, ...]
+    finding_refs: tuple[str, ...]
+    x_field: str
+    y_fields: tuple[str, ...]
+    purpose: str
+    relative_path: str
+    content_fingerprint: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "chart_id", _required(self.chart_id, "chart_id"))
+        object.__setattr__(self, "title", _required(self.title, "title"))
+        object.__setattr__(self, "chart_type", _required(self.chart_type, "chart_type"))
+        object.__setattr__(self, "x_field", _required(self.x_field, "x_field"))
+        object.__setattr__(self, "purpose", _required(self.purpose, "purpose"))
+        object.__setattr__(
+            self,
+            "content_fingerprint",
+            _required(self.content_fingerprint, "content_fingerprint"),
+        )
+        object.__setattr__(self, "dataset_version_ids", _tuple(self.dataset_version_ids))
+        object.__setattr__(self, "finding_refs", _tuple(self.finding_refs))
+        object.__setattr__(self, "y_fields", _tuple(self.y_fields))
+        expected_path = f"charts/{self.chart_id}.html"
+        if self.relative_path != expected_path:
+            raise ValueError(f"relative_path must equal {expected_path}")
+        if not self.dataset_version_ids or not self.y_fields:
+            raise ValueError("chart dataset_version_ids and y_fields are required")
+        if self.purpose in {"evidence", "insight"} and not self.finding_refs:
+            raise ValueError("evidence-backed charts require finding_refs")
+        if not self.content_fingerprint.startswith("sha256:"):
+            raise ValueError("chart content_fingerprint must use sha256")
 
 
 @dataclass(frozen=True, slots=True)
 class CompiledAnswer:
     blocks: tuple[AnswerBlock, ...]
     markdown: str
+    calibrations: tuple[BlockCalibration, ...] = ()

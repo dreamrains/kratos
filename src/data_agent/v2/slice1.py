@@ -9,6 +9,7 @@ from typing import Any, Iterator
 import pandas as pd
 
 from data_agent.v2.answer import compile_answer
+from data_agent.v2.chart import build_trend_chart, decide_chart
 from data_agent.v2.dataset import DatasetRegistry, DatasetRole
 from data_agent.v2.models import (
     AnswerBlockDraft,
@@ -23,7 +24,12 @@ from data_agent.v2.models import (
 )
 from data_agent.v2.projection import project_run
 from data_agent.v2.store import V2FactStore
-from data_agent.v2.tools import DESCRIBE_NUMERIC_CONTRACT, describe_numeric
+from data_agent.v2.tools import (
+    DESCRIBE_NUMERIC_CONTRACT,
+    DESCRIBE_TREND_CONTRACT,
+    describe_numeric,
+    describe_trend,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +120,16 @@ class Slice1DescriptiveRuntime:
             role=DatasetRole.ANALYSIS,
             transform={"operation": "identity_analysis_copy", "lossless": True},
         )
+        analysis_frame = datasets.get_frame(analysis_version.dataset_version_id)
+        chart_decision = decide_chart(
+            analysis_frame,
+            metric=metric_name,
+            question=user_question,
+        )
+        method_contract = (
+            DESCRIBE_TREND_CONTRACT if chart_decision.warranted else DESCRIBE_NUMERIC_CONTRACT
+        )
+        tool_name = "describe_trend" if chart_decision.warranted else "describe_numeric"
 
         commitment = Commitment(
             commitment_id=commitment_id,
@@ -122,7 +138,12 @@ class Slice1DescriptiveRuntime:
             target_semantics=metric_name,
             dataset_version_ids=(analysis_version.dataset_version_id,),
             accepted_result_kinds=(FindingKind.ESTIMATE, FindingKind.NULL_RESULT),
-            accepted_method_capabilities=(DESCRIBE_NUMERIC_CONTRACT.capability,),
+            accepted_method_capabilities=(method_contract.capability,),
+            visualization_intent=(
+                f"line:{chart_decision.x_field}:{metric_name}"
+                if chart_decision.warranted
+                else ""
+            ),
         )
         store.write_commitments([commitment])
         yield RuntimeEvent(
@@ -136,8 +157,8 @@ class Slice1DescriptiveRuntime:
             commitment_id=commitment_id,
             event_type=EventType.TOOL_STARTED,
             tool_call_id=tool_call_id,
-            tool_name="v2.describe_numeric",
-            capability=DESCRIBE_NUMERIC_CONTRACT.capability,
+            tool_name=f"v2.{tool_name}",
+            capability=method_contract.capability,
             dataset_version_ids=(analysis_version.dataset_version_id,),
         )
         store.append_event(started)
@@ -145,57 +166,144 @@ class Slice1DescriptiveRuntime:
             "tool_started",
             {
                 "tool_call_id": tool_call_id,
-                "name": "describe_numeric",
-                "capability": DESCRIBE_NUMERIC_CONTRACT.capability,
+                "name": tool_name,
+                "capability": method_contract.capability,
             },
         )
 
-        result = describe_numeric(
-            datasets.get_frame(analysis_version.dataset_version_id),
-            metric_name,
-        )
+        if chart_decision.warranted:
+            result = describe_trend(
+                analysis_frame,
+                metric_name,
+                chart_decision.x_field,
+            )
+        else:
+            result = describe_numeric(analysis_frame, metric_name)
         succeeded = ExecutionEvent(
             event_id=f"event_{uuid.uuid4().hex}",
             run_id=run_id,
             commitment_id=commitment_id,
             event_type=EventType.TOOL_SUCCEEDED,
             tool_call_id=tool_call_id,
-            tool_name="v2.describe_numeric",
-            capability=DESCRIBE_NUMERIC_CONTRACT.capability,
+            tool_name=f"v2.{tool_name}",
+            capability=method_contract.capability,
             dataset_version_ids=(analysis_version.dataset_version_id,),
             result_ref=computation_ref,
         )
         store.append_event(succeeded)
         has_observations = int(result["count"]) > 0
-        finding = Finding(
-            finding_id=finding_id,
-            commitment_id=commitment_id,
-            finding_kind=(FindingKind.ESTIMATE if has_observations else FindingKind.NULL_RESULT),
-            dataset_version_ids=(analysis_version.dataset_version_id,),
-            metric_identity=f"column:{metric_name}.mean",
-            method_capability=DESCRIBE_NUMERIC_CONTRACT.capability,
-            estimate=result["mean"] if has_observations else None,
-            direction="level" if has_observations else "",
-            effective_sample=int(result["count"]),
-            uncertainty={
-                "minimum": result["minimum"],
-                "maximum": result["maximum"],
-                "missing": result["missing"],
-            },
-            limitations=DESCRIBE_NUMERIC_CONTRACT.known_limitations,
-            maximum_claim_class=DESCRIBE_NUMERIC_CONTRACT.maximum_claim_class,
-            computation_ref=computation_ref,
-        )
+        if chart_decision.warranted:
+            change = float(result["absolute_change"])
+            finding = Finding(
+                finding_id=finding_id,
+                commitment_id=commitment_id,
+                finding_kind=FindingKind.ESTIMATE,
+                dataset_version_ids=(analysis_version.dataset_version_id,),
+                metric_identity=f"column:{metric_name}.ordered_change",
+                method_capability=method_contract.capability,
+                estimate=change,
+                direction=("increase" if change > 0 else "decrease" if change < 0 else "flat"),
+                effective_sample=int(result["count"]),
+                time_scope=f"{result['start_time']}..{result['end_time']}",
+                uncertainty={
+                    "start_time": result["start_time"],
+                    "end_time": result["end_time"],
+                    "start_value": result["start_value"],
+                    "end_value": result["end_value"],
+                    "absolute_change": result["absolute_change"],
+                    "percent_change": result["percent_change"],
+                    "missing": result["missing"],
+                },
+                limitations=method_contract.known_limitations,
+                maximum_claim_class=method_contract.maximum_claim_class,
+                computation_ref=computation_ref,
+            )
+        else:
+            finding = Finding(
+                finding_id=finding_id,
+                commitment_id=commitment_id,
+                finding_kind=(
+                    FindingKind.ESTIMATE if has_observations else FindingKind.NULL_RESULT
+                ),
+                dataset_version_ids=(analysis_version.dataset_version_id,),
+                metric_identity=f"column:{metric_name}.mean",
+                method_capability=method_contract.capability,
+                estimate=result["mean"] if has_observations else None,
+                direction="level" if has_observations else "",
+                effective_sample=int(result["count"]),
+                uncertainty={
+                    "minimum": result["minimum"],
+                    "maximum": result["maximum"],
+                    "missing": result["missing"],
+                },
+                limitations=method_contract.known_limitations,
+                maximum_claim_class=method_contract.maximum_claim_class,
+                computation_ref=computation_ref,
+            )
         store.append_finding(finding)
         yield RuntimeEvent(
             "tool_finished",
             {
                 "tool_call_id": tool_call_id,
-                "name": "describe_numeric",
+                "name": tool_name,
                 "status": "succeeded",
                 "result_ref": computation_ref,
             },
         )
+
+        artifact_ids: tuple[str, ...] = ()
+        chart_unavailable = False
+        if chart_decision.warranted:
+            try:
+                artifact, chart_html = build_trend_chart(
+                    analysis_frame,
+                    decision=chart_decision,
+                    metric=metric_name,
+                    dataset_version_id=analysis_version.dataset_version_id,
+                    finding_refs=(finding_id,),
+                    title=f"{metric_name} 趋势",
+                )
+                store.write_chart_artifact(artifact, chart_html)
+                artifact_ids = (artifact.chart_id,)
+                store.append_event(
+                    ExecutionEvent(
+                        event_id=f"event_{uuid.uuid4().hex}",
+                        run_id=run_id,
+                        commitment_id=commitment_id,
+                        event_type=EventType.ARTIFACT_CREATED,
+                        tool_name="v2.chart_renderer",
+                        capability="visual.chart",
+                        dataset_version_ids=(analysis_version.dataset_version_id,),
+                        result_ref=artifact.chart_id,
+                    )
+                )
+                yield RuntimeEvent(
+                    "artifact_created",
+                    {"turn_id": turn_id, "artifact": asdict(artifact)},
+                )
+            except Exception as exc:
+                chart_unavailable = True
+                store.append_event(
+                    ExecutionEvent(
+                        event_id=f"event_{uuid.uuid4().hex}",
+                        run_id=run_id,
+                        commitment_id=commitment_id,
+                        event_type=EventType.ARTIFACT_FAILED,
+                        tool_name="v2.chart_renderer",
+                        capability="visual.chart",
+                        dataset_version_ids=(analysis_version.dataset_version_id,),
+                        error_code=type(exc).__name__,
+                        message="chart rendering failed",
+                    )
+                )
+                yield RuntimeEvent(
+                    "artifact_failed",
+                    {
+                        "turn_id": turn_id,
+                        "status": "unavailable",
+                        "error_code": type(exc).__name__,
+                    },
+                )
 
         projection = project_run(
             store.read_commitments(),
@@ -213,7 +321,44 @@ class Slice1DescriptiveRuntime:
         if not projection.publishable:
             raise RuntimeError("Slice 1 core commitment did not reach a publishable outcome")
 
-        if has_observations:
+        chart_refs: tuple[str, ...] = ()
+        if chart_decision.warranted:
+            chart_refs = artifact_ids
+            start_value = _number(float(result["start_value"]))
+            end_value = _number(float(result["end_value"]))
+            change_value = float(result["absolute_change"])
+            change_text = _number(abs(change_value))
+            direction_text = "增加" if change_value > 0 else "减少" if change_value < 0 else "持平"
+            percent_change = result["percent_change"]
+            percent_text = (
+                f"（{_number(abs(float(percent_change)))}%）"
+                if percent_change is not None
+                else ""
+            )
+            answer_narrative = (
+                f"从 {result['start_time']} 的 {start_value} 到 {result['end_time']} 的 "
+                f"{end_value}，{metric_name} {direction_text} {change_text}{percent_text}。"
+            )
+            answer_values = (
+                float(result["start_value"]),
+                float(result["end_value"]),
+                change_value,
+            ) + ((float(percent_change),) if percent_change is not None else ())
+            overview_narrative = (
+                f"趋势描述使用 {result['count']} 个有效时间点，"
+                f"另有 {result['missing']} 条记录缺失时间或数值。"
+            )
+            overview_values = (int(result["count"]), int(result["missing"]))
+            method_narrative = (
+                "结果按可解析日期排序，比较当前观测区间的首尾数值。"
+                + (
+                    "图表生成不可用，因此仅发布结构化数值结论。"
+                    if chart_unavailable
+                    else "折线图展示全部有效点。"
+                )
+                + "它不构成长期趋势、显著性或因果结论。"
+            )
+        elif has_observations:
             mean_text = _number(float(result["mean"]))
             minimum_text = _number(float(result["minimum"]))
             maximum_text = _number(float(result["maximum"]))
@@ -231,6 +376,10 @@ class Slice1DescriptiveRuntime:
                 float(result["maximum"]),
                 int(result["missing"]),
             )
+            method_narrative = (
+                "结果来自当前分析副本的描述统计。它只概括这份数据，"
+                "不表示变量之间存在因果关系，也不能自动推广到数据范围之外。"
+            )
         else:
             answer_narrative = (
                 f"当前数据范围内，{metric_name}没有可用于计算平均值的数值观测，"
@@ -241,6 +390,10 @@ class Slice1DescriptiveRuntime:
                 f"共有 0 条有效记录；{result['missing']} 条记录缺失或无法解析为数值。"
             )
             overview_values = (0, int(result["missing"]))
+            method_narrative = (
+                "结果来自当前分析副本的描述统计。它只概括这份数据，"
+                "不表示变量之间存在因果关系，也不能自动推广到数据范围之外。"
+            )
 
         drafts = [
             AnswerBlockDraft(
@@ -251,6 +404,7 @@ class Slice1DescriptiveRuntime:
                 narrative=answer_narrative,
                 claim_class=ClaimClass.DESCRIPTIVE,
                 canonical_values=answer_values,
+                chart_refs=chart_refs,
             ),
             AnswerBlockDraft(
                 block_id=f"block_{uuid.uuid4().hex}",
@@ -266,16 +420,26 @@ class Slice1DescriptiveRuntime:
                 block_type=AnswerBlockType.METHOD,
                 support_refs=(finding_id,),
                 headline="方法与局限",
-                narrative=(
-                    "结果来自当前分析副本的描述统计。它只概括这份数据，"
-                    "不表示变量之间存在因果关系，也不能自动推广到数据范围之外。"
-                ),
+                narrative=method_narrative,
                 claim_class=ClaimClass.DESCRIPTIVE,
-                limitations=DESCRIBE_NUMERIC_CONTRACT.known_limitations,
+                limitations=(
+                    method_contract.known_limitations
+                    + (("图表生成失败，本答案仅保留结构化数值结论。",) if chart_unavailable else ())
+                ),
             ),
         ]
         compiled = compile_answer(drafts, [finding], {commitment_id: outcome})
-        store.write_turn_blocks(turn_id, list(compiled.blocks), status="finalized")
+        store.write_turn_blocks(
+            turn_id,
+            list(compiled.blocks),
+            status="finalized",
+            artifact_ids=artifact_ids,
+            request_context={
+                "filename": filename,
+                "metric": metric_name,
+                "question": user_question,
+            },
+        )
         for block in compiled.blocks:
             yield RuntimeEvent(
                 "final_block_delta",

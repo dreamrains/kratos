@@ -4,6 +4,7 @@
         sessionId: '',
         turnId: '',
         blocks: [],
+        artifacts: [],
         running: false,
     };
     const byId = (id) => document.getElementById(id);
@@ -25,16 +26,63 @@
         history.replaceState({}, '', url);
         byId('run-id').textContent = `session ${state.sessionId} · turn ${state.turnId}`;
     }
-    function renderBlocks(blocks) {
+    function artifactUrl(chartId) {
+        return `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/artifacts/${encodeURIComponent(chartId)}`;
+    }
+    function chartHtml(artifact) {
+        return `<figure class="chart-shell" data-chart-id="${escapeHtml(artifact.chart_id)}" data-chart-loaded="false">
+            <figcaption>${escapeHtml(artifact.title)}</figcaption>
+            <iframe class="chart-frame" title="${escapeHtml(artifact.title)}" src="${artifactUrl(artifact.chart_id)}" loading="eager"></iframe>
+        </figure>`;
+    }
+    function bindChartLoadEvents() {
+        byId('answer').querySelectorAll('.chart-frame').forEach((frame) => {
+            const markLoaded = () => {
+                const shell = frame.closest('.chart-shell');
+                if (shell) shell.dataset.chartLoaded = 'true';
+            };
+            const waitForPlot = (attempt = 0) => {
+                try {
+                    if (frame.contentDocument?.querySelector('.plotly-graph-div .main-svg')) {
+                        markLoaded();
+                        return;
+                    }
+                } catch (_) {
+                    // V2 artifacts are same-origin; a later load callback retries.
+                }
+                if (attempt < 100) window.setTimeout(() => waitForPlot(attempt + 1), 50);
+            };
+            frame.addEventListener('load', () => waitForPlot(), { once: true });
+            waitForPlot();
+        });
+    }
+    function renderBlocks(blocks, artifacts = state.artifacts) {
         state.blocks = blocks || [];
-        byId('answer').innerHTML = state.blocks.map((block) => {
+        state.artifacts = artifacts || [];
+        const artifactById = new Map(state.artifacts.map((item) => [item.chart_id, item]));
+        const consumed = new Set();
+        const blockHtml = state.blocks.map((block) => {
             const limits = (block.limitations || []).length
                 ? `<ul>${block.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
+            const charts = (block.chart_refs || []).map((chartId) => {
+                const artifact = artifactById.get(chartId);
+                if (!artifact) return '';
+                consumed.add(chartId);
+                return chartHtml(artifact);
+            }).join('');
             return `<article class="answer-block" data-block-id="${escapeHtml(block.block_id)}">
                 <h2>${escapeHtml(block.headline)}</h2>
-                <p>${escapeHtml(block.narrative)}</p>${limits}
+                <p>${escapeHtml(block.narrative)}</p>${charts}${limits}
             </article>`;
         }).join('');
+        const supplemental = state.artifacts.filter((item) => !consumed.has(item.chart_id));
+        const supplementalHtml = supplemental.length
+            ? `<section class="supplemental" aria-labelledby="supplemental-heading">
+                <h2 id="supplemental-heading">补充图表</h2>
+                ${supplemental.map(chartHtml).join('')}
+            </section>` : '';
+        byId('answer').innerHTML = blockHtml + supplementalHtml;
+        bindChartLoadEvents();
     }
     function progress(label) {
         byId('progress').classList.add('visible');
@@ -81,11 +129,14 @@
         const labels = {
             turn_started: '分析会话已建立', commitment_snapshot: '已确定核心分析承诺',
             tool_started: '正在执行描述统计', tool_finished: '结构化计算已完成',
+            artifact_created: '图表产物已持久化', artifact_failed: '图表不可用，继续发布文本结论',
             outcome_snapshot: '已计算分析终态', final_block_delta: '正在发布已校准答案',
         };
         if (labels[event]) progress(labels[event]);
         if (event === 'turn_started') {
             state.sessionId = data.session_id; state.turnId = data.turn_id; updateUrl();
+        } else if (event === 'artifact_created') {
+            state.artifacts = [...state.artifacts, data.artifact];
         } else if (event === 'final_block_delta') {
             renderBlocks([...state.blocks, data.block]);
         } else if (event === 'turn_completed') {
@@ -97,7 +148,8 @@
     async function run() {
         if (state.running) return;
         state.running = true; byId('run').disabled = true; showError('');
-        byId('progress-list').innerHTML = ''; byId('progress').classList.remove('visible'); renderBlocks([]);
+        byId('progress-list').innerHTML = ''; byId('progress').classList.remove('visible');
+        state.artifacts = []; renderBlocks([]);
         try {
             if (!state.filename) await uploadSelected();
             setStatus('分析进行中');
@@ -122,7 +174,14 @@
         const response = await fetch(`/api/v2/sessions/${encodeURIComponent(state.sessionId)}/turns/${encodeURIComponent(state.turnId)}`);
         const body = await response.json();
         if (!response.ok) { showError(body.error || '恢复失败'); setStatus('恢复失败'); return; }
-        renderBlocks(body.blocks || []); updateUrl(); setStatus('已从持久化消息块恢复');
+        const context = body.request_context || {};
+        if (context.metric) byId('metric').value = context.metric;
+        if (context.question) byId('question').value = context.question;
+        if (context.filename) {
+            state.filename = context.filename;
+            byId('file-state').textContent = `已关联：${context.filename}`;
+        }
+        renderBlocks(body.blocks || [], body.artifacts || []); updateUrl(); setStatus('已从持久化消息块恢复');
     }
     byId('run').addEventListener('click', run);
     byId('restore').addEventListener('click', restore);

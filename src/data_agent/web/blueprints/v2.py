@@ -76,3 +76,18 @@ def get_v2_turn(session_id: str, turn_id: str):
     except KeyError:
         return jsonify({"error": "V2 turn not found"}), 404
     return jsonify(turn)
+
+
+@v2_bp.get("/v2/sessions/<session_id>/artifacts/<chart_id>")
+def get_v2_chart(session_id: str, chart_id: str) -> Response:
+    try:
+        html = V2FactStore(get_config().sessions_resolved, session_id).read_chart_html(chart_id)
+    except ValueError:
+        return jsonify({"error": "Invalid V2 artifact identity"}), 400
+    except KeyError:
+        return jsonify({"error": "V2 chart not found"}), 404
+    return Response(
+        html,
+        mimetype="text/html",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
