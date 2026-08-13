@@ -1,0 +1,167 @@
+from data_agent.v2.models import (
+    ClaimClass,
+    Commitment,
+    CommitmentPriority,
+    EventType,
+    ExecutionEvent,
+    Finding,
+    FindingKind,
+    OutcomeStatus,
+)
+from data_agent.v2.projection import project_run
+
+
+def _core() -> Commitment:
+    return Commitment(
+        commitment_id="c_core",
+        priority=CommitmentPriority.CORE,
+        question="销售额的总体情况如何？",
+        dataset_version_ids=("dv_sales",),
+        accepted_result_kinds=(FindingKind.ESTIMATE, FindingKind.NULL_RESULT),
+        accepted_method_capabilities=("analysis.describe",),
+    )
+
+
+def test_successful_tool_event_does_not_assert_completion():
+    result = project_run(
+        commitments=[_core()],
+        events=[
+            ExecutionEvent(
+                event_id="ev_1",
+                run_id="run_1",
+                commitment_id="c_core",
+                event_type=EventType.TOOL_SUCCEEDED,
+                tool_name="describe_dataset",
+                capability="analysis.describe",
+                dataset_version_ids=("dv_sales",),
+            )
+        ],
+        findings=[],
+    )
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.RUNNING
+    assert result.publishable is False
+
+def test_matching_finding_computes_supported_outcome():
+    result = project_run(
+        commitments=[_core()],
+        events=[],
+        findings=[
+            Finding(
+                finding_id="f_sales_mean",
+                commitment_id="c_core",
+                finding_kind=FindingKind.ESTIMATE,
+                dataset_version_ids=("dv_sales",),
+                metric_identity="sales.mean",
+                method_capability="analysis.describe",
+                estimate=120.0,
+                unit="CNY",
+                maximum_claim_class=ClaimClass.DESCRIPTIVE,
+                computation_ref="comp_1",
+            )
+        ],
+    )
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.SUPPORTED
+    assert result.outcomes["c_core"].finding_ids == ("f_sales_mean",)
+    assert result.publishable is True
+
+
+def test_null_result_is_a_publishable_analysis_outcome():
+    result = project_run(
+        commitments=[_core()],
+        events=[],
+        findings=[
+            Finding(
+                finding_id="f_null",
+                commitment_id="c_core",
+                finding_kind=FindingKind.NULL_RESULT,
+                dataset_version_ids=("dv_sales",),
+                metric_identity="sales.group_difference",
+                method_capability="analysis.describe",
+                limitations=("当前样本未显示可辨认差异",),
+                maximum_claim_class=ClaimClass.DESCRIPTIVE,
+                computation_ref="comp_null",
+            )
+        ],
+    )
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.NULL_RESULT
+    assert result.publishable is True
+
+
+def test_exhausted_declared_method_is_publishable_as_unavailable():
+    result = project_run(
+        commitments=[_core()],
+        events=[
+            ExecutionEvent(
+                event_id="ev_fail",
+                run_id="run_1",
+                commitment_id="c_core",
+                event_type=EventType.TOOL_FAILED,
+                tool_name="describe_dataset",
+                capability="analysis.describe",
+                dataset_version_ids=("dv_sales",),
+                error_code="dependency_unavailable",
+            )
+        ],
+        findings=[],
+    )
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.UNAVAILABLE
+    assert result.publishable is True
+
+
+def test_optional_chart_failure_does_not_block_supported_core():
+    chart = Commitment(
+        commitment_id="c_chart",
+        priority=CommitmentPriority.OPTIONAL,
+        question="绘制趋势图",
+        dataset_version_ids=("dv_sales",),
+        accepted_result_kinds=(FindingKind.ESTIMATE,),
+        accepted_method_capabilities=("visual.chart",),
+    )
+    result = project_run(
+        commitments=[_core(), chart],
+        events=[
+            ExecutionEvent(
+                event_id="ev_chart_fail",
+                run_id="run_1",
+                commitment_id="c_chart",
+                event_type=EventType.TOOL_FAILED,
+                capability="visual.chart",
+                error_code="render_failed",
+            )
+        ],
+        findings=[
+            Finding(
+                finding_id="f_sales",
+                commitment_id="c_core",
+                finding_kind=FindingKind.ESTIMATE,
+                dataset_version_ids=("dv_sales",),
+                metric_identity="sales.mean",
+                method_capability="analysis.describe",
+                estimate=120.0,
+                maximum_claim_class=ClaimClass.DESCRIPTIVE,
+                computation_ref="comp_sales",
+            )
+        ],
+    )
+
+    assert result.publishable is True
+    assert result.outcomes["c_chart"].status is OutcomeStatus.UNAVAILABLE
+
+
+def test_process_language_has_no_effect_on_projection():
+    event = ExecutionEvent(
+        event_id="ev_commentary",
+        run_id="run_1",
+        commitment_id="c_core",
+        event_type=EventType.TOOL_STARTED,
+        message="最后生成两张支撑图表",
+    )
+
+    result = project_run([_core()], [event], [])
+
+    assert result.outcomes["c_core"].status is OutcomeStatus.RUNNING
+    assert result.publishable is False

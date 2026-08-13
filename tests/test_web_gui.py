@@ -1,5 +1,13 @@
 """全功能 Web GUI 系统测试 — 覆盖所有端点与交互场景"""
 
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip(
+        "legacy live-provider script must not run during pytest collection",
+        allow_module_level=True,
+    )
+
 import json
 import os
 import sys
