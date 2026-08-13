@@ -105,3 +105,24 @@ def test_planning_input_reply_identity_cannot_change_content(tmp_path):
             questions=questions,
             answers=tuple(changed),
         )
+
+
+def test_planning_input_preserves_long_answer_without_application_limit(tmp_path):
+    store = PlanningInputStore(tmp_path, "session_input_long")
+    questions = _questions("plan_source")
+    long_answer = "复杂业务背景与统计口径说明。" * 1000
+    record = store.record(
+        source_plan_id="plan_source",
+        client_reply_id="reply_long",
+        questions=questions,
+        answers=tuple(
+            {"question_id": item["question_id"], "answer": long_answer}
+            for item in questions
+        ),
+    )
+
+    restored = PlanningInputStore(tmp_path, "session_input_long").get(
+        record.planning_input_id
+    )
+    assert restored.answers[0]["answer"] == long_answer
+    assert restored.clarifications[1]["answer"] == long_answer

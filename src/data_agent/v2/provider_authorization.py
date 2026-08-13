@@ -32,11 +32,13 @@ class ProviderAuthorizationRecord:
     provider_calls_authorized: int
     status: ProviderAuthorizationStatus
     planning_input_id: str = ""
+    planning_context: dict[str, Any] | None = None
     consumer_request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["status"] = self.status.value
+        value["planning_context"] = dict(self.planning_context or {})
         return value
 
 
@@ -56,6 +58,33 @@ def _line(value: dict[str, Any]) -> str:
 
 def _event_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+
+def _planning_context(value: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("planning_context is required")
+    required_ints = (
+        "estimated_input_tokens",
+        "model_context_window_tokens",
+        "reserved_output_tokens",
+        "available_input_tokens",
+    )
+    normalized: dict[str, Any] = {
+        "model_id": str(value.get("model_id") or "").strip(),
+        "fits": value.get("fits"),
+    }
+    if not normalized["model_id"]:
+        raise ValueError("planning_context model_id is required")
+    if normalized["fits"] is not True:
+        raise ValueError("planning_context must fit the model window")
+    for key in required_ints:
+        item = value.get(key)
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+            raise ValueError(f"planning_context {key} must be a non-negative integer")
+        normalized[key] = item
+    if normalized["estimated_input_tokens"] > normalized["available_input_tokens"]:
+        raise ValueError("planning_context estimate exceeds available input tokens")
+    return normalized
 
 
 def planning_request_fingerprint(
@@ -173,6 +202,7 @@ class ProviderAuthorizationStore:
                     ),
                     status=ProviderAuthorizationStatus.ISSUED,
                     planning_input_id=str(event.get("planning_input_id") or ""),
+                    planning_context=dict(event.get("planning_context") or {}),
                 )
                 order.append(authorization_id)
                 continue
@@ -216,6 +246,7 @@ class ProviderAuthorizationStore:
         question: str,
         provider_calls_authorized: int,
         confirm_provider_call: bool,
+        planning_context: dict[str, Any],
         planning_input_id: str = "",
     ) -> ProviderAuthorizationRecord:
         action_id = require_storage_id(client_action_id, "client_action_id")
@@ -236,6 +267,7 @@ class ProviderAuthorizationStore:
         normalized_purpose = str(purpose).strip()
         normalized_filename = str(filename).strip()
         normalized_input = str(planning_input_id or "").strip()
+        normalized_planning_context = _planning_context(planning_context)
         with _AUTHORIZATION_LOCK:
             existing = next(
                 (
@@ -253,6 +285,7 @@ class ProviderAuthorizationStore:
                     and existing.provider_calls_authorized
                     == provider_calls_authorized
                     and existing.planning_input_id == normalized_input
+                    and existing.planning_context == normalized_planning_context
                 )
                 if not same:
                     raise ProviderAuthorizationConflict(
@@ -275,6 +308,7 @@ class ProviderAuthorizationStore:
                     "request_fingerprint": request_fingerprint,
                     "provider_calls_authorized": provider_calls_authorized,
                     "planning_input_id": normalized_input,
+                    "planning_context": normalized_planning_context,
                 }
             )
             return self.get(authorization_id)

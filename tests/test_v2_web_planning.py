@@ -9,7 +9,15 @@ import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.v2.plan_store import DurablePlanStatus, PlanStore
 from data_agent.v2.planner import AnalysisPlan, AnalysisKind, PlanStatus
-from data_agent.v2.provider_authorization import ProviderAuthorizationStore
+from data_agent.v2.provider_authorization import (
+    ProviderAuthorizationStatus,
+    ProviderAuthorizationStore,
+)
+from data_agent.v2.planning_budget import (
+    PlanningContextEstimate,
+    PlanningContextTooLarge,
+    PlanningContextWindowUnknown,
+)
 from data_agent.web.app import create_app
 
 
@@ -37,7 +45,11 @@ def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(
         config_module,
         "_config",
-        AgentConfig(WORKSPACE_DIR=workspace, SESSIONS_DIR=tmp_path / "sessions"),
+        AgentConfig(
+            WORKSPACE_DIR=workspace,
+            SESSIONS_DIR=tmp_path / "sessions",
+            MODEL_CONTEXT_WINDOW=128000,
+        ),
     )
     return create_app().test_client()
 
@@ -130,6 +142,28 @@ class FakeClarifiedPlanner:
         )
 
 
+def _estimate(*, estimated=500, available=120000):
+    return PlanningContextEstimate(
+        model_id="provider/test-model",
+        estimated_input_tokens=estimated,
+        model_context_window_tokens=128000,
+        reserved_output_tokens=8000,
+        available_input_tokens=available,
+        fits=estimated <= available,
+    )
+
+
+class FakePlanningBudget:
+    def __init__(self, estimate=None, error=None):
+        self.value = estimate or _estimate()
+        self.error = error
+
+    def require_fits(self, question, context, *, clarifications=()):
+        if self.error:
+            raise self.error
+        return self.value
+
+
 def test_plan_api_rejects_client_asserted_or_unknown_authorization(
     monkeypatch, tmp_path
 ):
@@ -200,6 +234,169 @@ def test_authorization_api_is_explicit_idempotent_and_does_not_call_planner(
         == repeated.get_json()["authorization_id"]
     )
     assert first.get_json()["status"] == "issued"
+    assert first.get_json()["planning_context"]["estimated_input_tokens"] > 0
+
+
+def test_planning_estimate_reports_full_model_budget_without_authorization(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    estimate = _estimate(estimated=1234, available=120000)
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(estimate=estimate),
+    )
+    response = client.post(
+        "/api/v2/planning-estimates",
+        json={
+            "session_id": "session_estimate",
+            "filename": "sales.csv",
+            "question": "平均销售额？",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == estimate.to_dict()
+    auth_path = (
+        tmp_path
+        / "sessions"
+        / "session_estimate"
+        / "v2"
+        / "provider_authorizations.jsonl"
+    )
+    assert not auth_path.exists()
+
+
+def test_planning_context_too_large_is_explicit_and_does_not_issue_authorization(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    estimate = _estimate(estimated=120001, available=120000)
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(error=PlanningContextTooLarge(estimate)),
+    )
+    response = client.post(
+        "/api/v2/provider-authorizations",
+        json={
+            "session_id": "session_estimate_large",
+            "filename": "sales.csv",
+            "question": "long context",
+            "client_action_id": "action_estimate_large",
+            "purpose": "analysis_planning",
+            "provider_calls_authorized": 1,
+            "confirm_provider_call": True,
+        },
+    )
+
+    body = response.get_json()
+    assert response.status_code == 413
+    assert body["error_code"] == "planning_context_too_large"
+    assert body["planning_context"] == estimate.to_dict()
+    assert not (
+        tmp_path
+        / "sessions"
+        / "session_estimate_large"
+        / "v2"
+        / "provider_authorizations.jsonl"
+    ).exists()
+
+
+def test_plan_rechecks_context_before_consuming_authorization_or_calling_planner(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(estimate=_estimate()),
+    )
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_budget_recheck",
+        question="average sales",
+        client_action_id="action_budget_recheck",
+    )
+    too_large = _estimate(estimated=120001, available=120000)
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(error=PlanningContextTooLarge(too_large)),
+    )
+    FakePlanner.calls = 0
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakePlanner())
+
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_budget_recheck",
+            "filename": "sales.csv",
+            "question": "average sales",
+            "client_request_id": "client_budget_recheck",
+            "provider_authorization_id": authorization_id,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.get_json()["error_code"] == "planning_context_too_large"
+    assert FakePlanner.calls == 0
+    authorization = ProviderAuthorizationStore(
+        tmp_path / "sessions", "session_budget_recheck"
+    ).get(authorization_id)
+    assert authorization.status is ProviderAuthorizationStatus.ISSUED
+
+
+def test_unknown_model_window_is_not_replaced_by_an_arbitrary_limit(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(
+            error=PlanningContextWindowUnknown("configure MODEL_CONTEXT_WINDOW")
+        ),
+    )
+    response = client.post(
+        "/api/v2/planning-estimates",
+        json={
+            "session_id": "session_estimate_unknown",
+            "filename": "sales.csv",
+            "question": "average sales",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error_code"] == "planning_context_window_unknown"
+
+
+def test_planning_json_routes_keep_a_one_megabyte_transport_safety_limit(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    oversized = "x" * (1024 * 1024)
+
+    response = client.post(
+        "/api/v2/sessions/session_large/plans/plan_large/answers",
+        json={
+            "client_reply_id": "reply_large",
+            "answers": [{"question_id": "question_large", "answer": oversized}],
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.get_json()["error_code"] == "planning_request_too_large"
+    assert response.get_json()["max_request_bytes"] == 1024 * 1024
 
 
 def test_plan_api_persists_ready_and_idempotent_retry_does_not_reinvoke(

@@ -58,3 +58,47 @@ def test_v2_workbench_has_explicit_durable_queued_steer_controls():
     assert "steer_id" in js
     assert "afterCurrentStreamCloses" in js
     assert "AbortController" not in js
+
+
+def test_v2_workbench_has_explicit_one_call_planning_and_recoverable_questions():
+    client = create_app().test_client()
+    html = client.get("/v2-workbench").get_data(as_text=True)
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert 'id="plan-run"' in html
+    assert "估算系统规划（不调用模型）" in html
+    assert 'id="plan-confirm"' in html
+    assert "确认并开始分析（调用模型 1 次）" in html
+    assert 'id="planning-input"' in html
+    assert 'id="planning-questions"' in html
+    assert 'id="planning-submit"' in html
+    assert 'id="planning-estimate"' in html
+    assert "保存回答并估算（不调用模型）" in html
+    assert 'id="planning-confirm"' in html
+    assert "确认并重新规划（调用模型 1 次）" in html
+    assert "/api/v2/provider-authorizations" in js
+    assert "/api/v2/planning-estimates" in js
+    assert "/api/v2/plans" in js
+    assert "/planning-inputs/" in js
+    assert "/answers" in js
+    assert "confirm_provider_call: true" in js
+    assert "provider_calls_authorized: 1" in js
+    assert "planning_input_id" in js
+    assert "maxlength" not in html.lower()
+    assert "planning_context_too_large" not in js
+    assert "estimated_input_tokens" in js
+    assert "model_context_window_tokens" in js
+    assert "reserved_output_tokens" in js
+    assert "available_input_tokens" in js
+
+
+def test_v2_workbench_planning_is_only_bound_to_explicit_clicks():
+    client = create_app().test_client()
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert "byId('plan-run').addEventListener('click', planAndRun)" in js
+    assert "byId('plan-confirm').addEventListener('click', confirmInitialPlanning)" in js
+    assert "byId('planning-submit').addEventListener('click', answerAndReplan)" in js
+    assert "byId('planning-confirm').addEventListener('click', confirmPlanningAnswer)" in js
+    assert "if (params.has('turn_id')) restore();" in js
+    assert "else if (params.has('plan_id')) restorePlanning();" in js

@@ -4,7 +4,9 @@
         blocks: [], artifacts: [], running: false, stoppable: false,
         stopRequested: false, awaitingConfirmation: false, proposal: null,
         activityCount: 0, queuedSteer: null, queuedTargetTurnId: '', terminalStatus: '',
-        pendingSteerRequest: null,
+        pendingSteerRequest: null, planning: false, planId: '', planningInputId: '',
+        planningPlan: null, pendingPlanningRequest: null, pendingReplyId: '',
+        planningEstimate: null,
     };
     const byId = (id) => document.getElementById(id);
     const escapeHtml = (value) => String(value ?? '').replace(/&/g, '&amp;')
@@ -18,13 +20,20 @@
     }
 
     function updateUrl() {
-        if (!state.sessionId || !state.turnId) return;
+        if (!state.sessionId) return;
         const url = new URL(window.location.href);
         url.searchParams.set('session_id', state.sessionId);
-        url.searchParams.set('turn_id', state.turnId);
+        if (state.turnId) url.searchParams.set('turn_id', state.turnId);
+        else url.searchParams.delete('turn_id');
+        if (state.planId) url.searchParams.set('plan_id', state.planId);
+        else url.searchParams.delete('plan_id');
+        if (state.planningInputId) url.searchParams.set('planning_input_id', state.planningInputId);
+        else url.searchParams.delete('planning_input_id');
         history.replaceState({}, '', url);
         const run = state.runId ? ` · run ${state.runId}` : '';
-        byId('run-id').textContent = `session ${state.sessionId} · turn ${state.turnId}${run}`;
+        const turn = state.turnId ? ` · turn ${state.turnId}` : '';
+        const plan = state.planId ? ` · plan ${state.planId}` : '';
+        byId('run-id').textContent = `session ${state.sessionId}${turn}${plan}${run}`;
     }
 
     function showKindFields() {
@@ -60,7 +69,13 @@
         continueSteer.hidden = !canContinueSteer();
         continueSteer.disabled = !canContinueSteer();
         byId('run').disabled = state.running;
-        byId('restore').disabled = state.running;
+        byId('plan-run').disabled = state.running || state.planning;
+        byId('plan-confirm').disabled = state.running || state.planning;
+        byId('run').disabled = state.running || state.planning;
+        byId('planning-submit').disabled = state.running || state.planning;
+        byId('planning-confirm').disabled = state.running || state.planning;
+        byId('execute-plan').disabled = state.running || state.planning;
+        byId('restore').disabled = state.running || state.planning;
     }
 
     const artifactUrl = (id) => `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/artifacts/${encodeURIComponent(id)}`;
@@ -128,6 +143,289 @@
         if (!response.ok) throw new Error(body.error || '上传失败');
         state.filename = body.filename;
         byId('file-state').textContent = `已上传：${body.filename}`;
+    }
+
+    function requestIdentity(prefix) {
+        return `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`;
+    }
+
+    function ensurePlanningSession() {
+        state.sessionId ||= `v2_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+        updateUrl();
+    }
+
+    async function fetchJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(body.error || '请求失败');
+            error.body = body;
+            error.status = response.status;
+            throw error;
+        }
+        return body;
+    }
+
+    function hidePlanning() {
+        state.planningPlan = null;
+        byId('planning-input').hidden = true;
+        byId('planning-questions').innerHTML = '';
+        byId('planning-submit').hidden = false;
+        byId('planning-confirm').hidden = true;
+        byId('execute-plan').hidden = true;
+    }
+
+    function renderPlanningEstimate(estimate) {
+        state.planningEstimate = estimate || null;
+        byId('planning-estimate').textContent = estimate
+            ? `预计输入 ${estimate.estimated_input_tokens} tokens；模型窗口 ${estimate.model_context_window_tokens}；预留输出 ${estimate.reserved_output_tokens}；可用输入 ${estimate.available_input_tokens}。`
+            : '尚未估算。估算本身不会签发授权或调用模型。';
+    }
+
+    async function estimatePlanning(planningInputId = '') {
+        const body = {
+            session_id: state.sessionId,
+            filename: state.filename,
+            question: byId('question').value.trim(),
+        };
+        if (planningInputId) body.planning_input_id = planningInputId;
+        const estimate = await fetchJson('/api/v2/planning-estimates', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        renderPlanningEstimate(estimate);
+        return estimate;
+    }
+
+    function renderPlanning(plan, planningInput = null) {
+        state.planningPlan = plan;
+        state.planId = plan.plan_id;
+        state.planningInputId = planningInput?.planning_input_id || '';
+        const panel = byId('planning-input');
+        panel.hidden = false;
+        byId('planning-rationale').textContent = plan.rationale || plan.message || '';
+        const submit = byId('planning-submit');
+        const execute = byId('execute-plan');
+        submit.hidden = plan.status !== 'needs_input';
+        execute.hidden = plan.status !== 'ready';
+        const headings = {
+            needs_input: '规划需要补充信息',
+            ready: '分析计划已就绪',
+            unsupported: '当前方法目录无法支持该问题',
+            failed: '方法规划失败',
+        };
+        byId('planning-heading').textContent = headings[plan.status] || '分析规划';
+        const answerById = new Map((planningInput?.answers || []).map((item) => [item.question_id, item.answer]));
+        byId('planning-questions').innerHTML = (plan.message_blocks || []).map((block) => `
+            <div class="planning-question">
+                <label for="answer-${escapeHtml(block.question_id)}">${escapeHtml(block.text)}</label>
+                <textarea id="answer-${escapeHtml(block.question_id)}" data-question-id="${escapeHtml(block.question_id)}" placeholder="请提供完整业务语义；回答不会被截断。">${escapeHtml(answerById.get(block.question_id) || '')}</textarea>
+            </div>`).join('');
+        byId('planning-questions').querySelectorAll('textarea').forEach((input) => {
+            input.addEventListener('input', () => {
+                state.planningInputId = '';
+                byId('planning-confirm').hidden = true;
+                updateUrl();
+            });
+        });
+        updateUrl();
+    }
+
+    async function issuePlanningAuthorization(planningInputId, identities) {
+        const body = {
+            session_id: state.sessionId,
+            filename: state.filename,
+            question: byId('question').value.trim(),
+            client_action_id: identities.clientActionId,
+            purpose: 'analysis_planning',
+            provider_calls_authorized: 1,
+            confirm_provider_call: true,
+        };
+        if (planningInputId) body.planning_input_id = planningInputId;
+        return fetchJson('/api/v2/provider-authorizations', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+    }
+
+    async function handlePlanningResult(plan, {autoExecute = true} = {}) {
+        state.planId = plan.plan_id;
+        state.pendingPlanningRequest = null;
+        updateUrl();
+        if (plan.status === 'ready') {
+            restoreFields({
+                analysis_kind: plan.analysis_kind,
+                filename: plan.dataset_context?.filename,
+                question: plan.question,
+                ...(plan.parameters || {}),
+            });
+            if (!autoExecute) {
+                renderPlanning(plan);
+                setStatus('计划已恢复，可直接执行');
+                return;
+            }
+            hidePlanning();
+            state.turnId = requestIdentity('turn').slice(0, 17);
+            updateUrl();
+            await executeAnalysis({
+                session_id: state.sessionId,
+                turn_id: state.turnId,
+                plan_id: plan.plan_id,
+            });
+            return;
+        }
+        renderPlanning(plan);
+        if (plan.status === 'needs_input') setStatus('等待补充规划信息');
+        else if (plan.status === 'unsupported') setStatus('当前方法目录不支持该问题');
+        else setStatus('规划失败；不会自动重试');
+    }
+
+    async function requestPlan(planningInputId = '', {autoExecute = true} = {}) {
+        if (state.running || state.planning) return;
+        const question = byId('question').value.trim();
+        if (!question) {
+            showError('请输入需要分析的问题。');
+            return;
+        }
+        ensurePlanningSession();
+        const pending = state.pendingPlanningRequest;
+        const identities = pending && pending.planningInputId === planningInputId
+            ? pending
+            : {
+                planningInputId,
+                clientActionId: requestIdentity('action'),
+                clientRequestId: requestIdentity('client'),
+                authorizationId: '',
+            };
+        state.pendingPlanningRequest = identities;
+        state.planning = true;
+        showError('');
+        updateRunControls();
+        try {
+            setStatus('正在计算完整规划请求 token');
+            await estimatePlanning(planningInputId);
+            setStatus('正在取得一次性规划授权');
+            if (!identities.authorizationId) {
+                const authorization = await issuePlanningAuthorization(planningInputId, identities);
+                identities.authorizationId = authorization.authorization_id;
+            }
+            setStatus('正在选择分析方法（模型调用 1 次）');
+            const requestBody = {
+                session_id: state.sessionId,
+                filename: state.filename,
+                question,
+                client_request_id: identities.clientRequestId,
+                provider_authorization_id: identities.authorizationId,
+            };
+            if (planningInputId) requestBody.planning_input_id = planningInputId;
+            const plan = await fetchJson('/api/v2/plans', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody),
+            });
+            await handlePlanningResult(plan, {autoExecute});
+        } catch (error) {
+            if (error.body?.plan) {
+                state.pendingPlanningRequest = null;
+                await handlePlanningResult(error.body.plan, {autoExecute: false});
+            }
+            showError(error.message);
+            setStatus('规划失败；不会自动重试');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function planAndRun() {
+        if (state.running || state.planning) return;
+        try {
+            if (!state.filename) await uploadSelected();
+        } catch (error) {
+            showError(error.message);
+            setStatus('上传失败');
+            return;
+        }
+        ensurePlanningSession();
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            setStatus('正在估算完整规划请求；不会调用模型');
+            await estimatePlanning('');
+            byId('plan-confirm').hidden = false;
+            setStatus('估算完成；确认后才会调用模型 1 次');
+        } catch (error) {
+            showError(error.message);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function answerAndReplan() {
+        const plan = state.planningPlan;
+        if (!plan || plan.status !== 'needs_input' || state.running || state.planning) return;
+        const answers = [...byId('planning-questions').querySelectorAll('textarea')].map((input) => ({
+            question_id: input.dataset.questionId,
+            answer: input.value.trim(),
+        }));
+        if (!answers.length || answers.some((item) => !item.answer)) {
+            showError('请完整回答所有规划问题。');
+            return;
+        }
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            if (!state.planningInputId) {
+                state.pendingReplyId ||= requestIdentity('reply');
+                setStatus('正在保存规划回答');
+                const planningInput = await fetchJson(
+                    `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/plans/${encodeURIComponent(plan.plan_id)}/answers`,
+                    {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({client_reply_id: state.pendingReplyId, answers}),
+                    },
+                );
+                state.planningInputId = planningInput.planning_input_id;
+                state.pendingReplyId = '';
+                updateUrl();
+            }
+        } catch (error) {
+            showError(error.message);
+            setStatus('回答保存失败；未调用模型');
+            return;
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+        state.planning = true;
+        updateRunControls();
+        try {
+            setStatus('正在估算回答后的完整规划请求；不会调用模型');
+            await estimatePlanning(state.planningInputId);
+            byId('planning-confirm').hidden = false;
+            setStatus('回答已保存并完成估算；确认后才会调用模型 1 次');
+        } catch (error) {
+            showError(error.message);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function confirmInitialPlanning() {
+        if (!state.planningEstimate) return;
+        byId('plan-confirm').hidden = true;
+        await requestPlan('');
+    }
+
+    async function confirmPlanningAnswer() {
+        if (!state.planningEstimate || !state.planningInputId) return;
+        byId('planning-confirm').hidden = true;
+        await requestPlan(state.planningInputId);
     }
 
     function payload() {
@@ -330,6 +628,11 @@
             setStatus('上传失败');
             return;
         }
+        state.planId = '';
+        state.planningInputId = '';
+        state.pendingPlanningRequest = null;
+        hidePlanning();
+        renderPlanningEstimate(null);
         await executeAnalysis(payload());
     }
 
@@ -464,6 +767,8 @@
         const params = new URLSearchParams(window.location.search);
         state.sessionId ||= params.get('session_id') || '';
         state.turnId ||= params.get('turn_id') || '';
+        state.planId ||= params.get('plan_id') || '';
+        state.planningInputId ||= params.get('planning_input_id') || '';
         if (!state.sessionId || !state.turnId) {
             showError('当前页面没有可恢复的 V2 分析。');
             return;
@@ -491,17 +796,96 @@
         else setStatus(state.awaitingConfirmation ? '等待日期语义确认' : '已从持久化消息块恢复');
     }
 
+    async function restorePlanning() {
+        const params = new URLSearchParams(window.location.search);
+        state.sessionId ||= params.get('session_id') || '';
+        state.planId ||= params.get('plan_id') || '';
+        state.planningInputId ||= params.get('planning_input_id') || '';
+        if (!state.sessionId || !state.planId) {
+            showError('当前页面没有可恢复的 V2 规划。');
+            return;
+        }
+        showError('');
+        setStatus('正在恢复分析规划');
+        try {
+            const plan = await fetchJson(
+                `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/plans/${encodeURIComponent(state.planId)}`,
+            );
+            state.filename = plan.dataset_context?.filename || '';
+            if (state.filename) byId('file-state').textContent = `已关联：${state.filename}`;
+            byId('question').value = plan.question || '';
+            let planningInput = null;
+            if (state.planningInputId) {
+                planningInput = await fetchJson(
+                    `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/planning-inputs/${encodeURIComponent(state.planningInputId)}`,
+                );
+            }
+            if (plan.status === 'ready') {
+                restoreFields({
+                    analysis_kind: plan.analysis_kind,
+                    filename: plan.dataset_context?.filename,
+                    question: plan.question,
+                    ...(plan.parameters || {}),
+                });
+            }
+            renderPlanning(plan, planningInput);
+            if (plan.status === 'needs_input') setStatus('已恢复规划问题与回答');
+            else if (plan.status === 'ready') setStatus('计划已恢复，可直接执行');
+            else setStatus('已恢复规划终态');
+        } catch (error) {
+            showError(error.message);
+            setStatus('规划恢复失败');
+        }
+    }
+
+    async function executeRestoredPlan() {
+        const plan = state.planningPlan;
+        if (!plan || plan.status !== 'ready' || state.running || state.planning) return;
+        hidePlanning();
+        state.turnId = requestIdentity('turn').slice(0, 17);
+        updateUrl();
+        await executeAnalysis({
+            session_id: state.sessionId,
+            turn_id: state.turnId,
+            plan_id: plan.plan_id,
+        });
+    }
+
+    function restoreCurrent() {
+        const params = new URLSearchParams(window.location.search);
+        if (state.turnId || params.has('turn_id')) restore();
+        else restorePlanning();
+    }
+
     byId('analysis-kind').addEventListener('change', showKindFields);
+    byId('plan-run').addEventListener('click', planAndRun);
+    byId('plan-confirm').addEventListener('click', confirmInitialPlanning);
     byId('run').addEventListener('click', run);
+    byId('planning-submit').addEventListener('click', answerAndReplan);
+    byId('planning-confirm').addEventListener('click', confirmPlanningAnswer);
+    byId('execute-plan').addEventListener('click', executeRestoredPlan);
     byId('steer').addEventListener('click', sendSteer);
     byId('continue-steer').addEventListener('click', runQueuedSteer);
     byId('stop').addEventListener('click', stop);
-    byId('restore').addEventListener('click', restore);
+    byId('restore').addEventListener('click', restoreCurrent);
     byId('file').addEventListener('change', () => {
         state.filename = '';
+        state.planId = '';
+        state.planningInputId = '';
+        state.pendingPlanningRequest = null;
+        hidePlanning();
+        renderPlanningEstimate(null);
+        byId('plan-confirm').hidden = true;
         byId('file-state').textContent = '等待上传';
+    });
+    byId('question').addEventListener('input', () => {
+        state.pendingPlanningRequest = null;
+        renderPlanningEstimate(null);
+        byId('plan-confirm').hidden = true;
     });
     showKindFields();
     updateRunControls();
-    if (new URLSearchParams(window.location.search).has('session_id')) restore();
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('turn_id')) restore();
+    else if (params.has('plan_id')) restorePlanning();
 })();

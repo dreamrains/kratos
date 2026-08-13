@@ -119,6 +119,13 @@ class AnalysisPlan:
     model_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class PlanningProviderRequest:
+    messages: list[dict[str, Any]]
+    tools: list[dict[str, Any]]
+    system: str
+
+
 class PlannerClient(Protocol):
     model_id: str
 
@@ -317,6 +324,37 @@ class StructuredAnalysisPlanner:
         *,
         clarifications: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
     ) -> AnalysisPlan:
+        question, request = self.build_request(
+            user_question, context, clarifications=clarifications
+        )
+        response = self.client.chat_once(
+            messages=request.messages,
+            tools=request.tools,
+            system=request.system,
+        )
+        calls = [
+            item
+            for item in getattr(response, "tool_calls", ())
+            if getattr(item, "name", "") == "submit_analysis_plan"
+        ]
+        if len(calls) != 1 or len(getattr(response, "tool_calls", ())) != 1:
+            raise PlannerContractError(
+                "planner must return exactly one submit_analysis_plan tool call"
+            )
+        arguments = getattr(calls[0], "arguments", None)
+        if not isinstance(arguments, dict):
+            raise PlannerContractError("planner tool arguments must be an object")
+        return self._compile(question, context, arguments)
+
+    def build_request(
+        self,
+        user_question: str,
+        context: DatasetPlanningContext,
+        *,
+        clarifications: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+    ) -> tuple[str, PlanningProviderRequest]:
+        """Build the single Provider request shared by estimation and execution."""
+
         question = _required_text(user_question, "user_question")
         normalized_clarifications = _clarifications(clarifications)
         prompt_payload = {
@@ -325,7 +363,7 @@ class StructuredAnalysisPlanner:
         }
         if normalized_clarifications:
             prompt_payload["clarifications"] = list(normalized_clarifications)
-        response = self.client.chat_once(
+        return question, PlanningProviderRequest(
             messages=[
                 {
                     "role": "user",
@@ -347,19 +385,6 @@ class StructuredAnalysisPlanner:
                 "submit_analysis_plan tool exactly once."
             ),
         )
-        calls = [
-            item
-            for item in getattr(response, "tool_calls", ())
-            if getattr(item, "name", "") == "submit_analysis_plan"
-        ]
-        if len(calls) != 1 or len(getattr(response, "tool_calls", ())) != 1:
-            raise PlannerContractError(
-                "planner must return exactly one submit_analysis_plan tool call"
-            )
-        arguments = getattr(calls[0], "arguments", None)
-        if not isinstance(arguments, dict):
-            raise PlannerContractError("planner tool arguments must be an object")
-        return self._compile(question, context, arguments)
 
     def _compile(
         self,

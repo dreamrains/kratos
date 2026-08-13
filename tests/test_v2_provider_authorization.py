@@ -18,6 +18,14 @@ def _issue(store: ProviderAuthorizationStore, **overrides):
         "question": "What is average sales?",
         "provider_calls_authorized": 1,
         "confirm_provider_call": True,
+        "planning_context": {
+            "model_id": "provider/model",
+            "estimated_input_tokens": 100,
+            "model_context_window_tokens": 1000,
+            "reserved_output_tokens": 100,
+            "available_input_tokens": 900,
+            "fits": True,
+        },
     }
     values.update(overrides)
     return store.issue(**values)

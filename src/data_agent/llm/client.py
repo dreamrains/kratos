@@ -63,6 +63,19 @@ def _convert_tools(tool_defs: list[dict]) -> list[dict]:
     return result
 
 
+def prepare_provider_prompt(
+    messages: list[dict],
+    tools: Optional[list[dict]] = None,
+    system: Optional[str] = None,
+) -> tuple[list[dict], list[dict]]:
+    """Return the exact messages and tool schema sent to LiteLLM."""
+
+    prepared_messages = list(messages)
+    if system:
+        prepared_messages = [{"role": "system", "content": system}] + prepared_messages
+    return prepared_messages, _convert_tools(tools or [])
+
+
 def _sanitize(text: str) -> str:
     """清理字符串中的非法 UTF-8 代理字符。"""
     if not text:
@@ -122,9 +135,12 @@ class LLMClient:
         self.temperature = temperature
 
     def _base_kwargs(self, messages, tools=None, system=None) -> dict:
+        prepared_messages, prepared_tools = prepare_provider_prompt(
+            messages, tools, system
+        )
         kwargs: dict[str, Any] = {
             "model": self.model_id,
-            "messages": messages,
+            "messages": prepared_messages,
             "max_tokens": self.max_tokens,
             "timeout": self.timeout,
         }
@@ -134,10 +150,8 @@ class LLMClient:
             kwargs["api_key"] = self.api_key
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
-        if system:
-            kwargs["messages"] = [{"role": "system", "content": system}] + list(kwargs["messages"])
-        if tools:
-            kwargs["tools"] = _convert_tools(tools)
+        if prepared_tools:
+            kwargs["tools"] = prepared_tools
         return kwargs
 
     def chat(

@@ -37,6 +37,13 @@ from data_agent.v2.planning_input import (
     PlanningInputStore,
     planning_question_blocks,
 )
+from data_agent.v2.planning_budget import (
+    PlanningContextBudget,
+    PlanningContextTooLarge,
+    PlanningContextWindowUnknown,
+    PlanningTokenEstimateUnavailable,
+    resolve_model_context_window,
+)
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
@@ -52,10 +59,76 @@ from data_agent.llm.client import LLMClient
 
 v2_bp = Blueprint("v2", __name__)
 ACTIVE_V2_RUNS = ActiveRunRegistry()
+_PLANNING_JSON_MAX_BYTES = 1024 * 1024
 
 
 def V2_PLANNER_FACTORY():
     return StructuredAnalysisPlanner(LLMClient(temperature=0, timeout=120))
+
+
+def V2_PLANNING_BUDGET_FACTORY():
+    cfg = get_config()
+    planner = StructuredAnalysisPlanner(LLMClient(temperature=0, timeout=120))
+    return PlanningContextBudget(
+        planner,
+        model_id=planner.client.model_id,
+        context_window_tokens=resolve_model_context_window(
+            planner.client.model_id,
+            cfg.model_context_window,
+            api_base=planner.client.api_base,
+        ),
+        reserved_output_tokens=planner.client.max_tokens,
+    )
+
+
+class PlanningRequestBodyTooLarge(ValueError):
+    pass
+
+
+def _planning_json_payload() -> dict:
+    raw = request.get_data(cache=True)
+    if len(raw) > _PLANNING_JSON_MAX_BYTES:
+        raise PlanningRequestBodyTooLarge(
+            f"planning request body exceeds {_PLANNING_JSON_MAX_BYTES} bytes"
+        )
+    payload = request.get_json(force=True)
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    return payload
+
+
+def _planning_budget_error(exc: Exception) -> tuple[Response, int]:
+    if isinstance(exc, PlanningContextTooLarge):
+        return jsonify(
+            {
+                "error": "planning context exceeds the model input budget",
+                "error_code": "planning_context_too_large",
+                "planning_context": exc.estimate.to_dict(),
+            }
+        ), 413
+    if isinstance(exc, PlanningContextWindowUnknown):
+        return jsonify(
+            {
+                "error": str(exc),
+                "error_code": "planning_context_window_unknown",
+            }
+        ), 422
+    return jsonify(
+        {
+            "error": str(exc),
+            "error_code": "planning_token_estimate_unavailable",
+        }
+    ), 422
+
+
+def _planning_body_error(exc: PlanningRequestBodyTooLarge) -> tuple[Response, int]:
+    return jsonify(
+        {
+            "error": str(exc),
+            "error_code": "planning_request_too_large",
+            "max_request_bytes": _PLANNING_JSON_MAX_BYTES,
+        }
+    ), 413
 
 
 def _request_context(payload: dict, analysis_kind: str) -> dict[str, str]:
@@ -163,6 +236,21 @@ def _planning_input_for_request(
     if planning_input.questions != expected_questions:
         raise PlanningInputConflict("planning input questions differ from source plan")
     return planning_input
+
+
+def _planning_context_estimate(
+    *,
+    question: str,
+    context: DatasetPlanningContext,
+    planning_input: PlanningInputRecord | None,
+):
+    return V2_PLANNING_BUDGET_FACTORY().require_fits(
+        question,
+        context,
+        clarifications=(
+            planning_input.clarifications if planning_input is not None else ()
+        ),
+    )
 
 
 def _sse_response(queue: EventQueue) -> Response:
@@ -311,9 +399,12 @@ def analyze_v2() -> Response:
 def create_v2_plan() -> Response:
     """Consume one server-issued receipt, then run one model planning call."""
 
-    payload = request.get_json(force=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "request body must be a JSON object"}), 400
+    try:
+        payload = _planning_json_payload()
+    except PlanningRequestBodyTooLarge as exc:
+        return _planning_body_error(exc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     session_id = str(
         payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}"
     ).strip()
@@ -353,6 +444,11 @@ def create_v2_plan() -> Response:
         )
         parent_plan_id = (
             planning_input.source_plan_id if planning_input is not None else ""
+        )
+        _planning_context_estimate(
+            question=question,
+            context=context,
+            planning_input=planning_input,
         )
         existing = store.find_by_client_request(client_request_id)
         if existing is not None:
@@ -402,6 +498,12 @@ def create_v2_plan() -> Response:
         ProviderAuthorizationConflict,
     ) as exc:
         return jsonify({"error": str(exc)}), 409
+    except (
+        PlanningContextTooLarge,
+        PlanningContextWindowUnknown,
+        PlanningTokenEstimateUnavailable,
+    ) as exc:
+        return _planning_budget_error(exc)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -427,13 +529,68 @@ def create_v2_plan() -> Response:
     return jsonify(completed.to_dict()), 201
 
 
+@v2_bp.post("/v2/planning-estimates")
+def estimate_v2_planning_context() -> Response:
+    """Count the exact Planner request without authorizing or calling a Provider."""
+
+    try:
+        payload = _planning_json_payload()
+    except PlanningRequestBodyTooLarge as exc:
+        return _planning_body_error(exc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    session_id = str(payload.get("session_id") or "").strip()
+    filename = str(payload.get("filename") or "").strip()
+    question = str(payload.get("question") or "").strip()
+    planning_input_id = str(payload.get("planning_input_id") or "").strip()
+    if not all((session_id, filename, question)):
+        return jsonify(
+            {"error": "session_id, filename, and question are required"}
+        ), 400
+    cfg = get_config()
+    try:
+        context = _planning_source(cfg.inbox_dir, filename)
+        planning_input = (
+            _planning_input_for_request(
+                sessions_root=cfg.sessions_resolved,
+                session_id=session_id,
+                planning_input_id=planning_input_id,
+                question=question,
+                context=context,
+            )
+            if planning_input_id
+            else None
+        )
+        estimate = _planning_context_estimate(
+            question=question,
+            context=context,
+            planning_input=planning_input,
+        )
+    except (FileNotFoundError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 404
+    except PlanningInputConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except (
+        PlanningContextTooLarge,
+        PlanningContextWindowUnknown,
+        PlanningTokenEstimateUnavailable,
+    ) as exc:
+        return _planning_budget_error(exc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(estimate.to_dict())
+
+
 @v2_bp.post("/v2/provider-authorizations")
 def issue_v2_provider_authorization() -> Response:
     """Persist one explicit, exact-count permission without calling a Provider."""
 
-    payload = request.get_json(force=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "request body must be a JSON object"}), 400
+    try:
+        payload = _planning_json_payload()
+    except PlanningRequestBodyTooLarge as exc:
+        return _planning_body_error(exc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     session_id = str(payload.get("session_id") or "").strip()
     filename = str(payload.get("filename") or "").strip()
     question = str(payload.get("question") or "").strip()
@@ -452,7 +609,7 @@ def issue_v2_provider_authorization() -> Response:
     cfg = get_config()
     try:
         context = _planning_source(cfg.inbox_dir, filename)
-        if planning_input_id:
+        planning_input = (
             _planning_input_for_request(
                 sessions_root=cfg.sessions_resolved,
                 session_id=session_id,
@@ -460,6 +617,14 @@ def issue_v2_provider_authorization() -> Response:
                 question=question,
                 context=context,
             )
+            if planning_input_id
+            else None
+        )
+        estimate = _planning_context_estimate(
+            question=question,
+            context=context,
+            planning_input=planning_input,
+        )
         store = ProviderAuthorizationStore(cfg.sessions_resolved, session_id)
         existing = next(
             (
@@ -477,12 +642,19 @@ def issue_v2_provider_authorization() -> Response:
             question=question,
             provider_calls_authorized=payload.get("provider_calls_authorized"),
             confirm_provider_call=payload.get("confirm_provider_call"),
+            planning_context=estimate.to_dict(),
             planning_input_id=planning_input_id,
         )
     except (FileNotFoundError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 404
     except (PlanningInputConflict, ProviderAuthorizationConflict) as exc:
         return jsonify({"error": str(exc)}), 409
+    except (
+        PlanningContextTooLarge,
+        PlanningContextWindowUnknown,
+        PlanningTokenEstimateUnavailable,
+    ) as exc:
+        return _planning_budget_error(exc)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(record.to_dict()), 200 if existing is not None else 201
@@ -503,9 +675,12 @@ def get_v2_plan(session_id: str, plan_id: str):
 def answer_v2_plan(session_id: str, plan_id: str) -> Response:
     """Persist user answers without reopening a terminal needs_input plan."""
 
-    payload = request.get_json(force=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "request body must be a JSON object"}), 400
+    try:
+        payload = _planning_json_payload()
+    except PlanningRequestBodyTooLarge as exc:
+        return _planning_body_error(exc)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     client_reply_id = str(payload.get("client_reply_id") or "").strip()
     answers = payload.get("answers")
     if not client_reply_id or not isinstance(answers, list):
