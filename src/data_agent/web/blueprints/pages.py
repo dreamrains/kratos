@@ -14,3 +14,9 @@ def index():
 def v2_canary():
     """Isolated Slice 1 browser canary; not the legacy chat runtime."""
     return render_template("v2_canary.html")
+
+
+@pages_bp.route("/v2-factor-canary")
+def v2_factor_canary():
+    """Isolated Slice 2 factor-relationship browser canary."""
+    return render_template("v2_factor_canary.html")

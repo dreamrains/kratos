@@ -50,16 +50,25 @@
                 } catch (_) {
                     // V2 artifacts are same-origin; a later load callback retries.
                 }
+                if (attempt === 20 && frame.dataset.navigationRetried !== 'true') {
+                    frame.dataset.navigationRetried = 'true';
+                    const retryUrl = new URL(frame.src, window.location.origin);
+                    retryUrl.searchParams.set('_retry', String(Date.now()));
+                    frame.src = retryUrl.toString();
+                    window.setTimeout(() => waitForPlot(0), 50);
+                    return;
+                }
                 if (attempt < 100) window.setTimeout(() => waitForPlot(attempt + 1), 50);
             };
             frame.addEventListener('load', () => waitForPlot(), { once: true });
             waitForPlot();
         });
     }
-    function renderBlocks(blocks, artifacts = state.artifacts) {
+    function renderBlocks(blocks, artifacts = state.artifacts, showCharts = true) {
         state.blocks = blocks || [];
         state.artifacts = artifacts || [];
-        const artifactById = new Map(state.artifacts.map((item) => [item.chart_id, item]));
+        const renderArtifacts = showCharts ? state.artifacts : [];
+        const artifactById = new Map(renderArtifacts.map((item) => [item.chart_id, item]));
         const consumed = new Set();
         const blockHtml = state.blocks.map((block) => {
             const limits = (block.limitations || []).length
@@ -75,7 +84,7 @@
                 <p>${escapeHtml(block.narrative)}</p>${charts}${limits}
             </article>`;
         }).join('');
-        const supplemental = state.artifacts.filter((item) => !consumed.has(item.chart_id));
+        const supplemental = renderArtifacts.filter((item) => !consumed.has(item.chart_id));
         const supplementalHtml = supplemental.length
             ? `<section class="supplemental" aria-labelledby="supplemental-heading">
                 <h2 id="supplemental-heading">补充图表</h2>
@@ -138,7 +147,7 @@
         } else if (event === 'artifact_created') {
             state.artifacts = [...state.artifacts, data.artifact];
         } else if (event === 'final_block_delta') {
-            renderBlocks([...state.blocks, data.block]);
+            renderBlocks([...state.blocks, data.block], state.artifacts, false);
         } else if (event === 'turn_completed') {
             setStatus('分析完成'); progress('最终答案已持久化');
         } else if (event === 'turn_failed') {
@@ -162,6 +171,8 @@
                 }),
             });
             await consumeSse(response);
+            // Wait for the stream to close before loading artifact iframes.
+            renderBlocks(state.blocks, state.artifacts, true);
         } catch (error) { showError(error.message); setStatus('分析失败'); }
         finally { state.running = false; byId('run').disabled = false; }
     }

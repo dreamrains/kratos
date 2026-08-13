@@ -302,7 +302,16 @@ class V2FactStore:
         if missing_chart_ids:
             raise ValueError("answer block chart_refs must exist in artifact_ids")
         raw_context = dict(request_context or {})
-        allowed_context_keys = {"filename", "metric", "question"}
+        allowed_context_keys = {
+            "filename",
+            "metric",
+            "target",
+            "features",
+            "analysis_unit",
+            "time_field",
+            "question",
+            "analysis_kind",
+        }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")
         normalized_context = {

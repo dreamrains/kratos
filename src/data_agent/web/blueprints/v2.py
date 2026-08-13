@@ -9,6 +9,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from data_agent.config import get_config
 from data_agent.v2.slice1 import Slice1DescriptiveRuntime
+from data_agent.v2.slice2 import Slice2FactorRuntime
 from data_agent.v2.store import V2FactStore
 from data_agent.web.event_bus import EventQueue, SSEEvent
 
@@ -45,6 +46,54 @@ def describe_v2() -> Response:
                 turn_id=turn_id,
                 filename=str(payload.get("filename") or ""),
                 metric=str(payload.get("metric") or ""),
+                question=str(payload.get("question") or ""),
+            ):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {
+                        "session_id": session_id,
+                        "turn_id": turn_id,
+                        "status": "failed",
+                        "error_code": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            )
+        finally:
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
+@v2_bp.post("/v2/factors")
+def factors_v2() -> Response:
+    """Run the Slice 2 explicit continuous factor-relationship journey."""
+
+    payload = request.get_json(force=True)
+    raw_features = payload.get("features")
+    if not isinstance(raw_features, list):
+        return jsonify({"error": "features must be a JSON array"}), 400
+    features = tuple(str(item or "").strip() for item in raw_features if str(item or "").strip())
+    session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
+    turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
+    cfg = get_config()
+    runtime = Slice2FactorRuntime(cfg.sessions_resolved, cfg.inbox_dir)
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in runtime.stream(
+                session_id=session_id,
+                turn_id=turn_id,
+                filename=str(payload.get("filename") or ""),
+                target=str(payload.get("target") or ""),
+                features=features,
+                analysis_unit=str(payload.get("analysis_unit") or ""),
+                time_field=str(payload.get("time_field") or ""),
                 question=str(payload.get("question") or ""),
             ):
                 queue.put(SSEEvent(event.event, event.data))

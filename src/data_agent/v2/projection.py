@@ -38,7 +38,10 @@ def _project_commitment(
     matched_ids = tuple(item.finding_id for item in matched)
     event_ids = tuple(item.event_id for item in events)
 
-    if any(item.finding_kind is FindingKind.ESTIMATE for item in matched):
+    if any(
+        item.finding_kind in {FindingKind.ESTIMATE, FindingKind.ASSOCIATION}
+        for item in matched
+    ):
         return CommitmentOutcome(
             commitment_id=commitment.commitment_id,
             status=OutcomeStatus.SUPPORTED,
