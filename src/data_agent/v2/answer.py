@@ -57,6 +57,12 @@ def _validate_draft(
     finding_by_id: Mapping[str, Finding],
     outcomes: Mapping[str, CommitmentOutcome],
 ) -> None:
+    if draft.block_type is AnswerBlockType.SUPPLEMENTAL:
+        if draft.claim_class is not None or draft.canonical_values:
+            raise AnswerCompilationError(
+                "exploratory supplemental blocks cannot declare verified claims",
+                reason_code="exploratory_claim_not_allowed",
+            )
     if draft.block_type in _MATERIAL_BLOCKS and not draft.support_refs:
         raise AnswerCompilationError(
             f"block {draft.block_id} requires support_refs",
@@ -162,7 +168,11 @@ def _supported_block(draft: AnswerBlockDraft) -> AnswerBlock:
         canonical_values=draft.canonical_values,
         limitations=draft.limitations,
         chart_refs=draft.chart_refs,
-        calibration=CalibrationAction.SUPPORTED,
+        calibration=(
+            CalibrationAction.EXPLORATORY
+            if draft.block_type is AnswerBlockType.SUPPLEMENTAL
+            else CalibrationAction.SUPPORTED
+        ),
     )
 
 
@@ -234,11 +244,12 @@ def compile_answer(
                 )
             )
             continue
-        blocks.append(_supported_block(draft))
+        block = _supported_block(draft)
+        blocks.append(block)
         calibrations.append(
             BlockCalibration(
                 block_id=draft.block_id,
-                action=CalibrationAction.SUPPORTED,
+                action=block.calibration,
             )
         )
     if not blocks:

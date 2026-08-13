@@ -16,6 +16,7 @@ from data_agent.v2.slice4a import Slice4AGroupComparisonRuntime
 from data_agent.v2.slice4b import Slice4BTimeSeriesRuntime
 from data_agent.v2.slice4c import Slice4CForecastRuntime
 from data_agent.v2.slice4d import Slice4DMultiFindingRuntime
+from data_agent.v2.slice4e import Slice4EExploratoryRuntime
 from data_agent.v2.store import V2FactStore
 from data_agent.v2.time_series import TimeAggregation, TimeFrequency
 from data_agent.v2.transformation import TransformationStore
@@ -437,6 +438,46 @@ def multi_finding_v2() -> Response:
                         "status": "failed", "error_code": type(exc).__name__,
                         "message": str(exc),
                     },
+                )
+            )
+        finally:
+            queue.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return _sse_response(queue)
+
+
+@v2_bp.post("/v2/exploratory-python")
+def exploratory_python_v2() -> Response:
+    """Run a structured core answer plus non-promotable Python exploration."""
+
+    payload = request.get_json(force=True)
+    purpose = str(payload.get("purpose") or "").strip()
+    code = str(payload.get("code") or "").strip()
+    if not purpose or not code:
+        return jsonify({"error": "purpose and code are required"}), 400
+    session_id = str(payload.get("session_id") or f"v2_{uuid.uuid4().hex[:12]}").strip()
+    turn_id = str(payload.get("turn_id") or f"turn_{uuid.uuid4().hex[:12]}").strip()
+    cfg = get_config()
+    runtime = Slice4EExploratoryRuntime(cfg.sessions_resolved, cfg.inbox_dir)
+    queue = EventQueue()
+
+    def run() -> None:
+        try:
+            for event in runtime.stream(
+                session_id=session_id, turn_id=turn_id,
+                filename=str(payload.get("filename") or ""),
+                metric=str(payload.get("metric") or ""),
+                question=str(payload.get("question") or ""),
+                purpose=purpose, code=code,
+            ):
+                queue.put(SSEEvent(event.event, event.data))
+        except Exception as exc:
+            queue.put(
+                SSEEvent(
+                    "turn_failed",
+                    {"session_id": session_id, "turn_id": turn_id, "status": "failed",
+                     "error_code": type(exc).__name__, "message": str(exc)},
                 )
             )
         finally:

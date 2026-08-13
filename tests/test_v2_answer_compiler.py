@@ -189,3 +189,51 @@ def test_invalid_optional_chart_block_is_omitted_without_blocking_answer():
 
     assert [block.block_id for block in answer.blocks] == ["b_valid"]
     assert answer.calibrations[1].action is CalibrationAction.OMIT_OPTIONAL
+
+
+def test_exploratory_supplement_cannot_declare_claim_or_canonical_values():
+    answer = compile_answer(
+        drafts=[
+            AnswerBlockDraft(
+                block_id="b_core",
+                block_type=AnswerBlockType.EXECUTIVE_ANSWER,
+                support_refs=("f_mean",),
+                headline="直接回答",
+                narrative="平均销售额为 120。",
+                claim_class=ClaimClass.DESCRIPTIVE,
+                canonical_values=(120,),
+            ),
+            AnswerBlockDraft(
+                block_id="b_explore",
+                block_type=AnswerBlockType.SUPPLEMENTAL,
+                headline="探索输出",
+                narrative="自由代码计算得到 999。",
+                claim_class=ClaimClass.DESCRIPTIVE,
+                canonical_values=(999,),
+            )
+        ],
+        findings=[_finding()],
+        outcomes={},
+    )
+
+    assert [block.block_id for block in answer.blocks] == ["b_core"]
+    assert answer.calibrations[1].action is CalibrationAction.OMIT_OPTIONAL
+    assert answer.calibrations[1].reason_code == "exploratory_claim_not_allowed"
+
+
+def test_valid_supplement_is_explicitly_calibrated_as_exploratory():
+    answer = compile_answer(
+        drafts=[
+            AnswerBlockDraft(
+                block_id="b_explore",
+                block_type=AnswerBlockType.SUPPLEMENTAL,
+                headline="探索输出",
+                narrative="该输出不作为结论证据。",
+            )
+        ],
+        findings=[],
+        outcomes={},
+    )
+
+    assert answer.blocks[0].calibration is CalibrationAction.EXPLORATORY
+    assert answer.calibrations[0].action is CalibrationAction.EXPLORATORY

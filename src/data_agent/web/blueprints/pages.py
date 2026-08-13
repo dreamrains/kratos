@@ -50,3 +50,9 @@ def v2_forecast_canary():
 def v2_multi_canary():
     """Isolated Slice 4D multi-finding synthesis browser canary."""
     return render_template("v2_multi_canary.html")
+
+
+@pages_bp.route("/v2-python-canary")
+def v2_python_canary():
+    """Isolated Slice 4E exploratory-Python browser canary."""
+    return render_template("v2_python_canary.html")

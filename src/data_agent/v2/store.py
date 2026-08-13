@@ -18,6 +18,7 @@ from data_agent.v2.models import (
     CommitmentPriority,
     EventType,
     ExecutionEvent,
+    ExploratoryArtifact,
     Finding,
     FindingKind,
 )
@@ -276,6 +277,55 @@ class V2FactStore:
             raise KeyError(f"missing V2 chart content {artifact.chart_id}")
         return path.read_text(encoding="utf-8")
 
+    @property
+    def _supplemental_path(self) -> Path:
+        return self.root / "supplemental"
+
+    @staticmethod
+    def _exploratory_fingerprint(value: dict[str, Any]) -> str:
+        import hashlib
+
+        payload = dict(value)
+        payload.pop("content_fingerprint", None)
+        return f"sha256:{hashlib.sha256(_json_line(payload).encode('utf-8')).hexdigest()}"
+
+    def write_exploratory_artifact(self, artifact: ExploratoryArtifact) -> bool:
+        artifact_id = require_storage_id(artifact.artifact_id, "artifact_id")
+        value = asdict(artifact)
+        if self._exploratory_fingerprint(value) != artifact.content_fingerprint:
+            raise FactConflictError("exploratory artifact content fingerprint mismatch")
+        path = self._supplemental_path / f"{artifact_id}.json"
+        if path.exists():
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if _json_line(existing) == _json_line(value):
+                return False
+            raise FactConflictError(f"immutable exploratory artifact conflict for {artifact_id}")
+        _atomic_write_json(path, value)
+        return True
+
+    def read_exploratory_artifact(self, artifact_id: str) -> ExploratoryArtifact:
+        safe_id = require_storage_id(artifact_id, "artifact_id")
+        path = self._supplemental_path / f"{safe_id}.json"
+        if not path.exists():
+            raise KeyError(f"unknown V2 exploratory artifact {safe_id}")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if self._exploratory_fingerprint(value) != value.get("content_fingerprint"):
+            raise ValueError("exploratory artifact fingerprint mismatch")
+        return ExploratoryArtifact(
+            artifact_id=value["artifact_id"],
+            dataset_version_ids=tuple(value.get("dataset_version_ids") or ()),
+            purpose=value["purpose"],
+            code_fingerprint=value["code_fingerprint"],
+            status=value["status"],
+            output=value.get("output", ""),
+            result=value.get("result", ""),
+            error_code=value.get("error_code", ""),
+            risk_level=value.get("risk_level", "low"),
+            limitations=tuple(value.get("limitations") or ()),
+            verification_level=value["verification_level"],
+            content_fingerprint=value["content_fingerprint"],
+        )
+
     def write_turn_blocks(
         self,
         turn_id: str,
@@ -283,6 +333,7 @@ class V2FactStore:
         *,
         status: str,
         artifact_ids: tuple[str, ...] = (),
+        supplemental_artifact_ids: tuple[str, ...] = (),
         request_context: dict[str, str] | None = None,
     ) -> None:
         safe_turn_id = require_storage_id(turn_id, "turn_id")
@@ -295,6 +346,13 @@ class V2FactStore:
             raise ValueError("artifact_ids must be unique")
         for chart_id in safe_artifact_ids:
             self.read_chart_artifact(chart_id)
+        safe_supplemental_ids = tuple(
+            require_storage_id(item, "artifact_id") for item in supplemental_artifact_ids
+        )
+        if len(safe_supplemental_ids) != len(set(safe_supplemental_ids)):
+            raise ValueError("supplemental_artifact_ids must be unique")
+        for artifact_id in safe_supplemental_ids:
+            self.read_exploratory_artifact(artifact_id)
         referenced_chart_ids = {
             chart_id for block in blocks for chart_id in block.chart_refs
         }
@@ -321,6 +379,7 @@ class V2FactStore:
             "frequency",
             "aggregation",
             "horizon",
+            "purpose",
         }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")
@@ -336,6 +395,7 @@ class V2FactStore:
                 "status": status,
                 "blocks": [asdict(item) for item in blocks],
                 "artifact_ids": list(safe_artifact_ids),
+                "supplemental_artifact_ids": list(safe_supplemental_ids),
                 "request_context": normalized_context,
             },
         )
@@ -349,9 +409,15 @@ class V2FactStore:
         if not isinstance(value, dict):
             raise ValueError("invalid V2 turn payload")
         artifact_ids = tuple(value.get("artifact_ids") or ())
+        supplemental_artifact_ids = tuple(value.get("supplemental_artifact_ids") or ())
         value["artifact_ids"] = list(artifact_ids)
+        value["supplemental_artifact_ids"] = list(supplemental_artifact_ids)
         value["request_context"] = dict(value.get("request_context") or {})
         value["artifacts"] = [
             asdict(self.read_chart_artifact(chart_id)) for chart_id in artifact_ids
+        ]
+        value["supplemental_artifacts"] = [
+            asdict(self.read_exploratory_artifact(artifact_id))
+            for artifact_id in supplemental_artifact_ids
         ]
         return value

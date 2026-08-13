@@ -294,6 +294,38 @@ class ChartArtifact:
 
 
 @dataclass(frozen=True, slots=True)
+class ExploratoryArtifact:
+    artifact_id: str
+    dataset_version_ids: tuple[str, ...]
+    purpose: str
+    code_fingerprint: str
+    status: str
+    output: str
+    result: str
+    error_code: str
+    risk_level: str
+    limitations: tuple[str, ...]
+    verification_level: str
+    content_fingerprint: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifact_id", _required(self.artifact_id, "artifact_id"))
+        object.__setattr__(self, "dataset_version_ids", _tuple(self.dataset_version_ids))
+        object.__setattr__(self, "purpose", _required(self.purpose, "purpose"))
+        object.__setattr__(self, "limitations", _tuple(self.limitations))
+        if not self.dataset_version_ids:
+            raise ValueError("exploratory artifact dataset_version_ids is required")
+        if self.status not in {"succeeded", "rejected", "failed", "timed_out"}:
+            raise ValueError("invalid exploratory artifact status")
+        if self.verification_level != "exploratory_only":
+            raise ValueError("exploratory artifacts must remain exploratory_only")
+        if not self.code_fingerprint.startswith("sha256:"):
+            raise ValueError("code_fingerprint must use sha256")
+        if not self.content_fingerprint.startswith("sha256:"):
+            raise ValueError("content_fingerprint must use sha256")
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledAnswer:
     blocks: tuple[AnswerBlock, ...]
     markdown: str
