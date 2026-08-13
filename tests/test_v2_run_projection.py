@@ -165,3 +165,43 @@ def test_process_language_has_no_effect_on_projection():
 
     assert result.outcomes["c_core"].status is OutcomeStatus.RUNNING
     assert result.publishable is False
+
+
+def test_group_means_do_not_complete_group_comparison_commitment():
+    commitment = Commitment(
+        commitment_id="c_group",
+        priority=CommitmentPriority.CORE,
+        question="A 与 B 的收入是否不同？",
+        dataset_version_ids=("dv_groups",),
+        accepted_result_kinds=(
+            FindingKind.GROUP_COMPARISON,
+            FindingKind.NULL_RESULT,
+            FindingKind.LIMITATION,
+        ),
+        accepted_method_capabilities=("analysis.group_comparison",),
+    )
+    group_mean = Finding(
+        finding_id="f_group_a_mean",
+        commitment_id="c_group",
+        finding_kind=FindingKind.ESTIMATE,
+        dataset_version_ids=("dv_groups",),
+        metric_identity="revenue.mean",
+        feature_identity="group:channel:A",
+        method_capability="analysis.group_comparison",
+        estimate=100,
+        maximum_claim_class=ClaimClass.DESCRIPTIVE,
+        computation_ref="comp_group",
+    )
+    succeeded = ExecutionEvent(
+        event_id="ev_group_success",
+        run_id="run_group",
+        commitment_id="c_group",
+        event_type=EventType.TOOL_SUCCEEDED,
+        capability="analysis.group_comparison",
+        dataset_version_ids=("dv_groups",),
+    )
+
+    result = project_run([commitment], [succeeded], [group_mean])
+
+    assert result.outcomes["c_group"].status is OutcomeStatus.RUNNING
+    assert result.publishable is False

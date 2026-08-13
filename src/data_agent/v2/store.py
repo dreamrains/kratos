@@ -313,6 +313,11 @@ class V2FactStore:
             "analysis_kind",
             "date_column",
             "proposal_id",
+            "group",
+            "recommendation_intent",
+            "action_risk",
+            "reversible",
+            "recommendation_mode",
         }
         if set(raw_context) - allowed_context_keys:
             raise ValueError("request_context contains unsupported fields")

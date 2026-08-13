@@ -19,6 +19,7 @@ class FindingKind(StrEnum):
     LIMITATION = "limitation"
     ASSOCIATION = "association"
     TRANSFORMATION = "transformation"
+    GROUP_COMPARISON = "group_comparison"
 
 
 class ClaimClass(StrEnum):

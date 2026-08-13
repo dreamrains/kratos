@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 4A 分组比较</title>
+    <style>
+        :root { color-scheme: light; font-family: Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+        * { box-sizing: border-box; } body { margin:0; background:#f5f5f7; color:#20262b; }
+        main { width:min(960px,calc(100% - 32px)); margin:36px auto 72px; }
+        header { display:flex; justify-content:space-between; align-items:flex-start; gap:22px; margin-bottom:22px; }
+        h1 { margin:0 0 8px; font-size:28px; letter-spacing:-.03em; } h2 { margin:0 0 14px; font-size:18px; }
+        .subtitle { margin:0; color:#687079; line-height:1.55; } .badge { white-space:nowrap; border:1px solid #d5cee9; background:#f1edfb; color:#594486; border-radius:999px; padding:7px 11px; font-size:12px; }
+        .panel { margin-bottom:16px; padding:20px; background:#fff; border:1px solid #e0e1e5; border-radius:16px; box-shadow:0 12px 30px rgba(30,35,45,.055); }
+        .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+        label { display:block; margin-bottom:7px; color:#5c626a; font-size:12px; font-weight:700; }
+        input,select,button { font:inherit; } input[type="text"],input[type="file"],select { width:100%; min-height:44px; padding:10px 12px; border:1px solid #cfd2d8; border-radius:10px; background:#fcfcfd; }
+        .wide { grid-column:1/-1; } .check { display:flex; gap:9px; align-items:center; min-height:44px; }
+        .actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:16px; }
+        button { min-height:42px; padding:0 18px; border:0; border-radius:10px; background:#654fa0; color:#fff; font-weight:700; cursor:pointer; }
+        button:disabled { background:#aaa6b5; cursor:wait; } .secondary { background:#eeedf2; color:#514b60; }
+        .status,.file-state,.run-id { color:#6b727a; font-size:12px; overflow-wrap:anywhere; }
+        .progress { display:none; } .progress.visible { display:block; } .progress-list { display:grid; gap:8px; }
+        .progress-item { display:flex; gap:9px; align-items:center; color:#555d65; font-size:13px; } .dot { width:8px; height:8px; border-radius:50%; background:#765db7; box-shadow:0 0 0 4px #eee9f8; }
+        .answer { display:grid; gap:14px; } .answer:empty::before { content:"完成后，组间差异、图表、方法边界和条件建议会显示在这里。"; color:#858c92; }
+        .answer-block { border-left:3px solid #7561aa; padding:4px 0 4px 16px; } .answer-block h2 { margin:0 0 8px; font-size:17px; } .answer-block p { margin:0; line-height:1.7; color:#3d454c; } .answer-block ul { color:#656d74; }
+        .chart-shell { margin:16px 0 6px; border:1px solid #e0e1e5; border-radius:12px; overflow:hidden; } .chart-shell figcaption { padding:10px 14px; font-weight:700; font-size:13px; border-bottom:1px solid #ececf0; } .chart-frame { display:block; width:100%; height:360px; border:0; }
+        .error { display:none; margin-bottom:16px; padding:13px 15px; border:1px solid #f0c6c2; border-radius:12px; background:#fff0ef; color:#8c2d27; } .error.visible { display:block; }
+        @media(max-width:700px){header{flex-direction:column}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+    </style>
+</head>
+<body><main>
+    <header><div><h1>双组指标比较</h1><p class="subtitle">显式分析单位、Welch 区间、效应量和独立建议决策；差异不会自动升级为因果行动。</p></div><span class="badge">Group comparison canary</span></header>
+    <div id="error" class="error" role="alert"></div>
+    <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">分析规范</h2><div class="grid">
+        <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
+        <div><label for="metric">连续指标列</label><input id="metric" type="text" value="revenue"></div>
+        <div><label for="group">双组字段</label><input id="group" type="text" value="channel"></div>
+        <div><label for="analysis-unit">分析单位列</label><input id="analysis-unit" type="text" value="unit_id"></div>
+        <div><label for="recommendation-intent">建议意图</label><select id="recommendation-intent"><option value="none">只回答事实，不给建议</option><option value="investigate">给调查建议</option><option value="act">给行动建议</option></select></div>
+        <div><label for="action-risk">行动风险</label><select id="action-risk"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></div>
+        <div class="check"><input id="reversible" type="checkbox" checked><label for="reversible">候选行动可逆</label></div>
+        <div class="wide"><label for="question">问题</label><input id="question" type="text" value="A 与 B 的收入是否存在可靠差异？"></div>
+    </div><div class="actions"><button id="run" type="button">开始比较</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading"><h2 id="progress-heading">实时进度</h2><div id="progress-list" class="progress-list" aria-live="polite"></div></section>
+    <section class="panel" aria-labelledby="answer-heading"><h2 id="answer-heading">分析结果</h2><div id="answer" class="answer" aria-live="polite"></div></section>
+</main><script src="{{ url_for('static', filename='js/v2_group_canary.js', v='slice4a1') }}"></script></body></html>

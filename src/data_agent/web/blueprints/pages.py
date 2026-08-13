@@ -26,3 +26,9 @@ def v2_factor_canary():
 def v2_transform_canary():
     """Isolated Slice 3 date-transformation browser canary."""
     return render_template("v2_transform_canary.html")
+
+
+@pages_bp.route("/v2-group-canary")
+def v2_group_canary():
+    """Isolated Slice 4A group-comparison browser canary."""
+    return render_template("v2_group_canary.html")

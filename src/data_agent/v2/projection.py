@@ -40,7 +40,12 @@ def _project_commitment(
 
     if any(
         item.finding_kind
-        in {FindingKind.ESTIMATE, FindingKind.ASSOCIATION, FindingKind.TRANSFORMATION}
+        in {
+            FindingKind.ESTIMATE,
+            FindingKind.ASSOCIATION,
+            FindingKind.TRANSFORMATION,
+            FindingKind.GROUP_COMPARISON,
+        }
         for item in matched
     ):
         return CommitmentOutcome(
