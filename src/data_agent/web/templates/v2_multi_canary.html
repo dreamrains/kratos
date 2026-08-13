@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 4D 多发现综合</title>
+    <style>
+        :root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:#222832}main{width:min(1000px,calc(100% - 32px));margin:36px auto 72px}header{display:flex;justify-content:space-between;align-items:flex-start;gap:22px;margin-bottom:22px}h1{margin:0 0 8px;font-size:28px;letter-spacing:-.03em}h2{margin:0 0 14px;font-size:18px}.subtitle{margin:0;color:#69717d;line-height:1.55}.badge{white-space:nowrap;border:1px solid #cad2e7;background:#edf0f8;color:#455b8b;border-radius:999px;padding:7px 11px;font-size:12px}.panel{margin-bottom:16px;padding:20px;background:#fff;border:1px solid #dfe3eb;border-radius:16px;box-shadow:0 12px 30px rgba(35,43,62,.05)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}label{display:block;margin-bottom:7px;color:#5d6673;font-size:12px;font-weight:700}input,select,button{font:inherit}input[type="text"],input[type="file"],select{width:100%;min-height:44px;padding:10px 12px;border:1px solid #ccd2dc;border-radius:10px;background:#fcfdff}.wide{grid-column:1/-1}.check{display:flex;gap:9px;align-items:center;min-height:44px}.actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:16px}button{min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#526ca7;color:#fff;font-weight:700;cursor:pointer}button:disabled{background:#a7adbb;cursor:wait}.secondary{background:#eceef3;color:#4e586c}.status,.file-state,.run-id{color:#6c7480;font-size:12px;overflow-wrap:anywhere}.progress{display:none}.progress.visible{display:block}.progress-list{display:grid;gap:8px}.progress-item{display:flex;gap:9px;align-items:center;color:#58616d;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#607ab5;box-shadow:0 0 0 4px #e9edf7}.answer{display:grid;gap:14px}.answer:empty::before{content:"完成后，综合结论、历史趋势、双组比较及各自图表会显示在这里。";color:#858c97}.answer-block{border-left:3px solid #627bb2;padding:4px 0 4px 16px}.answer-block h2{margin:0 0 8px;font-size:17px}.answer-block p{margin:0;line-height:1.7;color:#3f4752}.answer-block ul{color:#626b78}.chart-shell{margin:16px 0 6px;border:1px solid #dfe3eb;border-radius:12px;overflow:hidden}.chart-shell figcaption{padding:10px 14px;font-weight:700;font-size:13px;border-bottom:1px solid #e9ecf2}.chart-frame{display:block;width:100%;height:360px;border:0}.error{display:none;margin-bottom:16px;padding:13px 15px;border:1px solid #f0c6c2;border-radius:12px;background:#fff0ef;color:#8c2d27}.error.visible{display:block}@media(max-width:700px){header{flex-direction:column}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+    </style>
+</head>
+<body><main>
+    <header><div><h1>趋势与双组综合分析</h1><p class="subtitle">一次数据注册、两个核心承诺、统一事实投影与金字塔发布；单项受限不会删除其他有效结论。</p></div><span class="badge">Multi-finding canary</span></header>
+    <div id="error" class="error" role="alert"></div>
+    <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">综合分析规范</h2><div class="grid">
+        <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
+        <div><label for="metric">连续指标列</label><input id="metric" type="text" value="sales"></div>
+        <div><label for="time-field">时间字段</label><input id="time-field" type="text" value="date"></div>
+        <div><label for="frequency">时间粒度</label><select id="frequency"><option value="daily">日</option><option value="weekly">周</option><option value="monthly">月</option></select></div>
+        <div><label for="aggregation">周期聚合</label><select id="aggregation"><option value="mean">平均</option><option value="sum">求和</option></select></div>
+        <div><label for="group">双组字段</label><input id="group" type="text" value="channel"></div>
+        <div><label for="analysis-unit">分析单位列</label><input id="analysis-unit" type="text" value="unit_id"></div>
+        <div><label for="recommendation-intent">建议意图</label><select id="recommendation-intent"><option value="none">只回答事实，不给建议</option><option value="investigate">给调查建议</option><option value="act">给行动建议</option></select></div>
+        <div><label for="action-risk">行动风险</label><select id="action-risk"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></div>
+        <div class="check"><input id="reversible" type="checkbox" checked><label for="reversible">候选行动可逆</label></div>
+        <div class="wide"><label for="question">问题</label><input id="question" type="text" value="销售如何变化，不同渠道是否存在可靠差异？"></div>
+    </div><div class="actions"><button id="run" type="button">开始综合分析</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading"><h2 id="progress-heading">实时进度</h2><div id="progress-list" class="progress-list" aria-live="polite"></div></section>
+    <section class="panel" aria-labelledby="answer-heading"><h2 id="answer-heading">综合分析结果</h2><div id="answer" class="answer" aria-live="polite"></div></section>
+</main><script src="{{ url_for('static', filename='js/v2_multi_canary.js', v='slice4d1') }}"></script></body></html>

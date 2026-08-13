@@ -44,3 +44,9 @@ def v2_time_canary():
 def v2_forecast_canary():
     """Isolated Slice 4C backtested-forecast browser canary."""
     return render_template("v2_forecast_canary.html")
+
+
+@pages_bp.route("/v2-multi-canary")
+def v2_multi_canary():
+    """Isolated Slice 4D multi-finding synthesis browser canary."""
+    return render_template("v2_multi_canary.html")
