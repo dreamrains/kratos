@@ -1,0 +1,113 @@
+{
+  "version": "v2_release_matrix.v1",
+  "scenarios": [
+    {
+      "scenario_id": "descriptive_analysis",
+      "user_value": "回答单指标水平与范围，并在适用时提供邻接图表",
+      "entry": "/v2-canary",
+      "fixture": "tests/fixtures/v2_slice1_sales.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["process_language_as_final_answer", "tool_success_asserts_completion", "unexpected_user_confirmation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "factor_relationships",
+      "user_value": "识别因素关系并校准统计与因果边界",
+      "entry": "/v2-factor-canary",
+      "fixture": "tests/fixtures/v2_slice2_factors.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["causal_upgrade", "effective_sample_omitted", "unexpected_user_confirmation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "semantic_date_transformation",
+      "user_value": "自动执行无歧义转换，并仅为真实语义歧义请求确认",
+      "entry": "/v2-transform-canary",
+      "fixture": "tests/fixtures/v2_slice3_ambiguous_dates.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "user_input_required", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "method"],
+      "required_interactions": ["upload", "semantic_confirmation", "resume", "refresh_restore"],
+      "chart_policy": "forbidden",
+      "forbidden_behaviors": ["confirmation_for_lossless_unambiguous_transform", "stale_candidate_promotion", "raw_dataset_mutation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "group_comparison",
+      "user_value": "比较两个组并报告差值、区间、效应量和限制",
+      "entry": "/v2-group-canary",
+      "fixture": "tests/fixtures/v2_slice4a_groups.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "comparison", "method"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["causal_upgrade", "missing_analysis_unit", "unexpected_user_confirmation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "historical_trend",
+      "user_value": "估计历史趋势并处理依赖结构与缺失周期",
+      "entry": "/v2-time-canary",
+      "fixture": "tests/fixtures/v2_slice4b_daily.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["causal_upgrade", "silent_missing_interval_imputation", "unexpected_user_confirmation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "backtested_forecast",
+      "user_value": "仅在回测优于基线时发布校准预测",
+      "entry": "/v2-forecast-canary",
+      "fixture": "tests/fixtures/v2_slice4b_daily.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["forecast_without_backtest", "predictive_upgrade_when_baseline_not_beaten", "unexpected_user_confirmation", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "multi_finding_synthesis",
+      "user_value": "组合多个独立 Finding，并保持块级失败隔离和图文邻接",
+      "entry": "/v2-multi-canary",
+      "fixture": "tests/fixtures/v2_slice4d_combined.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "comparison", "method"],
+      "required_interactions": ["upload", "live_progress", "inline_charts", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["single_finding_asserts_full_completion", "one_block_failure_deletes_other_blocks", "causal_upgrade", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "exploratory_python",
+      "user_value": "允许受限探索代码，但不把自由输出升级为结论证据",
+      "entry": "/v2-python-canary",
+      "fixture": "tests/fixtures/v2_slice4d_combined.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "supplemental_artifact_created", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "method", "supplemental"],
+      "required_interactions": ["upload", "live_progress", "refresh_restore"],
+      "chart_policy": "forbidden",
+      "forbidden_behaviors": ["exploration_promoted_to_finding", "external_io", "exploration_advances_core_commitment", "internal_evidence_marker"]
+    },
+    {
+      "scenario_id": "unified_analysis_entry",
+      "user_value": "从统一入口完成上传、分析路由、实时协作、停止、恢复和会话隔离",
+      "entry": "/",
+      "fixture": "tests/fixtures/v2_slice4d_combined.csv",
+      "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
+      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_interactions": ["upload", "live_progress", "draft_while_running", "stop", "error_recovery", "session_isolation", "task_overlay_collapsed", "refresh_restore"],
+      "chart_policy": "conditional",
+      "forbidden_behaviors": ["legacy_runtime_authority", "composer_disabled_while_running", "task_panel_forced_open", "stale_session_projection", "internal_evidence_marker"]
+    }
+  ]
+}
