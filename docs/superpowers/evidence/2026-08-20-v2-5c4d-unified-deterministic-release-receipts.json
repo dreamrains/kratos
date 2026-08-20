@@ -1,0 +1,45 @@
+[
+  {
+    "receipt_id": "receipt_unified_owner_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "owner_contract",
+    "status": "pass",
+    "evidence_refs": [
+      "deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"
+    ],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1"
+  },
+  {
+    "receipt_id": "receipt_unified_incident_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "incident_replay",
+    "status": "pass",
+    "evidence_refs": [
+      "deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"
+    ],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1"
+  },
+  {
+    "receipt_id": "receipt_unified_sse_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "sse_transport_contract",
+    "status": "pass",
+    "evidence_refs": [
+      "deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"
+    ],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1",
+    "observed_semantic_events": [
+      "turn_started",
+      "commitment_snapshot",
+      "tool_started",
+      "tool_finished",
+      "outcome_snapshot",
+      "final_block_delta",
+      "turn_completed",
+      "turn_interrupted"
+    ]
+  }
+]
