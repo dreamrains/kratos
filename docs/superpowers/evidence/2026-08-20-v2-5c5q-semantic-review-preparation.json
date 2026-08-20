@@ -12,6 +12,7 @@
     "docs/superpowers/evidence/2026-08-20-v2-5c5r-planning-browser.json",
     "docs/superpowers/evidence/2026-08-20-v2-5c5r-interaction-browser.json"
   ],
+  "same_digest_stability_protocol": "docs/superpowers/evidence/2026-08-20-v2-5c5s-real-provider-stability-preflight.json",
   "implementation_assessment": {
     "question_understanding": {"status": "pass", "evidence": "Planner selected multi_finding_synthesis and bound date, sales, channel, and unit_id."},
     "data_scope": {"status": "pass", "evidence": "Published output states the exact date range, 42 source and valid rows, 42 observed daily periods, zero missing, boundary, and imputed periods, 42 effective unit_id values, and the non-generalization boundary."},
@@ -23,7 +24,7 @@
     "chart_value": {"status": "pass", "evidence": "An actual browser restored two unique adjacent figures; both chart shells reached data-chart-loaded=true before and after page reload, and the rendered directions matched their supported findings."},
     "recommendation_quality": {"status": "pass", "evidence": "The only advice is a low-risk, reversible investigation aligned with recommendation_intent=investigate."},
     "journey_integrity": {"status": "pass", "evidence": "The same-digest real Provider API planning and execution passed; actual-browser restore verified that real result, while a same-digest provider-neutral actual-browser journey covered explicit planning, needs_input, stable failure, retry, live progress, steer, stop, recovery, isolation, charts, and refresh."},
-    "stability": {"status": "blocked", "evidence": "This digest has one successful real Provider planning sample; no additional calls are authorized."}
+    "stability": {"status": "blocked", "evidence": "This digest has one successful real Provider planning sample. A two-trial conditional stability protocol is prepared, but no new runtime authorization has been issued and no additional Provider call has occurred."}
   },
   "decision": "not_eligible_for_human_semantic_review_pass",
   "reason_codes": ["reviewer_not_human", "real_provider_stability_not_established"],

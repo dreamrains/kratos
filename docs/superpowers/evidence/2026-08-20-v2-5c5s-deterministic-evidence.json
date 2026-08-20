@@ -1,0 +1,65 @@
+{
+  "version": "v2_5c5s_deterministic_evidence.v1",
+  "slice": "5C5S",
+  "source_identity": {
+    "git_head": "d465b405ded787774f4dfff904ef3881ec5e0726",
+    "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+    "source_dirty": false,
+    "digest_includes": ["src", "scripts", "tests", "pyproject.toml"],
+    "docs_change_source_digest": false
+  },
+  "implementation_decision": {
+    "initial_source_code_stability_contract_retained": false,
+    "reason": "Adding source, script, or test code changed the digest and made the one current successful baseline sample stale, defeating the three-sample design.",
+    "discarded_candidate_digest": "sha256:a4de33ff093a8517b223a8dfdb4c5f0a00a849ceaf2efc6789b7f6eac2e254a9",
+    "selected_implementation": "docs-only stability protocol over the already validated per-call preflight and runtime authorization contract",
+    "compatibility_patch_added": false,
+    "single_call_preflight_relaxed": false,
+    "pooled_authorization_added": false
+  },
+  "offline_checks": {
+    "current_single_call_preflight": {
+      "command": ".venv/Scripts/python.exe scripts/preflight_v2_real_provider_journey.py --root . --preflight docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-preflight.json",
+      "status": "pass",
+      "reason_codes": [],
+      "provider_calls": 0,
+      "authorization_issued": false
+    },
+    "stability_protocol_identity": {
+      "status": "pass",
+      "protocol_identity_fingerprint": "sha256:36ccb1ba8d621f0cad1f0d09b1484aa4cc77cf872d8e1ea667da4c06fcbb512f",
+      "canonical_hash_recomputed": true,
+      "source_digest_match": true,
+      "baseline_plan_identity_match": true,
+      "two_single_call_slots": true,
+      "second_slot_requires_first_pass": true,
+      "continue_after_failure": false
+    },
+    "focused_tests": {
+      "paths": [
+        "tests/test_v2_real_provider_preflight.py",
+        "tests/test_v2_release_readiness.py"
+      ],
+      "result": "11 passed",
+      "functional_failures": 0,
+      "warning": "pytest cache path was not writable; test execution and assertions completed successfully"
+    },
+    "modified_json_parse": "pass",
+    "git_diff_check": "pass"
+  },
+  "provider_boundary": {
+    "provider_calls_observed": 0,
+    "authorizations_issued": 0,
+    "exact_conditional_user_authorization_received": false,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "allowed_provider_host_after_authorization": "api.deepseek.com"
+  },
+  "current_decision": {
+    "stability_status": "blocked_pending_exact_conditional_authorization",
+    "human_semantic_release_receipt_issued": false,
+    "release_readiness_claimed": false,
+    "root_switch_authorized": false,
+    "full_product_matrix_ready": false
+  }
+}

@@ -1113,3 +1113,18 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 5. multi-finding 可继续发布独立且可靠的 group comparison，但 executive 与趋势块必须明确趋势受数据条件限制，不能让组间结论掩盖时间方法限制。
 
 该修复不改变 Planner 输出、不自动改成 daily、不重放 consumed plan，也不新增 Provider 调用或隐式 repair。5C5O attempt 是旧 digest 上一次有效调用和语义失败的历史事实；源码变化后所有旧 source-bound receipts 失效。
+
+## 37. Slice 5C5S 实施补充：同 digest 真实 Planner 最小重复性
+
+稳定性证据本身也受 source digest 约束。若为了编排稳定性试验新增 `src/`、`scripts/` 或 `tests/` 代码，现有真实 Provider baseline 会立刻 stale，原定的“一个 current baseline 加两个追加样本”就不能成立。因此在单次 Provider 调用、安全诊断、runtime authorization 绑定和 preflight validator 已经具备的前提下，5C5S 使用 docs-only 协议编排，不新增 pooled authorization 层，也不改变源码身份。
+
+重复性协议遵守以下合同：
+
+1. baseline 与追加样本必须共享 release preflight identity：source digest、场景、fixture、数据 fingerprint、问题、模型、完整 planning context 和 Planner schema；
+2. 两个追加 trial 分别消费一份恰好 1 次的 runtime authorization。第二份只能在第一轮 PASS 后签发，不能预先创建可消费两次的 blanket authorization；
+3. 每次消费前重新计算实际模型和完整 planning context，并与该次 authorization 严格比较；各 trial 的 authorization、client action 和 consumer request identity 必须唯一；
+4. Provider、Planner、needs-input、unsupported、normalized plan identity、确定性续跑或独立复算任一失败都立即停止，不重试、不 repair、不补跑；
+5. 三样本 PASS 只支持“同一冻结输入上的最小重复性”结论，不等同于总体 Provider 可靠率、其他场景能力、human semantic review 或产品发布完成；
+6. release preflight identity fingerprint、runtime authorization fingerprint 和 plan identity fingerprint 分别绑定发布输入、单次运行权限与规范化计划语义，三者不能互相替代。
+
+该协议不调用 Provider、不签发 authorization、不改变现有真实 Provider receipt，也不授权根入口切换、旧系统删除、push 或 merge。
