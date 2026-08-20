@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -73,7 +74,7 @@ def resolve_model_context_window(
 
 
 class PlanningContextBudget:
-    """Count the exact Planner request and enforce only the model window."""
+    """Conservatively count the full Planner request and enforce the model window."""
 
     def __init__(
         self,
@@ -110,19 +111,45 @@ class PlanningContextBudget:
             request.messages, request.tools, request.system
         )
         try:
-            estimated = self.token_counter(
+            native_request_tokens = self.token_counter(
                 model=self.model_id,
                 messages=messages,
                 tools=tools,
+            )
+            message_tokens = self.token_counter(
+                model=self.model_id,
+                messages=messages,
+            )
+            tool_schema_tokens = self.token_counter(
+                model=self.model_id,
+                text=json.dumps(
+                    tools,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             )
         except Exception as exc:
             raise PlanningTokenEstimateUnavailable(
                 "planning request token estimate is unavailable"
             ) from exc
-        if isinstance(estimated, bool) or not isinstance(estimated, int) or estimated < 0:
-            raise PlanningTokenEstimateUnavailable(
-                "planning request token estimate is invalid"
-            )
+        for estimate_part in (
+            native_request_tokens,
+            message_tokens,
+            tool_schema_tokens,
+        ):
+            if (
+                isinstance(estimate_part, bool)
+                or not isinstance(estimate_part, int)
+                or estimate_part < 0
+            ):
+                raise PlanningTokenEstimateUnavailable(
+                    "planning request token estimate is invalid"
+                )
+        estimated = max(
+            native_request_tokens,
+            message_tokens + tool_schema_tokens,
+        )
         available = max(
             0, self.context_window_tokens - self.reserved_output_tokens
         )

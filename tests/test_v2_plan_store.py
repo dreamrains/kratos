@@ -251,6 +251,71 @@ def test_plan_store_persists_sanitized_failure_diagnostic_without_exposing_it_pu
     assert "diagnostic" not in public
 
 
+def test_plan_store_persists_parameter_relation_failure_without_exposing_diagnostic(
+    tmp_path,
+):
+    store = PlanStore(tmp_path, "session_plan_relation_diagnostic")
+    requested = store.request(
+        client_request_id="client_plan_relation_diagnostic",
+        question="不同渠道的销售额是否有差异？",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_relation_diagnostic",
+        provider_calls_authorized=1,
+    )
+    diagnostic = {
+        "failure_stage": "plan_compilation",
+        "finish_reason": "tool_calls",
+        "tool_call_count": 1,
+        "tool_names": ["submit_analysis_plan"],
+        "tool_argument_types": ["dict"],
+        "argument_top_level_fields": [
+            "analysis_kind",
+            "parameters",
+            "questions",
+            "rationale",
+            "status",
+        ],
+        "metadata_truncated": False,
+        "recognized_status": "ready",
+        "analysis_kind_present": True,
+        "parameters_empty_object": False,
+        "questions_present": False,
+        "recognized_analysis_kind": "multi_finding_synthesis",
+        "recognized_parameter_fields": [
+            "aggregation",
+            "analysis_unit",
+            "frequency",
+            "group",
+            "metric",
+            "time_field",
+        ],
+        "missing_required_parameter_fields": [],
+        "unexpected_recognized_parameter_fields": [],
+        "unknown_parameter_field_count": 0,
+        "invalid_parameter_fields": ["analysis_unit", "group"],
+        "parameter_metadata_truncated": False,
+    }
+
+    store.fail(
+        requested.plan_id,
+        error_code="PlannerContractError",
+        message="planner invocation or contract validation failed",
+        error_reason_code="plan_parameter_relation_invalid",
+        failure_stage="plan_compilation",
+        diagnostic=diagnostic,
+    )
+    restored = PlanStore(tmp_path, "session_plan_relation_diagnostic").get(
+        requested.plan_id
+    )
+
+    assert restored.error_reason_code == "plan_parameter_relation_invalid"
+    assert restored.diagnostic["invalid_parameter_fields"] == [
+        "analysis_unit",
+        "group",
+    ]
+    assert "diagnostic" not in restored.to_dict()
+
+
 def test_unsupported_plan_is_terminal_without_an_executable_route(tmp_path):
     store = PlanStore(tmp_path, "session_plan_unsupported")
     requested = store.request(

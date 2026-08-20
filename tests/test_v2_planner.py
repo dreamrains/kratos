@@ -520,6 +520,88 @@ def test_planner_reports_first_invalid_field_in_stable_policy_order():
 
 
 @pytest.mark.parametrize(
+    ("kind", "parameters", "invalid_fields"),
+    [
+        (
+            "group_comparison",
+            {"metric": "sales", "group": "channel", "analysis_unit": "channel"},
+            ["analysis_unit", "group"],
+        ),
+        (
+            "multi_finding_synthesis",
+            {
+                "time_field": "date",
+                "metric": "sales",
+                "frequency": "weekly",
+                "aggregation": "sum",
+                "group": "channel",
+                "analysis_unit": "channel",
+            },
+            ["analysis_unit", "group"],
+        ),
+    ],
+)
+def test_planner_schema_and_compiler_reject_duplicate_group_field_identities(
+    kind, parameters, invalid_fields
+):
+    arguments = _ready_arguments(kind, parameters)
+
+    assert list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "比较渠道销售额", _context()
+        )
+
+    assert caught.value.reason_code == "plan_parameter_relation_invalid"
+    assert caught.value.diagnostic["invalid_parameter_fields"] == invalid_fields
+
+
+@pytest.mark.parametrize(
+    ("parameters", "invalid_fields"),
+    [
+        (
+            {
+                "target": "sales",
+                "features": ["sales"],
+                "analysis_unit": "unit_id",
+            },
+            ["features", "target"],
+        ),
+        (
+            {
+                "target": "sales",
+                "features": ["marketing"],
+                "analysis_unit": "marketing",
+            },
+            ["analysis_unit", "features"],
+        ),
+        (
+            {
+                "target": "sales",
+                "features": ["marketing"],
+                "analysis_unit": "date",
+                "time_field": "date",
+            },
+            ["analysis_unit", "time_field"],
+        ),
+    ],
+)
+def test_planner_schema_and_compiler_reject_factor_identity_collisions(
+    parameters, invalid_fields
+):
+    arguments = _ready_arguments("factor_relationship", parameters)
+
+    assert list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售因素", _context()
+        )
+
+    assert caught.value.reason_code == "plan_parameter_relation_invalid"
+    assert caught.value.diagnostic["invalid_parameter_fields"] == invalid_fields
+
+
+@pytest.mark.parametrize(
     ("arguments", "reason_code", "shape"),
     [
         (

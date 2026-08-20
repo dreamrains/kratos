@@ -28,13 +28,21 @@ def _config() -> AgentConfig:
     )
 
 
-def test_preflight_counts_exact_request_without_authorizing_or_calling_provider():
+def _token_counter(**kwargs) -> int:
+    if "tools" in kwargs:
+        return 357
+    if "messages" in kwargs:
+        return 100
+    return 200
+
+
+def test_preflight_counts_full_request_without_authorizing_or_calling_provider():
     digest = "sha256:" + "a" * 64
     preflight = build_real_provider_preflight(
         fixture_path=FIXTURE,
         source_digest=digest,
         config=_config(),
-        token_counter=lambda **_: 357,
+        token_counter=_token_counter,
     )
 
     result = validate_real_provider_preflight(
@@ -95,7 +103,7 @@ def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_author
         fixture_path=FIXTURE,
         source_digest=digest,
         config=_config(),
-        token_counter=lambda **_: 357,
+        token_counter=_token_counter,
     )
     expected_planner_contract_gate = deepcopy(preflight["planner_contract_gate"])
     preflight["source_digest"] = "sha256:" + "c" * 64

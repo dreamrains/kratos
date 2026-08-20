@@ -599,6 +599,65 @@ def test_analyze_by_plan_id_uses_persisted_parameters_not_consumer_body(
     assert projected.target_turn_id == "turn_plan_execute"
 
 
+def test_analyze_by_plan_persists_failed_turn_when_runtime_rejects_parameters(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    store = PlanStore(tmp_path / "sessions", "session_plan_runtime_failure")
+    source = tmp_path / "workspace" / "inbox" / "sales.csv"
+    requested = store.request(
+        client_request_id="client_plan_runtime_failure",
+        question="比较销售额",
+        dataset_context={
+            "filename": "sales.csv",
+            "source_fingerprint": "sha256:"
+            + hashlib.sha256(source.read_bytes()).hexdigest(),
+            "row_count": 3,
+            "columns": [{"name": "sales", "dtype": "int64", "role": "numeric"}],
+        },
+        provider_authorization_ref="user:explicit:runtime-failure",
+        provider_calls_authorized=1,
+    )
+    store.complete(
+        requested.plan_id,
+        AnalysisPlan(
+            status=PlanStatus.READY,
+            user_question="比较销售额",
+            analysis_kind=AnalysisKind.GROUP_COMPARISON,
+            parameters={
+                "metric": "sales",
+                "group": "sales",
+                "analysis_unit": "sales",
+            },
+            rationale="历史计划包含运行时不接受的字段关系。",
+            questions=(),
+            maximum_claim_class="inferential",
+            planner_invocations=1,
+            model_id="fake-planner",
+        ),
+    )
+
+    response = client.post(
+        "/api/v2/analyze",
+        json={
+            "session_id": "session_plan_runtime_failure",
+            "turn_id": "turn_plan_runtime_failure",
+            "plan_id": requested.plan_id,
+        },
+    )
+    events = _events(response.get_data(as_text=True))
+    restored = client.get(
+        "/api/v2/sessions/session_plan_runtime_failure/turns/turn_plan_runtime_failure"
+    )
+
+    assert response.status_code == 200
+    assert events[-1][0] == "turn_failed"
+    assert restored.status_code == 200
+    assert restored.get_json()["status"] == "failed"
+    assert restored.get_json()["request_context"]["plan_id"] == requested.plan_id
+    assert store.get(requested.plan_id).status is DurablePlanStatus.CONSUMED
+
+
 def test_analyze_by_plan_rejects_replaced_source_without_consuming_plan(
     monkeypatch, tmp_path
 ):

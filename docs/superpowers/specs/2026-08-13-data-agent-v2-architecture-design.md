@@ -1047,3 +1047,21 @@ V2 不读取以下对象作为运行时权威：
 7. 真实 Provider 不再用于发现基础 schema/compiler 漂移。新的调用申请只能发生在 RED matrix、focused、V2/config、compileall、diff check、clean commit 和新 preflight 全部通过之后。
 
 该补充不增加 repair、隐式重试、原始响应持久化或 Provider 调用。它不构成真实 Provider journey PASS、Gate F、产品完成或根入口切换授权。
+
+## 31. Slice 5C5H 实施补充：跨字段关系与失败 turn 持久化
+
+5C5G 的真实 planning 在一次调用内成功生成 ready plan，但随后确定性执行器拒绝重复的 `group` 与 `analysis_unit` 字段身份。该失败证明单字段 required/type/enum/role 一致仍不足以声明 Planner 与执行器合同闭合。
+
+Planner 共享合同还必须表达执行器的跨字段关系：group comparison 和 multi-finding synthesis 的 metric/group/analysis_unit 互异；factor relationship 的 target 与 analysis_unit 不得进入 features，time_field 不得与 target、analysis_unit 或 features 重合。schema 与 compiler 共同消费一份声明式 relation 定义；schema 按当前数据集列生成 `not` 约束，compiler 继续独立 fail closed，并以 `plan_parameter_relation_invalid` 和受控冲突字段名提供安全诊断。
+
+执行期异常也必须留下 durable terminal state。`/v2/analyze` 在发送 `turn_failed` 前写入空 blocks、status=failed 和受控 request_context，使刷新与独立 GET 能恢复失败；若该持久化自身失败，SSE 只附加异常类型组成的 `persistence_error_code`。
+
+该修复不修改或重放历史 plan，不生成自动 repair，不复用 consumed authorization。5C5G attempt 仍是原 digest 上一次 planning 成功的历史事实；源码变化后必须重新提交、计算 digest 和制作 preflight，才能考虑任何新的真实 Provider 调用。
+
+## 32. Slice 5C5I 实施补充：完整 Planner 请求 token 估算
+
+Provider SDK 的 native `messages+tools` token counter 不能被默认视为完整覆盖 tool schema。5C5I 的实测中，messages 单独为 311 tokens，14,592 字符的当前 tool schema 单独为 4,037 tokens，但 native messages+tools 只返回 348。
+
+PlanningContextBudget 因此使用保守的多分项估算：保留 native 结果作为下限，同时单独计算 messages 与 canonical compact tools JSON，最终取 `max(native, messages + tools)`。任何分项不可计数或返回无效类型都 fail closed。
+
+该数值用于 context-window 安全与 runtime authorization planning_context 绑定，不宣称等同于 Provider 内部不可观察的最终计费 token。历史 5C5G 的 348 估算不完整；虽然没有 context overflow，但对应 preflight 不满足完整 token 身份要求，不能签发 PASS receipt。

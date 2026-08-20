@@ -47,6 +47,7 @@ class PlannerFailureReason(StrEnum):
     PLAN_PARAMETER_FIELDS_MISSING = "plan_parameter_fields_missing"
     PLAN_COLUMN_BINDING_INVALID = "plan_column_binding_invalid"
     PLAN_PARAMETER_VALUE_INVALID = "plan_parameter_value_invalid"
+    PLAN_PARAMETER_RELATION_INVALID = "plan_parameter_relation_invalid"
 
 
 class PlannerContractError(ValueError):
@@ -518,6 +519,25 @@ _ENUM_PARAMETER_VALUES: dict[str, tuple[str, ...]] = {
 }
 _INTEGER_PARAMETER_RANGES = {"horizon": (1, 30)}
 _BOOLEAN_PARAMETERS = ("reversible",)
+_SCALAR_DISTINCT_RELATIONS: dict[
+    AnalysisKind, tuple[tuple[str, ...], ...]
+] = {
+    AnalysisKind.FACTOR_RELATIONSHIP: (
+        ("time_field", "target"),
+        ("time_field", "analysis_unit"),
+    ),
+    AnalysisKind.GROUP_COMPARISON: (("metric", "group", "analysis_unit"),),
+    AnalysisKind.MULTI_FINDING_SYNTHESIS: (
+        ("metric", "group", "analysis_unit"),
+    ),
+}
+_ARRAY_EXCLUSION_RELATIONS: dict[
+    AnalysisKind, tuple[tuple[str, tuple[str, ...]], ...]
+] = {
+    AnalysisKind.FACTOR_RELATIONSHIP: (
+        ("features", ("target", "analysis_unit", "time_field")),
+    ),
+}
 
 _PARAMETER_POLICY_FIELDS = (
     frozenset(_NUMERIC_COLUMN_PARAMETERS)
@@ -541,6 +561,19 @@ if _CONTRACT_PARAMETER_FIELDS != _CONTROLLED_PARAMETER_FIELDS:
     raise RuntimeError("planner parameter diagnostic allowlist differs from contract")
 if _CONTRACT_PARAMETER_FIELDS != _PARAMETER_POLICY_FIELDS:
     raise RuntimeError("planner parameter policies differ from contract")
+_RELATION_PARAMETER_FIELDS = frozenset(
+    field
+    for groups in _SCALAR_DISTINCT_RELATIONS.values()
+    for group in groups
+    for field in group
+) | frozenset(
+    field
+    for relations in _ARRAY_EXCLUSION_RELATIONS.values()
+    for array_field, scalar_fields in relations
+    for field in (array_field, *scalar_fields)
+)
+if not _RELATION_PARAMETER_FIELDS.issubset(_CONTRACT_PARAMETER_FIELDS):
+    raise RuntimeError("planner parameter relations reference unknown fields")
 
 
 def _parameter_contract_diagnostic(
@@ -645,12 +678,68 @@ def _parameter_schema(
     properties.update({name: {"type": "boolean"} for name in _BOOLEAN_PARAMETERS})
     required = list(_REQUIRED_PARAMETERS[kind])
     allowed = required + sorted(_OPTIONAL_PARAMETERS.get(kind, ()))
-    return {
+    schema = {
         "type": "object",
         "additionalProperties": False,
         "required": required,
         "properties": {name: properties[name] for name in allowed},
     }
+    relation_constraints: list[dict[str, Any]] = []
+    for fields in _SCALAR_DISTINCT_RELATIONS.get(kind, ()):
+        for left_index, left in enumerate(fields):
+            for right in fields[left_index + 1 :]:
+                for column_name in column_names:
+                    relation_constraints.append(
+                        {
+                            "not": {
+                                "required": [left, right],
+                                "properties": {
+                                    left: {"const": column_name},
+                                    right: {"const": column_name},
+                                },
+                            }
+                        }
+                    )
+    for array_field, scalar_fields in _ARRAY_EXCLUSION_RELATIONS.get(kind, ()):
+        for scalar_field in scalar_fields:
+            for column_name in column_names:
+                relation_constraints.append(
+                    {
+                        "not": {
+                            "required": [array_field, scalar_field],
+                            "properties": {
+                                array_field: {"contains": {"const": column_name}},
+                                scalar_field: {"const": column_name},
+                            },
+                        }
+                    }
+                )
+    if relation_constraints:
+        schema["allOf"] = relation_constraints
+    return schema
+
+
+def _invalid_parameter_relation_fields(
+    kind: AnalysisKind,
+    parameters: dict[str, Any],
+) -> list[str]:
+    invalid: set[str] = set()
+    for fields in _SCALAR_DISTINCT_RELATIONS.get(kind, ()):
+        values = {
+            field: str(parameters.get(field) or "").strip()
+            for field in fields
+        }
+        for value in {item for item in values.values() if item}:
+            duplicates = [field for field, item in values.items() if item == value]
+            if len(duplicates) > 1:
+                invalid.update(duplicates)
+    for array_field, scalar_fields in _ARRAY_EXCLUSION_RELATIONS.get(kind, ()):
+        array_values = set(parameters.get(array_field) or ())
+        for scalar_field in scalar_fields:
+            scalar_value = str(parameters.get(scalar_field) or "").strip()
+            if scalar_value and scalar_value in array_values:
+                invalid.update((array_field, scalar_field))
+    return sorted(invalid)
 
 
 def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
@@ -1191,6 +1280,14 @@ class StructuredAnalysisPlanner:
                     diagnostic={"invalid_parameter_fields": ["features"]},
                 )
             result["features"] = features
+
+        invalid_relation_fields = _invalid_parameter_relation_fields(kind, result)
+        if invalid_relation_fields:
+            raise PlannerContractError(
+                "parameter field identities violate the analysis contract",
+                reason_code="plan_parameter_relation_invalid",
+                diagnostic={"invalid_parameter_fields": invalid_relation_fields},
+            )
 
         for key, allowed_values in _ENUM_PARAMETER_VALUES.items():
             if key in result and result[key] not in allowed_values:

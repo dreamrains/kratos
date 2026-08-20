@@ -1,0 +1,93 @@
+{
+  "version": "v2_planner_runtime_relation_closure.v1",
+  "baseline": {
+    "git_head": "ca20a81581f64f080c4384dffcb8eec8d6a9fff7",
+    "source_digest": "sha256:31026edbfad63ff84265a08aa7a0c8b757286f400a612892ef73a4afcf7fb3a5",
+    "source_clean": true
+  },
+  "authorized_attempt": {
+    "evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5g-real-provider-attempt.json",
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "authorization_status": "consumed",
+    "planning_http_status": 201,
+    "plan_id": "plan_5249748d6540f9985e5c551e",
+    "plan_status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "group": "channel",
+    "analysis_unit": "channel"
+  },
+  "deterministic_continuation_failure": {
+    "provider_calls_observed": 0,
+    "analysis_http_status": 200,
+    "terminal_event": "turn_failed",
+    "error_code": "ValueError",
+    "message": "metric, group, and analysis_unit must be distinct",
+    "plan_status_after": "consumed",
+    "restored_turn_http_status": 404
+  },
+  "root_causes": [
+    "planner schema and compiler omitted executor field-identity relations",
+    "analyze failure emitted transient SSE without a durable failed turn"
+  ],
+  "red": {
+    "relation_contract": "5 failed",
+    "durable_failed_turn": "1 failed",
+    "coverage": [
+      "group_comparison_duplicate_metric_group_analysis_unit",
+      "multi_finding_synthesis_duplicate_metric_group_analysis_unit",
+      "factor_target_in_features",
+      "factor_analysis_unit_in_features",
+      "factor_time_field_identity_collision",
+      "plan_driven_runtime_failure_is_durable"
+    ]
+  },
+  "implementation": {
+    "reason_code": "plan_parameter_relation_invalid",
+    "shared_scalar_distinct_relations": true,
+    "shared_array_exclusion_relations": true,
+    "schema_and_compiler_consume_same_relations": true,
+    "safe_invalid_parameter_fields": true,
+    "durable_failed_turn_status": true,
+    "durable_failed_turn_request_context": true,
+    "failure_persistence_error_exposed_as_controlled_code": true,
+    "contract_relaxed": false,
+    "repair_added": false,
+    "provider_retry_added": false
+  },
+  "green": {
+    "relation_contract": "5 passed",
+    "planner_plan_store_preflight": "68 passed",
+    "durable_failed_turn": "1 passed",
+    "focused_planning_contracts": "102 passed",
+    "v2_and_config": "313 passed",
+    "compileall": "pass",
+    "git_diff_check": "pass",
+    "corrected_deterministic_runtime": {
+      "provider_calls_observed": 0,
+      "analysis_http_status": 200,
+      "restored_http_status": 200,
+      "terminal_event": "turn_completed",
+      "final_block_delta_count": 4,
+      "restored_status": "finalized",
+      "restored_block_count": 4
+    }
+  },
+  "current_source": {
+    "source_digest": "sha256:3212b49e5f36fd38d51d92e5920b58a342125c763d39bae0826efda324d4a1f3",
+    "dirty": true,
+    "planner_schema_fingerprint": "sha256:d87c12de5d78ade97697634d94b4aa12618416209a53921668ebd0d047ca1587",
+    "offline_request_fingerprint": "sha256:af50de8dcd731914396d20547ce5ff4e978ff08db2398e62f62146414eaf6d76",
+    "provider_calls_observed": 0,
+    "authorization_issued": false
+  },
+  "receipt_impact": {
+    "v2_5c5g_preflight_current": false,
+    "v2_5c5g_attempt_is_historical_planning_success": true,
+    "current_source_real_provider_pass_issued": false,
+    "gate_f_claimed": false,
+    "product_completion_claimed": false,
+    "root_switch_authorized": false
+  }
+}

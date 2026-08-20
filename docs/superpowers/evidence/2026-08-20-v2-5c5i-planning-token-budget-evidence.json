@@ -1,0 +1,68 @@
+{
+  "version": "v2_planning_token_budget_closure.v1",
+  "trigger": {
+    "historical_preflight": "docs/superpowers/evidence/2026-08-20-v2-5c5g-real-provider-preflight.json",
+    "historical_estimated_input_tokens": 348,
+    "historical_model_context_window_tokens": 1000000,
+    "historical_reserved_output_tokens": 8000,
+    "historical_available_input_tokens": 992000,
+    "historical_call_completed": true,
+    "historical_provider_calls_observed": 1,
+    "historical_automatic_retries": 0
+  },
+  "diagnosis": {
+    "message_json_chars": 1274,
+    "current_tool_schema_json_chars": 14592,
+    "litellm_message_tokens": 311,
+    "litellm_native_messages_and_tools_tokens": 348,
+    "current_tool_schema_tokens_when_counted_as_text": 4037,
+    "native_tool_count_materially_incomplete": true,
+    "historical_348_full_request_claim_valid": false,
+    "historical_context_window_exceeded": false
+  },
+  "red": {
+    "planning_budget": "2 failed, 3 passed",
+    "coverage": [
+      "message_and_canonical_tool_schema_components_are_counted",
+      "tool_schema_tokenizer_failure_is_fail_closed"
+    ]
+  },
+  "implementation": {
+    "native_request_estimate_retained_as_floor": true,
+    "message_tokens_counted_separately": true,
+    "canonical_tool_schema_tokens_counted_separately": true,
+    "estimated_input_formula": "max(native_request_tokens, message_tokens + canonical_tool_schema_tokens)",
+    "invalid_or_unavailable_component_fails_closed": true,
+    "arbitrary_cost_limit_added": false,
+    "provider_call_added": false
+  },
+  "green": {
+    "planning_budget": "5 passed",
+    "focused_planning_contracts": "102 passed",
+    "v2_and_config": "313 passed",
+    "compileall": "pass",
+    "git_diff_check": "pass"
+  },
+  "current_offline_candidate": {
+    "source_digest": "sha256:3212b49e5f36fd38d51d92e5920b58a342125c763d39bae0826efda324d4a1f3",
+    "source_dirty": true,
+    "estimated_input_tokens": 3200,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true,
+    "planner_schema_fingerprint": "sha256:d87c12de5d78ade97697634d94b4aa12618416209a53921668ebd0d047ca1587",
+    "request_fingerprint": "sha256:af50de8dcd731914396d20547ce5ff4e978ff08db2398e62f62146414eaf6d76",
+    "provider_calls_observed": 0,
+    "authorization_issued": false,
+    "executable_preflight_claimed": false
+  },
+  "receipt_impact": {
+    "v2_5c5g_preflight_token_identity_complete": false,
+    "v2_5c5g_attempt_is_historical_single_call_fact": true,
+    "v2_5c5g_attempt_promoted_to_pass_receipt": false,
+    "current_source_real_provider_pass_issued": false,
+    "gate_f_claimed": false,
+    "product_completion_claimed": false
+  }
+}

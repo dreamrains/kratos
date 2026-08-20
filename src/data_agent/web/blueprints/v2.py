@@ -388,11 +388,29 @@ def analyze_v2() -> Response:
             for event in active.stream(prepared.stream()):
                 queue.put(SSEEvent(event.event, event.data))
         except Exception as exc:
+            failure_persistence_error = ""
+            try:
+                store.write_turn_blocks(
+                    turn_id,
+                    [],
+                    status="failed",
+                    request_context=_request_context(effective_payload, kind.value),
+                )
+            except Exception as persistence_exc:
+                failure_persistence_error = type(persistence_exc).__name__
+            failure_data = {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "status": "failed",
+                "error_code": type(exc).__name__,
+                "message": str(exc),
+            }
+            if failure_persistence_error:
+                failure_data["persistence_error_code"] = failure_persistence_error
             queue.put(
                 SSEEvent(
                     "turn_failed",
-                    {"session_id": session_id, "turn_id": turn_id, "status": "failed",
-                     "error_code": type(exc).__name__, "message": str(exc)},
+                    failure_data,
                 )
             )
         finally:
