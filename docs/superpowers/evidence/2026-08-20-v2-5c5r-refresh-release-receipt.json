@@ -1,0 +1,16 @@
+[
+  {
+    "receipt_id": "receipt_unified_refresh_real_4d0895b17d6f5a62",
+    "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "refresh_persistence_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "docs/superpowers/evidence/2026-08-20-v2-5c5q-deterministic-continuation.json",
+      "docs/superpowers/evidence/2026-08-20-v2-5c5r-real-result-browser-restore.json"
+    ],
+    "oracle_identity": "v2_actual_browser_real_result_restore.v1",
+    "observed_interactions": ["refresh_restore"],
+    "forbidden_behavior_hits": []
+  }
+]

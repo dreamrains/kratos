@@ -1,0 +1,32 @@
+{
+  "version": "v2_unified_current_release_status.v1",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "scenario_id": "unified_analysis_entry",
+  "receipt_sources": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5p-unified-deterministic-release-receipts.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-release-receipt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5r-refresh-release-receipt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5r-browser-release-receipt.json"
+  ],
+  "current_pass_layers": [
+    "owner_contract",
+    "incident_replay",
+    "sse_transport_contract",
+    "browser_interaction_journey",
+    "refresh_persistence_journey",
+    "real_provider_analysis_journey"
+  ],
+  "decision": {
+    "status": "not_ready",
+    "missing_requirements": ["unified_analysis_entry:human_semantic_review"],
+    "non_pass_requirements": [],
+    "conflicting_requirements": [],
+    "stale_receipt_ids": [],
+    "unknown_receipt_ids": [],
+    "incomplete_receipt_ids": [],
+    "provider_calls": 1,
+    "root_switch_authorized": false
+  },
+  "full_product_matrix_ready": false,
+  "release_readiness_claimed": false
+}

@@ -1,0 +1,53 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "steer": "v2_3fd5a072fe49",
+    "stop": "v2_11f63b221176",
+    "isolation": "v2_2f1e8b004a51"
+  },
+  "turns": {
+    "planning_completed": "turn_ec7d3f5d2c66",
+    "steer_source": "turn_cef111d9d214",
+    "steer_target": "turn_b8f71a40aa6b",
+    "stop": "turn_6253c893aa0e",
+    "failed": "turn_52e915fb6e9e",
+    "recovery": "turn_c6d90d333077"
+  },
+  "observations": {
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  },
+  "server_observations": {
+    "planner_invocations": 3,
+    "authorizations_issued": 3,
+    "authorizations_consumed": 3,
+    "provider_calls": 0,
+    "interrupted_block_count": 0,
+    "failed_block_count": 0,
+    "recovery_block_count": 3,
+    "steer_source_block_count": 4,
+    "steer_target_block_count": 4
+  },
+  "refresh_digests": {
+    "completed_before": "sha256:79ebfd64610732039c6739ae63b6a65bb46867ae8853cf8f32ee63bdbeaaa31b",
+    "completed_after": "sha256:79ebfd64610732039c6739ae63b6a65bb46867ae8853cf8f32ee63bdbeaaa31b"
+  }
+}
