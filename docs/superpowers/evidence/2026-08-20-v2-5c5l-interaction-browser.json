@@ -1,0 +1,43 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "steer": "v2_d4d083815aff",
+    "stop": "v2_f3d825d71379",
+    "isolation": "v2_bf2b9d679990"
+  },
+  "turns": {
+    "steer_source": "turn_43ec8f5a819d",
+    "steer_target": "turn_bb507de0c875",
+    "stop": "turn_8c6ca6770b0d",
+    "failed": "turn_49240be63605",
+    "recovery": "turn_941c2393a668"
+  },
+  "observations": {
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  },
+  "refresh_digests": {
+    "steer_before": "sha256:d26472b74957acd9b8da7a534d1864f39a41f953c0116338ea4675290c7ad0d3",
+    "steer_after": "sha256:d26472b74957acd9b8da7a534d1864f39a41f953c0116338ea4675290c7ad0d3",
+    "recovery_before": "sha256:d26472b74957acd9b8da7a534d1864f39a41f953c0116338ea4675290c7ad0d3",
+    "recovery_after": "sha256:d26472b74957acd9b8da7a534d1864f39a41f953c0116338ea4675290c7ad0d3"
+  }
+}

@@ -468,7 +468,19 @@ class Slice4DMultiFindingRuntime:
                 }.get(group_result.reason_code, f"限制原因：{group_result.reason_code}。")
             )
             group_claim = ClaimClass.ASSOCIATIONAL
+        time_scope = (
+            f"{time_result.start_time[:10]} 至 {time_result.end_time[:10]}"
+            if time_result.start_time and time_result.end_time
+            else "未形成可用时间范围"
+        )
         method = (
+            f"数据范围为 {time_scope}；趋势基于 {time_result.observed_periods} 个已观测{period}周期"
+            f"（源记录 {time_result.source_rows}，有效记录 {time_result.valid_rows}，"
+            f"缺失周期 {time_result.missing_periods}，插补周期 {time_result.imputed_periods}）；"
+            f"组间比较基于 {group_result.effective_units} 个有效 {analysis_unit}"
+            f"（完整记录 {group_result.complete_case_rows}，剔除 {group_result.dropped_rows}）。"
+            f"适用总体限于当前上传数据中以 {analysis_unit} 定义且字段完整的观察单位，"
+            "不自动外推到其他时间或总体。"
             f"趋势按{period}频{_AGGREGATION_LABEL[time_spec.aggregation]}聚合，使用 HAC 稳健标准误"
             f"（max lag={time_result.hac_max_lag}）；双组比较以 {analysis_unit} 为独立单位，"
             f"使用 Welch 区间并报告 Hedges g。两种方法共享同一不可变分析副本，但各自拥有独立 Commitment 和 Finding。"

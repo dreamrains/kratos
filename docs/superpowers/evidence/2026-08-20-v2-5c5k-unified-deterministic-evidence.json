@@ -1,0 +1,51 @@
+{
+  "version": "v2_unified_deterministic_journey.v1",
+  "source_digest": "sha256:60dd53c73d7e104ca36d623e669937d5006bd9bebb58081e616a039169383804",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "provider_calls": 0,
+  "owner_observations": {
+    "immutable_dataset_versions": true,
+    "findings_bound_to_commitments": true,
+    "completion_computed_from_ledger": true,
+    "published_blocks_bound_to_findings": true,
+    "charts_bound_to_findings": true,
+    "run_state_matches_publication": true
+  },
+  "incident_observations": {
+    "unsupported_finding_did_not_publish": true,
+    "stop_won_before_publication": true,
+    "interrupted_turn_persisted": true,
+    "final_after_interrupt_blocked": true,
+    "session_isolation_preserved": true
+  },
+  "sse_observations": {
+    "completed_events": [
+      "turn_started",
+      "commitment_snapshot",
+      "tool_started",
+      "tool_finished",
+      "tool_started",
+      "tool_finished",
+      "artifact_created",
+      "artifact_created",
+      "outcome_snapshot",
+      "final_block_delta",
+      "final_block_delta",
+      "final_block_delta",
+      "final_block_delta",
+      "turn_completed"
+    ],
+    "interrupted_events": [
+      "turn_started",
+      "commitment_snapshot",
+      "tool_started",
+      "outcome_snapshot",
+      "turn_interrupted"
+    ],
+    "final_block_delta_count": 4,
+    "required_order": true,
+    "completed_terminal_exclusive": true,
+    "interrupted_terminal_exclusive": true
+  }
+}

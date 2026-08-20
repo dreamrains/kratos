@@ -1,0 +1,48 @@
+{
+  "version": "v2_semantic_review_preparation.v1",
+  "scenario_id": "unified_analysis_entry",
+  "reviewer_type": "implementation_agent",
+  "current_source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "historical_real_provider_source_digest": "sha256:3212b49e5f36fd38d51d92e5920b58a342125c763d39bae0826efda324d4a1f3",
+  "historical_real_provider_evidence": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5j-real-provider-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5j-deterministic-continuation.json"
+  ],
+  "current_provider_neutral_evidence": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5l-planning-browser.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5l-interaction-browser.json"
+  ],
+  "historical_real_provider_assessment": {
+    "question_understanding": {"status": "pass", "evidence": "Planner selected multi_finding_synthesis and bound date, sales, channel, and unit_id."},
+    "data_scope": {"status": "fail", "evidence": "The published answer stated the date range but omitted explicit effective sample, missingness, and the applicable population boundary."},
+    "method_fit": {"status": "pass", "evidence": "Daily time trend and independent-unit Welch comparison address the two requested questions."},
+    "statistical_rigor": {"status": "pass", "evidence": "The answer reported HAC inference, Welch confidence interval and p-value, and Hedges g."},
+    "claim_calibration": {"status": "pass", "evidence": "The answer explicitly rejected causal and intervention-effect interpretations."},
+    "alternative_explanations": {"status": "pass", "evidence": "The answer separated time change from group differences and warned that their coexistence does not establish a channel-driven trend."},
+    "pyramid_structure": {"status": "pass", "evidence": "Direct answer preceded the two findings and the common method/limitations block."},
+    "chart_value": {"status": "pass", "evidence": "A time-series chart and a group boxplot were bound to their adjacent findings."},
+    "recommendation_quality": {"status": "pass", "evidence": "Recommendation intent was none and no unsupported action recommendation was published."},
+    "journey_integrity": {"status": "blocked", "evidence": "The historical Provider plan and deterministic continuation completed through API and refresh, but no same-digest actual-browser Provider journey was recorded."},
+    "stability": {"status": "blocked", "evidence": "Only one successful real Provider planning result exists for this source digest."}
+  },
+  "current_provider_neutral_assessment": {
+    "question_understanding": "pass",
+    "data_scope": "pass",
+    "method_fit": "pass",
+    "statistical_rigor": "pass",
+    "claim_calibration": "pass",
+    "alternative_explanations": "pass",
+    "pyramid_structure": "pass",
+    "chart_value": "pass",
+    "recommendation_quality": "pass",
+    "journey_integrity": "pass",
+    "stability": "blocked"
+  },
+  "current_data_scope_observation": "The actual browser output states the date range, 42 observed periods, source and valid rows, zero missing and imputed periods, 42 effective unit_id values, complete and dropped rows, and the non-generalization boundary.",
+  "decision": "not_eligible_for_human_semantic_review_pass",
+  "reason_codes": ["reviewer_not_human", "current_real_provider_journey_missing", "real_provider_stability_not_established"],
+  "human_semantic_release_receipt_issued": false,
+  "real_provider_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

@@ -24,6 +24,8 @@ from data_agent.web.app import create_app
 class DeterministicJourneyPlanner:
     """Three-call fake Planner: needs input, fails, then succeeds."""
 
+    model_id = "provider-neutral-fixture"
+
     def __init__(self) -> None:
         self.calls = 0
 

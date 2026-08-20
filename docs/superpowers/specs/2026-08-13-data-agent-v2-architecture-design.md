@@ -1065,3 +1065,23 @@ Provider SDK 的 native `messages+tools` token counter 不能被默认视为完�
 PlanningContextBudget 因此使用保守的多分项估算：保留 native 结果作为下限，同时单独计算 messages 与 canonical compact tools JSON，最终取 `max(native, messages + tools)`。任何分项不可计数或返回无效类型都 fail closed。
 
 该数值用于 context-window 安全与 runtime authorization planning_context 绑定，不宣称等同于 Provider 内部不可观察的最终计费 token。历史 5C5G 的 348 估算不完整；虽然没有 context overflow，但对应 preflight 不满足完整 token 身份要求，不能签发 PASS receipt。
+
+## 33. Slice 5C5K 实施补充：Provider-neutral fixture 身份与测试隔离
+
+运行时 authorization 对实际 Planner 模型的严格绑定同样适用于 provider-neutral fixture。fixture Planner 必须显式声明与 planning budget 相同的 `model_id`，不能依赖测试替身缺字段而绕过生产合同。
+
+`build_provider_neutral_fixture()` 会替换配置和 V2 factory，这些是进程级全局状态。每个 fixture 测试必须在结束时恢复原值；组合测试必须在任意文件顺序下保持一致，不能把 pytest 默认排序当作隔离机制。
+
+这两项修复只恢复测试替身与生产合同的 parity，不放宽 authorization，也不生成真实 Provider 证据。
+
+## 34. Slice 5C5L 实施补充：Multi-finding 数据范围合同
+
+5C5J 的真实输出证明方法、区间、效应量和结论校准可用，但人工语义维度中的 `data_scope` 还要求明确说明时间、粒度、样本、缺失和适用总体。仅在 Finding 或内部 ledger 保存这些事实不足以满足发布合同。
+
+multi-finding 的确定性 publisher 因此必须在方法块投影：
+
+1. 时间起止范围、源记录、有效记录、已观测周期、缺失周期和插补周期；
+2. 组间比较的有效分析单位、完整记录和剔除记录；
+3. 适用总体限于当前上传数据中字段完整、按指定 analysis unit 定义的观察单位，并明确禁止自动外推。
+
+这些内容必须来自结构化分析结果，不由模型自由生成。历史 5C5J 输出仍保持原样且绑定旧 source digest；当前修复不能反向签发 real-provider 或 human-semantic PASS。只有当前源码上的新真实旅程和独立人工逐维评审才能闭合对应发布层。

@@ -75,6 +75,21 @@ def test_two_supported_findings_publish_pyramid_with_adjacent_charts(tmp_path):
     assert any(item["block_type"] == "next_investigation" for item in blocks)
 
 
+def test_multi_finding_answer_reports_data_scope_sample_and_missingness(tmp_path):
+    _, _, turn = _run(tmp_path, _frame())
+
+    method = next(
+        item for item in turn["blocks"] if item["block_type"] == "method"
+    )
+
+    assert "2026-01-01 至 2026-03-11" in method["narrative"]
+    assert "70 个已观测日周期" in method["narrative"]
+    assert "缺失周期 0" in method["narrative"]
+    assert "70 个有效 unit_id" in method["narrative"]
+    assert "完整记录 70，剔除 0" in method["narrative"]
+    assert "适用总体限于当前上传数据" in method["narrative"]
+
+
 def test_limited_group_does_not_remove_supported_trend_or_chart(tmp_path):
     events, store, turn = _run(tmp_path, _frame(groups=3))
     projection_event = next(item for item in events if item.event == "outcome_snapshot")

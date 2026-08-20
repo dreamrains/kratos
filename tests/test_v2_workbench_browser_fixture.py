@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+from pathlib import Path
 
 import pandas as pd
+import pytest
+
+import data_agent.config as config_module
 
 from data_agent.v2.workbench_browser_fixture import (
     DelayedAnalysisRouter,
@@ -13,6 +17,23 @@ from data_agent.v2.workbench_browser_fixture import (
 from data_agent.v2.router import AnalysisKind
 from data_agent.v2.planner import DatasetColumnContext, DatasetPlanningContext, ColumnRole
 from data_agent.v2.planning_input import PlanningInputStore
+
+
+@pytest.fixture(autouse=True)
+def _restore_provider_neutral_fixture_globals():
+    import data_agent.web.blueprints.v2 as v2_module
+
+    original_config = config_module._config
+    original_planner_factory = v2_module.V2_PLANNER_FACTORY
+    original_budget_factory = v2_module.V2_PLANNING_BUDGET_FACTORY
+    original_router_factory = v2_module.V2_ROUTER_FACTORY
+    try:
+        yield
+    finally:
+        config_module._config = original_config
+        v2_module.V2_PLANNER_FACTORY = original_planner_factory
+        v2_module.V2_PLANNING_BUDGET_FACTORY = original_budget_factory
+        v2_module.V2_ROUTER_FACTORY = original_router_factory
 
 
 def test_fixture_exposes_isolated_state_and_never_reports_provider_calls(tmp_path):
@@ -30,6 +51,61 @@ def test_fixture_exposes_isolated_state_and_never_reports_provider_calls(tmp_pat
     assert state["fixture_csv"].replace("\\", "/").endswith(
         "tests/fixtures/v2_slice4d_combined.csv"
     )
+
+
+def test_fixture_planning_model_identity_reaches_needs_input(tmp_path):
+    app = build_provider_neutral_fixture(tmp_path)
+    client = app.test_client()
+    fixture = Path(app.config["PROVIDER_NEUTRAL_FIXTURE_CSV"])
+    question = "销售如何变化？"
+    session_id = "session_fixture_planning_identity"
+    upload = client.post(
+        "/api/upload",
+        data={"file": (io.BytesIO(fixture.read_bytes()), fixture.name)},
+        content_type="multipart/form-data",
+    )
+    estimate = client.post(
+        "/api/v2/planning-estimates",
+        json={
+            "session_id": session_id,
+            "filename": fixture.name,
+            "question": question,
+        },
+    )
+    authorization = client.post(
+        "/api/v2/provider-authorizations",
+        json={
+            "session_id": session_id,
+            "filename": fixture.name,
+            "question": question,
+            "client_action_id": "action_fixture_planning_identity",
+            "purpose": "analysis_planning",
+            "provider_calls_authorized": 1,
+            "confirm_provider_call": True,
+        },
+    )
+    plan = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": session_id,
+            "filename": fixture.name,
+            "question": question,
+            "client_request_id": "request_fixture_planning_identity",
+            "provider_authorization_id": authorization.get_json()["authorization_id"],
+        },
+    )
+    state = client.get("/__acceptance/state").get_json()
+
+    assert upload.status_code == 200
+    assert estimate.status_code == 200
+    assert estimate.get_json()["model_id"] == "provider-neutral-fixture"
+    assert authorization.status_code == 201
+    assert plan.status_code == 201
+    assert plan.get_json()["status"] == "needs_input"
+    assert state["planner_invocations"] == 1
+    assert state["authorizations_issued"] == 1
+    assert state["authorizations_consumed"] == 1
+    assert state["provider_calls"] == 0
 
 
 def test_fixture_context_overflow_is_explicit_and_never_authorizes(tmp_path):

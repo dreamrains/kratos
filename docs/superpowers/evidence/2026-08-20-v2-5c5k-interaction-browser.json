@@ -1,0 +1,30 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:60dd53c73d7e104ca36d623e669937d5006bd9bebb58081e616a039169383804",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "steer": "v2_3664dd08a446",
+    "stop": "v2_3b532ada788a",
+    "isolation": "v2_86f25ed7357f"
+  },
+  "observations": {
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  }
+}
