@@ -1,0 +1,108 @@
+{
+  "version": "v2_planner_status_payload_contract_alignment.v1",
+  "baseline": {
+    "branch": "codex/data-agent-v2",
+    "head": "ec5e637e610b74fd6c198493bad9bbf037a47f51",
+    "source_digest": "sha256:ce17634adf292aeab07d9a8b7063793372cdaa86be1d02451dd89870a5e5a719"
+  },
+  "current_source": {
+    "source_digest": "sha256:ac33d746dbbce7ff2cd2d37352720f9d585140a40fc2e39cd595f934d3f24005",
+    "dirty": true
+  },
+  "trigger": {
+    "attempt_evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5c-real-provider-attempt.json",
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "http_status": 502,
+    "error_code": "PlannerContractError",
+    "error_reason_code": "plan_status_payload_invalid",
+    "failure_stage": "plan_compilation",
+    "safe_response_shape": {
+      "finish_reason": "tool_calls",
+      "tool_call_count": 1,
+      "tool_names": ["submit_analysis_plan"],
+      "tool_argument_types": ["dict"],
+      "argument_top_level_fields": [
+        "analysis_kind",
+        "parameters",
+        "questions",
+        "rationale",
+        "status"
+      ]
+    },
+    "specific_historical_payload_known": false
+  },
+  "root_cause": {
+    "code_fact": "the outgoing tool schema accepted status/payload combinations rejected by local compilation",
+    "scope": "shared planner contract",
+    "not_claimed": "the exact unpersisted 5C5C field values",
+    "contract_relaxed": false,
+    "repair_or_retry_added": false
+  },
+  "red": {
+    "command": "python -m pytest tests/test_v2_planner.py tests/test_v2_plan_store.py -q",
+    "result": "9 failed, 29 passed",
+    "coverage": [
+      "ready_with_questions_schema_drift",
+      "needs_input_with_route_schema_drift",
+      "needs_input_without_questions_schema_drift",
+      "unsupported_with_questions_schema_drift",
+      "status_payload_reason_code_coalescing",
+      "ledger_rejects_safe_payload_shape_metadata"
+    ]
+  },
+  "implementation": {
+    "tool_schema_variants": ["ready", "needs_input", "unsupported"],
+    "schema_combiner": "anyOf",
+    "local_compilation_remains_authoritative": true,
+    "new_reason_codes": [
+      "plan_ready_questions_present",
+      "plan_needs_input_route_present",
+      "plan_needs_input_questions_missing",
+      "plan_unsupported_payload_present"
+    ],
+    "historical_reason_code_retained": "plan_status_payload_invalid",
+    "safe_payload_shape_fields": [
+      "recognized_status",
+      "analysis_kind_present",
+      "parameters_empty_object",
+      "questions_present"
+    ],
+    "raw_model_text_persisted": false,
+    "reasoning_persisted": false,
+    "argument_values_persisted": false,
+    "public_http_diagnostic_exposed": false
+  },
+  "green": {
+    "planner_and_plan_store": "38 passed",
+    "planning_api_authorization_focused": "36 passed",
+    "v2_and_config": "280 passed",
+    "compileall": "pass",
+    "git_diff_check": "pass"
+  },
+  "offline_candidate_preflight": {
+    "validator_status": "pass",
+    "reason_codes": [],
+    "source_digest": "sha256:ac33d746dbbce7ff2cd2d37352720f9d585140a40fc2e39cd595f934d3f24005",
+    "source_dirty": true,
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 329,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true,
+    "request_fingerprint": "sha256:b6df6b8c0e4c1939a7a7c5c893e7a4947d58493b11ece2055e520a7cfed11155",
+    "provider_calls_observed": 0,
+    "authorization_issued": false,
+    "executable_preflight_claimed": false
+  },
+  "receipt_impact": {
+    "v2_5c5b_deterministic_evidence_current": false,
+    "v2_5c5c_real_provider_preflight_current": false,
+    "v2_5c5c_attempt_is_historical_failure_only": true,
+    "real_provider_pass_issued": false,
+    "gate_f_claimed": false,
+    "product_completion_claimed": false,
+    "root_switch_authorized": false
+  }
+}

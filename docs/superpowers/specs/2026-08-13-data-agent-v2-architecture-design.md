@@ -1016,3 +1016,18 @@ V2 不读取以下对象作为运行时权威：
 6. release preflight identity fingerprint 绑定 source digest、场景和发布预检身份；runtime authorization fingerprint 只约束一次运行时 Provider 权限。两者职责不同，不能互相替代。
 
 该补充不构成 `real_provider_analysis_journey` PASS，不授权新的 Provider 调用、`/` 根入口切换、旧系统删除或发布完成声明。
+
+## 29. Slice 5C5D 实施补充：Planner status/payload 共享合同对齐
+
+5C5C 的真实调用在 5C5B 诊断生效后返回单个 `submit_analysis_plan` 工具调用，工具名、arguments 类型和顶层字段均符合 response-shape 合同，但本地 compilation 以 `plan_status_payload_invalid` 拒绝。历史安全证据没有保存参数值，因此不能断言当次具体是哪一个 status/payload 组合；可以确定的是，调用前的 tool JSON Schema 只约束字段类型和独立枚举，没有表达本地编译器对三种 status 的互斥条件。Provider 因而可能产生“对外 schema 接受、本地编译器必拒绝”的 payload。
+
+5C5D 修复共享合同，不增加 repair、重试或放宽本地编译规则：
+
+1. `submit_analysis_plan.parameters` 使用三个互斥 `anyOf` variant：`ready` 必须包含 supported route 且 questions 为空；`needs_input` 必须清空 route 并提出 1–3 个问题；`unsupported` 必须清空 route 和 questions；
+2. Planner system contract 明示同一组状态规则；本地 `_compile()` 仍是 fail-closed 权威，Provider schema 不能替代本地语义和列绑定验证；
+3. 原 `plan_status_payload_invalid` 保留用于读取历史 Ledger，新增四个稳定原因：`plan_ready_questions_present`、`plan_needs_input_route_present`、`plan_needs_input_questions_missing`、`plan_unsupported_payload_present`；
+4. compilation 失败诊断可附加 `recognized_status` 和三个布尔结构标记，只表明 route/questions 是否存在，不保存问题文本、参数值、reasoning 或原始响应；
+5. Plan Ledger 仅接受完整的基础诊断字段集，或基础字段集加完整的受控 payload-shape 字段集；HTTP 公共 plan 投影仍不包含详细诊断；
+6. 不启用 Provider strict beta、不修改 API base 或模型。DeepSeek 官方文档说明 strict tool schema 需要 beta base 和 `strict=true`；本切片没有对应授权，也不把 schema 引导误称为 Provider 端强制保证。
+
+这次源码变化使 5C5B deterministic evidence、5C5C preflight 和任何更早的 source-bound PASS receipt 对当前源码失效。5C5C attempt 仍是历史失败事实，但不是当前源码 PASS。新的真实调用必须先形成 clean committed source，再重新制作 preflight，并获得新的模型、source digest、目的和精确次数授权。

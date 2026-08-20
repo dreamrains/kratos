@@ -218,6 +218,10 @@ def test_plan_store_persists_sanitized_failure_diagnostic_without_exposing_it_pu
         "tool_argument_types": ["dict"],
         "argument_top_level_fields": ["analysis_kind", "finding", "parameters"],
         "metadata_truncated": False,
+        "recognized_status": "ready",
+        "analysis_kind_present": True,
+        "parameters_empty_object": False,
+        "questions_present": True,
     }
 
     failed = store.fail(

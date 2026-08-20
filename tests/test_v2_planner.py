@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from jsonschema import Draft202012Validator
 
 import data_agent.llm.client as llm_client_module
 from data_agent.llm.client import LLMClient, Response, ToolCall
@@ -49,6 +50,12 @@ class FakePlannerClient:
             text=self.text,
             tool_calls=[ToolCall("call_plan", "submit_analysis_plan", self.arguments)],
         )
+
+
+def _planner_tool_schema() -> dict:
+    planner = StructuredAnalysisPlanner(FakePlannerClient({}))
+    _, request = planner.build_request("分析销售额", _context())
+    return request.tools[0]["parameters"]
 
 
 def test_planner_compiles_ready_group_plan_from_one_structured_call():
@@ -181,6 +188,175 @@ def test_planner_can_report_unsupported_without_inventing_a_fallback():
     assert result.status is PlanStatus.UNSUPPORTED
     assert result.analysis_kind is None
     assert result.maximum_claim_class == ""
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "status": "ready",
+            "analysis_kind": "descriptive",
+            "parameters": {"metric": "sales"},
+            "rationale": "描述销售额。",
+            "questions": [],
+        },
+        {
+            "status": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "缺少分析单位。",
+            "questions": ["每行代表什么？"],
+        },
+        {
+            "status": "unsupported",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "不支持因果识别。",
+            "questions": [],
+        },
+    ],
+)
+def test_planner_tool_schema_accepts_each_compileable_status_variant(arguments):
+    Draft202012Validator(_planner_tool_schema()).validate(arguments)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "status": "ready",
+            "analysis_kind": "descriptive",
+            "parameters": {"metric": "sales"},
+            "rationale": "先追问。",
+            "questions": ["是否只看已完成订单？"],
+        },
+        {
+            "status": "needs_input",
+            "analysis_kind": "group_comparison",
+            "parameters": {
+                "metric": "sales",
+                "group": "channel",
+                "analysis_unit": "unit_id",
+            },
+            "rationale": "同时给出 route 和问题。",
+            "questions": ["每行代表什么？"],
+        },
+        {
+            "status": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "声称缺少输入但没有提问。",
+            "questions": [],
+        },
+        {
+            "status": "unsupported",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "不支持但仍然追问。",
+            "questions": ["是否改做描述分析？"],
+        },
+    ],
+)
+def test_planner_tool_schema_rejects_status_payloads_the_compiler_rejects(arguments):
+    errors = list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
+
+    assert errors
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason_code", "shape"),
+    [
+        (
+            {
+                "status": "ready",
+                "analysis_kind": "descriptive",
+                "parameters": {"metric": "sales"},
+                "rationale": "先追问。",
+                "questions": ["是否只看已完成订单？"],
+            },
+            "plan_ready_questions_present",
+            {
+                "recognized_status": "ready",
+                "analysis_kind_present": True,
+                "parameters_empty_object": False,
+                "questions_present": True,
+            },
+        ),
+        (
+            {
+                "status": "needs_input",
+                "analysis_kind": "group_comparison",
+                "parameters": {
+                    "metric": "sales",
+                    "group": "channel",
+                    "analysis_unit": "unit_id",
+                },
+                "rationale": "同时给出 route 和问题。",
+                "questions": ["每行代表什么？"],
+            },
+            "plan_needs_input_route_present",
+            {
+                "recognized_status": "needs_input",
+                "analysis_kind_present": True,
+                "parameters_empty_object": False,
+                "questions_present": True,
+            },
+        ),
+        (
+            {
+                "status": "needs_input",
+                "analysis_kind": "",
+                "parameters": {},
+                "rationale": "声称缺少输入但没有提问。",
+                "questions": [],
+            },
+            "plan_needs_input_questions_missing",
+            {
+                "recognized_status": "needs_input",
+                "analysis_kind_present": False,
+                "parameters_empty_object": True,
+                "questions_present": False,
+            },
+        ),
+        (
+            {
+                "status": "unsupported",
+                "analysis_kind": "",
+                "parameters": {},
+                "rationale": "不支持但仍然追问。",
+                "questions": ["是否改做描述分析？"],
+            },
+            "plan_unsupported_payload_present",
+            {
+                "recognized_status": "unsupported",
+                "analysis_kind_present": False,
+                "parameters_empty_object": True,
+                "questions_present": True,
+            },
+        ),
+    ],
+)
+def test_planner_classifies_each_status_payload_failure_without_values(
+    arguments, reason_code, shape
+):
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售额", _context()
+        )
+
+    assert caught.value.reason_code == reason_code
+    assert {
+        key: caught.value.diagnostic[key]
+        for key in (
+            "recognized_status",
+            "analysis_kind_present",
+            "parameters_empty_object",
+            "questions_present",
+        )
+    } == shape
+    serialized = json.dumps(caught.value.diagnostic, ensure_ascii=False)
+    assert "每行代表什么" not in serialized
+    assert "是否改做描述分析" not in serialized
 
 
 def test_planner_rejects_free_text_or_exploratory_python_as_execution_plan():

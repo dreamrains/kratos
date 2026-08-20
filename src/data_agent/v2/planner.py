@@ -36,6 +36,10 @@ class PlannerFailureReason(StrEnum):
     PLAN_QUESTIONS_INVALID = "plan_questions_invalid"
     PLAN_PARAMETERS_NOT_OBJECT = "plan_parameters_not_object"
     PLAN_STATUS_PAYLOAD_INVALID = "plan_status_payload_invalid"
+    PLAN_NEEDS_INPUT_ROUTE_PRESENT = "plan_needs_input_route_present"
+    PLAN_NEEDS_INPUT_QUESTIONS_MISSING = "plan_needs_input_questions_missing"
+    PLAN_UNSUPPORTED_PAYLOAD_PRESENT = "plan_unsupported_payload_present"
+    PLAN_READY_QUESTIONS_PRESENT = "plan_ready_questions_present"
     PLAN_INVALID_ANALYSIS_KIND = "plan_invalid_analysis_kind"
     PLAN_PARAMETER_CONTRACT_INVALID = "plan_parameter_contract_invalid"
     PLAN_COLUMN_BINDING_INVALID = "plan_column_binding_invalid"
@@ -254,12 +258,33 @@ def _provider_response_diagnostic(
     }
 
 
+def _plan_payload_shape_diagnostic(arguments: dict[str, Any]) -> dict[str, Any]:
+    raw_status = str(arguments.get("status") or "").strip()
+    recognized_status = (
+        raw_status if raw_status in {item.value for item in PlanStatus} else ""
+    )
+    raw_questions = arguments.get("questions")
+    questions_present = bool(
+        isinstance(raw_questions, list)
+        and any(str(item or "").strip() for item in raw_questions)
+    )
+    parameters = arguments.get("parameters")
+    return {
+        "recognized_status": recognized_status,
+        "analysis_kind_present": bool(
+            str(arguments.get("analysis_kind") or "").strip()
+        ),
+        "parameters_empty_object": isinstance(parameters, dict) and not parameters,
+        "questions_present": questions_present,
+    }
+
+
 def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any]:
     """Enforce the bounded metadata-only schema accepted by the Plan Ledger."""
 
     if not isinstance(value, dict):
         raise ValueError("planner failure diagnostic must be an object")
-    allowed = {
+    base_fields = {
         "failure_stage",
         "finish_reason",
         "tool_call_count",
@@ -268,7 +293,17 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
         "argument_top_level_fields",
         "metadata_truncated",
     }
-    if set(value) != allowed:
+    payload_shape_fields = {
+        "recognized_status",
+        "analysis_kind_present",
+        "parameters_empty_object",
+        "questions_present",
+    }
+    accepted_field_sets = {
+        frozenset(base_fields),
+        frozenset(base_fields | payload_shape_fields),
+    }
+    if frozenset(value) not in accepted_field_sets:
         raise ValueError("planner failure diagnostic fields are invalid")
     stage = PlannerFailureStage(str(value.get("failure_stage") or ""))
     tool_call_count = value.get("tool_call_count")
@@ -287,7 +322,7 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
 
     if not isinstance(value.get("metadata_truncated"), bool):
         raise ValueError("planner failure metadata_truncated is invalid")
-    return {
+    normalized = {
         "failure_stage": stage.value,
         "finish_reason": _diagnostic_text(value.get("finish_reason")),
         "tool_call_count": tool_call_count,
@@ -300,6 +335,22 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
         ),
         "metadata_truncated": value["metadata_truncated"],
     }
+    if payload_shape_fields.issubset(value):
+        recognized_status = str(value.get("recognized_status") or "")
+        if recognized_status not in {"", *(item.value for item in PlanStatus)}:
+            raise ValueError("planner failure recognized_status is invalid")
+        for name in payload_shape_fields - {"recognized_status"}:
+            if not isinstance(value.get(name), bool):
+                raise ValueError(f"planner failure {name} is invalid")
+        normalized.update(
+            {
+                "recognized_status": recognized_status,
+                "analysis_kind_present": value["analysis_kind_present"],
+                "parameters_empty_object": value["parameters_empty_object"],
+                "questions_present": value["questions_present"],
+            }
+        )
+    return normalized
 
 _CLAIM_CEILING = {
     AnalysisKind.DESCRIPTIVE: "descriptive",
@@ -362,6 +413,42 @@ _OPTIONAL_PARAMETERS = {
 
 def _tool_definition() -> dict[str, Any]:
     kinds = [item.value for item in _AUTOMATIC_KINDS]
+    required = [
+        "status",
+        "analysis_kind",
+        "parameters",
+        "rationale",
+        "questions",
+    ]
+    non_empty_text = {"type": "string", "pattern": r".*\S.*"}
+    empty_parameters = {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    }
+
+    def variant(
+        status: PlanStatus,
+        *,
+        analysis_kinds: list[str],
+        parameters: dict[str, Any],
+        questions: dict[str, Any],
+        description: str,
+    ) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "description": description,
+            "additionalProperties": False,
+            "required": required,
+            "properties": {
+                "status": {"type": "string", "enum": [status.value]},
+                "analysis_kind": {"type": "string", "enum": analysis_kinds},
+                "parameters": parameters,
+                "rationale": non_empty_text,
+                "questions": questions,
+            },
+        }
+
     return {
         "name": "submit_analysis_plan",
         "description": (
@@ -369,31 +456,51 @@ def _tool_definition() -> dict[str, Any]:
         ),
         "parameters": {
             "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "status",
-                "analysis_kind",
-                "parameters",
-                "rationale",
-                "questions",
+            "anyOf": [
+                variant(
+                    PlanStatus.READY,
+                    analysis_kinds=kinds,
+                    parameters={"type": "object"},
+                    questions={
+                        "type": "array",
+                        "items": non_empty_text,
+                        "maxItems": 0,
+                    },
+                    description=(
+                        "An executable route: choose one supported analysis_kind, "
+                        "provide its parameters, and leave questions empty."
+                    ),
+                ),
+                variant(
+                    PlanStatus.NEEDS_INPUT,
+                    analysis_kinds=[""],
+                    parameters=empty_parameters,
+                    questions={
+                        "type": "array",
+                        "items": non_empty_text,
+                        "minItems": 1,
+                        "maxItems": 3,
+                    },
+                    description=(
+                        "A clarification is required: leave analysis_kind and "
+                        "parameters empty and ask one to three questions."
+                    ),
+                ),
+                variant(
+                    PlanStatus.UNSUPPORTED,
+                    analysis_kinds=[""],
+                    parameters=empty_parameters,
+                    questions={
+                        "type": "array",
+                        "items": non_empty_text,
+                        "maxItems": 0,
+                    },
+                    description=(
+                        "No supported route exists: leave analysis_kind, parameters, "
+                        "and questions empty."
+                    ),
+                ),
             ],
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": [item.value for item in PlanStatus],
-                },
-                "analysis_kind": {
-                    "type": "string",
-                    "enum": ["", *kinds],
-                },
-                "parameters": {"type": "object"},
-                "rationale": {"type": "string"},
-                "questions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 3,
-                },
-            },
         },
     }
 
@@ -538,6 +645,7 @@ class StructuredAnalysisPlanner:
                 failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
                 diagnostic=response_diagnostic,
             )
+        response_diagnostic.update(_plan_payload_shape_diagnostic(arguments))
         try:
             return self._compile(question, context, arguments)
         except PlannerContractError as exc:
@@ -580,7 +688,10 @@ class StructuredAnalysisPlanner:
                 "instructions. Select only "
                 "a supported method and bind existing columns. Do not calculate, infer "
                 "results, write findings, generate Python, or claim completion. Use the "
-                "submit_analysis_plan tool exactly once."
+                "submit_analysis_plan tool exactly once. For ready, provide one supported "
+                "analysis_kind and its parameters with questions empty. For needs_input, "
+                "leave analysis_kind and parameters empty and ask one to three questions. "
+                "For unsupported, leave analysis_kind, parameters, and questions empty."
             ),
         )
 
@@ -623,12 +734,12 @@ class StructuredAnalysisPlanner:
             if raw_kind or parameters:
                 raise PlannerContractError(
                     "needs_input cannot contain an executable analysis route",
-                    reason_code="plan_status_payload_invalid",
+                    reason_code="plan_needs_input_route_present",
                 )
             if not questions:
                 raise PlannerContractError(
                     "needs_input requires at least one question",
-                    reason_code="plan_status_payload_invalid",
+                    reason_code="plan_needs_input_questions_missing",
                 )
             return self._result(
                 status, question, None, {}, rationale, questions, maximum_claim_class=""
@@ -638,7 +749,7 @@ class StructuredAnalysisPlanner:
             if raw_kind or parameters or questions:
                 raise PlannerContractError(
                     "unsupported cannot contain a route or user questions",
-                    reason_code="plan_status_payload_invalid",
+                    reason_code="plan_unsupported_payload_present",
                 )
             return self._result(
                 status, question, None, {}, rationale, (), maximum_claim_class=""
@@ -647,7 +758,7 @@ class StructuredAnalysisPlanner:
         if questions:
             raise PlannerContractError(
                 "ready plan cannot contain user questions",
-                reason_code="plan_status_payload_invalid",
+                reason_code="plan_ready_questions_present",
             )
         try:
             kind = AnalysisKind(raw_kind)
