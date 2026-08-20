@@ -105,9 +105,9 @@
       "required_layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey", "real_provider_analysis_journey", "human_semantic_review"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed", "turn_interrupted"],
       "required_block_types": ["executive_answer", "key_finding", "method"],
-      "required_interactions": ["upload", "live_progress", "draft_while_running", "stop", "error_recovery", "session_isolation", "task_overlay_collapsed", "refresh_restore"],
+      "required_interactions": ["upload", "planning_estimate_without_authorization", "explicit_planning_confirmation", "needs_input", "planning_answer_persisted", "planning_failure_stable", "explicit_planning_retry", "live_progress", "draft_while_running", "stop", "error_recovery", "session_isolation", "task_overlay_collapsed", "refresh_restore"],
       "chart_policy": "conditional",
-      "forbidden_behaviors": ["legacy_runtime_authority", "composer_disabled_while_running", "task_panel_forced_open", "stale_session_projection", "turn_completed_after_interrupt", "final_block_after_interrupt", "internal_evidence_marker"]
+      "forbidden_behaviors": ["legacy_runtime_authority", "composer_disabled_while_running", "task_panel_forced_open", "stale_session_projection", "implicit_provider_retry", "planning_answer_truncation", "silent_planning_context_trim", "turn_completed_after_interrupt", "final_block_after_interrupt", "internal_evidence_marker"]
     }
   ]
 }

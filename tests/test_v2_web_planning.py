@@ -117,7 +117,7 @@ class FakeNeedsInputPlanner:
 class FakeFailedPlanner:
     calls = 0
 
-    def plan(self, question, context):
+    def plan(self, question, context, *, clarifications=()):
         type(self).calls += 1
         raise RuntimeError("provider unavailable")
 
@@ -721,6 +721,101 @@ def test_failed_plan_is_durable_and_same_request_does_not_retry_provider(
     assert repeated.status_code == 200
     assert repeated.get_json()["status"] == "failed"
     assert FakeFailedPlanner.calls == 1
+
+
+def test_failed_derived_plan_retries_only_with_new_explicit_authorization(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    session_id = "session_plan_derived_retry"
+    question = "比较表现"
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: FakeNeedsInputPlanner()
+    )
+    initial_authorization = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_derived_retry_initial",
+    )
+    needs_input = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": session_id,
+            "filename": "sales.csv",
+            "question": question,
+            "client_request_id": "client_derived_retry_initial",
+            "provider_authorization_id": initial_authorization,
+        },
+    ).get_json()
+    planning_input = client.post(
+        f"/api/v2/sessions/{session_id}/plans/{needs_input['plan_id']}/answers",
+        json={
+            "client_reply_id": "reply_derived_retry",
+            "answers": [
+                {
+                    "question_id": needs_input["message_blocks"][0]["question_id"],
+                    "answer": "每行代表订单；比较销售额。",
+                }
+            ],
+        },
+    ).get_json()
+
+    FakeFailedPlanner.calls = 0
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakeFailedPlanner())
+    failed_authorization = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_derived_retry_failed",
+        planning_input_id=planning_input["planning_input_id"],
+    )
+    failed_request = {
+        "session_id": session_id,
+        "filename": "sales.csv",
+        "question": question,
+        "client_request_id": "client_derived_retry_failed",
+        "provider_authorization_id": failed_authorization,
+        "planning_input_id": planning_input["planning_input_id"],
+    }
+    failed = client.post("/api/v2/plans", json=failed_request)
+    replayed = client.post("/api/v2/plans", json=failed_request)
+
+    assert failed.status_code == 502
+    assert replayed.status_code == 200
+    assert replayed.get_json()["status"] == "failed"
+    assert FakeFailedPlanner.calls == 1
+
+    FakeClarifiedPlanner.calls = 0
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: FakeClarifiedPlanner()
+    )
+    retry_authorization = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_derived_retry_explicit",
+        planning_input_id=planning_input["planning_input_id"],
+    )
+    retried = client.post(
+        "/api/v2/plans",
+        json={
+            **failed_request,
+            "client_request_id": "client_derived_retry_explicit",
+            "provider_authorization_id": retry_authorization,
+        },
+    )
+
+    assert retried.status_code == 201
+    assert retried.get_json()["status"] == "ready"
+    assert FakeClarifiedPlanner.calls == 1
+    records = ProviderAuthorizationStore(
+        tmp_path / "sessions", session_id
+    ).list_all()
+    assert len(records) == 3
+    assert all(item.status is ProviderAuthorizationStatus.CONSUMED for item in records)
 
 
 def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried(

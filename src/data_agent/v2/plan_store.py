@@ -289,15 +289,25 @@ class PlanStore:
                     "provider_authorization_ref was already used by another planning request"
                 )
             if normalized_input:
-                input_owner = next(
-                    (
-                        item
-                        for item in all_records
-                        if item.planning_input_id == normalized_input
-                    ),
-                    None,
+                input_owners = tuple(
+                    item
+                    for item in all_records
+                    if item.planning_input_id == normalized_input
                 )
-                if input_owner is not None:
+                retry_differs = any(
+                    item.parent_plan_id != normalized_parent
+                    or item.question != normalized_question
+                    or item.dataset_context != normalized_context
+                    for item in input_owners
+                )
+                if retry_differs:
+                    raise PlanConflict(
+                        "planning_input_id retry has different planning content"
+                    )
+                if any(
+                    item.status is not DurablePlanStatus.FAILED
+                    for item in input_owners
+                ):
                     raise PlanConflict(
                         "planning_input_id already derived another planning request"
                     )

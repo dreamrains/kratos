@@ -166,12 +166,28 @@
         return body;
     }
 
+    function planningErrorMessage(error) {
+        const context = error.body?.planning_context;
+        if (error.body?.error_code === 'planning_context_too_large' && context) {
+            return `规划上下文超过模型能力：预计输入 ${context.estimated_input_tokens} tokens；模型窗口 ${context.model_context_window_tokens}；预留输出 ${context.reserved_output_tokens}；可用输入 ${context.available_input_tokens}。未裁剪任何内容。`;
+        }
+        return error.message;
+    }
+
+    function showPlanningError(error) {
+        if (error.body?.planning_context) {
+            renderPlanningEstimate(error.body.planning_context);
+        }
+        showError(planningErrorMessage(error));
+    }
+
     function hidePlanning() {
         state.planningPlan = null;
         byId('planning-input').hidden = true;
         byId('planning-questions').innerHTML = '';
         byId('planning-submit').hidden = false;
         byId('planning-confirm').hidden = true;
+        byId('planning-retry').hidden = true;
         byId('execute-plan').hidden = true;
     }
 
@@ -200,14 +216,16 @@
     function renderPlanning(plan, planningInput = null) {
         state.planningPlan = plan;
         state.planId = plan.plan_id;
-        state.planningInputId = planningInput?.planning_input_id || '';
+        state.planningInputId = planningInput?.planning_input_id || plan.planning_input_id || '';
         const panel = byId('planning-input');
         panel.hidden = false;
         byId('planning-rationale').textContent = plan.rationale || plan.message || '';
         const submit = byId('planning-submit');
         const execute = byId('execute-plan');
+        const retry = byId('planning-retry');
         submit.hidden = plan.status !== 'needs_input';
         execute.hidden = plan.status !== 'ready';
+        retry.hidden = plan.status !== 'failed';
         const headings = {
             needs_input: '规划需要补充信息',
             ready: '分析计划已就绪',
@@ -328,7 +346,7 @@
                 state.pendingPlanningRequest = null;
                 await handlePlanningResult(error.body.plan, {autoExecute: false});
             }
-            showError(error.message);
+            showPlanningError(error);
             setStatus('规划失败；不会自动重试');
         } finally {
             state.planning = false;
@@ -355,7 +373,7 @@
             byId('plan-confirm').hidden = false;
             setStatus('估算完成；确认后才会调用模型 1 次');
         } catch (error) {
-            showError(error.message);
+            showPlanningError(error);
             setStatus('规划估算失败；未调用模型');
         } finally {
             state.planning = false;
@@ -393,7 +411,7 @@
                 updateUrl();
             }
         } catch (error) {
-            showError(error.message);
+            showPlanningError(error);
             setStatus('回答保存失败；未调用模型');
             return;
         } finally {
@@ -408,7 +426,7 @@
             byId('planning-confirm').hidden = false;
             setStatus('回答已保存并完成估算；确认后才会调用模型 1 次');
         } catch (error) {
-            showError(error.message);
+            showPlanningError(error);
             setStatus('规划估算失败；未调用模型');
         } finally {
             state.planning = false;
@@ -426,6 +444,30 @@
         if (!state.planningEstimate || !state.planningInputId) return;
         byId('planning-confirm').hidden = true;
         await requestPlan(state.planningInputId);
+    }
+
+    async function retryPlanning() {
+        if (state.running || state.planning) return;
+        state.pendingPlanningRequest = null;
+        state.planningEstimate = null;
+        byId('planning-retry').hidden = true;
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            setStatus('正在重新估算规划；不会调用模型');
+            await estimatePlanning(state.planningInputId);
+            if (state.planningInputId) byId('planning-confirm').hidden = false;
+            else byId('plan-confirm').hidden = false;
+            setStatus('重试估算完成；确认后才会调用模型 1 次');
+        } catch (error) {
+            byId('planning-retry').hidden = false;
+            showPlanningError(error);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
     }
 
     function payload() {
@@ -863,6 +905,7 @@
     byId('run').addEventListener('click', run);
     byId('planning-submit').addEventListener('click', answerAndReplan);
     byId('planning-confirm').addEventListener('click', confirmPlanningAnswer);
+    byId('planning-retry').addEventListener('click', retryPlanning);
     byId('execute-plan').addEventListener('click', executeRestoredPlan);
     byId('steer').addEventListener('click', sendSteer);
     byId('continue-steer').addEventListener('click', runQueuedSteer);

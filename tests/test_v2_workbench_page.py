@@ -76,6 +76,8 @@ def test_v2_workbench_has_explicit_one_call_planning_and_recoverable_questions()
     assert "保存回答并估算（不调用模型）" in html
     assert 'id="planning-confirm"' in html
     assert "确认并重新规划（调用模型 1 次）" in html
+    assert 'id="planning-retry"' in html
+    assert "重新估算规划（不调用模型）" in html
     assert "/api/v2/provider-authorizations" in js
     assert "/api/v2/planning-estimates" in js
     assert "/api/v2/plans" in js
@@ -85,7 +87,8 @@ def test_v2_workbench_has_explicit_one_call_planning_and_recoverable_questions()
     assert "provider_calls_authorized: 1" in js
     assert "planning_input_id" in js
     assert "maxlength" not in html.lower()
-    assert "planning_context_too_large" not in js
+    assert "planning_context_too_large" in js
+    assert "未裁剪任何内容" in js
     assert "estimated_input_tokens" in js
     assert "model_context_window_tokens" in js
     assert "reserved_output_tokens" in js
@@ -100,5 +103,7 @@ def test_v2_workbench_planning_is_only_bound_to_explicit_clicks():
     assert "byId('plan-confirm').addEventListener('click', confirmInitialPlanning)" in js
     assert "byId('planning-submit').addEventListener('click', answerAndReplan)" in js
     assert "byId('planning-confirm').addEventListener('click', confirmPlanningAnswer)" in js
+    assert "byId('planning-retry').addEventListener('click', retryPlanning)" in js
+    assert "plan.planning_input_id" in js
     assert "if (params.has('turn_id')) restore();" in js
     assert "else if (params.has('plan_id')) restorePlanning();" in js

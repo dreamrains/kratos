@@ -126,6 +126,43 @@ def test_planning_input_can_derive_only_one_new_plan_request(tmp_path):
         )
 
 
+def test_failed_derived_plan_allows_explicit_retry_with_new_authorization(tmp_path):
+    store = PlanStore(tmp_path, "session_plan_input_retry")
+    failed = store.request(
+        client_request_id="client_input_failed",
+        question="比较表现",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_input_failed",
+        provider_calls_authorized=1,
+        parent_plan_id="plan_needs_input",
+        planning_input_id="planning_input_retry",
+    )
+    store.fail(failed.plan_id, error_code="provider_error", message="unavailable")
+
+    retried = store.request(
+        client_request_id="client_input_retry",
+        question="比较表现",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_input_retry",
+        provider_calls_authorized=1,
+        parent_plan_id="plan_needs_input",
+        planning_input_id="planning_input_retry",
+    )
+
+    assert retried.plan_id != failed.plan_id
+    assert retried.status is DurablePlanStatus.REQUESTED
+    with pytest.raises(PlanConflict, match="already derived"):
+        store.request(
+            client_request_id="client_input_hidden_retry",
+            question="比较表现",
+            dataset_context=_context(),
+            provider_authorization_ref="auth_input_hidden_retry",
+            provider_calls_authorized=1,
+            parent_plan_id="plan_needs_input",
+            planning_input_id="planning_input_retry",
+        )
+
+
 def test_ready_plan_consumption_is_target_bound_and_idempotent(tmp_path):
     store = PlanStore(tmp_path, "session_plan_consume")
     requested = store.request(

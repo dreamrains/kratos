@@ -69,6 +69,14 @@ def test_release_matrix_has_unique_scenarios_and_all_seven_layers():
     assert unified.entry == "/v2-workbench"
     assert "stop" in unified.required_interactions
     assert "draft_while_running" in unified.required_interactions
+    assert "planning_estimate_without_authorization" in unified.required_interactions
+    assert "explicit_planning_confirmation" in unified.required_interactions
+    assert "planning_answer_persisted" in unified.required_interactions
+    assert "planning_failure_stable" in unified.required_interactions
+    assert "explicit_planning_retry" in unified.required_interactions
+    assert "implicit_provider_retry" in unified.forbidden_behaviors
+    assert "planning_answer_truncation" in unified.forbidden_behaviors
+    assert "silent_planning_context_trim" in unified.forbidden_behaviors
     assert "turn_interrupted" in unified.required_semantic_events
     assert "turn_completed_after_interrupt" in unified.forbidden_behaviors
 
