@@ -1085,3 +1085,17 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 3. 适用总体限于当前上传数据中字段完整、按指定 analysis unit 定义的观察单位，并明确禁止自动外推。
 
 这些内容必须来自结构化分析结果，不由模型自由生成。历史 5C5J 输出仍保持原样且绑定旧 source digest；当前修复不能反向签发 real-provider 或 human-semantic PASS。只有当前源码上的新真实旅程和独立人工逐维评审才能闭合对应发布层。
+
+## 35. Slice 5C5N 实施补充：分析单位语义身份合同
+
+5C5M 的单次真实 planning 和确定性续跑在 transport、持久化与刷新层面完成，但 Planner 把 datetime 角色的 `date` 同时绑定为 `time_field` 和 `analysis_unit`，并在发布内容中把适用总体写成 `analysis_unit:date`。数据集中已经存在 identifier 角色的 `unit_id`。因此该旅程只能记录为历史语义失败，不能签发 real-provider 或 human-semantic PASS。
+
+根因仍位于 Planner 与执行器之间的共享合同，而不是模型输出需要 repair：
+
+1. `analysis_unit` 不再使用“任意列”策略。schema 只公开非 datetime、非 unknown 的候选列，并明确其语义是独立观察实体或聚类单位；compiler 独立执行相同的角色限制，以 `plan_column_binding_invalid` 和受控字段名 fail closed；
+2. multi-finding 增加 `time_field/analysis_unit` 互异关系，factor relationship 增加设计文档早已要求但共享关系表遗漏的 `target/analysis_unit` 互异关系；schema 与 compiler 继续共同消费声明式关系定义，关系冲突使用 `plan_parameter_relation_invalid`；
+3. 允许 numeric、categorical、identifier 与 text 候选，是因为当前 metadata 只有粗粒度 column role，数值 ID、重复 subject ID 或 UUID 可能分别落入这些角色；本切片只排除能够确定不合法的 datetime/unknown，不用字段名启发式假装已识别所有观察单位；
+4. Planner system contract 明确不得把 datetime、metric、grouping 或 time field 绑定为 analysis unit。该引导不替代 schema/compiler 的 fail-closed 校验；
+5. 不修改历史 plan，不做自动 repair 或重试。5C5M authorization 已 consumed，历史 attempt 保持原 digest 上的事实，源码修复后任何真实调用都必须重新预检和授权。
+
+本切片的 provider-neutral RED 同时覆盖 observed multi-finding 路由、单独的 group comparison datetime unit，以及 factor target/unit 身份冲突，避免继续用真实 Provider 串行发现本地可穷举的合同缺口。

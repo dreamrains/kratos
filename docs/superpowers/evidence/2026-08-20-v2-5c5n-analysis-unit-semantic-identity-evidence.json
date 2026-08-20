@@ -1,0 +1,55 @@
+{
+  "version": "v2_analysis_unit_semantic_identity_evidence.v1",
+  "date": "2026-08-20",
+  "baseline_git_head": "a81a715814de2b2fe71b4ac3f3f9cd2180be83d5",
+  "trigger_source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "source_digest": "sha256:db3464a5249f9ae6ea7787998298bcbdf5aae4ea2fe56b1e5aef656840b7151c",
+  "provider_calls": 0,
+  "historical_attempt": {
+    "evidence_path": "docs/superpowers/evidence/2026-08-20-v2-5c5m-real-provider-attempt.json",
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "planning_http_status": 201,
+    "observed_time_field": "date",
+    "observed_analysis_unit": "date",
+    "semantic_review": "fail"
+  },
+  "red_regression": {
+    "command": ".\\.venv\\Scripts\\python.exe -m pytest tests/test_v2_planner.py -k datetime_analysis_units -q",
+    "result_before_fix": "2 failed",
+    "covered_failures": [
+      "group_comparison_datetime_analysis_unit",
+      "multi_finding_time_field_equals_analysis_unit"
+    ]
+  },
+  "contract_changes": {
+    "analysis_unit_excluded_roles": ["datetime", "unknown"],
+    "added_scalar_distinct_relations": [
+      ["multi_finding_synthesis", "time_field", "analysis_unit"],
+      ["factor_relationship", "target", "analysis_unit"]
+    ],
+    "compiler_fail_closed": true,
+    "automatic_repair_added": false,
+    "provider_retry_added": false
+  },
+  "planner_contract_gate": {
+    "version": "v2_planner_contract_parity.v1",
+    "passed": true,
+    "schema_fingerprint": "sha256:6d0eaf57ac63110ee5cc6ca5a6290bc7fe206c69cb6a7b4d943cf60a9ac363e8",
+    "ready_variant_count": 7,
+    "status_variant_count": 9
+  },
+  "verification": {
+    "relation_and_role_focused": "8 passed",
+    "planner_ledger_api_focused": "87 passed",
+    "v2_and_config": "318 passed",
+    "unified_deterministic_journey": "passed",
+    "unified_deterministic_receipt_layers": ["owner_contract", "incident_replay", "sse_transport_contract"],
+    "compileall": "passed",
+    "git_diff_check": "passed"
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "real_provider_preflight_current": false,
+  "root_switch_authorized": false
+}

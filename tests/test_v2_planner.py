@@ -557,6 +557,50 @@ def test_planner_schema_and_compiler_reject_duplicate_group_field_identities(
 
 
 @pytest.mark.parametrize(
+    ("kind", "parameters"),
+    [
+        (
+            "group_comparison",
+            {"metric": "sales", "group": "channel", "analysis_unit": "date"},
+        ),
+        (
+            "multi_finding_synthesis",
+            {
+                "time_field": "date",
+                "metric": "sales",
+                "frequency": "daily",
+                "aggregation": "sum",
+                "group": "channel",
+                "analysis_unit": "date",
+            },
+        ),
+    ],
+)
+def test_planner_schema_and_compiler_reject_datetime_analysis_units(
+    kind, parameters
+):
+    arguments = _ready_arguments(kind, parameters)
+
+    assert list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "比较渠道销售额", _context()
+        )
+
+    if kind == "multi_finding_synthesis":
+        assert caught.value.reason_code == "plan_parameter_relation_invalid"
+        assert caught.value.diagnostic["invalid_parameter_fields"] == [
+            "analysis_unit",
+            "time_field",
+        ]
+    else:
+        assert caught.value.reason_code == "plan_column_binding_invalid"
+        assert caught.value.diagnostic["invalid_parameter_fields"] == [
+            "analysis_unit"
+        ]
+
+
+@pytest.mark.parametrize(
     ("parameters", "invalid_fields"),
     [
         (
@@ -583,6 +627,14 @@ def test_planner_schema_and_compiler_reject_duplicate_group_field_identities(
                 "time_field": "date",
             },
             ["analysis_unit", "time_field"],
+        ),
+        (
+            {
+                "target": "sales",
+                "features": ["marketing"],
+                "analysis_unit": "sales",
+            },
+            ["analysis_unit", "target"],
         ),
     ],
 )

@@ -509,7 +509,8 @@ _OPTIONAL_PARAMETERS = {
 
 _NUMERIC_COLUMN_PARAMETERS = ("metric", "target")
 _DATETIME_COLUMN_PARAMETERS = ("time_field",)
-_ANY_COLUMN_PARAMETERS = ("analysis_unit", "group", "date_column")
+_ANALYSIS_UNIT_COLUMN_PARAMETERS = ("analysis_unit",)
+_ANY_COLUMN_PARAMETERS = ("group", "date_column")
 _NUMERIC_COLUMN_ARRAY_PARAMETERS = ("features",)
 _ENUM_PARAMETER_VALUES: dict[str, tuple[str, ...]] = {
     "frequency": ("daily", "weekly", "monthly"),
@@ -525,10 +526,12 @@ _SCALAR_DISTINCT_RELATIONS: dict[
     AnalysisKind.FACTOR_RELATIONSHIP: (
         ("time_field", "target"),
         ("time_field", "analysis_unit"),
+        ("target", "analysis_unit"),
     ),
     AnalysisKind.GROUP_COMPARISON: (("metric", "group", "analysis_unit"),),
     AnalysisKind.MULTI_FINDING_SYNTHESIS: (
         ("metric", "group", "analysis_unit"),
+        ("time_field", "analysis_unit"),
     ),
 }
 _ARRAY_EXCLUSION_RELATIONS: dict[
@@ -542,6 +545,7 @@ _ARRAY_EXCLUSION_RELATIONS: dict[
 _PARAMETER_POLICY_FIELDS = (
     frozenset(_NUMERIC_COLUMN_PARAMETERS)
     | frozenset(_DATETIME_COLUMN_PARAMETERS)
+    | frozenset(_ANALYSIS_UNIT_COLUMN_PARAMETERS)
     | frozenset(_ANY_COLUMN_PARAMETERS)
     | frozenset(_NUMERIC_COLUMN_ARRAY_PARAMETERS)
     | frozenset(_ENUM_PARAMETER_VALUES)
@@ -632,9 +636,19 @@ def _parameter_schema(
     datetime_columns = [
         item.name for item in context.columns if item.role is ColumnRole.DATETIME
     ]
+    analysis_unit_columns = [
+        item.name
+        for item in context.columns
+        if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+    ]
 
-    def string_enum(values: list[str]) -> dict[str, Any]:
-        return {"type": "string", "enum": values}
+    def string_enum(
+        values: list[str], *, description: str = ""
+    ) -> dict[str, Any]:
+        schema: dict[str, Any] = {"type": "string", "enum": values}
+        if description:
+            schema["description"] = description
+        return schema
 
     properties: dict[str, dict[str, Any]] = {}
     properties.update(
@@ -642,6 +656,18 @@ def _parameter_schema(
     )
     properties.update(
         {name: string_enum(column_names) for name in _ANY_COLUMN_PARAMETERS}
+    )
+    properties.update(
+        {
+            name: string_enum(
+                analysis_unit_columns,
+                description=(
+                    "Column identifying the independent observational entity or "
+                    "cluster. Do not use a datetime, metric, or grouping field."
+                ),
+            )
+            for name in _ANALYSIS_UNIT_COLUMN_PARAMETERS
+        }
     )
     properties.update(
         {
@@ -1069,7 +1095,9 @@ class StructuredAnalysisPlanner:
                 "leave analysis_kind and parameters empty and ask one to three questions. "
                 "For unsupported, leave analysis_kind, parameters, and questions empty. "
                 "For ready, use only parameter fields and dataset column values declared "
-                "by the selected analysis_kind schema."
+                "by the selected analysis_kind schema. analysis_unit identifies the "
+                "independent observational entity or cluster; never bind a datetime, "
+                "metric, grouping, or time_field column as analysis_unit."
             ),
         )
 
@@ -1244,6 +1272,9 @@ class StructuredAnalysisPlanner:
         for key in _ANY_COLUMN_PARAMETERS:
             if key in result:
                 column(key)
+        for key in _ANALYSIS_UNIT_COLUMN_PARAMETERS:
+            if key in result:
+                column(key)
         for key in _DATETIME_COLUMN_PARAMETERS:
             if key in result and str(result.get(key) or "").strip():
                 column(key, datetime=True)
@@ -1288,6 +1319,17 @@ class StructuredAnalysisPlanner:
                 reason_code="plan_parameter_relation_invalid",
                 diagnostic={"invalid_parameter_fields": invalid_relation_fields},
             )
+
+        for key in _ANALYSIS_UNIT_COLUMN_PARAMETERS:
+            if key not in result:
+                continue
+            selected = columns[result[key]]
+            if selected.role in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}:
+                raise PlannerContractError(
+                    "analysis_unit must identify an observational entity or cluster",
+                    reason_code="plan_column_binding_invalid",
+                    diagnostic={"invalid_parameter_fields": [key]},
+                )
 
         for key, allowed_values in _ENUM_PARAMETER_VALUES.items():
             if key in result and result[key] not in allowed_values:

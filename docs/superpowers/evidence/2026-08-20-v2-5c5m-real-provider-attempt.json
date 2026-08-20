@@ -1,0 +1,84 @@
+{
+  "version": "v2_real_provider_journey_attempt.v4",
+  "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "git_head": "a81a715814de2b2fe71b4ac3f3f9cd2180be83d5",
+  "preflight_request_fingerprint": "sha256:beb5b8c279f52c9221b93066dbff60c855a0f8af83ed3498778b718958e428e0",
+  "planner_schema_fingerprint": "sha256:d87c12de5d78ade97697634d94b4aa12618416209a53921668ebd0d047ca1587",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "planning_context": {
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 3200,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_c8b4888ac3fc4f4390cd6cbe552d8816",
+    "client_action_id": "action_real_5c5m_initial",
+    "purpose": "analysis_planning",
+    "model_id": "openai/deepseek-v4-flash",
+    "runtime_authorization_fingerprint": "sha256:542717fb3940fb2d7e284154960f0f4665791a933b062cf18eca4d35825dbd21",
+    "provider_calls_authorized": 1,
+    "status": "consumed",
+    "consumer_request_id": "request_real_5c5m_initial"
+  },
+  "journey": [
+    {"operation": "upload", "http_status": 200, "provider_calls": 0},
+    {"operation": "planning_estimate", "http_status": 200, "provider_calls": 0},
+    {"operation": "authorization_issue", "http_status": 201, "provider_calls": 0},
+    {"operation": "analysis_planning", "http_status": 201, "provider_calls": 1}
+  ],
+  "result": {
+    "plan_id": "plan_892483484a1f23d1e13b0b94",
+    "status_after_planning": "ready",
+    "status_after_deterministic_execution": "consumed",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "aggregation": "sum",
+      "analysis_unit": "date",
+      "frequency": "daily",
+      "group": "channel",
+      "metric": "sales",
+      "time_field": "date"
+    },
+    "questions_count": 0,
+    "maximum_claim_class": "inferential",
+    "planner_invocations": 1,
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_calls": 1,
+    "error_code": "",
+    "diagnostic_fields": []
+  },
+  "semantic_route_review": {
+    "status": "fail",
+    "reason_code": "analysis_unit_role_invalid",
+    "observed_analysis_unit": "date",
+    "observed_analysis_unit_role": "datetime",
+    "available_identifier_columns": ["unit_id"],
+    "time_field": "date",
+    "invalid_field_relation": ["analysis_unit", "time_field"],
+    "explanation": "The ready route bound the timeline column as the independent observational unit even though the dataset exposed an identifier column. The pre-call schema and local compiler both accepted this invalid semantic identity."
+  },
+  "provider_attempts": [
+    {"model_id": "openai/deepseek-v4-flash", "api_base": "https://api.deepseek.com"}
+  ],
+  "provider_calls_observed": 1,
+  "automatic_retries": 0,
+  "downstream_deterministic_analysis_executed": true,
+  "data_handling": {
+    "api_key_persisted": false,
+    "raw_provider_response_persisted": false,
+    "reasoning_copied_to_attempt_evidence": false,
+    "rationale_copied_to_attempt_evidence": false
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
