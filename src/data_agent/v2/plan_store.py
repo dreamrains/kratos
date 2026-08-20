@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from data_agent.v2.identity import require_storage_id
-from data_agent.v2.planner import AnalysisPlan, PlanStatus
+from data_agent.v2.planner import (
+    AnalysisPlan,
+    PlannerFailureReason,
+    PlannerFailureStage,
+    PlanStatus,
+    normalize_planner_failure_diagnostic,
+)
 from data_agent.v2.planning_input import planning_question_blocks
 
 
@@ -47,6 +53,9 @@ class DurablePlanRecord:
     target_turn_id: str = ""
     error_code: str = ""
     message: str = ""
+    error_reason_code: str = ""
+    failure_stage: str = ""
+    diagnostic: dict[str, Any] | None = None
     parent_plan_id: str = ""
     planning_input_id: str = ""
 
@@ -55,6 +64,11 @@ class DurablePlanRecord:
         value["status"] = self.status.value
         value["parameters"] = dict(self.parameters or {})
         value["questions"] = list(self.questions)
+        value.pop("diagnostic", None)
+        if not self.error_reason_code:
+            value.pop("error_reason_code", None)
+        if not self.failure_stage:
+            value.pop("failure_stage", None)
         value["message_blocks"] = (
             list(planning_question_blocks(self.plan_id, self.questions))
             if self.status is DurablePlanStatus.NEEDS_INPUT
@@ -181,12 +195,26 @@ class PlanStore:
                     provider_calls=int(event.get("provider_calls") or 0),
                 )
             elif event_type == "failed":
+                diagnostic = event.get("diagnostic")
+                if not isinstance(diagnostic, dict):
+                    diagnostic = {}
+                elif diagnostic:
+                    diagnostic = normalize_planner_failure_diagnostic(diagnostic)
+                    if diagnostic["failure_stage"] != str(
+                        event.get("failure_stage") or ""
+                    ):
+                        raise ValueError(
+                            "persisted diagnostic failure_stage differs from event"
+                        )
                 projected[plan_id] = replace(
                     current,
                     status=DurablePlanStatus.FAILED,
                     provider_calls=int(event.get("provider_calls") or 0),
                     error_code=str(event.get("error_code") or "planning_failed"),
                     message=str(event.get("message") or "planning failed"),
+                    error_reason_code=str(event.get("error_reason_code") or ""),
+                    failure_stage=str(event.get("failure_stage") or ""),
+                    diagnostic=dict(diagnostic),
                 )
             else:
                 raise ValueError(f"unknown plan event_type: {event_type}")
@@ -376,10 +404,33 @@ class PlanStore:
             )
             return self.get(safe_id)
 
-    def fail(self, plan_id: str, *, error_code: str, message: str) -> DurablePlanRecord:
+    def fail(
+        self,
+        plan_id: str,
+        *,
+        error_code: str,
+        message: str,
+        error_reason_code: str = "",
+        failure_stage: str = "",
+        diagnostic: dict[str, Any] | None = None,
+    ) -> DurablePlanRecord:
         safe_id = require_storage_id(plan_id, "plan_id")
         normalized_error = str(error_code or "").strip() or "planning_failed"
         normalized_message = str(message or "").strip() or "planning failed"
+        normalized_reason = (
+            PlannerFailureReason(error_reason_code).value if error_reason_code else ""
+        )
+        normalized_stage = (
+            PlannerFailureStage(failure_stage).value if failure_stage else ""
+        )
+        if diagnostic is None:
+            normalized_diagnostic: dict[str, Any] = {}
+        elif not isinstance(diagnostic, dict):
+            raise ValueError("diagnostic must be an object")
+        else:
+            normalized_diagnostic = normalize_planner_failure_diagnostic(diagnostic)
+            if normalized_diagnostic["failure_stage"] != normalized_stage:
+                raise ValueError("diagnostic failure_stage differs from failure_stage")
         with _PLAN_LOCK:
             current = self.get(safe_id)
             if current.status is not DurablePlanStatus.REQUESTED:
@@ -392,6 +443,9 @@ class PlanStore:
                     "provider_calls": 1,
                     "error_code": normalized_error,
                     "message": normalized_message,
+                    "error_reason_code": normalized_reason,
+                    "failure_stage": normalized_stage,
+                    "diagnostic": normalized_diagnostic,
                 }
             )
             return self.get(safe_id)

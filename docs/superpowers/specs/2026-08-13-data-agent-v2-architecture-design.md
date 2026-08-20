@@ -1003,3 +1003,16 @@ V2 不读取以下对象作为运行时权威：
 - [`2026-07-09-golden-answer-quality-measurement-design.md`](./2026-07-09-golden-answer-quality-measurement-design.md)：确定性与软质量分层测量。
 - [`2026-08-11-user-journey-validation-redesign.md`](./2026-08-11-user-journey-validation-redesign.md)：事故回放、浏览器旅程和真实 provider 风险验证。
 - [`2026-08-11-assurance-overlay-recovery-design.md`](./2026-08-11-assurance-overlay-recovery-design.md)：当前 overlay 故障链和非破坏性发布经验。
+
+## 28. Slice 5C5B 实施补充：Planner 失败诊断与运行时授权绑定
+
+5C5A 的首次真实规划调用证明了两个共享合同缺口：Planner 合同失败只有异常类名和通用消息，且运行时 authorization 在消费时没有重新绑定实际模型与完整 token 估算。5C5B 按以下边界修复，不放宽 `submit_analysis_plan` 合同，也不增加 repair 或重试：
+
+1. `PlannerContractError` 使用有限枚举 reason code，并明确区分 `provider_response_shape` 与 `plan_compilation`；
+2. Provider response 诊断只允许持久化有界结构元数据：`finish_reason`、工具调用数量、工具名、参数类型、参数顶层字段和截断标记；原始文本、reasoning、参数值和 Provider 原始响应不得进入 Plan Ledger；
+3. Plan Ledger 持久化 reason code、失败阶段和经过 schema 校验的诊断；HTTP 只返回稳定错误代码、reason code、失败阶段和不含详细诊断的公共 plan 投影；
+4. 运行时 authorization fingerprint 绑定 purpose、文件名、数据 fingerprint、问题、planning input、实际 `model_id` 和完整 `planning_context`；消费前必须重新估算并严格相等比较；
+5. 实际 Planner 实例的模型必须与消费时估算模型一致，Planner 结果的模型也必须与已授权模型一致；任何漂移都在 Provider 调用前 fail closed；
+6. release preflight identity fingerprint 绑定 source digest、场景和发布预检身份；runtime authorization fingerprint 只约束一次运行时 Provider 权限。两者职责不同，不能互相替代。
+
+该补充不构成 `real_provider_analysis_journey` PASS，不授权新的 Provider 调用、`/` 根入口切换、旧系统删除或发布完成声明。

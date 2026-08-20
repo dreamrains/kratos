@@ -1,0 +1,50 @@
+{
+  "version": "v2_real_provider_journey_attempt.v1",
+  "source_digest": "sha256:2983e3090b6bd57a75358e8ee957aeda14bdc0c65d60375d7f885951debdf7e1",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "planning_context": {
+    "estimated_input_tokens": 357,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_675950dc44ae4c6fa47c038c882ce435",
+    "client_action_id": "action_real_5c5a_initial",
+    "purpose": "analysis_planning",
+    "provider_calls_authorized": 1,
+    "status": "consumed",
+    "consumer_request_id": "request_real_5c5a_initial",
+    "request_fingerprint": "sha256:f867588da1a306767aa95ac555603f74e5958d3b1dc15f072a96f19339934e53"
+  },
+  "journey": [
+    {"operation": "upload", "http_status": 200, "provider_calls": 0},
+    {"operation": "planning_estimate", "http_status": 200, "provider_calls": 0},
+    {"operation": "authorization_issue", "http_status": 201, "provider_calls": 0},
+    {"operation": "analysis_planning", "http_status": 502, "provider_calls": 1}
+  ],
+  "result": {
+    "plan_id": "plan_5e182aaf6f42822918de8b91",
+    "status": "failed",
+    "error_code": "PlannerContractError",
+    "message": "planner invocation or contract validation failed",
+    "provider_calls": 1,
+    "planner_invocations": 0,
+    "automatic_retries": 0,
+    "stop_condition": "planner_contract_error"
+  },
+  "diagnostic_limit": {
+    "specific_contract_reason_persisted": false,
+    "sanitized_provider_structure_persisted": false,
+    "root_cause_resolution": "insufficient_observability"
+  },
+  "release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

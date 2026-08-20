@@ -199,6 +199,47 @@ def test_non_ready_plan_cannot_be_consumed(tmp_path):
         store.consume(requested.plan_id, target_turn_id="turn_target")
 
 
+def test_plan_store_persists_sanitized_failure_diagnostic_without_exposing_it_publicly(
+    tmp_path,
+):
+    store = PlanStore(tmp_path, "session_plan_diagnostic")
+    requested = store.request(
+        client_request_id="client_plan_diagnostic",
+        question="平均销售额？",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_diagnostic",
+        provider_calls_authorized=1,
+    )
+    diagnostic = {
+        "failure_stage": "plan_compilation",
+        "finish_reason": "tool_calls",
+        "tool_call_count": 1,
+        "tool_names": ["submit_analysis_plan"],
+        "tool_argument_types": ["dict"],
+        "argument_top_level_fields": ["analysis_kind", "finding", "parameters"],
+        "metadata_truncated": False,
+    }
+
+    failed = store.fail(
+        requested.plan_id,
+        error_code="PlannerContractError",
+        message="planner invocation or contract validation failed",
+        error_reason_code="plan_unexpected_fields",
+        failure_stage="plan_compilation",
+        diagnostic=diagnostic,
+    )
+    restored = PlanStore(tmp_path, "session_plan_diagnostic").get(requested.plan_id)
+
+    assert restored == failed
+    assert restored.error_reason_code == "plan_unexpected_fields"
+    assert restored.failure_stage == "plan_compilation"
+    assert restored.diagnostic == diagnostic
+    public = restored.to_dict()
+    assert public["error_reason_code"] == "plan_unexpected_fields"
+    assert public["failure_stage"] == "plan_compilation"
+    assert "diagnostic" not in public
+
+
 def test_unsupported_plan_is_terminal_without_an_executable_route(tmp_path):
     store = PlanStore(tmp_path, "session_plan_unsupported")
     requested = store.request(

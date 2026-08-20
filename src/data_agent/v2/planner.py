@@ -12,8 +12,58 @@ import pandas as pd
 from data_agent.v2.router import AnalysisKind
 
 
+class PlannerFailureStage(StrEnum):
+    PROVIDER_RESPONSE_SHAPE = "provider_response_shape"
+    PLAN_COMPILATION = "plan_compilation"
+
+
+class PlannerFailureReason(StrEnum):
+    PROVIDER_RESPONSE_MISSING_TOOL_CALL = "provider_response_missing_tool_call"
+    PROVIDER_RESPONSE_UNEXPECTED_TOOL_CALL_COUNT = (
+        "provider_response_unexpected_tool_call_count"
+    )
+    PROVIDER_RESPONSE_UNEXPECTED_TOOL_NAME = "provider_response_unexpected_tool_name"
+    PROVIDER_RESPONSE_TOOL_ARGUMENTS_INVALID_JSON = (
+        "provider_response_tool_arguments_invalid_json"
+    )
+    PROVIDER_RESPONSE_TOOL_ARGUMENTS_NOT_OBJECT = (
+        "provider_response_tool_arguments_not_object"
+    )
+    PLAN_CONTRACT_INVALID = "plan_contract_invalid"
+    PLAN_UNEXPECTED_FIELDS = "plan_unexpected_fields"
+    PLAN_INVALID_STATUS = "plan_invalid_status"
+    PLAN_REQUIRED_FIELD_MISSING = "plan_required_field_missing"
+    PLAN_QUESTIONS_INVALID = "plan_questions_invalid"
+    PLAN_PARAMETERS_NOT_OBJECT = "plan_parameters_not_object"
+    PLAN_STATUS_PAYLOAD_INVALID = "plan_status_payload_invalid"
+    PLAN_INVALID_ANALYSIS_KIND = "plan_invalid_analysis_kind"
+    PLAN_PARAMETER_CONTRACT_INVALID = "plan_parameter_contract_invalid"
+    PLAN_COLUMN_BINDING_INVALID = "plan_column_binding_invalid"
+    PLAN_PARAMETER_VALUE_INVALID = "plan_parameter_value_invalid"
+
+
 class PlannerContractError(ValueError):
-    """The model response cannot become an executable V2 analysis plan."""
+    """A classified model response cannot become an executable V2 plan."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: PlannerFailureReason | str = (
+            PlannerFailureReason.PLAN_CONTRACT_INVALID
+        ),
+        failure_stage: PlannerFailureStage = PlannerFailureStage.PLAN_COMPILATION,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = PlannerFailureReason(reason_code).value
+        self.failure_stage = PlannerFailureStage(failure_stage)
+        self.diagnostic = dict(diagnostic or {})
+        self.diagnostic["failure_stage"] = self.failure_stage.value
+
+    def attach_response_diagnostic(self, diagnostic: dict[str, Any]) -> None:
+        self.diagnostic = dict(diagnostic)
+        self.diagnostic["failure_stage"] = self.failure_stage.value
 
 
 class PlanStatus(StrEnum):
@@ -148,6 +198,109 @@ _AUTOMATIC_KINDS = (
 )
 _AUTOMATIC_KIND_SET = frozenset(_AUTOMATIC_KINDS)
 
+_DIAGNOSTIC_MAX_TOOL_CALLS = 8
+_DIAGNOSTIC_MAX_ARGUMENT_FIELDS = 32
+_DIAGNOSTIC_MAX_TEXT = 64
+
+
+def _diagnostic_text(value: Any) -> str:
+    normalized = "".join(
+        character
+        for character in str(value or "").strip()
+        if character.isprintable() and character not in "\r\n"
+    )
+    return normalized[:_DIAGNOSTIC_MAX_TEXT]
+
+
+def _provider_response_diagnostic(
+    response: Any,
+    *,
+    failure_stage: PlannerFailureStage,
+) -> dict[str, Any]:
+    raw_calls = getattr(response, "tool_calls", ()) or ()
+    calls = tuple(raw_calls)
+    retained_calls = calls[:_DIAGNOSTIC_MAX_TOOL_CALLS]
+    raw_fields = tuple(
+        str(key)
+        for call in retained_calls
+        for key in (
+            getattr(call, "arguments", {}).keys()
+            if isinstance(getattr(call, "arguments", None), dict)
+            else ()
+        )
+    )
+    fields = sorted({_diagnostic_text(key) for key in raw_fields})
+    metadata_truncated = (
+        len(calls) > _DIAGNOSTIC_MAX_TOOL_CALLS
+        or len(fields) > _DIAGNOSTIC_MAX_ARGUMENT_FIELDS
+        or any(
+            len(str(getattr(call, "name", "") or "")) > _DIAGNOSTIC_MAX_TEXT
+            for call in retained_calls
+        )
+        or any(len(field) > _DIAGNOSTIC_MAX_TEXT for field in raw_fields)
+    )
+    return {
+        "failure_stage": failure_stage.value,
+        "finish_reason": _diagnostic_text(getattr(response, "finish_reason", "")),
+        "tool_call_count": len(calls),
+        "tool_names": [
+            _diagnostic_text(getattr(call, "name", "")) for call in retained_calls
+        ],
+        "tool_argument_types": [
+            type(getattr(call, "arguments", None)).__name__ for call in retained_calls
+        ],
+        "argument_top_level_fields": fields[:_DIAGNOSTIC_MAX_ARGUMENT_FIELDS],
+        "metadata_truncated": metadata_truncated,
+    }
+
+
+def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any]:
+    """Enforce the bounded metadata-only schema accepted by the Plan Ledger."""
+
+    if not isinstance(value, dict):
+        raise ValueError("planner failure diagnostic must be an object")
+    allowed = {
+        "failure_stage",
+        "finish_reason",
+        "tool_call_count",
+        "tool_names",
+        "tool_argument_types",
+        "argument_top_level_fields",
+        "metadata_truncated",
+    }
+    if set(value) != allowed:
+        raise ValueError("planner failure diagnostic fields are invalid")
+    stage = PlannerFailureStage(str(value.get("failure_stage") or ""))
+    tool_call_count = value.get("tool_call_count")
+    if (
+        isinstance(tool_call_count, bool)
+        or not isinstance(tool_call_count, int)
+        or tool_call_count < 0
+    ):
+        raise ValueError("planner failure tool_call_count is invalid")
+
+    def bounded_list(name: str, limit: int) -> list[str]:
+        items = value.get(name)
+        if not isinstance(items, list) or len(items) > limit:
+            raise ValueError(f"planner failure {name} is invalid")
+        return [_diagnostic_text(item) for item in items]
+
+    if not isinstance(value.get("metadata_truncated"), bool):
+        raise ValueError("planner failure metadata_truncated is invalid")
+    return {
+        "failure_stage": stage.value,
+        "finish_reason": _diagnostic_text(value.get("finish_reason")),
+        "tool_call_count": tool_call_count,
+        "tool_names": bounded_list("tool_names", _DIAGNOSTIC_MAX_TOOL_CALLS),
+        "tool_argument_types": bounded_list(
+            "tool_argument_types", _DIAGNOSTIC_MAX_TOOL_CALLS
+        ),
+        "argument_top_level_fields": bounded_list(
+            "argument_top_level_fields", _DIAGNOSTIC_MAX_ARGUMENT_FIELDS
+        ),
+        "metadata_truncated": value["metadata_truncated"],
+    }
+
 _CLAIM_CEILING = {
     AnalysisKind.DESCRIPTIVE: "descriptive",
     AnalysisKind.FACTOR_RELATIONSHIP: "inferential",
@@ -248,16 +401,24 @@ def _tool_definition() -> dict[str, Any]:
 def _required_text(value: Any, field_name: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
-        raise PlannerContractError(f"{field_name} is required")
+        raise PlannerContractError(
+            f"{field_name} is required",
+            reason_code="plan_required_field_missing",
+        )
     return normalized
 
 
 def _questions(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise PlannerContractError("questions must be an array")
+        raise PlannerContractError(
+            "questions must be an array", reason_code="plan_questions_invalid"
+        )
     result = tuple(str(item or "").strip() for item in value if str(item or "").strip())
     if len(result) > 3:
-        raise PlannerContractError("questions must contain at most three items")
+        raise PlannerContractError(
+            "questions must contain at most three items",
+            reason_code="plan_questions_invalid",
+        )
     return result
 
 
@@ -317,6 +478,10 @@ class StructuredAnalysisPlanner:
     def __init__(self, client: PlannerClient) -> None:
         self.client = client
 
+    @property
+    def model_id(self) -> str:
+        return str(getattr(self.client, "model_id", "") or "").strip()
+
     def plan(
         self,
         user_question: str,
@@ -332,19 +497,52 @@ class StructuredAnalysisPlanner:
             tools=request.tools,
             system=request.system,
         )
-        calls = [
-            item
-            for item in getattr(response, "tool_calls", ())
-            if getattr(item, "name", "") == "submit_analysis_plan"
-        ]
-        if len(calls) != 1 or len(getattr(response, "tool_calls", ())) != 1:
+        tool_calls = tuple(getattr(response, "tool_calls", ()) or ())
+        response_diagnostic = _provider_response_diagnostic(
+            response, failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE
+        )
+        if not tool_calls:
             raise PlannerContractError(
-                "planner must return exactly one submit_analysis_plan tool call"
+                "planner must return exactly one submit_analysis_plan tool call",
+                reason_code="provider_response_missing_tool_call",
+                failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+                diagnostic=response_diagnostic,
             )
-        arguments = getattr(calls[0], "arguments", None)
+        if len(tool_calls) != 1:
+            raise PlannerContractError(
+                "planner must return exactly one submit_analysis_plan tool call",
+                reason_code="provider_response_unexpected_tool_call_count",
+                failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+                diagnostic=response_diagnostic,
+            )
+        call = tool_calls[0]
+        if getattr(call, "name", "") != "submit_analysis_plan":
+            raise PlannerContractError(
+                "planner must call submit_analysis_plan",
+                reason_code="provider_response_unexpected_tool_name",
+                failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+                diagnostic=response_diagnostic,
+            )
+        if getattr(call, "arguments_parse_error", "") == "invalid_json":
+            raise PlannerContractError(
+                "planner tool arguments are invalid JSON",
+                reason_code="provider_response_tool_arguments_invalid_json",
+                failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+                diagnostic=response_diagnostic,
+            )
+        arguments = getattr(call, "arguments", None)
         if not isinstance(arguments, dict):
-            raise PlannerContractError("planner tool arguments must be an object")
-        return self._compile(question, context, arguments)
+            raise PlannerContractError(
+                "planner tool arguments must be an object",
+                reason_code="provider_response_tool_arguments_not_object",
+                failure_stage=PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+                diagnostic=response_diagnostic,
+            )
+        try:
+            return self._compile(question, context, arguments)
+        except PlannerContractError as exc:
+            exc.attach_response_diagnostic(response_diagnostic)
+            raise
 
     def build_request(
         self,
@@ -402,26 +600,36 @@ class StructuredAnalysisPlanner:
         unexpected = sorted(set(arguments) - allowed_keys)
         if unexpected:
             raise PlannerContractError(
-                f"unexpected planner fields: {', '.join(unexpected)}"
+                f"unexpected planner fields: {', '.join(unexpected)}",
+                reason_code="plan_unexpected_fields",
             )
         try:
             status = PlanStatus(str(arguments.get("status") or ""))
         except ValueError as exc:
-            raise PlannerContractError("unknown planner status") from exc
+            raise PlannerContractError(
+                "unknown planner status", reason_code="plan_invalid_status"
+            ) from exc
         rationale = _required_text(arguments.get("rationale"), "rationale")
         questions = _questions(arguments.get("questions"))
         parameters = arguments.get("parameters")
         if not isinstance(parameters, dict):
-            raise PlannerContractError("parameters must be an object")
+            raise PlannerContractError(
+                "parameters must be an object",
+                reason_code="plan_parameters_not_object",
+            )
         raw_kind = str(arguments.get("analysis_kind") or "").strip()
 
         if status is PlanStatus.NEEDS_INPUT:
             if raw_kind or parameters:
                 raise PlannerContractError(
-                    "needs_input cannot contain an executable analysis route"
+                    "needs_input cannot contain an executable analysis route",
+                    reason_code="plan_status_payload_invalid",
                 )
             if not questions:
-                raise PlannerContractError("needs_input requires at least one question")
+                raise PlannerContractError(
+                    "needs_input requires at least one question",
+                    reason_code="plan_status_payload_invalid",
+                )
             return self._result(
                 status, question, None, {}, rationale, questions, maximum_claim_class=""
             )
@@ -429,21 +637,29 @@ class StructuredAnalysisPlanner:
         if status is PlanStatus.UNSUPPORTED:
             if raw_kind or parameters or questions:
                 raise PlannerContractError(
-                    "unsupported cannot contain a route or user questions"
+                    "unsupported cannot contain a route or user questions",
+                    reason_code="plan_status_payload_invalid",
                 )
             return self._result(
                 status, question, None, {}, rationale, (), maximum_claim_class=""
             )
 
         if questions:
-            raise PlannerContractError("ready plan cannot contain user questions")
+            raise PlannerContractError(
+                "ready plan cannot contain user questions",
+                reason_code="plan_status_payload_invalid",
+            )
         try:
             kind = AnalysisKind(raw_kind)
         except ValueError as exc:
-            raise PlannerContractError(f"unknown analysis_kind: {raw_kind}") from exc
+            raise PlannerContractError(
+                f"unknown analysis_kind: {raw_kind}",
+                reason_code="plan_invalid_analysis_kind",
+            ) from exc
         if kind not in _AUTOMATIC_KIND_SET:
             raise PlannerContractError(
-                f"{kind.value} is not available to automatic planning"
+                f"{kind.value} is not available to automatic planning",
+                reason_code="plan_invalid_analysis_kind",
             )
         normalized = self._validate_parameters(kind, parameters, context)
         return self._result(
@@ -490,12 +706,14 @@ class StructuredAnalysisPlanner:
         unknown = sorted(set(parameters) - allowed)
         if unknown:
             raise PlannerContractError(
-                f"unsupported parameters for {kind.value}: {', '.join(unknown)}"
+                f"unsupported parameters for {kind.value}: {', '.join(unknown)}",
+                reason_code="plan_parameter_contract_invalid",
             )
         missing = [key for key in required if key not in parameters]
         if missing:
             raise PlannerContractError(
-                f"missing parameters for {kind.value}: {', '.join(missing)}"
+                f"missing parameters for {kind.value}: {', '.join(missing)}",
+                reason_code="plan_parameter_contract_invalid",
             )
 
         columns = {item.name: item for item in context.columns}
@@ -505,11 +723,20 @@ class StructuredAnalysisPlanner:
             value = _required_text(result.get(key), key)
             selected = columns.get(value)
             if selected is None:
-                raise PlannerContractError(f"unknown column: {value}")
+                raise PlannerContractError(
+                    f"unknown column: {value}",
+                    reason_code="plan_column_binding_invalid",
+                )
             if numeric and selected.role is not ColumnRole.NUMERIC:
-                raise PlannerContractError(f"{key} must be numeric")
+                raise PlannerContractError(
+                    f"{key} must be numeric",
+                    reason_code="plan_column_binding_invalid",
+                )
             if datetime and selected.role is not ColumnRole.DATETIME:
-                raise PlannerContractError(f"{key} must be datetime")
+                raise PlannerContractError(
+                    f"{key} must be datetime",
+                    reason_code="plan_column_binding_invalid",
+                )
             result[key] = value
             return value
 
@@ -526,18 +753,30 @@ class StructuredAnalysisPlanner:
         if "features" in result:
             raw_features = result["features"]
             if not isinstance(raw_features, list) or not raw_features:
-                raise PlannerContractError("features must be a non-empty array")
+                raise PlannerContractError(
+                    "features must be a non-empty array",
+                    reason_code="plan_parameter_value_invalid",
+                )
             features: list[str] = []
             for value in raw_features:
                 name = str(value or "").strip()
                 selected = columns.get(name)
                 if selected is None:
-                    raise PlannerContractError(f"unknown column: {name}")
+                    raise PlannerContractError(
+                        f"unknown column: {name}",
+                        reason_code="plan_column_binding_invalid",
+                    )
                 if selected.role is not ColumnRole.NUMERIC:
-                    raise PlannerContractError("features must be numeric")
+                    raise PlannerContractError(
+                        "features must be numeric",
+                        reason_code="plan_column_binding_invalid",
+                    )
                 features.append(name)
             if len(features) != len(set(features)):
-                raise PlannerContractError("features must be unique")
+                raise PlannerContractError(
+                    "features must be unique",
+                    reason_code="plan_parameter_value_invalid",
+                )
             result["features"] = features
 
         if "frequency" in result and result["frequency"] not in {
@@ -545,25 +784,43 @@ class StructuredAnalysisPlanner:
             "weekly",
             "monthly",
         }:
-            raise PlannerContractError("frequency must be daily, weekly, or monthly")
+            raise PlannerContractError(
+                "frequency must be daily, weekly, or monthly",
+                reason_code="plan_parameter_value_invalid",
+            )
         if "aggregation" in result and result["aggregation"] not in {"sum", "mean"}:
-            raise PlannerContractError("aggregation must be sum or mean")
+            raise PlannerContractError(
+                "aggregation must be sum or mean",
+                reason_code="plan_parameter_value_invalid",
+            )
         if "horizon" in result:
             horizon = result["horizon"]
             if isinstance(horizon, bool) or not isinstance(horizon, int) or not 1 <= horizon <= 30:
-                raise PlannerContractError("horizon must be an integer between 1 and 30")
+                raise PlannerContractError(
+                    "horizon must be an integer between 1 and 30",
+                    reason_code="plan_parameter_value_invalid",
+                )
         if "recommendation_intent" in result and result["recommendation_intent"] not in {
             "none",
             "investigate",
             "act",
         }:
-            raise PlannerContractError("invalid recommendation_intent")
+            raise PlannerContractError(
+                "invalid recommendation_intent",
+                reason_code="plan_parameter_value_invalid",
+            )
         if "action_risk" in result and result["action_risk"] not in {
             "low",
             "medium",
             "high",
         }:
-            raise PlannerContractError("invalid action_risk")
+            raise PlannerContractError(
+                "invalid action_risk",
+                reason_code="plan_parameter_value_invalid",
+            )
         if "reversible" in result and not isinstance(result["reversible"], bool):
-            raise PlannerContractError("reversible must be a boolean")
+            raise PlannerContractError(
+                "reversible must be a boolean",
+                reason_code="plan_parameter_value_invalid",
+            )
         return result

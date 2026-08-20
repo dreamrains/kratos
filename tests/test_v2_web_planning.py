@@ -8,7 +8,13 @@ import pandas as pd
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.v2.plan_store import DurablePlanStatus, PlanStore
-from data_agent.v2.planner import AnalysisPlan, AnalysisKind, PlanStatus
+from data_agent.v2.planner import (
+    AnalysisPlan,
+    AnalysisKind,
+    PlanStatus,
+    PlannerContractError,
+    PlannerFailureStage,
+)
 from data_agent.v2.provider_authorization import (
     ProviderAuthorizationStatus,
     ProviderAuthorizationStore,
@@ -48,6 +54,7 @@ def _client(monkeypatch, tmp_path):
         AgentConfig(
             WORKSPACE_DIR=workspace,
             SESSIONS_DIR=tmp_path / "sessions",
+            MODEL_ID="provider/test-model",
             MODEL_CONTEXT_WINDOW=128000,
         ),
     )
@@ -83,6 +90,7 @@ def _issue_authorization(
 
 class FakePlanner:
     calls = 0
+    model_id = "provider/test-model"
 
     def plan(self, question, context):
         type(self).calls += 1
@@ -95,11 +103,13 @@ class FakePlanner:
             questions=(),
             maximum_claim_class="descriptive",
             planner_invocations=1,
-            model_id="fake-planner",
+            model_id=self.model_id,
         )
 
 
 class FakeNeedsInputPlanner:
+    model_id = "provider/test-model"
+
     def plan(self, question, context):
         return AnalysisPlan(
             status=PlanStatus.NEEDS_INPUT,
@@ -110,12 +120,13 @@ class FakeNeedsInputPlanner:
             questions=("每行代表订单还是客户？",),
             maximum_claim_class="",
             planner_invocations=1,
-            model_id="fake-planner",
+            model_id=self.model_id,
         )
 
 
 class FakeFailedPlanner:
     calls = 0
+    model_id = "provider/test-model"
 
     def plan(self, question, context, *, clarifications=()):
         type(self).calls += 1
@@ -125,6 +136,7 @@ class FakeFailedPlanner:
 class FakeClarifiedPlanner:
     calls = 0
     clarifications = ()
+    model_id = "provider/test-model"
 
     def plan(self, question, context, *, clarifications=()):
         type(self).calls += 1
@@ -138,7 +150,7 @@ class FakeClarifiedPlanner:
             questions=(),
             maximum_claim_class="descriptive",
             planner_invocations=1,
-            model_id="fake-clarified-planner",
+            model_id=self.model_id,
         )
 
 
@@ -350,6 +362,96 @@ def test_plan_rechecks_context_before_consuming_authorization_or_calling_planner
     assert FakePlanner.calls == 0
     authorization = ProviderAuthorizationStore(
         tmp_path / "sessions", "session_budget_recheck"
+    ).get(authorization_id)
+    assert authorization.status is ProviderAuthorizationStatus.ISSUED
+
+
+def test_plan_rejects_fit_but_changed_authorized_context_before_provider_call(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    issued_estimate = _estimate(estimated=500, available=120000)
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(estimate=issued_estimate),
+    )
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_context_drift",
+        question="average sales",
+        client_action_id="action_context_drift",
+    )
+    changed_estimate = _estimate(estimated=501, available=120000)
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(estimate=changed_estimate),
+    )
+    FakePlanner.calls = 0
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakePlanner())
+
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_context_drift",
+            "filename": "sales.csv",
+            "question": "average sales",
+            "client_request_id": "client_context_drift",
+            "provider_authorization_id": authorization_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "planning context" in response.get_json()["error"]
+    assert FakePlanner.calls == 0
+    authorization = ProviderAuthorizationStore(
+        tmp_path / "sessions", "session_context_drift"
+    ).get(authorization_id)
+    assert authorization.status is ProviderAuthorizationStatus.ISSUED
+
+
+def test_plan_rejects_planner_model_drift_before_consuming_or_calling(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    monkeypatch.setattr(
+        v2_module,
+        "V2_PLANNING_BUDGET_FACTORY",
+        lambda: FakePlanningBudget(estimate=_estimate()),
+    )
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_model_drift",
+        question="average sales",
+        client_action_id="action_model_drift",
+    )
+
+    class DriftedPlanner(FakePlanner):
+        model_id = "provider/other-model"
+
+    DriftedPlanner.calls = 0
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: DriftedPlanner())
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_model_drift",
+            "filename": "sales.csv",
+            "question": "average sales",
+            "client_request_id": "client_model_drift",
+            "provider_authorization_id": authorization_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "planner model" in response.get_json()["error"]
+    assert DriftedPlanner.calls == 0
+    authorization = ProviderAuthorizationStore(
+        tmp_path / "sessions", "session_model_drift"
     ).get(authorization_id)
     assert authorization.status is ProviderAuthorizationStatus.ISSUED
 
@@ -723,6 +825,70 @@ def test_failed_plan_is_durable_and_same_request_does_not_retry_provider(
     assert FakeFailedPlanner.calls == 1
 
 
+def test_planner_contract_failure_returns_stable_safe_http_error_and_persists_diagnostic(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    class ContractFailedPlanner:
+        calls = 0
+        model_id = "provider/test-model"
+
+        def plan(self, question, context, *, clarifications=()):
+            type(self).calls += 1
+            raise PlannerContractError(
+                "unexpected planner fields: finding",
+                reason_code="plan_unexpected_fields",
+                failure_stage=PlannerFailureStage.PLAN_COMPILATION,
+                diagnostic={
+                    "failure_stage": "plan_compilation",
+                    "finish_reason": "tool_calls",
+                    "tool_call_count": 1,
+                    "tool_names": ["submit_analysis_plan"],
+                    "tool_argument_types": ["dict"],
+                    "argument_top_level_fields": ["finding", "parameters"],
+                    "metadata_truncated": False,
+                },
+            )
+
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: ContractFailedPlanner()
+    )
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_contract_diagnostic",
+        question="average sales",
+        client_action_id="action_contract_diagnostic",
+    )
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_contract_diagnostic",
+            "filename": "sales.csv",
+            "question": "average sales",
+            "client_request_id": "client_contract_diagnostic",
+            "provider_authorization_id": authorization_id,
+        },
+    )
+
+    body = response.get_json()
+    assert response.status_code == 502
+    assert body["error"] == "planning failed"
+    assert body["error_code"] == "planner_contract_error"
+    assert body["reason_code"] == "plan_unexpected_fields"
+    assert body["failure_stage"] == "plan_compilation"
+    assert "finding" not in json.dumps(body)
+    restored = PlanStore(
+        tmp_path / "sessions", "session_contract_diagnostic"
+    ).get(body["plan"]["plan_id"])
+    assert restored.error_reason_code == "plan_unexpected_fields"
+    assert restored.diagnostic["argument_top_level_fields"] == [
+        "finding",
+        "parameters",
+    ]
+
+
 def test_failed_derived_plan_retries_only_with_new_explicit_authorization(
     monkeypatch, tmp_path
 ):
@@ -830,9 +996,11 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
         question=question,
         client_action_id="action_plan_incomplete",
     )
-    ProviderAuthorizationStore(
+    authorization_store = ProviderAuthorizationStore(
         tmp_path / "sessions", "session_plan_incomplete"
-    ).consume(
+    )
+    authorization = authorization_store.get(authorization_id)
+    authorization_store.consume(
         authorization_id,
         client_request_id="client_plan_incomplete",
         purpose="analysis_planning",
@@ -841,6 +1009,8 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
             "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
         ),
         question=question,
+        model_id=authorization.model_id,
+        planning_context=authorization.planning_context,
     )
     store = PlanStore(tmp_path / "sessions", "session_plan_incomplete")
     store.request(

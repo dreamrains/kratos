@@ -28,7 +28,8 @@ class ProviderAuthorizationRecord:
     client_action_id: str
     purpose: str
     filename: str
-    request_fingerprint: str
+    model_id: str
+    runtime_authorization_fingerprint: str
     provider_calls_authorized: int
     status: ProviderAuthorizationStatus
     planning_input_id: str = ""
@@ -87,18 +88,24 @@ def _planning_context(value: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def planning_request_fingerprint(
+def runtime_authorization_fingerprint(
     *,
     purpose: str,
     filename: str,
     source_fingerprint: str,
     question: str,
+    model_id: str,
+    planning_context: dict[str, Any],
     planning_input_id: str = "",
 ) -> str:
+    """Bind one runtime Provider permission to request, model, and token context."""
+
     normalized_purpose = str(purpose or "").strip()
     safe_filename = str(filename or "").strip()
     normalized_source = str(source_fingerprint or "").strip()
     normalized_question = str(question or "").strip()
+    normalized_model = str(model_id or "").strip()
+    normalized_context = _planning_context(planning_context)
     normalized_input = str(planning_input_id or "").strip()
     if normalized_input:
         normalized_input = require_storage_id(
@@ -112,6 +119,10 @@ def planning_request_fingerprint(
         raise ValueError("source_fingerprint must be a sha256 fingerprint")
     if not normalized_question:
         raise ValueError("question is required")
+    if not normalized_model:
+        raise ValueError("model_id is required")
+    if normalized_context["model_id"] != normalized_model:
+        raise ValueError("planning_context model_id must equal model_id")
     canonical = _line(
         {
             "filename": safe_filename,
@@ -119,6 +130,8 @@ def planning_request_fingerprint(
             "question": normalized_question,
             "source_fingerprint": normalized_source,
             "planning_input_id": normalized_input,
+            "model_id": normalized_model,
+            "planning_context": normalized_context,
         }
     )
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
@@ -194,8 +207,9 @@ class ProviderAuthorizationStore:
                     ),
                     purpose=str(event.get("purpose") or ""),
                     filename=str(event.get("filename") or ""),
-                    request_fingerprint=str(
-                        event.get("request_fingerprint") or ""
+                    model_id=str(event.get("model_id") or ""),
+                    runtime_authorization_fingerprint=str(
+                        event.get("runtime_authorization_fingerprint") or ""
                     ),
                     provider_calls_authorized=int(
                         event.get("provider_calls_authorized") or 0
@@ -246,6 +260,7 @@ class ProviderAuthorizationStore:
         question: str,
         provider_calls_authorized: int,
         confirm_provider_call: bool,
+        model_id: str,
         planning_context: dict[str, Any],
         planning_input_id: str = "",
     ) -> ProviderAuthorizationRecord:
@@ -257,17 +272,20 @@ class ProviderAuthorizationStore:
             or provider_calls_authorized != 1
         ):
             raise ValueError("provider_calls_authorized must equal 1")
-        request_fingerprint = planning_request_fingerprint(
+        normalized_model = str(model_id or "").strip()
+        normalized_planning_context = _planning_context(planning_context)
+        authorization_fingerprint = runtime_authorization_fingerprint(
             purpose=purpose,
             filename=filename,
             source_fingerprint=source_fingerprint,
             question=question,
+            model_id=normalized_model,
+            planning_context=normalized_planning_context,
             planning_input_id=planning_input_id,
         )
         normalized_purpose = str(purpose).strip()
         normalized_filename = str(filename).strip()
         normalized_input = str(planning_input_id or "").strip()
-        normalized_planning_context = _planning_context(planning_context)
         with _AUTHORIZATION_LOCK:
             existing = next(
                 (
@@ -281,7 +299,9 @@ class ProviderAuthorizationStore:
                 same = (
                     existing.purpose == normalized_purpose
                     and existing.filename == normalized_filename
-                    and existing.request_fingerprint == request_fingerprint
+                    and existing.model_id == normalized_model
+                    and existing.runtime_authorization_fingerprint
+                    == authorization_fingerprint
                     and existing.provider_calls_authorized
                     == provider_calls_authorized
                     and existing.planning_input_id == normalized_input
@@ -305,7 +325,8 @@ class ProviderAuthorizationStore:
                     "client_action_id": action_id,
                     "purpose": normalized_purpose,
                     "filename": normalized_filename,
-                    "request_fingerprint": request_fingerprint,
+                    "model_id": normalized_model,
+                    "runtime_authorization_fingerprint": authorization_fingerprint,
                     "provider_calls_authorized": provider_calls_authorized,
                     "planning_input_id": normalized_input,
                     "planning_context": normalized_planning_context,
@@ -322,20 +343,37 @@ class ProviderAuthorizationStore:
         filename: str,
         source_fingerprint: str,
         question: str,
+        model_id: str,
+        planning_context: dict[str, Any],
         planning_input_id: str = "",
     ) -> ProviderAuthorizationRecord:
         safe_id = require_storage_id(authorization_id, "authorization_id")
         consumer_id = require_storage_id(client_request_id, "client_request_id")
-        request_fingerprint = planning_request_fingerprint(
+        normalized_model = str(model_id or "").strip()
+        normalized_planning_context = _planning_context(planning_context)
+        authorization_fingerprint = runtime_authorization_fingerprint(
             purpose=purpose,
             filename=filename,
             source_fingerprint=source_fingerprint,
             question=question,
+            model_id=normalized_model,
+            planning_context=normalized_planning_context,
             planning_input_id=planning_input_id,
         )
         with _AUTHORIZATION_LOCK:
             current = self.get(safe_id)
-            if current.request_fingerprint != request_fingerprint:
+            if current.model_id != normalized_model:
+                raise ProviderAuthorizationConflict(
+                    "provider authorization is bound to a different model"
+                )
+            if current.planning_context != normalized_planning_context:
+                raise ProviderAuthorizationConflict(
+                    "provider authorization is bound to a different planning context"
+                )
+            if (
+                current.runtime_authorization_fingerprint
+                != authorization_fingerprint
+            ):
                 raise ProviderAuthorizationConflict(
                     "provider authorization is bound to different request content"
                 )

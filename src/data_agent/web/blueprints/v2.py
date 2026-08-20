@@ -30,7 +30,11 @@ from data_agent.v2.provider_authorization import (
     ProviderAuthorizationConflict,
     ProviderAuthorizationStore,
 )
-from data_agent.v2.planner import DatasetPlanningContext, StructuredAnalysisPlanner
+from data_agent.v2.planner import (
+    DatasetPlanningContext,
+    PlannerContractError,
+    StructuredAnalysisPlanner,
+)
 from data_agent.v2.planning_input import (
     PlanningInputConflict,
     PlanningInputRecord,
@@ -449,7 +453,7 @@ def create_v2_plan() -> Response:
         parent_plan_id = (
             planning_input.source_plan_id if planning_input is not None else ""
         )
-        _planning_context_estimate(
+        planning_context = _planning_context_estimate(
             question=question,
             context=context,
             planning_input=planning_input,
@@ -472,10 +476,18 @@ def create_v2_plan() -> Response:
                 filename=filename,
                 source_fingerprint=context.source_fingerprint,
                 question=question,
+                model_id=planning_context.model_id,
+                planning_context=planning_context.to_dict(),
                 planning_input_id=planning_input_id,
             )
             restored = store.require_replayable(requested.plan_id)
             return jsonify(restored.to_dict()), 200
+        planner = V2_PLANNER_FACTORY()
+        planner_model_id = str(getattr(planner, "model_id", "") or "").strip()
+        if not planner_model_id or planner_model_id != planning_context.model_id:
+            raise ProviderAuthorizationConflict(
+                "planner model differs from the current planning estimate"
+            )
         authorization_store.consume(
             authorization_id,
             client_request_id=client_request_id,
@@ -483,6 +495,8 @@ def create_v2_plan() -> Response:
             filename=filename,
             source_fingerprint=context.source_fingerprint,
             question=question,
+            model_id=planner_model_id,
+            planning_context=planning_context.to_dict(),
             planning_input_id=planning_input_id,
         )
         requested = store.request(
@@ -512,7 +526,6 @@ def create_v2_plan() -> Response:
         return jsonify({"error": str(exc)}), 400
 
     try:
-        planner = V2_PLANNER_FACTORY()
         result = (
             planner.plan(
                 question,
@@ -522,7 +535,29 @@ def create_v2_plan() -> Response:
             if planning_input is not None
             else planner.plan(question, context)
         )
+        if result.model_id != planner_model_id:
+            raise PlanConflict(
+                "planner result model differs from the authorized planner model"
+            )
         completed = store.complete(requested.plan_id, result)
+    except PlannerContractError as exc:
+        failed = store.fail(
+            requested.plan_id,
+            error_code="PlannerContractError",
+            message="planner invocation or contract validation failed",
+            error_reason_code=exc.reason_code,
+            failure_stage=exc.failure_stage.value,
+            diagnostic=exc.diagnostic,
+        )
+        return jsonify(
+            {
+                "error": "planning failed",
+                "error_code": "planner_contract_error",
+                "reason_code": exc.reason_code,
+                "failure_stage": exc.failure_stage.value,
+                "plan": failed.to_dict(),
+            }
+        ), 502
     except Exception as exc:
         failed = store.fail(
             requested.plan_id,
@@ -646,6 +681,7 @@ def issue_v2_provider_authorization() -> Response:
             question=question,
             provider_calls_authorized=payload.get("provider_calls_authorized"),
             confirm_provider_call=payload.get("confirm_provider_call"),
+            model_id=estimate.model_id,
             planning_context=estimate.to_dict(),
             planning_input_id=planning_input_id,
         )

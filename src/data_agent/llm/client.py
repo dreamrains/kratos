@@ -11,12 +11,20 @@ from data_agent.config import get_config
 
 
 class ToolCall:
-    __slots__ = ("id", "name", "arguments")
+    __slots__ = ("id", "name", "arguments", "arguments_parse_error")
 
-    def __init__(self, id: str, name: str, arguments: dict[str, Any]):
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        arguments: Any,
+        *,
+        arguments_parse_error: str = "",
+    ):
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.arguments_parse_error = str(arguments_parse_error or "")
 
 
 class Response:
@@ -94,13 +102,22 @@ def _parse_response(resp: Any) -> Response:
     if message.tool_calls:
         for tc in message.tool_calls:
             args = tc.function.arguments
+            arguments_parse_error = ""
             if isinstance(args, str):
                 args = _sanitize(args)
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError:
+                    arguments_parse_error = "invalid_json"
                     args = {"raw": args}
-            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+            tool_calls.append(
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=args,
+                    arguments_parse_error=arguments_parse_error,
+                )
+            )
 
     return Response(
         text=text,
@@ -252,14 +269,17 @@ class LLMClient:
                 for idx in sorted(tc_accum.keys()):
                     entry = tc_accum[idx]
                     args_str = _sanitize(entry["arguments"])
+                    arguments_parse_error = ""
                     try:
                         args = json.loads(args_str) if args_str else {}
                     except json.JSONDecodeError:
+                        arguments_parse_error = "invalid_json"
                         args = {"raw": args_str}
                     tool_calls.append(ToolCall(
                         id=entry["id"],
                         name=entry["name"],
                         arguments=args,
+                        arguments_parse_error=arguments_parse_error,
                     ))
 
                 response = Response(

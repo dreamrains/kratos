@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -13,6 +14,7 @@ from data_agent.v2.planner import (
     DatasetPlanningContext,
     PlanStatus,
     PlannerContractError,
+    PlannerFailureStage,
     StructuredAnalysisPlanner,
 )
 from data_agent.v2.router import AnalysisKind
@@ -218,6 +220,152 @@ def test_planner_rejects_hidden_result_fields_in_tool_arguments():
         StructuredAnalysisPlanner(client).plan("描述销售额", _context())
 
 
+@pytest.mark.parametrize(
+    ("response", "reason_code", "failure_stage", "tool_count", "tool_names", "fields"),
+    [
+        (
+            Response(text="untrusted free text", finish_reason="stop"),
+            "provider_response_missing_tool_call",
+            PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+            0,
+            [],
+            [],
+        ),
+        (
+            Response(
+                tool_calls=[
+                    ToolCall("one", "submit_analysis_plan", {}),
+                    ToolCall("two", "submit_analysis_plan", {}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            "provider_response_unexpected_tool_call_count",
+            PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+            2,
+            ["submit_analysis_plan", "submit_analysis_plan"],
+            [],
+        ),
+        (
+            Response(
+                tool_calls=[ToolCall("one", "unapproved_tool", {})],
+                finish_reason="tool_calls",
+            ),
+            "provider_response_unexpected_tool_name",
+            PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+            1,
+            ["unapproved_tool"],
+            [],
+        ),
+        (
+            Response(
+                tool_calls=[
+                    ToolCall(
+                        "one",
+                        "submit_analysis_plan",
+                        {"raw": "must never be persisted"},
+                        arguments_parse_error="invalid_json",
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            "provider_response_tool_arguments_invalid_json",
+            PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+            1,
+            ["submit_analysis_plan"],
+            ["raw"],
+        ),
+        (
+            Response(
+                tool_calls=[ToolCall("one", "submit_analysis_plan", "not-an-object")],
+                finish_reason="tool_calls",
+            ),
+            "provider_response_tool_arguments_not_object",
+            PlannerFailureStage.PROVIDER_RESPONSE_SHAPE,
+            1,
+            ["submit_analysis_plan"],
+            [],
+        ),
+    ],
+)
+def test_planner_classifies_provider_response_shape_failures_without_raw_content(
+    response, reason_code, failure_stage, tool_count, tool_names, fields
+):
+    class Client:
+        model_id = "provider/test-model"
+
+        def chat_once(self, messages, tools=None, system=None):
+            return response
+
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(Client()).plan("描述销售额", _context())
+
+    error = caught.value
+    assert error.reason_code == reason_code
+    assert error.failure_stage is failure_stage
+    assert error.diagnostic == {
+        "failure_stage": failure_stage.value,
+        "finish_reason": response.finish_reason,
+        "tool_call_count": tool_count,
+        "tool_names": tool_names,
+        "tool_argument_types": [
+            type(item.arguments).__name__ for item in response.tool_calls
+        ],
+        "argument_top_level_fields": fields,
+        "metadata_truncated": False,
+    }
+    assert "untrusted free text" not in json.dumps(error.diagnostic)
+    assert "must never be persisted" not in json.dumps(error.diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason_code"),
+    [
+        (
+            {
+                "status": "ready",
+                "analysis_kind": "descriptive",
+                "parameters": {"metric": "sales"},
+                "rationale": "describe",
+                "questions": [],
+                "finding": "must not become evidence",
+            },
+            "plan_unexpected_fields",
+        ),
+        (
+            {
+                "status": "invented",
+                "analysis_kind": "descriptive",
+                "parameters": {"metric": "sales"},
+                "rationale": "describe",
+                "questions": [],
+            },
+            "plan_invalid_status",
+        ),
+        (
+            {
+                "status": "ready",
+                "analysis_kind": "descriptive",
+                "parameters": {"metric": "channel"},
+                "rationale": "describe",
+                "questions": [],
+            },
+            "plan_column_binding_invalid",
+        ),
+    ],
+)
+def test_planner_classifies_local_plan_compilation_failures(arguments, reason_code):
+    client = FakePlannerClient(arguments)
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(client).plan("描述销售额", _context())
+
+    error = caught.value
+    assert error.reason_code == reason_code
+    assert error.failure_stage is PlannerFailureStage.PLAN_COMPILATION
+    assert error.diagnostic["failure_stage"] == "plan_compilation"
+    assert error.diagnostic["argument_top_level_fields"] == sorted(arguments)
+    assert "must not become evidence" not in json.dumps(error.diagnostic)
+
+
 def test_planning_context_infers_roles_without_sending_raw_rows():
     context = DatasetPlanningContext.from_frame(
         filename="orders.csv",
@@ -255,4 +403,46 @@ def test_llm_chat_once_makes_one_provider_attempt_without_hidden_retry(monkeypat
     with pytest.raises(RuntimeError, match="provider failed"):
         client.chat_once([{"role": "user", "content": "plan"}])
 
+    assert len(attempts) == 1
+
+
+def test_llm_invalid_tool_argument_json_is_classified_without_raw_or_reasoning(
+    monkeypatch,
+):
+    attempts = []
+
+    def invalid_json_once(**kwargs):
+        attempts.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="tool_calls",
+                    message=SimpleNamespace(
+                        content="untrusted model text",
+                        reasoning_content="private reasoning",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call_invalid_json",
+                                function=SimpleNamespace(
+                                    name="submit_analysis_plan",
+                                    arguments='{not-json:"secret value"',
+                                ),
+                            )
+                        ],
+                    ),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(llm_client_module, "completion", invalid_json_once)
+    planner = StructuredAnalysisPlanner(LLMClient(model_id="fake-model"))
+
+    with pytest.raises(PlannerContractError) as caught:
+        planner.plan("描述销售额", _context())
+
+    assert caught.value.reason_code == "provider_response_tool_arguments_invalid_json"
+    serialized = json.dumps(caught.value.diagnostic)
+    assert "secret value" not in serialized
+    assert "private reasoning" not in serialized
+    assert "untrusted model text" not in serialized
     assert len(attempts) == 1

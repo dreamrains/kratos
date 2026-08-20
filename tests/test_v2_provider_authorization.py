@@ -18,6 +18,7 @@ def _issue(store: ProviderAuthorizationStore, **overrides):
         "question": "What is average sales?",
         "provider_calls_authorized": 1,
         "confirm_provider_call": True,
+        "model_id": "provider/model",
         "planning_context": {
             "model_id": "provider/model",
             "estimated_input_tokens": 100,
@@ -66,6 +67,8 @@ def test_authorization_is_bound_and_can_only_fund_one_client_request(tmp_path):
         filename="sales.csv",
         source_fingerprint="sha256:" + "a" * 64,
         question="What is average sales?",
+        model_id=issued.model_id,
+        planning_context=issued.planning_context,
     )
     repeated = store.consume(
         issued.authorization_id,
@@ -74,6 +77,8 @@ def test_authorization_is_bound_and_can_only_fund_one_client_request(tmp_path):
         filename="sales.csv",
         source_fingerprint="sha256:" + "a" * 64,
         question="What is average sales?",
+        model_id=issued.model_id,
+        planning_context=issued.planning_context,
     )
 
     assert consumed == repeated
@@ -87,6 +92,8 @@ def test_authorization_is_bound_and_can_only_fund_one_client_request(tmp_path):
             filename="sales.csv",
             source_fingerprint="sha256:" + "a" * 64,
             question="What is average sales?",
+            model_id=issued.model_id,
+            planning_context=issued.planning_context,
         )
 
 
@@ -102,6 +109,8 @@ def test_authorization_rejects_changed_question_or_dataset(tmp_path):
             filename="sales.csv",
             source_fingerprint="sha256:" + "a" * 64,
             question="What is maximum sales?",
+            model_id=issued.model_id,
+            planning_context=issued.planning_context,
         )
     with pytest.raises(ProviderAuthorizationConflict, match="different request content"):
         store.consume(
@@ -111,6 +120,8 @@ def test_authorization_rejects_changed_question_or_dataset(tmp_path):
             filename="sales.csv",
             source_fingerprint="sha256:" + "b" * 64,
             question="What is average sales?",
+            model_id=issued.model_id,
+            planning_context=issued.planning_context,
         )
 
 
@@ -127,6 +138,8 @@ def test_authorization_is_bound_to_one_planning_input(tmp_path):
             source_fingerprint="sha256:" + "a" * 64,
             question="What is average sales?",
             planning_input_id="planning_input_two",
+            model_id=issued.model_id,
+            planning_context=issued.planning_context,
         )
 
     consumed = store.consume(
@@ -137,5 +150,45 @@ def test_authorization_is_bound_to_one_planning_input(tmp_path):
         source_fingerprint="sha256:" + "a" * 64,
         question="What is average sales?",
         planning_input_id="planning_input_one",
+        model_id=issued.model_id,
+        planning_context=issued.planning_context,
     )
     assert consumed.planning_input_id == "planning_input_one"
+
+
+@pytest.mark.parametrize(
+    ("field", "changed"),
+    [
+        ("model_id", "provider/other-model"),
+        ("estimated_input_tokens", 101),
+        ("model_context_window_tokens", 2000),
+        ("reserved_output_tokens", 200),
+        ("available_input_tokens", 800),
+    ],
+)
+def test_authorization_rejects_model_or_planning_context_drift_before_consumption(
+    tmp_path, field, changed
+):
+    store = ProviderAuthorizationStore(tmp_path, f"session_auth_drift_{field}")
+    issued = _issue(store)
+    current_context = dict(issued.planning_context)
+    current_model = issued.model_id
+    if field == "model_id":
+        current_model = changed
+        current_context["model_id"] = changed
+    else:
+        current_context[field] = changed
+
+    with pytest.raises(ProviderAuthorizationConflict, match="different"):
+        store.consume(
+            issued.authorization_id,
+            client_request_id="client_plan_drift",
+            purpose="analysis_planning",
+            filename="sales.csv",
+            source_fingerprint="sha256:" + "a" * 64,
+            question="What is average sales?",
+            model_id=current_model,
+            planning_context=current_context,
+        )
+
+    assert store.get(issued.authorization_id).status is ProviderAuthorizationStatus.ISSUED
