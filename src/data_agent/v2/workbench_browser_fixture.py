@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from flask import jsonify
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.v2.planner import AnalysisKind, AnalysisPlan, PlanStatus
+from data_agent.v2.planning_input import PlanningInputStore
 from data_agent.v2.planning_budget import (
     PlanningContextEstimate,
     PlanningContextTooLarge,
@@ -45,11 +47,18 @@ class DeterministicJourneyPlanner:
             return AnalysisPlan(
                 status=PlanStatus.READY,
                 user_question=question,
-                analysis_kind=AnalysisKind.DESCRIPTIVE,
-                parameters={"metric": "sales"},
-                rationale="根据已持久化的业务语义执行描述分析。",
+                analysis_kind=AnalysisKind.MULTI_FINDING_SYNTHESIS,
+                parameters={
+                    "time_field": "date",
+                    "metric": "sales",
+                    "frequency": "daily",
+                    "aggregation": "mean",
+                    "group": "channel",
+                    "analysis_unit": "unit_id",
+                },
+                rationale="根据已持久化的业务语义执行趋势与双组综合分析。",
                 questions=(),
-                maximum_claim_class="descriptive",
+                maximum_claim_class="inferential",
                 planner_invocations=1,
                 model_id="provider-neutral-fixture",
             )
@@ -121,13 +130,15 @@ def build_provider_neutral_fixture(root: Path):
         Path(__file__).resolve().parents[3]
         / "tests"
         / "fixtures"
-        / "v2_slice1_sales.csv"
+        / "v2_slice4d_combined.csv"
     )
     fixture_csv = repository_fixture if repository_fixture.is_file() else root / "planning_journey.csv"
     if not fixture_csv.is_file():
         pd.DataFrame(
             {
-                "order_id": ["o1", "o2", "o3", "o4"],
+                "date": ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"],
+                "unit_id": ["u1", "u2", "u3", "u4"],
+                "channel": ["A", "B", "A", "B"],
                 "sales": [10.0, 20.0, 30.0, 40.0],
             }
         ).to_csv(fixture_csv, index=False)
@@ -181,6 +192,28 @@ def build_provider_neutral_fixture(root: Path):
                     "question": (value.get("request_context") or {}).get("question", ""),
                 }
             )
+        planning_inputs = []
+        for path in sessions.glob("*/v2/planning_inputs.jsonl"):
+            session_id = path.parents[1].name
+            for record in PlanningInputStore(sessions, session_id).list_all():
+                answers = []
+                for answer in record.answers:
+                    text = answer["answer"]
+                    answers.append(
+                        {
+                            "question_id": answer["question_id"],
+                            "characters": len(text),
+                            "digest": "sha256:"
+                            + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                        }
+                    )
+                planning_inputs.append(
+                    {
+                        "session_id": session_id,
+                        "planning_input_id": record.planning_input_id,
+                        "answers": answers,
+                    }
+                )
         return jsonify(
             {
                 "fixture_id": "v2_workbench_planning_failure_retry.v1",
@@ -189,6 +222,10 @@ def build_provider_neutral_fixture(root: Path):
                 "authorizations_issued": issued,
                 "authorizations_consumed": consumed,
                 "provider_calls": 0,
+                "planning_inputs": sorted(
+                    planning_inputs,
+                    key=lambda item: (item["session_id"], item["planning_input_id"]),
+                ),
                 "turns": sorted(
                     turns, key=lambda item: (item["session_id"], item["turn_id"])
                 ),

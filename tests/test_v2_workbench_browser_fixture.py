@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pandas as pd
@@ -11,6 +12,7 @@ from data_agent.v2.workbench_browser_fixture import (
 )
 from data_agent.v2.router import AnalysisKind
 from data_agent.v2.planner import DatasetColumnContext, DatasetPlanningContext, ColumnRole
+from data_agent.v2.planning_input import PlanningInputStore
 
 
 def test_fixture_exposes_isolated_state_and_never_reports_provider_calls(tmp_path):
@@ -25,6 +27,9 @@ def test_fixture_exposes_isolated_state_and_never_reports_provider_calls(tmp_pat
     assert state["authorizations_issued"] == 0
     assert state["authorizations_consumed"] == 0
     assert state["provider_calls"] == 0
+    assert state["fixture_csv"].replace("\\", "/").endswith(
+        "tests/fixtures/v2_slice4d_combined.csv"
+    )
 
 
 def test_fixture_context_overflow_is_explicit_and_never_authorizes(tmp_path):
@@ -62,6 +67,29 @@ def test_fixture_context_overflow_is_explicit_and_never_authorizes(tmp_path):
     assert state["planner_invocations"] == 0
     assert state["authorizations_issued"] == 0
     assert state["provider_calls"] == 0
+
+
+def test_fixture_exposes_only_digest_and_length_for_persisted_planning_answers(tmp_path):
+    app = build_provider_neutral_fixture(tmp_path)
+    answer = "完整业务语义" * 400
+    PlanningInputStore(tmp_path / "sessions", "session_answer").record(
+        source_plan_id="plan_source",
+        client_reply_id="reply_source",
+        questions=({"question_id": "question_one", "text": "每行代表什么？"},),
+        answers=({"question_id": "question_one", "answer": answer},),
+    )
+
+    state = app.test_client().get("/__acceptance/state").get_json()
+
+    observed = state["planning_inputs"][0]
+    assert observed["session_id"] == "session_answer"
+    assert observed["answers"] == [
+        {
+            "question_id": "question_one",
+            "characters": len(answer),
+            "digest": "sha256:" + hashlib.sha256(answer.encode("utf-8")).hexdigest(),
+        }
+    ]
 
 
 def test_fixture_planner_fails_exactly_once_then_requires_explicit_third_call():
