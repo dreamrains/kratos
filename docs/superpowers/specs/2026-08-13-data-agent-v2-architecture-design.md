@@ -1031,3 +1031,19 @@ V2 不读取以下对象作为运行时权威：
 6. 不启用 Provider strict beta、不修改 API base 或模型。DeepSeek 官方文档说明 strict tool schema 需要 beta base 和 `strict=true`；本切片没有对应授权，也不把 schema 引导误称为 Provider 端强制保证。
 
 这次源码变化使 5C5B deterministic evidence、5C5C preflight 和任何更早的 source-bound PASS receipt 对当前源码失效。5C5C attempt 仍是历史失败事实，但不是当前源码 PASS。新的真实调用必须先形成 clean committed source，再重新制作 preflight，并获得新的模型、source digest、目的和精确次数授权。
+
+## 30. Slice 5C5F 实施补充：逐方法参数合同 parity gate
+
+5C5E 证明 status/payload 对齐有效：真实响应进入 `ready` 分支，route 存在且 questions 为空；随后在 `plan_parameter_contract_invalid` 失败。该 reason 同时覆盖缺少必需参数和存在额外参数，而当时诊断没有嵌套参数字段元数据。这说明继续逐次调用只能串行发现下一层合同漂移，不能作为有效测试策略。
+
+5C5F 在再次申请 Provider 授权前完成以下确定性闭环：
+
+1. `ready` 不再使用一个允许任意 parameters 对象的共享 schema，而是按七种自动 analysis kind 生成七个独立 variant；每个 variant 的 required、optional、additionalProperties、类型和值域来自与 compiler 相同的参数合同。列策略、枚举值域、整数范围和布尔类型只有一份服务端定义，schema 与 compiler 共同消费，并以完整字段集合 invariant 防止策略遗漏；
+2. schema 绑定当前 DatasetPlanningContext：数值字段、日期字段和可绑定列使用实际列枚举；features 还约束非空、唯一和数值列；
+3. compiler 保持独立 fail-closed 校验。schema 是请求侧约束，不是对 Provider 遵循行为的信任替代；
+4. 历史 `plan_parameter_contract_invalid` 保留用于读取旧 Ledger；新失败区分 `plan_parameter_fields_missing` 与 `plan_parameter_fields_unexpected`；
+5. 受控诊断记录 recognized analysis kind、命中的已知参数字段、缺失的服务端必需字段、对该方法不允许但全局已知的字段、未知字段数量，以及首个值无效的受控字段。未知字段文本和所有参数值仍不持久化；
+6. real-provider preflight 升级为 v2，并绑定 `planner_contract_gate`：schema fingerprint、七个 ready variant、九个总状态 variant 和 parity PASS。gate 缺失、失败或计数不符时 validator fail closed；
+7. 真实 Provider 不再用于发现基础 schema/compiler 漂移。新的调用申请只能发生在 RED matrix、focused、V2/config、compileall、diff check、clean commit 和新 preflight 全部通过之后。
+
+该补充不增加 repair、隐式重试、原始响应持久化或 Provider 调用。它不构成真实 Provider journey PASS、Gate F、产品完成或根入口切换授权。

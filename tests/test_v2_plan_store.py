@@ -222,24 +222,31 @@ def test_plan_store_persists_sanitized_failure_diagnostic_without_exposing_it_pu
         "analysis_kind_present": True,
         "parameters_empty_object": False,
         "questions_present": True,
+        "recognized_analysis_kind": "descriptive",
+        "recognized_parameter_fields": ["horizon", "metric"],
+        "missing_required_parameter_fields": [],
+        "unexpected_recognized_parameter_fields": ["horizon"],
+        "unknown_parameter_field_count": 1,
+        "invalid_parameter_fields": [],
+        "parameter_metadata_truncated": False,
     }
 
     failed = store.fail(
         requested.plan_id,
         error_code="PlannerContractError",
         message="planner invocation or contract validation failed",
-        error_reason_code="plan_unexpected_fields",
+        error_reason_code="plan_parameter_fields_unexpected",
         failure_stage="plan_compilation",
         diagnostic=diagnostic,
     )
     restored = PlanStore(tmp_path, "session_plan_diagnostic").get(requested.plan_id)
 
     assert restored == failed
-    assert restored.error_reason_code == "plan_unexpected_fields"
+    assert restored.error_reason_code == "plan_parameter_fields_unexpected"
     assert restored.failure_stage == "plan_compilation"
     assert restored.diagnostic == diagnostic
     public = restored.to_dict()
-    assert public["error_reason_code"] == "plan_unexpected_fields"
+    assert public["error_reason_code"] == "plan_parameter_fields_unexpected"
     assert public["failure_stage"] == "plan_compilation"
     assert "diagnostic" not in public
 

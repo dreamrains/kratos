@@ -12,14 +12,19 @@ import pandas as pd
 
 from data_agent.config import AgentConfig, get_config
 from data_agent.llm.client import LLMClient
-from data_agent.v2.planner import DatasetPlanningContext, StructuredAnalysisPlanner
+from data_agent.v2.planner import (
+    PLANNER_CONTRACT_GATE_VERSION,
+    DatasetPlanningContext,
+    StructuredAnalysisPlanner,
+    build_planner_contract_gate,
+)
 from data_agent.v2.planning_budget import (
     PlanningContextBudget,
     resolve_model_context_window,
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v1"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v2"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (
@@ -84,6 +89,9 @@ def build_real_provider_preflight(
         timeout=120,
     )
     planner = StructuredAnalysisPlanner(client)
+    planner_contract_gate = build_planner_contract_gate(context)
+    if planner_contract_gate["passed"] is not True:
+        raise ValueError("planner parameter contract parity gate failed")
     budget_kwargs: dict[str, Any] = {}
     if token_counter is not None:
         budget_kwargs["token_counter"] = token_counter
@@ -107,6 +115,7 @@ def build_real_provider_preflight(
         "question": UNIFIED_QUESTION,
         "model_id": client.model_id,
         "planning_context": estimate.to_dict(),
+        "planner_contract_gate": planner_contract_gate,
     }
     return {
         "version": REAL_PROVIDER_JOURNEY_VERSION,
@@ -138,6 +147,7 @@ def validate_real_provider_preflight(
     expected_source_digest: str,
     expected_model_id: str,
     expected_dataset_fingerprint: str,
+    expected_planner_contract_gate: dict[str, Any],
 ) -> RealProviderPreflightValidation:
     if not isinstance(preflight, dict):
         return RealProviderPreflightValidation(False, ("invalid_real_provider_preflight",))
@@ -171,10 +181,36 @@ def validate_real_provider_preflight(
             "question",
             "model_id",
             "planning_context",
+            "planner_contract_gate",
         )
     }
     if request_fingerprint != _fingerprint(request_identity):
         reasons.append("real_provider_request_fingerprint_mismatch")
+
+    planner_gate = preflight.get("planner_contract_gate")
+    if not isinstance(planner_gate, dict):
+        planner_gate = {}
+        reasons.append("invalid_planner_contract_gate")
+    if planner_gate.get("version") != PLANNER_CONTRACT_GATE_VERSION:
+        reasons.append("invalid_planner_contract_gate_version")
+    if planner_gate.get("passed") is not True:
+        reasons.append("planner_parameter_contract_parity_failed")
+    if not _SHA256.fullmatch(str(planner_gate.get("schema_fingerprint") or "")):
+        reasons.append("invalid_planner_contract_schema_fingerprint")
+    analysis_kinds = planner_gate.get("automatic_analysis_kinds")
+    if (
+        not isinstance(analysis_kinds, list)
+        or len(analysis_kinds) != 7
+        or len(set(str(item) for item in analysis_kinds)) != len(analysis_kinds)
+    ):
+        reasons.append("invalid_planner_analysis_kind_matrix")
+        analysis_kinds = []
+    if planner_gate.get("ready_variant_count") != len(analysis_kinds):
+        reasons.append("invalid_planner_ready_variant_count")
+    if planner_gate.get("status_variant_count") != len(analysis_kinds) + 2:
+        reasons.append("invalid_planner_status_variant_count")
+    if planner_gate != expected_planner_contract_gate:
+        reasons.append("planner_contract_gate_mismatch")
     if preflight.get("provider_calls_observed") != 0:
         reasons.append("provider_call_occurred_during_preflight")
     if preflight.get("authorization_issued") is not False:

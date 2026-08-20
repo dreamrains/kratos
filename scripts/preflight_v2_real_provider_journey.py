@@ -31,14 +31,15 @@ def main() -> int:
 
     source = compute_release_source_digest(args.root)
     cfg = get_config()
+    current_preflight = build_real_provider_preflight(
+        fixture_path=args.root / UNIFIED_FIXTURE_PATH,
+        source_digest=source.source_digest,
+        config=cfg,
+    )
     preflight = (
         json.loads(args.preflight.read_text(encoding="utf-8"))
         if args.preflight is not None
-        else build_real_provider_preflight(
-            fixture_path=args.root / UNIFIED_FIXTURE_PATH,
-            source_digest=source.source_digest,
-            config=cfg,
-        )
+        else current_preflight
     )
     result = validate_real_provider_preflight(
         preflight,
@@ -50,6 +51,7 @@ def main() -> int:
                 (args.root / UNIFIED_FIXTURE_PATH).read_bytes()
             ).hexdigest()
         ),
+        expected_planner_contract_gate=current_preflight["planner_contract_gate"],
     )
     print(
         json.dumps(

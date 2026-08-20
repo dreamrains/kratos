@@ -1,0 +1,106 @@
+{
+  "version": "v2_planner_parameter_contract_parity.v1",
+  "baseline": {
+    "branch": "codex/data-agent-v2",
+    "head": "11e4287a328831e0fe65bfd0c97aea5336639cac",
+    "source_digest": "sha256:ac33d746dbbce7ff2cd2d37352720f9d585140a40fc2e39cd595f934d3f24005"
+  },
+  "current_source": {
+    "source_digest": "sha256:31026edbfad63ff84265a08aa7a0c8b757286f400a612892ef73a4afcf7fb3a5",
+    "dirty": true
+  },
+  "trigger": {
+    "attempt_evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5e-real-provider-attempt.json",
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "error_reason_code": "plan_parameter_contract_invalid",
+    "failure_stage": "plan_compilation",
+    "recognized_status": "ready",
+    "parameters_empty_object": false,
+    "specific_parameter_failure_known": false
+  },
+  "root_cause": {
+    "code_fact": "the ready tool schema accepted any parameter object while the compiler enforced per-analysis-kind contracts",
+    "scope": "shared planner parameter contract and preflight assurance",
+    "real_provider_as_schema_fuzzer_rejected": true,
+    "contract_relaxed": false,
+    "repair_or_retry_added": false
+  },
+  "red": {
+    "planner_and_ledger": "13 failed, 37 passed",
+    "preflight_gate": "2 failed",
+    "coverage": [
+      "seven_kind_required_parameter_matrix",
+      "seven_kind_additional_parameter_rejection",
+      "numeric_column_binding",
+      "datetime_column_binding",
+      "numeric_features_binding",
+      "missing_vs_unexpected_reason_codes",
+      "controlled_invalid_parameter_field_diagnostic",
+      "ledger_safe_parameter_metadata",
+      "preflight_contract_gate_required"
+    ]
+  },
+  "implementation": {
+    "ready_variant_count": 7,
+    "status_variant_count": 9,
+    "dataset_aware_column_enums": true,
+    "saved_gate_must_equal_current_rebuild": true,
+    "shared_parameter_policy_definitions": true,
+    "stable_parameter_validation_order": true,
+    "compiler_remains_authoritative": true,
+    "new_reason_codes": [
+      "plan_parameter_fields_missing",
+      "plan_parameter_fields_unexpected"
+    ],
+    "historical_reason_code_retained": "plan_parameter_contract_invalid",
+    "safe_parameter_diagnostic_fields": [
+      "recognized_analysis_kind",
+      "recognized_parameter_fields",
+      "missing_required_parameter_fields",
+      "unexpected_recognized_parameter_fields",
+      "unknown_parameter_field_count",
+      "invalid_parameter_fields",
+      "parameter_metadata_truncated"
+    ],
+    "unknown_parameter_names_persisted": false,
+    "parameter_values_persisted": false,
+    "raw_model_text_persisted": false,
+    "public_http_diagnostic_exposed": false
+  },
+  "green": {
+    "planner_plan_store_preflight": "62 passed",
+    "planning_api_authorization_preflight_focused": "34 passed",
+    "v2_and_config": "305 passed",
+    "compileall": "pass",
+    "git_diff_check": "pass"
+  },
+  "offline_candidate_preflight": {
+    "version": "v2_real_provider_journey_preflight.v2",
+    "validator_status": "pass",
+    "reason_codes": [],
+    "source_digest": "sha256:31026edbfad63ff84265a08aa7a0c8b757286f400a612892ef73a4afcf7fb3a5",
+    "source_dirty": true,
+    "estimated_input_tokens": 348,
+    "fits": true,
+    "planner_contract_gate": {
+      "version": "v2_planner_contract_parity.v1",
+      "passed": true,
+      "schema_fingerprint": "sha256:ccb98eb96b90a0a1745f0ca42ca829a361b0a7fdc016393fe4e72066624766b0",
+      "ready_variant_count": 7,
+      "status_variant_count": 9
+    },
+    "request_fingerprint": "sha256:3e892e4bc09a0a1d4991af963c4498bb83abb67ba89a93bac4e9308e13fd9b5b",
+    "provider_calls_observed": 0,
+    "authorization_issued": false,
+    "executable_preflight_claimed": false
+  },
+  "receipt_impact": {
+    "v2_5c5e_preflight_current": false,
+    "v2_5c5e_attempt_is_historical_failure_only": true,
+    "real_provider_pass_issued": false,
+    "gate_f_claimed": false,
+    "product_completion_claimed": false,
+    "root_switch_authorized": false
+  }
+}

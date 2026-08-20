@@ -58,6 +58,54 @@ def _planner_tool_schema() -> dict:
     return request.tools[0]["parameters"]
 
 
+_VALID_READY_PARAMETERS = {
+    "descriptive": {"metric": "sales"},
+    "factor_relationship": {
+        "target": "sales",
+        "features": ["marketing"],
+        "analysis_unit": "unit_id",
+        "time_field": "date",
+    },
+    "date_transformation": {"date_column": "date"},
+    "group_comparison": {
+        "metric": "sales",
+        "group": "channel",
+        "analysis_unit": "unit_id",
+    },
+    "time_trend": {
+        "time_field": "date",
+        "metric": "sales",
+        "frequency": "daily",
+        "aggregation": "sum",
+    },
+    "forecast": {
+        "time_field": "date",
+        "metric": "sales",
+        "frequency": "weekly",
+        "aggregation": "mean",
+        "horizon": 7,
+    },
+    "multi_finding_synthesis": {
+        "time_field": "date",
+        "metric": "sales",
+        "frequency": "monthly",
+        "aggregation": "sum",
+        "group": "channel",
+        "analysis_unit": "unit_id",
+    },
+}
+
+
+def _ready_arguments(kind: str, parameters: dict) -> dict:
+    return {
+        "status": "ready",
+        "analysis_kind": kind,
+        "parameters": parameters,
+        "rationale": "使用受支持的确定性方法。",
+        "questions": [],
+    }
+
+
 def test_planner_compiles_ready_group_plan_from_one_structured_call():
     client = FakePlannerClient(
         {
@@ -261,6 +309,214 @@ def test_planner_tool_schema_rejects_status_payloads_the_compiler_rejects(argume
     errors = list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
 
     assert errors
+
+
+@pytest.mark.parametrize(
+    ("kind", "valid_parameters"), list(_VALID_READY_PARAMETERS.items())
+)
+def test_planner_tool_schema_matches_required_and_allowed_parameters_by_kind(
+    kind, valid_parameters
+):
+    validator = Draft202012Validator(_planner_tool_schema())
+    validator.validate(_ready_arguments(kind, valid_parameters))
+
+    missing = dict(valid_parameters)
+    missing.pop(next(iter(valid_parameters)))
+    unexpected = {**valid_parameters, "provider_invented_field": "secret value"}
+
+    assert list(validator.iter_errors(_ready_arguments(kind, missing)))
+    assert list(validator.iter_errors(_ready_arguments(kind, unexpected)))
+
+
+@pytest.mark.parametrize(
+    ("kind", "parameters"),
+    [
+        ("descriptive", {"metric": "channel"}),
+        (
+            "time_trend",
+            {
+                "time_field": "channel",
+                "metric": "sales",
+                "frequency": "daily",
+                "aggregation": "sum",
+            },
+        ),
+        (
+            "factor_relationship",
+            {
+                "target": "sales",
+                "features": ["channel"],
+                "analysis_unit": "unit_id",
+            },
+        ),
+    ],
+)
+def test_planner_tool_schema_rejects_wrong_role_column_bindings(kind, parameters):
+    errors = list(
+        Draft202012Validator(_planner_tool_schema()).iter_errors(
+            _ready_arguments(kind, parameters)
+        )
+    )
+
+    assert errors
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason_code", "parameter_shape"),
+    [
+        (
+            _ready_arguments(
+                "group_comparison",
+                {"metric": "sales", "group": "channel"},
+            ),
+            "plan_parameter_fields_missing",
+            {
+                "recognized_analysis_kind": "group_comparison",
+                "recognized_parameter_fields": ["group", "metric"],
+                "missing_required_parameter_fields": ["analysis_unit"],
+                "unexpected_recognized_parameter_fields": [],
+                "unknown_parameter_field_count": 0,
+                "invalid_parameter_fields": [],
+                "parameter_metadata_truncated": False,
+            },
+        ),
+        (
+            _ready_arguments(
+                "descriptive",
+                {
+                    "metric": "sales",
+                    "horizon": 7,
+                    "provider_invented_field": "secret value",
+                },
+            ),
+            "plan_parameter_fields_unexpected",
+            {
+                "recognized_analysis_kind": "descriptive",
+                "recognized_parameter_fields": ["horizon", "metric"],
+                "missing_required_parameter_fields": [],
+                "unexpected_recognized_parameter_fields": ["horizon"],
+                "unknown_parameter_field_count": 1,
+                "invalid_parameter_fields": [],
+                "parameter_metadata_truncated": False,
+            },
+        ),
+    ],
+)
+def test_planner_parameter_contract_failure_is_exact_without_unknown_names_or_values(
+    arguments, reason_code, parameter_shape
+):
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售额", _context()
+        )
+
+    assert caught.value.reason_code == reason_code
+    assert {
+        key: caught.value.diagnostic[key] for key in parameter_shape
+    } == parameter_shape
+    serialized = json.dumps(caught.value.diagnostic, ensure_ascii=False)
+    assert "provider_invented_field" not in serialized
+    assert "secret value" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("arguments", "reason_code", "invalid_fields"),
+    [
+        (
+            _ready_arguments("descriptive", {"metric": "channel"}),
+            "plan_column_binding_invalid",
+            ["metric"],
+        ),
+        (
+            _ready_arguments(
+                "time_trend",
+                {
+                    "time_field": "date",
+                    "metric": "sales",
+                    "frequency": "hourly",
+                    "aggregation": "sum",
+                },
+            ),
+            "plan_parameter_value_invalid",
+            ["frequency"],
+        ),
+        (
+            _ready_arguments(
+                "factor_relationship",
+                {
+                    "target": "sales",
+                    "features": ["channel"],
+                    "analysis_unit": "unit_id",
+                },
+            ),
+            "plan_column_binding_invalid",
+            ["features"],
+        ),
+    ],
+)
+def test_planner_diagnostic_identifies_controlled_invalid_parameter_fields(
+    arguments, reason_code, invalid_fields
+):
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售额", _context()
+        )
+
+    assert caught.value.reason_code == reason_code
+    assert caught.value.diagnostic["invalid_parameter_fields"] == invalid_fields
+    serialized = json.dumps(caught.value.diagnostic, ensure_ascii=False)
+    assert "hourly" not in serialized
+    assert "channel" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("kind", "field", "invalid_value"),
+    [
+        ("time_trend", "frequency", "hourly"),
+        ("time_trend", "aggregation", "median"),
+        ("forecast", "horizon", 0),
+        ("group_comparison", "recommendation_intent", "publish"),
+        ("group_comparison", "action_risk", "critical"),
+        ("group_comparison", "reversible", "yes"),
+    ],
+)
+def test_planner_schema_and_compiler_share_finite_parameter_policies(
+    kind, field, invalid_value
+):
+    parameters = {**_VALID_READY_PARAMETERS[kind], field: invalid_value}
+    arguments = _ready_arguments(kind, parameters)
+
+    schema_errors = list(
+        Draft202012Validator(_planner_tool_schema()).iter_errors(arguments)
+    )
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售额", _context()
+        )
+
+    assert schema_errors
+    assert caught.value.reason_code == "plan_parameter_value_invalid"
+    assert caught.value.diagnostic["invalid_parameter_fields"] == [field]
+
+
+def test_planner_reports_first_invalid_field_in_stable_policy_order():
+    arguments = _ready_arguments(
+        "time_trend",
+        {
+            "time_field": "channel",
+            "metric": "channel",
+            "frequency": "hourly",
+            "aggregation": "median",
+        },
+    )
+
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "分析销售额", _context()
+        )
+
+    assert caught.value.reason_code == "plan_column_binding_invalid"
+    assert caught.value.diagnostic["invalid_parameter_fields"] == ["metric"]
 
 
 @pytest.mark.parametrize(
