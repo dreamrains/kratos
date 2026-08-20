@@ -1,0 +1,29 @@
+{
+  "version": "v2_semantic_review_preparation.v2",
+  "scenario_id": "unified_analysis_entry",
+  "reviewer_type": "implementation_agent",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "same_digest_real_provider_evidence": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5q-deterministic-continuation.json"
+  ],
+  "implementation_assessment": {
+    "question_understanding": {"status": "pass", "evidence": "Planner selected multi_finding_synthesis and bound date, sales, channel, and unit_id."},
+    "data_scope": {"status": "pass", "evidence": "Published output states the exact date range, 42 source and valid rows, 42 observed daily periods, zero missing, boundary, and imputed periods, 42 effective unit_id values, and the non-generalization boundary."},
+    "method_fit": {"status": "pass", "evidence": "Daily HAC trend with weekday controls and an independent-unit Welch comparison answer the two requested observational questions."},
+    "statistical_rigor": {"status": "pass", "evidence": "Trend estimate, HAC interval and p-value, Welch difference and interval, p-value, and Hedges g all match independent recomputation."},
+    "claim_calibration": {"status": "pass", "evidence": "The answer explicitly excludes causal and intervention-effect interpretations."},
+    "alternative_explanations": {"status": "pass", "evidence": "The method and next-investigation blocks identify composition, external events, and confounding as unresolved alternatives."},
+    "pyramid_structure": {"status": "pass", "evidence": "Direct answer precedes the trend, comparison, shared method, and next-investigation blocks."},
+    "chart_value": {"status": "blocked", "evidence": "Two adjacent chart artifacts are referenced by their corresponding trend and comparison blocks, but visual rendering was not re-observed on this source digest."},
+    "recommendation_quality": {"status": "pass", "evidence": "The only advice is a low-risk, reversible investigation aligned with recommendation_intent=investigate."},
+    "journey_integrity": {"status": "blocked", "evidence": "The same-digest Provider planning, deterministic execution, persistence, and refresh passed, but no same-digest actual-browser Provider planning journey was recorded."},
+    "stability": {"status": "blocked", "evidence": "This digest has one successful real Provider planning sample; no additional calls are authorized."}
+  },
+  "decision": "not_eligible_for_human_semantic_review_pass",
+  "reason_codes": ["reviewer_not_human", "same_digest_actual_browser_provider_journey_missing", "same_digest_chart_render_not_observed", "real_provider_stability_not_established"],
+  "real_provider_release_receipt_issued": true,
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

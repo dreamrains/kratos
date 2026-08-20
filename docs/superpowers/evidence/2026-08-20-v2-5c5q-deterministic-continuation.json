@@ -1,0 +1,54 @@
+{
+  "version": "v2_real_provider_deterministic_continuation.v4",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "scenario_id": "unified_analysis_entry",
+  "source_plan_id": "plan_be601d811361b4587b54b6a5",
+  "turn_id": "turn_real_5c5q_deterministic",
+  "provider_calls_observed_during_continuation": 0,
+  "analysis_http_status": 200,
+  "refresh_http_status": 200,
+  "terminal_event": "turn_completed",
+  "restored_status": "finalized",
+  "block_types": ["executive_answer", "key_finding", "comparison", "method", "next_investigation"],
+  "block_count": 5,
+  "chart_count": 2,
+  "finding_count": 2,
+  "analysis_parameters": {
+    "action_risk": "medium",
+    "aggregation": "sum",
+    "analysis_unit": "unit_id",
+    "frequency": "daily",
+    "group": "channel",
+    "metric": "sales",
+    "recommendation_intent": "investigate",
+    "reversible": true,
+    "time_field": "date"
+  },
+  "published_claims": {
+    "time_trend": "reliable_linear_trend",
+    "group_comparison": "reliable_mean_difference",
+    "causal_upgrade": false,
+    "intervention_effect_claimed": false
+  },
+  "data_scope_review": {
+    "actual_data_window": "2026-01-01/2026-02-11",
+    "actual_data_window_published_correctly": true,
+    "source_rows": 42,
+    "effective_periods": 42,
+    "missing_periods": 0,
+    "incomplete_boundary_periods": 0,
+    "imputed_periods": 0,
+    "effective_analysis_units": 42,
+    "analysis_unit": "unit_id",
+    "population_non_generalization_boundary_published": true
+  },
+  "semantic_review": {
+    "reviewer_type": "implementation_agent",
+    "status": "pass",
+    "explanation": "The daily route avoids partial calendar boundary aggregation, all published statistics match independent recomputation, the answer states data and population scope, and causal/intervention claims remain explicitly excluded."
+  },
+  "real_provider_release_receipt_issued": true,
+  "human_semantic_pass_issued": false,
+  "provider_followup_authorized": false,
+  "root_switch_authorized": false
+}
