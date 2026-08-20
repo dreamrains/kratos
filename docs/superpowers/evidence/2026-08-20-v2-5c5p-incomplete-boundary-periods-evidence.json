@@ -1,0 +1,52 @@
+{
+  "version": "v2_incomplete_boundary_periods_evidence.v1",
+  "date": "2026-08-20",
+  "baseline_git_head": "dfa9f0c3aa735d045244adeb7636c4f979cbc5dd",
+  "trigger_source_digest": "sha256:db3464a5249f9ae6ea7787998298bcbdf5aae4ea2fe56b1e5aef656840b7151c",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "provider_calls": 0,
+  "historical_attempt": {
+    "evidence_path": "docs/superpowers/evidence/2026-08-20-v2-5c5o-real-provider-attempt.json",
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "analysis_unit": "unit_id",
+    "frequency": "weekly",
+    "aggregation": "sum",
+    "semantic_review": "fail"
+  },
+  "red_regression": {
+    "result_before_fix": "2 failed",
+    "covered_failures": [
+      "trend_compared_incomplete_boundary_weeks",
+      "forecast_consumed_incomplete_boundary_weeks"
+    ]
+  },
+  "contract_changes": {
+    "reason_code": "incomplete_boundary_periods",
+    "weekly_calendar": "Monday-Sunday",
+    "monthly_calendar": "natural_month",
+    "source_cadence_aware": true,
+    "trend_fail_closed_before_fit": true,
+    "forecast_fail_closed_before_backtest": true,
+    "silent_boundary_drop": false,
+    "imputation_added": false,
+    "automatic_repair_added": false
+  },
+  "verification": {
+    "time_series": "10 passed",
+    "time_forecast_runtime_focused": "30 passed",
+    "v2_and_config": "323 passed",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "unified_deterministic_journey": "passed",
+    "unified_deterministic_receipt_layers": [
+      "owner_contract",
+      "incident_replay",
+      "sse_transport_contract"
+    ]
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "real_provider_preflight_current": false,
+  "root_switch_authorized": false
+}

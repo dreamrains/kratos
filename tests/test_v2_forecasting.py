@@ -79,6 +79,25 @@ def test_missing_period_is_limited_without_imputation():
     assert result.forecast_values == ()
 
 
+def test_forecast_rejects_partial_boundary_weeks_from_daily_rows():
+    dates = pd.date_range("2026-01-01", "2026-04-30", freq="D")
+    frame = pd.DataFrame({"date": dates, "sales": 100 + np.arange(len(dates))})
+
+    result = forecast_time_series(
+        frame,
+        ForecastSpec(
+            "date", "sales", TimeFrequency.WEEKLY, TimeAggregation.SUM, 2
+        ),
+    )
+
+    assert result.status == "limited"
+    assert result.reason_code == "incomplete_boundary_periods"
+    assert result.incomplete_boundary_periods == 2
+    assert result.start_time.startswith("2026-01-01")
+    assert result.end_time.startswith("2026-04-30")
+    assert result.forecast_values == ()
+
+
 def test_ambiguous_date_is_delegated_to_semantic_confirmation():
     frame = pd.DataFrame(
         {"date": ["01/02/2026", "03/04/2026", "05/06/2026"], "sales": [1, 2, 3]}

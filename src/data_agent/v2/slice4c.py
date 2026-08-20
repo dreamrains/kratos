@@ -105,11 +105,11 @@ class Slice4CForecastRuntime:
             direction="future_baseline" if supported else "none",
             effective_sample=result.observed_periods,
             time_scope=(
-                f"{result.historical_times[0]}/{result.forecast_times[-1]}"
+                f"{result.start_time}/{result.forecast_times[-1]}"
                 if supported
                 else (
-                    f"{result.historical_times[0]}/{result.historical_times[-1]}"
-                    if result.historical_times
+                    f"{result.start_time}/{result.end_time}"
+                    if result.start_time
                     else ""
                 )
             ),
@@ -134,6 +134,7 @@ class Slice4CForecastRuntime:
                 "candidate_methods": result.candidate_methods,
                 "backtest_scheme": result.backtest_scheme,
                 "interval_method": result.interval_method,
+                "incomplete_boundary_periods": result.incomplete_boundary_periods,
                 "imputed_periods": result.imputed_periods,
             },
             limitations=result.limitations,
@@ -342,6 +343,7 @@ class Slice4CForecastRuntime:
                 "forecast_horizon_too_long": "请求的预测期相对历史长度过长，因此未发布未来点预测。",
                 "insufficient_forecast_history": "历史周期不足以同时形成训练窗口和时间外验证，因此未发布未来点预测。",
                 "missing_time_intervals": "规范时间序列存在缺失周期；系统没有补零或插值，因此未发布未来点预测。",
+                "incomplete_boundary_periods": "时间范围包含不完整边界周期；系统未将部分周期与完整周期直接比较，因此未发布未来点预测。",
                 "date_semantics_require_confirmation": "时间字段存在多种无损日期解释，需要先确认日期语义。",
                 "time_field_not_losslessly_parseable": "时间字段无法无损解析，因此未发布未来点预测。",
                 "no_valid_time_metric_rows": "没有可用于预测的有效时间与指标记录。",
@@ -351,7 +353,8 @@ class Slice4CForecastRuntime:
             )
             method = (
                 f"源数据 {result.source_rows} 行，形成 {result.observed_periods} 个规范{period_label}周期，"
-                f"聚合口径为{aggregation_label}；限制原因：{result.reason_code}。"
+                f"聚合口径为{aggregation_label}，不完整边界周期 "
+                f"{result.incomplete_boundary_periods}；限制原因：{result.reason_code}。"
             )
             claim_class = ClaimClass.ASSOCIATIONAL
         if chart_failed:

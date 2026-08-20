@@ -120,6 +120,52 @@ def test_small_weekly_series_is_judged_by_model_df_not_n30():
     assert result.status in {"supported", "null_result"}
 
 
+def test_subweekly_rows_with_partial_boundary_weeks_fail_closed():
+    dates = pd.date_range("2026-01-01", "2026-02-11", freq="D")
+    frame = pd.DataFrame({"date": dates, "sales": 100 + np.arange(len(dates))})
+
+    result = analyze_time_series(
+        frame,
+        TimeSeriesSpec("date", "sales", TimeFrequency.WEEKLY, TimeAggregation.SUM),
+    )
+
+    assert result.status == "limited"
+    assert result.reason_code == "incomplete_boundary_periods"
+    assert result.incomplete_boundary_periods == 2
+    assert result.start_time.startswith("2026-01-01")
+    assert result.end_time.startswith("2026-02-11")
+    assert result.trend_per_period is None
+
+
+def test_subweekly_rows_covering_complete_weeks_remain_eligible():
+    dates = pd.date_range("2026-01-05", periods=70, freq="D")
+    frame = pd.DataFrame({"date": dates, "sales": 100 + np.arange(len(dates))})
+
+    result = analyze_time_series(
+        frame,
+        TimeSeriesSpec("date", "sales", TimeFrequency.WEEKLY, TimeAggregation.SUM),
+    )
+
+    assert result.status in {"supported", "null_result"}
+    assert result.incomplete_boundary_periods == 0
+    assert result.start_time.startswith("2026-01-05")
+    assert result.end_time.startswith("2026-03-15")
+
+
+def test_submonthly_rows_with_partial_boundary_months_fail_closed():
+    dates = pd.date_range("2026-01-15", "2026-06-20", freq="D")
+    frame = pd.DataFrame({"date": dates, "sales": 100 + np.arange(len(dates))})
+
+    result = analyze_time_series(
+        frame,
+        TimeSeriesSpec("date", "sales", TimeFrequency.MONTHLY, TimeAggregation.MEAN),
+    )
+
+    assert result.status == "limited"
+    assert result.reason_code == "incomplete_boundary_periods"
+    assert result.incomplete_boundary_periods == 2
+
+
 def test_monthly_two_year_series_controls_month_seasonality():
     dates = pd.date_range("2024-01-01", periods=30, freq="MS")
     index = np.arange(30, dtype=float)

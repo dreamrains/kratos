@@ -1099,3 +1099,17 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 5. 不修改历史 plan，不做自动 repair 或重试。5C5M authorization 已 consumed，历史 attempt 保持原 digest 上的事实，源码修复后任何真实调用都必须重新预检和授权。
 
 本切片的 provider-neutral RED 同时覆盖 observed multi-finding 路由、单独的 group comparison datetime unit，以及 factor target/unit 身份冲突，避免继续用真实 Provider 串行发现本地可穷举的合同缺口。
+
+## 36. Slice 5C5P 实施补充：不完整时间边界周期合同
+
+5C5O 的真实 Planner 已正确选择 `analysis_unit=unit_id`，但同时选择 weekly sum。原始数据覆盖 2026-01-01 至 2026-02-11，形成的首周只有四天、末周只有三天；旧时间序列方法将两个部分周与五个完整周直接回归，把 period bucket 的 2025-12-29 写成数据起点，并发布“未检出可靠趋势”。独立复算证明数值计算与代码一致，但方法输入不可比，因此真实旅程仍不能判 PASS。
+
+时间序列与预测共享的 regular-series 合同必须在推断前识别这一风险：
+
+1. 当输入记录的中位日期间隔小于目标周期长度，说明系统正在把更高频记录聚合到 weekly/monthly；此时观察窗口必须覆盖完整首尾日历周期；
+2. 对 weekly 使用 Monday-Sunday，对 monthly 使用自然月边界。首尾落在同一周期时只计一次；原生周频或月频数据保持原周期语义，不因只有一个周期标签记录而误判为部分周期；
+3. 任一不完整边界周期产生稳定 `incomplete_boundary_periods`，trend 和 forecast 都 fail closed，不删除边界、不补零、不插值，也不发布趋势系数或未来点预测；
+4. `TimeSeriesResult`、`ForecastResult`、Finding 和方法块投影不完整边界周期数量。时间范围使用真实有效记录的最小/最大时间，不再把 period bucket 起点冒充数据覆盖起点；
+5. multi-finding 可继续发布独立且可靠的 group comparison，但 executive 与趋势块必须明确趋势受数据条件限制，不能让组间结论掩盖时间方法限制。
+
+该修复不改变 Planner 输出、不自动改成 daily、不重放 consumed plan，也不新增 Provider 调用或隐式 repair。5C5O attempt 是旧 digest 上一次有效调用和语义失败的历史事实；源码变化后所有旧 source-bound receipts 失效。

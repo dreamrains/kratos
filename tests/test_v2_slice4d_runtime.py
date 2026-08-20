@@ -28,7 +28,14 @@ def _frame(groups=2):
     )
 
 
-def _run(tmp_path, frame, *, intent=RecommendationIntent.NONE):
+def _run(
+    tmp_path,
+    frame,
+    *,
+    intent=RecommendationIntent.NONE,
+    frequency=TimeFrequency.DAILY,
+    aggregation=TimeAggregation.MEAN,
+):
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     frame.to_csv(inbox / "combined.csv", index=False)
@@ -39,8 +46,8 @@ def _run(tmp_path, frame, *, intent=RecommendationIntent.NONE):
             filename="combined.csv",
             time_field="date",
             metric="sales",
-            frequency=TimeFrequency.DAILY,
-            aggregation=TimeAggregation.MEAN,
+            frequency=frequency,
+            aggregation=aggregation,
             group="channel",
             analysis_unit="unit_id",
             question="销售如何变化，不同渠道是否存在差异？",
@@ -88,6 +95,35 @@ def test_multi_finding_answer_reports_data_scope_sample_and_missingness(tmp_path
     assert "70 个有效 unit_id" in method["narrative"]
     assert "完整记录 70，剔除 0" in method["narrative"]
     assert "适用总体限于当前上传数据" in method["narrative"]
+
+
+def test_multi_finding_rejects_partial_boundary_weeks_and_reports_true_scope(
+    tmp_path,
+):
+    frame = _frame().iloc[:42].copy()
+    _, store, turn = _run(
+        tmp_path,
+        frame,
+        frequency=TimeFrequency.WEEKLY,
+        aggregation=TimeAggregation.SUM,
+    )
+    findings = store.read_findings()
+    time_finding = next(
+        item for item in findings if item.method_capability == "analysis.time_trend"
+    )
+    trend = next(
+        item for item in turn["blocks"] if item["block_type"] == "key_finding"
+    )
+    method = next(
+        item for item in turn["blocks"] if item["block_type"] == "method"
+    )
+
+    assert time_finding.finding_kind is FindingKind.LIMITATION
+    assert time_finding.uncertainty["reason_code"] == "incomplete_boundary_periods"
+    assert "不完整边界周期" in trend["narrative"]
+    assert "2026-01-01 至 2026-02-11" in method["narrative"]
+    assert "不完整边界周期 2" in method["narrative"]
+    assert "HAC" not in trend["narrative"]
 
 
 def test_limited_group_does_not_remove_supported_trend_or_chart(tmp_path):

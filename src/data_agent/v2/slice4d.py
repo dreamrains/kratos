@@ -105,6 +105,7 @@ def _time_finding(
             "confidence_high": result.confidence_high,
             "p_value": result.p_value,
             "hac_max_lag": result.hac_max_lag,
+            "incomplete_boundary_periods": result.incomplete_boundary_periods,
             "reason_code": result.reason_code,
         },
         assumption_results={
@@ -437,6 +438,7 @@ class Slice4DMultiFindingRuntime:
                 "历史趋势暂不能可靠估计；"
                 + {
                     "missing_time_intervals": "规范时间序列存在缺失周期，且系统未补零或插值。",
+                    "incomplete_boundary_periods": "时间范围包含不完整边界周期，系统未将部分周期与完整周期直接比较。",
                     "date_semantics_require_confirmation": "时间字段存在多种无损日期解释。",
                     "insufficient_trend_degrees_of_freedom": "当前周期不足以支持稳健趋势规格。",
                 }.get(time_result.reason_code, f"限制原因：{time_result.reason_code}。")
@@ -476,7 +478,8 @@ class Slice4DMultiFindingRuntime:
         method = (
             f"数据范围为 {time_scope}；趋势基于 {time_result.observed_periods} 个已观测{period}周期"
             f"（源记录 {time_result.source_rows}，有效记录 {time_result.valid_rows}，"
-            f"缺失周期 {time_result.missing_periods}，插补周期 {time_result.imputed_periods}）；"
+            f"缺失周期 {time_result.missing_periods}，不完整边界周期 "
+            f"{time_result.incomplete_boundary_periods}，插补周期 {time_result.imputed_periods}）；"
             f"组间比较基于 {group_result.effective_units} 个有效 {analysis_unit}"
             f"（完整记录 {group_result.complete_case_rows}，剔除 {group_result.dropped_rows}）。"
             f"适用总体限于当前上传数据中以 {analysis_unit} 定义且字段完整的观察单位，"

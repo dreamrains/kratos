@@ -73,7 +73,10 @@ class ForecastResult:
     valid_rows: int = 0
     observed_periods: int = 0
     missing_periods: int = 0
+    incomplete_boundary_periods: int = 0
     imputed_periods: int = 0
+    start_time: str = ""
+    end_time: str = ""
     maximum_claim_class: ClaimClass = ClaimClass.PREDICTIVE
     limitations: tuple[str, ...] = field(default_factory=tuple)
 
@@ -116,6 +119,9 @@ def _limited(
     series: pd.Series | None = None,
     valid_rows: int = 0,
     missing_periods: int = 0,
+    incomplete_boundary_periods: int = 0,
+    start_time: str = "",
+    end_time: str = "",
     selected_method: str = "",
     candidate_methods: tuple[str, ...] = (),
     candidate_metrics: dict[str, dict[str, float]] | None = None,
@@ -151,7 +157,10 @@ def _limited(
         valid_rows=valid_rows,
         observed_periods=len(regular),
         missing_periods=missing_periods,
+        incomplete_boundary_periods=incomplete_boundary_periods,
         imputed_periods=0,
+        start_time=start_time,
+        end_time=end_time,
         maximum_claim_class=ClaimClass.ASSOCIATIONAL,
         limitations=(
             "当前数据或时间外回测不足以支持可用的未来预测。",
@@ -176,6 +185,9 @@ def forecast_time_series(frame: pd.DataFrame, spec: ForecastSpec) -> ForecastRes
             series=prepared.series,
             valid_rows=prepared.valid_rows,
             missing_periods=prepared.missing_periods,
+            incomplete_boundary_periods=prepared.incomplete_boundary_periods,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     series = prepared.series
     values = series.to_numpy(dtype=float)
@@ -187,6 +199,8 @@ def forecast_time_series(frame: pd.DataFrame, spec: ForecastSpec) -> ForecastRes
             reason_code="forecast_horizon_too_long",
             series=series,
             valid_rows=prepared.valid_rows,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     validation_points = max(6, spec.horizon, int(math.ceil(observed * 0.2)))
     if observed - validation_points < 8:
@@ -196,6 +210,8 @@ def forecast_time_series(frame: pd.DataFrame, spec: ForecastSpec) -> ForecastRes
             reason_code="insufficient_forecast_history",
             series=series,
             valid_rows=prepared.valid_rows,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     season_length = _season_length(spec.frequency)
     methods = ["naive_last", "drift"]
@@ -256,6 +272,8 @@ def forecast_time_series(frame: pd.DataFrame, spec: ForecastSpec) -> ForecastRes
             mase=float(mase),
             skill_vs_naive=float(skill),
             error_to_level_ratio=float(error_to_level),
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     forecast_values = _method_forecast(values, selected, spec.horizon, season_length)
     absolute_errors = np.asarray(errors[selected], dtype=float)
@@ -297,7 +315,10 @@ def forecast_time_series(frame: pd.DataFrame, spec: ForecastSpec) -> ForecastRes
         valid_rows=prepared.valid_rows,
         observed_periods=observed,
         missing_periods=0,
+        incomplete_boundary_periods=0,
         imputed_periods=0,
+        start_time=prepared.start_time,
+        end_time=prepared.end_time,
         maximum_claim_class=ClaimClass.PREDICTIVE,
         limitations=(
             "预测区间来自有限的滚动时间外误差，并按预测步长扩张，不保证未来必然覆盖。",

@@ -1,10 +1,10 @@
 # Data Agent V2 Slice 5C5O：分析单位修复后的真实 Provider 预检
 
 - **日期**：2026-08-20
-- **状态**：离线预检 PASS，等待新的精确次数授权
+- **状态**：精确单次调用完成；时间聚合语义评审 FAIL
 - **基线提交**：`38b6cee2a05b41dd9dfe24af53dcda07d4327d41`
 - **source digest**：`sha256:db3464a5249f9ae6ea7787998298bcbdf5aae4ea2fe56b1e5aef656840b7151c`
-- **本切片 Provider calls**：0
+- **本切片 Provider calls**：1
 
 ## 1. 前置闭环
 
@@ -44,3 +44,23 @@
 失败即停止，不自动重试。若返回 `needs_input`，保存回答与重新估算不调用 Provider，但 follow-up planning 必须重新获得精确授权。
 
 本 preflight 不签发 authorization，不调用 Provider，不构成 `real_provider_analysis_journey` 或 `human_semantic_review` PASS，不宣称 release readiness、产品完成或根入口切换。
+
+## 5. 已授权单次调用
+
+- upload、estimate：HTTP 200；authorization、planning：HTTP 201；
+- Provider calls observed：1；automatic retries：0；
+- authorization：`provider_auth_390dc641d71c46a59282b07ca0f33b64`，状态 `consumed`；
+- plan：`plan_b9163ff88f3fa2b70d1106dd`；
+- route：`multi_finding_synthesis`；
+- 参数：`time_field=date`、`metric=sales`、`frequency=weekly`、`aggregation=sum`、`group=channel`、`analysis_unit=unit_id`；
+- 确定性续跑：Provider calls 0、analysis/refresh HTTP 200、`turn_completed`、4 blocks、2 charts。
+
+5C5N 的分析单位修复在真实输出中生效，`analysis_unit=unit_id`。本次授权已经耗尽，不可复用。
+
+## 6. 语义评审结论
+
+独立复算验证双组比较数字完全一致，但周频求和趋势包含两个不完整边界周：首周只有 2026-01-01 至 01-04 四天、末周只有 02-09 至 02-11 三天。系统把它们与五个完整周直接回归，并把 period bucket 的 2025-12-29 误写为数据范围起点，最终发布“未检出可靠历史趋势”。
+
+这属于不完整周期比较，可能将增长序列扭曲为 null result，不能签发真实旅程或人工语义 PASS。旧 runner 的 `data_scope_present=false` 还有一个固定查找“日周期”的检查器误报，但实际 blocker 是方法本身未识别不完整边界周，而非该字符串检查。
+
+历史调用证据见 `docs/superpowers/evidence/2026-08-20-v2-5c5o-real-provider-attempt.json`，续跑证据见 `docs/superpowers/evidence/2026-08-20-v2-5c5o-deterministic-continuation.json`。后续修复不得重放 plan、自动 repair 或再次调用 Provider。

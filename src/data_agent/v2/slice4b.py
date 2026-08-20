@@ -128,6 +128,7 @@ class Slice4BTimeSeriesRuntime:
                 "hac_max_lag": result.hac_max_lag,
                 "observed_periods": result.observed_periods,
                 "missing_periods": result.missing_periods,
+                "incomplete_boundary_periods": result.incomplete_boundary_periods,
                 "imputed_periods": result.imputed_periods,
                 "reason_code": result.reason_code,
             },
@@ -342,6 +343,7 @@ class Slice4BTimeSeriesRuntime:
         else:
             messages = {
                 "missing_time_intervals": f"规范{period_label}周期中存在 {result.missing_periods} 个缺失周期；系统没有补零或插值，因此未发布趋势推断。",
+                "incomplete_boundary_periods": f"时间范围包含 {result.incomplete_boundary_periods} 个不完整边界{period_label}周期；系统未把部分周期与完整周期直接比较，因此未发布趋势推断。",
                 "date_semantics_require_confirmation": "时间字段存在多种无损日期解释，需要先通过日期语义确认再分析趋势。",
                 "time_field_not_losslessly_parseable": "时间字段无法无损解析，未静默生成缺失日期。",
                 "insufficient_trend_degrees_of_freedom": "当前观测周期不足以支持该趋势规格的稳健不确定性估计。",
@@ -351,7 +353,8 @@ class Slice4BTimeSeriesRuntime:
             claim_class = ClaimClass.ASSOCIATIONAL
         method = (
             f"源数据 {result.source_rows} 行，其中 {result.valid_rows} 行进入时间聚合；"
-            f"形成 {result.observed_periods} 个{period_label}周期，口径为{aggregation_label}。"
+            f"形成 {result.observed_periods} 个{period_label}周期，口径为{aggregation_label}；"
+            f"不完整边界周期 {result.incomplete_boundary_periods}。"
         )
         if result.status in {"supported", "null_result"}:
             seasonal = {"weekday": "并控制星期效应", "month": "并控制月份效应", "none": "未加入季节哑变量"}[result.seasonality_control]

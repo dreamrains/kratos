@@ -75,6 +75,7 @@ class TimeSeriesResult:
     valid_rows: int = 0
     observed_periods: int = 0
     missing_periods: int = 0
+    incomplete_boundary_periods: int = 0
     imputed_periods: int = 0
     start_time: str = ""
     end_time: str = ""
@@ -91,7 +92,10 @@ class PreparedTimeSeries:
     source_rows: int
     valid_rows: int
     missing_periods: int
+    incomplete_boundary_periods: int = 0
     imputed_periods: int = 0
+    start_time: str = ""
+    end_time: str = ""
 
 
 def _periodize(values: pd.Series, frequency: TimeFrequency) -> pd.Series:
@@ -109,6 +113,49 @@ def _expected_index(start: pd.Timestamp, end: pd.Timestamp, frequency: TimeFrequ
         TimeFrequency.MONTHLY: "MS",
     }[frequency]
     return pd.date_range(start, end, freq=alias)
+
+
+def _has_subperiod_rows(values: pd.Series, frequency: TimeFrequency) -> bool:
+    if frequency is TimeFrequency.DAILY:
+        return False
+    normalized = pd.DatetimeIndex(values.dropna()).normalize().unique().sort_values()
+    if len(normalized) < 2:
+        return False
+    median_gap_days = float(
+        np.median(np.diff(normalized.to_numpy()) / np.timedelta64(1, "D"))
+    )
+    threshold = 7 if frequency is TimeFrequency.WEEKLY else 27
+    return median_gap_days < threshold
+
+
+def _incomplete_boundary_periods(
+    values: pd.Series,
+    frequency: TimeFrequency,
+) -> int:
+    if not _has_subperiod_rows(values, frequency):
+        return 0
+    start = pd.Timestamp(values.min()).normalize()
+    end = pd.Timestamp(values.max()).normalize()
+    boundaries = _periodize(pd.Series([start, end]), frequency)
+    first_period = pd.Timestamp(boundaries.iloc[0])
+    last_period = pd.Timestamp(boundaries.iloc[1])
+    first_partial = start > first_period
+    last_period_end = (
+        last_period + pd.Timedelta(days=6)
+        if frequency is TimeFrequency.WEEKLY
+        else last_period + pd.offsets.MonthEnd(0)
+    )
+    last_partial = end < last_period_end
+    return len(
+        {
+            period
+            for period, partial in (
+                (first_period, first_partial),
+                (last_period, last_partial),
+            )
+            if partial
+        }
+    )
 
 
 def prepare_regular_series(
@@ -130,11 +177,21 @@ def prepare_regular_series(
         date_plan = inspect_date_conversion(frame, time_field)
         if date_plan.disposition is DateTransformDisposition.NEEDS_INPUT:
             return PreparedTimeSeries(
-                "limited", "date_semantics_require_confirmation", pd.Series(dtype=float), len(frame), 0, 0
+                status="limited",
+                reason_code="date_semantics_require_confirmation",
+                series=pd.Series(dtype=float),
+                source_rows=len(frame),
+                valid_rows=0,
+                missing_periods=0,
             )
         if date_plan.disposition is DateTransformDisposition.UNAVAILABLE:
             return PreparedTimeSeries(
-                "limited", "time_field_not_losslessly_parseable", pd.Series(dtype=float), len(frame), 0, 0
+                status="limited",
+                reason_code="time_field_not_losslessly_parseable",
+                series=pd.Series(dtype=float),
+                source_rows=len(frame),
+                valid_rows=0,
+                missing_periods=0,
             )
         converted = apply_date_option(frame, time_field, date_plan.options[0])
         parsed_time = converted[time_field]
@@ -145,20 +202,38 @@ def prepare_regular_series(
     valid_rows = len(working)
     if valid_rows == 0:
         return PreparedTimeSeries(
-            "limited", "no_valid_time_metric_rows", pd.Series(dtype=float), len(frame), 0, 0
+            status="limited",
+            reason_code="no_valid_time_metric_rows",
+            series=pd.Series(dtype=float),
+            source_rows=len(frame),
+            valid_rows=0,
+            missing_periods=0,
         )
     working["period"] = _periodize(working["time"], frequency)
     grouped = working.groupby("period", sort=True)["value"]
     series = grouped.sum() if aggregation is TimeAggregation.SUM else grouped.mean()
     expected = _expected_index(series.index.min(), series.index.max(), frequency)
     missing_periods = int(len(expected.difference(series.index)))
+    incomplete_boundary_periods = _incomplete_boundary_periods(
+        working["time"], frequency
+    )
+    reason_code = (
+        "missing_time_intervals"
+        if missing_periods
+        else "incomplete_boundary_periods"
+        if incomplete_boundary_periods
+        else ""
+    )
     return PreparedTimeSeries(
-        "limited" if missing_periods else "ready",
-        "missing_time_intervals" if missing_periods else "",
-        series,
-        len(frame),
-        valid_rows,
-        missing_periods,
+        status="limited" if reason_code else "ready",
+        reason_code=reason_code,
+        series=series,
+        source_rows=len(frame),
+        valid_rows=valid_rows,
+        missing_periods=missing_periods,
+        incomplete_boundary_periods=incomplete_boundary_periods,
+        start_time=pd.Timestamp(working["time"].min()).isoformat(),
+        end_time=pd.Timestamp(working["time"].max()).isoformat(),
     )
 
 
@@ -172,6 +247,9 @@ def _base(
     values: tuple[float, ...] = (),
     valid_rows: int = 0,
     missing_periods: int = 0,
+    incomplete_boundary_periods: int = 0,
+    start_time: str = "",
+    end_time: str = "",
 ) -> TimeSeriesResult:
     return TimeSeriesResult(
         status=status,
@@ -186,9 +264,10 @@ def _base(
         valid_rows=valid_rows,
         observed_periods=len(values),
         missing_periods=missing_periods,
+        incomplete_boundary_periods=incomplete_boundary_periods,
         imputed_periods=0,
-        start_time=times[0] if times else "",
-        end_time=times[-1] if times else "",
+        start_time=start_time,
+        end_time=end_time,
         alpha=spec.alpha,
         maximum_claim_class=ClaimClass.ASSOCIATIONAL,
         limitations=(
@@ -213,16 +292,19 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
     series = prepared.series
     times = tuple(pd.Timestamp(item).isoformat() for item in series.index)
     values = tuple(float(item) for item in series.to_numpy(dtype=float))
-    if prepared.missing_periods:
+    if prepared.status == "limited":
         return _base(
             frame,
             spec,
             status="limited",
-            reason_code="missing_time_intervals",
+            reason_code=prepared.reason_code,
             times=times,
             values=values,
             valid_rows=prepared.valid_rows,
             missing_periods=prepared.missing_periods,
+            incomplete_boundary_periods=prepared.incomplete_boundary_periods,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     if len(series) < 6:
         return _base(
@@ -233,6 +315,8 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             times=times,
             values=values,
             valid_rows=prepared.valid_rows,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     if float(series.std(ddof=0)) == 0:
         return _base(
@@ -243,6 +327,8 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             times=times,
             values=values,
             valid_rows=prepared.valid_rows,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     trend = np.arange(len(series), dtype=float)
     design = pd.DataFrame({"trend": trend}, index=series.index)
@@ -267,6 +353,8 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
             times=times,
             values=values,
             valid_rows=prepared.valid_rows,
+            start_time=prepared.start_time,
+            end_time=prepared.end_time,
         )
     x = sm.add_constant(design, has_constant="add")
     hac_lag = max(1, min(len(series) // 4, int(math.floor(4 * (len(series) / 100) ** (2 / 9)))))
@@ -313,8 +401,9 @@ def analyze_time_series(frame: pd.DataFrame, spec: TimeSeriesSpec) -> TimeSeries
         observed_periods=len(series),
         missing_periods=0,
         imputed_periods=0,
-        start_time=times[0],
-        end_time=times[-1],
+        incomplete_boundary_periods=0,
+        start_time=prepared.start_time,
+        end_time=prepared.end_time,
         alpha=spec.alpha,
         maximum_claim_class=ClaimClass.INFERENTIAL,
         limitations=tuple(limitations),
