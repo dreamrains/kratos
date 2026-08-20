@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import io
 
+import pandas as pd
+
 from data_agent.v2.workbench_browser_fixture import (
+    DelayedAnalysisRouter,
     DeterministicJourneyPlanner,
     build_provider_neutral_fixture,
 )
+from data_agent.v2.router import AnalysisKind
 from data_agent.v2.planner import DatasetColumnContext, DatasetPlanningContext, ColumnRole
 
 
@@ -79,3 +83,27 @@ def test_fixture_planner_fails_exactly_once_then_requires_explicit_third_call():
     assert planner.calls == 2
     assert planner.plan("销售额如何？", context, clarifications=()).status.value == "ready"
     assert planner.calls == 3
+
+
+def test_fixture_router_preserves_real_runtime_and_only_delays_events(tmp_path):
+    workspace = tmp_path / "workspace"
+    inbox = workspace / "inbox"
+    inbox.mkdir(parents=True)
+    pd.DataFrame({"sales": [10, 20, 30]}).to_csv(inbox / "sales.csv", index=False)
+    router = DelayedAnalysisRouter(tmp_path / "sessions", inbox, delay_seconds=0)
+
+    prepared = router.prepare(
+        analysis_kind=AnalysisKind.DESCRIPTIVE,
+        session_id="session_fixture_router",
+        turn_id="turn_fixture_router",
+        payload={
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "平均销售额？",
+        },
+    )
+    events = list(prepared.stream())
+
+    assert events[0].event == "turn_started"
+    assert events[-1].event == "turn_completed"
+    assert any(item.event == "final_block_delta" for item in events)

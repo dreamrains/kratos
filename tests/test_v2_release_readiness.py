@@ -74,6 +74,7 @@ def test_release_matrix_has_unique_scenarios_and_all_seven_layers():
     assert "planning_answer_persisted" in unified.required_interactions
     assert "planning_failure_stable" in unified.required_interactions
     assert "explicit_planning_retry" in unified.required_interactions
+    assert "queued_steer" in unified.required_interactions
     assert "implicit_provider_retry" in unified.forbidden_behaviors
     assert "planning_answer_truncation" in unified.forbidden_behaviors
     assert "silent_planning_context_trim" in unified.forbidden_behaviors

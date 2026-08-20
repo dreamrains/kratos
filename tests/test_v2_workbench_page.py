@@ -107,3 +107,13 @@ def test_v2_workbench_planning_is_only_bound_to_explicit_clicks():
     assert "plan.planning_input_id" in js
     assert "if (params.has('turn_id')) restore();" in js
     assert "else if (params.has('plan_id')) restorePlanning();" in js
+
+
+def test_v2_workbench_manual_retries_keep_session_and_create_new_turn():
+    client = create_app().test_client()
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert "ensurePlanningSession();" in js
+    assert "state.turnId = requestIdentity('turn').slice(0, 17);" in js
+    assert "session_id: state.sessionId" in js
+    assert "turn_id: state.turnId" in js

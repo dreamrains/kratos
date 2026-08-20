@@ -675,7 +675,14 @@
         state.pendingPlanningRequest = null;
         hidePlanning();
         renderPlanningEstimate(null);
-        await executeAnalysis(payload());
+        ensurePlanningSession();
+        state.turnId = requestIdentity('turn').slice(0, 17);
+        updateUrl();
+        await executeAnalysis({
+            ...payload(),
+            session_id: state.sessionId,
+            turn_id: state.turnId,
+        });
     }
 
     async function sendSteer() {

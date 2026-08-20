@@ -111,6 +111,34 @@ def test_unified_api_requires_explicit_kind(monkeypatch, tmp_path):
     assert response.get_json()["error"] == "analysis_kind is required"
 
 
+def test_unified_api_uses_injectable_router_factory(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    calls = []
+    original = v2_module.V2_ROUTER_FACTORY
+
+    def factory(sessions_root, inbox_root):
+        calls.append((sessions_root, inbox_root))
+        return original(sessions_root, inbox_root)
+
+    monkeypatch.setattr(v2_module, "V2_ROUTER_FACTORY", factory)
+    response = client.post(
+        "/api/v2/analyze",
+        json={
+            "analysis_kind": "descriptive",
+            "session_id": "session_router_factory",
+            "turn_id": "turn_router_factory",
+            "filename": "sales.csv",
+            "metric": "sales",
+            "question": "平均销售额？",
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(calls) == 1
+
+
 def test_unified_api_supports_two_sequential_turns_in_one_session(
     monkeypatch, tmp_path
 ):

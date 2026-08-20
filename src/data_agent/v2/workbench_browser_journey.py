@@ -7,6 +7,8 @@ from typing import Any
 
 JOURNEY_VERSION = "v2_provider_neutral_browser_journey.v1"
 JOURNEY_FIXTURE_ID = "v2_workbench_planning_failure_retry.v1"
+INTERACTION_JOURNEY_VERSION = "v2_provider_neutral_interaction_journey.v1"
+INTERACTION_FIXTURE_ID = "v2_workbench_interactions.v1"
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Each checkpoint declares the exact cumulative number of deterministic fake
@@ -33,6 +35,34 @@ _OBSERVED_INTERACTIONS = (
     "planning_failure_stable",
     "explicit_planning_retry",
     "live_progress",
+    "task_overlay_collapsed",
+    "refresh_restore",
+)
+
+_REQUIRED_INTERACTION_OBSERVATIONS = (
+    "upload",
+    "live_progress",
+    "draft_while_running",
+    "queued_steer_persisted",
+    "queued_steer_completed",
+    "stop_receipt_persisted",
+    "turn_interrupted",
+    "no_final_after_interrupt",
+    "task_overlay_collapsed",
+    "refresh_completed_restore",
+    "refresh_interrupted_restore",
+    "session_isolation",
+    "error_recovery",
+)
+
+_INTERACTION_NAMES = (
+    "upload",
+    "live_progress",
+    "draft_while_running",
+    "queued_steer",
+    "stop",
+    "error_recovery",
+    "session_isolation",
     "task_overlay_collapsed",
     "refresh_restore",
 )
@@ -116,4 +146,57 @@ def validate_provider_neutral_journey(
         passed=not unique_reasons,
         reason_codes=unique_reasons,
         observed_interactions=_OBSERVED_INTERACTIONS if not unique_reasons else (),
+    )
+
+
+def validate_provider_neutral_interaction_journey(
+    receipt: Any,
+    *,
+    expected_source_digest: str,
+) -> BrowserJourneyValidation:
+    """Validate the actual-DOM stop, steer, refresh, and isolation journey."""
+
+    if not isinstance(receipt, dict):
+        return BrowserJourneyValidation(False, ("invalid_browser_journey",))
+    reasons: list[str] = []
+    if receipt.get("version") != INTERACTION_JOURNEY_VERSION:
+        reasons.append("invalid_browser_journey_version")
+    if receipt.get("observer") != "actual_browser":
+        reasons.append("actual_browser_observer_required")
+    if receipt.get("fixture_id") != INTERACTION_FIXTURE_ID:
+        reasons.append("invalid_browser_journey_fixture")
+    source_digest = receipt.get("source_digest")
+    if not isinstance(source_digest, str) or not _SHA256.fullmatch(source_digest):
+        reasons.append("invalid_browser_journey_source_digest")
+    elif source_digest != expected_source_digest:
+        reasons.append("stale_browser_journey")
+    if receipt.get("scenario_id") != "unified_analysis_entry":
+        reasons.append("invalid_browser_journey_scenario")
+    if receipt.get("provider_calls") != 0:
+        reasons.append("real_provider_call_in_provider_neutral_journey")
+    console_errors = receipt.get("console_errors")
+    if not isinstance(console_errors, list) or console_errors:
+        reasons.append("browser_console_error")
+
+    sessions = receipt.get("sessions")
+    if not isinstance(sessions, dict):
+        reasons.append("invalid_browser_sessions")
+    else:
+        identities = tuple(str(sessions.get(key) or "").strip() for key in ("steer", "stop", "isolation"))
+        if not all(identities) or len(set(identities)) != len(identities):
+            reasons.append("browser_sessions_not_isolated")
+
+    observations = receipt.get("observations")
+    if not isinstance(observations, dict):
+        reasons.append("invalid_browser_observations")
+        observations = {}
+    for name in _REQUIRED_INTERACTION_OBSERVATIONS:
+        if observations.get(name) is not True:
+            reasons.append(f"missing_browser_interaction:{name}")
+
+    unique_reasons = tuple(dict.fromkeys(reasons))
+    return BrowserJourneyValidation(
+        passed=not unique_reasons,
+        reason_codes=unique_reasons,
+        observed_interactions=_INTERACTION_NAMES if not unique_reasons else (),
     )

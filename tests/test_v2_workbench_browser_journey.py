@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 
 from data_agent.v2.workbench_browser_journey import (
+    INTERACTION_JOURNEY_VERSION,
     PROVIDER_NEUTRAL_CHECKPOINTS,
+    validate_provider_neutral_interaction_journey,
     validate_provider_neutral_journey,
 )
 
@@ -95,3 +97,69 @@ def test_provider_neutral_browser_journey_rejects_truncated_answer_and_stale_sou
     assert result.passed is False
     assert "stale_browser_journey" in result.reason_codes
     assert "full_planning_answer_not_observed" in result.reason_codes
+
+
+def _interaction_receipt():
+    return {
+        "version": INTERACTION_JOURNEY_VERSION,
+        "observer": "actual_browser",
+        "fixture_id": "v2_workbench_interactions.v1",
+        "source_digest": "sha256:" + "d" * 64,
+        "scenario_id": "unified_analysis_entry",
+        "provider_calls": 0,
+        "console_errors": [],
+        "sessions": {
+            "steer": "session_steer",
+            "stop": "session_stop",
+            "isolation": "session_isolation",
+        },
+        "observations": {
+            "upload": True,
+            "live_progress": True,
+            "draft_while_running": True,
+            "queued_steer_persisted": True,
+            "queued_steer_completed": True,
+            "stop_receipt_persisted": True,
+            "turn_interrupted": True,
+            "no_final_after_interrupt": True,
+            "task_overlay_collapsed": True,
+            "refresh_completed_restore": True,
+            "refresh_interrupted_restore": True,
+            "session_isolation": True,
+            "error_recovery": True,
+        },
+    }
+
+
+def test_interaction_journey_requires_stop_steer_refresh_and_isolation():
+    result = validate_provider_neutral_interaction_journey(
+        _interaction_receipt(), expected_source_digest="sha256:" + "d" * 64
+    )
+
+    assert result.passed is True
+    assert result.observed_interactions == (
+        "upload",
+        "live_progress",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation",
+        "task_overlay_collapsed",
+        "refresh_restore",
+    )
+
+
+def test_interaction_journey_rejects_session_reuse_final_after_stop_and_stale_source():
+    receipt = _interaction_receipt()
+    receipt["sessions"]["stop"] = "session_steer"
+    receipt["observations"]["no_final_after_interrupt"] = False
+
+    result = validate_provider_neutral_interaction_journey(
+        receipt, expected_source_digest="sha256:" + "e" * 64
+    )
+
+    assert result.passed is False
+    assert "stale_browser_journey" in result.reason_codes
+    assert "browser_sessions_not_isolated" in result.reason_codes
+    assert "missing_browser_interaction:no_final_after_interrupt" in result.reason_codes

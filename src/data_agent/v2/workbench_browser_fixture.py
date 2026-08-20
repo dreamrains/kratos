@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,7 @@ from data_agent.v2.planning_budget import (
     PlanningContextTooLarge,
 )
 from data_agent.v2.provider_authorization import ProviderAuthorizationStatus
+from data_agent.v2.router import AnalysisRouter, PreparedAnalysis
 from data_agent.web.app import create_app
 
 
@@ -82,6 +84,31 @@ class DeterministicPlanningBudget:
         return estimate
 
 
+class DelayedPreparedAnalysis:
+    """Preserve the real runtime while opening deterministic UI interaction gaps."""
+
+    def __init__(self, prepared: PreparedAnalysis, delay_seconds: float) -> None:
+        self.prepared = prepared
+        self.delay_seconds = max(0.0, float(delay_seconds))
+
+    def stream(self):
+        for event in self.prepared.stream():
+            yield event
+            if self.delay_seconds:
+                time.sleep(self.delay_seconds)
+
+
+class DelayedAnalysisRouter(AnalysisRouter):
+    def __init__(self, sessions_root, inbox_root, *, delay_seconds: float = 1.0):
+        super().__init__(sessions_root, inbox_root)
+        self.delay_seconds = delay_seconds
+
+    def prepare(self, **kwargs):
+        return DelayedPreparedAnalysis(
+            super().prepare(**kwargs), self.delay_seconds
+        )
+
+
 def build_provider_neutral_fixture(root: Path):
     """Build an isolated actual-HTTP fixture that can never call a Provider."""
 
@@ -116,6 +143,9 @@ def build_provider_neutral_fixture(root: Path):
 
     v2_module.V2_PLANNER_FACTORY = lambda: planner
     v2_module.V2_PLANNING_BUDGET_FACTORY = lambda: budget
+    v2_module.V2_ROUTER_FACTORY = lambda sessions_root, inbox_root: DelayedAnalysisRouter(
+        sessions_root, inbox_root
+    )
     app = create_app()
     app.config.update(
         TESTING=False,
@@ -139,6 +169,18 @@ def build_provider_neutral_fixture(root: Path):
                 status == ProviderAuthorizationStatus.CONSUMED.value
                 for status in records.values()
             )
+        turns = []
+        for path in sessions.glob("*/v2/turns/*.json"):
+            value = json.loads(path.read_text(encoding="utf-8"))
+            turns.append(
+                {
+                    "session_id": path.parents[2].name,
+                    "turn_id": path.stem,
+                    "status": value.get("status"),
+                    "block_count": len(value.get("blocks") or ()),
+                    "question": (value.get("request_context") or {}).get("question", ""),
+                }
+            )
         return jsonify(
             {
                 "fixture_id": "v2_workbench_planning_failure_retry.v1",
@@ -147,6 +189,9 @@ def build_provider_neutral_fixture(root: Path):
                 "authorizations_issued": issued,
                 "authorizations_consumed": consumed,
                 "provider_calls": 0,
+                "turns": sorted(
+                    turns, key=lambda item: (item["session_id"], item["turn_id"])
+                ),
             }
         )
 

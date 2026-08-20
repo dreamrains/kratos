@@ -81,6 +81,10 @@ def V2_PLANNING_BUDGET_FACTORY():
     )
 
 
+def V2_ROUTER_FACTORY(sessions_root, inbox_root):
+    return AnalysisRouter(sessions_root, inbox_root)
+
+
 class PlanningRequestBodyTooLarge(ValueError):
     pass
 
@@ -273,7 +277,7 @@ def analyze_v2() -> Response:
     if not isinstance(payload, dict):
         return jsonify({"error": "request body must be a JSON object"}), 400
     cfg = get_config()
-    router = AnalysisRouter(cfg.sessions_resolved, cfg.inbox_dir)
+    router = V2_ROUTER_FACTORY(cfg.sessions_resolved, cfg.inbox_dir)
     steer_store = None
     queued_steer = None
     plan_store = None
