@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from data_agent.config import get_config
 
@@ -37,26 +37,8 @@ WORKFLOW_FIELDS = {
     "required_capability": "",
     "evidence_requirements": [],
     "satisfied_evidence_requirements": [],
-    "satisfied_claim_keys": [],
-    "analysis_requirement_ids": [],
-    "satisfied_analysis_requirement_ids": [],
     "confirmation_policy": {},
 }
-
-
-def normalize_required_claim_keys(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        raise ValueError("required_claim_keys must be a list of non-empty strings")
-    result: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise ValueError("required_claim_keys must be a list of non-empty strings")
-        claim_key = " ".join(item.split())
-        if not claim_key:
-            raise ValueError("required_claim_keys must be a list of non-empty strings")
-        if claim_key not in result:
-            result.append(claim_key)
-    return result
 
 
 PLAN_FIELDS = {
@@ -118,15 +100,6 @@ class TaskManager:
         )
 
     def _normalize(self, task: dict) -> dict:
-        if "required_claim_keys" in task:
-            try:
-                task["required_claim_keys"] = normalize_required_claim_keys(
-                    task["required_claim_keys"]
-                )
-            except ValueError:
-                # Malformed-present data stays on the canonical path and can
-                # never opt into persisted legacy matching semantics.
-                task["required_claim_keys"] = []
         for key, value in WORKFLOW_FIELDS.items():
             if key not in task:
                 task[key] = list(value) if isinstance(value, list) else value
@@ -158,9 +131,6 @@ class TaskManager:
         **workflow_fields,
     ) -> dict:
         """创建新任务。"""
-        required_claim_keys = normalize_required_claim_keys(
-            workflow_fields.get("required_claim_keys", [])
-        )
         task = {
             "id": self._alloc_id(),
             "subject": subject,
@@ -170,7 +140,6 @@ class TaskManager:
             "blocks": [],
             "owner": "",
             "session_id": session_id,
-            "required_claim_keys": required_claim_keys,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         for key in WORKFLOW_FIELDS:
@@ -198,17 +167,10 @@ class TaskManager:
         **workflow_fields,
     ) -> Optional[dict]:
         """更新任务。status 可选值：pending / in_progress / completed / deleted。"""
-        if "required_claim_keys" in workflow_fields:
-            workflow_fields["required_claim_keys"] = normalize_required_claim_keys(
-                workflow_fields["required_claim_keys"]
-            )
         try:
             task = self._load(tid)
         except ValueError:
             return None
-
-        if "required_claim_keys" in workflow_fields:
-            task["required_claim_keys"] = workflow_fields["required_claim_keys"]
 
         if status is not None:
             allowed = ("pending", "blocked", "in_progress", "completed", "failed", "superseded", "archived", "deleted")
@@ -285,44 +247,6 @@ class TaskManager:
     def is_ready(self, task: dict) -> bool:
         task = self._normalize(dict(task))
         return task.get("status") == "pending" and not task.get("blockedBy")
-
-    def activate_next_ready_plan_task(
-        self,
-        *,
-        session_id: str,
-        project_name: str = "",
-        plan_id: str = "",
-    ) -> int | None:
-        """Activate exactly one ready canonical task when none is running.
-
-        Canonical workflow bookkeeping is server-owned.  The model should
-        choose and execute analytical tools, not maintain the transient
-        ``pending -> in_progress`` invariant required by workspace scoping.
-        Legacy/user-authored tasks remain untouched.
-        """
-
-        tasks = [
-            task
-            for task in self.list_active_for_scope(
-                session_id=session_id,
-                project_name=project_name,
-            )
-            if task.get("task_kind") == "plan_task"
-            and (not plan_id or task.get("plan_id") == plan_id)
-            and self._is_stage3c0b_scoped_task(task)
-        ]
-        current = [task for task in tasks if task.get("status") == "in_progress"]
-        if current:
-            return int(sorted(current, key=lambda task: int(task.get("id") or 0))[0]["id"])
-
-        ready = sorted(
-            (task for task in tasks if self.is_ready(task)),
-            key=lambda task: int(task.get("id") or 0),
-        )
-        if not ready:
-            return None
-        activated = self.update(ready[0]["id"], status="in_progress")
-        return int(activated["id"]) if activated else None
 
     def _active_plans_path(self) -> Path:
         return self.dir / "active_plans.json"
@@ -611,24 +535,6 @@ class TaskManager:
     def _stage3c0b_evidence_requirement(self, evidence: dict) -> str:
         return str(evidence.get("evidence_requirement") or "")
 
-    def _uses_legacy_claim_key_compat(self, task: dict) -> bool:
-        return "required_claim_keys" not in task
-
-    def _stage3c0b_required_claim_keys(self, task: dict) -> list[str]:
-        try:
-            return normalize_required_claim_keys(task.get("required_claim_keys"))
-        except ValueError:
-            return []
-
-    def _stage3c0b_analysis_requirement_ids(self, task: dict) -> list[str]:
-        return [str(item) for item in task.get("analysis_requirement_ids") or [] if str(item)]
-
-    def _stage3c0b_evidence_requirement_ids(self, evidence: dict) -> list[str]:
-        value = evidence.get("requirement_ids")
-        if not isinstance(value, list):
-            return []
-        return [str(item) for item in value if str(item)]
-
     def _stage3c0b_task_matches_evidence(self, task: dict, evidence: dict) -> bool:
         task_plan_id = str(task.get("analysis_plan_id") or "")
         if task_plan_id and str(evidence.get("plan_id") or "") != task_plan_id:
@@ -649,22 +555,10 @@ class TaskManager:
             if not set(task_contract_ids).intersection(evidence_contract_ids):
                 return False
 
-        required_claim_keys = self._stage3c0b_required_claim_keys(task)
-        if not self._uses_legacy_claim_key_compat(task):
-            claim_key = str(evidence.get("claim_key") or "")
-            if not required_claim_keys or claim_key not in required_claim_keys:
-                return False
-            analysis_requirement_ids = self._stage3c0b_analysis_requirement_ids(task)
-            if analysis_requirement_ids:
-                evidence_requirement_ids = self._stage3c0b_evidence_requirement_ids(evidence)
-                if not set(analysis_requirement_ids).intersection(evidence_requirement_ids):
-                    return False
-        else:
-            # Read-only compatibility for tasks persisted before required_claim_keys.
-            task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-            evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-            if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
-                return False
+        task_requirements = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+        if not task_requirements or not evidence_requirement or evidence_requirement not in task_requirements:
+            return False
 
         return True
 
@@ -677,50 +571,20 @@ class TaskManager:
         if evidence_id and evidence_id not in evidence_ids:
             evidence_ids.append(evidence_id)
 
-        required_claim_keys = self._stage3c0b_required_claim_keys(task)
-        if not self._uses_legacy_claim_key_compat(task):
-            claim_key = str(evidence.get("claim_key") or "")
-            satisfied_claim_keys = list(task.get("satisfied_claim_keys") or [])
-            if claim_key and claim_key not in satisfied_claim_keys:
-                satisfied_claim_keys.append(claim_key)
-            analysis_requirement_ids = self._stage3c0b_analysis_requirement_ids(task)
-            evidence_requirement_ids = self._stage3c0b_evidence_requirement_ids(evidence)
-            satisfied_analysis_requirement_ids = list(
-                task.get("satisfied_analysis_requirement_ids") or []
-            )
-            for requirement_id in analysis_requirement_ids:
-                if (
-                    requirement_id in evidence_requirement_ids
-                    and requirement_id not in satisfied_analysis_requirement_ids
-                ):
-                    satisfied_analysis_requirement_ids.append(requirement_id)
-            all_satisfied = (
-                bool(required_claim_keys)
-                and all(item in satisfied_claim_keys for item in required_claim_keys)
-                and all(
-                    item in satisfied_analysis_requirement_ids
-                    for item in analysis_requirement_ids
-                )
-            )
-            satisfaction_fields = {
-                "satisfied_claim_keys": satisfied_claim_keys,
-                "satisfied_analysis_requirement_ids": satisfied_analysis_requirement_ids,
-            }
-        else:
-            evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
-            satisfied = list(task.get("satisfied_evidence_requirements") or [])
-            if evidence_requirement and evidence_requirement not in satisfied:
-                satisfied.append(evidence_requirement)
-            required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
-            all_satisfied = bool(required) and all(item in satisfied for item in required)
-            satisfaction_fields = {"satisfied_evidence_requirements": satisfied}
+        evidence_requirement = self._stage3c0b_evidence_requirement(evidence)
+        satisfied = list(task.get("satisfied_evidence_requirements") or [])
+        if evidence_requirement and evidence_requirement not in satisfied:
+            satisfied.append(evidence_requirement)
+
+        required = [str(item) for item in task.get("evidence_requirements") or [] if str(item)]
+        all_satisfied = bool(required) and all(item in satisfied for item in required)
         was_completed = task.get("status") == "completed"
 
         update_fields = {
             "evidence_ids": evidence_ids,
             "result_summary": evidence.get("result_summary", "") or evidence.get("claim", ""),
             "confidence": evidence.get("confidence", ""),
-            **satisfaction_fields,
+            "satisfied_evidence_requirements": satisfied,
         }
         if all_satisfied:
             self.update(
@@ -803,22 +667,6 @@ class TaskManager:
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
-            activated_scopes: set[tuple[str, str]] = set()
-            for task in active_tasks:
-                if task.get("id") not in completed:
-                    continue
-                scope_key = (
-                    str(task.get("project_name") or ""),
-                    str(task.get("plan_id") or ""),
-                )
-                if scope_key in activated_scopes:
-                    continue
-                activated_scopes.add(scope_key)
-                self.activate_next_ready_plan_task(
-                    session_id=session_id,
-                    project_name=scope_key[0],
-                    plan_id=scope_key[1],
-                )
             return completed
 
         evidence_text = self._evidence_text(evidence)

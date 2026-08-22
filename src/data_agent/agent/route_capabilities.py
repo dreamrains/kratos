@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from data_agent.agent.artifact_refs import hydrate_refs
-from data_agent.agent.analysis_requirements import requirement_ids_for_route
 from data_agent.agent.confirmation_policy import (
     empty_confirmation_gate,
     pending_confirmation_gate,
@@ -31,10 +30,7 @@ _CONCEPTUAL_REQUIREMENTS = {
     "denominator",
     "drivers",
     "distribution",
-    "effective_sample_size",
-    "effect_estimate",
     "effect_size",
-    "estimand",
     "field semantics",
     "field_semantics",
     "hypothesis",
@@ -43,9 +39,7 @@ _CONCEPTUAL_REQUIREMENTS = {
     "limitations",
     "method",
     "metric_delta",
-    "missing_intervals",
     "missingness",
-    "multiplicity_handling",
     "period coverage",
     "period_comparability",
     "period_definition",
@@ -54,22 +48,16 @@ _CONCEPTUAL_REQUIREMENTS = {
     "rate_definition",
     "retention_metric",
     "sample_size",
-    "sample_adequacy",
     "schema",
-    "seasonality_estimability",
     "significance",
     "statistical_significance",
     "step_definition",
     "time_scope",
-    "time_frequency",
     "trend",
     "trend_statistics",
-    "autocorrelation_awareness",
     "validation",
     "validation_metric",
     "variables",
-    "window_comparability",
-    "calculation_method",
 }
 
 _COMMON_FIELD_REQUIREMENTS = {
@@ -192,7 +180,7 @@ def _executable_routes(
             "category": "ready",
             "reason": _text(route.get("reason")),
             "limitations": _text_list(route.get("limitations")),
-            "evidence_requirements": requirement_ids_for_route(route),
+            "evidence_requirements": _text_list(route.get("evidence_requirements")),
             "risk_fields": risk_fields,
             "budget_level": _text(route.get("budget_level")),
             "prompt": _route_prompt(route, risk_fields),
@@ -331,7 +319,7 @@ def _demoted_route_item(
         "reason": _text(route.get("reason")),
         "data_requirements": missing,
         "value_if_available": "",
-        "evidence_requirements": requirement_ids_for_route(route),
+        "evidence_requirements": _text_list(route.get("evidence_requirements")),
         "limitations": _text_list(route.get("limitations")),
         "prompt": (
             f'I want to explore "{direction}". Please tell me what data is missing, '
@@ -442,7 +430,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
-    required = requirement_ids_for_route(route)
+    required = _text_list(route.get("evidence_requirements"))
     required.extend(_route_field_role_requirements(route))
     return _dedupe(required)
 

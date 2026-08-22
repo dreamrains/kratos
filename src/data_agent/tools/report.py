@@ -23,25 +23,10 @@ _STAT_DETAIL_FIELDS = [
     "time_scope",
     "calculation_method",
     "method_detail",
-    "denominator",
-    "missingness",
-    "estimand",
-    "effect_estimate",
-    "sample_adequacy",
-    "time_frequency",
-    "missing_intervals",
-    "window_comparability",
-    "autocorrelation_awareness",
     "significance",
     "correlation",
     "confidence_interval",
 ]
-
-
-def _expected_statistical_fields(record: dict[str, Any]) -> list[str]:
-    from data_agent.tools.analysis_flow import statistical_detail_fields
-
-    return statistical_detail_fields(record)
 
 
 def _json_result(payload: dict[str, Any]) -> str:
@@ -282,7 +267,7 @@ def _statistical_gap_lines(records: list[dict[str, Any]]) -> list[str]:
     missing = sorted({
         field
         for record in records
-        for field in _expected_statistical_fields(record)
+        for field in _STAT_DETAIL_FIELDS
         if record.get(field) in (None, "", [], {})
     })
     if not missing:
@@ -294,11 +279,7 @@ def _statistical_quality_lines(records: list[dict[str, Any]]) -> list[str]:
     for record in records:
         gaps = record.get("statistical_detail_gaps")
         if gaps is None:
-            gaps = [
-                field
-                for field in _expected_statistical_fields(record)
-                if record.get(field) in (None, "", [], {})
-            ]
+            gaps = [field for field in _STAT_DETAIL_FIELDS if record.get(field) in (None, "", [], {})]
         status = "complete" if not gaps else "needs supplementation"
         lines.append(f"- `{record.get('id', '-')}` {record.get('claim', '')}: {status}")
         if gaps:

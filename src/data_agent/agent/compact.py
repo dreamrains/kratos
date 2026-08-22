@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -32,11 +31,6 @@ class CompactState:
     has_compacted: bool = False
     last_summary: str = ""
     recent_files: list[str] = field(default_factory=list)
-    trust_capsule_digest: str = ""
-    trust_capsule_json: str = ""
-    compaction_count: int = 0
-    message_count_after_compaction: int = 0
-    last_output_digest: str = ""
 
 
 def _session_tool_outputs_dir(session_id: str) -> Path:
@@ -184,115 +178,6 @@ def estimate_tokens(messages: list[dict]) -> int:
     return len(json.dumps(messages, default=str, ensure_ascii=False)) // 4
 
 
-def _bounded_recent_messages(messages: list[dict], max_chars: int) -> list[dict]:
-    """Bound recent payloads while retaining roles and tool-call/result pairing IDs."""
-
-    if not messages:
-        return []
-    total_limit = max(400, int(max_chars))
-    per_message = max(80, total_limit // len(messages))
-    result_ids = {
-        str(message.get("tool_call_id") or "")
-        for message in messages
-        if isinstance(message, dict) and message.get("role") == "tool"
-    }
-    bounded: list[dict] = []
-    for original in messages:
-        msg = {
-            key: original[key]
-            for key in ("role", "content", "tool_call_id")
-            if key in original
-        }
-        content = original.get("content")
-        if isinstance(content, str) and len(content) > per_message:
-            marker = "\n...[recent content compacted; full text in transcript]...\n"
-            remaining = max(20, per_message - len(marker))
-            head = remaining * 2 // 3
-            tail = remaining - head
-            msg["content"] = content[:head] + marker + content[-tail:]
-        tool_calls = original.get("tool_calls")
-        if isinstance(tool_calls, list):
-            compact_calls = []
-            ordered_calls = sorted(
-                [call for call in tool_calls if isinstance(call, dict)],
-                key=lambda call: (str(call.get("id") or "") not in result_ids),
-            )[:32]
-            for call in ordered_calls:
-                if not isinstance(call, dict):
-                    compact_calls.append(call)
-                    continue
-                compact_call = {
-                    key: call[key]
-                    for key in ("id", "type", "name")
-                    if key in call
-                }
-                function = compact_call.get("function")
-                if function is None:
-                    function = call.get("function")
-                if isinstance(function, dict):
-                    function = {
-                        key: function[key]
-                        for key in ("name", "arguments")
-                        if key in function
-                    }
-                    arguments = function.get("arguments")
-                    raw_arguments = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
-                    if len(raw_arguments) > 600:
-                        function["arguments"] = json.dumps({
-                            "compacted_arguments_digest": hashlib.sha256(
-                                raw_arguments.encode("utf-8")
-                            ).hexdigest(),
-                            "full_arguments": "transcript",
-                        })
-                    compact_call["function"] = function
-                elif "arguments" in call:
-                    raw_arguments = json.dumps(
-                        call.get("arguments"), ensure_ascii=False, sort_keys=True, default=str
-                    )
-                    compact_call["arguments"] = (
-                        call.get("arguments")
-                        if len(raw_arguments) <= 600
-                        else {"compacted_arguments_digest": hashlib.sha256(
-                            raw_arguments.encode("utf-8")
-                        ).hexdigest()}
-                    )
-                compact_calls.append(compact_call)
-            msg["tool_calls"] = compact_calls
-            if len(tool_calls) > len(compact_calls):
-                marker = f"[tool calls bounded; {len(tool_calls) - len(compact_calls)} in transcript]"
-                msg["content"] = ((msg.get("content") or "") + "\n" + marker).strip()
-        bounded.append(msg)
-
-    def serialized_size(items: list[dict]) -> int:
-        return len(json.dumps(items, ensure_ascii=False, sort_keys=True, default=str))
-
-    while len(bounded) > 1 and serialized_size(bounded) > total_limit:
-        bounded.pop(0)
-        while len(bounded) > 1 and bounded[0].get("role") == "tool":
-            bounded.pop(0)
-    if serialized_size(bounded) > total_limit:
-        for msg in bounded:
-            if isinstance(msg.get("content"), str):
-                msg["content"] = _extract_compact_preview(msg["content"], max_chars=80)
-            if isinstance(msg.get("tool_calls"), list):
-                msg["tool_calls"] = msg["tool_calls"][:4]
-                for call in msg["tool_calls"]:
-                    if isinstance(call, dict) and isinstance(call.get("function"), dict):
-                        call["function"]["arguments"] = "{}"
-    if serialized_size(bounded) > total_limit:
-        digest = hashlib.sha256(
-            json.dumps(messages, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
-        bounded = [{
-            "role": "user",
-            "content": (
-                "[Recent context exceeded its hard bound. Full content is in the transcript; "
-                f"digest={digest}. Downgrade or disclose if a needed detail is unavailable.]"
-            ),
-        }]
-    return bounded
-
-
 def _find_safe_boundary(messages: list[dict], keep_recent: int) -> int:
     """找到安全的压缩分割点，确保 tool_use/tool_result 对不被拆分。
 
@@ -369,26 +254,18 @@ def compact_history(
     state: CompactState,
     focus: Optional[str] = None,
     token_threshold: int = 100_000,
-    trust_capsule: Optional[dict] = None,
-    summary_max_chars: int = 6_000,
-    recent_max_chars: int | None = None,
 ) -> list[dict]:
     """压缩早期对话历史为 LLM 生成的摘要。先保存 transcript。"""
-
-    input_digest = hashlib.sha256(
-        json.dumps(messages, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-    if state.has_compacted and input_digest == state.last_output_digest:
-        return messages
-    if token_threshold > 0 and estimate_tokens(messages) <= token_threshold:
-        return messages
 
     # 保存完整 transcript 以便恢复
     transcript_path = write_transcript(session_id, messages)
     logger.info(f"Transcript saved: {transcript_path}")
 
     keep_recent = 10
-    split_idx = _find_safe_boundary(messages, keep_recent) if len(messages) > keep_recent else 0
+    if len(messages) <= keep_recent:
+        return messages
+
+    split_idx = _find_safe_boundary(messages, keep_recent)
     early = messages[:split_idx]
     recent = messages[split_idx:]
 
@@ -399,7 +276,7 @@ def compact_history(
         "请将以下数据分析对话历史压缩为结构化摘要，必须保留以下关键信息：\n"
         "0. 用户对输出格式、质量、详细程度的明确要求（必须完整保留原文）\n"
         "1. 已加载的数据集名称、行数列数、关键字段、数据质量状态\n"
-        "2. 已完成的分析步骤和每步的核心结论（含具体数值；仅在适用且已验证时包含推断统计）\n"
+        "2. 已完成的分析步骤和每步的核心结论（含具体数值和统计显著性）\n"
         "3. 用户关注的核心指标和维度\n"
         "4. 用户表达的分析偏好或业务约束\n"
         "5. 当前分析进展（进行到哪一步、还有什么未完成）\n"
@@ -410,33 +287,18 @@ def compact_history(
         f"{conv_text}"
     )
 
-    if early:
-        resp = client.chat(
-            messages=[{"role": "user", "content": summary_prompt}],
-            system="你是数据分析对话摘要专家。压缩对话时保留所有数值结论、分析方法和数据引用，去除闲聊和重复内容。用结构化列表输出。",
-        )
-        summary = resp.text or ""
-    else:
-        summary = "Recent context was size-bounded; full text remains in the persisted transcript."
+    resp = client.chat(
+        messages=[{"role": "user", "content": summary_prompt}],
+        system="你是数据分析对话摘要专家。压缩对话时保留所有数值结论、分析方法和数据引用，去除闲聊和重复内容。用结构化列表输出。",
+    )
+
+    summary = resp.text or ""
 
     if focus:
         summary += f"\n\nFocus to preserve: {focus}"
-    summary = summary[:max(0, int(summary_max_chars))]
 
     state.has_compacted = True
     state.last_summary = summary
-    capsule_block = ""
-    if isinstance(trust_capsule, dict):
-        from data_agent.agent.analysis_state import render_trust_capsule
-
-        state.trust_capsule_digest = str(trust_capsule.get("digest") or "")
-        state.trust_capsule_json = render_trust_capsule(trust_capsule)
-        capsule_block = (
-            "\n\n<trust_capsule "
-            f'contract_version="trust_capsule.v1" digest="{state.trust_capsule_digest}">\n'
-            f"{state.trust_capsule_json}\n"
-            "</trust_capsule>"
-        )
 
     logger.info("History compacted", extra={"extra_data": {
         "early_messages": len(early),
@@ -444,26 +306,12 @@ def compact_history(
         "summary_length": len(summary),
     }})
 
-    compacted = [
+    return [
         {"role": "user", "content": (
             f"[Context compressed at turn boundary]\n{summary}\n\n"
-            f"{capsule_block}\n\n"
             "[Instruction: This is a compressed summary of earlier conversation. "
             "Do NOT re-acknowledge or re-summarize this context. "
             "Continue the conversation naturally from the recent messages below.]"
         )},
         {"role": "assistant", "content": "好的，继续。"},
-        ] + _bounded_recent_messages(
-            recent,
-            max_chars=(
-                max(1_000, int(token_threshold) * 2)
-            if recent_max_chars is None
-            else recent_max_chars
-        ),
-    )
-    state.compaction_count += 1
-    state.message_count_after_compaction = len(compacted)
-    state.last_output_digest = hashlib.sha256(
-        json.dumps(compacted, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-    return compacted
+    ] + recent

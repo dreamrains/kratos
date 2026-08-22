@@ -7,7 +7,6 @@ import sys
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
 
 from data_agent.agent.repl import run_repl
-from data_agent.utils.unicode_io import configure_utf8_stdio
 
 
 def _auto_discover_tools():
@@ -19,7 +18,8 @@ def _auto_discover_tools():
 def main():
     if sys.platform == "win32":
         os.system("")
-        configure_utf8_stdio()
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     from data_agent.lifecycle import AgentLifecycle
     lifecycle = AgentLifecycle()

@@ -9,16 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from html import escape as html_escape
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from data_agent.agent.evidence_contracts import BoundedEvidenceAliasCatalog
-
-# Canonical Chinese exploratory suffix reused by claim-tier publication
-# (``answer_quality.render_audited_analysis_answer``). The synthesis prompt
-# keeps the marker discipline internal; the suffix is appended deterministically
-# by the publisher when a claim is downgraded or completion is limited.
-EXPLORATORY_CLAIM_SUFFIX = "（探索性，未经独立校验）"
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,9 +22,6 @@ class SynthesisPolicy:
     suppressed_moves: list[str]
     wording_style: str
     reason: str
-    allowed_evidence_ids: tuple[str, ...] = ()
-    evidence_catalog: str = ""
-    evidence_aliases: tuple[tuple[str, str, str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,7 +36,6 @@ def derive_synthesis_policy(
     user_requirements: Any = None,
     proficiency: str | None = None,
     analysis_spec: dict[str, Any] | None = None,
-    analysis_plan: dict[str, Any] | None = None,
     evidence_records: list[dict[str, Any]] | None = None,
     **_: Any,
 ) -> SynthesisPolicy:
@@ -62,15 +49,9 @@ def derive_synthesis_policy(
     profile_text = _text(data_profile)
     intent_type = _get(intent, "intent_type", "")
     action = _get(intent, "recommended_action", "")
-    plan = analysis_plan
-    if plan is None:
-        # Deprecated call-boundary compatibility for older pipeline callers.
-        plan = analysis_spec
-    if plan is None:
-        plan = _get(state, "analysis_plan", None) or {}
+    spec = analysis_spec if analysis_spec is not None else (_get(state, "analysis_spec", None) or {})
     evidence = evidence_records if evidence_records is not None else (_get(state, "evidence_records", None) or [])
     evidence = list(evidence or [])
-    evidence_catalog = _build_catalog_for_plan(evidence, plan)
     verification_status = _latest_verification_status(state)
     wording_style = _wording_style(proficiency)
 
@@ -85,9 +66,6 @@ def derive_synthesis_policy(
                 suppressed_moves=["business_meaning", "assumptions"],
                 wording_style=wording_style,
                 reason="Direct or terse request; suppressing business translation.",
-                allowed_evidence_ids=_evidence_ids(evidence),
-                evidence_catalog=evidence_catalog.text,
-                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
@@ -103,15 +81,12 @@ def derive_synthesis_policy(
                 suppressed_moves=["business_meaning", "decision_recommendation"],
                 wording_style=wording_style,
                 reason="No evidence records are available, so synthesis stays exploratory.",
-                allowed_evidence_ids=(),
-                evidence_catalog=evidence_catalog.text,
-                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
 
     advisory = _is_advisory_request(text, profile_text, intent_type)
-    uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, plan)
+    uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, spec)
     reasons: list[str] = []
     if advisory:
         reasons.append("advisory or predictive request")
@@ -140,9 +115,6 @@ def derive_synthesis_policy(
                 suppressed_moves=[],
                 wording_style=wording_style,
                 reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
-                allowed_evidence_ids=_evidence_ids(evidence),
-                evidence_catalog=evidence_catalog.text,
-                evidence_aliases=evidence_catalog.aliases,
             ),
             verification_status,
         )
@@ -168,59 +140,9 @@ def derive_synthesis_policy(
             suppressed_moves=["decision_recommendation"],
             wording_style=wording_style,
             reason=_reason(reasons, "Evidence supports a light analytical synthesis."),
-            allowed_evidence_ids=_evidence_ids(evidence),
-            evidence_catalog=evidence_catalog.text,
-            evidence_aliases=evidence_catalog.aliases,
         ),
         verification_status,
     )
-
-
-def _build_catalog_for_plan(
-    evidence_records: list[Any],
-    plan: Any,
-) -> BoundedEvidenceAliasCatalog:
-    """Build the bounded synthesis-time evidence catalog.
-
-    Auto-projected records carry ``plan_id``; we filter to the current plan,
-    annotate each record with ``step_order`` from the plan's ``method_plan``,
-    and forward to ``build_bounded_evidence_alias_catalog``. When the plan is empty
-    we still emit the catalog so the synthesis instruction always carries the
-    no-ritual reminder.
-    """
-
-    from data_agent.agent.evidence_contracts import (
-        build_bounded_evidence_alias_catalog,
-    )
-
-    plan_id = ""
-    method_plan: list[dict[str, Any]] = []
-    if isinstance(plan, dict):
-        plan_id = str(plan.get("id") or "")
-        raw_method_plan = plan.get("method_plan")
-        if isinstance(raw_method_plan, list):
-            method_plan = [item for item in raw_method_plan if isinstance(item, dict)]
-    step_order: dict[str, int] = {}
-    for index, step in enumerate(method_plan, 1):
-        step_id = str(step.get("step_id") or "").strip()
-        if step_id:
-            step_order[step_id] = index
-    annotated: list[dict[str, Any]] = []
-    for record in evidence_records:
-        if not isinstance(record, dict):
-            continue
-        record_plan_id = str(record.get("plan_id") or "").strip()
-        # Filter to current-plan records when we know the plan id; legacy
-        # unbound evidence (empty plan_id) passes through unchanged so the
-        # catalog still surfaces something useful when no plan exists yet.
-        if plan_id and record_plan_id and record_plan_id != plan_id:
-            continue
-        annotated_record = dict(record)
-        step_id = str(record.get("step_id") or "").strip()
-        if step_id in step_order:
-            annotated_record["step_order"] = step_order[step_id]
-        annotated.append(annotated_record)
-    return build_bounded_evidence_alias_catalog(annotated)
 
 
 def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
@@ -234,12 +156,6 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
     required = ",".join(_escape_prompt_value(move) for move in policy.required_moves)
     suppressed = ",".join(_escape_prompt_value(move) for move in policy.suppressed_moves)
     reason = _escape_prompt_value(policy.reason)
-    allowed_evidence_aliases = ",".join(
-        _escape_prompt_value(f"[[evidence:{item[0]}#{item[1]}]]")
-        for item in policy.evidence_aliases
-    )
-    catalog_text = policy.evidence_catalog or ""
-    catalog_block = _escape_prompt_value(catalog_text)
     return (
         "<synthesis_policy "
         f'answer_mode="{answer_mode}" '
@@ -250,30 +166,16 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         f"<required_moves>{required}</required_moves>"
         f"<suppressed_moves>{suppressed}</suppressed_moves>"
         f"<reason>{reason}</reason>"
-        f"<allowed_evidence_aliases>{allowed_evidence_aliases}</allowed_evidence_aliases>"
         "</synthesis_policy>"
-        "<internal_evidence_markers>"
-        "Every material claim that uses a catalog measurement must end with the exact "
-        "[[evidence:aeNN#amNN]] marker shown for that measurement. "
-        "In that claim, copy the exact metric_label and value from the same catalog entry. "
-        "Do not translate or round those identity tokens; add reader-friendly Chinese explanation around them. "
-        "When bounded_evidence_catalog contains required_verified_core_copy=, begin the final answer by copying only the value after "
-        "that prefix verbatim, including its exact metric_label, value, and marker. "
-        "When aliases are available, include at least one standalone verified-core sentence using exactly one "
-        "catalog measurement, its exact metric_label/value, and its marker; put no unrelated quantity in that sentence. "
-        "Do not combine aliases from different catalog entries. "
-        "Do not invent or substitute evidence aliases. These markers are internal and removed before publication."
-        "</internal_evidence_markers>"
-        "<bounded_evidence_catalog>"
-        f"{catalog_block}"
-        "</bounded_evidence_catalog>"
-        "<synthesis_evidence_discipline>"
-        "During final answer generation do not call any analysis, plan, or evidence-recording tool; "
-        "the bounded_evidence_catalog is the only evidence source for synthesis. "
+        "<bounded_evidence_replenishment>"
+        "Before final synthesis, check whether each material claim is supported by an EvidenceRecord. "
         "Do not read raw datasets during synthesis. "
-        "If a material claim is not supported by an EvidenceRecord in the catalog, return a partial answer with "
-        "missing-evidence limitations instead of strengthening the claim."
-        "</synthesis_evidence_discipline>"
+        "If a material claim lacks evidence and a relevant dataset is available, call record_analysis_plan "
+        "with contract_version stage3c0b.v1, the current analysis plan id, and one bounded independent step "
+        "for that dataset. "
+        "After the step runs, record the result with record_evidence_record and synthesize from EvidenceRecords. "
+        "If evidence cannot be produced within the bounded plan, return a partial answer with missing-evidence limitations."
+        "</bounded_evidence_replenishment>"
     )
 
 
@@ -314,14 +216,6 @@ def _append_unique(items: list[str], item: str) -> list[str]:
     if item not in result:
         result.append(item)
     return result
-
-
-def _evidence_ids(evidence: list[Any]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(
-        str(_get(record, "id", "")).strip()
-        for record in evidence
-        if str(_get(record, "id", "")).strip()
-    ))
 
 
 def _text(value: Any) -> str:

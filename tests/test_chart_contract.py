@@ -107,44 +107,6 @@ def test_chart_metadata_records_exploratory_purpose_by_default(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
-def test_chart_normalizes_common_analysis_purpose_alias_to_exploratory(tmp_path):
-    cfg, old_sessions = _use_tmp_sessions(tmp_path)
-    ws = Workspace()
-    ws.add("pay", pd.DataFrame({
-        "month": ["2026-03", "2026-04"],
-        "revenue": [100, 150],
-    }))
-    ctx = AgentContext(session_id="chart_purpose_alias", workspace=ws)
-
-    try:
-        with use_agent_context(ctx):
-            result = create_chart(
-                "bar",
-                data="pay",
-                x_col="month",
-                y_col="revenue",
-                title="收入对比",
-                purpose="analytical",
-            )
-
-        assert "Chart saved:" in result
-        metadata_files = list(
-            (tmp_path / "sessions" / "chart_purpose_alias" / "charts").glob("*.json")
-        )
-        metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
-        assert metadata["purpose"] == "exploratory"
-    finally:
-        cfg.sessions_dir = old_sessions
-
-
-def test_chart_tool_schema_advertises_purpose_enum():
-    tool = registry.get("create_chart")
-
-    assert tool is not None
-    purpose = tool.parameters["properties"]["purpose"]
-    assert purpose["enum"] == ["exploratory", "evidence", "insight"]
-
-
 def test_chart_metadata_can_bind_evidence_ids(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ws = Workspace()
@@ -560,40 +522,3 @@ def test_create_chart_recovery_hint_does_not_suggest_mermaid_for_data_charts():
 
     assert tool is not None
     assert "Mermaid" not in tool.recovery_hint
-
-
-def test_explicit_unknown_chart_dataset_never_falls_back(tmp_path):
-    cfg, old_sessions = _use_tmp_sessions(tmp_path)
-    ws = Workspace()
-    ws.add("orders", pd.DataFrame({"x": [1], "y": [2]}))
-    ctx = AgentContext(session_id="chart_unknown_dataset", workspace=ws)
-
-    try:
-        with use_agent_context(ctx):
-            payload = json.loads(
-                create_chart("bar", data="missing", x_col="x", y_col="y", title="Missing dataset")
-            )
-
-        assert payload["error_type"] == "chart_dataset_not_found"
-        assert payload["requested_dataset"] == "missing"
-    finally:
-        cfg.sessions_dir = old_sessions
-
-
-def test_omitted_chart_dataset_requires_one_eligible_dataset(tmp_path):
-    cfg, old_sessions = _use_tmp_sessions(tmp_path)
-    ws = Workspace()
-    ws.add("orders", pd.DataFrame({"x": [1], "y": [2]}))
-    ws.add("users", pd.DataFrame({"x": [1], "y": [3]}))
-    ctx = AgentContext(session_id="chart_ambiguous_dataset", workspace=ws)
-
-    try:
-        with use_agent_context(ctx):
-            payload = json.loads(
-                create_chart("bar", x_col="x", y_col="y", title="Ambiguous dataset")
-            )
-
-        assert payload["error_type"] == "chart_dataset_ambiguous"
-        assert payload["eligible_datasets"] == ["orders", "users"]
-    finally:
-        cfg.sessions_dir = old_sessions

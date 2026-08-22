@@ -5,8 +5,8 @@ Test data files (from reference/test_doc):
   - 游戏A内购数据.xlsx: 248r x 13c, game in-app purchase metrics (daily aggregate)
   - 游戏A激励视频汇总数据报表.xlsx: 248r x 23c, game rewarded video metrics (daily aggregate)
   - 游戏互推.xlsx: 1985r x 8c, game cross-promotion data (multi-dimension aggregate)
-  - 省钱卡0201到0510购卡用户付费数据.xlsx: 13757r x 9c, savings card user transactions (individual)
-  - 省钱卡订单.xlsx: 71r x 7c, savings card orders (individual)
+  - 省钱卡用户最近流水_20260511.xlsx: 13815r x 8c, savings card user transactions (individual)
+  - 省钱卡订单_20260507.xlsx: 71r x 7c, savings card orders (individual)
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
 
 
 def _data_path(filename: str) -> str:
@@ -112,7 +112,7 @@ class TestPhase1IntentClassification:
 
     def test_intent_with_savings_card_context(self):
         """Intent classification with savings card data context."""
-        ctx = "- orders: 13757 rows x 9 cols, columns: order_id, user_id, product_id"
+        ctx = "- orders: 13815 rows x 8 cols, columns: order_id, user_id, product_id"
         intent = self.plan("哪些用户购买频次最高", ctx)
         assert intent.intent_type in ("directed_analysis", "comprehensive_report", "data_operation")
 
@@ -255,7 +255,7 @@ class TestPhase2AutoInsight:
     @pytest.mark.parametrize("filename", [
         "游戏Abanner汇总数据.xlsx",
         "游戏互推.xlsx",
-        "省钱卡0201到0510购卡用户付费数据.xlsx",
+        "省钱卡用户最近流水_20260511.xlsx",
     ])
     def test_auto_insight_scan_real_data(self, filename):
         from data_agent.tools.auto_insight import auto_insight_scan, format_auto_insight
@@ -291,7 +291,7 @@ class TestPhase2AutoInsight:
     def test_auto_insight_savings_card_transactions(self):
         """Savings card transaction data should detect ID columns and metrics."""
         from data_agent.tools.auto_insight import auto_insight_scan
-        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
+        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
         result = auto_insight_scan(df, "transactions")
 
         semantics = result["field_semantics"]
@@ -311,8 +311,8 @@ class TestPhase2AutoInsight:
     def test_auto_insight_adaptive_sampling(self):
         """Large dataset should trigger sampling."""
         from data_agent.tools.auto_insight import auto_insight_scan
-        # 13757 rows is under 100K, so the scan should remain lightweight.
-        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
+        # 13815 rows is under 100K, should use full scan
+        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
         result = auto_insight_scan(df, "large_test")
         assert result["scan_mode"] in ("full", "sampled_10pct", "sampled_1pct")
 
@@ -484,25 +484,12 @@ class TestPhase3RegressionHandling:
 class TestPhase3ConfidenceCalibration:
     """Phase 3.3: Confidence calibration in evidence records."""
 
-    def test_high_confidence_method_inadequate_sample_downgraded(self):
+    def test_high_confidence_small_sample_downgraded(self):
         from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {
-            "confidence": "high",
-            "method": "clustered_group_compare",
-            "claim_type": "inferential",
-            "sample_size": 10_000,
-            "sample_adequacy": {
-                "status": "inadequate",
-                "design": "clustered",
-                "reason": "too few independent clusters",
-            },
-            "effect_estimate": 0.1,
-            "confidence_interval": [-0.2, 0.4],
-            "limitations": "some",
-        }
+        payload = {"confidence": "high", "sample_size": 10, "limitations": "some"}
         warnings = _calibrate_confidence(payload)
         assert len(warnings) > 0
-        assert "independent clusters" in warnings[0]
+        assert "不足" in warnings[0] or "30" in warnings[0]
 
     def test_high_confidence_non_significant_downgraded(self):
         from data_agent.tools.analysis_flow import _calibrate_confidence
@@ -542,11 +529,6 @@ class TestPhase3ConfidenceCalibration:
                 "limitations": "some",
                 "confidence": "high",
                 "sample_size": 5,
-                "sample_adequacy": {
-                    "status": "inadequate",
-                    "design": "independent_groups",
-                    "reason": "too few independent observations for the selected method",
-                },
             })
             result = registry.execute("record_evidence_record", {"record_json": record})
             parsed = json.loads(result.to_cli())
@@ -618,8 +600,8 @@ class TestPhase4MultiDataset:
         from data_agent.tools.data_understand import interpret_dataset
 
         ws = _fresh_workspace()
-        df_orders = _load_excel("省钱卡订单.xlsx")
-        df_transactions = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
+        df_orders = _load_excel("省钱卡订单_20260507.xlsx")
+        df_transactions = _load_excel("省钱卡用户最近流水_20260511.xlsx")
         ws.add("orders", df_orders)
         ws.add("transactions", df_transactions)
 
@@ -713,19 +695,6 @@ class TestPhase4Proficiency:
 class TestPhase4ParallelExecution:
     """Phase 4.5: Parallel execution of read-only tools."""
 
-    @pytest.fixture(autouse=True)
-    def _isolated_task_manager(self, monkeypatch, tmp_path):
-        """Keep fixed test session IDs independent of persisted local tasks."""
-
-        import data_agent.session.task_manager as task_manager_module
-        from data_agent.session.task_manager import TaskManager
-
-        monkeypatch.setattr(
-            task_manager_module,
-            "task_manager",
-            TaskManager(tmp_path / "tasks"),
-        )
-
     def test_read_only_set_completeness(self):
         """Verify key tools are correctly classified via auto-derivation."""
         from data_agent.tools.registry import registry, get_read_only_tools
@@ -796,7 +765,7 @@ class TestPhase4ParallelExecution:
 
         registry._ensure_discovered()
         ws = _fresh_workspace()
-        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
+        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
         ws.add("savings", df)
 
         with patch("data_agent.agent.loop.AgentLoop._ensure_mcp_initialized"):
@@ -913,7 +882,7 @@ class TestCrossPhaseIntegration:
         assert "方法论" in adv_instruction or "显著性" in adv_instruction
 
     def test_confidence_calibration_with_real_data_analysis(self):
-        """Use real data to verify method-specific confidence calibration."""
+        """Use real data to verify confidence calibration on small samples."""
         from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
         from data_agent.agent.analysis_state import AnalysisSessionState
         from data_agent.tools.registry import registry
@@ -922,7 +891,7 @@ class TestCrossPhaseIntegration:
         registry._ensure_discovered()
         ws = _fresh_workspace()
         # Use small subset of game data
-        df = _load_excel("省钱卡订单.xlsx").head(5)
+        df = _load_excel("省钱卡订单_20260507.xlsx").head(5)
         ws.add("tiny", df)
 
         ctx = AgentContext(session_id="test_conf_cal")
@@ -938,15 +907,10 @@ class TestCrossPhaseIntegration:
                 "limitations": "样本量极小",
                 "confidence": "high",
                 "sample_size": 5,
-                "sample_adequacy": {
-                    "status": "inadequate",
-                    "design": "categorical_frequency",
-                    "reason": "observed categories do not support a stable popularity ranking",
-                },
             })
             result = registry.execute("record_evidence_record", {"record_json": record})
             parsed = json.loads(result.to_cli())
-            # The method-specific adequacy result, not a universal n cutoff, downgrades it.
+            # Should auto-downgrade due to small sample
             assert parsed.get("confidence_auto_downgraded") is True
         finally:
             reset_current_context(token)
@@ -960,8 +924,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡0201到0510购卡用户付费数据.xlsx",
-            "省钱卡订单.xlsx",
+            "省钱卡用户最近流水_20260511.xlsx",
+            "省钱卡订单_20260507.xlsx",
         ]
         for f in files:
             df = _load_excel(f)
@@ -979,8 +943,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡0201到0510购卡用户付费数据.xlsx",
-            "省钱卡订单.xlsx",
+            "省钱卡用户最近流水_20260511.xlsx",
+            "省钱卡订单_20260507.xlsx",
         ]
         for f in files:
             ws = _fresh_workspace()
@@ -1077,7 +1041,7 @@ class TestUnifiedFieldClassification:
         from data_agent.tools.auto_insight import auto_insight_scan
         from data_agent.tools.data_understand import _classify_columns
 
-        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
+        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
 
         insight = auto_insight_scan(df, "savings")
         insight_ids = insight["field_semantics"]["id"]

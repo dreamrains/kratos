@@ -9,8 +9,8 @@ from dataclasses import dataclass
 
 if sys.platform == "win32":
     os.system("")
-    from data_agent.utils.unicode_io import configure_utf8_stdio
-    configure_utf8_stdio()
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -594,12 +594,12 @@ def run_repl() -> None:
             console.print(analysis_state_summary(state) or "No analysis state.")
         elif action == "requirements":
             console.print_json(data=state.data_requirements)
-        elif action in ("plan", "spec"):
-            console.print_json(data=state.analysis_plan or {})
+        elif action == "spec":
+            console.print_json(data=state.analysis_spec or {})
         elif action == "evidence":
             console.print_json(data=state.evidence_records)
         else:
-            console.print("[yellow]Usage: /analysis status|requirements|plan|evidence|reset[/yellow]")
+            console.print("[yellow]Usage: /analysis status|requirements|spec|evidence|reset[/yellow]")
         return None
 
     def cmd_save(args: str):

@@ -164,7 +164,7 @@ def assert_state(result: ScenarioResult, *, has_requirement=False, has_spec=Fals
     if has_requirement:
         assert result.state.data_requirements, "expected at least one DataRequirement"
     if has_spec:
-        assert result.state.analysis_plan is not None, "expected AnalysisPlan"
+        assert result.state.analysis_spec is not None, "expected AnalysisSpec"
     assert len(result.state.evidence_records) >= min_evidence
 
 
@@ -176,10 +176,9 @@ def assert_task_workflow(result: ScenarioResult, *, min_tasks: int, node_types: 
         assert node_types <= present
 
 
-def assert_adapter_plan_is_display_only(result: ScenarioResult):
-    assert result.state.analysis_plan is not None
-    assert result.state.analysis_plan["contract_version"] == "analysis_plan.v1"
-    assert result.state.analysis_plan["review_status"] == "display_only"
+def assert_legacy_spec_is_display_only(result: ScenarioResult):
+    assert result.state.analysis_spec is not None
+    assert result.state.analysis_spec.get("contract_version") is None
     workflow_tasks = [t for t in result.tasks if t.get("workflow_id") or t.get("node_type")]
     assert workflow_tasks == []
 
@@ -285,11 +284,6 @@ def revenue_decline_case() -> ScenarioCase:
                 "Conclusion: paid channel appears to be the largest contributor. "
                 "Limitation: this is descriptive attribution, not proof of causality. Confidence: medium."
             ),
-            text_response(
-                "Conclusion: paid channel appears to be the largest contributor. "
-                "Limitation: no additional structured computation was completed, so this remains "
-                "descriptive attribution rather than proof of causality. Confidence: exploratory."
-            ),
         ],
     )
 
@@ -334,11 +328,6 @@ def funnel_case() -> ScenarioCase:
             ),
             text_response(
                 "The largest visible drop is signup to trial. Limitation: aggregate counts do not prove user-level paths. Confidence: medium."
-            ),
-            text_response(
-                "The largest visible drop is signup to trial. Limitation: no additional structured "
-                "computation was completed and aggregate counts do not prove user-level paths. "
-                "Confidence: exploratory."
             ),
         ],
     )
@@ -402,20 +391,12 @@ def test_golden_revenue_decline_attribution(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_adapter_plan_is_display_only(result)
+    assert_legacy_spec_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["paid channel", "descriptive attribution"], confidence="medium")
-    method_capabilities = {
-        str(step.get("required_capability") or "")
-        for step in result.state.analysis_plan["method_plan"]
-        if isinstance(step, dict)
-    }
-    assert {
-        "analysis.period_compare",
-        "analysis.dimension_decomposition",
-    } <= method_capabilities
-    forbidden_claims = result.state.analysis_plan["evidence_policy"]["forbidden_claims"]
-    assert any("causal" in str(claim).lower() for claim in forbidden_claims)
+    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
+    for term in ("compare", "decompose", "exclude"):
+        assert term in task_text
     assert_final_boundary(result, ["limitation", "confidence"])
 
 
@@ -425,9 +406,9 @@ def test_golden_funnel_conversion_analysis(tmp_path):
     result = run_scenario(case, tmp_path)
 
     assert_state(result, has_spec=True, min_evidence=1)
-    assert_adapter_plan_is_display_only(result)
+    assert_legacy_spec_is_display_only(result)
     assert_tool_trace(result, includes={"record_analysis_spec", "record_evidence_record"})
     assert_evidence_contains(result, ["signup to trial", "aggregate"], confidence="medium")
-    task_text = json.dumps(result.state.analysis_plan, ensure_ascii=False).lower()
+    task_text = json.dumps(result.state.analysis_spec, ensure_ascii=False).lower()
     assert "analysis.funnel" in task_text
     assert_final_boundary(result, ["limitation", "confidence"])

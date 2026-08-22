@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -385,65 +385,26 @@ def regression_analysis(name: str, target_col: str, features: str = "", method: 
         for fname, coef in sorted(zip(feature_cols, model.coef_), key=lambda x: abs(x[1]), reverse=True):
             importances[fname] = round(float(coef), 4)
 
-    cv_details: dict[str, Any] | None = None
-    if cv_folds >= 2:
-        cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring="r2")
-        cv_details = {
-            "folds": int(cv_folds),
-            "mean_r2": round(float(cv_scores.mean()), 6),
-            "std_r2": round(float(cv_scores.std()), 6),
-            "split_strategy": "kfold_shuffle_default_seed",
-        }
-
-    result: dict[str, Any] = {
+    result = {
         "method": type(model).__name__,
-        "train_size": int(len(X_train)),
-        "test_size": int(len(X_test)),
-        "effective_sample_size": int(len(data)),
-        "train_test_split": {
-            "test_size": 0.2,
-            "random_state": 42,
-            "shuffle": True,
-        },
+        "train_size": len(X_train),
+        "test_size": len(X_test),
         "metrics": {
             "r2": round(float(r2_score(y_test, y_pred)), 4),
             "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 4),
             "mae": round(float(mean_absolute_error(y_test, y_pred)), 4),
         },
         "feature_importance": importances,
-        "calculation_method": (
-            "train_test_split with sklearn default metrics; feature_importance "
-            "is normalized model attribution, not a coefficient significance test."
-        ),
-        "assumptions": [
-            {
-                "name": "predictive_objective_only",
-                "status": "passed",
-                "reason": (
-                    "Feature importance values describe predictive contribution "
-                    "in this model; they are not coefficient significance, "
-                    "confidence intervals, or causal effects."
-                ),
-            }
-        ],
-        "limitations": [
-            "Feature importance does not equal statistical significance; use "
-            "factor_relationship_analysis for inferential coefficient tests.",
-            "Train/test split and CV describe predictive generalization, not "
-            "an inferential statement about the population.",
-            "Tree-based importances can inflate for high-cardinality features "
-            "and hide multicollinearity.",
-        ],
-        "allowed_claim_class": "predictive_importance",
     }
-    if cv_details is not None:
-        # ``cross_validation`` is the canonical detailed key. Mirror the same
-        # dict under the legacy ``cv`` key so older callers (and the legacy
-        # script suite) that read ``data["cv"]["folds"]`` keep working
-        # without losing the new ``split_strategy`` / ``mean_r2`` / ``std_r2``
-        # sub-fields.
-        result["cross_validation"] = cv_details
-        result["cv"] = cv_details
+
+    # 交叉验证
+    if cv_folds >= 2:
+        cv_scores = cross_val_score(model, X, y, cv=cv_folds, scoring="r2")
+        result["cv"] = {
+            "folds": cv_folds,
+            "mean": round(float(cv_scores.mean()), 4),
+            "std": round(float(cv_scores.std()), 4),
+        }
 
     model_key = f"{name}_reg_{target_col}"
     _trained_models[model_key] = model
@@ -516,23 +477,11 @@ def attribution_analysis(name: str, target_col: str, features: str = "") -> str:
 
     drivers.sort(key=lambda x: x["combined_score"], reverse=True)
 
-    result: dict[str, Any] = {
+    result = {
         "target": target_col,
         "top_drivers": drivers[:10],
         "method": "correlation + GradientBoosting importance",
         "model_reused": reused,
-        "effective_sample_size": int(len(data)),
-        "calculation_method": (
-            "Combined ranking from absolute Pearson correlation and "
-            "GradientBoosting feature_importances_; scores are descriptive "
-            "predictive attribution, not coefficient significance."
-        ),
-        "limitations": [
-            "本工具产出的'驱动因素'是预测贡献排序，不是因果效应。",
-            "相关性 + 模型重要性的组合不能跨多重共线性或混杂变量解释系数。",
-            "若需要统计显著性、置信区间或因果效应，请使用 factor_relationship_analysis 或 causal_analysis。",
-        ],
-        "allowed_claim_class": "predictive_importance",
     }
 
     return json.dumps(result, ensure_ascii=False, indent=2)

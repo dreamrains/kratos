@@ -13,15 +13,15 @@ def test_analysis_state_utf8_roundtrip(tmp_path, monkeypatch):
     config._config = AgentConfig(PROJECT_DIR=tmp_path / "project", SESSIONS_DIR=tmp_path / "sessions")
     try:
         state = AnalysisSessionState(session_id="utf8_state", project_name="省钱卡项目")
-        state.set_analysis_plan({"goal": "分析收入、留存、成本", "limitations": ["不能直接推断因果"]})
         state.goal = "评估省钱卡是否值得长期运营"
+        state.analysis_spec = {"goal": "分析收入、留存、成本", "limitations": ["不能直接推断因果"]}
         state.evidence_records.append({"claim": "省钱卡用户消费更高", "confidence": "medium"})
         state.save()
 
         loaded = load_analysis_state("utf8_state")
         assert loaded.project_name == "省钱卡项目"
         assert loaded.goal == "评估省钱卡是否值得长期运营"
-        assert loaded.analysis_plan["limitations"][0] == "不能直接推断因果"
+        assert loaded.analysis_spec["limitations"][0] == "不能直接推断因果"
         assert loaded.evidence_records[0]["claim"] == "省钱卡用户消费更高"
     finally:
         config._config = old_cfg

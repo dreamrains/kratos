@@ -361,8 +361,7 @@ class TestThinkingAnimation:
         assert "_stopThinkingCycle" in js
 
     def test_thinking_cycle_on_llm_call_start(self, js):
-        assert "_startThinkingCycle(turn, sessionId, state)" in js
-        assert "_thinkingTimerOwner" in js
+        assert "_startThinkingCycle(turn)" in js
 
     def test_thinking_cycle_stops_on_sse_end(self, js):
         assert "_stopThinkingCycle()" in js
@@ -659,21 +658,3 @@ class TestConfirmationWorkbenchWording:
         assert "diagnostic_only" not in html
         assert "关系待确认" not in html
         assert "等待确认" not in html
-
-
-class TestAnalysisProgressNarration:
-    """Task 11 — safe live progress narration reaches the browser without leaking findings."""
-
-    def test_frontend_handles_analysis_progress_without_appending_final_text(self, js):
-        assert "case 'analysis_progress':" in js
-        assert "turn.analysisProgress" in js
-        # Scope to the case body so the assertion is robust to other handlers.
-        start = js.index("case 'analysis_progress':")
-        end = js.index("break;", start)
-        block = js[start:end]
-        assert "turn.thinkingText = data.label" in block
-        assert "this._renderMessages()" not in block
-        assert "this.turns = [...state.turns]" in block
-        # No mutation of the final answer text inside the progress handler.
-        assert "turn.content +=" not in block
-        assert "turn.content =" not in block

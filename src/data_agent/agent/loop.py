@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import inspect
 import json
 import threading
 import uuid
@@ -42,7 +40,6 @@ from data_agent.agent.execution_control import (
     TurnExecutionState,
 )
 from data_agent.session.workspace import Workspace, workspace
-from data_agent.agent.progress import build_analysis_progress
 
 logger = get_logger("loop")
 
@@ -72,141 +69,13 @@ _SUBSTANTIVE_TOOLS = {
     "run_python",
 }
 
-# Tools that do not by themselves advance the analysis contract — only used to
-# detect the "loaded/profiled but never planned or executed" pre-plan case.
-_META_QUALITY_TOOLS = {
-    "load_data",
-    "list_data",
-    "record_data_requirement",
-    "record_insight_record",
-    "task_create",
-    "task_update",
-    "task_list",
-    "ask_user_question",
-}
-
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "<analysis_quality_guard>\n"
     "The user requested analysis, but this turn has only loaded or profiled data. "
-    "Continue by creating or applying an AnalysisPlan, running relevant analysis steps, "
+    "Continue by creating or applying an AnalysisSpec, running relevant analysis steps, "
     "and recording evidence before giving the final answer.\n"
     "</analysis_quality_guard>"
 )
-
-_ANALYSIS_QUALITY_CONTINUATION_TEMPLATE = (
-    "<analysis_quality_guard>\n"
-    "Requirement-based completion evaluator: status={status}, reason={reason}.\n"
-    "Missing requirements: {missing}.\n"
-    "Allowed capability/fallback: {capability_hint}.\n"
-    "Do ONE bounded round: you MUST call at least one listed structured analysis tool, "
-    "using at most three distinct structured analysis tools in total. Do not return a "
-    "final answer before that attempt; if the attempted tool fails, disclose that exact limitation. "
-    "The server auto-projects eligible structured results; do not call task tools "
-    "or record_evidence_record merely for bookkeeping. Do not strengthen the claim "
-    "class. After this round, synthesize the final answer with explicit limitations "
-    "even if a requirement remains unmet.\n"
-    "</analysis_quality_guard>"
-)
-
-_COMPUTATION_REPAIR_REASON_CODES = {
-    "computation_integrity_failure",
-    "evidence_identity_not_found",
-    "evidence_outside_current_plan",
-    "missing_structured_measurement",
-    "stale_dataset_evidence",
-    "stale_plan_evidence",
-    "unmet_block_claim_requirement",
-    "unsupported_claim",
-}
-
-_MEASUREMENT_BOOKKEEPING_CODES = {
-    "measurement_identity_missing",
-    "measurement_marker_invalid",
-    "measurement_not_found",
-    "measurement_metric_mismatch",
-    "measurement_claim_key_mismatch",
-    "measurement_scope_mismatch",
-    "measurement_dataset_version_mismatch",
-    "measurement_ambiguous",
-}
-
-_SYNTHESIS_MEASUREMENT_REPAIR_CODES = {
-    # ``verify_analysis_claims`` adds this generic companion to the actionable
-    # missing-marker codes below.  Treating it as an independent hard blocker
-    # accidentally skipped the one bounded synthesis-only repair.
-    "evidence_check_failed",
-    "measurement_identity_missing",
-    "measurement_marker_invalid",
-    # These failures describe a draft that did not faithfully copy a current
-    # bounded-catalog measurement.  They are repairable by the same one-shot
-    # synthesis rewrite: copy the exact alias label/value/marker, then let the
-    # unchanged audit verify the revised claim.  They must not trigger another
-    # computation round.
-    "measurement_ambiguous",
-    "measurement_metric_mismatch",
-    "numeric_mismatch",
-    "unit_mismatch",
-}
-
-
-def _capability_hint_for_unmet(decision, *, plan: dict[str, Any] | None = None) -> str:
-    """Render a compact, requirement-aware capability hint for the guard.
-
-    Looked up from the recoverable requirement ids in the decision; never
-    invents a stronger capability than the supported claim class allows.
-    """
-
-    recoverable = list(getattr(decision, "recoverable_requirement_ids", ()) or ())
-    if not recoverable:
-        return "use the next planned analysis step or downgrade the claim"
-    recoverable_set = {str(item) for item in recoverable}
-    method_plan = plan.get("method_plan") if isinstance(plan, dict) else None
-    structured_hints: list[str] = []
-    known_tool_names = (
-        "detect_data_quality",
-        "distribution_analysis",
-        "transform_data",
-        "segmentation_analysis",
-        "correlation_analysis",
-        "factor_relationship_analysis",
-        "regression_analysis",
-        "compare_periods",
-        "analyze_time_series",
-        "top_n",
-    )
-    for step in method_plan if isinstance(method_plan, list) else []:
-        if not isinstance(step, dict) or step.get("combination_mode") == "synthesis":
-            continue
-        requirement_ids = {
-            str(item) for item in step.get("requirement_ids") or [] if str(item)
-        }
-        if not requirement_ids.intersection(recoverable_set):
-            continue
-        capability = str(step.get("required_capability") or "").strip()
-        method = str(step.get("method") or "")
-        tools = [name for name in known_tool_names if name in method]
-        if capability:
-            tools.extend(registry.tools_for_capability(capability))
-        tools = list(dict.fromkeys(tools))
-        if not tools:
-            continue
-        step_id = str(step.get("step_id") or "planned_step")
-        structured_hints.append(
-            f"{step_id}: use {', '.join(tools[:2])} ({capability or 'planned capability'})"
-        )
-        if len(structured_hints) >= 3:
-            break
-    if structured_hints:
-        return "; ".join(structured_hints)
-
-    head = recoverable[0]
-    head_text = str(head)
-    # The requirement id encodes the missing method input (e.g.
-    # ``req_step_multivariable_method_attempted_multivariable_adjustment``);
-    # surface the trailing segment so the model knows which structured
-    # output to produce without re-stating the whole plan.
-    tail = head_text.rsplit("_", 1)[-1] if "_" in head_text else head_text
-    return f"produce the structured {tail} output for {head_text}"
 
 
 # === LoopResult: Agent loop return types ===
@@ -515,24 +384,6 @@ _protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
 )
 
 
-def _redact_trust_dataset_names(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a prompt-safe projection while preserving opaque dataset identity."""
-
-    redacted = dict(payload)
-    datasets = payload.get("datasets")
-    if isinstance(datasets, list):
-        redacted["datasets"] = [
-            {
-                key: value
-                for key, value in item.items()
-                if key not in {"name", "dataset", "dataset_name"}
-            }
-            for item in datasets
-            if isinstance(item, dict)
-        ]
-    return redacted
-
-
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
@@ -567,18 +418,14 @@ class AgentLoop:
         )
         from data_agent.agent.analysis_state import load_analysis_state
         self.context.analysis_state = load_analysis_state(self.session_id, active_project)
-        self.context.user_quality_requirements = (
-            self.context.analysis_state.explicit_user_requirements
-        )
         self.messages: list[dict] = []
         self.token_threshold = cfg.token_threshold
         self._last_data_file = ""
         self._prompt_cache: str = ""
         self._prompt_cache_dirty: bool = True
-        self._prompt_cache_key: tuple[str, str, str] | None = None
+        self._prompt_cache_key: tuple[str, str] | None = None
         self._knowledge_retrieval_service = None
         self._interrupt_event = threading.Event()
-        self._computation_ref_lock = threading.Lock()
         self._compact_state = CompactState()
         self._last_jsonl_idx: int = 0  # 上次 JSONL 推送的消息索引
 
@@ -654,19 +501,13 @@ class AgentLoop:
         self._prompt_cache_dirty = True
 
     def _restore_workspace(self) -> None:
-        """Restore datasets while the loop-owned context is authoritative."""
-        with self.__context_operation("use"):
-            self._restore_workspace_in_context()
-
-    def _restore_workspace_in_context(self) -> None:
         """Restore workspace datasets from persisted metadata.
 
         Strategy A: reload from original file path.
         Strategy B: fall back to parquet backup in session directory.
         """
         from data_agent.session.history import _session_dir
-
-        workspace = self.context.workspace
+        from data_agent.session.workspace import workspace
 
         sdir = _session_dir(self.session_id)
         meta_path = sdir / "workspace_meta.json"
@@ -683,28 +524,7 @@ class AgentLoop:
 
         restored = 0
         for name, info in meta.items():
-            raw_df = None
-            source_df = None
-            persisted_raw = None
-            active_backup = None
-            migrated_from_legacy_backup = False
-            source_changed_since_save = False
-            raw_matches_saved = False
-
-            def _read_backup(stem: str):
-                parquet_path = sdir / "data" / f"{stem}.parquet"
-                if parquet_path.exists():
-                    try:
-                        return pd.read_parquet(parquet_path)
-                    except Exception:
-                        pass
-                pickle_path = sdir / "data" / f"{stem}.pkl"
-                if pickle_path.exists():
-                    try:
-                        return pd.read_pickle(pickle_path)
-                    except Exception:
-                        pass
-                return None
+            df = None
 
             # Strategy A: try original file path
             source_path = info.get("source_path", "")
@@ -716,132 +536,41 @@ class AgentLoop:
                         fmt = info.get("source_fmt", "")
                         if fmt == "csv":
                             try:
-                                source_df = pd.read_csv(sp, encoding="utf-8-sig")
+                                df = pd.read_csv(sp, encoding="utf-8-sig")
                             except UnicodeDecodeError:
-                                source_df = pd.read_csv(sp, encoding="gbk")
+                                df = pd.read_csv(sp, encoding="gbk")
                         elif fmt == "excel":
-                            source_df = pd.read_excel(sp)
+                            df = pd.read_excel(sp)
                         elif fmt == "json":
-                            source_df = pd.read_json(sp)
+                            df = pd.read_json(sp)
+                        if df is not None:
+                            from data_agent.tools.data_clean import auto_clean
+                            df, _, _ = auto_clean(df)
                     except Exception:
-                        source_df = None
+                        df = None
 
-            # Always inspect the separately persisted immutable raw snapshot;
-            # it is authoritative when the original source has drifted.
-            persisted_raw = _read_backup(f"{name}__raw")
-
-            # The active backup may contain confirmed material cleaning.  A
-            # legacy session has only this file, so migrate it once as raw.
-            active_backup = _read_backup(name)
-
-            from data_agent.agent.data_lineage import frame_fingerprint
-
-            saved_source_fingerprint = str(info.get("source_fingerprint") or "")
-            source_fingerprint = (
-                frame_fingerprint(source_df) if source_df is not None else ""
-            )
-            persisted_fingerprint = (
-                frame_fingerprint(persisted_raw)
-                if persisted_raw is not None
-                else ""
-            )
-            if saved_source_fingerprint:
-                if source_df is not None and source_fingerprint == saved_source_fingerprint:
-                    raw_df = source_df
-                    raw_matches_saved = True
-                elif (
-                    persisted_raw is not None
-                    and persisted_fingerprint == saved_source_fingerprint
-                ):
-                    raw_df = persisted_raw
-                    raw_matches_saved = True
-                elif source_df is not None:
-                    raw_df = source_df
-                elif persisted_raw is not None:
-                    raw_df = persisted_raw
-
-                source_changed_since_save = bool(
-                    (
-                        source_df is not None
-                        and source_fingerprint != saved_source_fingerprint
-                    )
-                    or (
-                        source_df is None
-                        and persisted_raw is not None
-                        and persisted_fingerprint != saved_source_fingerprint
-                    )
-                )
-            else:
-                raw_df = source_df if source_df is not None else persisted_raw
-
-            if raw_df is None and active_backup is not None:
-                raw_df = active_backup.copy(deep=True)
-                migrated_from_legacy_backup = True
-
-            if raw_df is not None:
-                from data_agent.tools.data_clean import prepare_analysis_copy
-
-                source_fingerprint = frame_fingerprint(raw_df)
-                raw_info = workspace.register_raw_snapshot(
-                    name, raw_df, source_fingerprint
-                )
-                if not isinstance(raw_info, dict):
-                    continue
-                prepared, record, _, _ = prepare_analysis_copy(
-                    raw_df,
-                    logical_name=name,
-                    raw_dataset_id=raw_info["dataset_id"],
-                    source_fingerprint=source_fingerprint,
-                )
-
-                saved_versions = info.get("versions") or []
-                saved_active = next(
-                    (
-                        item
-                        for item in saved_versions
-                        if item.get("dataset_id") == info.get("active_dataset_id")
-                    ),
-                    {},
-                )
-                active_matches_saved = False
-                if active_backup is not None and saved_active and raw_matches_saved:
-                    saved_fingerprint = saved_active.get("frame_fingerprint", "")
-                    active_matches_saved = (
-                        saved_fingerprint == frame_fingerprint(active_backup)
-                    )
-
-                active_info = None
-                if active_matches_saved:
+            # Strategy B: fall back to local dataset backup
+            if df is None:
+                parquet_path = sdir / "data" / f"{name}.parquet"
+                if parquet_path.exists():
                     try:
-                        active_info = workspace.restore_analysis_version(
-                            name,
-                            active_backup,
-                            raw_info["dataset_id"],
-                            saved_active,
-                        )
-                    except (KeyError, TypeError, ValueError, RuntimeError):
-                        active_info = None
-                if not isinstance(active_info, dict):
-                    active_info = workspace.promote_analysis_copy(
-                        name,
-                        prepared,
-                        raw_info["dataset_id"],
-                        record,
-                    )
-                if not isinstance(active_info, dict):
-                    continue
+                        df = pd.read_parquet(parquet_path)
+                    except Exception:
+                        pass
+                if df is None:
+                    pickle_path = sdir / "data" / f"{name}.pkl"
+                    if pickle_path.exists():
+                        try:
+                            df = pd.read_pickle(pickle_path)
+                        except Exception:
+                            pass
+
+            if df is not None:
+                workspace.add(name, df)
                 if info.get("context"):
                     workspace.set_metadata(name, "context", info["context"])
                 workspace.set_metadata(name, "_source_path", source_path)
                 workspace.set_metadata(name, "_source_fmt", info.get("source_fmt", ""))
-                if migrated_from_legacy_backup:
-                    workspace.set_metadata(
-                        name, "migrated_from_legacy_backup", True
-                    )
-                if source_changed_since_save:
-                    workspace.set_metadata(
-                        name, "source_changed_since_save", True
-                    )
                 restored += 1
 
         if restored:
@@ -975,11 +704,7 @@ class AgentLoop:
             session_ctx = (session_ctx + "\n" if session_ctx else "") + "\n".join(feature_lines)
 
         try:
-            from data_agent.agent.analysis_state import (
-                analysis_state_summary,
-                build_trust_capsule,
-                render_trust_capsule,
-            )
+            from data_agent.agent.analysis_state import analysis_state_summary
             scope = self.context.workspace_scope or self.__context_operation("refresh")
             if scope.phase in {"synthesis", "error"}:
                 state = self.context.analysis_state
@@ -993,44 +718,8 @@ class AgentLoop:
                 analysis_ctx = analysis_state_summary(self.context.analysis_state)
             if analysis_ctx:
                 session_ctx = (session_ctx + "\n\n" if session_ctx else "") + "<analysis_state>\n" + analysis_ctx + "\n</analysis_state>"
-            capsule = build_trust_capsule(
-                self.context.analysis_state,
-                user_requirements=self.context.user_quality_requirements,
-                active_confirmation=self._active_confirmation_identity(),
-                active_datasets=self._active_dataset_capsule_inputs(),
-            )
-            redact_dataset_names = scope.phase in {"synthesis", "error"}
-            prompt_capsule = (
-                _redact_trust_dataset_names(capsule)
-                if redact_dataset_names
-                else capsule
-            )
-            capsule_json = render_trust_capsule(prompt_capsule)
-            self._turn_trust_capsule = capsule
-            self._turn_trust_capsule_text = capsule_json
-            hydrated_trust_context = self._hydrate_overflow_trust_context(
-                capsule,
-                redact_dataset_names=redact_dataset_names,
-            )
-            self._turn_hydrated_trust_context_text = hydrated_trust_context
-            session_context_without_capsule = session_ctx
-            session_ctx = (
-                (session_ctx + "\n\n" if session_ctx else "")
-                + f'<trust_capsule digest="{capsule["digest"]}">\n'
-                + capsule_json
-                + "\n</trust_capsule>"
-            )
-            if hydrated_trust_context:
-                session_ctx += (
-                    "\n\n<hydrated_trust_context>\n"
-                    + hydrated_trust_context
-                    + "\n</hydrated_trust_context>"
-                )
         except Exception:
-            self._turn_trust_capsule = {}
-            self._turn_trust_capsule_text = ""
-            self._turn_hydrated_trust_context_text = ""
-            session_context_without_capsule = session_ctx
+            pass
 
         level = _classify_task(user_input, session_ctx) if user_input else "standard"
 
@@ -1067,21 +756,6 @@ class AgentLoop:
                 f"  - {s.name}: {s.description}" for s in loaded
             )
             skill_instructions = self._skill_loader.get_prompt_injections()
-
-        self._prompt_component_payloads = {
-            "tool_list": tool_list,
-            "project_rules": rules_prompt,
-            "retrieved_context": retrieved_context if level != "chat" else "",
-            "session_context": session_context_without_capsule,
-            "skill_descriptions": skill_descriptions if level != "chat" else "",
-            "skill_instructions": skill_instructions if level != "chat" else "",
-            "user_input": user_input,
-            "user_requirements": self.context.user_quality_requirements,
-            "trust_capsule": getattr(self, "_turn_trust_capsule_text", ""),
-            "hydrated_trust_context": getattr(
-                self, "_turn_hydrated_trust_context_text", ""
-            ),
-        }
 
         # Chat 模式：只注入 rules（业务约束），跳过 domain/experience
         if level == "chat":
@@ -1124,11 +798,7 @@ class AgentLoop:
                 if validation.ok:
                     bundle_fingerprint = str(validation.thaw_bundle().get("data_fingerprint") or "")
                     break
-            cache_key = (
-                scope.fingerprint,
-                bundle_fingerprint,
-                self._trust_state_cache_digest(),
-            )
+            cache_key = (scope.fingerprint, bundle_fingerprint)
             if self._prompt_cache_dirty or not self._prompt_cache or cache_key != self._prompt_cache_key:
                 self._prompt_cache = self._build_system_prompt()
                 self._prompt_cache_dirty = False
@@ -1137,150 +807,10 @@ class AgentLoop:
             synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
             if synthesis_instruction:
                 prompt = prompt + "\n\n" + synthesis_instruction
-            final_audit_instruction = getattr(self, "_turn_final_audit_instruction", "")
-            if final_audit_instruction:
-                prompt = prompt + "\n\n" + final_audit_instruction
             hint = self._execution_prompt_hint()
             if hint:
-                prompt = prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None:
-                phase = self._current_prompt_phase()
-                turn_state.ensure_phase_capacity(phase)
-                components = dict(getattr(self, "_prompt_component_payloads", {}) or {})
-                components.update({
-                    "conversation_history": self.messages,
-                    "synthesis_instruction": synthesis_instruction,
-                    "final_audit_instruction": final_audit_instruction,
-                    "execution_control": hint,
-                })
-                capsule = getattr(self, "_turn_trust_capsule", {})
-                turn_state.record_prompt_assembly(
-                    components,
-                    assembled_payload={"system": prompt, "messages": self.messages},
-                    trust_capsule_digest=(
-                        str(capsule.get("digest") or "") if isinstance(capsule, dict) else ""
-                    ),
-                    phase=phase,
-                )
-                self._persist_budget_diagnostics(turn_state)
+                return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
             return prompt
-
-    def _current_prompt_phase(self) -> str:
-        instruction = getattr(self, "_turn_final_audit_instruction", "")
-        if 'mode="synthesis"' in instruction:
-            return "revision"
-        turn_state = getattr(self.context, "turn_state", None)
-        if (
-            getattr(self, "_turn_synthesis_policy_instruction", "")
-            or (turn_state is not None and turn_state.exploration_budget_exhausted)
-        ):
-            return "synthesis"
-        return "exploration"
-
-    def _enter_synthesis_reserve_if_needed(self, user_input: str) -> None:
-        """Switch to synthesis before a nearly empty exploration slice can draft the answer."""
-
-        if getattr(self, "_turn_synthesis_policy_instruction", ""):
-            return
-        turn_state = getattr(self.context, "turn_state", None)
-        state = getattr(self.context, "analysis_state", None)
-        if turn_state is None or state is None or not getattr(state, "evidence_records", None):
-            return
-        synthesis_reserve = int(turn_state.budget.synthesis_reserve_tokens or 0)
-        if synthesis_reserve <= 0 or not turn_state.can_run_phase("synthesis"):
-            return
-        if turn_state.remaining_phase_tokens("exploration") > synthesis_reserve:
-            return
-        self._maybe_inject_synthesis_policy(user_input)
-
-    def _record_stream_delta_budget(self, text: str, *, phase: str) -> int:
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None or not text:
-            return 0
-        amount = max(1, _estimate_tokens([{"text": text}]))
-        turn_state.record_token_usage(amount, phase=phase)
-        self._persist_budget_diagnostics(turn_state)
-        return amount
-
-    def _record_llm_response_budget(
-        self,
-        response: Any,
-        *,
-        phase: str,
-        pre_recorded_tokens: int = 0,
-    ) -> None:
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None or response is None:
-            return
-        payload = {
-            "text": getattr(response, "text", "") or "",
-            "reasoning_content": getattr(response, "reasoning_content", "") or "",
-            "tool_calls": [
-                {
-                    "name": getattr(call, "name", ""),
-                    "arguments": getattr(call, "arguments", {}),
-                }
-                for call in (getattr(response, "tool_calls", None) or [])
-            ],
-        }
-        estimated = max(1, _estimate_tokens([payload]))
-        unreported = getattr(response, "unreported_output_tokens", None)
-        if unreported is None:
-            residual = max(0, estimated - max(0, int(pre_recorded_tokens or 0)))
-        else:
-            # Structured streaming reports hidden reasoning/tool output across
-            # all retry attempts; visible text deltas were charged in real time.
-            residual = max(0, int(unreported or 0))
-        turn_state.record_llm_round()
-        if residual:
-            turn_state.record_token_usage(residual, phase=phase)
-        self._persist_budget_diagnostics(turn_state)
-
-    def _reclassify_synthesis_tool_round_budget(
-        self,
-        response: Any,
-        *,
-        phase: str,
-        phase_usage_before: int,
-    ) -> None:
-        """Keep tool-bearing rounds out of the final synthesis reserve."""
-
-        if (
-            phase != "synthesis"
-            or response is None
-            or not getattr(response, "has_tool_calls", False)
-            or self._synthesis_audit_revision_active()
-        ):
-            return
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return
-        used_after = int(turn_state.phase_token_usage.get("synthesis", 0) or 0)
-        moved = turn_state.reclassify_phase_usage(
-            max(0, used_after - max(0, int(phase_usage_before or 0))),
-            source_phase="synthesis",
-            target_phase="exploration",
-        )
-        if moved:
-            self._persist_budget_diagnostics(turn_state)
-
-    def _llm_output_limit_kwargs(self, method: Any, *, phase: str) -> dict[str, int]:
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return {}
-        configured_max = int(getattr(self.client, "max_tokens", get_config().max_tokens) or 1)
-        limit = turn_state.output_limit_for_phase(phase, configured_max)
-        try:
-            parameters = inspect.signature(method).parameters.values()
-            supports_limit = any(
-                parameter.name == "max_tokens"
-                or parameter.kind == inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters
-            )
-        except (TypeError, ValueError):
-            supports_limit = False
-        return {"max_tokens": limit} if supports_limit else {}
 
     def _prepare_analysis_turn(self, user_input: str):
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
@@ -1329,23 +859,16 @@ class AgentLoop:
             )
         profile = _intent_to_budget_profile(intent.intent_type)
         cfg = get_config()
-        token_budget = _token_budget_for_profile(profile, cfg.token_threshold)
+        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
+            profile=profile,
+            token_budget=_token_budget_for_profile(profile, cfg.token_threshold),
+        ))
+
         # Extract user quality requirements on first analysis turn
         if not self.context.user_quality_requirements and user_input and len(user_input) > 100:
             self._extract_user_requirements(user_input)
-        if self.context.user_quality_requirements:
-            state.explicit_user_requirements = self.context.user_quality_requirements
-            state.save()
 
-        activated_groups = controller.activate_tool_groups(registry, intent, state, user_input)
-        # Install the turn execution state AFTER activate_tool_groups so the
-        # registry.reset_groups() call inside it (which clears per-turn state)
-        # does not wipe the budget/recovery counters we just compiled.
-        self.context.turn_state = TurnExecutionState(ToolExecutionBudget(
-            profile=profile,
-            token_budget=token_budget,
-        ))
-        return activated_groups
+        return controller.activate_tool_groups(registry, intent, state, user_input)
 
     def _maybe_auto_suspend_for_required_question(self) -> SuspendedForConfirmation | None:
         state = getattr(self.context, "analysis_state", None)
@@ -1454,10 +977,6 @@ class AgentLoop:
             requirements = resp.text.strip()
             if requirements and len(requirements) > 5:
                 self.context.user_quality_requirements = requirements
-                state = getattr(self.context, "analysis_state", None)
-                if state is not None:
-                    state.explicit_user_requirements = requirements
-                    state.save()
                 logger.info("User quality requirements extracted",
                             extra={"extra_data": {"requirements": requirements[:200]}})
         except Exception as e:
@@ -1492,245 +1011,6 @@ class AgentLoop:
             return ""
         return turn_state.prompt_hint()
 
-    def _compact_context_if_needed(self) -> None:
-        """Compact low-priority history while reattaching deterministic trust state."""
-
-        _microcompact(self.session_id, self.messages)
-        turn_state = getattr(self.context, "turn_state", None)
-        threshold = int(self.token_threshold)
-        summary_max_chars = 6_000
-        capsule_max_chars = 8_000
-        if turn_state is not None:
-            threshold = min(threshold, max(1, int(turn_state.exploration_token_budget)))
-            summary_max_chars = min(
-                summary_max_chars,
-                max(400, int(turn_state.budget.synthesis_reserve_tokens or 0) * 4),
-            )
-            capsule_max_chars = min(
-                capsule_max_chars,
-                max(2_000, int(turn_state.budget.audit_reserve_tokens or 0) * 4),
-            )
-        if _estimate_tokens(self.messages) <= threshold:
-            return
-        from data_agent.agent.analysis_state import build_trust_capsule
-
-        capsule = build_trust_capsule(
-            getattr(self.context, "analysis_state", None),
-            user_requirements=self.context.user_quality_requirements,
-            active_confirmation=self._active_confirmation_identity(),
-            active_datasets=self._active_dataset_capsule_inputs(),
-            max_chars=capsule_max_chars,
-        )
-        if turn_state is not None:
-            turn_state.trust_capsule_digest = str(capsule.get("digest") or "")
-            self._persist_budget_diagnostics(turn_state)
-        self.messages[:] = compact_history(
-            self.session_id,
-            self.client,
-            self.messages,
-            self._compact_state,
-            token_threshold=threshold,
-            trust_capsule=capsule,
-            summary_max_chars=summary_max_chars,
-            recent_max_chars=min(12_000, max(1_000, threshold * 2)),
-        )
-        self._prompt_cache_dirty = True
-
-    def _persist_budget_diagnostics(self, turn_state: TurnExecutionState) -> None:
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return
-        diagnostics = turn_state.budget_diagnostics()
-        previous = getattr(state, "budget_diagnostics", None)
-        previous_digest = (
-            str(previous.get("trust_capsule_digest") or "")
-            if isinstance(previous, dict)
-            else ""
-        )
-        state.budget_diagnostics = diagnostics
-        current_digest = str(diagnostics.get("trust_capsule_digest") or "")
-        if current_digest and current_digest != previous_digest:
-            save = getattr(state, "save", None)
-            if callable(save):
-                save()
-
-    def _active_confirmation_identity(self) -> dict[str, Any] | None:
-        """Read the durable confirmation checkpoint for capsule/restart identity."""
-
-        try:
-            record = self._confirmation_runtime().checkpoint(self.session_id)
-        except Exception:
-            return None
-        if record is None:
-            return None
-        params = getattr(record, "resolution_params", None)
-        params = dict(params) if isinstance(params, dict) else {}
-        return {
-            "confirmation_id": str(getattr(record, "confirmation_id", "") or ""),
-            "version": getattr(record, "version", None),
-            "proposal_ref": {
-                "proposal_id": str(params.get("proposal_id") or ""),
-                "candidate_fingerprint": str(params.get("candidate_fingerprint") or ""),
-                "data_version": str(
-                    params.get("data_version") or getattr(record, "data_version", "") or ""
-                ),
-                "spec_version": str(
-                    params.get("spec_version") or getattr(record, "spec_version", "") or ""
-                ),
-            },
-        }
-
-    def _active_dataset_capsule_inputs(self) -> list[dict[str, Any]]:
-        try:
-            datasets = self.context.workspace.list_datasets()
-        except Exception:
-            return []
-        result: list[dict[str, Any]] = []
-        for name, info in sorted((datasets or {}).items()):
-            if not isinstance(info, dict):
-                continue
-            metadata = info.get("metadata")
-            metadata = metadata if isinstance(metadata, dict) else {}
-            source_fingerprint = str(metadata.get("_source_fingerprint") or "")
-            entry = {
-                "dataset": str(name),
-                "dataset_version_id": str(info.get("dataset_id") or ""),
-                "raw_dataset_id": str(info.get("raw_dataset_id") or ""),
-                "raw_fingerprint": source_fingerprint,
-                "source_fingerprint": source_fingerprint,
-            }
-            if any(entry.values()):
-                result.append(entry)
-        return result
-
-    def _hydrate_overflow_trust_context(
-        self,
-        capsule: dict[str, Any],
-        *,
-        redact_dataset_names: bool = False,
-    ) -> str:
-        if capsule.get("status") != "requires_hydration":
-            return ""
-        state = getattr(self.context, "analysis_state", None)
-        plan = getattr(state, "analysis_plan", None)
-        plan = plan if isinstance(plan, dict) else {}
-        requirement_ids = [
-            str(item.get("id") or "")
-            for group in (plan.get("analysis_requirements") or {}).values()
-            if isinstance(group, list)
-            for item in group
-            if isinstance(item, dict)
-            and item.get("status") != "satisfied"
-            and str(item.get("id") or "")
-        ] if isinstance(plan.get("analysis_requirements"), dict) else []
-        evidence_ids = [
-            str(item.get("id") or "")
-            for item in (getattr(state, "evidence_records", None) or [])
-            if isinstance(item, dict) and str(item.get("id") or "")
-        ]
-        dataset_names = [
-            str(item.get("dataset") or item.get("name") or "")
-            for item in self._active_dataset_capsule_inputs()
-            if str(item.get("dataset") or item.get("name") or "")
-        ]
-        requested = {
-            "datasets": dataset_names,
-            "unresolved_hard_requirements": requirement_ids,
-            "evidence_bindings": evidence_ids,
-        }
-        try:
-            from data_agent.agent.artifact_refs import hydrate_trust_capsule_manifest
-
-            hydrated = hydrate_trust_capsule_manifest(
-                capsule.get("trust_manifest") or {},
-                expected_session_id=self.session_id,
-                expected_plan_id=str(plan.get("id") or ""),
-                expected_body_digest=str(
-                    (capsule.get("trust_manifest") or {}).get("body_digest") or ""
-                ),
-                requested_ids=requested,
-                per_component_limit=8,
-                include_confirmation=True,
-            )
-        except Exception:
-            hydrated = {}
-        if not hydrated:
-            return json.dumps({
-                "status": "hydration_failed",
-                "required_action": "downgrade_or_disclose",
-                "manifest_digest": str(
-                    (capsule.get("trust_manifest") or {}).get("body_digest") or ""
-                ),
-            }, ensure_ascii=False, sort_keys=True)
-        confirmation = hydrated.get("active_confirmation")
-        if isinstance(confirmation, dict):
-            hydrated["active_confirmation"] = {
-                key: (
-                    confirmation.get(key)
-                    if key == "version"
-                    else (
-                        str(confirmation.get(key) or "")
-                        if len(str(confirmation.get(key) or "")) <= 320
-                        else "sha256:" + hashlib.sha256(
-                            str(confirmation.get(key) or "").encode("utf-8")
-                        ).hexdigest()
-                    )
-                )
-                for key in (
-                    "id",
-                    "version",
-                    "proposal_id",
-                    "candidate_fingerprint",
-                    "data_version",
-                    "spec_version",
-                )
-            }
-        if redact_dataset_names:
-            hydrated = _redact_trust_dataset_names(hydrated)
-        hydrated["status"] = "hydrated_with_limits"
-        hydrated["omitted_counts"] = {
-            key: max(0, len(values) - 8)
-            for key, values in requested.items()
-        }
-        hydrated["required_action"] = (
-            "Use only hydrated identities. Downgrade or disclose any claim whose required identity is omitted."
-        )
-        text = json.dumps(hydrated, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        if len(text) <= 4_000:
-            return text
-        return json.dumps({
-            "status": "hydration_exceeded_prompt_limit",
-            "required_action": "downgrade_or_disclose",
-            "manifest_digest": str(
-                (capsule.get("trust_manifest") or {}).get("body_digest") or ""
-            ),
-        }, ensure_ascii=False, sort_keys=True)
-
-    def _trust_state_cache_digest(self) -> str:
-        state = getattr(self.context, "analysis_state", None)
-        payload = {
-            "user_requirements": self.context.user_quality_requirements,
-            "active_datasets": self._active_dataset_capsule_inputs(),
-            "active_confirmation": self._active_confirmation_identity(),
-        }
-        if state is not None:
-            for field_name in (
-                "goal",
-                "explicit_user_requirements",
-                "analysis_plan",
-                "data_pool",
-                "dataset_contracts",
-                "computation_refs",
-                "evidence_records",
-                "pending_confirmations",
-                "verification_reports",
-                "route_proposals",
-                "cleaning_logs",
-            ):
-                payload[field_name] = getattr(state, field_name, None)
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
     def _is_tool_blocked_by_confirmation(self, tool_name: str) -> bool:
         from data_agent.agent.analysis_flow_controller import AnalysisFlowController
 
@@ -1755,283 +1035,11 @@ class AgentLoop:
                 "content": json.dumps({"error": reason, "error_type": "early_termination"}, ensure_ascii=False),
             })
 
-    def _bind_tool_call(self, tc):
-        """Bind a substantive tool call to its plan step before execution.
-
-        Returns a ``StepBindingResult`` (successful or not) for tools with
-        capability metadata; returns ``None`` for non-substantive tools that
-        don't participate in plan/step identity (e.g. capability-less helpers
-        or pure interaction tools). The caller passes the result into
-        ``_compact_tool_output`` which is the single consumer.
-        """
-
-        try:
-            from data_agent.agent.analysis_execution import bind_tool_call_to_plan_step
-
-            state = getattr(self.context, "analysis_state", None)
-            plan = getattr(state, "analysis_plan", None)
-            if not isinstance(plan, dict) or not plan:
-                return None
-            capability = registry.capability_for(tc.name)
-            if not capability:
-                return None
-            from data_agent.agent.execution_scope import dataset_arguments_for_tool
-
-            dataset_names = dataset_arguments_for_tool(
-                registry,
-                tc.name,
-                dict(tc.arguments or {}),
-            )
-            dataset_names = list(dict.fromkeys(dataset_names))
-            scope = getattr(self.context, "workspace_scope", None)
-            preferred_step_id = str(getattr(scope, "step_id", "") or "")
-            return bind_tool_call_to_plan_step(
-                plan=plan,
-                tool_name=tc.name,
-                capability=capability,
-                dataset_names=dataset_names,
-                preferred_step_id=preferred_step_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Tool binding skipped: %s",
-                exc,
-                extra={"extra_data": {"tool": tc.name, "error": str(exc)}},
-            )
-            return None
-
-    def _maybe_project_structured_evidence(
-        self,
-        *,
-        ref: dict[str, Any],
-        step_binding: Any,
-        plan: dict[str, Any],
-        capability: Any,
-    ) -> None:
-        """Auto-project a successful structured computation into v2 evidence.
-
-        Reuses ``project_structured_computation_evidence``: on success it
-        upserts the validated record and dirties the synthesis-policy
-        cache so the next prompt rebuilds against the new evidence. On
-        failure it appends a bounded projection diagnostic. The model is
-        never asked to call ``record_evidence_record`` for this turn into
-        a tool call; eligibility failures stay computation-only.
-        """
-
-        try:
-            from data_agent.agent.evidence_contracts import (
-                project_structured_computation_evidence,
-            )
-            from data_agent.config import get_config
-
-            state = getattr(self.context, "analysis_state", None)
-            if state is None:
-                return
-            if step_binding is None or not getattr(step_binding, "ok", False):
-                return
-            capability_payload: dict[str, Any] | None = None
-            if capability is not None:
-                if isinstance(capability, dict):
-                    capability_payload = capability
-                else:
-                    to_dict = getattr(capability, "to_dict", None)
-                    if callable(to_dict):
-                        capability_payload = to_dict()
-                    else:
-                        capability_payload = {
-                            "capability_id": str(getattr(capability, "capability_id", "") or ""),
-                            "evidence_fields": list(getattr(capability, "evidence_fields", []) or []),
-                            "risk_level": str(getattr(capability, "risk_level", "") or ""),
-                        }
-            dataset_contracts = list(getattr(state, "dataset_contracts", []) or [])
-            turn_state = getattr(self.context, "turn_state", None)
-            turn_id = str(getattr(turn_state, "turn_id", "") or "")
-            result = project_structured_computation_evidence(
-                computation_ref=ref,
-                binding=step_binding,
-                plan=plan,
-                capability=capability_payload,
-                dataset_contracts=dataset_contracts,
-                current_session_id=self.session_id,
-                current_turn_id=turn_id,
-                sessions_root=get_config().sessions_resolved,
-            )
-            if result.projected:
-                projected_record = state.upsert_evidence_record(result.record)
-                # Automatic evidence must own canonical workflow progress as
-                # well as persistence. Requiring the model to replay the same
-                # record through ``record_evidence_record`` reintroduces a
-                # bookkeeping ritual and can leave workspace scope with no
-                # current task between analytical steps.
-                from data_agent.session.task_manager import task_manager
-
-                completed_task_ids = task_manager.complete_matching_tasks_from_evidence(
-                    session_id=state.session_id,
-                    evidence=projected_record,
-                    analysis_spec_id="",
-                )
-                # Invalidate the synthesis-policy cache so the next prompt
-                # rebuilds the bounded evidence catalog with this record.
-                self._turn_synthesis_policy_injected = False
-                self._turn_synthesis_policy_instruction = ""
-                self._turn_synthesis_evidence_aliases = ()
-                state.append_turn_diagnostic({
-                    "event": "evidence_projected",
-                    "tool_call_id": str(ref.get("tool_call_id") or ""),
-                    "plan_id": str(ref.get("plan_id") or ""),
-                    "step_id": str(ref.get("step_id") or ""),
-                    "claim_key": str(ref.get("claim_key") or ""),
-                    "completed_task_ids": list(completed_task_ids or []),
-                })
-                return
-            state.append_turn_diagnostic({
-                "event": "evidence_projection_skipped",
-                "tool_call_id": str(ref.get("tool_call_id") or ""),
-                "reason": str(result.reason or ""),
-                "diagnostics": list(result.diagnostics or []),
-            })
-        except Exception as exc:
-            logger.warning(
-                "Structured evidence projection skipped: %s",
-                exc,
-                extra={"extra_data": {"tool": str(ref.get("tool_name") or ""), "error": str(exc)}},
-            )
-
-    def _compact_tool_output(self, tool_result, tc, step_binding=None) -> str:
-        """Compact tool output for LLM context. Persist data/details to disk, return concise summary.
-
-        ``step_binding`` is the canonical ``StepBindingResult`` for this tool
-        call. When supplied and successful, plan/step identity and the claim
-        key/requirement IDs flow only from the binding. Unsuccessful or absent
-        bindings persist an untrusted computation ref with empty identity and
-        the structured diagnostic; we never invent identity later.
-        """
+    def _compact_tool_output(self, tool_result, tc) -> str:
+        """Compact tool output for LLM context. Persist data/details to disk, return concise summary."""
         from data_agent.tools.registry import ToolResult
 
         summary = tool_result.to_cli()
-        success = not self._tool_content_is_error(str(summary or ""))
-
-        try:
-            from data_agent.agent.evidence_contracts import persist_computation_output
-            from data_agent.config import get_config
-
-            state = getattr(self.context, "analysis_state", None)
-            turn_state = getattr(self.context, "turn_state", None)
-            plan = getattr(state, "analysis_plan", None)
-            scope = getattr(self.context, "workspace_scope", None)
-            from data_agent.agent.execution_scope import dataset_arguments_for_tool
-            from data_agent.agent.evidence_contracts import (
-                analysis_plan_semantic_digest,
-                analysis_step_semantic_digest,
-            )
-
-            dataset_names = dataset_arguments_for_tool(
-                registry,
-                tc.name,
-                dict(tc.arguments or {}),
-            )
-            try:
-                summary_payload = json.loads(summary)
-            except (TypeError, json.JSONDecodeError):
-                summary_payload = None
-            if tc.name == "run_python" and isinstance(summary_payload, dict):
-                dataset_names.extend(
-                    str(item)
-                    for item in (summary_payload.get("dataset_reads") or [])
-                    if str(item)
-                )
-            dataset_names = list(dict.fromkeys(dataset_names))
-            binding_active = step_binding is not None and bool(getattr(step_binding, "ok", False))
-            if binding_active:
-                plan_id = str(getattr(step_binding, "plan_id", "") or "")
-                step_id = str(getattr(step_binding, "step_id", "") or "")
-                claim_key = str(getattr(step_binding, "claim_key", "") or "")
-                requirement_ids = [
-                    str(item)
-                    for item in (getattr(step_binding, "requirement_ids", ()) or ())
-                    if str(item)
-                ]
-                binding_error_type = ""
-                binding_candidate_step_ids: list[str] = []
-            else:
-                plan_id = ""
-                step_id = ""
-                claim_key = ""
-                requirement_ids = []
-                if step_binding is not None:
-                    binding_error_type = str(getattr(step_binding, "error_type", "") or "")
-                    binding_candidate_step_ids = [
-                        str(item)
-                        for item in (getattr(step_binding, "candidate_step_ids", ()) or ())
-                        if str(item)
-                    ]
-                else:
-                    binding_error_type = "analysis_step_not_bound"
-                    binding_candidate_step_ids = []
-            dataset_versions = []
-            for dataset_name in dataset_names:
-                info = self.context.workspace.get_active_version_info(dataset_name)
-                if isinstance(info, dict) and info.get("dataset_id"):
-                    dataset_versions.append(str(info["dataset_id"]))
-            definition = registry.get(tc.name)
-            capability = getattr(definition, "capability", None)
-            method_steps = [
-                item
-                for item in ((plan or {}).get("method_plan") or [])
-                if isinstance(item, dict) and str(item.get("step_id") or "")
-            ] if isinstance(plan, dict) else []
-            current_step = next((
-                item
-                for item in method_steps
-                if str(item.get("step_id") or "") == step_id
-            ), {})
-            with self._computation_ref_lock:
-                ref = persist_computation_output(
-                    sessions_root=get_config().sessions_resolved,
-                    session_id=self.session_id,
-                    turn_id=str(getattr(turn_state, "turn_id", "") or ""),
-                    plan_id=plan_id,
-                    step_id=step_id,
-                    tool_call_id=tc.id,
-                    tool_name=tc.name,
-                    arguments=dict(tc.arguments or {}),
-                    output=tool_result.to_web(),
-                    dataset_versions=dataset_versions,
-                    success=success,
-                    plan_digest=analysis_plan_semantic_digest(plan or {}),
-                    step_digest=analysis_step_semantic_digest(current_step),
-                    capability_id=str(getattr(capability, "capability_id", "") or ""),
-                    evidence_fields=list(getattr(capability, "evidence_fields", []) or []),
-                )
-                ref["claim_key"] = claim_key
-                ref["requirement_ids"] = requirement_ids
-                ref["binding_error_type"] = binding_error_type
-                if binding_candidate_step_ids:
-                    ref["binding_candidate_step_ids"] = binding_candidate_step_ids
-                if state is not None:
-                    state.upsert_computation_ref(ref)
-                    state.append_turn_diagnostic({
-                        "event": "tool_binding",
-                        "tool_call_id": tc.id,
-                        "tool_name": tc.name,
-                        "ok": binding_active,
-                        "plan_id": plan_id,
-                        "step_id": step_id,
-                        "error_type": binding_error_type,
-                    })
-                    self._maybe_project_structured_evidence(
-                        ref=ref,
-                        step_binding=step_binding,
-                        plan=plan or {},
-                        capability=capability,
-                    )
-                    state.save()
-        except Exception as exc:
-            logger.warning(
-                "Computation provenance persistence skipped: %s",
-                exc,
-                extra={"extra_data": {"tool": tc.name, "error": str(exc)}},
-            )
 
         # If ToolResult has structured data, persist it
         if tool_result.data is not None:
@@ -2144,142 +1152,27 @@ class AgentLoop:
 
     def _reset_turn_tracking(self) -> None:
         self._turn_tools_used = []
-        self._turn_tool_outcomes = []
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
-        self._turn_synthesis_evidence_aliases = ()
-        self._turn_final_audit_revision_used = False
-        self._turn_final_audit_analysis_retry_used = False
-        self._turn_final_audit_instruction = ""
-        self._turn_last_final_audit = None
-        self._turn_provider_truncation_repair_used = False
-        self._turn_resumed_from_confirmation = False
-
-    # --- Safe live analysis progress narration -----------------------------
-    # ``_progress_payload`` returns the wire dict for a closed-vocabulary
-    # progress event (or ``None`` if the code/state was rejected). Streaming
-    # callers yield the dict; sync callers pass it to
-    # ``_record_progress_diagnostic`` so CLI/tests share the same provenance
-    # trail without SSE. Progress payloads only carry identity/phase — no
-    # values, p-values, rankings, claims, or reasoning.
-
-    def _progress_payload(
-        self,
-        code: str,
-        *,
-        step_id: str = "",
-        status: str = "running",
-        phase: str = "",
-    ) -> dict[str, str] | None:
-        try:
-            return build_analysis_progress(
-                code=code,
-                step_id=step_id,
-                status=status,  # type: ignore[arg-type]
-                phase=phase,
-            ).to_dict()
-        except Exception as exc:
-            logger.warning(
-                "analysis_progress event skipped",
-                extra={"extra_data": {"code": code, "error": str(exc)}},
-            )
-            return None
-
-    def _record_progress_diagnostic(self, payload: dict[str, str] | None) -> None:
-        if not payload:
-            return
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return
-        diagnostic = {"kind": "analysis_progress"}
-        diagnostic.update(payload)
-        # Strip the wire-only ``type`` key so the diagnostic is purely
-        # observational and does not masquerade as a streamed event.
-        diagnostic.pop("type", None)
-        append = getattr(state, "append_turn_diagnostic", None)
-        # Best-effort observability: progress diagnostics must never break
-        # the main loop. Test stubs may use SimpleNamespace without the
-        # method; just drop the diagnostic in that case.
-        if callable(append):
-            try:
-                append(diagnostic)
-            except Exception as exc:
-                logger.warning(
-                    "analysis_progress diagnostic dropped",
-                    extra={"extra_data": {"error": str(exc)}},
-                )
-
-    def _emit_progress_stream(
-        self,
-        code: str,
-        *,
-        step_id: str = "",
-        status: str = "running",
-        phase: str = "",
-    ):
-        """Yield a progress event for SSE streaming (no-op on rejection)."""
-        payload = self._progress_payload(code, step_id=step_id, status=status, phase=phase)
-        if payload is not None:
-            yield payload
-
-    def _record_progress(
-        self,
-        code: str,
-        *,
-        step_id: str = "",
-        status: str = "running",
-        phase: str = "",
-    ) -> None:
-        """Record a progress event in turn diagnostics for sync execution."""
-        self._record_progress_diagnostic(
-            self._progress_payload(code, step_id=step_id, status=status, phase=phase)
-        )
-
-    # --- End progress narration -------------------------------------------
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
-        payload_text = stripped.split(" [detail:", 1)[0]
-        try:
-            payload = json.loads(payload_text)
-        except (TypeError, json.JSONDecodeError):
-            payload = None
+        lowered = stripped.lower()
         return (
-            isinstance(payload, dict) and "error" in payload
-        ) or stripped.casefold().startswith("error")
+            stripped.startswith('{"error":')
+            or stripped.startswith('{"error": ')
+            or lowered.startswith("error")
+        )
 
     def _record_turn_tool_result(self, tool_name: str, tool_msg_content: str) -> None:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
         self._turn_tools_used.append(tool_name)
-        is_error = self._tool_content_is_error(tool_msg_content)
-        if not hasattr(self, "_turn_tool_outcomes"):
-            self._turn_tool_outcomes = []
-        # Keep the most recent outcome per tool_call_id-ish key (tool_name + index).
-        self._turn_tool_outcomes.append({
-            "tool_name": tool_name,
-            "tool_call_id": f"{tool_name}_{len(self._turn_tool_outcomes)}",
-            "success": not is_error,
-            "error_category": (
-                self._categorize_tool_error(tool_msg_content) if is_error else ""
-            ),
-        })
-        if tool_name == "load_data" and not is_error:
+        if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
-
-    @staticmethod
-    def _categorize_tool_error(content: str) -> str:
-        text = (content or "").lower()
-        if "not found" in text or "不存在" in text or "missing" in text or "找不到" in text:
-            return "missing_column_or_data"
-        if "too few" in text or "数据点太少" in text or "insufficient" in text:
-            return "insufficient_data"
-        if "安全" in text or "sandbox" in text or "not allowed" in text:
-            return "sandbox_violation"
-        return "tool_error"
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -2317,6 +1210,8 @@ class AgentLoop:
         return "\n".join(profile_lines)
 
     def _maybe_inject_synthesis_policy(self, user_input: str) -> None:
+        if getattr(self, "_turn_synthesis_policy_injected", False):
+            return
         intent = getattr(self, "_last_turn_intent", None)
         if intent is None or intent.intent_type not in ("directed_analysis", "comprehensive_report"):
             return
@@ -2327,16 +1222,17 @@ class AgentLoop:
         if not evidence:
             return
 
-        try:
-            from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
+        if not getattr(self, "_turn_verification_injected", False):
+            try:
+                from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
 
-            self._turn_verification_injected = True
-            maybe_verify_turn_claims(user_input, state)
-        except Exception as exc:
-            logger.warning(
-                "Trust workflow loop verification skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
+                self._turn_verification_injected = True
+                maybe_verify_turn_claims(user_input, state)
+            except Exception as exc:
+                logger.warning(
+                    "Trust workflow loop verification skipped",
+                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+                )
 
         try:
             from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
@@ -2363,478 +1259,12 @@ class AgentLoop:
             proficiency=self.context.user_proficiency,
         )
         self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
-        self._turn_synthesis_evidence_aliases = tuple(policy.evidence_aliases)
         self._turn_synthesis_policy_injected = True
 
-    def _is_final_answer_audit_candidate(self) -> bool:
-        intent = getattr(self, "_last_turn_intent", None)
-        if intent is not None and getattr(intent, "intent_type", "") in {
-            "directed_analysis", "comprehensive_report", "result_followup",
-        }:
-            return True
-        if not getattr(self, "_turn_resumed_from_confirmation", False):
-            return False
-        state = getattr(self.context, "analysis_state", None)
-        return state is not None and bool(
-            getattr(state, "analysis_plan", None)
-            or getattr(state, "evidence_records", None)
-        )
-
-    def _should_buffer_final_answer_text(self) -> bool:
-        return self._is_final_answer_audit_candidate()
-
-    def _analysis_retry_budget_available(self) -> bool:
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return False
-        budget = getattr(turn_state, "budget", None)
-        if budget is None:
-            return False
-        if turn_state.tool_calls >= int(getattr(budget, "max_tool_calls", 0) or 0):
-            return False
-        if getattr(turn_state, "exploration_budget_exhausted", False):
-            return False
-        max_elapsed = getattr(budget, "max_elapsed_seconds", None)
-        if max_elapsed is not None and turn_state.elapsed_seconds >= max_elapsed:
-            return False
-        return True
-
-    def _discard_last_answer_candidate(self) -> None:
-        if not self.messages:
-            return
-        last = self.messages[-1]
-        if last.get("role") == "assistant" and not last.get("tool_calls"):
-            self.messages.pop()
-
-    def _replace_last_answer_candidate(self, public_text: str) -> None:
-        for message in reversed(self.messages):
-            if message.get("role") == "assistant" and not message.get("tool_calls"):
-                message["content"] = public_text
-                return
-        self.messages.append({"role": "assistant", "content": public_text})
-
-    def _public_intermediate_text(self, text: str) -> str:
-        from data_agent.agent.answer_quality import strip_internal_evidence_markers
-
-        return strip_internal_evidence_markers(text)
-
-    def _interrupted_response_text(self, partial_text: str) -> str:
-        if self._is_final_answer_audit_candidate():
-            return "分析在最终审计前被中断；未发布未经审计的分析结论。\n\n[已中断]"
-        return (partial_text or "分析已中断。") + "\n\n[已中断]"
-
-    def _inject_final_answer_audit_repair(
-        self,
-        *,
-        mode: str,
-        reason_codes: list[str],
-    ) -> None:
-        self._discard_last_answer_candidate()
-        if mode == "synthesis":
-            if "provider_output_truncated" in reason_codes:
-                instruction = (
-                    "The provider stopped the previous final draft at its output limit. Rewrite it as one "
-                    "complete self-contained answer; do not continue from the cutoff and do not call tools. "
-                    "Keep the visible answer within 2400 Chinese characters and prioritize the answer over "
-                    "process narration. It must contain explicit findings, actionable recommendations, and "
-                    "limitations. Copy only exact current short measurement aliases from "
-                    "bounded_evidence_catalog using [[evidence:aeNN#amNN]] markers and copy the exact metric_label "
-                    "and value from the same entry without translating or rounding those identity tokens; "
-                    "when required_verified_core_copy= is present, begin the revised answer by copying only its "
-                    "value verbatim, including the marker; "
-                    "include at least one standalone verified-core sentence with exactly one catalog measurement; "
-                    "downgrade unsupported claims, and keep "
-                    "the internal evidence markers for re-audit. This is the only truncation repair attempt."
-                )
-            else:
-                instruction = (
-                    "Revise the synthesis only. Do not call tools. Copy the exact current short measurement "
-                    "aliases shown in bounded_evidence_catalog, using [[evidence:aeNN#amNN]] markers; "
-                    "for each cited measurement copy the exact metric_label and value from the same entry. "
-                    "Do not translate or round those identity tokens; add Chinese explanation around them. "
-                    "When required_verified_core_copy= is present, Begin the revised answer by copying only its "
-                    "value verbatim, including the marker. "
-                    "Include at least one standalone verified-core sentence using exactly one catalog measurement, "
-                    "its exact metric_label/value, and its marker, with no unrelated quantity in that sentence. "
-                    "remove or downgrade unsupported claims, add required limitations/exploratory labels, and keep "
-                    "the internal evidence markers for re-audit. Return a complete answer, not process narration; "
-                    "for a comprehensive report include findings, recommendations, and limitations with enough "
-                    "supporting context to stand alone. This is the only synthesis revision attempt."
-                )
-        else:
-            instruction = (
-                "Do not merely rephrase the blocked draft. Continue the required analysis with available tools, "
-                "record current computation evidence, then synthesize only supported findings. If evidence cannot "
-                "be produced within the remaining budget, return only diagnostic evidence gaps."
-            )
-        codes = ",".join(sorted(set(reason_codes)))
-        self._turn_final_audit_instruction = (
-            f'<final_answer_audit_repair mode="{mode}" reason_codes="{codes}">'
-            f"{instruction}</final_answer_audit_repair>"
-        )
-        self._prompt_cache_dirty = True
-
-    def _maybe_repair_truncated_analysis_response(self, response: Any) -> bool:
-        """Use one revision-reserve round for a provider-truncated final draft."""
-
-        finish_reason = str(getattr(response, "finish_reason", "") or "").casefold()
-        if finish_reason not in {"length", "max_tokens", "max_output_tokens"}:
-            return False
-        if getattr(response, "has_tool_calls", False):
-            return False
-        if not self._is_final_answer_audit_candidate():
-            return False
-        if getattr(self, "_turn_provider_truncation_repair_used", False):
-            return False
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is not None and not turn_state.claim_revision_attempt():
-            return False
-        self._turn_provider_truncation_repair_used = True
-        # The final-audit revision flag shares the same single revision
-        # reserve.  A truncation rewrite must not be followed by another
-        # stylistic rewrite that silently exceeds the agreed budget.
-        self._turn_final_audit_revision_used = True
-        self._inject_final_answer_audit_repair(
-            mode="synthesis",
-            reason_codes=["provider_output_truncated"],
-        )
-        state = getattr(self.context, "analysis_state", None)
-        if state is not None:
-            try:
-                state.append_turn_diagnostic({
-                    "event": "provider_output_truncation",
-                    "finish_reason": finish_reason,
-                    "action": "bounded_synthesis_revision",
-                })
-            except Exception:
-                pass
-        return True
-
-    def _publication_mode(self) -> str:
-        from data_agent.config import get_config
-
-        try:
-            return str(getattr(get_config(), "assurance_publication_mode", "tiered") or "tiered")
-        except Exception:
-            return "tiered"
-
-    def _publication_feature_flags(self) -> dict[str, bool]:
-        from data_agent.config import get_config
-
-        try:
-            cfg = get_config()
-        except Exception:
-            return {
-                "auto_evidence_projection_enabled": True,
-                "analysis_live_progress_enabled": True,
-            }
-        return {
-            "auto_evidence_projection_enabled": bool(
-                getattr(cfg, "auto_evidence_projection_enabled", True)
-            ),
-            "analysis_live_progress_enabled": bool(
-                getattr(cfg, "analysis_live_progress_enabled", True)
-            ),
-        }
-
-    def _record_publication_diagnostic(self, publication: Any) -> None:
-        state = getattr(self.context, "analysis_state", None)
-        if state is None or publication is None:
-            return
-        try:
-            state.append_turn_diagnostic({
-                "event": "claim_tier_publication",
-                "mode": self._publication_mode(),
-                "feature_flags": self._publication_feature_flags(),
-                "actions": dict(getattr(publication, "actions", {}) or {}),
-            })
-        except Exception:
-            pass
-
-    def _record_pass_publication_diagnostic(self, audit: dict[str, Any]) -> None:
-        """Record a ``claim_tier_publication`` diagnostic on the pass path.
-
-        The pass path publishes ``audit.public_text`` directly without going
-        through ``_render_audited_publication`` (every claim passed, so there
-        is nothing to downgrade or replace). The publication still happened,
-        so we record the per-claim action map (all ``verified``) for
-        observability consistency with the fallback and revise paths.
-        """
-
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return
-        actions = {
-            str(check.get("claim_id") or ""): "verified"
-            for check in audit.get("claim_checks") or []
-            if isinstance(check, dict) and check.get("status") == "passed"
-        }
-        try:
-            state.append_turn_diagnostic({
-                "event": "claim_tier_publication",
-                "mode": self._publication_mode(),
-                "feature_flags": self._publication_feature_flags(),
-                "actions": actions,
-            })
-        except Exception:
-            pass
-
-    def _render_audited_publication(
-        self,
-        draft: str,
-        audit: dict[str, Any] | None,
-    ) -> str:
-        """Render a draft answer under claim-tier publication rules.
-
-        Always publishes deterministically — never triggers another analysis
-        tool call. When ``audit`` is missing or invalid (audit infrastructure
-        failure), every material claim is replaced with a deterministic
-        diagnostic; an exploratory disclaimer cannot authorize unaudited
-        analytical assertions.
-        """
-
-        from data_agent.agent.answer_quality import (
-            PublicationResult,
-            render_audited_analysis_answer,
-        )
-
-        completion = self._evaluate_turn_completion()
-        rendered: PublicationResult = render_audited_analysis_answer(
-            draft=draft,
-            audit=audit if isinstance(audit, dict) else None,
-            completion=completion,
-            mode=self._publication_mode(),
-        )
-        self._record_publication_diagnostic(rendered)
-        return rendered.text
-
-    def _synthesis_audit_revision_active(self) -> bool:
-        return 'mode="synthesis"' in getattr(self, "_turn_final_audit_instruction", "")
-
-    def _reject_synthesis_revision_tool_calls(self) -> str:
-        draft_text = ""
-        if self.messages and self.messages[-1].get("role") == "assistant":
-            draft_text = str(self.messages[-1].get("content") or "")
-            self.messages.pop()
-        audit = getattr(self, "_turn_last_final_audit", None)
-        rendered = self._render_audited_publication(
-            draft_text, audit if isinstance(audit, dict) else None,
-        )
-        self._replace_last_answer_candidate(rendered)
-        self._turn_final_audit_instruction = ""
-        return rendered
-
-    def _gate_final_analysis_answer(
-        self,
-        user_input: str,
-        final_text: str,
-        *,
-        allow_repair: bool = True,
-    ) -> dict[str, str]:
-        if not self._is_final_answer_audit_candidate():
-            return {"action": "publish", "text": final_text}
-
-        from data_agent.agent.trust_workflow_runtime import (
-            audit_final_answer_draft,
-            hydrate_final_answer_audit_ref,
-        )
-
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            rendered = self._render_audited_publication(final_text, None)
-            self._replace_last_answer_candidate(rendered)
-            self._turn_final_audit_instruction = ""
-            return {"action": "fallback", "text": rendered}
-
-        try:
-            ref = audit_final_answer_draft(
-                final_text,
-                state,
-                evidence_aliases=tuple(
-                    getattr(self, "_turn_synthesis_evidence_aliases", ()) or ()
-                ),
-            )
-            audit = hydrate_final_answer_audit_ref(ref)
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None:
-                turn_state.record_token_usage(1, phase="audit")
-                self._persist_budget_diagnostics(turn_state)
-        except Exception as exc:
-            logger.error(
-                "Final answer audit failed closed",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
-            audit = None
-        if not isinstance(audit, dict):
-            # Audit failed closed. Publish deterministically via the renderer
-            # with a missing audit so every material claim is replaced by a
-            # diagnostic. Never trigger another analysis tool call from this
-            # path — the renderer is read-only.
-            rendered = self._render_audited_publication(final_text, None)
-            self._replace_last_answer_candidate(rendered)
-            self._turn_final_audit_instruction = ""
-            return {"action": "fallback", "text": rendered}
-
-        self._turn_last_final_audit = audit
-
-        status = str(audit.get("status") or "blocked")
-        if status == "pass":
-            public_text = str(audit.get("public_text") or "")
-            incomplete_codes = self._analysis_answer_incomplete_reasons(public_text)
-            turn_state = getattr(self.context, "turn_state", None)
-            if (
-                incomplete_codes
-                and allow_repair
-                and not self._turn_final_audit_revision_used
-                and (turn_state is None or turn_state.claim_revision_attempt())
-            ):
-                self._turn_final_audit_revision_used = True
-                self._inject_final_answer_audit_repair(
-                    mode="synthesis",
-                    reason_codes=incomplete_codes,
-                )
-                return {"action": "continue", "mode": "synthesis"}
-            # Record the publication diagnostic on the pass path too — the
-            # publication still happened, so observability must be consistent
-            # with the fallback and revise paths. The published text is the
-            # audit's public_text verbatim (every claim passed).
-            self._record_pass_publication_diagnostic(audit)
-            self._replace_last_answer_candidate(public_text)
-            self._turn_final_audit_instruction = ""
-            return {"action": "publish", "text": public_text}
-
-        failed_codes = list(dict.fromkeys(
-            str(code)
-            for check in audit.get("claim_checks") or []
-            if isinstance(check, dict) and check.get("status") == "failed"
-            for code in check.get("reason_codes") or []
-            if str(code)
-        ))
-        all_codes = list(dict.fromkeys(
-            str(code)
-            for check in audit.get("claim_checks") or []
-            if isinstance(check, dict)
-            for code in check.get("reason_codes") or []
-            if str(code)
-        ))
-        evidence_available = bool(getattr(state, "evidence_records", None))
-        evidence_aliases_available = bool(
-            getattr(self, "_turn_synthesis_evidence_aliases", ()) or ()
-        )
-        synthesis_repairable = status == "revise" or (
-            status == "blocked"
-            and evidence_available
-            and evidence_aliases_available
-            and bool(failed_codes)
-            and set(failed_codes) <= {
-                "missing_evidence_identity",
-                *_SYNTHESIS_MEASUREMENT_REPAIR_CODES,
-            }
-        )
-        if (
-            allow_repair
-            and synthesis_repairable
-            and not self._turn_final_audit_revision_used
-            and (
-                getattr(self.context, "turn_state", None) is None
-                or self.context.turn_state.claim_revision_attempt()
-            )
-        ):
-            self._turn_final_audit_revision_used = True
-            self._inject_final_answer_audit_repair(
-                mode="synthesis",
-                reason_codes=all_codes,
-            )
-            return {"action": "continue", "mode": "synthesis"}
-
-        failed_code_set = set(failed_codes)
-        all_code_set = set(all_codes)
-        has_measurement_bookkeeping = bool(
-            all_code_set & _MEASUREMENT_BOOKKEEPING_CODES
-        )
-        needs_computation = (
-            not has_measurement_bookkeeping
-            and bool(failed_code_set & _COMPUTATION_REPAIR_REASON_CODES)
-        )
-        if (
-            allow_repair
-            and needs_computation
-            and not self._turn_final_audit_analysis_retry_used
-            and self._analysis_retry_budget_available()
-        ):
-            self._turn_final_audit_analysis_retry_used = True
-            self._inject_final_answer_audit_repair(
-                mode="analysis",
-                reason_codes=failed_codes,
-            )
-            return {"action": "continue", "mode": "analysis"}
-
-        # One bounded wording revision is already exhausted (or not allowed).
-        # Publish deterministically by claim tier: verified findings stay,
-        # downgraded claims get the exploratory suffix, fabricated/stale/
-        # cross-scope/contradictory/causal-invalid claims are replaced in
-        # place with Chinese diagnostics. The whole-answer English fallback
-        # must not appear.
-        rendered = self._render_audited_publication(final_text, audit)
-        self._replace_last_answer_candidate(rendered)
-        self._turn_final_audit_instruction = ""
-        return {"action": "fallback", "text": rendered}
-
-    def _analysis_answer_incomplete_reasons(self, text: str) -> list[str]:
-        """Detect an unfinished analysis response without judging its claims.
-
-        Claim audit answers "is this statement supported?"; it cannot decide
-        whether a comprehensive answer exists at all.  This bounded check is
-        intentionally structural and intent-aware so a concise directed
-        answer is not forced into a long report.
-        """
-
-        intent = getattr(self, "_last_turn_intent", None)
-        intent_type = str(getattr(intent, "intent_type", "") or "")
-        compact = "".join(str(text or "").split())
-        process_markers = (
-            "现在继续执行",
-            "接下来执行",
-            "将继续分析",
-            "正在继续分析",
-            "continue the analysis",
-        )
-        section_groups = (
-            ("发现", "结论", "结果"),
-            ("建议", "行动", "下一步"),
-            ("局限", "限制"),
-        )
-        has_all_sections = all(
-            any(marker in text for marker in group)
-            for group in section_groups
-        )
-        reasons: list[str] = []
-        if any(marker.casefold() in compact.casefold() for marker in process_markers) and not has_all_sections:
-            reasons.append("analysis_answer_incomplete")
-        if intent_type == "comprehensive_report":
-            if len(compact) < 600:
-                reasons.append("analysis_answer_too_short")
-            if not has_all_sections:
-                reasons.append("analysis_answer_sections_missing")
-        return list(dict.fromkeys(reasons))
-
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
-        return self._maybe_continue_for_analysis_quality(user_input, final_text) is not None
+        return self._is_analysis_quality_guard_candidate()
 
     def _is_analysis_quality_guard_candidate(self) -> bool:
-        """Streaming-round buffer gate.
-
-        Text is buffered only when this turn is still eligible for one
-        analysis-quality continuation: the intent is analysis-bearing, the
-        guard has not yet been injected, and the per-turn continuation
-        budget still has room. The substantive-tool shortcut is gone — a
-        missing requirement can still force a recovery round even after a
-        successful substantive tool.
-        """
-
-        return self._is_analysis_continuation_candidate()
-
-    def _is_analysis_continuation_candidate(self) -> bool:
         if getattr(self, "_turn_final_guard_injected", False):
             return False
         intent = getattr(self, "_last_turn_intent", None)
@@ -2842,181 +1272,20 @@ class AgentLoop:
             return False
         if getattr(intent, "execution_readiness", "") not in ("ready", "pending_load"):
             return False
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return False
-        return int(getattr(turn_state, "analysis_continuations_used", 0) or 0) < 1
-
-    def _evaluate_turn_completion(self):
-        """Build and run the requirement-based completion evaluator."""
-
-        from data_agent.agent.execution_control import evaluate_analysis_completion
-
-        state = getattr(self.context, "analysis_state", None)
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return None
-        plan = getattr(state, "analysis_plan", None) if state is not None else None
-        requirements: list[dict[str, Any]] = []
-        if state is not None and isinstance(plan, dict) and plan.get("method_plan"):
-            try:
-                from data_agent.agent.analysis_requirements import compile_analysis_requirements
-
-                requirements = compile_analysis_requirements(
-                    plan=plan,
-                    **state.analysis_requirement_inputs(plan),
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Requirement compilation failed for completion evaluation: %s",
-                    exc,
-                    extra={"extra_data": {"session_id": self.session_id}},
-                )
-                requirements = []
-        computation_refs = list(getattr(state, "computation_refs", []) or []) if state is not None else []
-        evidence_records = list(getattr(state, "evidence_records", []) or []) if state is not None else []
-        tool_outcomes = list(getattr(self, "_turn_tool_outcomes", []) or [])
-        budget_exhausted = (
-            turn_state.tool_calls >= int(turn_state.budget.max_tool_calls or 0)
-            or getattr(turn_state, "exploration_budget_exhausted", False)
-        )
-        try:
-            return evaluate_analysis_completion(
-                plan=plan if isinstance(plan, dict) else None,
-                requirements=requirements,
-                computation_refs=computation_refs,
-                evidence_records=evidence_records,
-                tool_outcomes=tool_outcomes,
-                turn_state=turn_state,
-                budget_exhausted=budget_exhausted,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Completion evaluation failed: %s",
-                exc,
-                extra={"extra_data": {"session_id": self.session_id}},
-            )
-            return None
-
-    def _maybe_continue_for_analysis_quality(
-        self,
-        user_input: str,
-        final_text: str,
-    ):
-        """Return the system message to inject when continuation is allowed.
-
-        Returns ``None`` when the turn should proceed to synthesis.
-        Handles two paths:
-
-        1. ``plan_not_started`` — analysis intent, plan not materialized,
-           only profiling/meta tools used. Allow one continuation so the
-           agent can produce a plan and execute.
-        2. ``requirement_based`` — plan exists; the evaluator reports
-           ``allow_analysis_continuation=True`` for a recoverable
-           requirement. Inject a targeted instruction naming the
-           requirement and the allowed capability/fallback.
-        """
-
-        if not self._is_analysis_continuation_candidate():
-            return None
-        turn_state = getattr(self.context, "turn_state", None)
-        if turn_state is None:
-            return None
-        if not turn_state.can_run_phase("synthesis") or not turn_state.can_run_phase("audit"):
-            return None
-
-        state = getattr(self.context, "analysis_state", None)
-        plan = getattr(state, "analysis_plan", None) if state is not None else None
         tools_used = set(getattr(self, "_turn_tools_used", []))
-        if (
-            not isinstance(plan, dict) or not plan.get("method_plan")
-        ) and tools_used and tools_used <= (_PROFILING_TOOLS | _META_QUALITY_TOOLS):
-            if not turn_state.consume_quality_continuation(reason="plan_not_started"):
-                return None
-            message = _ANALYSIS_QUALITY_GUARD_MESSAGE
-            self._record_completion_diagnostic(
-                status="complete_with_limits",
-                reason_code="plan_not_started",
-                unmet_requirement_ids=(),
-                recoverable_requirement_ids=(),
-                supported_claim_class="exploratory_association",
-            )
-            self._inject_analysis_quality_guard(message)
-            return message
+        if tools_used & _SUBSTANTIVE_TOOLS:
+            return False
+        if not tools_used or not tools_used <= _PROFILING_TOOLS:
+            return False
+        return True
 
-        decision = self._evaluate_turn_completion()
-        if decision is None or not decision.allow_analysis_continuation:
-            if decision is not None:
-                self._record_completion_diagnostic(
-                    status=decision.status,
-                    reason_code=decision.reason_code,
-                    unmet_requirement_ids=decision.unmet_requirement_ids,
-                    recoverable_requirement_ids=decision.recoverable_requirement_ids,
-                    supported_claim_class=decision.supported_claim_class,
-                )
-            return None
-        if not turn_state.consume_quality_continuation(reason=decision.reason_code):
-            self._record_completion_diagnostic(
-                status=decision.status,
-                reason_code=decision.reason_code,
-                unmet_requirement_ids=decision.unmet_requirement_ids,
-                recoverable_requirement_ids=decision.recoverable_requirement_ids,
-                supported_claim_class=decision.supported_claim_class,
-            )
-            return None
-        missing = ", ".join(decision.recoverable_requirement_ids) or "current_missing_requirement"
-        message = _ANALYSIS_QUALITY_CONTINUATION_TEMPLATE.format(
-            status=decision.status,
-            reason=decision.reason_code,
-            missing=missing,
-            capability_hint=_capability_hint_for_unmet(decision, plan=plan),
-        )
-        self._record_completion_diagnostic(
-            status=decision.status,
-            reason_code=decision.reason_code,
-            unmet_requirement_ids=decision.unmet_requirement_ids,
-            recoverable_requirement_ids=decision.recoverable_requirement_ids,
-            supported_claim_class=decision.supported_claim_class,
-        )
-        self._inject_analysis_quality_guard(message)
-        return message
-
-    def _record_completion_diagnostic(
-        self,
-        *,
-        status: str,
-        reason_code: str,
-        unmet_requirement_ids,
-        recoverable_requirement_ids,
-        supported_claim_class: str,
-    ) -> None:
-        state = getattr(self.context, "analysis_state", None)
-        if state is None:
-            return
-        try:
-            state.append_turn_diagnostic({
-                "event": "completion_decision",
-                "status": str(status or ""),
-                "reason_code": str(reason_code or ""),
-                "unmet_requirement_ids": [str(item) for item in (unmet_requirement_ids or ())],
-                "recoverable_requirement_ids": [
-                    str(item) for item in (recoverable_requirement_ids or ())
-                ],
-                "supported_claim_class": str(supported_claim_class or ""),
-            })
-        except Exception:
-            pass
-
-    def _inject_analysis_quality_guard(self, message: str | None = None) -> None:
+    def _inject_analysis_quality_guard(self) -> None:
         self._turn_final_guard_injected = True
         if self.messages:
             last_msg = self.messages[-1]
             if last_msg.get("role") == "assistant" and not last_msg.get("tool_calls"):
                 self.messages.pop()
-        self.messages.append({
-            "role": "system",
-            "content": message or _ANALYSIS_QUALITY_GUARD_MESSAGE,
-        })
+        self.messages.append({"role": "system", "content": _ANALYSIS_QUALITY_GUARD_MESSAGE})
 
     def _last_external_user_message(self) -> str:
         for msg in reversed(self.messages):
@@ -3244,18 +1513,6 @@ class AgentLoop:
                 idempotency_key,
             )
 
-        if (
-            resolved.resolution_action == "approve_dataset_transformation"
-            and resolved.response == "approve"
-        ):
-            from data_agent.tools.data_clean import apply_confirmed_transformation
-
-            apply_confirmed_transformation(
-                resolved.confirmation_id,
-                session_id=self.session_id,
-            )
-            self._prompt_cache_dirty = True
-
         return confirmation_record_to_loop_result(
             resolved,
             {"messages": self._serialize_messages()},
@@ -3445,7 +1702,6 @@ class AgentLoop:
             return FinalResponse(content=f"Error: {exc}")
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
-        self._turn_resumed_from_confirmation = True
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
@@ -3501,7 +1757,6 @@ class AgentLoop:
                 answer = result.get("answer", "cancelled")
             self._resolve_confirmation(susp, answer)
             resumed_input = self._build_resume_user_input(susp, answer)
-            self._turn_resumed_from_confirmation = True
 
             self.messages.append({"role": "user", "content": (
                 f"<confirmation_response suspension_id=\"{susp.suspension_id}\">\n"
@@ -3576,36 +1831,15 @@ class AgentLoop:
 
         response = None
         streamed_text = ""
-        streamed_tokens = 0
-        used_sync_fallback = False
-        stream_requested_limit = 0
-        phase = self._current_prompt_phase()
-        turn_state = getattr(self.context, "turn_state", None)
-        phase_usage_before = (
-            int(turn_state.phase_token_usage.get(phase, 0) or 0)
-            if turn_state is not None
-            else 0
-        )
 
         # Defensive: repair any broken tool_call sequences from prior turns
         self._repair_broken_tool_sequence()
 
         try:
-            system_prompt = self._get_system_prompt()
-            output_limit = self._llm_output_limit_kwargs(
-                self.client.stream_chat_structured,
-                phase=phase,
-            )
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None:
-                stream_requested_limit = int(
-                    turn_state.requested_max_output_tokens.get(phase, 0) or 0
-                )
             for ev in self.client.stream_chat_structured(
                 messages=self.messages,
                 tools=registry.active_definitions() or None,
-                system=system_prompt,
-                **output_limit,
+                system=self._get_system_prompt(),
             ):
                 # Check interrupt between streaming chunks
                 if self._interrupt_event.is_set():
@@ -3614,36 +1848,18 @@ class AgentLoop:
 
                 if isinstance(ev, StreamTextDelta):
                     streamed_text += ev.text
-                    streamed_tokens += self._record_stream_delta_budget(
-                        ev.text,
-                        phase=phase,
-                    )
                     yield {"type": "text_delta", "text": ev.text, "turn_id": None}
                 elif isinstance(ev, StreamComplete):
                     response = ev.response
         except Exception as e:
-            unreported = getattr(e, "unreported_output_tokens", None)
-            if unreported is None:
-                unreported = max(0, stream_requested_limit - streamed_tokens)
-            turn_state = getattr(self.context, "turn_state", None)
-            if turn_state is not None and int(unreported or 0) > 0:
-                turn_state.record_token_usage(int(unreported), phase=phase)
-                self._persist_budget_diagnostics(turn_state)
             logger.warning("Streaming LLM call failed, falling back to sync", extra={"extra_data": {"error": str(e)}})
             # Fallback to synchronous call on streaming failure
             try:
-                system_prompt = self._get_system_prompt()
-                output_limit = self._llm_output_limit_kwargs(
-                    self.client.chat,
-                    phase=phase,
-                )
                 response = self.client.chat(
                     messages=self.messages,
                     tools=registry.active_definitions() or None,
-                    system=system_prompt,
-                    **output_limit,
+                    system=self._get_system_prompt(),
                 )
-                used_sync_fallback = True
                 # Emit any text that wasn't streamed yet
                 new_text = (response.text or "")[len(streamed_text):]
                 if new_text:
@@ -3654,16 +1870,6 @@ class AgentLoop:
                 return
 
         # Internal event — caller uses this to continue the loop
-        self._record_llm_response_budget(
-            response,
-            phase=phase,
-            pre_recorded_tokens=(0 if used_sync_fallback else streamed_tokens),
-        )
-        self._reclassify_synthesis_tool_round_budget(
-            response,
-            phase=phase,
-            phase_usage_before=phase_usage_before,
-        )
         yield {"type": "_response", "response": response, "streamed_text": streamed_text}
 
     def _process_tool_calls(
@@ -3714,19 +1920,6 @@ class AgentLoop:
                 "arguments": tc.arguments,
                 "round": round_num,
             }
-            # Bind the call to its plan step BEFORE execution so a
-            # substantive analytical tool can narrate its step-specific
-            # method (e.g. ``正在评估变量关系``) ahead of the generic
-            # ``正在运行分析工具``. Compute once and reuse for compaction.
-            step_binding = self._bind_tool_call(tc)
-            if step_binding is not None and step_binding.ok and step_binding.step_id:
-                yield from self._emit_progress_stream(
-                    "analysis_step_started", step_id=step_binding.step_id
-                )
-            # Server-authored "tool starting" progress event. Closed
-            # vocabulary — the tool name is NOT in the payload, only the
-            # generic narration label.
-            yield from self._emit_progress_stream("tool_started")
 
             scope_error = _scope_guard(self, tc.name, tc.arguments)
             if scope_error:
@@ -3777,19 +1970,18 @@ class AgentLoop:
                 continue
 
             duration_ms = int((time.monotonic() - t0) * 1000)
-            tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
-            tool_failed = self._tool_content_is_error(tool_msg_content)
+            tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-            if tool_failed:
+            if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                 tool_msg_content = registry.format_result(tc.name, tool_result)
 
             elif turn_state is not None:
-                turn_state.record_tool_success(tc.name)
+                turn_state.record_tool_success()
 
             self._record_turn_tool_result(tc.name, tool_msg_content)
-            self._auto_track_task_progress(tc.name, not tool_failed)
+            self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
             if self.context.analysis_state is not None:
@@ -3817,11 +2009,6 @@ class AgentLoop:
                 "web": tool_result.to_web(),
                 "duration_ms": duration_ms,
             }
-            # Server-authored "tool finished" progress event fires only on a
-            # successful tool execution; errors already surface via the
-            # ``error`` SSE event and must not be repackaged as progress.
-            if not tool_failed:
-                yield from self._emit_progress_stream("tool_succeeded", status="completed")
 
     def _stream_turn_impl(self, user_input: str):
         """Generator variant of run_turn for SSE streaming. Yields event dicts."""
@@ -3857,12 +2044,6 @@ class AgentLoop:
             }
             return
 
-        # Envelope ready: emit a single server-authored plan-ready progress
-        # event before any LLM round fires. This is the earliest progress
-        # signal the user sees and is guaranteed to precede any streamed or
-        # buffered final-answer text.
-        yield from self._emit_progress_stream("analysis_plan_ready", status="completed")
-
         final_text = ""
         round_num = 0
         self._ensure_mcp_initialized()
@@ -3881,19 +2062,19 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            self._compact_context_if_needed()
+            _microcompact(self.session_id, self.messages)
+            if _estimate_tokens(self.messages) > self.token_threshold:
+                self.messages[:] = compact_history(
+                    self.session_id, self.client, self.messages,
+                    self._compact_state, token_threshold=self.token_threshold,
+                )
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 yield self._suspended_event(blocked_confirmation)
                 return
 
-            self._enter_synthesis_reserve_if_needed(user_input)
-
-            buffer_text_events = (
-                self._is_analysis_quality_guard_candidate()
-                or self._should_buffer_final_answer_text()
-            )
+            buffer_text_events = self._is_analysis_quality_guard_candidate()
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -3927,14 +2108,11 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
-            response_text = response.text or ""
-            if response.has_tool_calls and self._is_final_answer_audit_candidate():
-                response_text = self._public_intermediate_text(response_text)
-            assistant_msg: dict = {"role": "assistant", "content": response_text}
+            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response_text:
-                final_text = response_text
+            if response.text:
+                final_text = response.text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -3951,54 +2129,25 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
-            if response.has_tool_calls and self._synthesis_audit_revision_active():
-                final_text = self._reject_synthesis_revision_tool_calls()
-                if final_text:
-                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
-                self._maybe_archive(user_input, final_text)
-                self._auto_save()
-                return
-
             if not response.has_tool_calls:
-                self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._inject_analysis_quality_guard()
                     continue
-                if self._maybe_repair_truncated_analysis_response(response):
-                    yield from self._emit_progress_stream("tool_recovery")
-                    continue
-                # The requirement-based completion evaluator ran inside
-                # ``_should_continue_for_analysis_quality``; emit the
-                # resulting progress signal before any final-answer gate so
-                # the user sees "整理可支持的结论" before audit/publication.
-                yield from self._emit_progress_stream("completion_evaluated")
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
-                if self._is_final_answer_audit_candidate():
-                    yield from self._emit_progress_stream("audit_started")
-                    gate = self._gate_final_analysis_answer(user_input, final_text)
-                    if gate["action"] == "continue":
-                        # Audit-driven bounded recovery (synthesis or analysis
-                        # revision). Emit the recovery signal before the next
-                        # round so the user knows the agent is retrying within
-                        # the agreed bounds — never leaking the rejected draft.
-                        yield from self._emit_progress_stream("tool_recovery")
-                        continue
-                    final_text = gate["text"]
-                    if final_text:
-                        yield {"type": "text_delta", "text": final_text, "turn_id": None}
-                elif buffer_text_events:
+                if buffer_text_events:
                     for ev in pending_text_events:
                         yield ev
+                # Text was already streamed; just archive and save
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
 
             if buffer_text_events:
-                if not self._is_final_answer_audit_candidate():
-                    for ev in pending_text_events:
-                        yield ev
+                for ev in pending_text_events:
+                    yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -4025,17 +2174,8 @@ class AgentLoop:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
-                yield from self._emit_progress_stream("completion_evaluated")
-                yield from self._emit_progress_stream("audit_started")
-                gate = self._gate_final_analysis_answer(
-                    user_input,
-                    bounded_text,
-                    allow_repair=False,
-                )
-                final_text = gate["text"]
-                if final_text:
-                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                if not final_text:
+                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
                 return
@@ -4065,7 +2205,6 @@ class AgentLoop:
             return
         resumed_input = self._build_resume_user_input(susp, user_response)
         confirmation_id = susp.confirmation_id or susp.suspension_id
-        self._turn_resumed_from_confirmation = True
 
         self.messages.append({"role": "user", "content": (
             f"<confirmation_response confirmation_id=\"{confirmation_id}\" suspension_id=\"{confirmation_id}\" version=\"{susp.version}\">\n"
@@ -4091,19 +2230,14 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            self._compact_context_if_needed()
+            _microcompact(self.session_id, self.messages)
+            if _estimate_tokens(self.messages) > self.token_threshold:
+                self.messages[:] = compact_history(
+                    self.session_id, self.client, self.messages,
+                    self._compact_state, token_threshold=self.token_threshold,
+                )
 
-            blocked_confirmation = self._runtime_confirmation_checkpoint()
-            if blocked_confirmation is not None:
-                yield self._suspended_event(blocked_confirmation)
-                return
-
-            self._enter_synthesis_reserve_if_needed(resumed_input)
-
-            buffer_text_events = (
-                self._is_analysis_quality_guard_candidate()
-                or self._should_buffer_final_answer_text()
-            )
+            buffer_text_events = self._is_analysis_quality_guard_candidate()
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -4135,14 +2269,11 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
-            response_text = response.text or ""
-            if response.has_tool_calls and self._is_final_answer_audit_candidate():
-                response_text = self._public_intermediate_text(response_text)
-            assistant_msg: dict = {"role": "assistant", "content": response_text}
+            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response_text:
-                final_text = response_text
+            if response.text:
+                final_text = response.text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -4159,33 +2290,11 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
-            if response.has_tool_calls and self._synthesis_audit_revision_active():
-                final_text = self._reject_synthesis_revision_tool_calls()
-                if final_text:
-                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
-                self._maybe_archive(resumed_input, final_text)
-                self._auto_save()
-                return
-
             if not response.has_tool_calls:
-                self._maybe_inject_synthesis_policy(resumed_input)
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
+                    self._inject_analysis_quality_guard()
                     continue
-                if self._maybe_repair_truncated_analysis_response(response):
-                    yield from self._emit_progress_stream("tool_recovery")
-                    continue
-                blocked_confirmation = self._runtime_confirmation_checkpoint()
-                if blocked_confirmation is not None:
-                    yield self._suspended_event(blocked_confirmation)
-                    return
-                if self._is_final_answer_audit_candidate():
-                    gate = self._gate_final_analysis_answer(resumed_input, final_text)
-                    if gate["action"] == "continue":
-                        continue
-                    final_text = gate["text"]
-                    if final_text:
-                        yield {"type": "text_delta", "text": final_text, "turn_id": None}
-                elif buffer_text_events:
+                if buffer_text_events:
                     for ev in pending_text_events:
                         yield ev
                 self._maybe_archive(resumed_input, final_text)
@@ -4193,9 +2302,8 @@ class AgentLoop:
                 return
 
             if buffer_text_events:
-                if not self._is_final_answer_audit_candidate():
-                    for ev in pending_text_events:
-                        yield ev
+                for ev in pending_text_events:
+                    yield ev
 
             # Budget-based quality reminder injection
             self._maybe_inject_quality_reminder()
@@ -4221,15 +2329,8 @@ class AgentLoop:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
-                gate = self._gate_final_analysis_answer(
-                    resumed_input,
-                    bounded_text,
-                    allow_repair=False,
-                )
-                final_text = gate["text"]
-                if final_text:
-                    yield {"type": "text_delta", "text": final_text, "turn_id": None}
+                if not final_text:
+                    yield {"type": "text_delta", "text": "分析已完成。（已达到安全轮次上限）"}
                 self._maybe_archive("", final_text)
                 self._auto_save()
                 return
@@ -4245,7 +2346,7 @@ class AgentLoop:
             if self._interrupt_event.is_set():
                 logger.info("Interrupted during tool execution")
                 self._fill_remaining_tool_responses(tool_calls, i, "Turn interrupted by user")
-                return FinalResponse(content=self._interrupted_response_text(final_text))
+                return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
 
             logger.info("Tool call", extra={"extra_data": {"tool": tc.name, "args_keys": list(tc.arguments.keys())}})
 
@@ -4294,19 +2395,6 @@ class AgentLoop:
         self.__context_operation("refresh")
         turn_state = getattr(self.context, "turn_state", None)
 
-        # Bind once and reuse for both progress narration and compaction.
-        # A substantive tool that binds to a canonical step narrates the
-        # step-specific method before the generic ``tool_started`` breadcrumb.
-        step_binding = self._bind_tool_call(tc)
-        if step_binding is not None and step_binding.ok and step_binding.step_id:
-            self._record_progress(
-                "analysis_step_started", step_id=step_binding.step_id
-            )
-        # Sync mirror of the streaming ``tool_started`` progress event. Emit
-        # before scope/budget guards return early so a turn that suspends or
-        # errors still leaves a "正在运行分析工具" diagnostic breadcrumb.
-        self._record_progress("tool_started")
-
         scope_error = _scope_guard(self, tc.name, tc.arguments)
         if scope_error:
             if turn_state is not None:
@@ -4351,23 +2439,18 @@ class AgentLoop:
             })
             return None
 
-        tool_msg_content = self._compact_tool_output(tool_result, tc, step_binding)
-        tool_failed = self._tool_content_is_error(tool_msg_content)
+        tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-        if tool_failed:
+        if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
             tool_msg_content = registry.format_result(tc.name, tool_result)
             logger.warning("Tool error", extra={"extra_data": {"tool": tc.name, "error": tool_msg_content[:200]}})
         elif turn_state is not None:
-            turn_state.record_tool_success(tc.name)
+            turn_state.record_tool_success()
 
         self._record_turn_tool_result(tc.name, tool_msg_content)
-        self._auto_track_task_progress(tc.name, not tool_failed)
-        if not tool_failed:
-            # Sync mirror of the streaming ``tool_succeeded`` event; only
-            # fires on a successful execution, never on errors.
-            self._record_progress("tool_succeeded", status="completed")
+        self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
         if self.context.analysis_state is not None:
@@ -4414,11 +2497,6 @@ class AgentLoop:
                 guard_errors[tc.id] = scope_error
             guarded_contexts[tc.id] = copy_context()
 
-        # Pre-compute deterministic bindings so the parallel workers can pass
-        # the canonical ``StepBindingResult`` into compaction without each
-        # worker touching ``state.analysis_plan`` concurrently.
-        bindings = {tc.id: self._bind_tool_call(tc) for tc in tool_calls}
-
         def _run_tool(tc):
             try:
                 scope_error = guard_errors.get(tc.id, "")
@@ -4437,17 +2515,14 @@ class AgentLoop:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
                     return (tc, scope_error, post_scope)
                 duration_ms = int((time.monotonic() - t0) * 1000)
-                tool_msg_content = self._compact_tool_output(
-                    tool_result, tc, bindings.get(tc.id)
-                )
-                tool_failed = self._tool_content_is_error(tool_msg_content)
+                tool_msg_content = self._compact_tool_output(tool_result, tc)
 
-                if tool_failed:
+                if tool_msg_content.startswith('{"error":') or tool_msg_content.startswith('{"error": '):
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, tool_msg_content)
                     tool_msg_content = registry.format_result(tc.name, tool_result)
                 elif turn_state is not None:
-                    turn_state.record_tool_success(tc.name)
+                    turn_state.record_tool_success()
 
                 return (tc, tool_msg_content, None)
             except Exception as e:
@@ -4485,16 +2560,12 @@ class AgentLoop:
         # 惰性初始化 MCP
         self._ensure_mcp_initialized()
 
-        # Sync mirror of the streaming plan-ready progress event so CLI/tests
-        # share state without SSE. Fires once per turn, before any round.
-        self._record_progress("analysis_plan_ready", status="completed")
-
         while True:
             round_num += 1
             # 协作式中断检查
             if self._interrupt_event.is_set():
                 logger.info("Turn interrupted by user")
-                return FinalResponse(content=self._interrupted_response_text(final_text))
+                return FinalResponse(content=(final_text or "分析已中断。") + "\n\n[已中断]")
 
             # Safety valve: force summary at high round count
             if round_num == 300:
@@ -4503,53 +2574,31 @@ class AgentLoop:
                     "基于已获得的所有数据和分析结果输出总结报告。"
                 )})
 
-            self._compact_context_if_needed()
+            _microcompact(self.session_id, self.messages)
+            if _estimate_tokens(self.messages) > self.token_threshold:
+                self.messages[:] = compact_history(
+                    self.session_id, self.client, self.messages,
+                    self._compact_state, token_threshold=self.token_threshold,
+                )
 
             blocked_confirmation = self._runtime_confirmation_checkpoint()
             if blocked_confirmation is not None:
                 return blocked_confirmation
 
-            self._enter_synthesis_reserve_if_needed(user_input)
-
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
-            phase = self._current_prompt_phase()
-            turn_state = getattr(self.context, "turn_state", None)
-            phase_usage_before = (
-                int(turn_state.phase_token_usage.get(phase, 0) or 0)
-                if turn_state is not None
-                else 0
-            )
-            system_prompt = self._get_system_prompt()
-            output_limit = self._llm_output_limit_kwargs(
-                self.client.chat,
-                phase=phase,
-            )
             response = self.client.chat(
                 messages=self.messages,
                 tools=registry.active_definitions() or None,
-                system=system_prompt,
-                **output_limit,
-            )
-            self._record_llm_response_budget(
-                response,
-                phase=phase,
-            )
-            self._reclassify_synthesis_tool_round_budget(
-                response,
-                phase=phase,
-                phase_usage_before=phase_usage_before,
+                system=self._get_system_prompt(),
             )
 
-            response_text = response.text or ""
-            if response.has_tool_calls and self._is_final_answer_audit_candidate():
-                response_text = self._public_intermediate_text(response_text)
-            assistant_msg: dict = {"role": "assistant", "content": response_text}
+            assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
-            if response_text:
-                final_text = response_text
+            if response.text:
+                final_text = response.text
 
             if response.has_tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -4566,28 +2615,13 @@ class AgentLoop:
 
             self.messages.append(assistant_msg)
 
-            if response.has_tool_calls and self._synthesis_audit_revision_active():
-                fallback = self._reject_synthesis_revision_tool_calls()
-                return FinalResponse(content=fallback)
-
             if not response.has_tool_calls:
-                self._maybe_inject_synthesis_policy(user_input)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    self._inject_analysis_quality_guard()
                     continue
-                if self._maybe_repair_truncated_analysis_response(response):
-                    self._record_progress("tool_recovery")
-                    continue
-                # Sync mirror of completion/audit/recovery progress signals.
-                self._record_progress("completion_evaluated")
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
-                self._record_progress("audit_started")
-                gate = self._gate_final_analysis_answer(user_input, final_text)
-                if gate["action"] == "continue":
-                    self._record_progress("tool_recovery")
-                    continue
-                final_text = gate["text"]
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
@@ -4620,19 +2654,9 @@ class AgentLoop:
                             break
 
                 if can_parallelize:
-                    # Sync mirror of the streaming ``tool_started`` event for
-                    # each parallelized read-only tool. Per-tool signal so the
-                    # diagnostic trail matches the sequential path even when
-                    # execution is concurrent.
-                    for tc in tool_calls:
-                        self._record_progress("tool_started")
                     results = self._execute_tools_parallel(tool_calls)
                     for tc, tool_msg_content in results:
                         self._record_turn_tool_result(tc.name, tool_msg_content)
-                        succeeded = not self._tool_content_is_error(tool_msg_content)
-                        self._auto_track_task_progress(tc.name, succeeded)
-                        if succeeded:
-                            self._record_progress("tool_succeeded", status="completed")
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -4650,20 +2674,18 @@ class AgentLoop:
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
 
+            # Track token usage for budget enforcement
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None:
+                round_tokens = _estimate_tokens(self.messages[-3:])
+                turn_state.record_token_usage(round_tokens)
+
             # Safety valve: hard stop at 310 rounds
             if round_num >= 310:
                 logger.warning("Safety valve triggered", extra={"extra_data": {
                     "session": self.session_id, "rounds": round_num,
                 }})
-                bounded_text = final_text or "分析已完成。（已达到安全轮次上限）"
-                self._record_progress("completion_evaluated")
-                self._record_progress("audit_started")
-                gate = self._gate_final_analysis_answer(
-                    user_input,
-                    bounded_text,
-                    allow_repair=False,
-                )
-                return FinalResponse(content=gate["text"])
+                return FinalResponse(content=final_text or "分析已完成。（已达到安全轮次上限）")
 
     def _maybe_archive(self, user_input: str, reply: str) -> None:
         """当有实质性分析结果时自动归档。"""

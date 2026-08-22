@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.session.workspace import Workspace
 from data_agent.session.task_manager import TaskManager
@@ -49,20 +47,6 @@ def _canonical_evidence(
     if evidence_id is not None:
         record["id"] = evidence_id
     return record
-
-
-def _persist_as_legacy_task(mgr: TaskManager, task: dict) -> dict:
-    path = mgr._path(task["id"])
-    stored = json.loads(path.read_text(encoding="utf-8"))
-    for field in (
-        "required_claim_keys",
-        "satisfied_claim_keys",
-        "analysis_requirement_ids",
-        "satisfied_analysis_requirement_ids",
-    ):
-        stored.pop(field, None)
-    path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
-    return mgr.get(task["id"])
 
 
 def test_evidence_id_for_slugs_stable_id():
@@ -123,7 +107,6 @@ def test_whitespace_identity_fields_validate_normalize_and_complete_scoped_task(
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate"],
     )
-    task = _persist_as_legacy_task(mgr, task)
 
     completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -193,14 +176,14 @@ def test_empty_measurement_compatibility_field_rejected():
     assert "denominator" in result.details["missing"]
 
 
-def test_record_evidence_record_rejects_unbound_live_stage3c0b_evidence(monkeypatch):
+def test_record_evidence_record_rejects_stage3c0b_evidence_without_current_plan(monkeypatch):
     from data_agent.tools.analysis_flow import record_evidence_record
 
     monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
 
     result = json.loads(record_evidence_record(json.dumps(_canonical_evidence())))
 
-    assert result["error_type"] == "missing_source_tool_call_ids"
+    assert result["error_type"] == "evidence_outside_current_plan"
 
 
 def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
@@ -230,9 +213,9 @@ def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
     assert result["statistical_detail_status"] == "missing"
 
 
-def test_analysis_state_upserts_validated_legacy_canonical_evidence_by_identity():
+def test_record_evidence_record_upserts_canonical_evidence_and_skips_legacy_stat_status():
     from data_agent.agent.analysis_state import AnalysisSessionState
-    from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence
+    from data_agent.tools.analysis_flow import record_evidence_record
 
     ctx = AgentContext(
         session_id="stage3c0b_canonical_upsert",
@@ -245,15 +228,14 @@ def test_analysis_state_upserts_validated_legacy_canonical_evidence_by_identity(
     second = _canonical_evidence(evidence_requirement="click_rate")
     second["result_summary"] = "click_rate=0.150 after rerun"
 
-    first_validation = validate_stage3c0b_evidence(first, current_plan_id="plan_abc")
-    second_validation = validate_stage3c0b_evidence(second, current_plan_id="plan_abc")
-    assert first_validation.ok and second_validation.ok
+    with use_agent_context(ctx):
+        first_result = json.loads(record_evidence_record(json.dumps(first)))
+        second_result = json.loads(record_evidence_record(json.dumps(second)))
 
-    first_stored = ctx.analysis_state.upsert_evidence_record(first_validation.record)
-    second_stored = ctx.analysis_state.upsert_evidence_record(second_validation.record)
-
-    assert first_stored["id"] == "ev_plan_abc_step_banner_click_rate"
-    assert second_stored["id"] == "ev_plan_abc_step_banner_click_rate"
+    assert first_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
+    assert second_result["evidence_id"] == "ev_plan_abc_step_banner_click_rate"
+    assert "statistical_detail_status" not in first_result
+    assert "statistical_detail_status" not in second_result
     assert len(ctx.analysis_state.evidence_records) == 1
     assert ctx.analysis_state.evidence_records[0]["result_summary"] == "click_rate=0.150 after rerun"
 
@@ -271,7 +253,6 @@ def test_task_manager_requires_all_evidence_requirements_before_completion(tmp_p
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate", "conversion_rate"],
     )
-    task = _persist_as_legacy_task(mgr, task)
 
     completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -298,7 +279,6 @@ def test_task_manager_completes_when_all_requirements_have_evidence_and_stores_i
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate", "conversion_rate"],
     )
-    task = _persist_as_legacy_task(mgr, task)
 
     first_completed = mgr.complete_matching_tasks_from_evidence(
         session_id="s1",
@@ -334,109 +314,10 @@ def test_scoped_task_ignores_claim_key_without_evidence_requirement(tmp_path):
         dataset_contract_ids=["contract_banner"],
         evidence_requirements=["click_rate"],
     )
-    task = _persist_as_legacy_task(mgr, task)
     evidence = _canonical_evidence(evidence_requirement="click_rate")
     evidence.pop("evidence_requirement")
 
     completed = mgr.complete_matching_tasks_from_evidence(session_id="s1", evidence=evidence)
-
-    assert completed == []
-    updated = mgr.get(task["id"])
-    assert updated["status"] == "pending"
-    assert updated["evidence_ids"] == []
-    assert updated["satisfied_evidence_requirements"] == []
-
-
-def test_new_scoped_task_does_not_write_legacy_evidence_requirement_authority(tmp_path):
-    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
-    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
-    task = mgr.create(
-        "Analyze banner metrics",
-        session_id="s1",
-        plan_id=plan["id"],
-        plan_version=plan["version"],
-        analysis_plan_id="plan_abc",
-        step_id="step_banner",
-        dataset_contract_ids=["contract_banner"],
-        evidence_requirements=["click_rate"],
-    )
-
-    completed = mgr.complete_matching_tasks_from_evidence(
-        session_id="s1",
-        evidence=_canonical_evidence(evidence_requirement="click_rate"),
-    )
-
-    assert completed == []
-    updated = mgr.get(task["id"])
-    assert updated["required_claim_keys"] == []
-    assert updated["evidence_ids"] == []
-    assert updated["satisfied_evidence_requirements"] == []
-
-
-@pytest.mark.parametrize("required_claim_keys", ["click_rate", ["click_rate", 7]])
-def test_new_scoped_task_rejects_malformed_required_claim_keys(tmp_path, required_claim_keys):
-    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
-
-    with pytest.raises(ValueError, match="required_claim_keys"):
-        mgr.create(
-            "Analyze banner metrics",
-            session_id="s1",
-            analysis_plan_id="plan_abc",
-            step_id="step_banner",
-            evidence_requirements=["click_rate"],
-            required_claim_keys=required_claim_keys,
-        )
-
-    assert mgr.list_all(include_stale=True) == []
-
-
-def test_persisted_field_absent_task_uses_explicit_legacy_compatibility(tmp_path):
-    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
-    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
-    task = mgr.create(
-        "Analyze legacy banner metrics",
-        session_id="s1",
-        plan_id=plan["id"],
-        plan_version=plan["version"],
-        analysis_plan_id="plan_abc",
-        step_id="step_banner",
-        dataset_contract_ids=["contract_banner"],
-        evidence_requirements=["click_rate"],
-    )
-    task = _persist_as_legacy_task(mgr, task)
-
-    assert "required_claim_keys" not in task
-    completed = mgr.complete_matching_tasks_from_evidence(
-        session_id="s1",
-        evidence=_canonical_evidence(evidence_requirement="click_rate"),
-    )
-
-    assert completed == [task["id"]]
-
-
-def test_persisted_malformed_present_claim_field_never_uses_legacy_authority(tmp_path):
-    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
-    plan = mgr.create_plan(session_id="s1", goal="Analyze banner", source="analysis_plan")
-    task = mgr.create(
-        "Analyze malformed banner metrics",
-        session_id="s1",
-        plan_id=plan["id"],
-        plan_version=plan["version"],
-        analysis_plan_id="plan_abc",
-        step_id="step_banner",
-        dataset_contract_ids=["contract_banner"],
-        evidence_requirements=["click_rate"],
-        required_claim_keys=["click_rate"],
-    )
-    path = mgr._path(task["id"])
-    stored = json.loads(path.read_text(encoding="utf-8"))
-    stored["required_claim_keys"] = "click_rate"
-    path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    completed = mgr.complete_matching_tasks_from_evidence(
-        session_id="s1",
-        evidence=_canonical_evidence(evidence_requirement="click_rate"),
-    )
 
     assert completed == []
     updated = mgr.get(task["id"])

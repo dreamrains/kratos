@@ -1,8 +1,3 @@
-import json
-from pathlib import Path
-
-import pandas as pd
-
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent import trust_workflow_runtime as runtime
 from data_agent.agent.hypotheses import hydrate_hypothesis_refs
@@ -139,158 +134,11 @@ def test_runtime_passes_analysis_plan_id_to_claim_verification(monkeypatch):
         }
 
     monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: ["dataset_current"])
-    monkeypatch.setattr(runtime, "_sessions_root", lambda: "sessions_root")
 
     ref = maybe_verify_turn_claims("summarize revenue", state)
 
     assert ref is not None
     assert captured.get("current_plan_id") == "plan_current"
-    assert captured.get("current_dataset_versions") == ["dataset_current"]
-    assert captured.get("sessions_root") == "sessions_root"
-
-
-def test_runtime_reverifies_when_active_dataset_versions_change(monkeypatch):
-    state = AnalysisSessionState(session_id="runtime_dataset_version_change")
-    state.analysis_plan = {"id": "plan_current", "goal": "Analyze current plan"}
-    state.evidence_records = [{
-        "id": "ev_1",
-        "plan_id": "plan_current",
-        "claim": "Revenue increased 12%",
-        "result_summary": "Revenue increased 12%",
-        "confidence": "medium",
-    }]
-    state.save = lambda: None
-    calls = []
-    versions = iter((["dataset_v1"], ["dataset_v2"]))
-
-    def fake_verify_analysis_claims(**kwargs):
-        calls.append(kwargs)
-        return {
-            "id": f"report_{len(calls)}",
-            "claim_checks": [{
-                "claim_id": "claim_1",
-                "claim": "Revenue increased 12%",
-                "evidence_id": "ev_1",
-                "status": "passed",
-                "strength": "supported",
-                "issues": [],
-            }],
-            "route_proposal_ids": [],
-            "overall_status": "pass",
-        }
-
-    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: next(versions))
-    monkeypatch.setattr(runtime, "_sessions_root", lambda: None)
-
-    first = maybe_verify_turn_claims("summarize revenue", state)
-    second = maybe_verify_turn_claims("summarize revenue", state)
-
-    assert first is not None
-    assert second is not None
-    assert len(calls) == 2
-    assert calls[0]["current_dataset_versions"] == ["dataset_v1"]
-    assert calls[1]["current_dataset_versions"] == ["dataset_v2"]
-    assert first["evidence_fingerprint"] != second["evidence_fingerprint"]
-
-
-def test_runtime_reverifies_when_computation_artifact_integrity_changes(
-    tmp_path,
-    monkeypatch,
-):
-    from data_agent.agent.evidence_contracts import persist_computation_output
-
-    sessions_root = tmp_path / "sessions"
-    ref = persist_computation_output(
-        sessions_root=sessions_root,
-        session_id="runtime_artifact_change",
-        turn_id="turn_1",
-        plan_id="plan_current",
-        step_id="step_1",
-        tool_call_id="call_1",
-        tool_name="test_tool",
-        arguments={},
-        output={"summary": "effect=3.5"},
-        dataset_versions=[],
-        success=True,
-    )
-    state = AnalysisSessionState(session_id="runtime_artifact_change")
-    state.analysis_plan = {"id": "plan_current", "goal": "Analyze current plan"}
-    state.evidence_records = [{
-        "id": "ev_1",
-        "contract_version": "evidence_record.v2",
-        "plan_id": "plan_current",
-        "claim": "The effect is 3.5.",
-        "result_summary": "effect=3.5",
-        "confidence": "medium",
-        "computation_refs": [ref],
-    }]
-    state.save = lambda: None
-    calls = []
-
-    def fake_verify_analysis_claims(**kwargs):
-        calls.append(kwargs)
-        return {
-            "id": f"report_{len(calls)}",
-            "claim_checks": [{
-                "claim_id": "claim_1",
-                "claim": "The effect is 3.5.",
-                "evidence_id": "ev_1",
-                "status": "passed",
-                "strength": "supported",
-                "issues": [],
-            }],
-            "route_proposal_ids": [],
-            "overall_status": "pass",
-        }
-
-    monkeypatch.setattr(runtime, "verify_analysis_claims", fake_verify_analysis_claims)
-    monkeypatch.setattr(runtime, "_active_dataset_versions", lambda: [])
-    monkeypatch.setattr(runtime, "_sessions_root", lambda: sessions_root)
-
-    first = maybe_verify_turn_claims("summarize effect", state)
-    artifact = Path(ref["artifact_path"])
-    payload = json.loads(artifact.read_text(encoding="utf-8"))
-    payload["output"]["summary"] = "effect=350"
-    artifact.write_text(json.dumps(payload), encoding="utf-8")
-    second = maybe_verify_turn_claims("summarize effect", state)
-
-    assert first is not None
-    assert second is not None
-    assert len(calls) == 2
-    assert first["evidence_fingerprint"] != second["evidence_fingerprint"]
-
-
-def test_active_dataset_versions_are_available_during_synthesis(tmp_path):
-    from data_agent.agent.context import AgentContext, use_agent_context
-    from data_agent.agent.data_lineage import frame_fingerprint
-    from data_agent.agent.execution_scope import WorkspaceScopeSnapshot
-    from data_agent.session.workspace import Workspace
-
-    workspace = Workspace()
-    frame = pd.DataFrame({"value": [1, 2]})
-    raw = workspace.register_raw_snapshot("orders", frame, frame_fingerprint(frame))
-    active = workspace.promote_analysis_copy(
-        "orders",
-        frame,
-        raw["dataset_id"],
-        {"operation": "fixture"},
-    )
-    context = AgentContext(session_id="synthesis_versions", workspace=workspace)
-    snapshot = WorkspaceScopeSnapshot(
-        phase="synthesis",
-        session_id="synthesis_versions",
-        plan_id="plan_1",
-        step_id="step_synthesis",
-        allowed_datasets=frozenset(),
-        combination_mode="synthesis",
-    )
-
-    with context.bind_workspace_scope(snapshot), use_agent_context(context):
-        versions = runtime._active_dataset_versions()
-
-    assert versions == [active["dataset_id"]]
 
 
 def _stage3c0b_runtime_measurement(**overrides):
@@ -377,11 +225,10 @@ def test_runtime_verifies_only_current_plan_claims_and_evidence():
     assert ref["claim_count"] == 1
 
 
-def test_runtime_uses_legacy_plan_after_state_boundary_normalization():
-    state = AnalysisSessionState.from_dict({
-        "session_id": "runtime_verify_legacy_plan",
-        "analysis_spec": {"id": "plan_current"},
-    }, "runtime_verify_legacy_plan")
+def test_runtime_falls_back_to_analysis_spec_when_analysis_plan_id_is_blank():
+    state = AnalysisSessionState(session_id="runtime_verify_analysis_spec_fallback")
+    state.analysis_plan = {"id": "   "}
+    state.analysis_spec = {"id": "plan_current"}
     state.evidence_records = [
         _stage3c0b_runtime_evidence("ev_current", "Current conversion rate is 18%."),
     ]

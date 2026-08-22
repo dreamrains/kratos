@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -211,62 +210,16 @@ def _chart_error(
     message: str,
     warnings: list[str],
     *,
-    error_type: str = "chart_validation",
     error_code: str = "chart_validation",
     recovery_options: list[dict[str, str]] | None = None,
-    extra_fields: dict[str, Any] | None = None,
 ) -> str:
-    payload: dict[str, Any] = {
+    return json.dumps({
         "error": message,
-        "error_type": error_type,
+        "error_type": "chart_validation",
         "error_code": error_code,
         "validation_warnings": warnings,
         "recovery_options": recovery_options or [],
-    }
-    if extra_fields:
-        payload.update(extra_fields)
-    return json.dumps(payload, ensure_ascii=False)
-
-
-@dataclass(frozen=True)
-class ChartDatasetResolution:
-    ok: bool
-    dataset_name: str = ""
-    error_type: str = ""
-    details: dict[str, Any] = field(default_factory=dict)
-
-
-def resolve_chart_dataset(
-    *,
-    data: str,
-    data_json: str,
-    eligible_names: Sequence[str],
-) -> ChartDatasetResolution:
-    """Resolve the exact dataset for ``create_chart`` without silent fallback.
-
-    ``data_json`` always wins and resolves to the inline ``__inline__`` marker.
-    An explicit ``data`` must name an eligible dataset or the resolver returns
-    ``chart_dataset_not_found``. With no ``data``, exactly one eligible dataset
-    resolves to that name; zero or multiple produce ``chart_dataset_ambiguous``.
-    """
-    names = sorted(set(eligible_names))
-    if data_json:
-        return ChartDatasetResolution(ok=True, dataset_name="__inline__")
-    if data:
-        if data not in names:
-            return ChartDatasetResolution(
-                ok=False,
-                error_type="chart_dataset_not_found",
-                details={"requested_dataset": data, "eligible_datasets": names},
-            )
-        return ChartDatasetResolution(ok=True, dataset_name=data)
-    if len(names) == 1:
-        return ChartDatasetResolution(ok=True, dataset_name=names[0])
-    return ChartDatasetResolution(
-        ok=False,
-        error_type="chart_dataset_ambiguous",
-        details={"eligible_datasets": names},
-    )
+    }, ensure_ascii=False)
 
 
 def _looks_like_identifier(col: str, series: pd.Series) -> bool:
@@ -491,10 +444,6 @@ def _validate_chart_spec(
         "data_json": {"description": "JSON 格式数据（funnel 必须用此参数）"},
         "aggregation": {"description": "重复分组的聚合方式", "enum": ["", "sum", "mean", "median", "count"]},
         "scale_mode": {"description": "多指标尺度处理", "enum": ["", "raw", "normalize"]},
-        "purpose": {
-            "description": "图表用途；无证据绑定时使用 exploratory",
-            "enum": ["exploratory", "evidence", "insight"],
-        },
     },
 )
 def create_chart(
@@ -512,68 +461,32 @@ def create_chart(
 ) -> str:
     fig = go.Figure()
 
-    # Resolve the exact dataset identity before reading any frame. No silent
-    # main/largest fallback: an unknown name returns ``chart_dataset_not_found``
-    # and an ambiguous omission returns ``chart_dataset_ambiguous``.
-    from data_agent.agent.execution_scope import resolve_chart_eligible_dataset_names
-
-    eligible_names, scope_active = resolve_chart_eligible_dataset_names()
-    if not scope_active:
-        eligible_names = list(workspace.list_datasets().keys())
-
-    resolution = resolve_chart_dataset(
-        data=data or "",
-        data_json=data_json or "",
-        eligible_names=eligible_names,
-    )
-    if not resolution.ok:
-        details = resolution.details
-        eligible = details.get("eligible_datasets", [])
-        eligible_label = ", ".join(eligible) if eligible else "(none)"
-        if resolution.error_type == "chart_dataset_not_found":
-            return _chart_error(
-                f"dataset '{details.get('requested_dataset', '')}' is not loaded",
-                [
-                    f"requested dataset '{details.get('requested_dataset', '')}' not found",
-                    f"eligible datasets: {eligible_label}",
-                ],
-                error_type="chart_dataset_not_found",
-                error_code="chart_dataset_not_found",
-                extra_fields={
-                    "requested_dataset": details.get("requested_dataset", ""),
-                    "eligible_datasets": eligible,
-                },
-            )
-        return _chart_error(
-            "create_chart requires one explicit dataset when multiple are eligible",
-            [
-                f"multiple eligible datasets: {eligible_label}",
-                "provide data=<name> explicitly",
-            ],
-            error_type="chart_dataset_ambiguous",
-            error_code="chart_dataset_ambiguous",
-            extra_fields={"eligible_datasets": eligible},
-        )
-
-    data_name = resolution.dataset_name
+    # 获取数据
     df = None
-    if data_name == "__inline__":
+    data_name = data
+    if data and data in workspace.list_datasets():
+        df = workspace.get(data)
+    elif data_json:
         try:
             from io import StringIO
             df = pd.read_json(StringIO(data_json))
-        except Exception as exc:
-            return _chart_error(
-                f"failed to parse data_json: {exc}",
-                ["invalid data_json payload"],
-            )
-    else:
-        df = workspace.get(data_name)
+        except Exception:
+            pass
+
+    if df is None and not data_json:
+        # 尝试从工作空间取默认数据集
+        datasets = workspace.list_datasets()
+        if "main" in datasets:
+            df = workspace.get("main")
+            data_name = "main"
+        elif datasets:
+            # 选择行数最多的数据集作为最合理的默认值
+            largest = max(datasets.items(), key=lambda kv: kv[1].get("rows", 0))
+            df = workspace.get(largest[0])
+            data_name = largest[0]
 
     if df is None:
-        return _chart_error(
-            f"dataset '{data_name}' could not be loaded",
-            [f"unable to read frame for dataset '{data_name}'"],
-        )
+        return "Error: 没有可用数据。请先加载数据或提供 data_json。"
 
     try:
         metadata, validation_error = _validate_chart_spec(df, chart_type, data_name, title, x_col, y_col, color_col)
@@ -582,10 +495,6 @@ def create_chart(
         if metadata is not None:
             allowed_purposes = {"exploratory", "evidence", "insight"}
             normalized_purpose = (purpose or "exploratory").strip().lower()
-            normalized_purpose = {
-                "analysis": "exploratory",
-                "analytical": "exploratory",
-            }.get(normalized_purpose, normalized_purpose)
             if normalized_purpose not in allowed_purposes:
                 return _chart_error(
                     f"invalid chart purpose: {purpose}",

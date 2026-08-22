@@ -37,25 +37,15 @@ if sys.platform == "win32":
 
 # ── Helpers ──────────────────────────────────────────────
 
-TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+HAS_REAL_DATA = TEST_DATA_DIR.exists()
 
 GAME_PURCHASE = TEST_DATA_DIR / "游戏A内购数据.xlsx"
 GAME_BANNER = TEST_DATA_DIR / "游戏Abanner汇总数据.xlsx"
 GAME_VIDEO = TEST_DATA_DIR / "游戏A激励视频汇总数据报表.xlsx"
 GAME_CROSS = TEST_DATA_DIR / "游戏互推.xlsx"
-ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单.xlsx"
-ECARD_FLOW = TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"
-HAS_REAL_DATA = all(
-    path.exists()
-    for path in (
-        GAME_PURCHASE,
-        GAME_BANNER,
-        GAME_VIDEO,
-        GAME_CROSS,
-        ECARD_ORDER,
-        ECARD_FLOW,
-    )
-)
+ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
+ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
 
 
 def _make_df(rows=100, seed=42):
@@ -415,14 +405,6 @@ class TestConversationFlow:
             msg.get("role") == "user" and "<analysis_quality_guard>" in str(msg.get("content") or "")
             for msg in loop.messages
         )
-        assert not any(
-            "<final_answer_audit_repair" in str(msg.get("content") or "")
-            for msg in loop.messages
-        )
-        assert not any(
-            msg.get("role") == "assistant" and "[[evidence:" in str(msg.get("content") or "")
-            for msg in loop.messages
-        )
 
     def test_tool_content_is_error_detects_plain_error_prefix(self, clean_workspace):
         from data_agent.agent.loop import AgentLoop
@@ -444,20 +426,10 @@ class TestConversationFlow:
         assert loop._turn_tools_used == ["load_data"]
         assert loop._turn_loaded_data is False
 
-    def test_same_turn_file_plus_analysis_does_not_end_after_profile(
-        self,
-        tmp_path,
-        clean_workspace,
-        tmp_project,
-        monkeypatch,
-    ):
+    def test_same_turn_file_plus_analysis_does_not_end_after_profile(self, tmp_path, clean_workspace):
         from data_agent.agent.loop import AgentLoop
         from data_agent.agent.context import use_agent_context
         from data_agent.llm.client import Response, ToolCall
-        from data_agent.session.task_manager import task_manager
-
-        monkeypatch.setattr(task_manager, "_dir", tmp_path / "tasks")
-        monkeypatch.setattr(task_manager, "_next_id_val", 0)
 
         df = _make_df(50)
         csv_path = tmp_path / "sales.csv"
@@ -495,11 +467,7 @@ class TestConversationFlow:
         assert "Suggested next analyses" not in reply
         assert "Final analysis" in reply
         with use_agent_context(loop.context):
-            assert loop.context.workspace.list_datasets(), json.dumps(
-                loop.messages,
-                ensure_ascii=False,
-                default=str,
-            )
+            assert loop.context.workspace.list_datasets()
         self._assert_final_guard_history_is_not_user_visible(loop)
 
     def test_streaming_guard_does_not_emit_profile_only_text(self, tmp_path, clean_workspace):
@@ -575,14 +543,7 @@ class TestConversationFlow:
 
         events = loop.stream_turn("hello")
 
-        # Skip the server-authored ``analysis_progress`` narration events
-        # (Task 11); they precede ``llm_call_start`` and carry no findings.
-        # This test focuses on text-delta streaming behavior, not progress.
-        # Loop (not one-shot) so it stays robust if a second pre-LLM progress
-        # signal is ever added.
         first = next(events)
-        while first["type"] == "analysis_progress":
-            first = next(events)
         assert first["type"] == "llm_call_start"
         second = next(events)
         assert second == {"type": "text_delta", "text": "Hello", "turn_id": None}
@@ -889,7 +850,7 @@ class TestSessionPersistence:
         workspace.set_metadata("restore_a", "_source_path", str(csv_path))
         workspace.set_metadata("restore_a", "_source_fmt", "csv")
 
-        session_id = f"restore_a_{tmp_path.name}"
+        session_id = "restore_a_test"
         sdir = _session_dir(session_id)
         sdir.mkdir(parents=True, exist_ok=True)
         workspace.save_meta(session_id)
@@ -904,12 +865,9 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        from data_agent.agent.context import use_agent_context
-        with use_agent_context(loop.context):
-            restored = loop.context.workspace.get("restore_a")
+        restored = workspace.get("restore_a")
         assert restored is not None
         assert restored.shape[0] == 40
-        assert workspace.get("restore_a") is None
 
     def test_workspace_restore_strategy_b_dataset_backup(self, tmp_path, clean_workspace):
         """恢复策略B：从数据备份恢复（原始文件不存在时）。"""
@@ -921,7 +879,7 @@ class TestSessionPersistence:
         workspace.set_metadata("restore_b", "_source_path", "/nonexistent/file.csv")
         workspace.set_metadata("restore_b", "_source_fmt", "csv")
 
-        session_id = f"restore_b_{tmp_path.name}"
+        session_id = "restore_b_test"
         sdir = _session_dir(session_id)
         sdir.mkdir(parents=True, exist_ok=True)
         workspace.save_meta(session_id)
@@ -937,12 +895,9 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        from data_agent.agent.context import use_agent_context
-        with use_agent_context(loop.context):
-            restored = loop.context.workspace.get("restore_b")
+        restored = workspace.get("restore_b")
         assert restored is not None
         assert restored.shape[0] == 25
-        assert workspace.get("restore_b") is None
 
     def test_agent_manager_auto_restore(self, tmp_path, clean_workspace):
         """AgentManager.get_or_create 自动恢复磁盘会话。"""

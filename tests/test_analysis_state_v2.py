@@ -165,10 +165,7 @@ class TestAnalysisSessionState:
     def test_from_dict_legacy_analysis_spec_alias(self):
         d = {"session_id": "s1", "analysis_spec": {"goal": "legacy"}}
         state = AnalysisSessionState.from_dict(d, "s1")
-        assert state.analysis_plan["goal"] == "legacy"
-        assert state.analysis_plan["contract_version"] == "analysis_plan.v1"
-        assert state.analysis_spec is state.analysis_plan
-        assert "analysis_spec" not in state.to_dict()
+        assert state.analysis_plan == {"goal": "legacy"}
 
     def test_touch_updates_timestamp(self):
         state = AnalysisSessionState(session_id="s1")
@@ -482,9 +479,7 @@ class TestConfirmations:
             "state_updates": json.dumps({"analysis_spec": {"goal": "updated spec"}}),
         })
         state.resolve_confirmation("c1", "yes")
-        assert state.analysis_plan["goal"] == "updated spec"
-        assert state.analysis_plan["contract_version"] == "analysis_plan.v1"
-        assert state.analysis_spec is state.analysis_plan
+        assert state.analysis_spec == {"goal": "updated spec"}
 
     def test_resolve_updates_last_recommended_paths(self):
         state = AnalysisSessionState(session_id="s1")

@@ -2,25 +2,12 @@ from __future__ import annotations
 
 import inspect
 import json
-import math
 import re
 import time
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
-from enum import Enum
-from types import UnionType
-from typing import (
-    Any,
-    Callable,
-    Literal,
-    Mapping,
-    Optional,
-    Union,
-    get_args,
-    get_origin,
-    get_type_hints,
-)
+from typing import Any, Callable, Optional
 
 
 # === ToolResult: structured return value ===
@@ -303,7 +290,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
     "stats": {
         "ab_test", "causal_analysis", "attribution_analysis",
-        "contribute_decomposition", "factor_relationship_analysis",
+        "contribute_decomposition",
     },
     "report": {
         "export_conversation",
@@ -337,7 +324,6 @@ def _cap(
     requires_confirmation: bool = False,
     dependencies: list[str] | None = None,
     fallback_tools: list[str] | None = None,
-    output_contract: dict[str, Any] | None = None,
 ) -> ToolCapability:
     return ToolCapability(
         capability_id=capability_id,
@@ -348,7 +334,6 @@ def _cap(
         requires_confirmation=requires_confirmation,
         dependencies=dependencies or [],
         fallback_tools=fallback_tools or [],
-        output_contract=output_contract or {},
     )
 
 
@@ -356,169 +341,20 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "list_data": _cap("data.list", "data_view", ["data_understanding"]),
     "preview_data": _cap("data.preview", "data_view", ["data_understanding"]),
     "describe_dataset": _cap("data.describe", "profile", ["data_understanding"], evidence_fields=["schema", "rows", "columns"]),
-    "quick_profile": _cap(
-        "data.profile",
-        "profile",
-        ["data_understanding", "quality"],
-        evidence_fields=[
-            "grain",
-            "quality.missing",
-            "quality.outliers",
-            "quality.duplicates",
-        ],
-    ),
-    "detect_data_quality": _cap(
-        "data.quality",
-        "quality",
-        ["quality"],
-        evidence_fields=[
-            "sample_size",
-            "missingness",
-            "duplicates",
-            "outliers",
-            "limitations",
-            "allowed_claim_class",
-        ],
-        output_contract={"allowed_claim_class_ceiling": "descriptive"},
-    ),
-    "distribution_analysis": _cap(
-        "analysis.distribution",
-        "distribution",
-        ["data_understanding", "distribution"],
-        evidence_fields=[
-            "sample_size",
-            "measurements.value",
-            "limitations",
-            "allowed_claim_class",
-        ],
-        output_contract={"allowed_claim_class_ceiling": "descriptive"},
-    ),
-    "segmentation_analysis": _cap(
-        "analysis.segmentation",
-        "segmentation",
-        ["segmentation", "diagnosis"],
-        evidence_fields=[
-            "total_samples",
-            "clusters",
-            "limitations",
-            "allowed_claim_class",
-        ],
-        output_contract={"allowed_claim_class_ceiling": "exploratory_association"},
-    ),
-    "compare_periods": _cap(
-        "analysis.period_compare",
-        "trend",
-        ["trend", "attribution"],
-        evidence_fields=[
-            "periods", "metric_delta", "effective_sample_size", "denominator",
-            "missingness", "estimand", "effect_estimate", "assumptions",
-            "sample_adequacy", "period_definition", "period_comparability",
-            "time_frequency", "missing_intervals", "window_comparability",
-            "multiplicity_handling",
-        ],
-    ),
-    "analyze_time_series": _cap(
-        "analysis.time_series",
-        "trend",
-        ["trend", "monitoring"],
-        evidence_fields=[
-            "trend", "trend_statistics", "seasonality", "time_frequency", "missing_intervals",
-            "window_comparability", "autocorrelation_awareness",
-            "effective_sample_size", "missingness", "seasonality_estimability",
-            "assumptions",
-        ],
-    ),
-    "contribute_decomposition": _cap(
-        "analysis.dimension_decomposition",
-        "decomposition",
-        ["attribution", "diagnosis"],
-        evidence_fields=[
-            "metric",
-            "dimension",
-            "decomposition.contribution",
-            "multiplicity_handling",
-            "top_positive",
-            "top_negative",
-            "allowed_claim_class",
-        ],
-        output_contract={
-            "allowed_claim_class_ceiling": "descriptive_attribution",
-        },
-    ),
+    "quick_profile": _cap("data.profile", "profile", ["data_understanding", "quality"], evidence_fields=["schema", "missingness", "distribution"]),
+    "detect_data_quality": _cap("data.quality", "quality", ["quality"], evidence_fields=["missingness", "duplicates", "outliers"]),
+    "compare_periods": _cap("analysis.period_compare", "trend", ["trend", "attribution"], evidence_fields=["periods", "metric_delta"]),
+    "analyze_time_series": _cap("analysis.time_series", "trend", ["trend", "monitoring"], evidence_fields=["trend", "seasonality"]),
+    "contribute_decomposition": _cap("analysis.dimension_decomposition", "decomposition", ["attribution", "diagnosis"], evidence_fields=["drivers", "contribution"]),
     "top_n": _cap("analysis.top_n", "decomposition", ["ranking", "diagnosis"], evidence_fields=["dimension", "metric"]),
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
     "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
-    "correlation_analysis": _cap(
-        "analysis.correlation",
-        "relationship",
-        ["drivers", "relationship"],
-        evidence_fields=[
-            "pairs.correlation",
-            "pairs.effective_sample_size",
-            "pairs.p_value",
-            "assumptions",
-            "allowed_claim_class",
-        ],
-        fallback_tools=["factor_relationship_analysis"],
-    ),
-    "ab_test": _cap(
-        "analysis.experiment",
-        "experiment",
-        ["evaluation", "causal"],
-        evidence_fields=[
-            "effective_sample_size", "denominator", "missingness", "estimand",
-            "effect_estimate", "confidence_interval", "test", "assumptions",
-            "sample_adequacy",
-        ],
-        risk_level="medium",
-        requires_confirmation=True,
-    ),
+    "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
+    "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["effect_size", "significance"], risk_level="medium", requires_confirmation=True),
     "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
-    "attribution_analysis": _cap(
-        "analysis.attribution",
-        "attribution",
-        ["attribution", "diagnosis"],
-        evidence_fields=[
-            "top_drivers",
-            "effective_sample_size",
-            "allowed_claim_class",
-            "limitations",
-        ],
-        fallback_tools=["factor_relationship_analysis"],
-    ),
+    "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
     "forecast": _cap("analysis.forecast", "prediction", ["prediction", "monitoring"], evidence_fields=["forecast", "interval"], risk_level="medium", requires_confirmation=True),
-    "regression_analysis": _cap(
-        "analysis.regression",
-        "modeling",
-        ["drivers", "prediction"],
-        evidence_fields=[
-            "feature_importance",
-            "effective_sample_size",
-            "metrics.r2",
-            "allowed_claim_class",
-            "limitations",
-        ],
-        fallback_tools=["factor_relationship_analysis"],
-    ),
-    "factor_relationship_analysis": _cap(
-        "analysis.factor_relationship",
-        "relationship",
-        ["drivers", "relationship"],
-        evidence_fields=[
-            "effective_sample_size",
-            "coefficients.estimate",
-            "coefficients.std_error",
-            "coefficients.confidence_interval",
-            "coefficients.p_value",
-            "coefficients.adjusted_p_value",
-            "collinearity",
-            "time_dependence",
-            "assumptions",
-            "allowed_claim_class",
-            "limitations",
-        ],
-        fallback_tools=["regression_analysis"],
-    ),
+    "regression_analysis": _cap("analysis.regression", "modeling", ["drivers", "prediction"], evidence_fields=["coefficients", "fit"]),
     "classification": _cap("analysis.classification", "modeling", ["prediction", "segmentation"], evidence_fields=["metrics", "features"], risk_level="medium", requires_confirmation=True),
     "run_python": _cap("fallback.python", "fallback", ["custom"], risk_level="medium"),
     "ask_user_question": _cap("interaction.confirmation", "confirmation", ["confirmation"], risk_level="low"),
@@ -535,109 +371,6 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "export_conversation": _cap("report.conversation_export", "report", ["export"], evidence_fields=["conversation"]),
     "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
 }
-
-
-def _resolve_dotted_path(payload: Mapping[str, Any], field: str) -> Any:
-    """Resolve a dotted evidence field path through nested mappings.
-
-    Each path segment must be present in a mapping at the previous level.
-    Returns the located value, or ``None`` if any segment is missing or the
-    traversal encounters a non-mapping before the path is consumed.
-    """
-
-    value: Any = payload
-    for segment in field.split("."):
-        if not isinstance(value, Mapping) or segment not in value:
-            return None
-        value = value[segment]
-    return value
-
-
-def _evidence_field_is_present(payload: Mapping[str, Any], field: str) -> bool:
-    """Return True when the dotted evidence field exists with a non-empty value.
-
-    A field path that traverses into a list (e.g. ``pairs.correlation``) is
-    considered present when at least one list record exposes the trailing key.
-    Numeric ``0``/``0.0`` and explicit ``None`` inside list records are
-    accepted as evidence; only structural absence or a fully-empty traversal
-    counts as missing.
-    """
-
-    segments = field.split(".")
-    if not segments:
-        return False
-
-    value: Any = payload
-    for index, segment in enumerate(segments):
-        if isinstance(value, Mapping):
-            if segment not in value:
-                return False
-            value = value[segment]
-        elif isinstance(value, list):
-            tail = ".".join(segments[index:])
-            return any(
-                isinstance(item, Mapping)
-                and _resolve_dotted_path(item, tail) is not None
-                for item in value
-            )
-        else:
-            return False
-    return value is not None
-
-
-def validate_capability_output(
-    capability: Mapping[str, Any] | None,
-    payload: Mapping[str, Any],
-) -> list[str]:
-    """Return the dotted evidence fields declared by ``capability`` that are
-    not present in a successful tool ``payload``.
-
-    Capability metadata owns the evidence contract: every entry in
-    ``evidence_fields`` MUST be resolvable through a real payload, otherwise
-    the tool is advertising fields it does not produce. The resolver
-    traverses dotted paths through nested mappings and (for one level only)
-    list records, so declarations like ``pairs.effective_sample_size`` and
-    ``coefficients.confidence_interval`` validate against the structured
-    payloads emitted by the corresponding tools.
-
-    Returns the list of missing field names in declaration order. An empty
-    list means every declared field is observable in the payload.
-    """
-
-    if not capability:
-        return []
-    raw_fields = capability.get("evidence_fields") if isinstance(capability, Mapping) else None
-    if not isinstance(raw_fields, list):
-        return []
-    missing: list[str] = []
-    for field in raw_fields:
-        if not isinstance(field, str) or not field:
-            continue
-        if not _evidence_field_is_present(payload, field):
-            missing.append(field)
-    output_contract = (
-        capability.get("output_contract")
-        if isinstance(capability, Mapping)
-        else None
-    )
-    claim_ceiling = (
-        output_contract.get("allowed_claim_class_ceiling")
-        if isinstance(output_contract, Mapping)
-        else None
-    )
-    if claim_ceiling:
-        from data_agent.agent.execution_control import (
-            resolve_claim_class_authority,
-        )
-
-        authority = resolve_claim_class_authority(
-            payload.get("allowed_claim_class"),
-            ceiling=claim_ceiling,
-        )
-        if not authority.valid and "allowed_claim_class" not in missing:
-            missing.append("allowed_claim_class")
-    return missing
-
 
 # Keywords that trigger group activation
 _GROUP_KEYWORDS: dict[str, list[str]] = {
@@ -673,18 +406,7 @@ def infer_groups_from_text(text: str) -> set[str]:
 
 
 class ToolDefinition:
-    __slots__ = (
-        "name",
-        "description",
-        "func",
-        "parameters",
-        "origin",
-        "recovery_hint",
-        "requires",
-        "capability",
-        "argument_aliases",
-        "compatibility_json_object_parameters",
-    )
+    __slots__ = ("name", "description", "func", "parameters", "origin", "recovery_hint", "requires", "capability")
 
     def __init__(
         self,
@@ -696,8 +418,6 @@ class ToolDefinition:
         recovery_hint: str = "",
         requires: list[str] | None = None,
         capability: ToolCapability | dict[str, Any] | None = None,
-        argument_aliases: Mapping[str, str] | None = None,
-        compatibility_json_object_parameters: set[str] | None = None,
     ):
         self.name = name
         self.description = description
@@ -707,10 +427,6 @@ class ToolDefinition:
         self.recovery_hint = recovery_hint
         self.requires = requires or []
         self.capability = ToolCapability.from_dict(capability) if isinstance(capability, dict) else capability
-        self.argument_aliases = dict(argument_aliases or {})
-        self.compatibility_json_object_parameters = set(
-            compatibility_json_object_parameters or set()
-        )
 
     def to_llm_schema(self) -> dict:
         desc = self.description
@@ -723,7 +439,7 @@ class ToolDefinition:
         }
 
 
-def _python_type_to_json(py_type: Any) -> str:
+def _python_type_to_json(py_type: type) -> str:
     mapping = {
         str: "string",
         int: "integer",
@@ -731,542 +447,39 @@ def _python_type_to_json(py_type: Any) -> str:
         bool: "boolean",
         list: "array",
         dict: "object",
-        type(None): "null",
     }
     return mapping.get(py_type, "string")
 
 
-def _annotation_schema(annotation: Any) -> dict[str, Any]:
-    if annotation is Any:
-        return {}
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin in (Union, UnionType):
-        non_none = [arg for arg in args if arg is not type(None)]
-        schema = (
-            _annotation_schema(non_none[0])
-            if len(non_none) == 1
-            else {"anyOf": [_annotation_schema(arg) for arg in non_none]}
-        )
-        if len(non_none) != len(args):
-            schema["nullable"] = True
-        return schema
-    if origin is Literal:
-        values = list(args)
-        return {
-            "type": _python_type_to_json(type(values[0])),
-            "enum": values,
-        }
-    if origin in (list, tuple, set):
-        item = args[0] if args else Any
-        return {"type": "array", "items": _annotation_schema(item)}
-    if origin is dict:
-        value = args[1] if len(args) == 2 else Any
-        return {
-            "type": "object",
-            "additionalProperties": _annotation_schema(value),
-        }
-    if inspect.isclass(annotation) and issubclass(annotation, Enum):
-        values = [member.value for member in annotation]
-        return {
-            "type": _python_type_to_json(type(values[0])),
-            "enum": values,
-        }
-    return {"type": _python_type_to_json(annotation)}
-
-
 def _build_schema(func: Callable) -> dict:
     """从函数签名自动构建 JSON Schema parameters。"""
-    signature = inspect.signature(func)
-    hints = get_type_hints(func)
+    sig = inspect.signature(func)
     properties: dict[str, Any] = {}
     required: list[str] = []
 
-    for name, parameter in signature.parameters.items():
-        if name in {"self", "cls"}:
+    for pname, param in sig.parameters.items():
+        if pname in ("self", "cls"):
             continue
-        properties[name] = _annotation_schema(hints.get(name, str))
-        if parameter.default is inspect.Parameter.empty:
-            required.append(name)
+
+        annotation = param.annotation
+        if annotation is inspect.Parameter.empty:
+            json_type = "string"
         else:
-            properties[name]["default"] = parameter.default
-    return {
+            json_type = _python_type_to_json(annotation)
+
+        prop: dict[str, Any] = {"type": json_type}
+        properties[pname] = prop
+
+        if param.default is inspect.Parameter.empty:
+            required.append(pname)
+
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": properties,
-        "required": required,
-        "additionalProperties": False,
     }
-
-
-class ToolArgumentValidationError(ValueError):
-    def __init__(self, *, issues: list[dict[str, Any]]):
-        self.issues = issues
-        super().__init__("invalid tool arguments")
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "error": "工具参数不符合已声明契约。",
-            "error_type": "invalid_tool_arguments",
-            "issues": self.issues,
-        }
-
-
-class _ArgumentValueError(ValueError):
-    def __init__(self, issue: str):
-        self.issue = issue
-        super().__init__(issue)
-
-
-_BOOLEAN_STRINGS: dict[str, bool] = {
-    "true": True,
-    "false": False,
-    "1": True,
-    "0": False,
-    "yes": True,
-    "no": False,
-    "on": True,
-    "off": False,
-}
-_INTEGER_PATTERN = re.compile(r"^[+-]?\d+$")
-
-
-def _type_name(value: Any) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int):
-        return "integer"
-    if isinstance(value, float):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, Mapping):
-        return "object"
-    return type(value).__name__
-
-
-def _matches_json_type_without_conversion(
-    value: Any,
-    schema: Mapping[str, Any],
-) -> bool:
-    expected_type = schema.get("type")
-    if expected_type == "boolean":
-        return isinstance(value, bool)
-    if expected_type == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected_type == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if expected_type == "string":
-        return isinstance(value, str)
-    if expected_type == "array":
-        return isinstance(value, list)
-    if expected_type == "object":
-        return isinstance(value, Mapping)
-    if expected_type == "null":
-        return value is None
-    return False
-
-
-def _distinct_normalized_values(values: list[Any]) -> list[Any]:
-    distinct: list[Any] = []
-    for value in values:
-        if any(
-            type(value) is type(existing) and value == existing
-            for existing in distinct
-        ):
-            continue
-        distinct.append(value)
-    return distinct
-
-
-def _normalize_schema_value(value: Any, schema: Mapping[str, Any]) -> Any:
-    if value is None:
-        if schema.get("nullable") is True or schema.get("type") == "null":
-            return None
-        raise _ArgumentValueError("null_not_allowed")
-
-    variants = schema.get("anyOf")
-    if isinstance(variants, list):
-        exact_variants = [
-            variant
-            for variant in variants
-            if _matches_json_type_without_conversion(value, variant)
-        ]
-        candidates = exact_variants or variants
-        normalized_candidates: list[Any] = []
-        for variant in candidates:
-            try:
-                normalized_candidates.append(
-                    _normalize_schema_value(value, variant)
-                )
-            except _ArgumentValueError:
-                continue
-        distinct = _distinct_normalized_values(normalized_candidates)
-        if len(distinct) == 1:
-            return distinct[0]
-        if len(distinct) > 1:
-            issue = (
-                "ambiguous_union_type"
-                if exact_variants
-                else "ambiguous_union_conversion"
-            )
-            raise _ArgumentValueError(issue)
-        raise _ArgumentValueError("no_matching_union_type")
-
-    expected_type = schema.get("type")
-    if expected_type == "boolean":
-        if isinstance(value, bool):
-            normalized = value
-        elif isinstance(value, str) and value in _BOOLEAN_STRINGS:
-            normalized = _BOOLEAN_STRINGS[value]
-        elif isinstance(value, int) and not isinstance(value, bool) and value in (0, 1):
-            normalized = bool(value)
-        else:
-            raise _ArgumentValueError("invalid_boolean")
-    elif expected_type == "integer":
-        if isinstance(value, int) and not isinstance(value, bool):
-            normalized = value
-        elif isinstance(value, str) and _INTEGER_PATTERN.fullmatch(value):
-            normalized = int(value)
-        else:
-            raise _ArgumentValueError("invalid_integer")
-    elif expected_type == "number":
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            if not math.isfinite(value):
-                raise _ArgumentValueError("non_finite_number")
-            normalized = value
-        elif isinstance(value, str):
-            try:
-                normalized = float(value)
-            except ValueError as exc:
-                raise _ArgumentValueError("invalid_number") from exc
-            if not math.isfinite(normalized):
-                raise _ArgumentValueError("non_finite_number")
-        else:
-            raise _ArgumentValueError("invalid_number")
-    elif expected_type == "string":
-        if not isinstance(value, str):
-            raise _ArgumentValueError("invalid_string")
-        normalized = value
-    elif expected_type == "array":
-        if not isinstance(value, list):
-            raise _ArgumentValueError("invalid_array")
-        item_schema = schema.get("items")
-        if not isinstance(item_schema, Mapping):
-            normalized = list(value)
-        else:
-            normalized = [
-                _normalize_schema_value(item, item_schema)
-                for item in value
-            ]
-    elif expected_type == "object":
-        if not isinstance(value, Mapping):
-            raise _ArgumentValueError("invalid_object")
-        properties = schema.get("properties")
-        required = set(schema.get("required") or [])
-        if not isinstance(properties, Mapping):
-            properties = {}
-        normalized_object: dict[str, Any] = {}
-        for required_name in required:
-            if required_name not in value:
-                raise _ArgumentValueError(
-                    f"missing_required_object_property:{required_name}"
-                )
-        additional = schema.get("additionalProperties", True)
-        for key, item in value.items():
-            if key in properties:
-                normalized_object[key] = _normalize_schema_value(
-                    item,
-                    properties[key],
-                )
-            elif additional is False:
-                raise _ArgumentValueError(f"unknown_object_property:{key}")
-            elif isinstance(additional, Mapping):
-                normalized_object[key] = _normalize_schema_value(
-                    item,
-                    additional,
-                )
-            else:
-                normalized_object[key] = item
-        normalized = normalized_object
-    elif expected_type == "null":
-        raise _ArgumentValueError("invalid_null")
-    else:
-        normalized = value
-
-    enum_values = schema.get("enum")
-    if isinstance(enum_values, list) and normalized not in enum_values:
-        raise _ArgumentValueError("value_not_in_enum")
-    return normalized
-
-
-def normalize_tool_arguments(
-    definition: ToolDefinition,
-    params: Mapping[str, Any],
-) -> dict[str, Any]:
-    if not isinstance(params, Mapping):
-        raise ToolArgumentValidationError(issues=[{
-            "field": "$",
-            "issue": "arguments_must_be_an_object",
-        }])
-
-    incoming = dict(params)
-    issues: list[dict[str, Any]] = []
-    aliased_targets: set[str] = set()
-    for alias, target in definition.argument_aliases.items():
-        if alias not in incoming:
-            continue
-        alias_value = incoming.pop(alias)
-        if target in incoming:
-            issues.append({
-                "field": alias,
-                "issue": "conflicting_alias",
-                "target": target,
-            })
-            continue
-        if (
-            target in definition.compatibility_json_object_parameters
-            and not isinstance(alias_value, str)
-        ):
-            issues.append({
-                "field": alias,
-                "issue": "compatibility_alias_requires_json_string",
-                "target": target,
-            })
-            continue
-        incoming[target] = alias_value
-        aliased_targets.add(target)
-
-    properties = definition.parameters.get("properties") or {}
-    required = set(definition.parameters.get("required") or [])
-    for key in incoming:
-        if key not in properties:
-            issues.append({
-                "field": key,
-                "issue": "unknown_argument",
-            })
-    for key in required:
-        if key not in incoming:
-            issues.append({
-                "field": key,
-                "issue": "missing_required_argument",
-            })
-
-    normalized: dict[str, Any] = {}
-    for key, value in incoming.items():
-        schema = properties.get(key)
-        if not isinstance(schema, Mapping):
-            continue
-        if (
-            key in aliased_targets
-            and key in definition.compatibility_json_object_parameters
-            and isinstance(value, str)
-        ):
-            try:
-                decoded = json.loads(value)
-            except json.JSONDecodeError:
-                issues.append({
-                    "field": key,
-                    "issue": "invalid_compatibility_json_object",
-                })
-                continue
-            if not isinstance(decoded, dict):
-                issues.append({
-                    "field": key,
-                    "issue": "compatibility_json_must_decode_to_object",
-                })
-                continue
-            value = decoded
-        try:
-            normalized[key] = _normalize_schema_value(value, schema)
-        except _ArgumentValueError as exc:
-            issues.append({
-                "field": key,
-                "issue": exc.issue,
-                "expected_type": schema.get("type") or "union",
-                "received_type": _type_name(value),
-            })
-
-    if issues:
-        raise ToolArgumentValidationError(issues=issues)
-    return normalized
-
-
-def _schema_matches_annotation(
-    visible_schema: Mapping[str, Any],
-    annotation_schema: Mapping[str, Any],
-) -> bool:
-    if not annotation_schema:
-        return True
-    variants = annotation_schema.get("anyOf")
-    if isinstance(variants, list):
-        return any(
-            _schema_matches_annotation(visible_schema, variant)
-            for variant in variants
-        )
-    if visible_schema.get("type") != annotation_schema.get("type"):
-        return False
-    expected_enum = annotation_schema.get("enum")
-    visible_enum = visible_schema.get("enum")
-    if isinstance(expected_enum, list):
-        if not isinstance(visible_enum, list):
-            return False
-        if any(value not in expected_enum for value in visible_enum):
-            return False
-    if annotation_schema.get("type") == "array":
-        expected_items = annotation_schema.get("items")
-        if isinstance(expected_items, Mapping) and expected_items:
-            visible_items = visible_schema.get("items")
-            if not isinstance(visible_items, Mapping):
-                return False
-            if not _schema_matches_annotation(visible_items, expected_items):
-                return False
-    if annotation_schema.get("type") == "object":
-        expected_additional = annotation_schema.get("additionalProperties")
-        if isinstance(expected_additional, Mapping) and expected_additional:
-            visible_additional = visible_schema.get("additionalProperties")
-            if isinstance(visible_additional, Mapping):
-                if not _schema_matches_annotation(
-                    visible_additional,
-                    expected_additional,
-                ):
-                    return False
-            else:
-                visible_nested = visible_schema.get("properties")
-                if not isinstance(visible_nested, Mapping) or any(
-                    not _schema_matches_annotation(item, expected_additional)
-                    for item in visible_nested.values()
-                ):
-                    return False
-    return True
-
-
-def validate_tool_definition_contract(
-    definition: ToolDefinition,
-) -> list[dict[str, Any]]:
-    if definition.origin != "native":
-        return []
-
-    expected = _build_schema(definition.func)
-    visible_properties = definition.parameters.get("properties") or {}
-    expected_properties = expected["properties"]
-    issues: list[dict[str, Any]] = []
-
-    if definition.parameters.get("type") != expected["type"]:
-        issues.append({
-            "issue": "root_type_mismatch",
-            "expected": expected["type"],
-            "actual": definition.parameters.get("type"),
-        })
-    if definition.parameters.get("additionalProperties") is not False:
-        issues.append({
-            "issue": "additional_properties_mismatch",
-            "expected": False,
-            "actual": definition.parameters.get("additionalProperties"),
-        })
-
-    visible_names = set(visible_properties)
-    expected_names = set(expected_properties)
-    if visible_names != expected_names:
-        issues.append({
-            "issue": "parameter_names_mismatch",
-            "missing": sorted(expected_names - visible_names),
-            "extra": sorted(visible_names - expected_names),
-        })
-
-    visible_required = set(definition.parameters.get("required") or [])
-    expected_required = set(expected["required"])
-    if visible_required != expected_required:
-        issues.append({
-            "issue": "required_parameters_mismatch",
-            "expected": sorted(expected_required),
-            "actual": sorted(visible_required),
-        })
-
-    signature = inspect.signature(definition.func)
-    for name in sorted(visible_names & expected_names):
-        visible_schema = visible_properties[name]
-        expected_schema = expected_properties[name]
-        if not _schema_matches_annotation(visible_schema, expected_schema):
-            issues.append({
-                "field": name,
-                "issue": "annotation_schema_mismatch",
-                "expected": expected_schema,
-                "actual": visible_schema,
-            })
-        parameter = signature.parameters[name]
-        if parameter.default is not inspect.Parameter.empty:
-            if "default" not in visible_schema:
-                issues.append({
-                    "field": name,
-                    "issue": "missing_default",
-                    "expected": parameter.default,
-                })
-            elif visible_schema["default"] != parameter.default:
-                issues.append({
-                    "field": name,
-                    "issue": "default_mismatch",
-                    "expected": parameter.default,
-                    "actual": visible_schema["default"],
-                })
-            try:
-                _normalize_schema_value(
-                    parameter.default,
-                    visible_schema,
-                )
-            except _ArgumentValueError as exc:
-                issues.append({
-                    "field": name,
-                    "issue": "default_schema_mismatch",
-                    "default": parameter.default,
-                    "schema_issue": exc.issue,
-                })
-
-    for alias, target in definition.argument_aliases.items():
-        if alias in visible_names or alias in expected_names:
-            issues.append({
-                "field": alias,
-                "issue": "alias_must_be_hidden",
-            })
-        if target not in expected_names:
-            issues.append({
-                "field": alias,
-                "issue": "alias_target_missing",
-                "target": target,
-            })
-
-    compatibility_targets = definition.compatibility_json_object_parameters
-    alias_targets = set(definition.argument_aliases.values())
-    for target in sorted(compatibility_targets):
-        if target not in expected_names:
-            issues.append({
-                "field": target,
-                "issue": "compatibility_target_missing",
-            })
-        if target not in alias_targets:
-            issues.append({
-                "field": target,
-                "issue": "compatibility_decoder_requires_alias",
-            })
-        target_schema = visible_properties.get(target)
-        if not isinstance(target_schema, Mapping) or target_schema.get("type") != "object":
-            issues.append({
-                "field": target,
-                "issue": "compatibility_decoder_requires_object_schema",
-            })
-    if compatibility_targets and not (
-        definition.name == "record_analysis_plan"
-        and definition.argument_aliases == {"plan_json": "plan"}
-        and compatibility_targets == {"plan"}
-    ):
-        issues.append({
-            "issue": "unsupported_compatibility_json_object_decoder",
-        })
-
-    return issues
+    if required:
+        schema["required"] = required
+    return schema
 
 
 class ToolRegistry:
@@ -1392,8 +605,6 @@ class ToolRegistry:
         recovery_hint: Optional[str] = None,
         requires: Optional[list[str]] = None,
         capability: ToolCapability | dict[str, Any] | None = None,
-        argument_aliases: Mapping[str, str] | None = None,
-        compatibility_json_object_parameters: set[str] | None = None,
     ) -> Callable:
         """装饰器，注册一个工具函数。
 
@@ -1422,10 +633,6 @@ class ToolRegistry:
                 recovery_hint=recovery_hint or "",
                 requires=requires or [],
                 capability=capability or DEFAULT_TOOL_CAPABILITIES.get(tool_name),
-                argument_aliases=argument_aliases,
-                compatibility_json_object_parameters=(
-                    compatibility_json_object_parameters
-                ),
             )
             if self._tools[tool_name].capability is not None:
                 self._capabilities[tool_name] = self._tools[tool_name].capability
@@ -1443,8 +650,6 @@ class ToolRegistry:
         recovery_hint: str = "",
         requires: Optional[list[str]] = None,
         capability: ToolCapability | dict[str, Any] | None = None,
-        argument_aliases: Mapping[str, str] | None = None,
-        compatibility_json_object_parameters: set[str] | None = None,
     ):
         """直接注册一个工具函数。"""
         tool_params = parameters or _build_schema(func)
@@ -1457,10 +662,6 @@ class ToolRegistry:
             recovery_hint=recovery_hint,
             requires=requires or [],
             capability=capability or DEFAULT_TOOL_CAPABILITIES.get(name),
-            argument_aliases=argument_aliases,
-            compatibility_json_object_parameters=(
-                compatibility_json_object_parameters
-            ),
         )
         if self._tools[name].capability is not None:
             self._capabilities[name] = self._tools[name].capability
@@ -1512,15 +713,6 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(summary=json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False))
-
-        try:
-            params = normalize_tool_arguments(tool, params)
-        except ToolArgumentValidationError as exc:
-            payload = exc.to_payload()
-            return ToolResult(
-                summary=json.dumps(payload, ensure_ascii=False),
-                data=payload,
-            )
 
         # 前置条件检查
         if tool.requires:

@@ -276,10 +276,8 @@ def extract_memory_candidates(session_id: str = "") -> dict:
             "needs_review": {
                 "type": "boolean",
                 "description": "When true, only return candidates marked as needing review.",
-                "default": False,
             }
         },
-        "additionalProperties": False,
     },
 )
 def list_memory_candidates(needs_review: bool | str = False) -> list[dict]:

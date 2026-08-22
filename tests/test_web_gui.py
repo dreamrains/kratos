@@ -1,7 +1,5 @@
 """全功能 Web GUI 系统测试 — 覆盖所有端点与交互场景"""
 
-# Manual legacy diagnostic only: cannot satisfy actual-browser Gate E.
-# This custom runner is non-authoritative and intended for ad-hoc troubleshooting.
 import json
 import os
 import sys

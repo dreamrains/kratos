@@ -1,7 +1,6 @@
 import json
 
 from data_agent.agent.analysis_plan_contracts import (
-    ANALYSIS_PLAN_CONTRACT_VERSION,
     STAGE3C0B_CONTRACT_VERSION,
     validate_analysis_plan_contract,
 )
@@ -23,8 +22,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
-                "evidence_requirements": ["metric", "sample_size"],
-                "required_claim_keys": ["impressions", "click_rate"],
+                "evidence_requirements": ["impressions", "click_rate"],
             },
             {
                 "step_id": "step_synthesis",
@@ -32,8 +30,7 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
                 "dataset_inputs": [],
                 "combination_mode": "synthesis",
                 "expected_output": "Cross-file synthesis",
-                "evidence_requirements": ["limitations"],
-                "required_claim_keys": ["comparative_summary"],
+                "evidence_requirements": ["comparative_summary"],
                 "required_evidence_step_ids": ["step_banner"],
             },
         ],
@@ -49,27 +46,17 @@ def test_valid_stage3c0b_plan_is_reviewed_and_executable():
     assert result.plan["method_plan"][0]["plan_id"] == result.plan["id"]
     assert result.plan["method_plan"][0]["dataset_contract_ids"] == ["contract_banner"]
     assert result.plan["method_plan"][0]["combination_mode"] == "independent"
-    assert result.plan["method_plan"][0]["required_claim_keys"] == ["impressions", "click_rate"]
 
 
-def test_unversioned_plan_is_normalized_before_execution_validation():
+def test_rejects_legacy_or_missing_contract_version_for_execution():
     result = validate_analysis_plan_contract(
-        {
-            "goal": "Analyze orders.",
-            "method_plan": [{
-                "step_id": "s1",
-                "goal": "Describe order volume.",
-                "dataset_inputs": ["orders"],
-                "combination_mode": "independent",
-                "expected_output": "Order summary",
-                "evidence_requirements": ["sample_size"],
-            }],
-        },
-        dataset_contracts=[_contract("orders", "contract_orders")],
+        {"goal": "legacy", "method_plan": [{"step_id": "s1"}]},
+        dataset_contracts=[],
     )
 
-    assert result.ok is True
-    assert result.plan["contract_version"] == ANALYSIS_PLAN_CONTRACT_VERSION
+    assert result.ok is False
+    assert result.error_type == "legacy_plan_display_only"
+    assert "contract_version" in result.message
 
 
 def test_rejects_join_hidden_as_executable_stage3c0b_mode():
@@ -83,8 +70,7 @@ def test_rejects_join_hidden_as_executable_stage3c0b_mode():
                 "dataset_inputs": ["orders", "users"],
                 "combination_mode": "join",
                 "expected_output": "Joined table",
-                "evidence_requirements": ["metric"],
-                "required_claim_keys": ["joined_rows"],
+                "evidence_requirements": ["joined_rows"],
             }
         ],
     }
@@ -165,8 +151,7 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
                     "dataset_inputs": [],
                     "combination_mode": "synthesis",
                     "expected_output": "Synthesis",
-                    "evidence_requirements": ["limitations"],
-                    "required_claim_keys": ["summary"],
+                    "evidence_requirements": ["summary"],
                     "required_evidence_step_ids": [f"step_{i}" for i in range(9)],
                 }
             ],
@@ -178,28 +163,20 @@ def test_rejects_synthesis_with_too_many_hard_dependencies():
     assert result.error_type == "too_many_required_evidence_dependencies"
 
 
-def test_record_analysis_plan_normalizes_unversioned_executable_plan(monkeypatch):
+def test_record_analysis_plan_rejects_legacy_stage3c0b_execution(monkeypatch):
     monkeypatch.setattr("data_agent.tools.analysis_flow._current_state", lambda: None)
     monkeypatch.setattr(
         "data_agent.tools.analysis_flow._write_analysis_artifact",
         lambda kind, payload: {"saved": "artifact.json", "type": kind, "payload": payload},
     )
 
-    result = json.loads(record_analysis_plan({
+    result = json.loads(record_analysis_plan(json.dumps({
         "goal": "Analyze files",
-        "method_plan": [{
-            "step_id": "s1",
-            "goal": "Analyze orders.",
-            "dataset_inputs": ["orders"],
-            "combination_mode": "independent",
-            "expected_output": "Order summary",
-            "evidence_requirements": ["sample_size"],
-        }],
+        "method_plan": [{"step_id": "s1"}],
         "visualization_strategy": "none",
-    }))
+    })))
 
-    assert "error" not in result
-    assert result["analysis_plan_id"]
+    assert result["error_type"] == "legacy_plan_display_only"
 
 
 def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
@@ -219,14 +196,13 @@ def test_record_analysis_plan_persists_valid_stage3c0b_plan(monkeypatch):
                 "dataset_inputs": ["banner"],
                 "combination_mode": "independent",
                 "expected_output": "Banner evidence",
-                "evidence_requirements": ["metric"],
-                "required_claim_keys": ["click_rate"],
+                "evidence_requirements": ["click_rate"],
             }
         ],
         "visualization_strategy": "none",
     }
 
-    result = json.loads(record_analysis_plan(payload))
+    result = json.loads(record_analysis_plan(json.dumps(payload)))
 
     assert result["analysis_plan_id"]
     assert result["state_stage"] if "state_stage" in result else True

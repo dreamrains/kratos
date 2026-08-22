@@ -27,19 +27,9 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
-HAS_TEST_DATA = all(
-    (TEST_DATA_DIR / filename).exists()
-    for filename in (
-        "游戏A内购数据.xlsx",
-        "游戏Abanner汇总数据.xlsx",
-        "游戏A激励视频汇总数据报表.xlsx",
-        "游戏互推.xlsx",
-        "省钱卡订单.xlsx",
-        "省钱卡0201到0510购卡用户付费数据.xlsx",
-    )
-)
-HAS_REAL_DATA = (TEST_DATA_DIR / "省钱卡购卡前后订单.xlsx").exists()
+TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+HAS_TEST_DATA = TEST_DATA_DIR.exists()
+HAS_REAL_DATA = Path("D:/Project/Daily/备用/20260512测试").exists()
 
 
 @pytest.fixture
@@ -68,32 +58,6 @@ def env(tmp_path):
     config._config = old
     task_manager._dir = old_task_dir
     task_manager._next_id_val = old_next_id
-
-
-def _approve_transformation(pending: dict, *, session_id: str) -> dict:
-    """Resolve and apply a transformation through its canonical receipt."""
-    from data_agent.agent.confirmation.runtime import build_action_registry
-    from data_agent.agent.confirmation.service import ConfirmationService
-    from data_agent.config import get_config
-    from data_agent.tools.data_clean import apply_confirmed_transformation
-
-    assert pending["status"] == "confirmation_required"
-    service = ConfirmationService(
-        get_config().sessions_resolved,
-        action_registry=build_action_registry(),
-    )
-    record = service.get(session_id, pending["confirmation_id"])
-    resolved = service.respond(
-        session_id,
-        record.confirmation_id,
-        "approve",
-        record.version,
-        f"approve_{record.confirmation_id}",
-    )
-    return apply_confirmed_transformation(
-        resolved.confirmation_id,
-        session_id=session_id,
-    )
 
 
 def _game_df(rows=200, seed=42):
@@ -263,8 +227,8 @@ class TestComparePeriodsEdge:
                            period_a="invalid", period_b="also_invalid")
         assert "Error" in r
 
-    def test_period_comparison_in_real_data_stays_descriptive(self, env):
-        """Real period data must not be routed to an independent-group test by default."""
+    def test_recommendation_in_real_data(self, env):
+        """真实数据的 compare_periods 应推荐统计检验。"""
         if not HAS_TEST_DATA:
             pytest.skip()
         from data_agent.tools.data_io import load_data
@@ -274,9 +238,10 @@ class TestComparePeriodsEdge:
                            period_a="2021/11/03~2021/12/01",
                            period_b="2021/12/02~2021/12/31")
         parsed = json.loads(r)
-        assert "statistical_test_recommendation" not in parsed
-        if "error" not in parsed:
-            assert parsed["inference_guidance"]["status"] == "descriptive_only"
+        # 如果有差异，应有统计检验推荐
+        if "statistical_test_recommendation" in parsed:
+            rec = parsed["statistical_test_recommendation"]
+            assert rec["recommended_tool"] == "ab_test"
 
 
 class TestTopNEdge:
@@ -298,19 +263,11 @@ class TestTopNEdge:
         assert "Error" not in r
 
     def test_real_data_top_channels(self, env):
-        _, ctx, _ = env
-        source = TEST_DATA_DIR / "游戏互推.xlsx"
-        if not source.exists():
+        if not HAS_TEST_DATA:
             pytest.skip()
         from data_agent.tools.data_io import load_data
-        from data_agent.tools.data_clean import apply_type_conversion
         from data_agent.tools.eda import top_n
-        load_data(str(source), name="cross")
-        pending = json.loads(apply_type_conversion(
-            "cross", column="卖量收入", target_type="numeric"
-        ))
-        conversion = _approve_transformation(pending, session_id=ctx.session_id)
-        assert conversion["status"] == "applied"
+        load_data(str(TEST_DATA_DIR / "游戏互推.xlsx"), name="cross")
         r = top_n("cross", sort_by="卖量收入", n=5)
         assert "Error" not in r
 
@@ -357,12 +314,11 @@ class TestABTestEdge:
 
     def test_real_data_ab(self, env):
         """用真实数据验证 ab_test。"""
-        source = TEST_DATA_DIR / "省钱卡购卡前后订单.xlsx"
-        if not source.exists():
+        if not HAS_REAL_DATA:
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.statistics import ab_test
-        load_data(str(source), name="ba")
+        load_data(str(Path("D:/Project/Daily/备用/20260512测试/购卡前后订单.xlsx")), name="ba")
         r = ab_test("ba", group_col="用户类型（1是购卡前30天内，2是购卡后30天内）", metric_col="实收金额")
         parsed = json.loads(r)
         assert "test" in parsed
@@ -600,8 +556,8 @@ class TestRealDataPipeline:
         ("游戏Abanner汇总数据.xlsx", "banner"),
         ("游戏A激励视频汇总数据报表.xlsx", "video"),
         ("游戏互推.xlsx", "cross"),
-        ("省钱卡订单.xlsx", "ecard"),
-        ("省钱卡0201到0510购卡用户付费数据.xlsx", "flow"),
+        ("省钱卡订单_20260507.xlsx", "ecard"),
+        ("省钱卡用户最近流水_20260511.xlsx", "flow"),
     ])
     def test_load_describe_eda(self, env, filename, name):
         """每个真实数据文件：加载 → 描述 → 基础 EDA。"""
@@ -630,22 +586,15 @@ class TestRealDataPipeline:
 
     def test_game_cross_promotion_analysis(self, env):
         """游戏互推数据完整分析流程。"""
-        _, ctx, _ = env
         if not (TEST_DATA_DIR / "游戏互推.xlsx").exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
-        from data_agent.tools.data_clean import apply_type_conversion
         from data_agent.tools.eda import top_n
         from data_agent.session.workspace import workspace
 
         load_data(str(TEST_DATA_DIR / "游戏互推.xlsx"), name="cross")
         df = workspace.get("cross")
         assert df.shape[0] == 1985
-        pending = json.loads(apply_type_conversion(
-            "cross", column="卖量收入", target_type="numeric"
-        ))
-        conversion = _approve_transformation(pending, session_id=ctx.session_id)
-        assert conversion["status"] == "applied"
 
         # Top 推广游戏
         r = top_n("cross", sort_by="卖量收入", n=5)
@@ -653,13 +602,13 @@ class TestRealDataPipeline:
 
     def test_ecard_order_analysis(self, env):
         """省钱卡订单分析流程。"""
-        if not (TEST_DATA_DIR / "省钱卡订单.xlsx").exists():
+        if not (TEST_DATA_DIR / "省钱卡订单_20260507.xlsx").exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import distribution_analysis
         from data_agent.session.workspace import workspace
 
-        load_data(str(TEST_DATA_DIR / "省钱卡订单.xlsx"), name="card")
+        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
         df = workspace.get("card")
         assert df is not None
 
@@ -686,14 +635,14 @@ class TestRealDataPipeline:
 
     def test_large_dataset_performance(self, env):
         """大数据集(13K+ rows)加载性能。"""
-        if not (TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx").exists():
+        if not (TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx").exists():
             pytest.skip()
         import time
         from data_agent.tools.data_io import load_data
         from data_agent.session.workspace import workspace
 
         t0 = time.time()
-        load_data(str(TEST_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"), name="big")
+        load_data(str(TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"), name="big")
         elapsed = time.time() - t0
 
         df = workspace.get("big")
@@ -710,7 +659,7 @@ class TestRealDataPipeline:
 class TestAnalysisFlowTools:
     """analysis_flow 工具链测试。"""
 
-    def test_full_artifact_pipeline(self, env, monkeypatch):
+    def test_full_artifact_pipeline(self, env):
         """完整产物流水线：requirement → spec → plan → evidence。"""
         from data_agent.tools.analysis_flow import (
             record_data_requirement, record_analysis_spec,
@@ -743,19 +692,14 @@ class TestAnalysisFlowTools:
         assert "saved" in r2 or "error" not in r2.lower()
 
         # 3. Plan
-        ws, ctx, _ = env
-        from data_agent.agent.data_lineage import frame_fingerprint
-
-        main = pd.DataFrame({"period": ["before", "after"], "arpu": [10.0, 11.0]})
-        raw = ws.register_raw_snapshot("main", main, frame_fingerprint(main))
-        ws.promote_analysis_copy("main", main, raw["dataset_id"], {"operation": "load_fixture"})
+        _, ctx, _ = env
         ctx.analysis_state.dataset_contracts.append({
             "id": "duc_main",
             "dataset": "main",
             "quality_status": "ready",
         })
-        plan = {
-            "contract_version": "analysis_plan.v1",
+        plan = json.dumps({
+            "contract_version": "stage3c0b.v1",
             "goal": "省钱卡效果评估",
             "method_plan": [{
                 "step_id": "step_arpu",
@@ -763,76 +707,29 @@ class TestAnalysisFlowTools:
                 "dataset_inputs": ["main"],
                 "combination_mode": "independent",
                 "expected_output": "ARPU 变化 EvidenceRecord",
-                "evidence_requirements": ["metric_delta", "sample_size", "limitations"],
-                "required_claim_keys": ["arpu_change"],
+                "evidence_requirements": ["ARPU change", "sample size", "limitations"],
             }],
             "visualization_strategy": "对比图",
-        }
+        })
         r3 = record_analysis_plan(plan)
         assert "saved" in r3 or "error" not in r3.lower()
-        recorded_plan = json.loads(r3)
-        plan_id = recorded_plan["analysis_plan_id"]
-        workflow_task_id = recorded_plan["workflow"]["task_ids"][0]
-
-        from data_agent.agent.execution_control import ToolExecutionBudget, TurnExecutionState
-        from data_agent.agent.loop import AgentLoop
-        from data_agent.llm.client import ToolCall
-        from data_agent.session.task_manager import task_manager
-        from data_agent.tools.registry import ToolCapability, ToolDefinition, ToolResult, registry
-
-        task_manager.update(workflow_task_id, status="in_progress")
-        ctx.turn_state = TurnExecutionState(ToolExecutionBudget(max_tool_calls=5))
-        ctx.turn_state.turn_id = "turn_pipeline_artifact"
-        definition = ToolDefinition(
-            name="pipeline_arpu_delta",
-            description="Return a structured ARPU delta for the pipeline fixture.",
-            func=lambda name: ToolResult(
-                summary="ARPU increased by 10%.",
-                data={
-                    "effective_sample_size": {"total": 63},
-                    "effect_estimate": {"value": 0.1, "unit": "ratio", "metric": "metric_delta"},
-                },
-            ),
-            parameters={"type": "object", "properties": {"name": {"type": "string"}}},
-            capability=ToolCapability(
-                "analysis.period_compare",
-                category="analysis",
-                evidence_fields=["effective_sample_size", "effect_estimate"],
-            ),
-        )
-        monkeypatch.setitem(registry._tools, definition.name, definition)
-        monkeypatch.setitem(registry._capabilities, definition.name, definition.capability)
-        loop = AgentLoop(client=object(), session_id=ctx.session_id)
-        loop.context = ctx
-        call = ToolCall("call_pipeline_arpu", definition.name, {"name": "main"})
-        assert loop._execute_single_tool(
-            call,
-            [call],
-            0,
-            _scope_guard=lambda *_args: "",
-        ) is None
+        plan_id = json.loads(r3)["analysis_plan_id"]
 
         # 4. Evidence (with auto-limitations)
         evidence = json.dumps({
-            "contract_version": "evidence_record.v2",
             "plan_id": plan_id,
             "step_id": "step_arpu",
             "claim_key": "arpu_change",
-            "claim": "省钱卡用户付费比前期高10%",
+            "claim": "省钱卡使用户付费增加10%",
             "dataset": "main",
             "dataset_contract_id": "duc_main",
             "method": "compare_periods before_after",
-            "tool_calls": ["pipeline_arpu_delta"],
-            "source_tool_call_ids": ["call_pipeline_arpu"],
-            "requirement_ids": [
-                item["id"]
-                for item in ctx.analysis_state.analysis_plan["analysis_requirements"]["step_arpu"]
-            ],
+            "tool_calls": ["compare_periods"],
             "result_summary": "ARPU变化+10%",
             "limitations": ["仅对比30天"],
             "confidence": "medium",
             "sample_size": 63,
-            "evidence_requirement": "metric_delta",
+            "evidence_requirement": "ARPU change with sample and limitations",
             "measurements": [{
                 "metric": "ARPU change",
                 "definition": "post-period ARPU versus pre-period ARPU",
@@ -845,26 +742,10 @@ class TestAnalysisFlowTools:
                 "denominator": "eligible savings-card users",
                 "limitations": ["no comparable control group"],
             }],
-            "statistical_support": {
-                "effective_sample_size": {"total": 63},
-                "effect_estimate": {"value": 0.1, "unit": "ratio", "metric": "metric_delta"},
-            },
         })
         r4 = record_evidence_record(evidence)
         parsed = json.loads(r4)
         assert "saved" in str(parsed)
-        assert parsed.get("completed_task_ids") == [workflow_task_id], {
-            "result": parsed,
-            "task": task_manager.get(workflow_task_id),
-            "evidence": ctx.analysis_state.evidence_records[-1],
-        }
-        completed_task = task_manager.get(workflow_task_id)
-        assert completed_task["status"] == "completed"
-        assert completed_task["satisfied_claim_keys"] == ["arpu_change"]
-        assert set(completed_task["satisfied_analysis_requirement_ids"]) == {
-            item["id"]
-            for item in ctx.analysis_state.analysis_plan["analysis_requirements"]["step_arpu"]
-        }
         # 应自动生成"无对照组"局限性
         auto_lim = parsed.get("auto_generated_limitations", [])
         assert any("对照" in l for l in auto_lim), f"应有自动局限性: {auto_lim}"
@@ -1024,12 +905,11 @@ class TestFunnelAnalysis:
 
     def test_real_data_funnel(self, env):
         """真实游戏数据构造漏斗。"""
-        source = TEST_DATA_DIR / "省钱卡订单.xlsx"
-        if not source.exists():
+        if not HAS_TEST_DATA:
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import funnel_analysis
-        load_data(str(source), name="card")
+        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
 
         from data_agent.session.workspace import workspace
         df = workspace.get("card")

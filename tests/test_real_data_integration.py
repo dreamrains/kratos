@@ -11,7 +11,7 @@ from data_agent.knowledge.memory import MemoryStore
 from data_agent.knowledge.models import MemoryType
 from data_agent.knowledge.retrieval import KnowledgeRetrievalService
 
-TEST_DOC_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+TEST_DOC_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
 
 
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="test_doc directory not found")

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
-from data_agent.agent.trust_contracts import route_evidence_requirements
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
@@ -65,56 +64,7 @@ _ROUTE_KEYWORDS = {
     "dimension_decomposition": ("segment", "dimension", "breakdown", "driver", "归因", "分维", "拆解"),
     "cohort": ("cohort", "retention", "留存", "复购"),
     "funnel": ("funnel", "conversion", "漏斗", "转化"),
-    "causal": ("causal", "experiment", "effect", "因果", "实验", "效果", "归因"),
 }
-
-# These are produced from loaded data or an analysis method. Their absence must
-# schedule evidence work; it must not be presented as a question only the user
-# can answer.
-_COMPUTABLE_EVIDENCE_REQUIREMENTS = frozenset({
-    "assumptions",
-    "autocorrelation_awareness",
-    "calculation_method",
-    "confidence_interval",
-    "denominator",
-    "effective_sample_size",
-    "effect_estimate",
-    "estimand",
-    "metric_delta",
-    "missing_intervals",
-    "missingness",
-    "multiplicity_handling",
-    "period_comparability",
-    "sample_adequacy",
-    "sample_size",
-    "seasonality_estimability",
-    "significance",
-    "time_frequency",
-    "trend_statistics",
-    "window_comparability",
-    "attrition",
-    "balance_diagnostics",
-    "bandwidth_sensitivity",
-    "discontinuity_diagnostics",
-    "identification_status",
-    "instrument_relevance",
-    "overlap_diagnostics",
-    "parallel_trends",
-    "per_arm_sample_size",
-    "power_mde",
-    "randomization_integrity",
-})
-
-
-def computable_route_evidence(route: dict[str, Any]) -> list[str]:
-    """Return route evidence that analysis should compute instead of asking for."""
-
-    return [
-        name
-        for name in route_evidence_requirements(route)
-        if name in _COMPUTABLE_EVIDENCE_REQUIREMENTS
-        and not (name == "estimand" and route.get("estimand_requires_confirmation") is True)
-    ]
 
 
 def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, Any]:
@@ -157,29 +107,18 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 affected_routes=[_route_direction(route)],
             )
 
-    if _is_high_risk_request(text) and not _has_confirmed_high_risk_plan(text, state):
-        missing_design_facts = _missing_material_design_facts(state)
-        if missing_design_facts:
-            return _hard_gate(
-                "causal_design_definition",
-                "Unavailable design facts materially change the causal estimand or identification.",
-                "请补充会改变因果识别的业务设计信息：" + "、".join(missing_design_facts) + "。",
-                blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
-                risk_fields=missing_design_facts,
-                affected_routes=[_route_direction(route)] if route else [],
-            )
-        if not _has_explicit_high_risk_design(state):
-            return _hard_gate(
-                "method_confirmation",
-                "High-risk analysis requires method, assumption, and evidence confirmation.",
-                "这类分析可能影响决策结论。请先确认分析目标、方法假设和可接受的证据标准。",
-                options=[
-                    {"label": "先确认方法与假设", "value": "confirm_method", "description": "适合预测、因果、实验或 ROI 判断。"},
-                    {"label": "仅做描述性探索", "value": "descriptive_only", "description": "不输出因果或预测性结论。"},
-                ],
-                blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
-                affected_routes=[_route_direction(route)] if route else [],
-            )
+    if _is_high_risk_request(text) and not _has_confirmed_high_risk_spec(text, state):
+        return _hard_gate(
+            "method_confirmation",
+            "High-risk analysis requires method, assumption, and evidence confirmation.",
+            "这类分析可能影响决策结论。请先确认分析目标、方法假设和可接受的证据标准。",
+            options=[
+                {"label": "先确认方法与假设", "value": "confirm_method", "description": "适合预测、因果、实验或 ROI 判断。"},
+                {"label": "仅做描述性探索", "value": "descriptive_only", "description": "不输出因果或预测性结论。"},
+            ],
+            blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
+            affected_routes=[_route_direction(route)] if route else [],
+        )
 
     if route and _route_direction(route) == "period_compare" and not _has_time_window(text):
         return _hard_gate(
@@ -205,21 +144,6 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 {"label": metric, "value": metric, "description": "使用该字段作为本次分析的核心指标。"}
                 for metric in metrics[:4]
             ],
-            blocking_surfaces=BLOCKED_SURFACES_ALL,
-            affected_routes=[_route_direction(route)],
-        )
-
-    if route and _estimand_confirmation_required(route, text):
-        options = [
-            item
-            for item in route.get("estimand_options") or []
-            if isinstance(item, dict) and _text(item.get("value"))
-        ]
-        return _hard_gate(
-            "estimand_definition",
-            "The aggregation choice changes the target quantity for this time-based analysis.",
-            "同一时间点存在多行记录；请确认先按时间点求和还是求均值。",
-            options=options,
             blocking_surfaces=BLOCKED_SURFACES_ALL,
             affected_routes=[_route_direction(route)],
         )
@@ -471,11 +395,7 @@ def _required_field_risks(route: dict[str, Any], cleaning_logs: list[dict[str, A
 
 
 def _required_fields(route: dict[str, Any]) -> list[str]:
-    fields = [
-        name
-        for name in route_evidence_requirements(route)
-        if name not in _COMPUTABLE_EVIDENCE_REQUIREMENTS
-    ]
+    fields = _text_list(route.get("evidence_requirements"))
     roles = route.get("field_roles") if isinstance(route.get("field_roles"), dict) else {}
     direction = _route_direction(route)
     if direction in {"trend", "period_compare", "cohort"}:
@@ -504,104 +424,20 @@ def _route_needs_metric(route: dict[str, Any]) -> bool:
     return direction in {"trend", "period_compare", "dimension_decomposition", "funnel"}
 
 
-def _estimand_confirmation_required(route: dict[str, Any], text: str) -> bool:
-    if route.get("estimand_requires_confirmation") is not True:
-        return False
-    if _text(route.get("aggregation") or route.get("estimand")):
-        return False
-    explicit_markers = (
-        "sum", "total", "aggregate", "mean", "average",
-        "总额", "总量", "合计", "均值", "平均",
-    )
-    return not any(marker in text for marker in explicit_markers)
-
-
 def _is_high_risk_request(text: str) -> bool:
     return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
 
 
-def _high_risk_design_step(state: Any) -> dict[str, Any] | None:
-    plan = getattr(state, "analysis_plan", None)
-    if not isinstance(plan, dict):
-        return None
-    for step in plan.get("method_plan") or []:
-        if not isinstance(step, dict):
-            continue
-        if _text(step.get("required_capability")) in {
-            "analysis.experiment", "analysis.causal",
-        }:
-            return step
-    return None
-
-
-def _missing_material_design_facts(state: Any) -> list[str]:
-    step = _high_risk_design_step(state)
-    if step is None:
-        return []
-    plan = getattr(state, "analysis_plan", None)
-    if not isinstance(plan, dict):
-        return []
-    from data_agent.agent.analysis_requirements import compile_analysis_requirements
-
-    try:
-        requirements = compile_analysis_requirements(
-            plan=plan,
-            route=None,
-            playbook=None,
-            dataset_contracts=_list_attr(state, "dataset_contracts"),
-            user_intent=_text(plan.get("goal")),
-            _allow_legacy_unknown=True,
-        )
-    except ValueError:
-        return ["design_type"]
-    step_id = _text(step.get("step_id"))
-    required_fields = [
-        _text(requirement.get("name"))
-        for requirement in requirements
-        if _text(requirement.get("step_id")) == step_id
-        and isinstance(requirement.get("parameters"), dict)
-        and requirement["parameters"].get("input_source") == "user_or_plan"
-        and _text(requirement.get("name"))
-    ]
-    design = _text(
-        step.get("design_type")
-        or step.get("causal_design")
-        or step.get("identification_strategy")
-    )
-    if "design_type" in required_fields and not design:
-        return ["design_type"]
-    missing = []
-    for field in required_fields:
-        if field == "design_type":
-            value = design
-        else:
-            value = step.get(field)
-        if isinstance(value, list):
-            present = any(_text(item) for item in value)
-        else:
-            present = bool(_text(value))
-        if not present:
-            missing.append(field)
-    return missing
-
-
-def _has_explicit_high_risk_design(state: Any) -> bool:
-    step = _high_risk_design_step(state)
-    return step is not None and not _missing_material_design_facts(state)
-
-
-def _has_confirmed_high_risk_plan(text: str, state: Any) -> bool:
-    plan = getattr(state, "analysis_plan", None)
-    if not isinstance(plan, dict):
+def _has_confirmed_high_risk_spec(text: str, state: Any) -> bool:
+    spec = getattr(state, "analysis_spec", None)
+    if not isinstance(spec, dict):
         return False
-    confirmation = plan.get("method_confirmation")
+    confirmation = spec.get("method_confirmation")
     if not isinstance(confirmation, dict) or confirmation.get("status") != "approved":
         return False
-    from data_agent.agent.analysis_plan_contracts import analysis_plan_id_from_mapping
-
     return (
-        analysis_plan_id_from_mapping(confirmation) == _text(plan.get("id"))
-        and _text(confirmation.get("playbook_id")) == _text(plan.get("playbook_id"))
+        _text(confirmation.get("analysis_spec_id")) == _text(spec.get("id"))
+        and _text(confirmation.get("playbook_id")) == _text(spec.get("playbook_id"))
         and _material_request_identity(text) == _text(confirmation.get("request_identity"))
     )
 

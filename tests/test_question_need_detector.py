@@ -157,33 +157,6 @@ def test_vague_goal_with_multiple_routes_requires_route_question():
     assert [option["value"] for option in gate["options"]] == ["trend", "period_compare"]
 
 
-def test_materially_ambiguous_period_estimand_requires_user_definition():
-    state = _state()
-    route = next(item for item in state.route_proposals if item["direction"] == "period_compare")
-    route.update({
-        "estimand_requires_confirmation": True,
-        "estimand_options": [
-            {"label": "总额差异", "value": "sum", "description": "compare totals"},
-            {"label": "平均值差异", "value": "mean", "description": "compare means"},
-        ],
-    })
-
-    ambiguous = detect_question_need(
-        "revenue 最近 7 天对比前 7 天",
-        _intent(),
-        state,
-    )
-    explicit = detect_question_need(
-        "revenue 最近 7 天对比前 7 天总额",
-        _intent(),
-        state,
-    )
-
-    assert ambiguous["question_type"] == "estimand_definition"
-    assert [item["value"] for item in ambiguous["options"]] == ["sum", "mean"]
-    assert explicit["status"] == "clear"
-
-
 def test_duplicate_material_file_reference_requires_scope_selection_first():
     gate = detect_question_need("analyze sales.csv", _intent(), _duplicate_file_state())
 
@@ -529,21 +502,21 @@ def test_high_risk_predictive_analysis_requires_method_confirmation():
     assert gate["blocking_surfaces"] == ["analysis_execution", "report_generation"]
 
 
-def test_confirmed_matching_high_risk_plan_skips_generic_gate_but_changed_request_does_not():
+def test_confirmed_matching_high_risk_spec_skips_generic_gate_but_changed_request_does_not():
     state = _state()
-    state.set_analysis_plan({
+    state.analysis_spec = {
         "id": "spec_forecast_revenue",
         "goal": "predict next month revenue",
         "playbook_id": "forecast_decision_simulation",
         "confirmation_policy": {"requires_confirmation": True},
-    })
+    }
     state.add_confirmation({
         "id": "method_forecast_revenue",
-        "related_plan_id": "spec_forecast_revenue",
+        "related_spec_id": "spec_forecast_revenue",
         "state_updates": json.dumps({
             "method_confirmation": {
                 "playbook_id": "forecast_decision_simulation",
-                "analysis_plan_id": "spec_forecast_revenue",
+                "analysis_spec_id": "spec_forecast_revenue",
                 "allowed_actions": ["confirm_method", "clarify_method_scope"],
             },
         }),

@@ -7,10 +7,7 @@ from data_agent.agent.analysis_state import (
     analysis_state_summary,
     load_analysis_state,
 )
-from data_agent.agent.analysis_plan_contracts import (
-    analysis_plan_id_from_mapping,
-    validate_analysis_plan_contract,
-)
+from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.intent import TurnIntent
 from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
@@ -36,68 +33,10 @@ class AnalysisFlowController:
         if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
             selection = select_playbooks(user_input, intent, state, dataset_profile)
             apply_selection_to_state(state, selection)
-        # Capture whether an explicit executable plan (e.g. from
-        # ``record_analysis_plan``) was already in place before the auto
-        # envelope runs. Workflow projection is only invoked for explicit
-        # plans; the auto envelope exists to give computations plan/step
-        # identity, not to commit the model to a workflow it never affirmed.
-        explicit_executable_plan = bool(
-            isinstance(state.analysis_plan, dict)
-            and state.analysis_plan.get("review_status") == "executable"
-        )
-        if intent.intent_type in {"directed_analysis", "comprehensive_report"}:
-            self.ensure_canonical_execution_envelope(state, intent, user_input)
-        if intent.intent_type == "directed_analysis" and state.analysis_plan:
-            if explicit_executable_plan:
-                self.ensure_workflow_tasks(state)
+        if intent.intent_type == "directed_analysis" and state.analysis_spec:
+            self.ensure_workflow_tasks(state)
             self.ensure_confirmation_task(state)
         state.save()
-
-    def ensure_canonical_execution_envelope(
-        self,
-        state: AnalysisSessionState,
-        intent: TurnIntent,
-        user_input: str,
-    ):
-        """Materialize the canonical executable plan before substantive calls.
-
-        Called after route/playbook selection. When dataset contracts are
-        available, the server owns the plan: it injects the active dataset
-        identity into each analytical step and validates the plan as
-        executable. Failures are recorded as bounded turn diagnostics so the
-        turn cannot report completion against an unsupported plan.
-
-        Returns the ``EnvelopeResult`` so callers can distinguish auto-envelope
-        materialization from an existing explicit plan.
-        """
-
-        active_contracts = [
-            contract
-            for contract in (state.dataset_contracts or [])
-            if isinstance(contract, dict)
-        ]
-        if not active_contracts:
-            return None
-        from data_agent.agent.analysis_execution import (
-            ensure_canonical_execution_envelope as _ensure_envelope,
-        )
-
-        result = _ensure_envelope(
-            state=state,
-            intent=intent,
-            user_input=user_input,
-            active_dataset_contracts=active_contracts,
-        )
-        diagnostic = {
-            "event": "execution_envelope",
-            "ok": bool(result.ok),
-            "error_type": result.error_type,
-            "plan_id": (result.plan or {}).get("id", "") if isinstance(result.plan, dict) else "",
-        }
-        if result.details:
-            diagnostic["details"] = result.details
-        state.append_turn_diagnostic(diagnostic)
-        return result
 
     def has_pending_confirmation(self, state: AnalysisSessionState) -> bool:
         return any(is_actionable_pending_confirmation(c) for c in state.pending_confirmations)
@@ -115,14 +54,14 @@ class AnalysisFlowController:
         "interaction.information",   # informational queries
     })
 
-    # Tool categories that are always safe regardless of plan content
+    # Tool categories that are always safe regardless of spec content
     SAFE_TOOL_CATEGORIES = frozenset({
         "data_view",     # list_data, quick_profile
         "data_load",     # load_data
         "confirmation",  # ask_user_question
     })
 
-    def is_high_risk_capability(self, capability_id: str, plan: dict | None = None) -> bool:
+    def is_high_risk_capability(self, capability_id: str, spec: dict | None = None) -> bool:
         if capability_id in self.HIGH_RISK_CAPABILITIES:
             return True
         return False
@@ -130,17 +69,17 @@ class AnalysisFlowController:
     def is_capability_blocked_by_confirmation(self, state: AnalysisSessionState, capability_id: str) -> bool:
         if capability_id in self.NEVER_BLOCK_CAPABILITIES:
             return False
-        plan = state.analysis_plan or {}
-        policy = plan.get("confirmation_policy") or {}
+        spec = state.analysis_spec or {}
+        policy = spec.get("confirmation_policy") or {}
         if not policy.get("requires_confirmation"):
             return False
-        if not self.is_high_risk_capability(capability_id, plan):
+        if not self.is_high_risk_capability(capability_id, spec):
             return False
-        confirmation = plan.get("method_confirmation") or {}
+        confirmation = spec.get("method_confirmation") or {}
         approved = (
             confirmation.get("status") == "approved"
-            and analysis_plan_id_from_mapping(confirmation) == plan.get("id")
-            and confirmation.get("playbook_id") == plan.get("playbook_id")
+            and confirmation.get("analysis_spec_id") == spec.get("id")
+            and confirmation.get("playbook_id") == spec.get("playbook_id")
         )
         return not approved
 
@@ -157,14 +96,14 @@ class AnalysisFlowController:
     def ensure_confirmation_task(self, state: AnalysisSessionState) -> dict | None:
         if not self.has_pending_confirmation(state):
             return None
-        plan = state.analysis_plan or {}
-        analysis_plan_id = plan.get("id", "")
-        workflow_id = plan.get("workflow_id", "")
+        spec = state.analysis_spec or {}
+        spec_id = spec.get("id", "")
+        workflow_id = spec.get("workflow_id", "")
         existing = [
             t for t in task_manager.list_all()
             if t.get("session_id") == self.session_id
             and t.get("node_type") == "confirmation"
-            and (not analysis_plan_id or analysis_plan_id_from_mapping(t) == analysis_plan_id)
+            and (not spec_id or t.get("analysis_spec_id") == spec_id)
             and t.get("status") not in ("deleted", "archived", "superseded")
         ]
         if existing:
@@ -173,20 +112,20 @@ class AnalysisFlowController:
             (c for c in state.pending_confirmations if is_actionable_pending_confirmation(c)),
             {},
         )
-        policy = plan.get("confirmation_policy") or {}
+        policy = spec.get("confirmation_policy") or {}
         project_name = self.project_name or state.project_name or ""
-        task_plan_id = task_manager.get_active_plan_id(self.session_id, project_name)
-        if not task_plan_id:
-            plan_record = task_manager.create_plan(
+        plan_id = task_manager.get_active_plan_id(self.session_id, project_name)
+        if not plan_id:
+            plan = task_manager.create_plan(
                 session_id=self.session_id,
                 project_name=project_name,
-                goal=plan.get("goal", state.goal),
+                goal=spec.get("goal", state.goal),
                 source="system_confirmation",
-                analysis_spec_id=analysis_plan_id,
+                analysis_spec_id=spec_id,
                 workflow_id=workflow_id,
             )
-            task_plan_id = plan_record["id"]
-            plan_version = plan_record["version"]
+            plan_id = plan["id"]
+            plan_version = plan["version"]
         else:
             active_tasks = task_manager.list_active_for_scope(
                 session_id=self.session_id,
@@ -201,12 +140,11 @@ class AnalysisFlowController:
             project_name=project_name,
             stage="plan",
             node_type="confirmation",
-            analysis_spec_id=analysis_plan_id,
-            analysis_plan_id=analysis_plan_id,
+            analysis_spec_id=spec_id,
             confirmation_ids=[pending.get("id")] if pending.get("id") else [],
             confirmation_policy=policy or {"requires_confirmation": True},
             required_capability="interaction.confirmation",
-            plan_id=task_plan_id,
+            plan_id=plan_id,
             plan_version=plan_version,
             plan_status="active",
             task_kind="confirmation",
@@ -214,22 +152,16 @@ class AnalysisFlowController:
         )
 
     def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
-        plan = state.analysis_plan or {}
+        plan = state.analysis_plan or state.analysis_spec or {}
         if not isinstance(plan, dict):
             return {"created": 0, "task_ids": []}
-        validation = validate_analysis_plan_contract(
-            plan,
-            dataset_contracts=list(state.dataset_contracts or []),
-        )
-        if not validation.ok:
+        if plan.get("contract_version") != STAGE3C0B_CONTRACT_VERSION:
             return {
                 "created": 0,
                 "task_ids": [],
                 "display_only": True,
-                "reason": "analysis_plan_not_executable",
-                "error_type": validation.error_type,
+                "reason": "legacy_analysis_spec_display_only",
             }
-        plan = validation.plan
         from data_agent.agent.workflow_projection import project_plan_to_workflow_tasks
 
         project_name = self.project_name or state.project_name or ""
@@ -280,17 +212,17 @@ class AnalysisFlowController:
     def _activate_from_data_signals(self, registry, state: AnalysisSessionState) -> None:
         """Activate tool groups based on data features stored in analysis state.
 
-        Uses evidence_records and the canonical analysis plan to detect data signals
+        Uses evidence_records and analysis_spec to detect data signals
         (time columns, dimensions, metrics, etc.) and proactively enable
         relevant tool groups.
         """
-        plan = state.analysis_plan or {}
+        spec = state.analysis_spec or {}
         evidence = state.evidence_records or []
 
-        # Extract signal text from the plan and recent evidence
+        # Extract signal text from spec and recent evidence
         signal_parts = []
         for field in ("metrics", "dimensions", "time_scope"):
-            val = plan.get(field)
+            val = spec.get(field)
             if isinstance(val, (list, str)) and val:
                 signal_parts.extend(val if isinstance(val, list) else [val])
         for rec in evidence[-3:]:
@@ -322,9 +254,9 @@ class AnalysisFlowController:
             registry.expand_from_tool_call("cohort_analysis")
 
     def _activate_capabilities_from_state(self, registry, state: AnalysisSessionState) -> None:
-        """Expand tool visibility from AnalysisPlan method-plan capabilities."""
-        plan = state.analysis_plan or {}
-        method_plan = plan.get("method_plan") or []
+        """Expand tool visibility from AnalysisSpec method-plan capabilities."""
+        spec = state.analysis_spec or {}
+        method_plan = spec.get("method_plan") or []
         if not isinstance(method_plan, list):
             return
         for step in method_plan:

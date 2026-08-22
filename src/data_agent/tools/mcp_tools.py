@@ -29,14 +29,9 @@ def _save_config(config) -> None:
         "properties": {
             "server": {"type": "string", "description": "MCP server name"},
             "tool": {"type": "string", "description": "Tool name on the server"},
-            "arguments": {
-                "type": "string",
-                "description": "JSON-formatted tool arguments",
-                "default": "{}",
-            },
+            "arguments": {"type": "string", "description": "JSON-formatted tool arguments"},
         },
         "required": ["server", "tool"],
-        "additionalProperties": False,
     },
 )
 def call_mcp_tool(server: str, tool: str, arguments: str = "{}") -> str:
@@ -57,7 +52,7 @@ def call_mcp_tool(server: str, tool: str, arguments: str = "{}") -> str:
 @registry.register(
     name="list_mcp_servers",
     description="List configured global MCP servers and current connection health.",
-    parameters={"type": "object", "properties": {}, "additionalProperties": False},
+    parameters={"type": "object", "properties": {}},
 )
 def list_mcp_servers() -> str:
     from data_agent.agent.loop import get_mcp_manager
@@ -77,18 +72,12 @@ def list_mcp_servers() -> str:
         "properties": {
             "name": {"type": "string"},
             "transport": {"type": "string", "enum": ["stdio", "sse", "streamable-http"]},
-            "command": {"type": "string", "default": ""},
-            "args": {
-                "type": "array",
-                "items": {"type": "string"},
-                "default": None,
-                "nullable": True,
-            },
-            "url": {"type": "string", "default": ""},
-            "enabled": {"type": "boolean", "default": True},
+            "command": {"type": "string"},
+            "args": {"type": "array", "items": {"type": "string"}},
+            "url": {"type": "string"},
+            "enabled": {"type": "boolean"},
         },
         "required": ["name", "transport"],
-        "additionalProperties": False,
     },
 )
 def add_mcp_server(
@@ -116,12 +105,7 @@ def add_mcp_server(
 @registry.register(
     name="enable_mcp_server",
     description="Enable a global MCP server configuration.",
-    parameters={
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"],
-        "additionalProperties": False,
-    },
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
 )
 def enable_mcp_server(name: str) -> str:
     return _set_mcp_server_enabled(name, True)
@@ -130,12 +114,7 @@ def enable_mcp_server(name: str) -> str:
 @registry.register(
     name="disable_mcp_server",
     description="Disable a global MCP server configuration.",
-    parameters={
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"],
-        "additionalProperties": False,
-    },
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
 )
 def disable_mcp_server(name: str) -> str:
     return _set_mcp_server_enabled(name, False)
@@ -154,12 +133,7 @@ def _set_mcp_server_enabled(name: str, enabled: bool) -> str:
 @registry.register(
     name="delete_mcp_server",
     description="Delete a global MCP server configuration.",
-    parameters={
-        "type": "object",
-        "properties": {"name": {"type": "string"}},
-        "required": ["name"],
-        "additionalProperties": False,
-    },
+    parameters={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
 )
 def delete_mcp_server(name: str) -> str:
     config = _load_config()

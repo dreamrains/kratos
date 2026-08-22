@@ -66,52 +66,6 @@ def build_required_question_candidate(
     )
 
 
-def build_dataset_transformation_candidate(
-    *,
-    session_id: str,
-    turn_id: str,
-    proposal_ref: dict[str, Any],
-) -> QuestionCandidate:
-    """Create the canonical confirmation request for one persisted data proposal."""
-    proposal_id = str(proposal_ref.get("proposal_id") or "").strip()
-    data_version = str(proposal_ref.get("data_version") or "").strip()
-    spec_version = str(proposal_ref.get("spec_version") or "").strip()
-    candidate_fingerprint = str(proposal_ref.get("candidate_fingerprint") or "").strip()
-    if not proposal_id or not data_version or not spec_version or not candidate_fingerprint:
-        raise ConfirmationContractError("dataset transformation proposal reference is incomplete")
-    identity = hashlib.sha256(
-        json.dumps(
-            {"session_id": session_id, "turn_id": turn_id, "proposal_id": proposal_id, "data_version": data_version, "spec_version": spec_version, "candidate_fingerprint": candidate_fingerprint},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    return QuestionCandidate(
-        confirmation_id=f"transform_{identity[:24]}",
-        session_id=session_id,
-        turn_id=turn_id,
-        decision_key=f"{session_id}:dataset_transformation:{proposal_id}",
-        source="data_cleaning",
-        operation="dataset_transformation",
-        question="Apply the proposed data transformation?",
-        decision_impact="This change creates a new analysis dataset version.",
-        answer_mode=AnswerMode.SINGLE_SELECT,
-        options=(ConfirmationOption("Approve", "approve"), ConfirmationOption("Reject", "reject")),
-        blocking_surfaces=("analysis_execution",),
-        skippable=True,
-        resolution_action="approve_dataset_transformation",
-        resolution_params={
-            "proposal_id": proposal_id,
-            "artifact_path": str(proposal_ref.get("artifact_path") or ""),
-            "data_version": data_version,
-            "spec_version": spec_version,
-            "candidate_fingerprint": candidate_fingerprint,
-        },
-        data_version=data_version,
-        spec_version=spec_version,
-    )
-
-
 def _build_question_candidate(
     *,
     session_id: str,
@@ -272,11 +226,6 @@ def build_action_registry() -> ResolutionActionRegistry:
     registry = ResolutionActionRegistry()
     registry.register("record_confirmation_answer", _record_confirmation_answer)
     registry.register(
-        "approve_dataset_transformation",
-        _record_dataset_transformation_approval,
-        validator=lambda _context, answer: answer in {"approve", "reject"},
-    )
-    registry.register(
         "set_analysis_stage",
         _apply_state_update_action,
         validator=_validate_stage_action,
@@ -287,21 +236,6 @@ def build_action_registry() -> ResolutionActionRegistry:
         validator=_validate_method_action,
     )
     return registry
-
-
-def _record_dataset_transformation_approval(
-    context: ResolutionContext,
-    answer: Any,
-) -> dict[str, Any]:
-    """Record the exact approval subject; candidate computation stays in data_clean."""
-    return {
-        "confirmation_id": context.confirmation_id,
-        "proposal_id": str(context.parameters.get("proposal_id") or ""),
-        "data_version": str(context.parameters.get("data_version") or ""),
-        "spec_version": str(context.parameters.get("spec_version") or ""),
-        "candidate_fingerprint": str(context.parameters.get("candidate_fingerprint") or ""),
-        "approved": answer == "approve",
-    }
 
 
 def _answer_mode(
@@ -366,11 +300,7 @@ def _validate_stage_action(context: ResolutionContext, answer: Any) -> bool:
 def _validate_method_action(context: ResolutionContext, answer: Any) -> bool:
     updates = context.parameters.get("state_updates")
     confirmation = updates.get("method_confirmation") if isinstance(updates, dict) else None
-    if not isinstance(confirmation, dict):
-        return False
-    from data_agent.agent.analysis_plan_contracts import analysis_plan_id_from_mapping
-
-    return bool(analysis_plan_id_from_mapping(confirmation))
+    return isinstance(confirmation, dict) and bool(confirmation.get("analysis_spec_id"))
 
 
 def _question_identity(

@@ -96,23 +96,11 @@ _DATA_REQUIREMENT_KEYWORDS = (
 _ANALYSIS_KEYWORDS = (
     "趋势", "对比", "比较", "归因", "为什么", "原因", "预测", "异常",
     "漏斗", "转化", "贡献", "效果", "是否值得", "长期运营", "有没有",
-    "分布", "相关性", "相关", "增长", "下降", "上升", "影响", "因素",
+    "分布", "相关性", "增长", "下降", "上升",
     "频次", "频率", "最高", "最低", "排名", "排行", "前几", "最多", "最少",
     "trend", "compare", "why", "reason", "decline", "drop", "driver",
     "forecast", "predict", "effect", "causal", "funnel", "conversion",
     "evaluate", "worth", "analyze", "correlation", "top", "rank", "ranking",
-    "factors", "associated",
-)
-
-# Factor/association wording selects the dedicated ``factor_relationship``
-# playbook (see ``method_playbooks``). These keywords are a subset of the
-# analysis-direction family — they classify the turn as ``directed_analysis``
-# via ``_ANALYSIS_KEYWORDS`` and are also queried by the playbook router to
-# disambiguate factor questions from period-change ``driver_decomposition``.
-_FACTOR_RELATIONSHIP_KEYWORDS = (
-    "影响因素", "显著影响", "驱动因素", "相关因素",
-    "associated factors", "significant factors",
-    "相关", "因素", "factors", "associated",
 )
 _GUIDANCE_KEYWORDS = (
     "不知道如何分析", "帮我看看", "看看这份数据", "分析一下",
@@ -382,42 +370,3 @@ def _try_llm_classify(text: str, session_context: str) -> tuple[str, list] | Non
         return result["intent_type"], result.get("ambiguities", [])
     except Exception:
         return None
-
-
-def classify_intent(user_input: str, data_loaded: bool = False) -> TurnIntent:
-    """Classify a single user turn into a :class:`TurnIntent`.
-
-    This is the prompt→intent accessor used by analysis-route builders and
-    playbook selectors. ``data_loaded`` selects between the ``data_loaded``
-    and ``no_data`` session states so callers do not have to fabricate a
-    session-context string. The result always carries ``clarity``,
-    ``data_state``, and ``recommended_action`` consistent with the canonical
-    :func:`plan_turn_intent` path.
-    """
-
-    session_context = (
-        "- dataset: rows loaded, columns: loaded"
-        if data_loaded
-        else ""
-    )
-    intent = plan_turn_intent(user_input or "", session_context)
-    # Factor/association questions that include a clear directional marker
-    # should reach ``directed_analysis`` so the playbook selector builds an
-    # executable plan rather than a guidance/data-requirement response.
-    text = (user_input or "").lower()
-    if (
-        any(keyword in text for keyword in _FACTOR_RELATIONSHIP_KEYWORDS)
-        and intent.intent_type not in {"directed_analysis", "comprehensive_report"}
-    ):
-        readiness = "ready" if data_loaded else "missing_data"
-        intent = TurnIntent(
-            intent_type="directed_analysis",
-            clarity="clear",
-            data_state=intent.data_state,
-            analysis_stage=_stage_for("directed_analysis", intent.data_state, readiness),
-            recommended_action=_action_for("directed_analysis", intent.data_state, readiness),
-            execution_readiness=readiness,
-            reason="factor-relationship question routed to directed analysis",
-            ambiguities=intent.ambiguities,
-        )
-    return intent

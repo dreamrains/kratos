@@ -98,21 +98,17 @@ def detect_data_quality(name: str) -> str:
 
     rows = df.shape[0]
     issues = []
-    missingness = []
-    outliers = []
 
     # 缺失检测
     missing = df.isnull().sum()
     for col, count in missing.items():
         if count > 0:
-            finding = {
+            issues.append({
                 "type": "missing_values",
                 "column": col,
                 "count": int(count),
                 "percentage": round(count / rows * 100, 2),
-            }
-            missingness.append(dict(finding))
-            issues.append(finding)
+            })
 
     # 常量列
     for col in df.columns:
@@ -125,15 +121,11 @@ def detect_data_quality(name: str) -> str:
 
     # 重复行
     dup_count = int(df.duplicated().sum())
-    duplicates = {
-        "count": dup_count,
-        "percentage": round(dup_count / rows * 100, 2) if rows else 0.0,
-    }
     if dup_count > 0:
         issues.append({
             "type": "duplicate_rows",
             "count": dup_count,
-            "percentage": duplicates["percentage"],
+            "percentage": round(dup_count / rows * 100, 2),
         })
 
     # 数值列异常值（IQR方法）
@@ -146,27 +138,16 @@ def detect_data_quality(name: str) -> str:
             upper = q3 + 1.5 * iqr
             outlier_count = int(((df[col] < lower) | (df[col] > upper)).sum())
             if outlier_count > 0:
-                finding = {
+                issues.append({
                     "type": "outliers",
                     "column": col,
                     "count": outlier_count,
                     "percentage": round(outlier_count / rows * 100, 2),
                     "bounds": {"lower": round(float(lower), 4), "upper": round(float(upper), 4)},
-                }
-                outliers.append(dict(finding))
-                issues.append(finding)
+                })
 
     return json.dumps({
         "dataset": name,
-        "sample_size": int(rows),
-        "missingness": missingness,
-        "duplicates": duplicates,
-        "outliers": outliers,
-        "limitations": [
-            "Outliers use the 1.5 IQR rule; domain-specific anomalies may differ.",
-            "Duplicate detection compares complete rows and does not infer entity-level duplicates.",
-        ],
-        "allowed_claim_class": "descriptive",
         "total_issues": len(issues),
         "issues": issues,
     }, ensure_ascii=False, indent=2)

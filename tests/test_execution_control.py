@@ -1,9 +1,6 @@
 import json
 import sys
-import uuid
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -22,16 +19,6 @@ from data_agent.session.task_manager import task_manager
 from data_agent.session.workspace import Workspace
 
 
-def test_turn_execution_state_mints_stable_unique_provenance_identity():
-    first = TurnExecutionState(ToolExecutionBudget())
-    second = TurnExecutionState(ToolExecutionBudget())
-
-    assert first.turn_id.startswith("turn_")
-    assert second.turn_id.startswith("turn_")
-    assert first.turn_id != second.turn_id
-    assert first.turn_id == first.turn_id
-
-
 def _loaded_context() -> str:
     return "- main: 20 rows x 4 cols, columns: date, revenue, cost, user_id"
 
@@ -41,13 +28,10 @@ def test_budget_soft_and_hard_thresholds():
 
     state.record_tool_call("list_data", {})
     state.record_tool_call("describe_dataset", {})
-    # run_python counts toward tool_calls; pending state starts only on success.
+    # run_python counts toward tool_calls and sets pending_fallback_resolution
     state.record_tool_call("run_python", {})
-    state.record_tool_success("run_python")
-    # record_evidence_record is meta, does NOT count toward tool_calls, and
-    # resolves a successful fallback only after its own success.
+    # record_evidence_record is meta, does NOT count toward tool_calls, but resolves fallback
     state.record_tool_call("record_evidence_record", {})
-    state.record_tool_success("record_evidence_record")
 
     assert state.tool_calls == 3  # list_data + describe_dataset + run_python
     assert state.pending_fallback_resolution is False
@@ -110,22 +94,6 @@ def test_elapsed_time_budget_blocks_more_tools():
         raise AssertionError("expected elapsed time budget to block tool calls")
 
 
-def test_exploration_cannot_consume_synthesis_or_audit_reserves():
-    state = TurnExecutionState(ToolExecutionBudget(
-        token_budget=1_000,
-        synthesis_reserve_tokens=200,
-        audit_reserve_tokens=100,
-        revision_reserve_tokens=100,
-    ))
-    state.record_token_usage(600, phase="exploration")
-
-    assert state.exploration_token_budget == 600
-    assert state.exploration_budget_exhausted is True
-    assert state.can_run_phase("synthesis")
-    assert state.can_run_phase("audit")
-    assert "assurance reserves" in state.prompt_hint().lower()
-
-
 def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch):
     from data_agent.agent.compact import persist_large_output
     from data_agent.config import get_config
@@ -143,7 +111,7 @@ def test_run_python_success_requires_resolution_before_more_exploration():
 
     state.ensure_can_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
     state.record_tool_call("run_python", {"purpose": "unsupported custom check", "code": "1 + 1"})
-    state.record_tool_success("run_python")
+    state.record_tool_success()
 
     try:
         state.ensure_can_call("preview_data", {"name": "main"})
@@ -153,59 +121,6 @@ def test_run_python_success_requires_resolution_before_more_exploration():
         raise AssertionError("expected fallback result to require evidence or limitation resolution")
 
     state.ensure_can_call("record_evidence_record", {"record_json": "{}"})
-
-
-def test_failed_run_python_does_not_create_pending_fallback():
-    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
-    args = {"purpose": "custom check", "code": "raise ValueError('x')"}
-
-    state.record_tool_call("run_python", args)
-    state.record_tool_error("run_python", args, '{"error":"x"}')
-
-    assert state.pending_fallback_resolution is False
-
-
-def test_successful_run_python_sets_pending_and_prompt_names_resolution():
-    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
-    args = {"purpose": "custom check", "code": "print(1)"}
-
-    state.record_tool_call("run_python", args)
-    state.record_tool_success("run_python")
-
-    hint = state.prompt_hint()
-    assert state.pending_fallback_resolution is True
-    assert "pending resolution" in hint
-    assert "record_evidence_record" in hint
-    assert "Do not call run_python again" in hint
-    budget_index = hint.find("Execution budget")
-    assert budget_index == -1 or hint.index("pending resolution") < budget_index
-
-
-def test_failed_resolution_does_not_clear_pending_fallback():
-    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
-    state.record_tool_call("run_python", {"purpose": "check", "code": "print(1)"})
-    state.record_tool_success("run_python")
-
-    resolution = {"record_json": "{}"}
-    state.record_tool_call("record_evidence_record", resolution)
-    state.record_tool_error(
-        "record_evidence_record",
-        resolution,
-        '{"error":"invalid record"}',
-    )
-
-    assert state.pending_fallback_resolution is True
-
-
-def test_successful_resolution_clears_pending_fallback():
-    state = TurnExecutionState(ToolExecutionBudget(profile="analysis"))
-    state.record_tool_call("run_python", {"purpose": "check", "code": "print(1)"})
-    state.record_tool_success("run_python")
-
-    state.record_tool_call("record_evidence_record", {"record_json": "{}"})
-    state.record_tool_success("record_evidence_record")
-
-    assert state.pending_fallback_resolution is False
 
 
 def test_repeated_tool_error_is_blocked_after_two_failures():
@@ -221,53 +136,6 @@ def test_repeated_tool_error_is_blocked_after_two_failures():
         assert "repeated tool error" in str(exc).lower()
     else:
         raise AssertionError("expected repeated forecast error to be blocked")
-
-
-def test_consecutive_error_burst_allows_one_changed_recovery_call():
-    """A corrected call must remain possible after one parallel error burst."""
-
-    state = TurnExecutionState(ToolExecutionBudget(max_consecutive_errors=3))
-    for index in range(3):
-        state.record_tool_error(
-            "create_chart",
-            {"purpose": "analysis", "chart": index},
-            '{"error":"invalid chart purpose"}',
-        )
-
-    corrected = {"purpose": "evidence", "chart": 0}
-    state.ensure_can_call("create_chart", corrected)
-    state.record_tool_call("create_chart", corrected)
-    state.record_tool_success()
-
-    assert state.consecutive_errors == 0
-    state.ensure_can_call("create_chart", {"purpose": "evidence", "chart": 1})
-
-
-def test_consecutive_error_burst_blocks_a_second_failed_recovery():
-    """The recovery allowance is bounded rather than a new retry loop."""
-
-    state = TurnExecutionState(ToolExecutionBudget(max_consecutive_errors=3))
-    for index in range(3):
-        state.record_tool_error(
-            "record_evidence_record",
-            {"record": index},
-            '{"error":"missing dataset"}',
-        )
-
-    recovery = {"record": "corrected-once"}
-    state.ensure_can_call("record_evidence_record", recovery)
-    state.record_tool_call("record_evidence_record", recovery)
-    state.record_tool_error(
-        "record_evidence_record",
-        recovery,
-        '{"error":"still invalid"}',
-    )
-
-    with pytest.raises(BudgetExceeded, match="Consecutive tool errors"):
-        state.ensure_can_call(
-            "record_evidence_record",
-            {"record": "different-but-second-recovery"},
-        )
 
 
 def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
@@ -297,10 +165,10 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
 
 def test_confirmation_gate_ignores_tools_without_capability_metadata():
     state = AnalysisSessionState(session_id="gate_unknown_tool")
-    state.set_analysis_plan({
+    state.analysis_spec = {
         "confirmation_policy": {"requires_confirmation": True},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
-    })
+    }
     state.pending_confirmations = [{"id": "method_gate", "status": "pending"}]
 
     controller = AnalysisFlowController("gate_unknown_tool")
@@ -362,11 +230,11 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
     workspace_obj = Workspace()
     ctx = AgentContext(session_id="loop_gate", workspace=workspace_obj)
     state = AnalysisSessionState(session_id="loop_gate")
-    state.set_analysis_plan({
+    state.analysis_spec = {
         "id": "spec_gate",
         "confirmation_policy": {"requires_confirmation": True, "confirmation_type": "method_confirmation"},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
-    })
+    }
     state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation"}]
     ctx.analysis_state = state
     loop = AgentLoop(client=_OneToolClient("causal_analysis", {"name": "main", "target_col": "revenue"}), session_id="loop_gate")
@@ -767,13 +635,12 @@ def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(mo
         def chat(self, *args, **kwargs):
             raise AssertionError("LLM should not be called before required confirmation")
 
-    session_id = f"playbook_pending_gate_{uuid.uuid4().hex}"
-    ctx = AgentContext(session_id=session_id, workspace=Workspace())
-    state = AnalysisSessionState(session_id=session_id, data_state="data_loaded")
+    ctx = AgentContext(session_id="playbook_pending_gate", workspace=Workspace())
+    state = AnalysisSessionState(session_id="playbook_pending_gate", data_state="data_loaded")
     state.active_scope["active_dataset"] = "main"
     state.active_scope["active_mode"] = "data_loaded"
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id=session_id)
+    loop = AgentLoop(client=FailingClient(), session_id="playbook_pending_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
@@ -839,26 +706,16 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     )
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr(AnalysisFlowController, "prepare_turn", lambda self, state, intent, user_input, dataset_profile: None)
-    from data_agent.agent import trust_workflow_runtime as runtime
-
-    real_verify = runtime.maybe_verify_turn_claims
-    verification_calls = []
-
-    def counting_verify(user_input, state, **kwargs):
-        verification_calls.append(len(state.evidence_records))
-        return real_verify(user_input, state, **kwargs)
-
-    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", counting_verify)
 
     workspace_obj = Workspace()
     ctx = AgentContext(session_id="loop_synthesis_policy", workspace=workspace_obj)
     state = AnalysisSessionState(session_id="loop_synthesis_policy")
-    state.set_analysis_plan({
+    state.analysis_spec = {
         "playbook_id": "retention_lifecycle",
         "question_type": "diagnostic",
         "confirmation_policy": {"requires_confirmation": False},
         "limitations": ["aggregate retention data"],
-    })
+    }
     ctx.analysis_state = state
     client = _EvidenceThenFinalClient()
     loop = AgentLoop(client=client, session_id="loop_synthesis_policy")
@@ -868,7 +725,6 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
         result = loop.run_turn("analyze retention formula")
 
     assert result == "final answer"
-    assert verification_calls == [1, 1]
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]
@@ -951,47 +807,6 @@ def test_synthesis_policy_injection_creates_verification_report_first(monkeypatc
     assert loop._turn_verification_injected is True
     assert loop._turn_synthesis_policy_injected is True
     assert "<synthesis_policy" in loop._turn_synthesis_policy_instruction
-
-
-def test_synthesis_policy_reverifies_when_evidence_changes_in_same_turn(monkeypatch):
-    intent = TurnIntent(
-        intent_type="directed_analysis",
-        clarity="clear",
-        data_state="data_loaded",
-        analysis_stage="execute",
-        recommended_action="run_analysis",
-        execution_readiness="ready",
-        reason="test",
-        ambiguities=[],
-    )
-    ctx = AgentContext(session_id="loop_incremental_verification", workspace=Workspace())
-    state = AnalysisSessionState(session_id="loop_incremental_verification")
-    state.evidence_records = [{"id": "ev_1", "claim": "First bound claim"}]
-    ctx.analysis_state = state
-    loop = AgentLoop(client=object(), session_id="loop_incremental_verification")
-    loop.context = ctx
-    loop._last_turn_intent = intent
-    loop._reset_turn_tracking()
-
-    verification_sizes = []
-
-    def fake_verify(_user_input, current_state):
-        verification_sizes.append(len(current_state.evidence_records))
-        return {"id": f"vr_{len(verification_sizes)}"}
-
-    from data_agent.agent import trust_workflow_runtime as runtime
-
-    monkeypatch.setattr(runtime, "maybe_verify_turn_claims", fake_verify)
-    monkeypatch.setattr(runtime, "maybe_create_hypothesis_set", lambda *_args, **_kwargs: None)
-
-    with use_agent_context(ctx):
-        loop._maybe_inject_synthesis_policy("compare groups")
-        state.evidence_records.append({"id": "ev_2", "claim": "Second bound claim"})
-        loop._maybe_inject_synthesis_policy("compare groups")
-
-    assert verification_sizes == [1, 2]
-    assert loop._turn_verification_injected is True
-    assert loop._turn_synthesis_policy_injected is True
 
 
 def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_path):
@@ -1150,40 +965,3 @@ def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monke
     assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
     assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
     assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()
-
-
-def test_completion_guard_names_planned_structured_tools_not_requirement_hashes():
-    from data_agent.agent.loop import _capability_hint_for_unmet
-
-    decision = type("Decision", (), {
-        "recoverable_requirement_ids": (
-            "req_distribution_sample_size",
-            "req_relationship_correlation_method",
-        ),
-    })()
-    plan = {
-        "method_plan": [
-            {
-                "step_id": "step_distribution",
-                "method": "distribution_analysis",
-                "required_capability": "analysis.distribution",
-                "requirement_ids": ["req_distribution_sample_size"],
-                "combination_mode": "independent",
-            },
-            {
-                "step_id": "step_relationship",
-                "method": "correlation_analysis",
-                "required_capability": "analysis.correlation",
-                "requirement_ids": ["req_relationship_correlation_method"],
-                "combination_mode": "independent",
-            },
-        ],
-    }
-
-    hint = _capability_hint_for_unmet(decision, plan=plan)
-
-    assert "step_distribution" in hint
-    assert "distribution_analysis" in hint
-    assert "step_relationship" in hint
-    assert "correlation_analysis" in hint
-    assert "req_distribution_sample_size" not in hint

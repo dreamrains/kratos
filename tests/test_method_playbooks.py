@@ -35,7 +35,6 @@ def test_method_playbooks_are_complete():
         "metric_overview",
         "trend_period_comparison",
         "driver_decomposition",
-        "factor_relationship",
         "funnel_conversion",
         "retention_lifecycle",
         "evaluation_causal",
@@ -107,10 +106,10 @@ def test_method_confirmation_is_answerable_when_playbook_requires_confirmation()
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_method_confirmation_uses_new_selection_plan_when_existing_state_has_stale_plan():
+def test_method_confirmation_uses_new_selection_spec_when_existing_state_has_stale_spec():
     state = AnalysisSessionState(session_id="method_stale_spec", data_state="data_loaded")
-    state.set_analysis_plan({
-        "id": "old_plan",
+    state.set_analysis_spec({
+        "id": "old_spec",
         "playbook_id": "driver_decomposition",
         "confirmation_policy": {
             "requires_confirmation": True,
@@ -127,20 +126,20 @@ def test_method_confirmation_uses_new_selection_plan_when_existing_state_has_sta
         execution_readiness="ready",
     )
     selection = choose_playbook("forecast revenue and ROI", intent, has_data=True)
-    assert selection.analysis_plan is not None
-    selection.analysis_plan["id"] = "new_forecast_plan"
+    assert selection.analysis_spec is not None
+    selection.analysis_spec["id"] = "new_forecast_spec"
 
     apply_selection_to_state(state, selection)
 
     confirmation = next(
         item for item in state.pending_confirmations
-        if item.get("related_plan_id") == selection.analysis_plan["id"]
+        if item.get("related_spec_id") == selection.analysis_spec["id"]
     )
     updates = json.loads(confirmation["state_updates"])
-    assert confirmation["related_plan_id"] == selection.analysis_plan["id"]
-    assert state.analysis_plan["id"] == selection.analysis_plan["id"]
-    assert state.analysis_plan["playbook_id"] == "forecast_decision_simulation"
-    assert updates["method_confirmation"]["analysis_plan_id"] == selection.analysis_plan["id"]
+    assert confirmation["related_spec_id"] == selection.analysis_spec["id"]
+    assert state.analysis_spec["id"] == selection.analysis_spec["id"]
+    assert state.analysis_spec["playbook_id"] == "forecast_decision_simulation"
+    assert updates["method_confirmation"]["analysis_spec_id"] == selection.analysis_spec["id"]
     assert confirmation["blocking_reason"] != "old reason"
 
 
@@ -161,14 +160,14 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
         apply_selection_to_state(state, selection)
         confirmation = next(
             item for item in state.pending_confirmations
-            if item.get("related_plan_id") == state.analysis_plan["id"]
+            if item.get("related_spec_id") == state.analysis_spec["id"]
         )
         updates = json.loads(confirmation["state_updates"])
 
         assert updates["stage"] in STAGES
         assert updates["method_confirmation"] == {
             "playbook_id": "forecast_decision_simulation",
-            "analysis_plan_id": state.analysis_plan["id"],
+            "analysis_spec_id": state.analysis_spec["id"],
             "allowed_actions": ["confirm_method", "clarify_method_scope"],
         }
 
@@ -203,7 +202,7 @@ def test_method_scope_clarification_keeps_forecast_blocked_until_method_is_confi
     assert controller.is_capability_blocked_by_confirmation(clarify_state, "analysis.forecast") is True
     clarification = next(item for item in clarify_state.pending_confirmations if item["status"] == "pending")
     assert clarification["confirmation_type"] == "method_scope_clarification"
-    assert clarification["related_plan_id"] == clarify_state.analysis_plan["id"]
+    assert clarification["related_spec_id"] == clarify_state.analysis_spec["id"]
     assert clarification["options"]
 
     clarify_state.resolve_confirmation(clarification["id"], "confirm_method")
@@ -217,12 +216,12 @@ def test_method_scope_clarification_keeps_forecast_blocked_until_method_is_confi
 
     confirm_state.resolve_confirmation(confirmation["id"], "confirm_method")
 
-    assert confirm_state.analysis_plan["method_confirmation"]["status"] == "approved"
+    assert confirm_state.analysis_spec["method_confirmation"]["status"] == "approved"
     assert controller.is_capability_blocked_by_confirmation(confirm_state, "analysis.forecast") is False
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_changed_high_risk_request_replaces_plan_and_requires_new_confirmation():
+def test_changed_high_risk_request_replaces_spec_and_requires_new_confirmation():
     state = AnalysisSessionState(session_id="method_changed_request", data_state="data_loaded")
     intent = TurnIntent(
         intent_type="directed_analysis",
@@ -234,34 +233,34 @@ def test_changed_high_risk_request_replaces_plan_and_requires_new_confirmation()
     )
 
     first = choose_playbook("forecast revenue and ROI next month", intent, has_data=True)
-    assert first.analysis_plan is not None
-    assert first.analysis_plan["id"]
+    assert first.analysis_spec is not None
+    assert first.analysis_spec["id"]
     apply_selection_to_state(state, first)
-    first_plan_id = state.analysis_plan["id"]
+    first_spec_id = state.analysis_spec["id"]
     first_confirmation = next(
         item for item in state.pending_confirmations
-        if item.get("related_plan_id") == first_plan_id
+        if item.get("related_spec_id") == first_spec_id
     )
     state.resolve_confirmation(first_confirmation["id"], "confirm_method")
 
     second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
     duplicate_second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
-    assert second.analysis_plan is not None
-    assert duplicate_second.analysis_plan is not None
+    assert second.analysis_spec is not None
+    assert duplicate_second.analysis_spec is not None
     assert second.primary_playbook_id == first.primary_playbook_id
-    assert second.analysis_plan["id"] != first_plan_id
-    assert duplicate_second.analysis_plan["id"] == second.analysis_plan["id"]
+    assert second.analysis_spec["id"] != first_spec_id
+    assert duplicate_second.analysis_spec["id"] == second.analysis_spec["id"]
 
     apply_selection_to_state(state, second)
     apply_selection_to_state(state, duplicate_second)
 
-    second_plan_id = second.analysis_plan["id"]
+    second_spec_id = second.analysis_spec["id"]
     second_confirmations = [
         item for item in state.pending_confirmations
-        if item.get("related_plan_id") == second_plan_id and item.get("status") == "pending"
+        if item.get("related_spec_id") == second_spec_id and item.get("status") == "pending"
     ]
-    assert state.analysis_plan["id"] == second_plan_id
-    assert state.analysis_plan["goal"] == "forecast cost and ROI next quarter"
+    assert state.analysis_spec["id"] == second_spec_id
+    assert state.analysis_spec["goal"] == "forecast cost and ROI next quarter"
     assert state.goal == "forecast cost and ROI next quarter"
     assert len(second_confirmations) == 1
     assert second_confirmations[0]["id"] != first_confirmation["id"]
@@ -290,67 +289,28 @@ def test_selector_maps_common_questions_to_playbooks():
             assert selection.primary_playbook_id == expected_playbook
         assert selection.recommended_paths
         if expected_intent == "directed_analysis":
-            assert selection.analysis_plan is not None
-            assert selection.analysis_plan["contract_version"] == "analysis_plan.v1"
-            assert "analysis_spec" not in selection.to_dict()
+            assert selection.analysis_spec is not None
             capabilities = {
                 step["required_capability"]
-                for step in selection.analysis_plan["method_plan"]
+                for step in selection.analysis_spec["method_plan"]
                 if step.get("required_capability")
             }
             assert capabilities
 
 
-@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_business_playbook_analysis_plan_contains_visualization_strategy_and_stats():
+def test_business_playbook_analysis_spec_contains_visualization_strategy_and_stats():
     ctx = _loaded_context("user_id, revenue, pay_time, feature_type, period")
     intent = plan_turn_intent("分析功能效果和收益", ctx)
     selection = select_playbooks("分析功能效果和收益", intent, AnalysisSessionState(session_id="business_spec"), ctx)
 
-    plan = selection.analysis_plan
+    spec = selection.analysis_spec
 
-    assert plan is not None
-    assert "visualization_strategy" in plan
-    assert "required_charts" not in plan
-    assert "statistical_requirements" in plan
-    assert "effect_size" in plan["statistical_requirements"]
-    compiled_names = {
-        requirement["name"]
-        for group in plan["analysis_requirements"].values()
-        for requirement in group
-    }
-    assert set(plan["statistical_requirements"]) <= compiled_names
-    assert any(item.get("chart_name") == "before_after_comparison" for item in plan["visualization_strategy"])
-
-
-def test_playbook_requirement_strings_remain_compiler_inputs():
-    playbook = PLAYBOOKS["effect_evaluation"]
-
-    assert playbook.output_policy["statistical_requirements"] == [
-        "effective_sample_size",
-        "denominator",
-        "missingness",
-        "estimand",
-        "effect_estimate",
-        "effect_size",
-        "confidence_interval",
-        "calculation_method",
-        "assumptions",
-        "sample_adequacy",
-        "significance",
-    ]
-    assert playbook.method_plan_template[1]["evidence_requirements"] == [
-        "effective_sample_size",
-        "denominator",
-        "missingness",
-        "estimand",
-        "effect_estimate",
-        "confidence_interval",
-        "calculation_method",
-        "assumptions",
-        "sample_adequacy",
-        "significance",
-    ]
+    assert spec is not None
+    assert "visualization_strategy" in spec
+    assert "required_charts" not in spec
+    assert "statistical_requirements" in spec
+    assert "effect_size" in spec["statistical_requirements"]
+    assert any(item.get("chart_name") == "before_after_comparison" for item in spec["visualization_strategy"])
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
@@ -361,7 +321,7 @@ def test_selector_handles_no_data_business_question_as_requirement():
 
     assert selection.primary_playbook_id == "evaluation_causal"
     assert "retention_lifecycle" in selection.supporting_playbook_ids
-    assert selection.analysis_plan is None
+    assert selection.analysis_spec is None
     assert selection.data_requirement is not None
     text = json.dumps(selection.data_requirement).lower()
     for term in ("treatment", "outcome", "control", "cost"):
@@ -378,12 +338,12 @@ def test_controller_writes_playbook_selection_to_state_and_activates_capability(
     controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
     controller.activate_tool_groups(registry, intent, state, "why did revenue decline")
 
-    assert state.analysis_plan is not None
-    assert state.analysis_plan["playbook_id"] == "driver_decomposition"
+    assert state.analysis_spec is not None
+    assert state.analysis_spec["playbook_id"] == "driver_decomposition"
     assert state.last_recommended_paths
     capabilities = {
         step["required_capability"]
-        for step in state.analysis_plan["method_plan"]
+        for step in state.analysis_spec["method_plan"]
         if step.get("required_capability")
     }
     assert "analysis.dimension_decomposition" in capabilities
@@ -410,7 +370,7 @@ def test_english_business_requests_are_direct_analysis():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_controller_keeps_generated_playbook_plan_display_only(tmp_path):
+def test_controller_keeps_generated_legacy_spec_display_only(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -427,13 +387,9 @@ def test_controller_keeps_generated_playbook_plan_display_only(tmp_path):
         controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
         second_tasks = task_manager.list_for_scope(session_id="controller_workflow")
 
-        assert state.analysis_plan is not None
-        assert state.analysis_plan["contract_version"] == "analysis_plan.v1"
-        # Without dataset contracts, the server-owned envelope does not
-        # materialize an executable plan; the playbook display-only plan
-        # remains as the initial projection.
-        assert state.analysis_plan["review_status"] == "display_only"
-        assert state.analysis_plan.get("workflow_id") is None
+        assert state.analysis_spec is not None
+        assert state.analysis_spec.get("contract_version") is None
+        assert state.analysis_spec.get("workflow_id") is None
         assert first_tasks == []
         assert second_tasks == []
     finally:
@@ -442,48 +398,7 @@ def test_controller_keeps_generated_playbook_plan_display_only(tmp_path):
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_controller_materializes_executable_envelope_when_dataset_contract_exists(tmp_path):
-    """When a dataset contract is present, prepare_turn must materialize the
-    canonical executable envelope before any substantive tool call."""
-
-    old_task_dir = task_manager._dir
-    old_next_id = task_manager._next_id_val
-    task_manager._dir = tmp_path / "tasks"
-    task_manager._next_id_val = 0
-    try:
-        state = AnalysisSessionState(session_id="controller_envelope", project_name=None)
-        state.dataset_contracts = [{
-            "id": "duc_orders_v1",
-            "dataset": "orders",
-            "quality_status": "ready",
-        }]
-        intent = plan_turn_intent("why did revenue decline", _loaded_context())
-        intent.intent_type = "directed_analysis"
-        intent.data_state = "data_loaded"
-
-        controller = AnalysisFlowController("controller_envelope")
-        controller.prepare_turn(state, intent, user_input="why did revenue decline", dataset_profile=_loaded_context())
-
-        plan = state.analysis_plan
-        assert plan is not None
-        assert plan["review_status"] == "executable"
-        assert all(step["dataset_inputs"] == ["orders"] for step in plan["method_plan"])
-        assert all(step["requirement_ids"] for step in plan["method_plan"])
-        assert state.turn_diagnostics
-        envelope_diag = next(
-            (item for item in state.turn_diagnostics if item.get("event") == "execution_envelope"),
-            None,
-        )
-        assert envelope_diag is not None
-        assert envelope_diag["ok"] is True
-        assert envelope_diag["plan_id"] == plan["id"]
-    finally:
-        task_manager._dir = old_task_dir
-        task_manager._next_id_val = old_next_id
-
-
-@patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_deprecated_analysis_spec_adapter_keeps_playbook_plan_display_only(tmp_path):
+def test_playbook_legacy_analysis_spec_is_display_only(tmp_path):
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -497,13 +412,13 @@ def test_deprecated_analysis_spec_adapter_keeps_playbook_plan_display_only(tmp_p
         selection = select_playbooks(user_input, intent, AnalysisSessionState(session_id="playbook_tasks"), _loaded_context("month, revenue, cost"))
 
         with use_agent_context(ctx):
-            result = json.loads(record_analysis_spec(json.dumps(selection.analysis_plan)))
+            result = json.loads(record_analysis_spec(json.dumps(selection.analysis_spec)))
 
         assert result["workflow"] == {
             "created": 0,
             "task_ids": [],
             "display_only": True,
-            "reason": "deprecated_analysis_spec_adapter_display_only",
+            "reason": "legacy_analysis_spec_display_only",
         }
         assert task_manager.list_for_scope(session_id="playbook_tasks") == []
     finally:

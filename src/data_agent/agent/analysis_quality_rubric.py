@@ -28,20 +28,11 @@ def score_analysis_quality(
     blockers: list[str] = []
 
     unsupported_claims: list[str] = []
-    blocked_claim_details: list[dict[str, Any]] = []
     for index, claim in enumerate(claim_items):
         if claim.get("material") is True and claim.get("supported") is not True:
             claim_key = str(claim.get("claim_key") or f"claim_{index + 1}")
             unsupported_claims.append(claim_key)
             blockers.append(f"unsupported_material_claim:{claim_key}")
-            blocked_claim_details.append({
-                "claim_key": claim_key,
-                "reason_codes": list(claim.get("reason_codes") or ["unsupported_material_claim"]),
-                "safe_action": claim.get("safe_action") or {
-                    "action": "remove_or_downgrade_claim",
-                    "target_claim_id": claim_key,
-                },
-            })
 
     invalid_relationships: list[str] = []
     time_scope_mismatches: list[str] = []
@@ -70,7 +61,6 @@ def score_analysis_quality(
                 claim.get("material") is True for claim in claim_items
             ),
             "unsupported_claims": unsupported_claims,
-            "blocked_claim_details": blocked_claim_details,
         },
         "relationship_integrity": {
             "status": (

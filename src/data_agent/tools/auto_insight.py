@@ -204,6 +204,12 @@ def _assess_health(df: pd.DataFrame) -> dict:
         elif missing_pct > 0:
             items.append(f"[INFO] 列 '{col}' 缺失 {missing_pct:.1f}%")
 
+    # 数据量级评估
+    if rows < 30:
+        items.append("[WARN] 数据不足 30 行，统计结果置信度低")
+    elif rows < 100:
+        items.append("[INFO] 数据量较少，复杂分析（预测、建模）可能不可靠")
+
     # 常量列
     for col in df.columns:
         if df[col].nunique() <= 1:
@@ -268,6 +274,12 @@ def _compute_health_score(df: pd.DataFrame, rows: int) -> int:
     if dup_pct > 0.1:
         score -= 10
     elif dup_pct > 0.05:
+        score -= 5
+
+    # 数据量不足惩罚
+    if rows < 30:
+        score -= 20
+    elif rows < 100:
         score -= 5
 
     return max(score, 0)

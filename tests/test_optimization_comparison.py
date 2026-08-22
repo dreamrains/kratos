@@ -37,23 +37,21 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # === 真实数据文件路径 ===
-TEST_DATA_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
-REAL_DATA_DIR = TEST_DATA_DIR
+REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
+TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
 
-# 当前规范测试文件；旧会话提示词仍保留在 ORIGINAL_PROMPT 中作为输入样本。
-CARD_PAYMENT = REAL_DATA_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "省钱卡代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "省钱卡购卡前后订单.xlsx"
+HAS_REAL_DATA = REAL_DATA_DIR.exists()
+HAS_TEST_DATA = TEST_DATA_DIR.exists()
+
+# 旧会话使用的文件
+CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
+VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
+BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
 CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
 
-ECARD_FLOW = CARD_PAYMENT
-ECARD_ORDER = CARD_ORDER
-
-HAS_REAL_DATA = all(
-    path.exists()
-    for path in (CARD_PAYMENT, VOUCHER_DETAIL, BEFORE_AFTER, CARD_ORDER)
-)
-HAS_TEST_DATA = all(path.exists() for path in (ECARD_FLOW, ECARD_ORDER))
+# 备用测试数据
+ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
+ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
 
 # 旧会话中用户的完整提示词
 ORIGINAL_PROMPT = (
@@ -528,17 +526,12 @@ class TestWorkspaceDataLoss:
         from data_agent.config import AgentConfig
         from data_agent.session.workspace import Workspace
         from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
-        from data_agent.session.task_manager import task_manager
 
         old_cfg = config._config
-        old_task_dir = task_manager._dir
-        old_next_id = task_manager._next_id_val
         config._config = AgentConfig(
             PROJECT_DIR=tmp_path / "project",
             SESSIONS_DIR=tmp_path / "sessions",
         )
-        task_manager._dir = tmp_path / "tasks"
-        task_manager.reset_for_testing()
 
         ctx = AgentContext(session_id="workspace_test", workspace=Workspace())
         token = set_current_context(ctx)
@@ -546,8 +539,6 @@ class TestWorkspaceDataLoss:
 
         reset_current_context(token)
         config._config = old_cfg
-        task_manager._dir = old_task_dir
-        task_manager._next_id_val = old_next_id
 
     def test_workspace_survives_save_restore(self, session_env):
         """workspace 数据在 save_meta + restore 后应完整恢复。"""
@@ -577,10 +568,7 @@ class TestWorkspaceDataLoss:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        from data_agent.agent.context import use_agent_context
-
-        with use_agent_context(loop.context):
-            restored = loop.context.workspace.get("test_data")
+        restored = workspace.get("test_data")
         assert restored is not None, "workspace 恢复后数据应存在"
         assert restored.shape[0] == 3
 
@@ -998,11 +986,11 @@ class TestAnalysisQualityTools:
         from data_agent.tools.analysis_flow import record_analysis_plan
 
         # 缺少 method_plan
-        incomplete = {
+        incomplete = json.dumps({
             "goal": "省钱卡效果分析",
             "question_type": "evaluation",
             "metrics": ["收益", "复购率"],
-        }
+        })
 
         result = record_analysis_plan(incomplete)
         assert "error" in result.lower(), "不完整的计划应报错"

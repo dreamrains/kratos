@@ -7,19 +7,13 @@ history or the task system.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from data_agent.agent.analysis_plan_contracts import (
-    analysis_plan_id_from_mapping,
-    normalize_analysis_plan_contract,
-)
 from data_agent.config import get_config
 
 
@@ -114,40 +108,6 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
-def _analysis_requirement_inputs(
-    plan: Any,
-    *,
-    dataset_contracts: list[dict[str, Any]],
-    route_proposals: list[dict[str, Any]],
-    active_scope: dict[str, Any],
-    goal: str,
-) -> dict[str, Any]:
-    plan_value = plan if isinstance(plan, dict) else {}
-    route_name = _text(plan_value.get("route")) or _text(active_scope.get("active_route"))
-    route: dict[str, Any] | str | None = route_name or None
-    for proposal in route_proposals:
-        if not isinstance(proposal, dict):
-            continue
-        direction = _text(proposal.get("direction") or proposal.get("route"))
-        proposal_id = _text(proposal.get("id"))
-        if route_name and route_name in {direction, proposal_id}:
-            route = proposal
-            break
-
-    playbook = None
-    playbook_id = _text(plan_value.get("playbook_id"))
-    if playbook_id:
-        from data_agent.agent.method_playbooks import get_playbook
-
-        playbook = get_playbook(playbook_id)
-    return {
-        "dataset_contracts": list(dataset_contracts or []),
-        "route": route,
-        "playbook": playbook,
-        "user_intent": plan_value.get("goal") or goal,
-    }
-
-
 def _state_path(session_id: str) -> Path:
     return get_config().sessions_resolved / session_id / "analysis_state.json"
 
@@ -159,7 +119,6 @@ class AnalysisSessionState:
     session_id: str
     project_name: Optional[str] = None
     goal: str = ""
-    explicit_user_requirements: str = ""
     stage: str = "discover"
     data_state: str = "unknown"
     data_requirements: list[dict[str, Any]] = field(default_factory=list)
@@ -168,7 +127,7 @@ class AnalysisSessionState:
     file_relationships: list[dict[str, Any]] = field(default_factory=list)
     active_bundle_id: str = ""
     analysis_plan: dict[str, Any] | None = None
-    computation_refs: list[dict[str, Any]] = field(default_factory=list)
+    analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
@@ -179,66 +138,19 @@ class AnalysisSessionState:
     verification_reports: list[dict[str, Any]] = field(default_factory=list)
     hypothesis_sets: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
-    budget_diagnostics: dict[str, Any] = field(default_factory=dict)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     regression_history: list[dict[str, Any]] = field(default_factory=list)
     active_scope: dict[str, Any] = field(default_factory=lambda: _normalize_active_scope(None))
     updated_at: str = field(default_factory=_now)
-    turn_diagnostics: list[dict[str, Any]] = field(default_factory=list)
-
-    def append_turn_diagnostic(self, diagnostic: dict[str, Any], *, limit: int = 20) -> None:
-        """Record a bounded provenance diagnostic for the current turn.
-
-        Each entry captures envelope/binding/failure identity only — no raw
-        rows or unbounded tool output — to keep memory bounded for replay.
-        """
-
-        if not isinstance(diagnostic, dict):
-            return
-        merged = list(self.turn_diagnostics or [])
-        merged.append(dict(diagnostic))
-        self.turn_diagnostics = merged[-limit:]
-
-    @property
-    def analysis_spec(self) -> dict[str, Any] | None:
-        """Deprecated read-only projection of the canonical analysis plan."""
-        return self.analysis_plan
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], session_id: str) -> "AnalysisSessionState":
         stage = data.get("stage") if data.get("stage") in STAGES else "discover"
         data_state = data.get("data_state") if data.get("data_state") in DATA_STATES else "unknown"
-        dataset_contracts = list(data.get("dataset_contracts") or [])
-        route_proposals = list(data.get("route_proposals") or [])
-        active_scope = _normalize_active_scope(data.get("active_scope"))
-        raw_plan = data.get("analysis_plan") or data.get("analysis_spec")
-        plan_result = normalize_analysis_plan_contract(
-            raw_plan,
-            require_executable=False,
-            _legacy_saved_plan_loading=True,
-            **_analysis_requirement_inputs(
-                raw_plan,
-                dataset_contracts=dataset_contracts,
-                route_proposals=route_proposals,
-                active_scope=active_scope,
-                goal=data.get("goal", ""),
-            ),
-        )
-        analysis_plan = plan_result.plan if plan_result.ok else None
-        evidence_records = []
-        for raw_record in data.get("evidence_records") or []:
-            if not isinstance(raw_record, dict):
-                continue
-            record = dict(raw_record)
-            if record.get("contract_version") != "evidence_record.v2":
-                record["provenance_status"] = "legacy_unbound"
-                record["verification_level"] = "legacy_unbound"
-            evidence_records.append(record)
         return cls(
             session_id=data.get("session_id") or session_id,
             project_name=data.get("project_name"),
             goal=data.get("goal", ""),
-            explicit_user_requirements=_text(data.get("explicit_user_requirements")),
             stage=stage,
             data_state=data_state,
             data_requirements=list(data.get("data_requirements") or []),
@@ -246,32 +158,22 @@ class AnalysisSessionState:
             dataset_bundles=list(data.get("dataset_bundles") or []),
             file_relationships=list(data.get("file_relationships") or []),
             active_bundle_id=data.get("active_bundle_id") or "",
-            analysis_plan=analysis_plan,
-            computation_refs=_dict_list_or_empty(data.get("computation_refs")),
-            evidence_records=evidence_records,
+            analysis_plan=data.get("analysis_plan") or data.get("analysis_spec"),
+            analysis_spec=data.get("analysis_spec"),
+            evidence_records=list(data.get("evidence_records") or []),
             insight_records=list(data.get("insight_records") or []),
-            dataset_contracts=dataset_contracts,
+            dataset_contracts=list(data.get("dataset_contracts") or []),
             data_understanding_bundles=_dict_list_or_empty(data.get("data_understanding_bundles")),
             cleaning_logs=list(data.get("cleaning_logs") or []),
             preview_digests=list(data.get("preview_digests") or []),
-            route_proposals=route_proposals,
+            route_proposals=list(data.get("route_proposals") or []),
             verification_reports=list(data.get("verification_reports") or []),
             hypothesis_sets=list(data.get("hypothesis_sets") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
-            budget_diagnostics=(
-                dict(data.get("budget_diagnostics"))
-                if isinstance(data.get("budget_diagnostics"), dict)
-                else {}
-            ),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
             regression_history=list(data.get("regression_history") or []),
-            active_scope=active_scope,
+            active_scope=_normalize_active_scope(data.get("active_scope")),
             updated_at=data.get("updated_at") or _now(),
-            turn_diagnostics=[
-                dict(item)
-                for item in (data.get("turn_diagnostics") or [])
-                if isinstance(item, dict)
-            ],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -279,7 +181,6 @@ class AnalysisSessionState:
             "session_id": self.session_id,
             "project_name": self.project_name,
             "goal": self.goal,
-            "explicit_user_requirements": self.explicit_user_requirements,
             "stage": self.stage,
             "data_state": self.data_state,
             "data_requirements": self.data_requirements,
@@ -288,7 +189,7 @@ class AnalysisSessionState:
             "file_relationships": self.file_relationships,
             "active_bundle_id": self.active_bundle_id,
             "analysis_plan": self.analysis_plan,
-            "computation_refs": self.computation_refs,
+            "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
             "insight_records": self.insight_records,
             "dataset_contracts": self.dataset_contracts,
@@ -299,12 +200,10 @@ class AnalysisSessionState:
             "verification_reports": self.verification_reports,
             "hypothesis_sets": self.hypothesis_sets,
             "pending_confirmations": self.pending_confirmations,
-            "budget_diagnostics": self.budget_diagnostics,
             "last_recommended_paths": self.last_recommended_paths,
             "regression_history": self.regression_history,
             "active_scope": _normalize_active_scope(self.active_scope),
             "updated_at": self.updated_at,
-            "turn_diagnostics": self.turn_diagnostics,
         }
 
     def touch(self) -> None:
@@ -373,33 +272,24 @@ class AnalysisSessionState:
         return item
 
     def set_analysis_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
-        """Deprecated callable adapter; new code must call set_analysis_plan."""
-        return self.set_analysis_plan(spec)
-
-    def set_analysis_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
-        result = normalize_analysis_plan_contract(
-            plan,
-            require_executable=False,
-            **self.analysis_requirement_inputs(plan),
-        )
-        if not result.ok:
-            raise ValueError(result.message)
-        item = result.plan
+        item = dict(spec)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.analysis_spec = item
         self.analysis_plan = item
         self.goal = item.get("goal") or self.goal
         self.stage = "plan"
         return item
 
-    def analysis_requirement_inputs(self, plan: dict[str, Any]) -> dict[str, Any]:
-        """Resolve state artifacts that are inputs to the canonical compiler."""
-
-        return _analysis_requirement_inputs(
-            plan,
-            dataset_contracts=self.dataset_contracts,
-            route_proposals=self.route_proposals,
-            active_scope=self.active_scope,
-            goal=self.goal,
-        )
+    def set_analysis_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        item = dict(plan)
+        item.setdefault("id", uuid.uuid4().hex[:10])
+        item.setdefault("created_at", _now())
+        self.analysis_plan = item
+        self.analysis_spec = item
+        self.goal = item.get("goal") or self.goal
+        self.stage = "plan"
+        return item
 
     def add_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
         item = dict(record)
@@ -407,21 +297,6 @@ class AnalysisSessionState:
         item.setdefault("created_at", _now())
         self.evidence_records.append(item)
         self.stage = "execute"
-        return item
-
-    def upsert_computation_ref(self, ref: dict[str, Any]) -> dict[str, Any]:
-        """Keep one compact, server-produced reference per turn/tool call."""
-        item = dict(ref)
-        identity = (str(item.get("turn_id") or ""), str(item.get("tool_call_id") or ""))
-        for index, existing in enumerate(self.computation_refs):
-            existing_identity = (
-                str(existing.get("turn_id") or ""),
-                str(existing.get("tool_call_id") or ""),
-            )
-            if existing_identity == identity:
-                self.computation_refs[index] = item
-                return item
-        self.computation_refs.append(item)
         return item
 
     def upsert_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -673,31 +548,22 @@ class AnalysisSessionState:
                 if key == "data_state" and value not in DATA_STATES:
                     continue
                 setattr(self, key, value)
-        plan_update = updates.get("analysis_plan")
-        if not isinstance(plan_update, dict):
-            plan_update = updates.get("analysis_spec")
-        if isinstance(plan_update, dict):
-            resolved_stage = self.stage
-            try:
-                self.set_analysis_plan(plan_update)
-            except ValueError:
-                pass
-            else:
-                self.stage = resolved_stage
+        if "analysis_spec" in updates and isinstance(updates["analysis_spec"], dict):
+            self.analysis_spec = updates["analysis_spec"]
         if isinstance(updates.get("method_confirmation"), dict):
             self._apply_method_confirmation(updates["method_confirmation"], _text(answer))
 
     def _apply_method_confirmation(self, confirmation: dict[str, Any], action: str) -> None:
-        plan = dict(self.analysis_plan) if isinstance(self.analysis_plan, dict) else {}
-        analysis_plan_id = analysis_plan_id_from_mapping(confirmation)
+        spec = self.analysis_spec if isinstance(self.analysis_spec, dict) else {}
+        spec_id = _text(confirmation.get("analysis_spec_id"))
         playbook_id = _text(confirmation.get("playbook_id"))
-        if not analysis_plan_id or analysis_plan_id != _text(plan.get("id")):
+        if not spec_id or spec_id != _text(spec.get("id")):
             return
 
         resolution = {
-            "analysis_plan_id": analysis_plan_id,
+            "analysis_spec_id": spec_id,
             "playbook_id": playbook_id,
-            "request_identity": _material_request_identity(plan.get("goal")),
+            "request_identity": _material_request_identity(spec.get("goal")),
         }
         if action == "confirm_method":
             resolution["status"] = "approved"
@@ -705,7 +571,7 @@ class AnalysisSessionState:
         elif action == "clarify_method_scope":
             resolution["status"] = "clarification_required"
             self.stage = "scope"
-            clarification_id = f"method_scope_{playbook_id}_{analysis_plan_id}"
+            clarification_id = f"method_scope_{playbook_id}_{spec_id}"
             if not any(
                 item.get("id") == clarification_id and item.get("status", "pending") == "pending"
                 for item in self.pending_confirmations
@@ -727,18 +593,14 @@ class AnalysisSessionState:
                         },
                     ],
                     "blocking_reason": "method scope requires clarification before high-risk analysis",
-                    "related_plan_id": analysis_plan_id,
-                    # Compatibility for the existing suspension persistence schema.
-                    "related_spec_id": analysis_plan_id,
+                    "related_spec_id": spec_id,
                     "state_updates": {"method_confirmation": dict(confirmation)},
                     "source": "method_scope_clarification",
                 })
         else:
             return
-        plan["method_confirmation"] = resolution
-        resolved_stage = self.stage
-        self.set_analysis_plan(plan)
-        self.stage = resolved_stage
+        spec["method_confirmation"] = resolution
+        self.analysis_spec = spec
 
 def load_analysis_state(session_id: str, project_name: Optional[str] = None) -> AnalysisSessionState:
     path = _state_path(session_id)
@@ -793,380 +655,6 @@ def _compact_trust_refs(items: Any, fields: tuple[str, ...], limit: int = 3) -> 
     return lines
 
 
-def _capsule_text(value: Any, max_chars: int = 1_200) -> str:
-    text = _text(value)
-    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
-
-
-def _capsule_identity(value: Any, max_chars: int = 320) -> str:
-    """Keep ordinary IDs exact and retain an exact digest identity for pathological values."""
-
-    text = _text(value)
-    if len(text) <= max_chars:
-        return text
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _capsule_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return sorted({_text(item) for item in value if _text(item)})
-    text = _text(value)
-    return [text] if text else []
-
-
-def _flatten_plan_requirements(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    grouped = plan.get("analysis_requirements")
-    if not isinstance(grouped, dict):
-        return []
-    return [
-        dict(item)
-        for step_id in sorted(grouped)
-        for item in (grouped.get(step_id) or [])
-        if isinstance(item, dict)
-    ]
-
-
-def _dataset_capsule_entries(
-    state: AnalysisSessionState,
-    active_datasets: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
-    collections = (
-        state.data_pool,
-        state.dataset_contracts,
-        state.data_understanding_bundles,
-        active_datasets or [],
-    )
-    for collection in collections:
-        for item in collection or []:
-            if not isinstance(item, dict):
-                continue
-            candidates = item.get("datasets") if isinstance(item.get("datasets"), list) else [item]
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
-                    continue
-                name = _text(
-                    candidate.get("dataset")
-                    or candidate.get("dataset_name")
-                    or candidate.get("name")
-                )
-                raw_fingerprint = _text(
-                    candidate.get("raw_fingerprint") or candidate.get("data_fingerprint")
-                )
-                source_fingerprint = _text(candidate.get("source_fingerprint"))
-                raw_dataset_id = _text(candidate.get("raw_dataset_id"))
-                versions = _capsule_list(
-                    candidate.get("dataset_versions")
-                    or candidate.get("dataset_version_ids")
-                    or candidate.get("dataset_version_id")
-                    or candidate.get("data_version")
-                    or candidate.get("dataset_id")
-                )
-                if not any((name, versions, raw_fingerprint, source_fingerprint)):
-                    continue
-                key = (name, raw_fingerprint, source_fingerprint)
-                entry = grouped.setdefault(key, {
-                    "name": name,
-                    "version_ids": [],
-                    "raw_fingerprint": raw_fingerprint,
-                    "source_fingerprint": source_fingerprint,
-                })
-                if raw_dataset_id:
-                    entry["raw_dataset_id"] = raw_dataset_id
-                entry["version_ids"] = sorted(set(entry["version_ids"]) | set(versions))
-    return [grouped[key] for key in sorted(grouped)]
-
-
-def _computation_digests(record: dict[str, Any]) -> list[str]:
-    digests: set[str] = set()
-    refs = record.get("computation_refs")
-    if isinstance(refs, list):
-        for ref in refs:
-            if not isinstance(ref, dict):
-                continue
-            digest = _text(
-                ref.get("output_digest")
-                or ref.get("artifact_digest")
-                or ref.get("envelope_digest")
-                or ref.get("digest")
-            )
-            if digest:
-                digests.add(digest)
-    return sorted(digests)
-
-
-def _active_confirmation_capsule(
-    state: AnalysisSessionState,
-    override: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
-
-    if isinstance(override, dict) and override:
-        item = override
-    else:
-        pending = [
-            item for item in state.pending_confirmations
-            if is_actionable_pending_confirmation(item)
-        ]
-        if not pending:
-            return None
-        item = pending[-1]
-    proposal = item.get("proposal_ref")
-    if not isinstance(proposal, dict):
-        proposal = item.get("resolution_params")
-    if not isinstance(proposal, dict):
-        proposal = {}
-    return {
-        "id": _text(item.get("confirmation_id") or item.get("id") or item.get("suspension_id")),
-        "version": item.get("version"),
-        "proposal_id": _text(proposal.get("proposal_id") or item.get("proposal_id")),
-        "candidate_fingerprint": _text(
-            proposal.get("candidate_fingerprint") or item.get("candidate_fingerprint")
-        ),
-        "data_version": _text(proposal.get("data_version") or item.get("data_version")),
-        "spec_version": _text(proposal.get("spec_version") or item.get("spec_version")),
-    }
-
-
-def _latest_audit_capsule(state: AnalysisSessionState) -> dict[str, Any] | None:
-    ref = next((
-        item for item in reversed(state.verification_reports)
-        if isinstance(item, dict)
-        and item.get("contract_version") == "final_answer_audit.v1"
-    ), None)
-    if ref is None:
-        return None
-    audit = ref
-    if ref.get("artifact_path"):
-        try:
-            from data_agent.agent.trust_workflow_runtime import hydrate_final_answer_audit_ref
-
-            hydrated = hydrate_final_answer_audit_ref(ref)
-            if isinstance(hydrated, dict):
-                audit = hydrated
-        except Exception:
-            pass
-    blockers: set[str] = set()
-    actions: list[dict[str, Any]] = []
-    for check in audit.get("claim_checks") or []:
-        if not isinstance(check, dict) or check.get("status") not in {"failed", "downgraded"}:
-            continue
-        blockers.update(_capsule_list(check.get("reason_codes")))
-        action = check.get("safe_action")
-        if isinstance(action, dict):
-            selected_keys = [
-                key for key in ("action", "target_claim_class", "required_disclosure")
-                if key in action
-            ] or [key for key, _ in sorted(action.items())[:1]]
-            bounded_action = {
-                str(key): _text(action.get(key))
-                for key in selected_keys
-                for value in [action.get(key)]
-                if isinstance(value, (str, int, float, bool)) and _text(value)
-            }
-            if bounded_action and bounded_action not in actions:
-                actions.append(bounded_action)
-    return {
-        "id": _text(ref.get("id") or audit.get("id")),
-        "status": _text(ref.get("status") or audit.get("status") or "blocked"),
-        "blockers": sorted(blockers),
-        "permitted_downgrade_actions": actions,
-    }
-
-
-def render_trust_capsule(capsule: dict[str, Any]) -> str:
-    """Return the canonical compact JSON representation used in prompts."""
-
-    return json.dumps(capsule, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def build_trust_capsule(
-    state: AnalysisSessionState | None,
-    *,
-    user_requirements: str = "",
-    active_confirmation: dict[str, Any] | None = None,
-    active_datasets: list[dict[str, Any]] | None = None,
-    max_items_per_component: int = 24,
-    max_chars: int = 8_000,
-) -> dict[str, Any]:
-    """Build bounded deterministic identity memory for assurance-critical state."""
-
-    if state is None:
-        body: dict[str, Any] = {
-            "contract_version": "trust_capsule.v1",
-            "goal": "",
-            "explicit_user_requirements": _capsule_text(user_requirements),
-            "plan": {"id": "", "contract_version": ""},
-            "datasets": [],
-            "unresolved_hard_requirements": [],
-            "evidence_bindings": [],
-            "active_confirmation": None,
-            "latest_audit": None,
-            "truncation": {},
-        }
-    else:
-        plan = state.analysis_plan if isinstance(state.analysis_plan, dict) else {}
-        hard_requirements = [
-            {
-                "id": _text(item.get("id")),
-                "unmet_action": _text(item.get("unmet_action")),
-            }
-            for item in _flatten_plan_requirements(plan)
-            if item.get("status") != "satisfied"
-            and item.get("necessity") == "required"
-            and item.get("unmet_action") in {"block_analysis", "block_claim"}
-            and _text(item.get("id"))
-        ]
-        evidence_bindings = [
-            {
-                "id": _text(item.get("id")),
-                "verification_level": _text(item.get("verification_level")),
-                "computation_ref_digests": _computation_digests(item),
-            }
-            for item in state.evidence_records
-            if isinstance(item, dict) and _text(item.get("id"))
-        ]
-        body = {
-            "contract_version": "trust_capsule.v1",
-            "goal": _text(state.goal),
-            "explicit_user_requirements": _text(
-                user_requirements or state.explicit_user_requirements
-            ),
-            "plan": {
-                "id": _text(plan.get("id")),
-                "contract_version": _text(plan.get("contract_version")),
-            },
-            "datasets": _dataset_capsule_entries(state, active_datasets),
-            "unresolved_hard_requirements": sorted(hard_requirements, key=lambda item: item["id"]),
-            "evidence_bindings": sorted(evidence_bindings, key=lambda item: item["id"]),
-            "active_confirmation": _active_confirmation_capsule(state, active_confirmation),
-            "latest_audit": _latest_audit_capsule(state),
-            "truncation": {},
-        }
-
-    encoded_body = render_trust_capsule(body)
-    body_digest = hashlib.sha256(encoded_body.encode("utf-8")).hexdigest()
-    result = {**body, "status": "ready", "digest": body_digest}
-    maximum = int(max_chars)
-    if maximum < 1_000:
-        raise ValueError("trust_capsule_minimum_budget_too_small")
-    limit = max(1, int(max_items_per_component))
-    component_overflow = any(
-        len(body[key]) > limit
-        for key in ("datasets", "unresolved_hard_requirements", "evidence_bindings")
-    )
-    if not component_overflow and len(render_trust_capsule(result)) <= maximum:
-        return result
-
-    manifest_ref = _persist_trust_capsule_manifest(state, body, body_digest)
-    confirmation = body.get("active_confirmation")
-    confirmation_digest = ""
-    confirmation_version = None
-    if isinstance(confirmation, dict):
-        confirmation_digest = hashlib.sha256(
-            render_trust_capsule(confirmation).encode("utf-8")
-        ).hexdigest()
-        confirmation_version = confirmation.get("version")
-    overflow_body = {
-        "contract_version": "trust_capsule.v1",
-        "status": "requires_hydration" if manifest_ref else "blocked",
-        "goal": _capsule_text(body.get("goal"), 160),
-        "explicit_user_requirements": _capsule_text(
-            body.get("explicit_user_requirements"), 200
-        ),
-        "plan": body.get("plan"),
-        "identity_counts": {
-            key: len(body[key])
-            for key in ("datasets", "unresolved_hard_requirements", "evidence_bindings")
-        },
-        "active_confirmation": (
-            {
-                key: (
-                    confirmation.get(key)
-                    if key == "version"
-                    else _capsule_identity(confirmation.get(key))
-                )
-                for key in (
-                    "id",
-                    "version",
-                    "proposal_id",
-                    "candidate_fingerprint",
-                    "data_version",
-                    "spec_version",
-                )
-            }
-            if isinstance(confirmation, dict)
-            else None
-        ),
-        "active_confirmation_identity_digest": confirmation_digest,
-        "active_confirmation_version": confirmation_version,
-        "latest_audit_id": _capsule_text(
-            (body.get("latest_audit") or {}).get("id")
-            if isinstance(body.get("latest_audit"), dict)
-            else "",
-            160,
-        ),
-        "trust_manifest": manifest_ref,
-        "required_action": "hydrate_or_downgrade",
-    }
-    overflow_digest = hashlib.sha256(
-        render_trust_capsule(overflow_body).encode("utf-8")
-    ).hexdigest()
-    overflow = {**overflow_body, "digest": overflow_digest}
-    if len(render_trust_capsule(overflow)) > maximum:
-        overflow["goal"] = ""
-        overflow["explicit_user_requirements"] = ""
-        overflow["plan"] = {
-            "id": hashlib.sha256(
-                _text((body.get("plan") or {}).get("id")).encode("utf-8")
-            ).hexdigest(),
-            "contract_version": _capsule_text(
-                (body.get("plan") or {}).get("contract_version"), 80
-            ),
-        }
-        unsigned = {key: value for key, value in overflow.items() if key != "digest"}
-        overflow["digest"] = hashlib.sha256(
-            render_trust_capsule(unsigned).encode("utf-8")
-        ).hexdigest()
-    if len(render_trust_capsule(overflow)) > maximum:
-        raise ValueError("trust_capsule_minimum_budget_too_small")
-    return overflow
-
-
-def _persist_trust_capsule_manifest(
-    state: AnalysisSessionState | None,
-    body: dict[str, Any],
-    body_digest: str,
-) -> dict[str, Any] | None:
-    if state is None or not _text(state.session_id):
-        return None
-    payload = {
-        "contract_version": "trust_capsule_manifest.v1",
-        "session_id": state.session_id,
-        "body_digest": body_digest,
-        "body": body,
-    }
-    try:
-        safe_session_id = re.sub(
-            r"[^A-Za-z0-9_.-]+", "_", state.session_id
-        ).strip("._") or "session"
-        directory = get_config().sessions_resolved / safe_session_id / "assurance"
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"trust_capsule_manifest_{body_digest[:20]}.json"
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        if not path.exists():
-            path.write_text(raw, encoding="utf-8")
-        artifact_digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    except (OSError, UnicodeError):
-        return None
-    return {
-        "contract_version": "trust_capsule_manifest.v1",
-        "artifact_path": str(path),
-        "artifact_digest": artifact_digest,
-        "body_digest": body_digest,
-    }
-
-
 def analysis_state_summary(state: AnalysisSessionState | None) -> str:
     if state is None:
         return ""
@@ -1200,7 +688,7 @@ def analysis_state_summary(state: AnalysisSessionState | None) -> str:
         ),
         f"- data_requirements: {len(state.data_requirements)}",
         f"- has_analysis_plan: {bool(state.analysis_plan)}",
-        f"- computation_refs: {len(state.computation_refs)}",
+        f"- has_analysis_spec: {bool(state.analysis_spec)}",
         f"- evidence_records: {len(state.evidence_records)}",
         f"- insight_records: {len(state.insight_records)}",
         f"- dataset_contracts: {len(state.dataset_contracts)}",
@@ -1300,7 +788,7 @@ def analysis_quality_summary(state: AnalysisSessionState | None) -> dict[str, An
         return {"status": "incomplete_can_continue", "missing": ["analysis_state"], "counts": {}}
 
     missing: list[str] = []
-    plan = state.analysis_plan or {}
+    plan = state.analysis_plan or state.analysis_spec or {}
     evidence = list(state.evidence_records or [])
 
     if not evidence:

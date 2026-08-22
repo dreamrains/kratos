@@ -8,7 +8,6 @@ from data_agent.agent.trust_contracts import (
     build_dataset_understanding_contract,
     build_preview_digest,
     build_route_proposals,
-    route_evidence_requirements,
 )
 
 
@@ -111,7 +110,7 @@ def test_build_dataset_understanding_contract_maps_supported_and_unsupported_ana
     json.dumps(contract)
 
 
-def test_build_route_proposals_adds_evidence_requirements():
+def test_build_route_proposals_adds_expected_evidence():
     contract = {
         "id": "duc_main_001",
         "dataset": "main",
@@ -138,33 +137,9 @@ def test_build_route_proposals_adds_evidence_requirements():
     first = proposals[0]
     assert first["dataset_contract_id"] == "duc_main_001"
     assert "record_evidence_record" in first["tool_chain"]
-    assert "limitations" in first["evidence_requirements"]
-    assert "expected_evidence" not in first
+    assert "limitations" in first["expected_evidence"]
     assert first["budget_level"] in {"light", "standard", "deep"}
     json.dumps(proposals)
-
-
-def test_period_route_marks_duplicate_timestamp_aggregation_as_user_definitional():
-    contract = {
-        "id": "duc_transactions",
-        "dataset": "transactions",
-        "field_roles": {"date": ["date"], "metrics": ["revenue"]},
-        "supported_analyses": ["period_compare"],
-        "analysis_profiles": {
-            "time_series": {"duplicate_timestamp_count": 12},
-        },
-    }
-
-    route = build_route_proposals(contract)[0]
-
-    assert route["estimand_requires_confirmation"] is True
-    assert [item["value"] for item in route["estimand_options"]] == ["sum", "mean"]
-
-
-def test_route_evidence_requirements_reads_legacy_expected_evidence():
-    legacy_route = {"expected_evidence": [" sample_size ", "limitations"]}
-
-    assert route_evidence_requirements(legacy_route) == ["sample_size", "limitations"]
 
 
 def test_builders_accept_pandas_and_numpy_containers_as_json_safe_values():

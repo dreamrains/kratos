@@ -125,36 +125,6 @@ def test_response_uses_expected_version_and_applies_once(tmp_path):
     assert calls == ["revenue"]
 
 
-def test_dataset_transformation_approval_records_only_compact_identity(tmp_path):
-    from data_agent.agent.confirmation.runtime import build_action_registry
-
-    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
-    candidate = _candidate(
-        confirmation_id="transform_1",
-        decision_key="dataset-transformation-1",
-        operation="dataset_transformation",
-        options=(ConfirmationOption("Approve", "approve"), ConfirmationOption("Reject", "reject")),
-        resolution_action="approve_dataset_transformation",
-        resolution_params={
-            "proposal_id": "proposal_1",
-            "artifact_path": "sessions/session_1/tool_outputs/proposal_1_detail.json",
-            "data_version": "dataset:orders_v1:source",
-            "spec_version": "transformation:one",
-            "candidate_fingerprint": "sha256:candidate",
-        },
-        data_version="dataset:orders_v1:source",
-        spec_version="transformation:one",
-    )
-    service.request(candidate)
-    active = service.checkpoint("session_1")
-    resolved = service.respond("session_1", active.confirmation_id, "reject", active.version, "reject_1")
-
-    assert resolved.response == "reject"
-    assert resolved.resolution_params["proposal_id"] == "proposal_1"
-    assert resolved.resolution_params["candidate_fingerprint"] == "sha256:candidate"
-    assert "DataFrame" not in repr(resolved.resolution_params)
-
-
 def test_pending_confirmation_cannot_be_answered_before_suspension(tmp_path):
     service, _, _ = _service(tmp_path)
     pending = service.request(_candidate()).record

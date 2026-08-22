@@ -12,10 +12,6 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from data_agent.agent.analysis_plan_contracts import (
-    ANALYSIS_PLAN_CONTRACT_VERSION,
-    normalize_analysis_plan_contract,
-)
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.intent import TurnIntent
 
@@ -46,22 +42,8 @@ class PlaybookSelection:
     selection_reason: str = ""
     recommended_paths: list[dict[str, Any]] = field(default_factory=list)
     data_requirement: dict[str, Any] | None = None
-    analysis_plan: dict[str, Any] | None = None
+    analysis_spec: dict[str, Any] | None = None
     requires_confirmation: bool = False
-
-    @property
-    def primary_id(self) -> str:
-        """Short alias for :attr:`primary_playbook_id`.
-
-        Tests and route builders use this compact name to assert which playbook
-        a prompt selected.
-        """
-        return self.primary_playbook_id
-
-    @property
-    def analysis_spec(self) -> dict[str, Any] | None:
-        """Deprecated read-only projection for callers migrating to analysis_plan."""
-        return self.analysis_plan
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,7 +52,7 @@ class PlaybookSelection:
             "selection_reason": self.selection_reason,
             "recommended_paths": self.recommended_paths,
             "data_requirement": self.data_requirement,
-            "analysis_plan": self.analysis_plan,
+            "analysis_spec": self.analysis_spec,
             "requires_confirmation": self.requires_confirmation,
         }
 
@@ -214,33 +196,8 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         recommended=["comparison window", "dimension fields", "seasonality context"],
         minimum="A metric with a usable time or period field.",
         method_plan=[
-            {
-                "step": "compare periods for the target metric",
-                "node_type": "analysis",
-                "required_capability": "analysis.period_compare",
-                "claim_type": "descriptive",
-                "sampling_structure": "repeated_measure_time",
-                "expected_output": "metric delta by period",
-                "evidence_requirements": [
-                    "periods", "metric_delta", "effective_sample_size", "denominator",
-                    "missingness", "estimand", "effect_estimate", "calculation_method",
-                    "assumptions", "sample_adequacy", "period_definition",
-                    "period_comparability", "time_frequency", "missing_intervals",
-                    "window_comparability",
-                ],
-            },
-            {
-                "step": "inspect time trend and anomalies",
-                "node_type": "analysis",
-                "required_capability": "analysis.time_series",
-                "claim_type": "descriptive",
-                "expected_output": "trend and anomaly summary",
-                "evidence_requirements": [
-                    "trend", "time_frequency", "missing_intervals", "window_comparability",
-                    "autocorrelation_awareness", "effective_sample_size", "missingness",
-                    "calculation_method", "assumptions",
-                ],
-            },
+            {"step": "compare periods for the target metric", "node_type": "analysis", "required_capability": "analysis.period_compare", "expected_output": "metric delta by period", "evidence_requirements": ["periods", "metric_delta"]},
+            {"step": "inspect time trend and anomalies", "node_type": "analysis", "required_capability": "analysis.time_series", "expected_output": "trend and anomaly summary", "evidence_requirements": ["trend"]},
         ],
         evidence=["period delta", "trend direction"],
         limitations=["period comparison can be distorted by seasonality or data freshness"],
@@ -260,126 +217,6 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         ],
         evidence=["metric delta", "driver contribution"],
         limitations=["descriptive decomposition is not causal proof"],
-    ),
-    "factor_relationship": _pb(
-        id="factor_relationship",
-        name="Factor Relationship",
-        description=(
-            "Identify which factors are statistically associated with a numeric "
-            "target, using pairwise screening followed by a multivariable "
-            "inferential model with multiplicity, collinearity, and "
-            "time-dependence diagnostics."
-        ),
-        question_types=["diagnostic"],
-        typical_user_goals=[
-            "find significant factors",
-            "identify drivers of a target metric",
-            "associate variables with an outcome",
-        ],
-        must_have=["numeric target", "one or more candidate feature columns"],
-        recommended=[
-            "ordered time column for dependence diagnostics",
-            "low-cardinality categoricals for one-hot encoding",
-            "missingness report for the target and features",
-        ],
-        optional=["pre-registered contrast", "domain-blocked confounders"],
-        minimum=(
-            "A numeric target and at least one candidate feature with enough "
-            "pairwise-complete observations to fit a multivariable model."
-        ),
-        method_plan=[
-            {
-                "step": "confirm grain, target definition, and missingness",
-                "analysis_code": "grain_and_missingness_checked",
-                "node_type": "data_check",
-                "required_capability": "data.profile",
-                "expected_output": "row grain, target definition, missingness report",
-                "evidence_requirements": [
-                    "grain_definition", "target_definition", "missingness_assessment",
-                ],
-            },
-            {
-                "step": "screen univariate associations with effective sample size",
-                "analysis_code": "univariate_relationship_checked",
-                "node_type": "analysis",
-                "required_capability": "analysis.correlation",
-                "expected_output": "pairwise associations with p-values and N",
-                "evidence_requirements": [
-                    "univariate_association", "effective_sample_size",
-                ],
-            },
-            {
-                "step": "fit multivariable model with robust covariance and multiplicity control",
-                "analysis_code": "multivariable_method_attempted",
-                "node_type": "analysis",
-                "required_capability": "analysis.factor_relationship",
-                "expected_output": "adjusted coefficients, CI, and p-values",
-                "evidence_requirements": [
-                    "multivariable_adjustment", "multiplicity_control",
-                    "collinearity_assessment",
-                ],
-            },
-            {
-                "step": "check stability and residual/time dependence",
-                "analysis_code": "stability_and_dependence_checked",
-                "node_type": "analysis",
-                "required_capability": "analysis.factor_relationship",
-                "expected_output": "residual and time-dependence diagnostics",
-                "evidence_requirements": [
-                    "stability_or_validation", "time_dependence_assessment",
-                ],
-            },
-            {
-                "step": "estimate effect size or predictive contribution",
-                "analysis_code": "effect_or_contribution_estimated",
-                "node_type": "analysis",
-                "required_capability": "analysis.regression",
-                "expected_output": "standardized effect or predictive importance",
-                "evidence_requirements": [
-                    "effect_size_or_predictive_contribution",
-                ],
-            },
-            {
-                "step": "prepare limitations and alternative explanations",
-                "analysis_code": "limitations_prepared",
-                "node_type": "evidence",
-                "required_capability": "artifact.evidence_record",
-                "expected_output": "bounded conclusion with explicit limitations",
-                "evidence_requirements": ["limitations_and_alternatives"],
-            },
-        ],
-        evidence=[
-            "univariate_association",
-            "multivariable_adjustment",
-            "effective_sample_size",
-            "collinearity_assessment",
-            "time_dependence_assessment",
-            "limitations_and_alternatives",
-        ],
-        limitations=[
-            "association is not causation",
-            "multicollinearity can mask individual factor effects",
-            "serial dependence can underestimate standard errors if ignored",
-        ],
-        chart_suggestions=["correlation_heatmap", "coefficient_forest_plot"],
-        statistical_requirements=[
-            "effective_sample_size",
-            "univariate_association",
-            "multivariable_adjustment",
-            "multiplicity_control",
-            "collinearity_assessment",
-            "stability_or_validation",
-            "time_dependence_assessment",
-            "effect_size_or_predictive_contribution",
-            "limitations_and_alternatives",
-        ],
-        output_sections=[
-            "core_conclusion",
-            "significant_factors",
-            "diagnostics",
-            "limitations",
-            "next_analysis",
-        ],
     ),
     "funnel_conversion": _pb(
         id="funnel_conversion",
@@ -422,35 +259,18 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         description="Evaluate experiments, campaign effects, quasi-causal designs, and causal boundaries.",
         question_types=["evaluation", "causal", "decision"],
         typical_user_goals=["evaluate effect", "decide whether to continue", "measure campaign impact"],
-        must_have=["treatment or exposure definition", "outcome definition", "time window", "causal design type"],
-        recommended=["assignment unit", "control group", "pre-period outcome", "cost", "confounders", "assignment rule"],
-        optional=["randomization metadata", "attrition metadata", "multiple-outcome family"],
+        must_have=["treatment or exposure", "outcome metric", "time window"],
+        recommended=["control group", "pre-period outcome", "cost", "confounders", "assignment rule"],
+        optional=["randomization metadata"],
         minimum="Treatment/exposure and outcome data; causal confidence requires a comparable control or experimental design.",
         method_plan=[
-            {"step": "validate treatment, outcome, and identification design", "node_type": "data_check", "required_capability": "data.profile", "expected_output": "design readiness and unavailable business facts", "evidence_requirements": ["treatment", "outcome", "comparison_group", "assignment_unit"]},
-            {
-                "step": "estimate the bounded effect under the declared causal design",
-                "node_type": "analysis",
-                "required_capability": "analysis.causal",
-                "claim_type": "causal_requested",
-                "design_type": "unspecified",
-                "expected_output": "effect estimate, identification status, diagnostics, and alternatives",
-                "evidence_requirements": [
-                    "effect_estimate", "confidence_interval", "calculation_method",
-                    "assumptions", "sample_adequacy", "identification_status",
-                    "alternative_explanations",
-                ],
-            },
+            {"step": "validate treatment, outcome, and comparison design", "node_type": "data_check", "required_capability": "data.profile", "expected_output": "design readiness", "evidence_requirements": ["treatment", "outcome", "comparison group"], "confirmation_policy": {"requires_confirmation": True, "confirmation_type": "method_confirmation"}},
+            {"step": "estimate effect with experiment or causal method", "node_type": "analysis", "required_capability": "analysis.causal", "expected_output": "effect estimate and assumptions", "evidence_requirements": ["effect", "assumptions"]},
         ],
-        evidence=["effect estimate", "confidence interval", "identification status", "assumptions", "alternative explanations"],
-        limitations=["without a design that identifies the effect, only association or descriptive comparison claims are allowed"],
+        evidence=["effect estimate", "comparison design", "assumptions"],
+        limitations=["without randomization or a credible control group, causal claims are limited"],
         confirmation={"requires_confirmation": True, "confirmation_type": "method_confirmation", "blocking_reason": "causal or decision analysis needs method and metric confirmation"},
         risk_level="high",
-        statistical_requirements=[
-            "effect_estimate", "confidence_interval", "calculation_method", "assumptions",
-            "sample_adequacy", "identification_status", "alternative_explanations",
-        ],
-        output_sections=["core_conclusion", "effect_estimate", "identification_status", "alternative_explanations", "next_analysis"],
     ),
     "product_feature_analysis": _pb(
         id="product_feature_analysis",
@@ -484,20 +304,8 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         optional=["experiment metadata", "matching variables"],
         minimum="Treatment/exposure and outcome data; without control group, only observational before-after conclusions are allowed.",
         method_plan=[
-            {"step": "validate treatment, outcome, time window, assignment unit, and comparison design", "node_type": "data_check", "required_capability": "data.profile", "expected_output": "effect evaluation readiness", "evidence_requirements": ["treatment", "outcome", "comparison_group", "assignment_unit"]},
-            {
-                "step": "estimate observed effect and statistical support",
-                "node_type": "analysis",
-                "required_capability": "analysis.experiment",
-                "claim_type": "inferential",
-                "sampling_structure": "independent_groups",
-                "expected_output": "effect magnitude, interval, and statistical support",
-                "evidence_requirements": [
-                    "effective_sample_size", "denominator", "missingness", "estimand",
-                    "effect_estimate", "confidence_interval", "calculation_method",
-                    "assumptions", "sample_adequacy", "significance",
-                ],
-            },
+            {"step": "validate treatment, outcome, time window, and comparison design", "node_type": "data_check", "required_capability": "data.profile", "expected_output": "effect evaluation readiness", "evidence_requirements": ["treatment", "outcome", "comparison group"]},
+            {"step": "estimate observed effect and statistical support", "node_type": "analysis", "required_capability": "analysis.experiment", "expected_output": "effect size, significance, and confidence boundary", "evidence_requirements": ["effect_size", "significance", "sample_size"]},
             {"step": "state causal limitations and alternative explanations", "node_type": "evidence", "required_capability": "artifact.evidence_record", "expected_output": "bounded effect conclusion", "evidence_requirements": ["assumptions", "limitations"]},
         ],
         evidence=["effect size", "significance", "sample size", "comparison design", "assumptions"],
@@ -505,11 +313,7 @@ PLAYBOOKS: dict[str, MethodPlaybook] = {
         confirmation={"requires_confirmation": True, "confirmation_type": "method_confirmation", "blocking_reason": "effect evaluation needs metric, window, and comparison design confirmation"},
         risk_level="high",
         chart_suggestions=["trend_context", "before_after_comparison", "effect_size_table"],
-        statistical_requirements=[
-            "effective_sample_size", "denominator", "missingness", "estimand",
-            "effect_estimate", "effect_size", "confidence_interval", "calculation_method",
-            "assumptions", "sample_adequacy", "significance",
-        ],
+        statistical_requirements=["sample_size", "effect_size", "significance", "confidence_interval"],
         output_sections=["core_conclusion", "effect_estimate", "statistical_support", "causal_boundary", "next_analysis"],
     ),
     "revenue_profitability": _pb(
@@ -637,10 +441,10 @@ def select_playbooks(
 
     recommended_paths = _recommended_paths(primary, supporting)
     requirement = _build_data_requirement(playbook, user_input, supporting)
-    analysis_plan = _build_analysis_plan(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
+    analysis_spec = _build_analysis_spec(playbook, user_input, supporting) if has_data and intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation"} else None
 
     if not has_data or intent.intent_type == "data_requirement":
-        analysis_plan = None
+        analysis_spec = None
 
     return PlaybookSelection(
         primary_playbook_id=primary,
@@ -648,7 +452,7 @@ def select_playbooks(
         selection_reason=_selection_reason(playbook, has_data, supporting),
         recommended_paths=recommended_paths,
         data_requirement=requirement,
-        analysis_plan=analysis_plan,
+        analysis_spec=analysis_spec,
         requires_confirmation=bool(playbook.confirmation_policy.get("requires_confirmation")),
     )
 
@@ -665,36 +469,34 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.data_requirement and state.data_state in {"no_data", "insufficient_data", "unknown"}:
         if not _contains_playbook_artifact(state.data_requirements, selection.primary_playbook_id):
             state.add_data_requirement(selection.data_requirement)
-    analysis_plan = state.analysis_plan
-    if selection.analysis_plan:
-        selection.analysis_plan.setdefault("id", _analysis_plan_id(selection.analysis_plan))
-        current_plan = state.analysis_plan or {}
-        selected_plan_id = selection.analysis_plan.get("id")
-        current_plan_id = current_plan.get("id")
-        should_replace_plan = (
-            not state.analysis_plan
-            or selected_plan_id != current_plan_id
+    analysis_spec = state.analysis_spec
+    if selection.analysis_spec:
+        selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
+        current_spec = state.analysis_spec or {}
+        selected_spec_id = selection.analysis_spec.get("id")
+        current_spec_id = current_spec.get("id")
+        should_replace_spec = (
+            not state.analysis_spec
+            or selected_spec_id != current_spec_id
         )
-        analysis_plan = state.set_analysis_plan(selection.analysis_plan) if should_replace_plan else state.analysis_plan
-    if selection.requires_confirmation and analysis_plan:
-        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_plan.get('id', '')}"
+        analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
+    if selection.requires_confirmation and analysis_spec:
+        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_spec.get('id', '')}"
         if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
-            confirmation_policy = analysis_plan.get("confirmation_policy", {})
+            confirmation_policy = analysis_spec.get("confirmation_policy", {})
             state.add_confirmation({
                 "id": confirmation_id,
                 "confirmation_type": confirmation_policy.get("confirmation_type", "method_confirmation"),
                 "question": _method_confirmation_question(selection),
                 "options": _method_confirmation_options(),
                 "blocking_reason": confirmation_policy.get("blocking_reason", "method confirmation required"),
-                "related_plan_id": analysis_plan.get("id", ""),
-                # Compatibility for the existing suspension persistence schema.
-                "related_spec_id": analysis_plan.get("id", ""),
+                "related_spec_id": analysis_spec.get("id", ""),
                 "state_updates": json.dumps(
                     {
                         "stage": "plan",
                         "method_confirmation": {
                             "playbook_id": selection.primary_playbook_id,
-                            "analysis_plan_id": analysis_plan.get("id", ""),
+                            "analysis_spec_id": analysis_spec.get("id", ""),
                             "allowed_actions": ["confirm_method", "clarify_method_scope"],
                         },
                     },
@@ -729,118 +531,14 @@ def _method_confirmation_options() -> list[dict[str, str]]:
     ]
 
 
-# Playbook → maximum publishable claim class when no override applies.
-# Playbooks not listed here default to "descriptive" unless their steps raise
-# the claim class via inferential/causal/predictive markers.
-_PLAYBOOK_CLAIM_CLASS: dict[str, str] = {
-    "factor_relationship": "inferential_associations",
-    "effect_evaluation": "inferential_associations",
-    "evaluation_causal": "causal_effect",
-    "driver_decomposition": "descriptive_attribution",
-}
-
-
-_PREDICTIVE_CLAIM_MARKERS = (
-    "predict", "forecast", "预测", "预估", "模拟",
-)
-_CAUSAL_CLAIM_MARKERS = (
-    "causal", "causes", "因为", "导致", "因果",
-)
-
-
-def _maximum_claim_class_for(playbook_id: str, user_input: str) -> str:
-    """Bound the publishable claim class for a selected playbook.
-
-    Predictive wording caps the class at ``predictive_importance`` so a
-    factor question cannot upgrade into inferential significance. Explicit
-    causal wording is routed through the evaluation_causal playbook; when
-    it leaks into a factor-style prompt we still downgrade rather than
-    strengthen.
-    """
-
-    base = _PLAYBOOK_CLAIM_CLASS.get(playbook_id, "descriptive")
-    text = (user_input or "").lower()
-    if any(marker in text for marker in _PREDICTIVE_CLAIM_MARKERS):
-        return "predictive_importance"
-    if any(marker in text for marker in _CAUSAL_CLAIM_MARKERS) and base != "causal_effect":
-        return "association_only"
-    return base
-
-
-def build_plan(user_input: str, dataset: str | None = None) -> dict[str, Any]:
-    """Build a display-only analysis plan for a prompt and optional dataset.
-
-    This is the prompt→plan builder used by analysis-route tests and by the
-    route selector when a caller needs the deterministic six-step plan
-    associated with a question. It classifies intent, selects a playbook,
-    builds the plan (binding the dataset contract when supplied), and tags
-    the result with the ``maximum_claim_class`` enforced by the selected
-    playbook.
-
-    The returned plan is display-only — it is not the canonical executable
-    envelope materialized by the analysis-flow controller. Tests assert
-    ``method_plan`` step ``analysis_code`` values and the bounded claim
-    class; runtime consumers should call :func:`select_playbooks` plus the
-    controller's envelope materialization for executable plans.
-
-    ``method_plan`` is the selected playbook's canonical step template — it
-    intentionally excludes the ``supporting check`` steps that the full
-    selector stitches together for live execution. Those supporting steps
-    do not carry ``analysis_code`` identifiers and would otherwise dilute
-    the deterministic six-step contract tests rely on.
-    """
-
-    from data_agent.agent.intent import classify_intent
-
-    text = user_input or ""
-    has_dataset = bool(dataset and str(dataset).strip())
-    intent = classify_intent(text, data_loaded=has_dataset)
-    dataset_profile = (
-        f"- {dataset.strip()}: data loaded"
-        if has_dataset
-        else ""
-    )
-    selection = select_playbooks(
-        text,
-        intent=intent,
-        state=None,
-        dataset_profile=dataset_profile,
-    )
-    playbook = PLAYBOOKS[selection.primary_playbook_id]
-    # Always build the plan from the playbook's own template so callers see
-    # exactly the canonical step sequence for the selected method, without
-    # supporting-check noise that the selector appends for live execution.
-    plan = _build_analysis_plan(playbook, text, supporting=[])
-    plan = dict(plan)
-    plan["maximum_claim_class"] = _maximum_claim_class_for(
-        selection.primary_playbook_id, text
-    )
-    return plan
-
-
 def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -> bool:
     return any(item.get("playbook_id") == playbook_id for item in items)
 
 
 _HIGH_CONFIDENCE_RULES: list[tuple[list[str], str]] = [
-    (["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"], "forecast_decision_simulation"),
-    # Driver decomposition wins when explicit period-change wording is present
-    # (下降/为什么/归因/decline/drop/why/driver/attribution). Factor wording is
-    # checked separately below so it cannot preempt a clear decline question.
-    (["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"], "driver_decomposition"),
-    (
-        # Factor wording must be checked BEFORE funnel_conversion because
-        # ``conversion`` is also a funnel keyword. Without this ordering, a
-        # question like "find factors associated with conversion" would
-        # misroute to the funnel playbook.
-        [
-            "影响因素", "显著影响", "驱动因素", "相关因素",
-            "associated factors", "significant factors",
-            "相关", "因素", "factors", "associated",
-        ],
-        "factor_relationship",
-    ),
     (["funnel", "conversion", "drop-off", "dropoff", "漏斗", "转化"], "funnel_conversion"),
+    (["forecast", "predict", "prediction", "what-if", "simulate", "budget", "预测", "预估"], "forecast_decision_simulation"),
+    (["decline", "drop", "why", "driver", "decomposition", "attribution", "下降", "为什么", "归因"], "driver_decomposition"),
     (["retention", "churn", "repeat", "lifecycle", "cohort", "keep purchasing", "first order", "purchase again", "留存", "复购", "生命周期"], "retention_lifecycle"),
     (["收益", "收入", "成本", "利润", "roi", "profit", "revenue", "cost", "net value"], "revenue_profitability"),
     (["trend", "period", "month", "week", "同比", "环比", "趋势"], "trend_period_comparison"),
@@ -904,8 +602,6 @@ def _choose_supporting(text: str, primary: str) -> list[str]:
         supporting.extend(["trend_period_comparison", "metric_overview"])
     elif primary == "driver_decomposition":
         supporting.extend(["trend_period_comparison", "metric_overview"])
-    elif primary == "factor_relationship":
-        supporting.extend(["driver_decomposition", "metric_overview"])
     elif primary == "retention_lifecycle":
         supporting.extend(["metric_overview"])
     elif primary == "data_understanding":
@@ -954,7 +650,7 @@ def _build_data_requirement(playbook: MethodPlaybook, user_input: str, supportin
     }
 
 
-def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: list[str]) -> dict[str, Any]:
+def _build_analysis_spec(playbook: MethodPlaybook, user_input: str, supporting: list[str]) -> dict[str, Any]:
     steps = [dict(step) for step in playbook.method_plan_template]
     for sid in supporting[:2]:
         steps.append({
@@ -989,9 +685,7 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
             if section not in output_sections:
                 output_sections.append(section)
     playbook_stack = [playbook.id] + [sid for sid in supporting if sid in PLAYBOOKS]
-    plan = {
-        "contract_version": ANALYSIS_PLAN_CONTRACT_VERSION,
-        "review_status": "display_only",
+    spec = {
         "goal": user_input.strip() or playbook.name,
         "analysis_plan_version": "expert_flow_v2",
         "playbook_id": playbook.id,
@@ -1020,21 +714,18 @@ def _build_analysis_plan(playbook: MethodPlaybook, user_input: str, supporting: 
         "output_sections": output_sections,
         "next_analysis_candidates": _next_analysis_candidates(output_policies),
     }
-    plan["id"] = _analysis_plan_id(plan)
-    validation = normalize_analysis_plan_contract(plan, require_executable=False)
-    if not validation.ok:
-        raise ValueError(validation.message)
-    return validation.plan
+    spec["id"] = _analysis_spec_id(spec)
+    return spec
 
 
-def _analysis_plan_id(plan: dict[str, Any]) -> str:
+def _analysis_spec_id(spec: dict[str, Any]) -> str:
     material = {
         key: value
-        for key, value in plan.items()
+        for key, value in spec.items()
         if key not in {"id", "created_at", "workflow_id"}
     }
     encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"plan_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:12]}"
+    return f"spec_{hashlib.sha1(encoded.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _next_analysis_candidates(output_policies: list[dict[str, Any]]) -> list[str]:

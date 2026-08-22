@@ -14,7 +14,7 @@ from data_agent.config import AgentConfig
 from data_agent.session.workspace import Workspace, workspace
 
 
-TEST_DOC_DIR = Path(__file__).resolve().parents[1] / "reference" / "test_doc"
+TEST_DOC_DIR = Path("reference/test_doc")
 
 
 @pytest.fixture
@@ -68,9 +68,7 @@ def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
 
     trend = _load_json_tool_result(analyze_time_series("game_purchase", date_col="日期", value_col="内购收入"))
     assert trend["data_points"] >= 200
-    assert {"direction", "slope", "r_squared", "method", "inference_status"} <= set(trend["trend"])
-    assert "p_value" not in trend["trend"]
-    assert "significant" not in trend["trend"]
+    assert {"direction", "slope", "r_squared", "p_value", "significant"} <= set(trend["trend"])
     assert trend["suggested_next"]
 
     corr = _load_json_tool_result(
@@ -80,13 +78,7 @@ def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
         )
     )
     assert {"活跃用户", "新增用户", "付费人数", "内购收入"} <= set(corr["columns_analyzed"])
-    # Task 7: correlation_analysis now emits truthful pairwise results with
-    # effective N and p-values. The shallow ``high_correlations`` shortcut was
-    # replaced by ``pairs`` so downstream evidence cannot overclaim.
-    assert "pairs" in corr
-    assert corr["allowed_claim_class"] == "exploratory_association"
-    sample_pair = corr["pairs"][0]
-    assert {"var1", "var2", "correlation", "effective_sample_size", "p_value"} <= set(sample_pair)
+    assert "high_correlations" in corr
 
 
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
@@ -137,8 +129,8 @@ def test_retention_analysis_records_quality_limits_for_descriptive_claims(audit_
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
 def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit_env):
     """Savings-card analysis should support user-level order/flow joins and repeat metrics."""
-    order_file = TEST_DOC_DIR / "省钱卡订单.xlsx"
-    flow_file = TEST_DOC_DIR / "省钱卡0201到0510购卡用户付费数据.xlsx"
+    order_file = TEST_DOC_DIR / "省钱卡订单_20260507.xlsx"
+    flow_file = TEST_DOC_DIR / "省钱卡用户最近流水_20260511.xlsx"
     _skip_if_missing(order_file)
     _skip_if_missing(flow_file)
 
@@ -151,7 +143,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     orders = workspace.get("card_orders")
     flow = workspace.get("recent_flow")
     assert orders is not None and flow is not None
-    assert {"user_id", "商品名称", "售价", "支付时间", "创建时间"} <= set(orders.columns)
+    assert {"user_id", "商品名称", "支付金额", "支付时间", "创建时间"} <= set(orders.columns)
     assert {"user_id", "下单金额", "实收金额", "支付时间", "创角时间"} <= set(flow.columns)
 
     card_users = set(orders["user_id"].astype(str))
@@ -163,7 +155,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     repeat_rate = float((user_order_counts >= 2).sum() / user_order_counts.size)
     assert 0 <= repeat_rate <= 1
 
-    total_paid = float(orders["售价"].sum())
+    total_paid = float(orders["支付金额"].sum())
     assert total_paid > 0
 
     readiness = _load_json_tool_result(assess_readiness("card_orders", intent="分析省钱卡订单收入和复购"))

@@ -64,8 +64,7 @@ def test_core_evidence_record_marks_missing_statistical_details(tmp_path):
     record = ctx.analysis_state.evidence_records[0]
     assert record["statistical_detail_status"] == "missing"
     assert "sample_size" in record["statistical_detail_gaps"]
-    assert "effect_estimate" in record["statistical_detail_gaps"]
-    assert "significance" not in record["statistical_detail_gaps"]
+    assert "significance" in record["statistical_detail_gaps"]
 
 
 def test_analysis_completeness_flags_missing_core_quality_fields():

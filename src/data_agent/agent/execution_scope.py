@@ -258,20 +258,6 @@ def ensure_dataset_allowed_in_current_context(dataset: str) -> ScopeGuardResult:
     )
 
 
-def resolve_chart_eligible_dataset_names() -> tuple[list[str], bool]:
-    """Return the eligible dataset names for ``create_chart``'s identity resolver.
-
-    The second value is ``True`` when an execution scope is active; in that case
-    the returned list is the active scope's ``allowed_datasets`` (sorted). When
-    no scope is active, the list is empty and the caller falls back to the
-    current workspace's dataset names.
-    """
-    scope = current_context_execution_scope()
-    if not scope.active:
-        return [], False
-    return sorted(scope.allowed_datasets), True
-
-
 def ensure_dataset_allowed_for_current_task(
     manager,
     session_id: str,

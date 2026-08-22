@@ -366,8 +366,7 @@ def _analysis_state_payload(state) -> dict:
             "stage": state.stage,
             "data_state": state.data_state,
             "requirements": len(state.data_requirements),
-            # Response key retained for API compatibility; source is canonical.
-            "has_spec": bool(state.analysis_plan),
+            "has_spec": bool(state.analysis_spec),
             "evidence_records": len(state.evidence_records),
             "insight_records": len(state.insight_records),
             "pending_confirmations": 0,
