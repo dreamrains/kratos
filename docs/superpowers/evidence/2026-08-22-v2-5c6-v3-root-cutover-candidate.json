@@ -1,0 +1,65 @@
+{
+  "version": "v2_root_cutover_candidate.v1",
+  "candidate_status": "ready_for_root_cutover_decision",
+  "source_freeze": {
+    "git_head": "633834477fd82f93043b2b4e1c81900caff078db",
+    "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+    "source_dirty": false
+  },
+  "release_contract": {
+    "matrix_version": "v2_release_matrix.v3",
+    "projected_status": "ready_for_human_decision",
+    "total_requirements": 18,
+    "pass": 18,
+    "fail": 0,
+    "blocked": 0,
+    "not_run": 0,
+    "conflict": 0,
+    "incomplete": 0,
+    "root_cutover_gaps": []
+  },
+  "representative_provider_group": {
+    "group_fingerprint": "sha256:504dc3e38c4682f019c46910bc06bce357acee8bf9f0c24ecf9060e2a86320a4",
+    "provider_calls_authorized": 2,
+    "provider_calls_observed": 2,
+    "ready_plans": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "fallback_calls": 0,
+    "automatic_followups": 0,
+    "evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-representative-provider-observation.json"
+  },
+  "human_semantic_review": {
+    "targets": 2,
+    "passed": 2,
+    "dimensions_per_target": 10,
+    "technical_stability_is_separate": true,
+    "accepted_non_blocking_caveats": [
+      "concrete external events, campaigns, mix shifts, and structural breaks are not enumerated in the answers",
+      "timezone, currency, and business-unit semantics are inherited from the uploaded files"
+    ],
+    "evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-human-semantic-review.json"
+  },
+  "journey_evidence": {
+    "unified_entry_actual_browser": "pass",
+    "refresh_persistence": "pass",
+    "real_data_actual_browser_canary": "pass",
+    "provider_neutral_semantic_oracles": 9,
+    "shared_runtime_receipts": 5,
+    "evidence_bundle": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-release-evidence.json",
+    "release_status": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-release-status.json"
+  },
+  "candidate_boundaries": {
+    "root_switch_authorized": false,
+    "root_switched": false,
+    "deployed": false,
+    "legacy_system_deleted": false,
+    "legacy_rollback_route_required_for_first_switch": true,
+    "additional_provider_calls_authorized": 0,
+    "commit_authorized": false,
+    "merge_authorized": false,
+    "push_authorized": false
+  },
+  "next_required_decision": "User authorization is required before committing this evidence group or opening a separate root-switch slice.",
+  "release_readiness_claimed": true
+}

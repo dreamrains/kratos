@@ -1,0 +1,140 @@
+{
+  "version": "v2_human_semantic_review_preparation.v2",
+  "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+  "git_head": "633834477fd82f93043b2b4e1c81900caff078db",
+  "technical_stability_is_separate": true,
+  "representative_provider_group": {
+    "status": "pass",
+    "group_fingerprint": "sha256:504dc3e38c4682f019c46910bc06bce357acee8bf9f0c24ecf9060e2a86320a4",
+    "provider_calls": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-representative-provider-observation.json"
+  },
+  "confirmed_business_context": {
+    "unit_id_is_independent_analysis_unit": true,
+    "reference": "conversation:2026-08-22:user-confirmed-unit-id"
+  },
+  "independent_validation_precheck": {
+    "reviewer_type": "analysis_qa_precheck_not_human_release_signoff",
+    "status": "ready_for_independent_human_review",
+    "verified": [
+      "both questions are answered by the selected methods",
+      "headline values match current-source deterministic oracle or canary evidence",
+      "the synthetic fixture has 42 unique unit_id values, 42 unique dates, balanced A/B groups, and no missing key cells",
+      "the real-data fixture has 248 unique contiguous dates and no missing date or metric cells",
+      "causal, intervention-effect, constancy, forecast, and recommendation boundaries are calibrated",
+      "actual-browser evidence records chart rendering and refresh restoration for both human-review targets"
+    ],
+    "non_blocking_caveats_for_human_judgment": [
+      "the answers state observational boundaries but do not enumerate concrete external events, campaigns, mix shifts, or structural breaks",
+      "timezone, currency, and business-unit semantics are inherited from the uploaded files rather than independently established"
+    ],
+    "remaining_blocker": "independent human business-semantic confirmation has not been recorded",
+    "provider_calls": 0
+  },
+  "review_dimensions": [
+    "question_understanding",
+    "data_scope",
+    "method_fit",
+    "statistical_rigor",
+    "claim_calibration",
+    "alternative_explanations",
+    "pyramid_structure",
+    "chart_value",
+    "recommendation_quality",
+    "journey_integrity"
+  ],
+  "targets": [
+    {
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "status": "pass",
+      "provider_journey_status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-workbench-browser-composition.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-representative-provider-preflight.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-representative-provider-observation.json"
+      ],
+      "deterministic_observation": {
+        "status": "finalized",
+        "block_count": 4,
+        "chart_count": 2,
+        "refresh_restored": true,
+        "provider_calls": 0
+      },
+      "representative_provider_observation": {
+        "planning_status": "ready",
+        "analysis_kind": "multi_finding_synthesis",
+        "analysis_unit": "unit_id",
+        "provider_calls": 1,
+        "deterministic_status": "finalized",
+        "block_count": 4,
+        "chart_count": 2
+      },
+      "published_claims": {
+        "data_range": "2026-01-01 through 2026-02-11",
+        "trend": "sales increased by 1.272 per daily period; 95% CI [1.225, 1.32], HAC p<0.001",
+        "group_difference": "B minus A sales mean difference was 14; 95% CI [4.324, 23.676], Welch p=0.006, Hedges g=0.885",
+        "scope": "42 observed daily periods and 42 effective unit_id values; no automatic generalization beyond the upload",
+        "calibration": "The answer rejects causal and intervention-effect interpretations.",
+        "recommendation": "No action recommendation was published for an analysis-only request."
+      },
+      "review_focus": {
+        "question_understanding": "Confirm that trend plus channel comparison directly answers the question.",
+        "data_scope": "Confirm the date range, 42 periods, 42 independent unit_id values, and non-generalization boundary.",
+        "method_fit": "Confirm daily aggregation, HAC trend, and independent-unit Welch comparison are appropriate.",
+        "statistical_rigor": "Confirm intervals, p-values, Hedges g, missing-period disclosure, and assumptions are decision-safe.",
+        "claim_calibration": "Confirm observational findings are not presented as causal or intervention effects.",
+        "alternative_explanations": "Decide whether concrete alternatives such as channel composition or external events must be stated explicitly.",
+        "pyramid_structure": "Confirm direct answer, findings, and boundaries are ordered for fast comprehension.",
+        "chart_value": "Confirm adjacent trend and group-distribution charts add value and match their claims.",
+        "recommendation_quality": "Confirm no recommendation is the safe response to an analysis-only request.",
+        "journey_integrity": "After Provider validation, confirm planning, deterministic execution, browser rendering, and refresh form one coherent journey."
+      }
+    },
+    {
+      "scenario_id": "historical_trend",
+      "fixture_path": "reference/test_doc/游戏A内购数据.xlsx",
+      "status": "pass",
+      "provider_journey_status": "not_required_for_this_human_target",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-real-data-canary.json"
+      ],
+      "deterministic_observation": {
+        "status": "finalized",
+        "block_count": 2,
+        "chart_count": 1,
+        "refresh_restored": true,
+        "provider_calls": 0
+      },
+      "published_claims": {
+        "data_range": "2021-03-01 through 2021-11-03",
+        "trend": "0.402 per day; 95% CI [-0.64, 1.443], HAC p=0.448",
+        "scope": "248 source rows and 248 effective daily periods under daily sum aggregation",
+        "diagnostics": "HAC max lag 4 with weekday controls; lag-1 autocorrelation 0.18; Kendall tau 0.015",
+        "calibration": "No reliable linear trend was detected; the answer explicitly says this does not imply constancy and is not causal."
+      },
+      "review_focus": {
+        "question_understanding": "Confirm that the output answers how daily in-app revenue changed.",
+        "data_scope": "Confirm the 2021-03-01 through 2021-11-03 range and 248 daily periods are sufficiently clear in the rendered answer.",
+        "method_fit": "Confirm daily sum and the linear/HAC specification fit the business question and data-generating process.",
+        "statistical_rigor": "Confirm the interval, p-value, weekday controls, autocorrelation and rank-trend diagnostics support the conclusion.",
+        "claim_calibration": "Confirm non-significance is not misread as proof of constancy and no causal or forecast claim is implied.",
+        "alternative_explanations": "Decide whether seasonality, campaigns, product events or structural breaks require explicit discussion.",
+        "pyramid_structure": "Confirm the direct answer precedes method details and limitations.",
+        "chart_value": "Confirm the daily trend chart makes the noisy history and lack of reliable linear trend easier to evaluate.",
+        "recommendation_quality": "Confirm no operational recommendation is appropriate without a recommendation request and causal evidence.",
+        "journey_integrity": "Confirm upload, deterministic analysis, answer, chart, terminal state and refresh restoration are coherent."
+      }
+    }
+  ],
+  "human_semantic_release_receipts": [
+    "receipt_evidence_v3_unified_human_20260822",
+    "receipt_evidence_v3_historical_human_20260822"
+  ],
+  "human_review_evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-human-semantic-review.json",
+  "provider_calls_during_preparation": 0,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
