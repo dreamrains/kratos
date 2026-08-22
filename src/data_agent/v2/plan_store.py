@@ -98,6 +98,24 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
 
 
+def _normalize_dataset_context(value: dict[str, Any]) -> dict[str, Any]:
+    normalized = json.loads(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
+    )
+    semantic_context = normalized.get("semantic_context")
+    if semantic_context is None:
+        semantic_context = {"confirmed_analysis_unit_column": ""}
+    if not isinstance(semantic_context, dict) or set(semantic_context) != {
+        "confirmed_analysis_unit_column"
+    }:
+        raise ValueError("plan dataset semantic_context is invalid")
+    semantic_context["confirmed_analysis_unit_column"] = str(
+        semantic_context.get("confirmed_analysis_unit_column") or ""
+    ).strip()
+    normalized["semantic_context"] = semantic_context
+    return normalized
+
+
 class PlanStore:
     """Append-only ledger for one-call model planning and plan consumption."""
 
@@ -156,7 +174,7 @@ class PlanStore:
                     plan_id=plan_id,
                     client_request_id=event["client_request_id"],
                     question=event["question"],
-                    dataset_context=dict(context),
+                    dataset_context=_normalize_dataset_context(context),
                     provider_authorization_ref=event["provider_authorization_ref"],
                     provider_calls_authorized=int(event["provider_calls_authorized"]),
                     status=DurablePlanStatus.REQUESTED,
@@ -269,9 +287,7 @@ class PlanStore:
         ).strip()
         if not source_fingerprint.startswith("sha256:"):
             raise ValueError("dataset_context source_fingerprint is required")
-        normalized_context = json.loads(
-            json.dumps(dataset_context, ensure_ascii=False, sort_keys=True, allow_nan=False)
-        )
+        normalized_context = _normalize_dataset_context(dataset_context)
         if (
             isinstance(provider_calls_authorized, bool)
             or provider_calls_authorized != 1

@@ -23,10 +23,16 @@ class PlanningInputRecord:
     questions: tuple[dict[str, str], ...]
     answers: tuple[dict[str, str], ...]
     clarifications: tuple[dict[str, str], ...]
+    semantic_resolutions: tuple[dict[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
-        for key in ("questions", "answers", "clarifications"):
+        for key in (
+            "questions",
+            "answers",
+            "clarifications",
+            "semantic_resolutions",
+        ):
             value[key] = [dict(item) for item in getattr(self, key)]
         return value
 
@@ -118,6 +124,30 @@ def _normalize_answers(
     )
 
 
+def normalize_semantic_resolutions(
+    resolutions: Iterable[dict[str, Any]],
+) -> tuple[dict[str, str], ...]:
+    normalized: list[dict[str, str]] = []
+    for raw in resolutions:
+        if not isinstance(raw, dict):
+            raise ValueError("semantic_resolutions must contain objects")
+        if set(raw) != {"prerequisite_code", "column"}:
+            raise ValueError("semantic resolution fields are invalid")
+        prerequisite_code = str(raw.get("prerequisite_code") or "").strip()
+        column = str(raw.get("column") or "").strip()
+        if prerequisite_code != "analysis_unit_semantics":
+            raise ValueError("semantic prerequisite code is invalid")
+        if not column:
+            raise ValueError("semantic resolution column is required")
+        normalized.append(
+            {"prerequisite_code": prerequisite_code, "column": column}
+        )
+    codes = [item["prerequisite_code"] for item in normalized]
+    if len(codes) != len(set(codes)):
+        raise ValueError("semantic prerequisite code must be unique")
+    return tuple(normalized)
+
+
 class PlanningInputStore:
     """Append-only ledger of user answers to one terminal needs_input plan."""
 
@@ -174,6 +204,9 @@ class PlanningInputStore:
             seen.add(input_id)
             questions = _normalize_questions(event.get("questions") or ())
             answers = _normalize_answers(event.get("answers") or (), questions)
+            semantic_resolutions = normalize_semantic_resolutions(
+                event.get("semantic_resolutions") or ()
+            )
             by_id = {item["question_id"]: item["answer"] for item in answers}
             result.append(
                 PlanningInputRecord(
@@ -193,6 +226,7 @@ class PlanningInputStore:
                         }
                         for item in questions
                     ),
+                    semantic_resolutions=semantic_resolutions,
                 )
             )
         return result
@@ -211,11 +245,15 @@ class PlanningInputStore:
         client_reply_id: str,
         questions: Iterable[dict[str, Any]],
         answers: Iterable[dict[str, Any]],
+        semantic_resolutions: Iterable[dict[str, Any]] = (),
     ) -> PlanningInputRecord:
         source_id = require_storage_id(source_plan_id, "source_plan_id")
         reply_id = require_storage_id(client_reply_id, "client_reply_id")
         normalized_questions = _normalize_questions(tuple(questions))
         normalized_answers = _normalize_answers(tuple(answers), normalized_questions)
+        normalized_semantic_resolutions = normalize_semantic_resolutions(
+            tuple(semantic_resolutions)
+        )
         planning_input_id = f"planning_input_{_digest(reply_id)}"
         with _PLANNING_INPUT_LOCK:
             existing = next(
@@ -231,6 +269,8 @@ class PlanningInputStore:
                     existing.source_plan_id == source_id
                     and existing.questions == normalized_questions
                     and existing.answers == normalized_answers
+                    and existing.semantic_resolutions
+                    == normalized_semantic_resolutions
                 )
                 if not same:
                     raise PlanningInputConflict(
@@ -246,6 +286,9 @@ class PlanningInputStore:
                     "client_reply_id": reply_id,
                     "questions": list(normalized_questions),
                     "answers": list(normalized_answers),
+                    "semantic_resolutions": list(
+                        normalized_semantic_resolutions
+                    ),
                 }
             )
             return self.get(planning_input_id)

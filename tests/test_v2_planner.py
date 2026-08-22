@@ -33,6 +33,7 @@ def _context() -> DatasetPlanningContext:
             DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
             DatasetColumnContext("marketing", "float64", ColumnRole.NUMERIC),
         ),
+        confirmed_analysis_unit_column="unit_id",
     )
 
 
@@ -247,6 +248,65 @@ def test_planner_accepts_needs_input_with_exact_missing_time_prerequisite():
     assert result.analysis_kind is None
     assert result.pending_analysis_kind is AnalysisKind.TIME_TREND
     assert result.missing_prerequisites == ("time_field",)
+
+
+def test_analysis_unit_route_requires_explicit_confirmed_semantic_column():
+    columns = (
+        DatasetColumnContext("date", "object", ColumnRole.DATETIME),
+        DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+        DatasetColumnContext("channel", "object", ColumnRole.CATEGORICAL),
+        DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+    )
+    unconfirmed = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "f" * 64,
+        row_count=120,
+        columns=columns,
+    )
+    needs_input = FakePlannerClient(
+        {
+            "status": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "组间推断需要用户确认独立观察单位。",
+            "questions": ["哪一列标识独立观察单位？"],
+            "pending_analysis_kind": "group_comparison",
+            "missing_prerequisites": ["analysis_unit_semantics"],
+        }
+    )
+
+    pending = StructuredAnalysisPlanner(needs_input).plan(
+        "不同渠道销售额是否有差异？", unconfirmed
+    )
+
+    assert pending.status is PlanStatus.NEEDS_INPUT
+    assert pending.missing_prerequisites == ("analysis_unit_semantics",)
+
+    confirmed = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "f" * 64,
+        row_count=120,
+        columns=columns,
+        confirmed_analysis_unit_column="unit_id",
+    )
+    ready = StructuredAnalysisPlanner(
+        FakePlannerClient(
+            {
+                "status": "ready",
+                "analysis_kind": "group_comparison",
+                "parameters": {
+                    "metric": "sales",
+                    "group": "channel",
+                    "analysis_unit": "unit_id",
+                },
+                "rationale": "使用用户确认的独立观察单位。",
+                "questions": [],
+            }
+        )
+    ).plan("不同渠道销售额是否有差异？", confirmed)
+
+    assert ready.status is PlanStatus.READY
+    assert ready.parameters["analysis_unit"] == "unit_id"
 
 
 def test_planner_rejects_ready_route_when_context_prerequisite_is_missing():

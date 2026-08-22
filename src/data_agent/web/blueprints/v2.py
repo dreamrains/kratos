@@ -39,6 +39,7 @@ from data_agent.v2.planning_input import (
     PlanningInputConflict,
     PlanningInputRecord,
     PlanningInputStore,
+    normalize_semantic_resolutions,
     planning_question_blocks,
 )
 from data_agent.v2.planning_budget import (
@@ -214,6 +215,52 @@ def _planning_source(inbox_root: Path | str, filename: str) -> DatasetPlanningCo
     )
 
 
+def _source_context_for_plan(
+    context: DatasetPlanningContext,
+    source_plan,
+) -> DatasetPlanningContext:
+    stored_semantic_context = source_plan.dataset_context.get("semantic_context")
+    confirmed_analysis_unit = (
+        str(stored_semantic_context.get("confirmed_analysis_unit_column") or "")
+        .strip()
+        if isinstance(stored_semantic_context, dict)
+        else ""
+    )
+    source_context = (
+        context.with_confirmed_analysis_unit_column(confirmed_analysis_unit)
+        if confirmed_analysis_unit
+        else context
+    )
+    if source_plan.dataset_context != source_context.to_prompt_dict():
+        raise PlanningInputConflict("planning input belongs to a different dataset")
+    return source_context
+
+
+def _resolve_semantic_context(
+    context: DatasetPlanningContext,
+    source_plan,
+    semantic_resolutions,
+) -> tuple[tuple[dict[str, str], ...], DatasetPlanningContext]:
+    required_semantic_codes = {
+        code
+        for code in source_plan.missing_prerequisites
+        if code == "analysis_unit_semantics"
+    }
+    resolutions = normalize_semantic_resolutions(semantic_resolutions)
+    received_codes = {item["prerequisite_code"] for item in resolutions}
+    if received_codes != required_semantic_codes:
+        raise ValueError(
+            "semantic resolutions must exactly match source plan prerequisites"
+        )
+    resolved_context = context
+    for item in resolutions:
+        if item["prerequisite_code"] == "analysis_unit_semantics":
+            resolved_context = resolved_context.with_confirmed_analysis_unit_column(
+                item["column"]
+            )
+    return resolutions, resolved_context
+
+
 def _planning_input_for_request(
     *,
     sessions_root: Path | str,
@@ -221,7 +268,7 @@ def _planning_input_for_request(
     planning_input_id: str,
     question: str,
     context: DatasetPlanningContext,
-) -> PlanningInputRecord:
+) -> tuple[PlanningInputRecord, DatasetPlanningContext]:
     planning_input = PlanningInputStore(sessions_root, session_id).get(
         planning_input_id
     )
@@ -232,8 +279,7 @@ def _planning_input_for_request(
         raise PlanningInputConflict("source plan is not needs_input")
     if source_plan.question != question:
         raise PlanningInputConflict("planning input belongs to a different question")
-    if source_plan.dataset_context != context.to_prompt_dict():
-        raise PlanningInputConflict("planning input belongs to a different dataset")
+    source_context = _source_context_for_plan(context, source_plan)
     expected_questions = tuple(
         {
             "question_id": item["question_id"],
@@ -243,7 +289,17 @@ def _planning_input_for_request(
     )
     if planning_input.questions != expected_questions:
         raise PlanningInputConflict("planning input questions differ from source plan")
-    return planning_input
+    try:
+        _, resolved_context = _resolve_semantic_context(
+            source_context,
+            source_plan,
+            planning_input.semantic_resolutions,
+        )
+    except ValueError as exc:
+        raise PlanningInputConflict(
+            "planning input semantic resolutions differ from source prerequisites"
+        ) from exc
+    return planning_input, resolved_context
 
 
 def _planning_context_estimate(
@@ -457,17 +513,15 @@ def create_v2_plan() -> Response:
         authorization_store = ProviderAuthorizationStore(
             cfg.sessions_resolved, session_id
         )
-        planning_input = (
-            _planning_input_for_request(
+        planning_input = None
+        if planning_input_id:
+            planning_input, context = _planning_input_for_request(
                 sessions_root=cfg.sessions_resolved,
                 session_id=session_id,
                 planning_input_id=planning_input_id,
                 question=question,
                 context=context,
             )
-            if planning_input_id
-            else None
-        )
         parent_plan_id = (
             planning_input.source_plan_id if planning_input is not None else ""
         )
@@ -607,17 +661,15 @@ def estimate_v2_planning_context() -> Response:
     cfg = get_config()
     try:
         context = _planning_source(cfg.inbox_dir, filename)
-        planning_input = (
-            _planning_input_for_request(
+        planning_input = None
+        if planning_input_id:
+            planning_input, context = _planning_input_for_request(
                 sessions_root=cfg.sessions_resolved,
                 session_id=session_id,
                 planning_input_id=planning_input_id,
                 question=question,
                 context=context,
             )
-            if planning_input_id
-            else None
-        )
         estimate = _planning_context_estimate(
             question=question,
             context=context,
@@ -666,17 +718,15 @@ def issue_v2_provider_authorization() -> Response:
     cfg = get_config()
     try:
         context = _planning_source(cfg.inbox_dir, filename)
-        planning_input = (
-            _planning_input_for_request(
+        planning_input = None
+        if planning_input_id:
+            planning_input, context = _planning_input_for_request(
                 sessions_root=cfg.sessions_resolved,
                 session_id=session_id,
                 planning_input_id=planning_input_id,
                 question=question,
                 context=context,
             )
-            if planning_input_id
-            else None
-        )
         estimate = _planning_context_estimate(
             question=question,
             context=context,
@@ -741,13 +791,25 @@ def answer_v2_plan(session_id: str, plan_id: str) -> Response:
         return jsonify({"error": str(exc)}), 400
     client_reply_id = str(payload.get("client_reply_id") or "").strip()
     answers = payload.get("answers")
+    semantic_resolutions = payload.get("semantic_resolutions", [])
     if not client_reply_id or not isinstance(answers, list):
         return jsonify({"error": "client_reply_id and answers are required"}), 400
+    if not isinstance(semantic_resolutions, list):
+        return jsonify({"error": "semantic_resolutions must be an array"}), 400
     cfg = get_config()
     try:
         source_plan = PlanStore(cfg.sessions_resolved, session_id).get(plan_id)
         if source_plan.status is not DurablePlanStatus.NEEDS_INPUT:
             return jsonify({"error": "only needs_input plans accept answers"}), 409
+        current_context = _planning_source(
+            cfg.inbox_dir, source_plan.dataset_context["filename"]
+        )
+        source_context = _source_context_for_plan(current_context, source_plan)
+        normalized_semantic_resolutions, _ = _resolve_semantic_context(
+            source_context,
+            source_plan,
+            semantic_resolutions,
+        )
         questions = tuple(
             {
                 "question_id": item["question_id"],
@@ -771,6 +833,7 @@ def answer_v2_plan(session_id: str, plan_id: str) -> Response:
             client_reply_id=client_reply_id,
             questions=questions,
             answers=answers,
+            semantic_resolutions=normalized_semantic_resolutions,
         )
     except KeyError:
         return jsonify({"error": "V2 plan not found"}), 404

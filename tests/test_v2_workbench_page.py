@@ -109,6 +109,16 @@ def test_v2_workbench_planning_is_only_bound_to_explicit_clicks():
     assert "else if (params.has('plan_id')) restorePlanning();" in js
 
 
+def test_v2_workbench_requires_controlled_analysis_unit_selection():
+    client = create_app().test_client()
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert "analysis_unit_semantics" in js
+    assert "data-prerequisite-code" in js
+    assert "semantic_resolutions: semanticResolutions" in js
+    assert "请选择已确认的独立观察单位列" in js
+
+
 def test_v2_workbench_manual_retries_keep_session_and_create_new_turn():
     client = create_app().test_client()
     js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)

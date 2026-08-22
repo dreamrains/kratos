@@ -59,7 +59,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     assert preflight["authorization_request"]["provider_calls"] == 1
     assert preflight["authorization_request"]["mode"] == "per_call"
     assert preflight["planner_contract_gate"] == {
-            "version": "v2_planner_contract_parity.v2",
+            "version": "v2_planner_contract_parity.v3",
         "passed": True,
         "schema_fingerprint": preflight["planner_contract_gate"][
             "schema_fingerprint"
@@ -73,14 +73,25 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
             "forecast",
             "multi_finding_synthesis",
         ],
-            "ready_variant_count": 6,
+            "ready_variant_count": 4,
             "needs_input_variants": [
                 {
                     "analysis_kind": "factor_relationship",
-                    "missing_prerequisites": ["compatible_column_binding"],
-                }
+                    "missing_prerequisites": [
+                        "analysis_unit_semantics",
+                        "compatible_column_binding",
+                    ],
+                },
+                {
+                    "analysis_kind": "group_comparison",
+                    "missing_prerequisites": ["analysis_unit_semantics"],
+                },
+                {
+                    "analysis_kind": "multi_finding_synthesis",
+                    "missing_prerequisites": ["analysis_unit_semantics"],
+                },
             ],
-            "needs_input_variant_count": 1,
+            "needs_input_variant_count": 3,
             "unsupported_variant_count": 1,
             "status_variant_count": 8,
     }

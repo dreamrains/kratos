@@ -43,7 +43,7 @@ class DeterministicJourneyPlanner:
                 planner_invocations=1,
                 model_id="provider-neutral-fixture",
                 pending_analysis_kind=AnalysisKind.MULTI_FINDING_SYNTHESIS,
-                missing_prerequisites=("compatible_column_binding",),
+                missing_prerequisites=("analysis_unit_semantics",),
             )
         if self.calls == 2:
             raise RuntimeError("synthetic provider failure")

@@ -1146,3 +1146,18 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 安全诊断只记录已识别的 pending method 和受控 missing code，不保存问题文本、参数值、reasoning 或原始 Provider 响应。该切片没有调用 Provider、自动回答、repair、重试或补跑。
 
 当前服务端可证明的是列角色存在性与字段身份兼容性；粗粒度 `identifier` 角色仍不等同于已确认的业务行粒度。5C5T 不把该剩余语义边界包装成完成，也不据此签发真实 Provider、稳定性或 human-semantic PASS。源码变化使 `sha256:4d0895...` 上的所有 release receipts 与 5C5S 样本相对当前源码 stale；任何新真实调用都必须重新预检并获得精确授权。
+
+## 39. Slice 5C5U 实施补充：用户确认的分析单位语义上下文
+
+列角色只能排除确定不合法的绑定，不能证明哪一列在业务上代表独立观察单位。`identifier` 可能是行 ID、客户 ID 或订单 ID，numeric/text 也可能承载业务实体标识；因此不得通过列名或粗粒度 role 自动升级为已确认语义。
+
+5C5U 将这项确认纳入服务端共享合同：
+
+1. `DatasetPlanningContext` 只接受当前数据集内非 datetime/unknown 的 `confirmed_analysis_unit_column`，并把它作为受控 `semantic_context` 输入 Planner；
+2. 依赖 analysis unit 的方法在未确认时产生 `analysis_unit_semantics`。schema 不向 Planner 暴露任意候选列；确认后只暴露唯一确认列，compiler 仍独立要求精确相等；
+3. Planning Input Ledger 持久化受控 `semantic_resolutions`，其代码必须与 source needs-input plan 的语义缺口集合严格相等。历史事件通过空缺省值保持可读，但新增事件不能绕过结构校验；
+4. estimate、authorization 与 Planner 都从同一个不可变 `planning_input_id` 恢复答案和语义解析。列、数据 fingerprint、问题、问题块或解析身份变化均在 Provider 调用前 fail closed；
+5. Workbench 必须让用户显式选择，不使用默认选项或列名启发式。选择变更会使旧 estimate/authorization 失效，刷新恢复则显示 Ledger 中已保存的选择；
+6. planner contract gate v3 和 real-provider preflight v4 绑定新的 schema/预算身份。未确认 fixture 上的 needs-input variant 是正确的预检结果，不得被改写为 ready 或自动回答。
+
+该切片的浏览器旅程使用 provider-neutral fixture，没有向外部 Provider 发送数据。浏览器中选择的 `unit_id` 只证明产品链路可用，不等同于用户为下一次真实调用作出的授权或语义确认。源码变化后，5C5T 及更早 source-bound receipts 相对当前实现均失效；需要 clean commit、新 preflight 和新的精确调用授权。

@@ -126,3 +126,44 @@ def test_planning_input_preserves_long_answer_without_application_limit(tmp_path
     )
     assert restored.answers[0]["answer"] == long_answer
     assert restored.clarifications[1]["answer"] == long_answer
+
+
+def test_planning_input_persists_controlled_semantic_resolution_immutably(tmp_path):
+    store = PlanningInputStore(tmp_path, "session_input_semantics")
+    questions = _questions("plan_semantics")
+    answers = tuple(
+        {"question_id": item["question_id"], "answer": "选择 unit_id"}
+        for item in questions
+    )
+    resolutions = (
+        {
+            "prerequisite_code": "analysis_unit_semantics",
+            "column": "unit_id",
+        },
+    )
+
+    recorded = store.record(
+        source_plan_id="plan_semantics",
+        client_reply_id="reply_semantics",
+        questions=questions,
+        answers=answers,
+        semantic_resolutions=resolutions,
+    )
+    restored = PlanningInputStore(tmp_path, "session_input_semantics").get(
+        recorded.planning_input_id
+    )
+
+    assert restored.semantic_resolutions == resolutions
+    with pytest.raises(PlanningInputConflict, match="different reply content"):
+        store.record(
+            source_plan_id="plan_semantics",
+            client_reply_id="reply_semantics",
+            questions=questions,
+            answers=answers,
+            semantic_resolutions=(
+                {
+                    "prerequisite_code": "analysis_unit_semantics",
+                    "column": "customer_id",
+                },
+            ),
+        )

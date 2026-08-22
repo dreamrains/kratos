@@ -234,12 +234,24 @@
         };
         byId('planning-heading').textContent = headings[plan.status] || '分析规划';
         const answerById = new Map((planningInput?.answers || []).map((item) => [item.question_id, item.answer]));
-        byId('planning-questions').innerHTML = (plan.message_blocks || []).map((block) => `
+        const resolutionByCode = new Map((planningInput?.semantic_resolutions || []).map((item) => [item.prerequisite_code, item.column]));
+        const semanticFields = (plan.missing_prerequisites || []).includes('analysis_unit_semantics') ? `
+            <div class="planning-question planning-semantic-resolution">
+                <label for="semantic-analysis-unit">哪一列标识独立观察单位？</label>
+                <select id="semantic-analysis-unit" data-prerequisite-code="analysis_unit_semantics">
+                    <option value="">请选择已确认的业务列</option>
+                    ${(plan.dataset_context?.columns || [])
+                        .filter((item) => !['datetime', 'unknown'].includes(item.role))
+                        .map((item) => `<option value="${escapeHtml(item.name)}" ${resolutionByCode.get('analysis_unit_semantics') === item.name ? 'selected' : ''}>${escapeHtml(item.name)}</option>`)
+                        .join('')}
+                </select>
+            </div>` : '';
+        byId('planning-questions').innerHTML = semanticFields + (plan.message_blocks || []).map((block) => `
             <div class="planning-question">
                 <label for="answer-${escapeHtml(block.question_id)}">${escapeHtml(block.text)}</label>
                 <textarea id="answer-${escapeHtml(block.question_id)}" data-question-id="${escapeHtml(block.question_id)}" placeholder="请提供完整业务语义；回答不会被截断。">${escapeHtml(answerById.get(block.question_id) || '')}</textarea>
             </div>`).join('');
-        byId('planning-questions').querySelectorAll('textarea').forEach((input) => {
+        byId('planning-questions').querySelectorAll('textarea, select[data-prerequisite-code]').forEach((input) => {
             input.addEventListener('input', () => {
                 state.planningInputId = '';
                 byId('planning-confirm').hidden = true;
@@ -392,6 +404,14 @@
             showError('请完整回答所有规划问题。');
             return;
         }
+        const semanticResolutions = [...byId('planning-questions').querySelectorAll('select[data-prerequisite-code]')].map((input) => ({
+            prerequisite_code: input.dataset.prerequisiteCode,
+            column: input.value,
+        }));
+        if (semanticResolutions.some((item) => !item.column)) {
+            showError('请选择已确认的独立观察单位列。');
+            return;
+        }
         state.planning = true;
         updateRunControls();
         showError('');
@@ -403,7 +423,11 @@
                     `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/plans/${encodeURIComponent(plan.plan_id)}/answers`,
                     {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({client_reply_id: state.pendingReplyId, answers}),
+                        body: JSON.stringify({
+                            client_reply_id: state.pendingReplyId,
+                            answers,
+                            semantic_resolutions: semanticResolutions,
+                        }),
                     },
                 );
                 state.planningInputId = planningInput.planning_input_id;

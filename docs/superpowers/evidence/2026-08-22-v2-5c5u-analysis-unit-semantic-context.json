@@ -1,0 +1,120 @@
+{
+  "version": "v2_analysis_unit_semantic_context_evidence.v1",
+  "slice": "5C5U",
+  "source_digest": "sha256:94b1d48b6d9f456ebc545a2180dc5e3a9085e7692bba2596007dc3e83cc46381",
+  "git_head": "517ebad182bf863ec49b8c3292c5481af8258f60",
+  "source_dirty": true,
+  "trigger": {
+    "evidence": "docs/superpowers/evidence/2026-08-21-v2-5c5t-controlled-needs-input.json",
+    "confirmed_gap": "column roles and compatible bindings did not prove the business meaning of the independent observational unit"
+  },
+  "red_regressions": [
+    {
+      "case": "analysis_unit_route_requires_explicit_confirmed_semantic_column",
+      "red_observation": "unconfirmed eligible columns were exposed directly to the Planner instead of producing a controlled semantic prerequisite",
+      "green_identity": {
+        "missing_prerequisite": "analysis_unit_semantics",
+        "confirmed_column": "unit_id"
+      }
+    },
+    {
+      "case": "planning_input_persists_immutable_semantic_resolution",
+      "red_observation": "PlanningInputStore did not accept or persist semantic_resolutions",
+      "green_identity": {
+        "prerequisite_code": "analysis_unit_semantics",
+        "column": "unit_id"
+      }
+    },
+    {
+      "case": "planning_http_rejects_missing_or_unknown_semantic_resolution",
+      "red_observation": "the answers endpoint discarded semantic_resolutions and could not bind downstream estimate or Planner context",
+      "green_behavior": "missing, extra, duplicate, unknown-column, dataset-drift and question-drift resolutions fail before a Planning Input is persisted or a Provider call is possible"
+    }
+  ],
+  "implemented_contract": {
+    "planner_contract_gate_version": "v2_planner_contract_parity.v3",
+    "real_provider_preflight_version": "v2_real_provider_journey_preflight.v4",
+    "controlled_semantic_code": "analysis_unit_semantics",
+    "semantic_context_field": "confirmed_analysis_unit_column",
+    "user_confirmation_required": true,
+    "automatic_column_selection": false,
+    "planner_schema_exposes_only_confirmed_analysis_unit": true,
+    "compiler_requires_exact_confirmed_column": true,
+    "planning_input_ledger_persisted": true,
+    "historical_ledger_defaults_preserved": true,
+    "estimate_authorization_planner_shared_context": true,
+    "refresh_restore_verified": true
+  },
+  "unconfirmed_unified_fixture_contract_gate": {
+    "version": "v2_planner_contract_parity.v3",
+    "passed": true,
+    "schema_fingerprint": "sha256:1bcbf05977a819739f93395026af41f2ac4e176508f0e0db6da7d728a56bdcea",
+    "automatic_analysis_kind_count": 7,
+    "ready_variant_count": 4,
+    "needs_input_variants": [
+      {
+        "analysis_kind": "factor_relationship",
+        "missing_prerequisites": [
+          "analysis_unit_semantics",
+          "compatible_column_binding"
+        ]
+      },
+      {
+        "analysis_kind": "group_comparison",
+        "missing_prerequisites": [
+          "analysis_unit_semantics"
+        ]
+      },
+      {
+        "analysis_kind": "multi_finding_synthesis",
+        "missing_prerequisites": [
+          "analysis_unit_semantics"
+        ]
+      }
+    ],
+    "needs_input_variant_count": 3,
+    "unsupported_variant_count": 1,
+    "status_variant_count": 8
+  },
+  "provider_neutral_browser_journey": {
+    "upload_http_status": 200,
+    "initial_estimate_http_status": 200,
+    "fixture_planner_status": "needs_input",
+    "fixture_provider_is_real": false,
+    "selector_rendered": true,
+    "automatic_selection_observed": false,
+    "selected_column": "unit_id",
+    "planning_input_http_status": 201,
+    "resolved_estimate_http_status": 200,
+    "refresh_restored_selection": true
+  },
+  "verification": {
+    "focused_planner_ledger_http_preflight_workbench": "128 passed",
+    "v2_and_config": "390 passed, 2123 deselected",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "provider_neutral_browser_journey": "passed",
+    "real_provider_preflight_dry_build": "passed",
+    "provider_calls": 0,
+    "automatic_retries": 0
+  },
+  "stale_source_bound_evidence": {
+    "prior_source_digest": "sha256:5be3c2147254f94aaa42114a85094d7e1e2af425e7fd616d770fcb394cb6cabe",
+    "all_prior_release_receipts_stale": true,
+    "all_5c5s_samples_stale_for_current_release": true,
+    "historical_facts_retained": true
+  },
+  "next_preflight_boundary": {
+    "deterministic_preflight_builder_passed": true,
+    "committed_clean_source_required": true,
+    "real_provider_preflight_receipt_issued": false,
+    "direct_unit_dependent_ready_context_frozen": false,
+    "reason": "the user-confirmed analysis-unit selection exists only in the provider-neutral fixture journey and cannot be reused as real-provider authorization",
+    "next_requirement": "review and commit 5C5U, then create a fresh source-bound preflight; any real call still requires exact model, source digest, purpose and count authorization"
+  },
+  "real_provider_receipt_issued": false,
+  "stability_receipt_issued": false,
+  "human_semantic_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

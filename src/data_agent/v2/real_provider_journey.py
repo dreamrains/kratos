@@ -24,7 +24,7 @@ from data_agent.v2.planning_budget import (
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v3"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v4"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (

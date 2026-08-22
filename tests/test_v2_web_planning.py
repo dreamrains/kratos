@@ -8,9 +8,11 @@ import pandas as pd
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.v2.plan_store import DurablePlanStatus, PlanStore
+from data_agent.v2.planning_input import PlanningInputStore
 from data_agent.v2.planner import (
     AnalysisPlan,
     AnalysisKind,
+    DatasetPlanningContext,
     PlanStatus,
     PlannerContractError,
     PlannerFailureStage,
@@ -47,7 +49,9 @@ def _client(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     inbox = workspace / "inbox"
     inbox.mkdir(parents=True)
-    pd.DataFrame({"sales": [10, 20, 30]}).to_csv(inbox / "sales.csv", index=False)
+    pd.DataFrame(
+        {"unit_id": ["u1", "u2", "u3"], "sales": [10, 20, 30]}
+    ).to_csv(inbox / "sales.csv", index=False)
     monkeypatch.setattr(
         config_module,
         "_config",
@@ -122,7 +126,7 @@ class FakeNeedsInputPlanner:
             planner_invocations=1,
             model_id=self.model_id,
             pending_analysis_kind=AnalysisKind.GROUP_COMPARISON,
-            missing_prerequisites=("compatible_column_binding",),
+            missing_prerequisites=("analysis_unit_semantics",),
         )
 
 
@@ -138,11 +142,15 @@ class FakeFailedPlanner:
 class FakeClarifiedPlanner:
     calls = 0
     clarifications = ()
+    confirmed_analysis_unit_column = ""
     model_id = "provider/test-model"
 
     def plan(self, question, context, *, clarifications=()):
         type(self).calls += 1
         type(self).clarifications = tuple(clarifications)
+        type(self).confirmed_analysis_unit_column = (
+            context.confirmed_analysis_unit_column
+        )
         return AnalysisPlan(
             status=PlanStatus.READY,
             user_question=question,
@@ -740,7 +748,7 @@ def test_plan_api_persists_needs_input_without_creating_executable_route(
     assert response.status_code == 201
     assert body["status"] == "needs_input"
     assert body["pending_analysis_kind"] == "group_comparison"
-    assert body["missing_prerequisites"] == ["compatible_column_binding"]
+    assert body["missing_prerequisites"] == ["analysis_unit_semantics"]
     assert body["analysis_kind"] == ""
     assert body["parameters"] == {}
     assert body["message_blocks"] == [
@@ -800,6 +808,12 @@ def test_needs_input_answer_is_refreshable_and_derives_new_authorized_plan(
                     "answer": "每行代表订单；比较销售额。",
                 }
             ],
+            "semantic_resolutions": [
+                {
+                    "prerequisite_code": "analysis_unit_semantics",
+                    "column": "unit_id",
+                }
+            ],
         },
     )
     planning_input = answer.get_json()
@@ -814,6 +828,12 @@ def test_needs_input_answer_is_refreshable_and_derives_new_authorized_plan(
     assert PlanStore(tmp_path / "sessions", session_id).get(
         needs_input["plan_id"]
     ).status is DurablePlanStatus.NEEDS_INPUT
+    assert planning_input["semantic_resolutions"] == [
+        {
+            "prerequisite_code": "analysis_unit_semantics",
+            "column": "unit_id",
+        }
+    ]
 
     FakeClarifiedPlanner.calls = 0
     FakeClarifiedPlanner.clarifications = ()
@@ -853,6 +873,67 @@ def test_needs_input_answer_is_refreshable_and_derives_new_authorized_plan(
             "answer": "每行代表订单；比较销售额。",
         },
     )
+    assert FakeClarifiedPlanner.confirmed_analysis_unit_column == "unit_id"
+
+
+def test_semantic_needs_input_rejects_missing_or_unknown_column_resolution(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    session_id = "session_plan_semantic_resolution"
+    question = "比较表现"
+    monkeypatch.setattr(
+        v2_module, "V2_PLANNER_FACTORY", lambda: FakeNeedsInputPlanner()
+    )
+    authorization_id = _issue_authorization(
+        client,
+        session_id=session_id,
+        question=question,
+        client_action_id="action_semantic_resolution",
+    )
+    needs_input = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": session_id,
+            "filename": "sales.csv",
+            "question": question,
+            "client_request_id": "client_semantic_resolution",
+            "provider_authorization_id": authorization_id,
+        },
+    ).get_json()
+    answer = {
+        "question_id": needs_input["message_blocks"][0]["question_id"],
+        "answer": "unit_id 表示独立观察单位。",
+    }
+
+    missing = client.post(
+        f"/api/v2/sessions/{session_id}/plans/{needs_input['plan_id']}/answers",
+        json={
+            "client_reply_id": "reply_semantic_missing",
+            "answers": [answer],
+        },
+    )
+    unknown = client.post(
+        f"/api/v2/sessions/{session_id}/plans/{needs_input['plan_id']}/answers",
+        json={
+            "client_reply_id": "reply_semantic_unknown",
+            "answers": [answer],
+            "semantic_resolutions": [
+                {
+                    "prerequisite_code": "analysis_unit_semantics",
+                    "column": "customer_id",
+                }
+            ],
+        },
+    )
+
+    assert missing.status_code == 400
+    assert "exactly match" in missing.get_json()["error"]
+    assert unknown.status_code == 400
+    assert "existing column" in unknown.get_json()["error"]
+    assert PlanningInputStore(tmp_path / "sessions", session_id).list_all() == []
 
 
 def test_failed_plan_is_durable_and_same_request_does_not_retry_provider(
@@ -989,6 +1070,12 @@ def test_failed_derived_plan_retries_only_with_new_explicit_authorization(
                     "answer": "每行代表订单；比较销售额。",
                 }
             ],
+            "semantic_resolutions": [
+                {
+                    "prerequisite_code": "analysis_unit_semantics",
+                    "column": "unit_id",
+                }
+            ],
         },
     ).get_json()
 
@@ -1079,13 +1166,13 @@ def test_incomplete_requested_plan_requires_new_authorization_and_is_not_retried
     store.request(
         client_request_id="client_plan_incomplete",
         question=question,
-        dataset_context={
-            "filename": "sales.csv",
-            "source_fingerprint": "sha256:"
-            + hashlib.sha256(source.read_bytes()).hexdigest(),
-            "row_count": 3,
-            "columns": [{"name": "sales", "dtype": "int64", "role": "numeric"}],
-        },
+        dataset_context=DatasetPlanningContext.from_frame(
+            filename="sales.csv",
+            source_fingerprint=(
+                "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+            ),
+            frame=pd.read_csv(source),
+        ).to_prompt_dict(),
         provider_authorization_ref=authorization_id,
         provider_calls_authorized=1,
     )

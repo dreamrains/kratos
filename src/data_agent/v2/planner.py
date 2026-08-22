@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -128,6 +128,7 @@ class DatasetPlanningContext:
     source_fingerprint: str
     row_count: int
     columns: tuple[DatasetColumnContext, ...]
+    confirmed_analysis_unit_column: str = ""
 
     def __post_init__(self) -> None:
         if not str(self.filename or "").strip():
@@ -145,6 +146,21 @@ class DatasetPlanningContext:
         names = [item.name for item in self.columns]
         if len(names) != len(set(names)):
             raise ValueError("column names must be unique")
+        confirmed_analysis_unit = str(
+            self.confirmed_analysis_unit_column or ""
+        ).strip()
+        if confirmed_analysis_unit:
+            by_name = {item.name: item for item in self.columns}
+            selected = by_name.get(confirmed_analysis_unit)
+            if selected is None:
+                raise ValueError("confirmed analysis unit must be an existing column")
+            if selected.role in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}:
+                raise ValueError(
+                    "confirmed analysis unit must identify an eligible column"
+                )
+        object.__setattr__(
+            self, "confirmed_analysis_unit_column", confirmed_analysis_unit
+        )
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
@@ -152,7 +168,17 @@ class DatasetPlanningContext:
             "source_fingerprint": self.source_fingerprint,
             "row_count": self.row_count,
             "columns": [asdict(item) for item in self.columns],
+            "semantic_context": {
+                "confirmed_analysis_unit_column": (
+                    self.confirmed_analysis_unit_column
+                )
+            },
         }
+
+    def with_confirmed_analysis_unit_column(
+        self, column: str
+    ) -> "DatasetPlanningContext":
+        return replace(self, confirmed_analysis_unit_column=column)
 
     @classmethod
     def from_frame(
@@ -227,7 +253,7 @@ _DIAGNOSTIC_MAX_TOOL_CALLS = 8
 _DIAGNOSTIC_MAX_ARGUMENT_FIELDS = 32
 _DIAGNOSTIC_MAX_TEXT = 64
 _DIAGNOSTIC_UNKNOWN_PARAMETER_COUNT_CAP = 33
-PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v2"
+PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v3"
 _CONTROLLED_PARAMETER_FIELDS = frozenset(
     {
         "action_risk",
@@ -249,6 +275,7 @@ _COMPATIBLE_COLUMN_BINDING = "compatible_column_binding"
 _CONTROLLED_MISSING_PREREQUISITES = frozenset(
     {
         "analysis_unit",
+        "analysis_unit_semantics",
         "date_column",
         "features",
         "group",
@@ -724,7 +751,7 @@ def _parameter_schema(
     analysis_unit_columns = [
         item.name
         for item in context.columns
-        if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+        if item.name == context.confirmed_analysis_unit_column
     ]
 
     def string_enum(
@@ -867,7 +894,7 @@ def _required_column_candidates(
     analysis_unit_columns = tuple(
         item.name
         for item in context.columns
-        if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+        if item.name == context.confirmed_analysis_unit_column
     )
     if field in _NUMERIC_COLUMN_PARAMETERS:
         return numeric_columns
@@ -903,9 +930,29 @@ def _missing_prerequisites_for_kind(
     candidates = {
         field: _required_column_candidates(field, context) for field in column_fields
     }
-    missing = tuple(field for field in column_fields if not candidates[field])
-    if missing:
-        return missing
+    if (
+        "analysis_unit" in candidates
+        and not context.confirmed_analysis_unit_column
+    ):
+        candidates["analysis_unit"] = tuple(
+            item.name
+            for item in context.columns
+            if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+        )
+    missing: list[str] = []
+    if (
+        "analysis_unit" in column_fields
+        and not context.confirmed_analysis_unit_column
+    ):
+        missing.append("analysis_unit_semantics")
+    unavailable_fields = [
+        field for field in column_fields if not candidates[field]
+    ]
+    missing.extend(
+        field for field in unavailable_fields if field != "analysis_unit"
+    )
+    if unavailable_fields:
+        return tuple(missing)
 
     ordered_fields = sorted(column_fields, key=lambda field: len(candidates[field]))
 
@@ -921,8 +968,8 @@ def _missing_prerequisites_for_kind(
         return False
 
     if not has_compatible_binding(0, {}):
-        return (_COMPATIBLE_COLUMN_BINDING,)
-    return ()
+        missing.append(_COMPATIBLE_COLUMN_BINDING)
+    return tuple(missing)
 
 
 def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
@@ -1374,7 +1421,8 @@ class StructuredAnalysisPlanner:
                 "For unsupported, leave analysis_kind, parameters, and questions empty. "
                 "For ready, use only parameter fields and dataset column values declared "
                 "by the selected analysis_kind schema. analysis_unit identifies the "
-                "independent observational entity or cluster; never bind a datetime, "
+                "independent observational entity or cluster and must equal the "
+                "user-confirmed semantic_context column; never bind a datetime, "
                 "metric, grouping, or time_field column as analysis_unit."
             ),
         )
@@ -1659,6 +1707,12 @@ class StructuredAnalysisPlanner:
             if key not in result:
                 continue
             selected = columns[result[key]]
+            if result[key] != context.confirmed_analysis_unit_column:
+                raise PlannerContractError(
+                    "analysis_unit must match the user-confirmed semantic column",
+                    reason_code="plan_column_binding_invalid",
+                    diagnostic={"invalid_parameter_fields": [key]},
+                )
             if selected.role in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}:
                 raise PlannerContractError(
                     "analysis_unit must identify an observational entity or cluster",
