@@ -1,0 +1,94 @@
+{
+  "version": "v2_human_semantic_review_preparation.v1",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "scenario_id": "unified_analysis_entry",
+  "status": "awaiting_independent_human_review",
+  "evidence_refs": [
+    "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-provider-preflight.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-provider-observation.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-browser-composition.json"
+  ],
+  "provider_plan": {
+    "status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "aggregation": "sum",
+      "analysis_unit": "unit_id",
+      "frequency": "daily",
+      "group": "channel",
+      "metric": "sales",
+      "time_field": "date"
+    },
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "repair_calls": 0
+  },
+  "deterministic_browser_reproduction": {
+    "provider_calls": 0,
+    "planner_calls": 0,
+    "session_id": "v2_c06079df62f9",
+    "turn_id": "turn_ef9b2878dad2",
+    "status": "finalized",
+    "block_count": 4,
+    "chart_count": 2,
+    "console_errors": [],
+    "refresh_restored": true,
+    "answer_before_digest": "sha256:57fcbdbe8f9cb7e9798a6c89621074115e845aa74c609fb2035c3f7f0250321c",
+    "answer_after_digest": "sha256:57fcbdbe8f9cb7e9798a6c89621074115e845aa74c609fb2035c3f7f0250321c"
+  },
+  "published_claims": {
+    "data_range": "2026-01-01 through 2026-02-11",
+    "trend": "sales increased by 1.272 per daily period; 95% CI [1.225, 1.32], HAC p<0.001",
+    "group_difference": "B minus A sales mean difference was 14; 95% CI [4.324, 23.676], Welch p=0.006, Hedges g=0.885",
+    "scope": "42 observed daily periods and 42 effective unit_id values, with no automatic generalization beyond the uploaded data",
+    "method": "daily sum with HAC max lag 3; Welch comparison by independent unit_id",
+    "calibration": "The answer explicitly rejects causal and intervention-effect interpretations.",
+    "recommendation": "No action recommendation was published because the plan remained analysis-only."
+  },
+  "review_dimensions": {
+    "question_understanding": {
+      "status": "prepared",
+      "review_focus": "Confirm that the trend plus channel comparison directly answers the business question."
+    },
+    "data_scope": {
+      "status": "prepared",
+      "review_focus": "Confirm the stated date range, 42 periods, 42 unit_id values, and non-generalization boundary."
+    },
+    "method_fit": {
+      "status": "prepared",
+      "review_focus": "Confirm daily sum, HAC trend, and independent-unit Welch comparison are appropriate."
+    },
+    "statistical_rigor": {
+      "status": "prepared",
+      "review_focus": "Confirm the intervals, p-values, effect size, missing-period disclosure, and assumptions are decision-safe."
+    },
+    "claim_calibration": {
+      "status": "prepared",
+      "review_focus": "Confirm observational findings are not presented as causal or as intervention effects."
+    },
+    "alternative_explanations": {
+      "status": "prepared_with_concern",
+      "review_focus": "The output states the non-causal boundary but does not enumerate concrete alternatives such as channel composition or external events; decide whether that omission is material."
+    },
+    "pyramid_structure": {
+      "status": "prepared",
+      "review_focus": "Confirm direct answer, findings, and method boundaries are ordered for fast business comprehension."
+    },
+    "chart_value": {
+      "status": "prepared",
+      "review_focus": "Confirm the adjacent trend and group-distribution charts add decision value and do not duplicate text."
+    },
+    "recommendation_quality": {
+      "status": "prepared",
+      "review_focus": "Confirm that publishing no recommendation is the safe response to an analysis-only plan."
+    },
+    "journey_integrity": {
+      "status": "prepared",
+      "review_focus": "Confirm the one-call Provider plan, deterministic execution, browser reproduction, and refresh evidence form one coherent journey."
+    }
+  },
+  "human_semantic_release_receipt_status": "not_run",
+  "provider_calls_during_preparation": 0,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
