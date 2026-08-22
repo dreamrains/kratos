@@ -1279,6 +1279,17 @@ def _infer_column_role(name: str, series: pd.Series) -> ColumnRole:
         return ColumnRole.IDENTIFIER
     if unique_count <= max(20, math.ceil(math.sqrt(len(values)))):
         return ColumnRole.CATEGORICAL
+    # Numeric self-healing: an object column whose values are almost all
+    # numeric-coercible becomes a metric candidate instead of dead text
+    # (up to 5% uncoercible values; engines drop those rows and disclose
+    # the counts). Identifier-named columns were classified above;
+    # low-cardinality strings were classified as categorical above.
+    numeric_probe = pd.to_numeric(sample, errors="coerce")
+    if (
+        float(numeric_probe.notna().mean()) >= 0.95
+        and numeric_probe.nunique(dropna=True) >= 2
+    ):
+        return ColumnRole.NUMERIC
     return ColumnRole.TEXT
 
 
