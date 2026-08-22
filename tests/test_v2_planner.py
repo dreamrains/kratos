@@ -141,6 +141,28 @@ def test_planner_compiles_ready_group_plan_from_one_structured_call():
     assert "原始行" not in str(client.calls[0]["messages"])
 
 
+def test_planner_cannot_invent_recommendation_policy_from_schema_only_context():
+    arguments = _ready_arguments(
+        "group_comparison",
+        {
+            "metric": "sales",
+            "group": "channel",
+            "analysis_unit": "unit_id",
+            "recommendation_intent": "act",
+            "action_risk": "low",
+            "reversible": True,
+        },
+    )
+
+    assert list(Draft202012Validator(_planner_tool_schema()).iter_errors(arguments))
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(FakePlannerClient(arguments)).plan(
+            "比较渠道销售额并建议下一步。", _context()
+        )
+
+    assert caught.value.reason_code == "plan_parameter_fields_unexpected"
+
+
 def test_planner_rejects_nonexistent_or_wrong_role_columns():
     missing = FakePlannerClient(
         {
@@ -665,9 +687,6 @@ def test_planner_diagnostic_identifies_controlled_invalid_parameter_fields(
         ("time_trend", "frequency", "hourly"),
         ("time_trend", "aggregation", "median"),
         ("forecast", "horizon", 0),
-        ("group_comparison", "recommendation_intent", "publish"),
-        ("group_comparison", "action_risk", "critical"),
-        ("group_comparison", "reversible", "yes"),
     ],
 )
 def test_planner_schema_and_compiler_share_finite_parameter_policies(

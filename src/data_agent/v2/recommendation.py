@@ -13,6 +13,7 @@ class RecommendationIntent(StrEnum):
 
 
 class ActionRisk(StrEnum):
+    UNKNOWN = "unknown"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -61,7 +62,7 @@ def decide_recommendation(context: RecommendationContext) -> RecommendationDecis
             "null_result_requires_more_information",
             "如该决策重要，应扩大有效样本、检查测量精度，并预先定义最小有意义差异后复验。",
         )
-    if context.action_risk is ActionRisk.HIGH or not context.reversible:
+    if context.action_risk not in {ActionRisk.LOW, ActionRisk.MEDIUM} or not context.reversible:
         return RecommendationDecision(
             RecommendationMode.INVESTIGATIVE_NEXT_STEP,
             "action_risk_requires_stronger_evidence",

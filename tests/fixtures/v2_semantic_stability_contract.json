@@ -1,0 +1,95 @@
+{
+  "version": "v2_semantic_stability_fixture.v1",
+  "baseline": {
+    "plan": {
+      "status": "ready",
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "metric": "sales",
+        "group": "channel",
+        "time_field": "date",
+        "analysis_unit": "unit_id",
+        "aggregation": "sum",
+        "frequency": "daily",
+        "recommendation_intent": "investigate",
+        "action_risk": "medium",
+        "reversible": true
+      },
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "data_scope": {
+        "source_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "time_range": "2026-01-01/2026-02-11",
+        "population": "42 effective units"
+      }
+    },
+    "outcome": {
+      "core_metrics": {
+        "daily_trend": 1.2723032069970808,
+        "group_difference": 14.0
+      },
+      "directions": {
+        "daily_trend": "positive",
+        "group_difference": "positive"
+      },
+      "intervals": {
+        "daily_trend": [1.2249842114157639, 1.3196222025783977],
+        "group_difference": [4.3235219134951475, 23.67647808650485]
+      },
+      "claim_class": "inferential",
+      "primary_limitations": ["observational", "confounding"],
+      "recommendation_safety_mode": "investigative_next_step"
+    }
+  },
+  "equivalent_low_risk": {
+    "plan": {
+      "status": "ready",
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "metric": "sales",
+        "group": "channel",
+        "time_field": "date",
+        "analysis_unit": "unit_id",
+        "aggregation": "sum",
+        "frequency": "daily",
+        "recommendation_intent": "investigate",
+        "action_risk": "low",
+        "reversible": true
+      },
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "data_scope": {
+        "source_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "time_range": "2026-01-01/2026-02-11",
+        "population": "42 effective units"
+      }
+    },
+    "outcome": {
+      "core_metrics": {
+        "daily_trend": 1.2723032069970808,
+        "group_difference": 14.0
+      },
+      "directions": {
+        "daily_trend": "positive",
+        "group_difference": "positive"
+      },
+      "intervals": {
+        "daily_trend": [1.2249842114157639, 1.3196222025783977],
+        "group_difference": [4.3235219134951475, 23.67647808650485]
+      },
+      "claim_class": "inferential",
+      "primary_limitations": ["observational", "confounding"],
+      "recommendation_safety_mode": "investigative_next_step"
+    }
+  },
+  "outcome_within_tolerance": {
+    "daily_trend": 1.2728,
+    "group_difference": 14.04
+  },
+  "outcome_outside_tolerance": {
+    "daily_trend": 1.5,
+    "group_difference": 17.0
+  }
+}

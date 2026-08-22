@@ -336,6 +336,9 @@
                 session_id: state.sessionId,
                 turn_id: state.turnId,
                 plan_id: plan.plan_id,
+                recommendation_intent: byId('recommendation-intent').value,
+                action_risk: byId('action-risk').value,
+                reversible: byId('reversible').checked,
             });
             return;
         }
@@ -965,6 +968,9 @@
             session_id: state.sessionId,
             turn_id: state.turnId,
             plan_id: plan.plan_id,
+            recommendation_intent: byId('recommendation-intent').value,
+            action_risk: byId('action-risk').value,
+            reversible: byId('reversible').checked,
         });
     }
 

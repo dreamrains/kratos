@@ -417,6 +417,15 @@ def analyze_v2() -> Response:
                 "question": ready_plan.question,
                 "plan_id": ready_plan.plan_id,
                 **dict(ready_plan.parameters or {}),
+                **{
+                    key: payload[key]
+                    for key in (
+                        "recommendation_intent",
+                        "action_risk",
+                        "reversible",
+                    )
+                    if key in payload
+                },
             }
         elif requested_steer_id:
             session_id = str(payload.get("session_id") or "").strip()

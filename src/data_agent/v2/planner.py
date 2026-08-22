@@ -253,10 +253,9 @@ _DIAGNOSTIC_MAX_TOOL_CALLS = 8
 _DIAGNOSTIC_MAX_ARGUMENT_FIELDS = 32
 _DIAGNOSTIC_MAX_TEXT = 64
 _DIAGNOSTIC_UNKNOWN_PARAMETER_COUNT_CAP = 33
-PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v3"
+PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v4"
 _CONTROLLED_PARAMETER_FIELDS = frozenset(
     {
-        "action_risk",
         "aggregation",
         "analysis_unit",
         "date_column",
@@ -265,8 +264,6 @@ _CONTROLLED_PARAMETER_FIELDS = frozenset(
         "group",
         "horizon",
         "metric",
-        "recommendation_intent",
-        "reversible",
         "target",
         "time_field",
     }
@@ -605,18 +602,6 @@ _REQUIRED_PARAMETERS: dict[AnalysisKind, tuple[str, ...]] = {
 
 _OPTIONAL_PARAMETERS = {
     AnalysisKind.FACTOR_RELATIONSHIP: frozenset({"time_field"}),
-    AnalysisKind.GROUP_COMPARISON: frozenset(
-        {"recommendation_intent", "action_risk", "reversible"}
-    ),
-    AnalysisKind.TIME_TREND: frozenset(
-        {"recommendation_intent", "action_risk", "reversible"}
-    ),
-    AnalysisKind.FORECAST: frozenset(
-        {"recommendation_intent", "action_risk", "reversible"}
-    ),
-    AnalysisKind.MULTI_FINDING_SYNTHESIS: frozenset(
-        {"recommendation_intent", "action_risk", "reversible"}
-    ),
 }
 
 _NUMERIC_COLUMN_PARAMETERS = ("metric", "target")
@@ -627,11 +612,9 @@ _NUMERIC_COLUMN_ARRAY_PARAMETERS = ("features",)
 _ENUM_PARAMETER_VALUES: dict[str, tuple[str, ...]] = {
     "frequency": ("daily", "weekly", "monthly"),
     "aggregation": ("sum", "mean"),
-    "recommendation_intent": ("none", "investigate", "act"),
-    "action_risk": ("low", "medium", "high"),
 }
 _INTEGER_PARAMETER_RANGES = {"horizon": (1, 30)}
-_BOOLEAN_PARAMETERS = ("reversible",)
+_BOOLEAN_PARAMETERS: tuple[str, ...] = ()
 _SCALAR_DISTINCT_RELATIONS: dict[
     AnalysisKind, tuple[tuple[str, ...], ...]
 ] = {

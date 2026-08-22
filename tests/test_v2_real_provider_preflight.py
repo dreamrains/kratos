@@ -61,7 +61,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     assert preflight["authorization_request"]["provider_calls"] == 1
     assert preflight["authorization_request"]["mode"] == "per_call"
     assert preflight["planner_contract_gate"] == {
-            "version": "v2_planner_contract_parity.v3",
+            "version": "v2_planner_contract_parity.v4",
         "passed": True,
         "schema_fingerprint": preflight["planner_contract_gate"][
             "schema_fingerprint"

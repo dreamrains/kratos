@@ -12,6 +12,7 @@ from data_agent.v2.release import (
     HUMAN_REVIEW_DIMENSIONS,
     compute_release_source_digest,
     evaluate_release_readiness,
+    load_receipts,
     load_release_matrix,
 )
 
@@ -80,6 +81,25 @@ def test_release_matrix_has_unique_scenarios_and_all_seven_layers():
     assert "silent_planning_context_trim" in unified.forbidden_behaviors
     assert "turn_interrupted" in unified.required_semantic_events
     assert "turn_completed_after_interrupt" in unified.forbidden_behaviors
+
+
+def test_human_semantic_review_excludes_machine_stability():
+    assert "stability" not in HUMAN_REVIEW_DIMENSIONS
+
+
+def test_historical_human_receipt_preserves_technical_stability_without_reclassifying_it():
+    receipts = load_receipts(
+        "docs/superpowers/evidence/2026-08-22-v2-5c5y-current-unified-release-receipts.json"
+    )
+    human_receipt = next(
+        receipt
+        for receipt in receipts
+        if receipt.layer is ValidationLayer.HUMAN_SEMANTIC_REVIEW
+    )
+
+    assert human_receipt.status is LayerStatus.FAIL
+    assert human_receipt.historical_technical_stability is LayerStatus.FAIL
+    assert all(status is LayerStatus.PASS for _, status in human_receipt.semantic_dimensions)
 
 
 def test_browser_pass_cannot_stand_in_for_other_layers():

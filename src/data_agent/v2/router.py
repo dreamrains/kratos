@@ -56,7 +56,7 @@ def _recommendation(payload: dict[str, Any]) -> dict[str, Any]:
         "recommendation_intent": _enum(
             payload, "recommendation_intent", RecommendationIntent, "none"
         ),
-        "action_risk": _enum(payload, "action_risk", ActionRisk, "low"),
+        "action_risk": _enum(payload, "action_risk", ActionRisk, "unknown"),
         "reversible": _boolean(payload, "reversible"),
     }
 

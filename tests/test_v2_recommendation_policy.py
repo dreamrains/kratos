@@ -61,6 +61,15 @@ def test_high_risk_or_irreversible_action_is_not_operationalized():
     assert decision.reason_code == "action_risk_requires_stronger_evidence"
 
 
+def test_unknown_action_risk_fails_closed_to_investigation():
+    decision = decide_recommendation(
+        _context(intent=RecommendationIntent.ACT, action_risk=ActionRisk.UNKNOWN)
+    )
+
+    assert decision.mode is RecommendationMode.INVESTIGATIVE_NEXT_STEP
+    assert decision.reason_code == "action_risk_requires_stronger_evidence"
+
+
 def test_limited_outcome_suppresses_operational_recommendation():
     decision = decide_recommendation(
         _context(intent=RecommendationIntent.ACT, outcome_status=OutcomeStatus.LIMITED)

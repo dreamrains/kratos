@@ -42,7 +42,6 @@ HUMAN_REVIEW_DIMENSIONS = (
     "chart_value",
     "recommendation_quality",
     "journey_integrity",
-    "stability",
 )
 
 
@@ -150,6 +149,7 @@ class ReleaseReceipt:
     provider_calls: int = 0
     provider_authorization_ref: str = ""
     semantic_dimensions: tuple[tuple[str, LayerStatus], ...] = ()
+    historical_technical_stability: LayerStatus | None = None
     observed_semantic_events: tuple[str, ...] = ()
     observed_block_types: tuple[str, ...] = ()
     observed_interactions: tuple[str, ...] = ()
@@ -191,8 +191,15 @@ class ReleaseReceipt:
                 status is not LayerStatus.PASS for _, status in dimensions
             ):
                 raise ValueError("passing human semantic receipt requires every dimension to pass")
+            if (
+                self.historical_technical_stability is not None
+                and self.status is LayerStatus.PASS
+            ):
+                raise ValueError("historical technical stability cannot accompany a passing human receipt")
         elif dimensions:
             raise ValueError("semantic_dimensions are valid only for human review receipts")
+        elif self.historical_technical_stability is not None:
+            raise ValueError("historical technical stability is valid only for human review receipts")
         for field_name in (
             "observed_semantic_events", "observed_block_types", "observed_interactions",
             "forbidden_behavior_hits"
@@ -210,6 +217,8 @@ class ReleaseReceipt:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ReleaseReceipt":
+        raw_dimensions = dict(value.get("semantic_dimensions") or {})
+        historical_stability = raw_dimensions.pop("stability", None)
         return cls(
             receipt_id=value.get("receipt_id", ""),
             source_digest=value.get("source_digest", ""),
@@ -222,8 +231,12 @@ class ReleaseReceipt:
             provider_calls=value.get("provider_calls", 0),
             provider_authorization_ref=value.get("provider_authorization_ref", ""),
             semantic_dimensions=tuple(
-                (key, LayerStatus(status))
-                for key, status in dict(value.get("semantic_dimensions") or {}).items()
+                (key, LayerStatus(status)) for key, status in raw_dimensions.items()
+            ),
+            historical_technical_stability=(
+                LayerStatus(historical_stability)
+                if historical_stability is not None
+                else None
             ),
             observed_semantic_events=tuple(value.get("observed_semantic_events") or ()),
             observed_block_types=tuple(value.get("observed_block_types") or ()),
