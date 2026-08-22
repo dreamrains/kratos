@@ -111,6 +111,12 @@ class Slice4AGroupComparisonRuntime:
                 "welch_degrees_of_freedom": result.welch_degrees_of_freedom,
                 "hedges_g": result.hedges_g,
                 "mann_whitney_p_value": result.mann_whitney_p_value,
+                "design": result.design,
+                "unit_aggregation": result.unit_aggregation,
+                "paired_sample_size": result.paired_sample_size,
+                "excluded_unpaired_units": result.excluded_unpaired_units,
+                "wilcoxon_signed_rank_p_value": result.wilcoxon_signed_rank_p_value,
+                "paired_cohens_dz": result.paired_cohens_dz,
                 "group_order": list(result.group_order),
                 "complete_case_rows": result.complete_case_rows,
                 "dropped_rows": result.dropped_rows,
@@ -119,7 +125,8 @@ class Slice4AGroupComparisonRuntime:
             },
             assumption_results={
                 "equal_variance_assumed": False,
-                "independent_units": result.reason_code != "repeated_analysis_units",
+                "independent_units": result.assumed_independent_units,
+                "design": result.design,
                 "alpha": result.alpha,
             },
             limitations=result.limitations,
@@ -314,40 +321,88 @@ class Slice4AGroupComparisonRuntime:
             )
         )
         support_refs = (comparison.finding_id,)
+        if len(result.groups) >= 2:
+            first, second = result.groups[:2]
+        else:  # limited results may carry no group summaries
+            first = second = None
+        design_note = {
+            "independent": "",
+            "aggregated_independent": (
+                f"行级数据已按分析单位聚合（每单位取{'求和' if result.unit_aggregation == 'sum' else '均值'}）后比较。"
+            ),
+            "paired": (
+                f"同一分析单位在两组均有观测，按配对设计比较；配对单位 {result.paired_sample_size} 个"
+                + (
+                    f"，另有 {result.excluded_unpaired_units} 个单组单位未进入配对推断"
+                    if result.excluded_unpaired_units
+                    else ""
+                )
+                + "。"
+            ),
+        }.get(result.design, "")
         if result.status == "supported":
-            first, second = result.groups
-            narrative = (
-                f"{second.group_value} 组 {metric} 均值为 {_number(second.mean)}，"
-                f"{first.group_value} 组为 {_number(first.mean)}；按“{second.group_value} - "
-                f"{first.group_value}”计算，均值差为 {_number(result.difference)}，"
-                f"95% CI [{_number(result.confidence_low)}, {_number(result.confidence_high)}]，"
-                f"Welch p{_p_value(result.p_value)}，Hedges g={_number(result.hedges_g)}。"
-                "当前数据支持组间均值差异，但不支持因果解释。"
-            )
+            if result.design == "paired":
+                narrative = (
+                    f"按“{second.group_value} - {first.group_value}”的配对差计算，"
+                    f"{metric} 每单位变化 {result.difference:+,.2f}，95% CI "
+                    f"[{_number(result.confidence_low)}, {_number(result.confidence_high)}]，"
+                    f"配对 t 检验 p{_p_value(result.p_value)}"
+                    + (
+                        f"，Wilcoxon 符号秩 p{_p_value(result.wilcoxon_signed_rank_p_value)}"
+                        if result.wilcoxon_signed_rank_p_value is not None
+                        else ""
+                    )
+                    + f"，Cohen's dz={_number(result.paired_cohens_dz)}。"
+                    "当前数据支持配对均值差异，但不支持因果解释。"
+                )
+            else:
+                narrative = (
+                    f"{second.group_value} 组 {metric} 均值为 {_number(second.mean)}，"
+                    f"{first.group_value} 组为 {_number(first.mean)}；按“{second.group_value} - "
+                    f"{first.group_value}”计算，均值差为 {_number(result.difference)}，"
+                    f"95% CI [{_number(result.confidence_low)}, {_number(result.confidence_high)}]，"
+                    f"Welch p{_p_value(result.p_value)}，Hedges g={_number(result.hedges_g)}。"
+                    "当前数据支持组间均值差异，但不支持因果解释。"
+                )
             claim_class = ClaimClass.INFERENTIAL
         elif result.status == "null_result":
-            first, second = result.groups
             narrative = (
                 f"当前样本未检出可靠均值差异。按“{second.group_value} - {first.group_value}”"
                 f"计算，差值为 {_number(result.difference)}，95% CI "
                 f"[{_number(result.confidence_low)}, {_number(result.confidence_high)}]，"
-                f"Welch p{_p_value(result.p_value)}。这不等于证明两组完全相同。"
+                + (
+                    f"Welch p{_p_value(result.p_value)}。"
+                    if result.design != "paired"
+                    else f"配对 t 检验 p{_p_value(result.p_value)}。"
+                )
+                + "这不等于证明两组完全相同。"
             )
             claim_class = ClaimClass.INFERENTIAL
         else:
             messages = {
-                "repeated_analysis_units": "分析单位存在重复观测，4A 没有把多行错误地当作独立样本，因此未发布组间推断。",
                 "requires_exactly_two_groups": "当前字段不是恰好两个非空组，超出 4A 的双组比较范围。",
                 "insufficient_group_degrees_of_freedom": "至少一个组缺少可估计组内变异所需的观测。",
                 "zero_within_group_variance": "两组内部都没有可估计变异，无法构造可靠 Welch 不确定性。",
+                "insufficient_paired_units": "同时出现在两组的分析单位过少，无法进行可靠的配对推断。",
             }
             narrative = messages.get(result.reason_code, "当前数据条件不足，未发布可靠组间推断。")
             claim_class = ClaimClass.ASSOCIATIONAL
-        method = (
-            f"完整案例 {result.complete_case_rows}/{result.source_rows} 行，有效分析单位 "
-            f"{result.effective_units} 个。主估计使用不假设等方差的 Welch 方法；"
-            "同时记录 Mann–Whitney 分布敏感性诊断。"
-        )
+        if result.status in {"supported", "null_result"}:
+            method = (
+                f"完整案例 {result.complete_case_rows}/{result.source_rows} 行，有效分析单位 "
+                f"{result.effective_units} 个。{design_note}"
+                + (
+                    "主估计使用不假设等方差的 Welch 方法；同时记录 Mann–Whitney 分布敏感性诊断。"
+                    if result.design != "paired"
+                    else "主估计使用配对 t 检验；同时记录 Wilcoxon 符号秩分布敏感性诊断。"
+                )
+            )
+        else:
+            method = (
+                f"已执行：字段绑定与单位结构诊断（完整案例 {result.complete_case_rows}/"
+                f"{result.source_rows} 行，有效分析单位 {result.effective_units} 个）。"
+                "未执行：组间统计检验——上述数据条件不满足检验前提。"
+            )
         if chart_failed:
             method += " 图表生成失败，但结构化文本结果仍可发布。"
         drafts = [

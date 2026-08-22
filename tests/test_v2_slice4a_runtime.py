@@ -89,7 +89,7 @@ def test_null_group_comparison_is_complete_and_does_not_claim_no_action_needed(t
     assert "无需行动" not in serialized
 
 
-def test_repeated_unit_limit_is_publishable_without_chart(tmp_path):
+def test_repeated_units_aggregate_to_unit_level_and_stay_publishable(tmp_path):
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     frame = _frame(rows_per_group=10)
@@ -113,7 +113,15 @@ def test_repeated_unit_limit_is_publishable_without_chart(tmp_path):
     store = V2FactStore(tmp_path / "sessions", "session_repeated")
     turn = store.read_turn_blocks("turn_repeated")
 
-    assert any(item.finding_kind is FindingKind.LIMITATION for item in store.read_findings())
+    # Order-level rows are aggregated per unit instead of ending in a dead end.
+    assert not any(
+        item.finding_kind is FindingKind.LIMITATION for item in store.read_findings()
+    )
+    assert any(
+        item.finding_kind in {FindingKind.GROUP_COMPARISON, FindingKind.NULL_RESULT}
+        for item in store.read_findings()
+    )
     assert events[-1].event == "turn_completed"
-    assert turn["artifacts"] == []
-    assert "重复" in json.dumps(turn, ensure_ascii=False)
+    serialized = json.dumps(turn, ensure_ascii=False)
+    assert "聚合" in serialized
+    assert "每单位取求和" in serialized

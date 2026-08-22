@@ -16,6 +16,7 @@ class GroupComparisonSpec:
     group: str
     analysis_unit: str
     alpha: float = 0.05
+    unit_aggregation: str = "sum"
 
     def __post_init__(self) -> None:
         metric = str(self.metric or "").strip()
@@ -27,9 +28,12 @@ class GroupComparisonSpec:
             raise ValueError("metric, group, and analysis_unit must be distinct")
         if not 0 < float(self.alpha) < 1:
             raise ValueError("alpha must be between 0 and 1")
+        if str(self.unit_aggregation) not in {"sum", "mean"}:
+            raise ValueError("unit_aggregation must be 'sum' or 'mean'")
         object.__setattr__(self, "metric", metric)
         object.__setattr__(self, "group", group)
         object.__setattr__(self, "analysis_unit", unit)
+        object.__setattr__(self, "unit_aggregation", str(self.unit_aggregation))
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,12 @@ class GroupComparisonResult:
     welch_degrees_of_freedom: float | None = None
     hedges_g: float | None = None
     mann_whitney_p_value: float | None = None
+    design: str = "independent"
+    unit_aggregation: str = ""
+    paired_sample_size: int = 0
+    excluded_unpaired_units: int = 0
+    wilcoxon_signed_rank_p_value: float | None = None
+    paired_cohens_dz: float | None = None
     source_rows: int = 0
     complete_case_rows: int = 0
     dropped_rows: int = 0
@@ -64,6 +74,10 @@ class GroupComparisonResult:
     alpha: float = 0.05
     maximum_claim_class: ClaimClass = ClaimClass.INFERENTIAL
     limitations: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def assumed_independent_units(self) -> bool:
+        return self.design != "paired"
 
 
 def _limited(
@@ -74,6 +88,10 @@ def _limited(
     complete_rows: int,
     effective_units: int,
     groups: tuple[GroupSummary, ...] = (),
+    design: str = "independent",
+    unit_aggregation: str = "",
+    paired_sample_size: int = 0,
+    excluded_unpaired_units: int = 0,
 ) -> GroupComparisonResult:
     return GroupComparisonResult(
         status="limited",
@@ -82,6 +100,10 @@ def _limited(
         group_field=spec.group,
         group_order=tuple(item.group_value for item in groups),
         groups=groups,
+        design=design,
+        unit_aggregation=unit_aggregation,
+        paired_sample_size=paired_sample_size,
+        excluded_unpaired_units=excluded_unpaired_units,
         source_rows=len(frame),
         complete_case_rows=complete_rows,
         dropped_rows=len(frame) - complete_rows,
@@ -91,8 +113,71 @@ def _limited(
         limitations=(
             "当前数据条件不足以支持可靠的双组均值推断。",
             "分组差异不识别组别对指标的因果效应。",
+            *_aggregation_disclosure(design, unit_aggregation),
         ),
     )
+
+
+def _welch_summary(
+    first: np.ndarray,
+    second: np.ndarray,
+    alpha: float,
+) -> dict[str, float | None]:
+    variance_first = float(np.var(first, ddof=1))
+    variance_second = float(np.var(second, ddof=1))
+    difference = float(np.mean(second) - np.mean(first))
+    first_term = variance_first / len(first)
+    second_term = variance_second / len(second)
+    standard_error = math.sqrt(first_term + second_term)
+    denominator = (first_term**2 / (len(first) - 1)) + (
+        second_term**2 / (len(second) - 1)
+    )
+    degrees = (first_term + second_term) ** 2 / denominator
+    critical = float(stats.t.ppf(1 - alpha / 2, degrees))
+    low = difference - critical * standard_error
+    high = difference + critical * standard_error
+    t_value = difference / standard_error
+    p_value = float(2 * stats.t.sf(abs(t_value), degrees))
+    pooled_df = len(first) + len(second) - 2
+    pooled_sd = math.sqrt(
+        ((len(first) - 1) * variance_first + (len(second) - 1) * variance_second)
+        / pooled_df
+    )
+    correction = 1 - (3 / (4 * pooled_df - 1)) if pooled_df > 1 else 1.0
+    hedges_g = (difference / pooled_sd) * correction if pooled_sd else float("nan")
+    mann_whitney = stats.mannwhitneyu(first, second, alternative="two-sided", method="auto")
+    return {
+        "difference": difference,
+        "standard_error": standard_error,
+        "confidence_low": float(low),
+        "confidence_high": float(high),
+        "p_value": p_value,
+        "welch_degrees_of_freedom": float(degrees),
+        "hedges_g": float(hedges_g),
+        "mann_whitney_p_value": float(mann_whitney.pvalue),
+    }
+
+
+def _group_summaries(
+    values_by_group: dict[str, np.ndarray],
+) -> tuple[GroupSummary, ...]:
+    return tuple(
+        GroupSummary(
+            group_value=group_value,
+            sample_size=len(values),
+            mean=float(np.mean(values)) if len(values) else float("nan"),
+            median=float(np.median(values)) if len(values) else float("nan"),
+            standard_deviation=float(np.std(values, ddof=1)) if len(values) > 1 else float("nan"),
+        )
+        for group_value, values in values_by_group.items()
+    )
+
+
+def _aggregation_disclosure(design: str, unit_aggregation: str) -> tuple[str, ...]:
+    if design == "independent":
+        return ()
+    label = "求和" if unit_aggregation == "sum" else "均值"
+    return (f"行级数据已按分析单位聚合（每单位取{label}）后进入比较；口径可在参数中调整。",)
 
 
 def analyze_group_comparison(
@@ -111,14 +196,6 @@ def analyze_group_comparison(
     ).replace([np.inf, -np.inf], np.nan).dropna()
     complete_rows = len(working)
     effective_units = int(working[spec.analysis_unit].nunique(dropna=True))
-    if working[spec.analysis_unit].duplicated().any():
-        return _limited(
-            frame,
-            spec,
-            reason_code="repeated_analysis_units",
-            complete_rows=complete_rows,
-            effective_units=effective_units,
-        )
     group_values = tuple(sorted(str(item) for item in working[spec.group].unique()))
     if len(group_values) != 2:
         return _limited(
@@ -128,22 +205,129 @@ def analyze_group_comparison(
             complete_rows=complete_rows,
             effective_units=effective_units,
         )
-    samples = [
-        working.loc[working[spec.group].astype(str) == group_value, spec.metric].to_numpy(
-            dtype=float
+
+    groups_per_unit = working.groupby(spec.analysis_unit, dropna=True)[spec.group].nunique()
+    rows_per_unit = working.groupby(spec.analysis_unit, dropna=True).size()
+    paired_design = bool((groups_per_unit > 1).any())
+    aggregated_design = bool((rows_per_unit > 1).any())
+    design = "paired" if paired_design else ("aggregated_independent" if aggregated_design else "independent")
+
+    if design == "independent":
+        values_by_group = {
+            group_value: working.loc[
+                working[spec.group].astype(str) == group_value, spec.metric
+            ].to_numpy(dtype=float)
+            for group_value in group_values
+        }
+    else:
+        aggregated = (
+            working.groupby([spec.analysis_unit, spec.group], dropna=True)[spec.metric]
+            .agg(spec.unit_aggregation)
+            .reset_index()
         )
-        for group_value in group_values
-    ]
-    summaries = tuple(
-        GroupSummary(
-            group_value=group_value,
-            sample_size=len(values),
-            mean=float(np.mean(values)) if len(values) else float("nan"),
-            median=float(np.median(values)) if len(values) else float("nan"),
-            standard_deviation=float(np.std(values, ddof=1)) if len(values) > 1 else float("nan"),
-        )
-        for group_value, values in zip(group_values, samples, strict=True)
+        values_by_group = {
+            group_value: aggregated.loc[
+                aggregated[spec.group].astype(str) == group_value, spec.metric
+            ].to_numpy(dtype=float)
+            for group_value in group_values
+        }
+
+    summaries = _group_summaries(values_by_group)
+    base_limitations = (
+        "观察性组间差异不识别组别对指标的因果效应。",
+        *_aggregation_disclosure(design, spec.unit_aggregation),
     )
+
+    if design == "paired":
+        first_name, second_name = group_values
+        unit_group_totals: dict[str, dict[str, float]] = {
+            group_value: {} for group_value in group_values
+        }
+        for group_value in group_values:
+            subset = working.loc[working[spec.group].astype(str) == group_value]
+            totals = subset.groupby(spec.analysis_unit, dropna=True)[spec.metric].agg(
+                spec.unit_aggregation
+            )
+            unit_group_totals[group_value] = {str(k): float(v) for k, v in totals.items()}
+        first_map, second_map = unit_group_totals[first_name], unit_group_totals[second_name]
+        paired_units = sorted(set(first_map) & set(second_map))
+        excluded_unpaired = len(set(first_map) ^ set(second_map))
+        if len(paired_units) < 2:
+            return _limited(
+                frame,
+                spec,
+                reason_code="insufficient_paired_units",
+                complete_rows=complete_rows,
+                effective_units=effective_units,
+                groups=summaries,
+                design=design,
+                unit_aggregation=spec.unit_aggregation,
+                paired_sample_size=len(paired_units),
+                excluded_unpaired_units=excluded_unpaired,
+            )
+        differences = np.array(
+            [second_map[unit] - first_map[unit] for unit in paired_units], dtype=float
+        )
+        n_pairs = len(differences)
+        mean_difference = float(np.mean(differences))
+        sd_difference = float(np.std(differences, ddof=1))
+        standard_error = sd_difference / math.sqrt(n_pairs)
+        degrees = n_pairs - 1
+        critical = float(stats.t.ppf(1 - spec.alpha / 2, degrees))
+        low = mean_difference - critical * standard_error
+        high = mean_difference + critical * standard_error
+        t_value = mean_difference / standard_error if standard_error > 0 else 0.0
+        p_value = float(2 * stats.t.sf(abs(t_value), degrees))
+        cohens_dz = mean_difference / sd_difference if sd_difference > 0 else None
+        if np.all(differences == 0):
+            wilcoxon_p: float | None = None
+        else:
+            wilcoxon_p = float(
+                stats.wilcoxon(differences, alternative="two-sided").pvalue
+            )
+        supported = p_value < spec.alpha and (low > 0 or high < 0)
+        return GroupComparisonResult(
+            status="supported" if supported else "null_result",
+            reason_code=(
+                "reliable_paired_mean_difference"
+                if supported
+                else "no_reliable_paired_mean_difference"
+            ),
+            metric=spec.metric,
+            group_field=spec.group,
+            group_order=group_values,
+            groups=summaries,
+            difference=mean_difference,
+            standard_error=standard_error,
+            confidence_low=float(low),
+            confidence_high=float(high),
+            p_value=p_value,
+            welch_degrees_of_freedom=None,
+            hedges_g=None,
+            mann_whitney_p_value=None,
+            design=design,
+            unit_aggregation=spec.unit_aggregation,
+            paired_sample_size=n_pairs,
+            excluded_unpaired_units=excluded_unpaired,
+            wilcoxon_signed_rank_p_value=wilcoxon_p,
+            paired_cohens_dz=cohens_dz,
+            source_rows=len(frame),
+            complete_case_rows=complete_rows,
+            dropped_rows=len(frame) - complete_rows,
+            effective_units=effective_units,
+            alpha=spec.alpha,
+            maximum_claim_class=ClaimClass.INFERENTIAL,
+            limitations=base_limitations + (
+                "配对比较控制了单位间固定差异；差值方向按第二组减第一组报告。",
+                *(
+                    (f"另有 {excluded_unpaired} 个仅出现在单组的单位未进入配对推断。",)
+                    if excluded_unpaired
+                    else ()
+                ),
+            ),
+        )
+
+    samples = [values_by_group[group_value] for group_value in group_values]
     if any(len(values) < 2 for values in samples):
         return _limited(
             frame,
@@ -152,11 +336,11 @@ def analyze_group_comparison(
             complete_rows=complete_rows,
             effective_units=effective_units,
             groups=summaries,
+            design=design,
+            unit_aggregation=spec.unit_aggregation if design != "independent" else "",
         )
     first, second = samples
-    variance_first = float(np.var(first, ddof=1))
-    variance_second = float(np.var(second, ddof=1))
-    if variance_first == 0 and variance_second == 0:
+    if float(np.var(first, ddof=1)) == 0 and float(np.var(second, ddof=1)) == 0:
         return _limited(
             frame,
             spec,
@@ -164,29 +348,18 @@ def analyze_group_comparison(
             complete_rows=complete_rows,
             effective_units=effective_units,
             groups=summaries,
+            design=design,
+            unit_aggregation=spec.unit_aggregation if design != "independent" else "",
         )
-    difference = float(np.mean(second) - np.mean(first))
-    first_term = variance_first / len(first)
-    second_term = variance_second / len(second)
-    standard_error = math.sqrt(first_term + second_term)
-    denominator = (first_term**2 / (len(first) - 1)) + (
-        second_term**2 / (len(second) - 1)
+    welch = _welch_summary(first, second, spec.alpha)
+    supported = welch["p_value"] < spec.alpha and (
+        welch["confidence_low"] > 0 or welch["confidence_high"] < 0
     )
-    degrees = (first_term + second_term) ** 2 / denominator
-    critical = float(stats.t.ppf(1 - spec.alpha / 2, degrees))
-    low = difference - critical * standard_error
-    high = difference + critical * standard_error
-    t_value = difference / standard_error
-    p_value = float(2 * stats.t.sf(abs(t_value), degrees))
-    pooled_df = len(first) + len(second) - 2
-    pooled_sd = math.sqrt(
-        ((len(first) - 1) * variance_first + (len(second) - 1) * variance_second)
-        / pooled_df
+    independent_limitation = (
+        "Welch 推断依赖独立观测与样本对目标总体具有可解释代表性。"
+        if design == "independent"
+        else "聚合后按单位独立的假设比较；Welch 推断依赖单位间独立。"
     )
-    correction = 1 - (3 / (4 * pooled_df - 1)) if pooled_df > 1 else 1.0
-    hedges_g = (difference / pooled_sd) * correction if pooled_sd else float("nan")
-    mann_whitney = stats.mannwhitneyu(first, second, alternative="two-sided", method="auto")
-    supported = p_value < spec.alpha and (low > 0 or high < 0)
     return GroupComparisonResult(
         status="supported" if supported else "null_result",
         reason_code=(
@@ -196,22 +369,14 @@ def analyze_group_comparison(
         group_field=spec.group,
         group_order=group_values,
         groups=summaries,
-        difference=difference,
-        standard_error=standard_error,
-        confidence_low=float(low),
-        confidence_high=float(high),
-        p_value=p_value,
-        welch_degrees_of_freedom=float(degrees),
-        hedges_g=float(hedges_g),
-        mann_whitney_p_value=float(mann_whitney.pvalue),
+        design=design,
+        unit_aggregation=spec.unit_aggregation if design != "independent" else "",
         source_rows=len(frame),
         complete_case_rows=complete_rows,
         dropped_rows=len(frame) - complete_rows,
         effective_units=effective_units,
         alpha=spec.alpha,
         maximum_claim_class=ClaimClass.INFERENTIAL,
-        limitations=(
-            "Welch 推断依赖独立观测与样本对目标总体具有可解释代表性。",
-            "观察性组间差异不识别组别对指标的因果效应。",
-        ),
+        limitations=(independent_limitation, *base_limitations),
+        **welch,
     )
