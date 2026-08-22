@@ -1,0 +1,87 @@
+{
+  "version": "v2_real_provider_deterministic_continuation.v5",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "source_plan_id": "plan_3f2cc581acb91892eb3fcc2e",
+  "turn_id": "turn_real_5c5x_deterministic",
+  "provider_calls_observed_during_continuation": 0,
+  "analysis_http_status": 200,
+  "refresh_http_status": 200,
+  "terminal_event": "turn_completed",
+  "restored_status": "finalized",
+  "plan_status_after_continuation": "consumed",
+  "block_types": [
+    "executive_answer",
+    "key_finding",
+    "comparison",
+    "method",
+    "next_investigation"
+  ],
+  "block_count": 5,
+  "chart_count": 2,
+  "finding_count": 2,
+  "analysis_parameters": {
+    "action_risk": "medium",
+    "aggregation": "sum",
+    "analysis_unit": "unit_id",
+    "frequency": "daily",
+    "group": "channel",
+    "metric": "sales",
+    "recommendation_intent": "investigate",
+    "reversible": true,
+    "time_field": "date"
+  },
+  "published_claims": {
+    "time_trend": "reliable_linear_trend",
+    "group_comparison": "reliable_mean_difference",
+    "causal_upgrade": false,
+    "intervention_effect_claimed": false
+  },
+  "data_scope_review": {
+    "actual_data_window": "2026-01-01/2026-02-11",
+    "actual_data_window_published_correctly": true,
+    "source_rows": 42,
+    "effective_periods": 42,
+    "missing_periods": 0,
+    "incomplete_boundary_periods": 0,
+    "imputed_periods": 0,
+    "effective_analysis_units": 42,
+    "analysis_unit": "unit_id",
+    "population_non_generalization_boundary_published": true
+  },
+  "independent_spot_checks": {
+    "daily_trend_with_weekday_controls": {
+      "estimate": 1.2723032069970808,
+      "confidence_low": 1.2249842114157639,
+      "confidence_high": 1.3196222025783977,
+      "p_value": 1.0252220673682181e-34,
+      "hac_max_lag": 3,
+      "small_sample_correction": true,
+      "effective_periods": 42
+    },
+    "group_comparison": {
+      "group_a_n": 21,
+      "group_b_n": 21,
+      "effective_units": 42,
+      "difference": 14.0,
+      "confidence_low": 4.3235219134951475,
+      "confidence_high": 23.67647808650485,
+      "p_value": 0.005663925517338145,
+      "hedges_g": 0.885372557357838
+    }
+  },
+  "implementation_semantic_review": {
+    "reviewer_type": "implementation_agent",
+    "status": "pass",
+    "analysis_unit_binding": "pass",
+    "data_scope": "pass",
+    "statistical_values": "pass",
+    "claim_calibration": "pass",
+    "recommendation_boundary": "pass",
+    "human_semantic_review": "not_issued"
+  },
+  "real_provider_release_receipt_issued": true,
+  "human_semantic_pass_issued": false,
+  "provider_followup_authorized": false,
+  "root_switch_authorized": false
+}

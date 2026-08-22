@@ -1,0 +1,99 @@
+{
+  "version": "v2_real_provider_journey_attempt.v7",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "git_head": "ebc8b961c504db08d1ce697e380042632d8dc370",
+  "preflight_request_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+  "planner_schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "semantic_context": {
+    "confirmed_analysis_unit_column": "unit_id"
+  },
+  "planning_context": {
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 2972,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_5d41558e9c5e4fe78dd3941da9076f52",
+    "client_action_id": "action_real_5c5x_initial",
+    "purpose": "analysis_planning",
+    "model_id": "openai/deepseek-v4-flash",
+    "runtime_authorization_fingerprint": "sha256:413c02c35b268a95d8d116a37ed1756cd10e78fbe7890f289773809af0cb5fc0",
+    "provider_calls_authorized": 1,
+    "status": "consumed",
+    "consumer_request_id": "request_real_5c5x_initial"
+  },
+  "journey": [
+    {
+      "operation": "upload",
+      "http_status": 200,
+      "provider_calls": 0
+    },
+    {
+      "operation": "planning_estimate",
+      "http_status": 200,
+      "provider_calls": 0
+    },
+    {
+      "operation": "authorization_issue",
+      "http_status": 201,
+      "provider_calls": 0
+    },
+    {
+      "operation": "analysis_planning",
+      "http_status": 201,
+      "provider_calls": 1
+    }
+  ],
+  "result": {
+    "plan_id": "plan_3f2cc581acb91892eb3fcc2e",
+    "status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "action_risk": "medium",
+      "aggregation": "sum",
+      "analysis_unit": "unit_id",
+      "frequency": "daily",
+      "group": "channel",
+      "metric": "sales",
+      "recommendation_intent": "investigate",
+      "reversible": true,
+      "time_field": "date"
+    },
+    "questions_count": 0,
+    "maximum_claim_class": "inferential",
+    "planner_invocations": 1,
+    "model_id": "openai/deepseek-v4-flash",
+    "error_code": "",
+    "reason_code": "",
+    "failure_stage": "",
+    "diagnostic": {}
+  },
+  "provider_attempts": [
+    {
+      "model_id": "openai/deepseek-v4-flash",
+      "api_host": "api.deepseek.com"
+    }
+  ],
+  "provider_calls_observed": 1,
+  "automatic_retries": 0,
+  "downstream_deterministic_analysis_executed": true,
+  "data_handling": {
+    "api_key_persisted": false,
+    "raw_provider_response_persisted": false,
+    "reasoning_copied_to_attempt_evidence": false,
+    "rationale_copied_to_attempt_evidence": false
+  },
+  "real_provider_release_receipt_issued": true,
+  "human_semantic_pass_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
