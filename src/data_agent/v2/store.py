@@ -483,6 +483,10 @@ class V2FactStore:
             "aggregation",
             "horizon",
             "purpose",
+            "series_columns",
+            "x_column",
+            "y_column",
+            "zero_values",
             "plan_id",
         }
         if set(raw_context) - allowed_context_keys:

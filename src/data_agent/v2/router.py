@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from data_agent.v2.recommendation import ActionRisk, RecommendationIntent
+from data_agent.v2.curve_fitting import CurveFitSpec
 from data_agent.v2.slice1 import RuntimeEvent, Slice1DescriptiveRuntime
+from data_agent.v2.slice_curve import SliceCurveFittingRuntime
 from data_agent.v2.slice2 import Slice2FactorRuntime
 from data_agent.v2.slice3 import Slice3TransformationRuntime
 from data_agent.v2.slice4a import Slice4AGroupComparisonRuntime
@@ -25,6 +27,7 @@ class AnalysisKind(StrEnum):
     TIME_TREND = "time_trend"
     FORECAST = "forecast"
     MULTI_FINDING_SYNTHESIS = "multi_finding_synthesis"
+    CURVE_FITTING = "curve_fitting"
     EXPLORATORY_PYTHON = "exploratory_python"
 
 
@@ -188,6 +191,29 @@ class AnalysisRouter:
                     "group": _text(payload, "group"),
                     "analysis_unit": _text(payload, "analysis_unit"),
                     **_recommendation(payload),
+                },
+            )
+        if analysis_kind is AnalysisKind.CURVE_FITTING:
+            raw_series = payload.get("series_columns")
+            series: tuple[str, ...] = ()
+            if isinstance(raw_series, list):
+                series = tuple(
+                    str(item or "").strip() for item in raw_series if str(item or "").strip()
+                )
+            CurveFitSpec(
+                y_column=_text(payload, "y_column", required=False),
+                x_column=_text(payload, "x_column", required=False),
+                series_columns=series,
+                zero_values=str(payload.get("zero_values") or "exclude"),
+            )
+            return PreparedAnalysis(
+                SliceCurveFittingRuntime(*runtime_args), "stream",
+                {
+                    **common,
+                    "y_column": _text(payload, "y_column", required=False),
+                    "x_column": _text(payload, "x_column", required=False),
+                    "series_columns": series,
+                    "zero_values": str(payload.get("zero_values") or "exclude"),
                 },
             )
         if analysis_kind is AnalysisKind.EXPLORATORY_PYTHON:
