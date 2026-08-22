@@ -1,0 +1,35 @@
+{
+  "version": "v2_current_unified_release_status.v3",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "status": "not_ready",
+  "current_pass_layers": [
+    "owner_contract",
+    "incident_replay",
+    "sse_transport_contract",
+    "browser_interaction_journey",
+    "refresh_persistence_journey",
+    "real_provider_analysis_journey"
+  ],
+  "selected_refresh_receipt": "receipt_unified_refresh_real_2dbb829eefb47652",
+  "unselected_auxiliary_refresh_receipt": "receipt_unified_refresh_e38aa729033cf36d",
+  "receipt_selection_reason": "prefer the actual-browser restore of the persisted real-provider result and avoid duplicate same-layer receipts in one evaluation input",
+  "missing_requirements": [],
+  "non_pass_requirements": [
+    "unified_analysis_entry:human_semantic_review"
+  ],
+  "conflicting_requirements": [],
+  "stale_receipt_ids": [],
+  "incomplete_receipt_ids": [],
+  "provider_calls": 1,
+  "human_review_dimensions": {
+    "pass": 10,
+    "blocked": [
+      "stability"
+    ]
+  },
+  "human_review_evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5z-human-semantic-review.json",
+  "full_product_matrix_ready": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

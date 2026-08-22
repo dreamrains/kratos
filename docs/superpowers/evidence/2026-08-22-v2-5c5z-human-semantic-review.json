@@ -1,0 +1,79 @@
+{
+  "version": "v2_human_semantic_review.v1",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "reviewer_type": "independent_business_reviewer",
+  "review_confirmation": {
+    "confirmed": true,
+    "recorded_on": "2026-08-22",
+    "reference": "conversation:2026-08-22:user-confirmed-human-semantic-review",
+    "confirmed_scope": [
+      "unit_id is the frozen fixture's independent analysis unit",
+      "the published 2026-01-01 through 2026-02-11 scope and 42 effective units are correct",
+      "trend and channel differences remain observational rather than causal or intervention effects",
+      "the proposed follow-up is low-risk, reversible investigation",
+      "the result is understandable, useful, and not misleading in business semantics"
+    ]
+  },
+  "current_source_evidence": [
+    "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-provider-attempt.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c5x-deterministic-continuation.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-result-browser-restore.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c5y-planning-browser.json",
+    "docs/superpowers/evidence/2026-08-22-v2-5c5y-interaction-browser.json"
+  ],
+  "semantic_dimensions": {
+    "question_understanding": {
+      "status": "pass",
+      "evidence": "The independent reviewer confirmed unit_id as the business analysis unit; the current-source Planner selected multi_finding_synthesis over date, sales, channel, and unit_id."
+    },
+    "data_scope": {
+      "status": "pass",
+      "evidence": "The reviewer confirmed the published 2026-01-01 through 2026-02-11 scope and 42 effective units; the output also states the non-generalization boundary."
+    },
+    "method_fit": {
+      "status": "pass",
+      "evidence": "Daily HAC trend with weekday controls and an independent-unit Welch comparison answer the two observational questions without upgrading them to causal analysis."
+    },
+    "statistical_rigor": {
+      "status": "pass",
+      "evidence": "Trend estimate, HAC interval and p-value, Welch difference and interval, p-value, and Hedges g match the current-source independent recomputation."
+    },
+    "claim_calibration": {
+      "status": "pass",
+      "evidence": "The reviewer accepted the observational boundary; the published result explicitly excludes causal and intervention-effect claims."
+    },
+    "alternative_explanations": {
+      "status": "pass",
+      "evidence": "The method and next-investigation blocks retain composition, external events, and confounding as unresolved alternatives."
+    },
+    "pyramid_structure": {
+      "status": "pass",
+      "evidence": "The actual browser restored direct answer, historical trend, group comparison, shared method, and next-investigation blocks in answer-first order."
+    },
+    "chart_value": {
+      "status": "pass",
+      "evidence": "The actual browser restored two unique adjacent charts for the trend and group comparison, and both loaded before and after refresh."
+    },
+    "recommendation_quality": {
+      "status": "pass",
+      "evidence": "The reviewer confirmed that the only proposed action is a low-risk, reversible investigation aligned with recommendation_intent=investigate."
+    },
+    "journey_integrity": {
+      "status": "pass",
+      "evidence": "The current-source authorized Provider journey, deterministic continuation, real-result refresh, and provider-neutral actual-browser interaction journey all passed without hidden Provider calls."
+    },
+    "stability": {
+      "status": "blocked",
+      "evidence": "The current source digest has one successful real Provider planning sample. Provider-neutral browser repetition proves lifecycle stability but not real Planner output repeatability; prior 5C5S samples are stale and did not achieve the frozen three-matching-pass criterion."
+    }
+  },
+  "decision": "not_eligible_for_human_semantic_review_pass",
+  "reason_codes": [
+    "current_source_real_provider_stability_not_established"
+  ],
+  "provider_calls_during_review": 0,
+  "human_semantic_release_receipt_status": "blocked",
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
