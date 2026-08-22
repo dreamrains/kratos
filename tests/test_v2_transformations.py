@@ -31,6 +31,21 @@ def test_iso_date_conversion_is_safe_and_does_not_require_user_input():
     assert not pd.api.types.is_datetime64_any_dtype(frame["order_date"])
 
 
+def test_iso_slash_date_conversion_is_safe_and_does_not_require_user_input():
+    frame = pd.DataFrame(
+        {"order_date": ["2026/01/02", "2026/02/03", None], "sales": [1, 2, 3]}
+    )
+
+    plan = inspect_date_conversion(frame, "order_date")
+
+    assert plan.disposition is DateTransformDisposition.AUTO_APPLY
+    assert plan.reason_code == "lossless_unambiguous_date"
+    assert plan.options[0].option_key == "iso_slash"
+    assert plan.options[0].sensitivity.new_missing == 0
+    converted = apply_date_option(frame, "order_date", plan.options[0])
+    assert pd.api.types.is_datetime64_any_dtype(converted["order_date"])
+
+
 def test_ambiguous_day_month_values_require_structured_semantic_choice():
     frame = pd.DataFrame(
         {"order_date": ["01/02/2026", "03/04/2026", "10/11/2026"]}

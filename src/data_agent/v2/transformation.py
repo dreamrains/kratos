@@ -87,19 +87,23 @@ def inspect_date_conversion(frame: pd.DataFrame, column: str) -> DateTransformPl
             "date_column_has_no_values",
         )
 
-    iso = TransformationOption.for_format(
-        values,
-        option_key="iso",
-        label="ISO 年-月-日",
-        date_format="%Y-%m-%d",
-    )
-    if iso.sensitivity.new_missing == 0:
-        return DateTransformPlan(
-            DateTransformDisposition.AUTO_APPLY,
-            field_name,
-            "lossless_unambiguous_date",
-            (iso,),
+    for option_key, label, date_format in (
+        ("iso", "ISO 年-月-日", "%Y-%m-%d"),
+        ("iso_slash", "ISO 年/月/日", "%Y/%m/%d"),
+    ):
+        iso = TransformationOption.for_format(
+            values,
+            option_key=option_key,
+            label=label,
+            date_format=date_format,
         )
+        if iso.sensitivity.new_missing == 0:
+            return DateTransformPlan(
+                DateTransformDisposition.AUTO_APPLY,
+                field_name,
+                "lossless_unambiguous_date",
+                (iso,),
+            )
 
     dmy = TransformationOption.for_format(
         values,
