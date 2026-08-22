@@ -76,6 +76,55 @@
         "turn_completed",
         "turn_interrupted"
       ]
+    },
+    {
+      "evidence_id": "evidence_5c6_root_cutover_unified_browser_b13b93a",
+      "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-planning-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-interaction-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "provider_calls": 0,
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_5c6_root_cutover_unified_refresh_b13b93a",
+      "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-planning-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-interaction-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "provider_calls": 0,
+      "observed_interactions": [
+        "refresh_restore"
+      ]
     }
   ]
 }
