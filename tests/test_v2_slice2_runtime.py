@@ -135,3 +135,45 @@ def test_slice2_repeated_units_without_time_publish_limited_answer(tmp_path):
     assert any(item.finding_kind is FindingKind.LIMITATION for item in findings)
     assert events[-1].event == "turn_completed"
     assert "重复观测" in turn["blocks"][0]["narrative"]
+
+
+def test_slice2_null_result_renders_unadjusted_bivariate_ranking(tmp_path):
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    rows = 60
+    rng = np.random.default_rng(7)
+    base = rng.normal(size=rows)
+    frame = pd.DataFrame(
+        {
+            "unit_id": [f"u{index:03d}" for index in range(rows)],
+            "target": rng.normal(size=rows),
+            "factor_a": base,
+            "factor_b": base * 1.05 + rng.normal(scale=0.05, size=rows),
+        }
+    )
+    frame.to_csv(inbox / "null_factors.csv", index=False)
+    runtime = Slice2FactorRuntime(tmp_path / "sessions", inbox)
+
+    events = list(
+        runtime.stream(
+            session_id="session_null_factor",
+            turn_id="turn_null_factor",
+            filename="null_factors.csv",
+            target="target",
+            features=("factor_a", "factor_b"),
+            analysis_unit="unit_id",
+            time_field="",
+            question="哪些因素与 target 存在可靠关系？",
+        )
+    )
+    store = V2FactStore(tmp_path / "sessions", "session_null_factor")
+    turn = store.read_turn_blocks("turn_null_factor")
+    rendered = json.dumps(turn, ensure_ascii=False)
+
+    assert events[-1].event == "turn_completed"
+    assert "未调整双变量关联排序" in rendered
+    assert "不构成因果或多因素结论" in rendered
+    finding = next(
+        item for item in store.read_findings() if item.finding_kind is not FindingKind.ESTIMATE
+    )
+    assert finding.uncertainty["bivariate_associations"]

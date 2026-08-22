@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
+from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
@@ -58,6 +59,17 @@ class FactorEstimate:
 
 
 @dataclass(frozen=True, slots=True)
+class BivariateAssociation:
+    feature: str
+    pearson_r: float
+    pearson_p_value: float
+    pearson_p_adjusted: float
+    spearman_rho: float
+    spearman_p_value: float
+    n_pairs: int
+
+
+@dataclass(frozen=True, slots=True)
 class FactorAnalysisResult:
     status: str
     reason_code: str
@@ -67,6 +79,7 @@ class FactorAnalysisResult:
     reliable_factors: tuple[FactorEstimate, ...] = ()
     excluded_features: dict[str, str] = field(default_factory=dict)
     unstable_features: tuple[str, ...] = ()
+    bivariate_associations: tuple[BivariateAssociation, ...] = ()
     complete_case_rows: int = 0
     source_rows: int = 0
     effective_units: int = 0
@@ -148,6 +161,55 @@ def _feature_vifs(design: pd.DataFrame, features: list[str]) -> dict[str, float]
             vif = float(variance_inflation_factor(matrix, index))
         values[feature] = vif if math.isfinite(vif) else float("inf")
     return values
+
+
+def _bivariate_associations(
+    working: pd.DataFrame,
+    target: str,
+    features: tuple[str, ...],
+    *,
+    alpha: float,
+) -> tuple[BivariateAssociation, ...]:
+    """Unadjusted per-feature association ranking for degraded results.
+
+    Descriptive only: these numbers do not control for the other features
+    and are labelled as such wherever they are rendered.
+    """
+
+    associations: list[BivariateAssociation] = []
+    for feature in features:
+        pearson_r, pearson_p = stats.pearsonr(working[target], working[feature])
+        spearman_rho, spearman_p = stats.spearmanr(working[target], working[feature])
+        associations.append(
+            BivariateAssociation(
+                feature=feature,
+                pearson_r=float(pearson_r),
+                pearson_p_value=float(pearson_p),
+                pearson_p_adjusted=float("nan"),
+                spearman_rho=float(spearman_rho),
+                spearman_p_value=float(spearman_p),
+                n_pairs=int(len(working)),
+            )
+        )
+    if associations:
+        adjusted = multipletests(
+            [item.pearson_p_value for item in associations], alpha=alpha, method="holm"
+        )[1]
+        associations = [
+            BivariateAssociation(
+                feature=item.feature,
+                pearson_r=item.pearson_r,
+                pearson_p_value=item.pearson_p_value,
+                pearson_p_adjusted=float(adjusted[index]),
+                spearman_rho=item.spearman_rho,
+                spearman_p_value=item.spearman_p_value,
+                n_pairs=item.n_pairs,
+            )
+            for index, item in enumerate(associations)
+        ]
+    return tuple(
+        sorted(associations, key=lambda item: -abs(item.pearson_r))
+    )
 
 
 def _base_result(
@@ -284,6 +346,9 @@ def analyze_factor_relationships(
             tested_features=tuple(candidate_features),
             excluded_features=excluded,
             unstable_features=unstable_features,
+            bivariate_associations=_bivariate_associations(
+                working, spec.target, tuple(candidate_features), alpha=spec.alpha
+            ),
             complete_case_rows=complete_rows,
             source_rows=len(frame),
             effective_units=effective_units,
@@ -375,6 +440,13 @@ def analyze_factor_relationships(
             reverse=True,
         )
     )
+    bivariate_fallback = (
+        ()
+        if reliable_factors
+        else _bivariate_associations(
+            working, spec.target, tuple(candidate_features), alpha=spec.alpha
+        )
+    )
     return FactorAnalysisResult(
         status="supported" if reliable_factors else "null_result",
         reason_code=("adjusted_associations_found" if reliable_factors else "no_adjusted_association"),
@@ -384,6 +456,7 @@ def analyze_factor_relationships(
         reliable_factors=reliable_factors,
         excluded_features=excluded,
         unstable_features=unstable_features,
+        bivariate_associations=bivariate_fallback,
         complete_case_rows=complete_rows,
         source_rows=len(frame),
         effective_units=effective_units,

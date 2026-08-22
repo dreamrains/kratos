@@ -216,6 +216,16 @@ class Slice2FactorRuntime:
                         "tested_features": list(result.tested_features),
                         "excluded_features": dict(result.excluded_features),
                         "unstable_features": list(result.unstable_features),
+                        "bivariate_associations": [
+                            {
+                                "feature": item.feature,
+                                "pearson_r": item.pearson_r,
+                                "pearson_p_adjusted": item.pearson_p_adjusted,
+                                "spearman_rho": item.spearman_rho,
+                                "n_pairs": item.n_pairs,
+                            }
+                            for item in result.bivariate_associations
+                        ],
                         "complete_case_rows": result.complete_case_rows,
                     },
                     limitations=result.limitations,
@@ -339,6 +349,19 @@ class Slice2FactorRuntime:
         diagnostic_narrative = (
             f"排除因素：{exclusions}；高共线不稳定因素：{unstable}。"
         )
+        if result.bivariate_associations:
+            ranking_lines = "；".join(
+                f"{item.feature} r={_number(item.pearson_r)}（Holm 校正 p{_p_value(item.pearson_p_adjusted)}）"
+                for item in result.bivariate_associations[:8]
+            )
+            remaining = len(result.bivariate_associations) - min(
+                8, len(result.bivariate_associations)
+            )
+            diagnostic_narrative += (
+                "未调整双变量关联排序（描述性，未控制其他因素，不构成因果或多因素结论）："
+                f"{ranking_lines}。"
+                + (f"其余 {remaining} 个因素见结构化结果。" if remaining > 0 else "")
+            )
         if chart_failure:
             diagnostic_narrative += " 图表生成失败，但结构化因素结论仍已发布。"
 

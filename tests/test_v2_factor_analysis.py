@@ -179,3 +179,55 @@ def test_small_but_identifiable_model_is_not_rejected_by_fixed_n_30_rule():
     assert result.complete_case_rows == 16
     assert result.reason_code != "fixed_small_sample_rule"
     assert result.status in {"supported", "null_result"}
+
+
+def _null_multivariate_frame(rows: int = 60) -> pd.DataFrame:
+    """Target is pure noise; features are mutually collinear and unrelated."""
+    rng = np.random.default_rng(7)
+    base = rng.normal(size=rows)
+    return pd.DataFrame(
+        {
+            "unit_id": [f"u{index}" for index in range(rows)],
+            "target": rng.normal(size=rows),
+            "factor_a": base,
+            "factor_b": base * 1.05 + rng.normal(scale=0.05, size=rows),
+            "factor_c": base * 0.95 + rng.normal(scale=0.05, size=rows),
+        }
+    )
+
+
+def test_null_result_carries_unadjusted_bivariate_ranking():
+    frame = _null_multivariate_frame()
+
+    result = analyze_factor_relationships(
+        frame,
+        FactorAnalysisSpec(
+            target="target",
+            features=("factor_a", "factor_b", "factor_c"),
+            analysis_unit="unit_id",
+        ),
+    )
+
+    assert result.status in {"null_result", "limited"}
+    assert result.bivariate_associations, "degraded results must not be empty of information"
+    ranked = result.bivariate_associations
+    magnitudes = [abs(item.pearson_r) for item in ranked]
+    assert magnitudes == sorted(magnitudes, reverse=True)
+    assert all(item.n_pairs == result.complete_case_rows for item in ranked)
+    assert all(0 <= item.pearson_p_adjusted <= 1 for item in ranked)
+
+
+def test_supported_result_does_not_render_bivariate_fallback():
+    frame = _strong_signal_frame(rows=48)
+
+    result = analyze_factor_relationships(
+        frame,
+        FactorAnalysisSpec(
+            target="target",
+            features=("marketing",),
+            analysis_unit="unit_id",
+        ),
+    )
+
+    assert result.status == "supported"
+    assert result.bivariate_associations == ()
