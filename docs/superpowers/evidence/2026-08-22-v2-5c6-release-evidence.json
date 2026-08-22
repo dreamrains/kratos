@@ -29,6 +29,53 @@
         "comparison",
         "method"
       ]
+    },
+    {
+      "evidence_id": "evidence_5c6_unified_browser_interaction_87f7896",
+      "source_digest": "sha256:cc5ad7379395b449ffce5d4776c6fa29a492648918070b859d1c698889db9705",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-planning-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-interaction-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_5c6_unified_browser_refresh_87f7896",
+      "source_digest": "sha256:cc5ad7379395b449ffce5d4776c6fa29a492648918070b859d1c698889db9705",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-planning-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-interaction-browser-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "observed_interactions": [
+        "refresh_restore"
+      ]
     }
   ]
 }
