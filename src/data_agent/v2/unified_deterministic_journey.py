@@ -386,7 +386,10 @@ def validate_unified_deterministic_evidence(
     if not isinstance(interrupted_events, list):
         interrupted_events = []
         reasons.append("invalid_interrupted_sse_events")
-    for event in scenario.required_semantic_events:
+    shared_sse_events = tuple(
+        dict.fromkeys((*scenario.required_semantic_events, "turn_interrupted"))
+    )
+    for event in shared_sse_events:
         required_stream = interrupted_events if event == "turn_interrupted" else completed_events
         if event not in required_stream:
             reasons.append(f"missing_required_sse_event:{event}")
@@ -431,7 +434,7 @@ def validate_unified_deterministic_evidence(
         ReleaseReceipt(
             receipt_id=f"receipt_unified_sse_{identity}",
             layer=ValidationLayer.SSE_TRANSPORT_CONTRACT,
-            observed_semantic_events=tuple(scenario.required_semantic_events),
+            observed_semantic_events=shared_sse_events,
             **common,
         ),
     )

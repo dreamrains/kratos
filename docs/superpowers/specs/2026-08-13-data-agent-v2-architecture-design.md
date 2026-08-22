@@ -855,10 +855,23 @@ recommendation safety 与 outcome 的材料性变化才是 release gate。人工
 是共享运行时能力。只要 matrix 明确把它们绑定到同一个 current-source unified
 receipt target，且该 receipt 覆盖完整的 unified 交互和事件合同，就只验证一次。
 
-方法场景仍各自需要 real-provider journey 与 human semantic review；共享 runtime
-receipt 不能被重标为某个场景专属 receipt，亦不能替代场景的统计、数据范围、图表
-策略或语义评审。状态投影将共享缺口命名为 `shared_runtime:<layer>`，与
-`<scenario>:<layer>` 的场景语义缺口明确区分。
+每个方法场景必须各自通过 fixture-bound、provider-neutral 的
+`scenario_semantic_oracle`。oracle 必须运行真实 deterministic runtime，并从持久化
+ledger、Answer Blocks、artifact 和语义事件中观察结果；不得把 matrix 的期望值直接
+回填为观察值。fixture、必需事件、稳定块类型、方法专属 Finding、图表策略或任何
+fail-closed 断言不满足时，整组 oracle 不得铸造 PASS receipt。
+
+真实 Provider 与人工语义评审只覆盖 matrix 显式列出的代表性场景。当前最小发布候选
+使用两次、每次严格一次调用的 Provider 预算：统一多发现入口验证端到端规划与执行，
+回测预测验证最容易产生材料性方法漂移的路径；禁止把其他场景的调用重标、合并或用
+多次调用填入一份 receipt。人工评审覆盖统一入口的合成夹具，以及历史趋势的
+`reference/test_doc/游戏A内购数据.xlsx` 真实数据。技术 stability 继续由机器合同
+独立判定，不再作为人工评审维度，也不能由人工 PASS 覆盖。
+
+状态投影将共享缺口命名为 `shared_runtime:<layer>`，每个方法的离线语义缺口命名为
+`<scenario>:scenario_semantic_oracle`，代表性 Provider 与 human 缺口仍使用各自 layer。
+因此当前有限合同共 18 个 obligation：5 个共享运行时、9 个离线方法 oracle、2 个
+真实 Provider 代表和 2 个人工语义代表。
 
 ### 21.7 已知事故与设计约束追踪
 

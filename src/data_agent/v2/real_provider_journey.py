@@ -24,12 +24,18 @@ from data_agent.v2.planning_budget import (
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v6"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v7"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (
     "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、"
     "方法局限，并仅在上下文支持时给出建议。"
+)
+FORECAST_SCENARIO_ID = "backtested_forecast"
+FORECAST_FIXTURE_PATH = "tests/fixtures/v2_slice4b_daily.csv"
+FORECAST_QUESTION = (
+    "未来七天销售基线是多少？仅在时间外回测优于朴素基线时发布校准预测，"
+    "并说明不确定性、方法局限和结论边界。"
 )
 REQUIRED_STOP_CONDITIONS = (
     "source_digest_changed",
@@ -64,17 +70,25 @@ def build_real_provider_preflight(
     config: AgentConfig | None = None,
     token_counter: Callable[..., int] | None = None,
     confirmed_analysis_unit_column: str = "",
+    scenario_id: str = UNIFIED_SCENARIO_ID,
 ) -> dict[str, Any]:
     """Build the exact first-call request budget without issuing authorization."""
 
     cfg = config or get_config()
     fixture = Path(fixture_path)
     normalized_fixture = fixture.as_posix()
+    specifications = {
+        UNIFIED_SCENARIO_ID: (UNIFIED_FIXTURE_PATH, UNIFIED_QUESTION),
+        FORECAST_SCENARIO_ID: (FORECAST_FIXTURE_PATH, FORECAST_QUESTION),
+    }
+    if scenario_id not in specifications:
+        raise ValueError(f"unsupported representative Provider scenario: {scenario_id}")
+    expected_fixture, question = specifications[scenario_id]
     if (
-        normalized_fixture != UNIFIED_FIXTURE_PATH
-        and not normalized_fixture.endswith("/" + UNIFIED_FIXTURE_PATH)
+        normalized_fixture != expected_fixture
+        and not normalized_fixture.endswith("/" + expected_fixture)
     ):
-        raise ValueError("real-provider preflight requires the unified matrix fixture")
+        raise ValueError("real-provider preflight requires its matrix-bound fixture")
     frame = pd.read_csv(fixture)
     dataset_fingerprint = "sha256:" + hashlib.sha256(fixture.read_bytes()).hexdigest()
     context = DatasetPlanningContext.from_frame(
@@ -112,13 +126,13 @@ def build_real_provider_preflight(
         reserved_output_tokens=client.max_tokens,
         **budget_kwargs,
     )
-    estimate = budget.require_fits(UNIFIED_QUESTION, context)
+    estimate = budget.require_fits(question, context)
     request_identity = {
         "source_digest": source_digest,
-        "scenario_id": UNIFIED_SCENARIO_ID,
-        "fixture_path": UNIFIED_FIXTURE_PATH,
+        "scenario_id": scenario_id,
+        "fixture_path": expected_fixture,
         "dataset_fingerprint": dataset_fingerprint,
-        "question": UNIFIED_QUESTION,
+        "question": question,
         "model_id": client.model_id,
         "planning_context": estimate.to_dict(),
         "semantic_context": context.to_prompt_dict()["semantic_context"],
@@ -156,6 +170,10 @@ def validate_real_provider_preflight(
     expected_dataset_fingerprint: str,
     expected_planner_contract_gate: dict[str, Any],
     expected_semantic_context: dict[str, str],
+    expected_scenario_id: str = UNIFIED_SCENARIO_ID,
+    expected_fixture_path: str = UNIFIED_FIXTURE_PATH,
+    expected_question: str = UNIFIED_QUESTION,
+    analysis_unit_required: bool = True,
 ) -> RealProviderPreflightValidation:
     if not isinstance(preflight, dict):
         return RealProviderPreflightValidation(False, ("invalid_real_provider_preflight",))
@@ -164,15 +182,15 @@ def validate_real_provider_preflight(
         reasons.append("invalid_real_provider_preflight_version")
     if preflight.get("source_digest") != expected_source_digest:
         reasons.append("stale_real_provider_preflight")
-    if preflight.get("scenario_id") != UNIFIED_SCENARIO_ID:
+    if preflight.get("scenario_id") != expected_scenario_id:
         reasons.append("invalid_real_provider_scenario")
-    if preflight.get("fixture_path") != UNIFIED_FIXTURE_PATH:
+    if preflight.get("fixture_path") != expected_fixture_path:
         reasons.append("wrong_real_provider_fixture")
     if not _SHA256.fullmatch(str(preflight.get("dataset_fingerprint") or "")):
         reasons.append("invalid_dataset_fingerprint")
     elif preflight.get("dataset_fingerprint") != expected_dataset_fingerprint:
         reasons.append("real_provider_dataset_changed")
-    if preflight.get("question") != UNIFIED_QUESTION:
+    if preflight.get("question") != expected_question:
         reasons.append("real_provider_question_changed")
     if preflight.get("model_id") != expected_model_id:
         reasons.append("real_provider_model_changed")
@@ -209,7 +227,7 @@ def validate_real_provider_preflight(
     confirmed_analysis_unit = str(
         semantic_context.get("confirmed_analysis_unit_column") or ""
     ).strip()
-    if not confirmed_analysis_unit:
+    if analysis_unit_required and not confirmed_analysis_unit:
         reasons.append("real_provider_analysis_unit_unconfirmed")
     if semantic_context != expected_semantic_context:
         reasons.append("real_provider_semantic_context_mismatch")

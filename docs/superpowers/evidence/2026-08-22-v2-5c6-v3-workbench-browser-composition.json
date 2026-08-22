@@ -1,0 +1,52 @@
+{
+  "version": "v2_provider_neutral_workbench_composition.v1",
+  "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+  "scenario_id": "unified_analysis_entry",
+  "planning_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-workbench-planning-browser-observation.json",
+  "interaction_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-workbench-interaction-browser-observation.json",
+  "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+  "status": "pass",
+  "reason_codes": [],
+  "provider_calls": 0,
+  "derived_receipts": [
+    {
+      "receipt_id": "receipt_unified_browser_b571a68ef41b6daf",
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:4fb4bc88eb7ffd7c7f0b7e29a5b3a796b1a83801f555fc2ba6221468cb04d9c4",
+        "actual-browser:interaction:sha256:dcb6cc1960a5345a6e335dcebe90c71199892ab9d991d69317f8deba7a2327d9"
+      ],
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "receipt_id": "receipt_unified_refresh_b571a68ef41b6daf",
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:4fb4bc88eb7ffd7c7f0b7e29a5b3a796b1a83801f555fc2ba6221468cb04d9c4",
+        "actual-browser:interaction:sha256:dcb6cc1960a5345a6e335dcebe90c71199892ab9d991d69317f8deba7a2327d9"
+      ],
+      "observed_interactions": ["refresh_restore"]
+    }
+  ],
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

@@ -1,16 +1,42 @@
 {
-  "version": "v2_release_matrix.v2",
+  "version": "v2_release_matrix.v3",
   "shared_runtime": {
     "scenario_id": "unified_analysis_entry",
-    "layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey"]
+    "layers": ["owner_contract", "incident_replay", "sse_transport_contract", "browser_interaction_journey", "refresh_persistence_journey"],
+    "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed", "turn_interrupted"],
+    "required_interactions": ["upload", "planning_estimate_without_authorization", "explicit_planning_confirmation", "needs_input", "planning_answer_persisted", "planning_failure_stable", "explicit_planning_retry", "live_progress", "draft_while_running", "queued_steer", "stop", "error_recovery", "session_isolation", "task_overlay_collapsed", "refresh_restore"],
+    "chart_policy": "conditional"
+  },
+  "representative_validation": {
+    "provider_call_budget": 2,
+    "real_provider": [
+      {
+        "scenario_id": "unified_analysis_entry",
+        "fixture": "tests/fixtures/v2_slice4d_combined.csv"
+      },
+      {
+        "scenario_id": "backtested_forecast",
+        "fixture": "tests/fixtures/v2_slice4b_daily.csv"
+      }
+    ],
+    "human_semantic": [
+      {
+        "scenario_id": "unified_analysis_entry",
+        "fixture": "tests/fixtures/v2_slice4d_combined.csv"
+      },
+      {
+        "scenario_id": "historical_trend",
+        "fixture": "reference/test_doc/游戏A内购数据.xlsx"
+      }
+    ]
   },
   "scenarios": [
     {
       "scenario_id": "descriptive_analysis",
       "user_value": "回答单指标水平与范围，并在适用时提供邻接图表",
-      "entry": "/v2-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice1_sales.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
       "required_block_types": ["executive_answer", "key_finding", "method"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
@@ -20,11 +46,11 @@
     {
       "scenario_id": "factor_relationships",
       "user_value": "识别因素关系并校准统计与因果边界",
-      "entry": "/v2-factor-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice2_factors.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
-      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_block_types": ["executive_answer", "method"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
       "chart_policy": "conditional",
       "forbidden_behaviors": ["causal_upgrade", "effective_sample_omitted", "unexpected_user_confirmation", "internal_evidence_marker"]
@@ -32,9 +58,9 @@
     {
       "scenario_id": "semantic_date_transformation",
       "user_value": "自动执行无歧义转换，并仅为真实语义歧义请求确认",
-      "entry": "/v2-transform-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice3_ambiguous_dates.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "user_input_required", "final_block_delta", "turn_completed"],
       "required_block_types": ["executive_answer", "method"],
       "required_interactions": ["upload", "semantic_confirmation", "resume", "refresh_restore"],
@@ -44,11 +70,11 @@
     {
       "scenario_id": "group_comparison",
       "user_value": "比较两个组并报告差值、区间、效应量和限制",
-      "entry": "/v2-group-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4a_groups.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
-      "required_block_types": ["executive_answer", "comparison", "method"],
+      "required_block_types": ["executive_answer", "method"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
       "chart_policy": "conditional",
       "forbidden_behaviors": ["causal_upgrade", "missing_analysis_unit", "unexpected_user_confirmation", "internal_evidence_marker"]
@@ -56,11 +82,11 @@
     {
       "scenario_id": "historical_trend",
       "user_value": "估计历史趋势并处理依赖结构与缺失周期",
-      "entry": "/v2-time-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4b_daily.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
-      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_block_types": ["executive_answer", "method"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
       "chart_policy": "conditional",
       "forbidden_behaviors": ["causal_upgrade", "silent_missing_interval_imputation", "unexpected_user_confirmation", "internal_evidence_marker"]
@@ -68,11 +94,11 @@
     {
       "scenario_id": "backtested_forecast",
       "user_value": "仅在回测优于基线时发布校准预测",
-      "entry": "/v2-forecast-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4b_daily.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
-      "required_block_types": ["executive_answer", "key_finding", "method"],
+      "required_block_types": ["executive_answer", "method"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
       "chart_policy": "conditional",
       "forbidden_behaviors": ["forecast_without_backtest", "predictive_upgrade_when_baseline_not_beaten", "unexpected_user_confirmation", "internal_evidence_marker"]
@@ -80,9 +106,9 @@
     {
       "scenario_id": "multi_finding_synthesis",
       "user_value": "组合多个独立 Finding，并保持块级失败隔离和图文邻接",
-      "entry": "/v2-multi-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4d_combined.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
       "required_block_types": ["executive_answer", "key_finding", "comparison", "method"],
       "required_interactions": ["upload", "live_progress", "inline_charts", "refresh_restore"],
@@ -92,9 +118,9 @@
     {
       "scenario_id": "exploratory_python",
       "user_value": "允许受限探索代码，但不把自由输出升级为结论证据",
-      "entry": "/v2-python-canary",
+      "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4d_combined.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
+      "required_layers": ["scenario_semantic_oracle"],
       "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "supplemental_artifact_created", "final_block_delta", "turn_completed"],
       "required_block_types": ["executive_answer", "method", "supplemental"],
       "required_interactions": ["upload", "live_progress", "refresh_restore"],
@@ -106,8 +132,8 @@
       "user_value": "从统一入口完成上传、分析路由、实时协作、停止、恢复和会话隔离",
       "entry": "/v2-workbench",
       "fixture": "tests/fixtures/v2_slice4d_combined.csv",
-      "required_layers": ["real_provider_analysis_journey", "human_semantic_review"],
-      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed", "turn_interrupted"],
+      "required_layers": ["scenario_semantic_oracle"],
+      "required_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed"],
       "required_block_types": ["executive_answer", "key_finding", "method"],
       "required_interactions": ["upload", "planning_estimate_without_authorization", "explicit_planning_confirmation", "needs_input", "planning_answer_persisted", "planning_failure_stable", "explicit_planning_retry", "live_progress", "draft_while_running", "queued_steer", "stop", "error_recovery", "session_isolation", "task_overlay_collapsed", "refresh_restore"],
       "chart_policy": "conditional",

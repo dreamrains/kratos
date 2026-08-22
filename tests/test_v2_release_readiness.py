@@ -60,7 +60,7 @@ def test_source_digest_is_line_ending_portable_and_source_sensitive(tmp_path):
 def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
     matrix = load_release_matrix(MATRIX_PATH)
 
-    assert matrix.version == "v2_release_matrix.v2"
+    assert matrix.version == "v2_release_matrix.v3"
     assert len(matrix.scenarios) == 9
     assert len({item.scenario_id for item in matrix.scenarios}) == 9
     assert matrix.shared_runtime_scenario_id == "unified_analysis_entry"
@@ -72,13 +72,10 @@ def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
         ValidationLayer.REFRESH_PERSISTENCE_JOURNEY,
     }
     assert all(
-        set(item.required_layers)
-        == {
-            ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
-            ValidationLayer.HUMAN_SEMANTIC_REVIEW,
-        }
+        item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
         for item in matrix.scenarios
     )
+    assert all(item.entry == "/v2-workbench" for item in matrix.scenarios)
     assert all("turn_completed" in item.required_semantic_events for item in matrix.scenarios)
     assert all("executive_answer" in item.required_block_types for item in matrix.scenarios)
     assert all(item.forbidden_behaviors for item in matrix.scenarios)
@@ -96,8 +93,138 @@ def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
     assert "implicit_provider_retry" in unified.forbidden_behaviors
     assert "planning_answer_truncation" in unified.forbidden_behaviors
     assert "silent_planning_context_trim" in unified.forbidden_behaviors
-    assert "turn_interrupted" in unified.required_semantic_events
     assert "turn_completed_after_interrupt" in unified.forbidden_behaviors
+
+
+def test_release_matrix_uses_offline_semantic_oracles_and_two_provider_representatives():
+    matrix = load_release_matrix(MATRIX_PATH)
+
+    assert matrix.version == "v2_release_matrix.v3"
+    assert all(item.entry == "/v2-workbench" for item in matrix.scenarios)
+    assert all(
+        item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
+        for item in matrix.scenarios
+    )
+    assert [item.scenario_id for item in matrix.representative_provider_targets] == [
+        "unified_analysis_entry",
+        "backtested_forecast",
+    ]
+    assert [item.scenario_id for item in matrix.representative_human_targets] == [
+        "unified_analysis_entry",
+        "historical_trend",
+    ]
+    assert matrix.representative_human_targets[1].fixture == (
+        "reference/test_doc/游戏A内购数据.xlsx"
+    )
+    assert matrix.provider_call_budget == 2
+    unified = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    assert "turn_interrupted" in matrix.shared_runtime_required_semantic_events
+    assert "turn_interrupted" not in unified.required_semantic_events
+    assert "stop" in matrix.shared_runtime_required_interactions
+
+    projection = project_release_status(
+        matrix,
+        (),
+        current_source_digest="sha256:" + "7" * 64,
+    )
+
+    assert projection["summary"]["total"] == 18
+    assert projection["root_cutover_gaps"] == [
+        "shared_runtime:owner_contract",
+        "shared_runtime:incident_replay",
+        "shared_runtime:sse_transport_contract",
+        "shared_runtime:browser_interaction_journey",
+        "shared_runtime:refresh_persistence_journey",
+        *[
+            f"{item.scenario_id}:scenario_semantic_oracle"
+            for item in matrix.scenarios
+        ],
+        "unified_analysis_entry:real_provider_analysis_journey",
+        "backtested_forecast:real_provider_analysis_journey",
+        "unified_analysis_entry:human_semantic_review",
+        "historical_trend:human_semantic_review",
+    ]
+
+
+def test_scenario_semantic_oracle_requires_exact_fixture_and_full_semantic_coverage():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(item for item in matrix.scenarios if item.scenario_id == "historical_trend")
+    digest = "sha256:" + "6" * 64
+    incomplete = ReleaseReceipt(
+        receipt_id="receipt_historical_semantic_incomplete",
+        source_digest=digest,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.SCENARIO_SEMANTIC_ORACLE,
+        status=LayerStatus.PASS,
+        evidence_refs=("offline:historical",),
+        oracle_identity="v2_scenario_semantic_oracle.v1",
+        fixture_path="tests/fixtures/not-the-bound-fixture.csv",
+        observed_semantic_events=scenario.required_semantic_events,
+        observed_block_types=scenario.required_block_types,
+        observed_interactions=scenario.required_interactions,
+        chart_observation="rendered",
+    )
+
+    decision = evaluate_release_readiness(
+        matrix, [incomplete], current_source_digest=digest
+    )
+
+    assert decision.incomplete_receipt_ids == (
+        "receipt_historical_semantic_incomplete",
+    )
+
+
+def test_unselected_real_provider_receipt_is_unknown_and_two_calls_are_incomplete():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "5" * 64
+    descriptive = next(
+        item for item in matrix.scenarios if item.scenario_id == "descriptive_analysis"
+    )
+    unified = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    unselected = ReleaseReceipt(
+        receipt_id="receipt_unselected_provider",
+        source_digest=digest,
+        scenario_id=descriptive.scenario_id,
+        layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+        status=LayerStatus.PASS,
+        evidence_refs=("provider:unselected",),
+        oracle_identity="provider-oracle:v1",
+        fixture_path=descriptive.fixture,
+        provider_calls=1,
+        provider_authorization_ref="authorization:one",
+        observed_semantic_events=descriptive.required_semantic_events,
+        observed_block_types=descriptive.required_block_types,
+        chart_observation="rendered",
+    )
+    over_budget = ReleaseReceipt(
+        receipt_id="receipt_unified_provider_two_calls",
+        source_digest=digest,
+        scenario_id=unified.scenario_id,
+        layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+        status=LayerStatus.PASS,
+        evidence_refs=("provider:two-calls",),
+        oracle_identity="provider-oracle:v1",
+        fixture_path=unified.fixture,
+        provider_calls=2,
+        provider_authorization_ref="authorization:two",
+        observed_semantic_events=unified.required_semantic_events,
+        observed_block_types=unified.required_block_types,
+        chart_observation="rendered",
+    )
+
+    decision = evaluate_release_readiness(
+        matrix, [unselected, over_budget], current_source_digest=digest
+    )
+
+    assert decision.unknown_receipt_ids == ("receipt_unselected_provider",)
+    assert decision.incomplete_receipt_ids == (
+        "receipt_unified_provider_two_calls",
+    )
+    assert decision.provider_calls == 2
 
 
 def test_human_semantic_review_excludes_machine_stability():
@@ -136,7 +263,7 @@ def test_browser_pass_cannot_stand_in_for_other_layers():
 
     assert decision.status is ReadinessStatus.NOT_READY
     assert decision.provider_calls == 0
-    assert len(decision.missing_requirements) == 22
+    assert len(decision.missing_requirements) == 17
     assert decision.incomplete_receipt_ids == ("receipt_browser",)
     assert "product_pass" not in json.dumps(decision.to_dict())
 
@@ -228,8 +355,8 @@ def test_complete_current_receipts_only_reach_human_decision():
                 status=LayerStatus.PASS,
                 evidence_refs=(f"evidence:shared_runtime:{layer.value}",),
                 oracle_identity="oracle:v1",
-                observed_semantic_events=shared_scenario.required_semantic_events,
-                observed_interactions=shared_scenario.required_interactions,
+                observed_semantic_events=matrix.shared_runtime_required_semantic_events,
+                observed_interactions=matrix.shared_runtime_required_interactions,
                 chart_observation="rendered",
             )
         )
@@ -244,6 +371,7 @@ def test_complete_current_receipts_only_reach_human_decision():
                     status=LayerStatus.PASS,
                     evidence_refs=(f"evidence:{scenario.scenario_id}:{layer.value}",),
                     oracle_identity="oracle:v1",
+                    fixture_path=scenario.fixture,
                     provider_calls=(1 if layer is ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY else 0),
                     provider_authorization_ref=(
                         "authorization:explicit:one-call"
@@ -262,12 +390,53 @@ def test_complete_current_receipts_only_reach_human_decision():
                     ),
                 )
             )
+    scenarios = {item.scenario_id: item for item in matrix.scenarios}
+    for target in matrix.representative_provider_targets:
+        scenario = scenarios[target.scenario_id]
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_{scenario.scenario_id}_provider",
+                source_digest=digest,
+                scenario_id=scenario.scenario_id,
+                layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:{scenario.scenario_id}:provider",),
+                oracle_identity="provider-oracle:v1",
+                fixture_path=target.fixture,
+                provider_calls=1,
+                provider_authorization_ref="authorization:explicit:one-call",
+                observed_semantic_events=scenario.required_semantic_events,
+                observed_block_types=scenario.required_block_types,
+                chart_observation=(
+                    "rendered" if scenario.chart_policy in {"required", "conditional"}
+                    else "forbidden_absent"
+                ),
+            )
+        )
+    for target in matrix.representative_human_targets:
+        scenario = scenarios[target.scenario_id]
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_{scenario.scenario_id}_human",
+                source_digest=digest,
+                scenario_id=scenario.scenario_id,
+                layer=ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:{scenario.scenario_id}:human",),
+                oracle_identity="human-rubric:v1",
+                fixture_path=target.fixture,
+                semantic_dimensions=tuple(
+                    (dimension, LayerStatus.PASS)
+                    for dimension in HUMAN_REVIEW_DIMENSIONS
+                ),
+            )
+        )
 
     decision = evaluate_release_readiness(matrix, receipts, current_source_digest=digest)
 
     assert decision.status is ReadinessStatus.READY_FOR_HUMAN_DECISION
     assert decision.missing_requirements == ()
-    assert decision.provider_calls == 9
+    assert decision.provider_calls == 2
     assert decision.root_switch_authorized is False
 
 
@@ -378,11 +547,11 @@ def test_append_only_evidence_projects_deterministic_receipts_and_a_bounded_stat
     assert projection["version"] == "v2_release_status_projection.v1"
     assert projection["status"] == "not_ready"
     assert projection["summary"] == {
-        "total": 23,
+        "total": 18,
         "pass": 1,
         "fail": 0,
         "blocked": 0,
-        "not_run": 22,
+        "not_run": 17,
         "conflict": 0,
         "incomplete": 0,
     }

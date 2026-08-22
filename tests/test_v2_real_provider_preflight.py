@@ -10,6 +10,12 @@ from data_agent.v2.real_provider_journey import (
     build_real_provider_preflight,
     validate_real_provider_preflight,
 )
+from data_agent.v2.release import load_release_matrix
+from data_agent.v2.representative_provider_preflight import (
+    REPRESENTATIVE_PROVIDER_PREFLIGHT_VERSION,
+    build_representative_provider_preflight,
+    validate_representative_provider_preflight,
+)
 
 
 FIXTURE = Path("tests/fixtures/v2_slice4d_combined.csv")
@@ -209,3 +215,78 @@ def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_author
     assert "planner_parameter_contract_parity_failed" in result.reason_codes
     assert "invalid_planner_ready_variant_count" in result.reason_codes
     assert "planner_contract_gate_mismatch" in result.reason_codes
+
+
+def test_grouped_preflight_freezes_exactly_two_matrix_representatives_without_authorizing():
+    digest = "sha256:" + "7" * 64
+    matrix = load_release_matrix("tests/release/v2_release_matrix.json")
+
+    preflight = build_representative_provider_preflight(
+        repository_root=Path.cwd(),
+        matrix=matrix,
+        source_digest=digest,
+        config=_config(),
+        token_counter=_token_counter,
+        confirmed_analysis_unit_column="unit_id",
+    )
+    result = validate_representative_provider_preflight(
+        preflight,
+        repository_root=Path.cwd(),
+        matrix=matrix,
+        expected_source_digest=digest,
+        expected_model_id="openai/deepseek-v4-flash",
+    )
+
+    assert preflight["version"] == REPRESENTATIVE_PROVIDER_PREFLIGHT_VERSION
+    assert preflight["provider_calls_observed"] == 0
+    assert preflight["authorization_issued"] is False
+    assert preflight["authorization_request"] == {
+        "mode": "grouped_exact_calls",
+        "purpose": "analysis_planning",
+        "provider_calls": 2,
+    }
+    assert [item["scenario_id"] for item in preflight["calls"]] == [
+        "unified_analysis_entry",
+        "backtested_forecast",
+    ]
+    assert all(
+        item["authorization_request"]["provider_calls"] == 1
+        for item in preflight["calls"]
+    )
+    assert preflight["calls"][0]["semantic_context"] == {
+        "confirmed_analysis_unit_column": "unit_id"
+    }
+    assert preflight["calls"][1]["semantic_context"] == {
+        "confirmed_analysis_unit_column": ""
+    }
+    assert result.passed is True
+    assert result.reason_codes == ()
+
+
+def test_grouped_preflight_rejects_budget_order_and_nested_request_drift():
+    digest = "sha256:" + "8" * 64
+    matrix = load_release_matrix("tests/release/v2_release_matrix.json")
+    preflight = build_representative_provider_preflight(
+        repository_root=Path.cwd(),
+        matrix=matrix,
+        source_digest=digest,
+        config=_config(),
+        token_counter=_token_counter,
+        confirmed_analysis_unit_column="unit_id",
+    )
+    preflight["authorization_request"]["provider_calls"] = 3
+    preflight["calls"].reverse()
+    preflight["calls"][0]["fixture_path"] = "tests/fixtures/relabelled.csv"
+
+    result = validate_representative_provider_preflight(
+        preflight,
+        repository_root=Path.cwd(),
+        matrix=matrix,
+        expected_source_digest=digest,
+        expected_model_id="openai/deepseek-v4-flash",
+    )
+
+    assert result.passed is False
+    assert "representative_provider_call_budget_mismatch" in result.reason_codes
+    assert "representative_provider_target_order_changed" in result.reason_codes
+    assert "representative_provider_group_fingerprint_mismatch" in result.reason_codes

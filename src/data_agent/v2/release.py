@@ -15,6 +15,7 @@ class ValidationLayer(StrEnum):
     SSE_TRANSPORT_CONTRACT = "sse_transport_contract"
     BROWSER_INTERACTION_JOURNEY = "browser_interaction_journey"
     REFRESH_PERSISTENCE_JOURNEY = "refresh_persistence_journey"
+    SCENARIO_SEMANTIC_ORACLE = "scenario_semantic_oracle"
     REAL_PROVIDER_ANALYSIS_JOURNEY = "real_provider_analysis_journey"
     HUMAN_SEMANTIC_REVIEW = "human_semantic_review"
 
@@ -123,11 +124,27 @@ class ScenarioRequirement:
 
 
 @dataclass(frozen=True, slots=True)
+class RepresentativeValidationTarget:
+    scenario_id: str
+    fixture: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scenario_id", _required(self.scenario_id, "scenario_id"))
+        object.__setattr__(self, "fixture", _required(self.fixture, "fixture"))
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseMatrix:
     version: str
     scenarios: tuple[ScenarioRequirement, ...]
     shared_runtime_scenario_id: str
     shared_runtime_layers: tuple[ValidationLayer, ...]
+    shared_runtime_required_semantic_events: tuple[str, ...]
+    shared_runtime_required_interactions: tuple[str, ...]
+    shared_runtime_chart_policy: str
+    representative_provider_targets: tuple[RepresentativeValidationTarget, ...]
+    representative_human_targets: tuple[RepresentativeValidationTarget, ...]
+    provider_call_budget: int
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "version", _required(self.version, "version"))
@@ -149,9 +166,51 @@ class ReleaseMatrix:
             raise ValueError("shared_runtime_layers is required")
         if len(shared_layers) != len(set(shared_layers)):
             raise ValueError("duplicate shared runtime layer")
+        for field_name in (
+            "shared_runtime_required_semantic_events",
+            "shared_runtime_required_interactions",
+        ):
+            values = tuple(
+                str(item).strip()
+                for item in getattr(self, field_name)
+                if str(item).strip()
+            )
+            object.__setattr__(self, field_name, values)
+            if not values or len(values) != len(set(values)):
+                raise ValueError(f"{field_name} must contain unique values")
+        if self.shared_runtime_chart_policy not in {"required", "conditional", "forbidden"}:
+            raise ValueError("invalid shared_runtime_chart_policy")
         shared = set(shared_layers)
         if any(shared.intersection(item.required_layers) for item in self.scenarios):
             raise ValueError("shared runtime layers cannot be scenario-specific layers")
+        if any(
+            item.required_layers != (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
+            for item in self.scenarios
+        ):
+            raise ValueError("every scenario requires exactly one semantic oracle")
+        if any(item.entry != "/v2-workbench" for item in self.scenarios):
+            raise ValueError("release scenarios must use the unified workbench entry")
+        for field_name in (
+            "representative_provider_targets",
+            "representative_human_targets",
+        ):
+            targets = tuple(getattr(self, field_name))
+            object.__setattr__(self, field_name, targets)
+            target_ids = [target.scenario_id for target in targets]
+            if not targets or len(target_ids) != len(set(target_ids)):
+                raise ValueError(f"{field_name} must contain unique targets")
+            if not set(target_ids).issubset(ids):
+                raise ValueError(f"{field_name} contains an unknown scenario")
+        if type(self.provider_call_budget) is not int or not 2 <= self.provider_call_budget <= 3:
+            raise ValueError("provider_call_budget must be between 2 and 3")
+        if self.provider_call_budget != len(self.representative_provider_targets):
+            raise ValueError("provider call budget must equal representative provider targets")
+        scenarios = {item.scenario_id: item for item in self.scenarios}
+        if any(
+            target.fixture != scenarios[target.scenario_id].fixture
+            for target in self.representative_provider_targets
+        ):
+            raise ValueError("representative Provider targets must use their scenario fixture")
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +221,11 @@ class ReleaseRequirement:
     scenario_id: str
     layer: ValidationLayer
     scenario: ScenarioRequirement
+    expected_fixture: str
+    required_semantic_events: tuple[str, ...]
+    required_block_types: tuple[str, ...]
+    required_interactions: tuple[str, ...]
+    chart_policy: str
 
 
 def _release_requirements(matrix: ReleaseMatrix) -> tuple[ReleaseRequirement, ...]:
@@ -173,6 +237,11 @@ def _release_requirements(matrix: ReleaseMatrix) -> tuple[ReleaseRequirement, ..
             scenario_id=shared_scenario.scenario_id,
             layer=layer,
             scenario=shared_scenario,
+            expected_fixture=shared_scenario.fixture,
+            required_semantic_events=matrix.shared_runtime_required_semantic_events,
+            required_block_types=shared_scenario.required_block_types,
+            required_interactions=matrix.shared_runtime_required_interactions,
+            chart_policy=matrix.shared_runtime_chart_policy,
         )
         for layer in matrix.shared_runtime_layers
     ]
@@ -182,9 +251,48 @@ def _release_requirements(matrix: ReleaseMatrix) -> tuple[ReleaseRequirement, ..
             scenario_id=scenario.scenario_id,
             layer=layer,
             scenario=scenario,
+            expected_fixture=scenario.fixture,
+            required_semantic_events=scenario.required_semantic_events,
+            required_block_types=scenario.required_block_types,
+            required_interactions=scenario.required_interactions,
+            chart_policy=scenario.chart_policy,
         )
         for scenario in matrix.scenarios
         for layer in scenario.required_layers
+    )
+    requirements.extend(
+        ReleaseRequirement(
+            requirement_id=(
+                f"{target.scenario_id}:"
+                f"{ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY.value}"
+            ),
+            scenario_id=target.scenario_id,
+            layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+            scenario=scenarios[target.scenario_id],
+            expected_fixture=target.fixture,
+            required_semantic_events=scenarios[target.scenario_id].required_semantic_events,
+            required_block_types=scenarios[target.scenario_id].required_block_types,
+            required_interactions=scenarios[target.scenario_id].required_interactions,
+            chart_policy=scenarios[target.scenario_id].chart_policy,
+        )
+        for target in matrix.representative_provider_targets
+    )
+    requirements.extend(
+        ReleaseRequirement(
+            requirement_id=(
+                f"{target.scenario_id}:"
+                f"{ValidationLayer.HUMAN_SEMANTIC_REVIEW.value}"
+            ),
+            scenario_id=target.scenario_id,
+            layer=ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+            scenario=scenarios[target.scenario_id],
+            expected_fixture=target.fixture,
+            required_semantic_events=scenarios[target.scenario_id].required_semantic_events,
+            required_block_types=scenarios[target.scenario_id].required_block_types,
+            required_interactions=scenarios[target.scenario_id].required_interactions,
+            chart_policy=scenarios[target.scenario_id].chart_policy,
+        )
+        for target in matrix.representative_human_targets
     )
     targets = [(item.scenario_id, item.layer) for item in requirements]
     if len(targets) != len(set(targets)):
@@ -201,6 +309,7 @@ class ReleaseReceipt:
     status: LayerStatus
     evidence_refs: tuple[str, ...]
     oracle_identity: str
+    fixture_path: str = ""
     first_failure_stage: str = ""
     provider_calls: int = 0
     provider_authorization_ref: str = ""
@@ -217,6 +326,7 @@ class ReleaseReceipt:
         object.__setattr__(self, "source_digest", _digest(self.source_digest))
         object.__setattr__(self, "scenario_id", _required(self.scenario_id, "scenario_id"))
         object.__setattr__(self, "oracle_identity", _required(self.oracle_identity, "oracle_identity"))
+        object.__setattr__(self, "fixture_path", str(self.fixture_path or "").strip().replace("\\", "/"))
         refs = tuple(str(item).strip() for item in self.evidence_refs if str(item).strip())
         object.__setattr__(self, "evidence_refs", refs)
         if not refs:
@@ -283,6 +393,7 @@ class ReleaseReceipt:
             status=LayerStatus(value.get("status", "")),
             evidence_refs=tuple(value.get("evidence_refs") or ()),
             oracle_identity=value.get("oracle_identity", ""),
+            fixture_path=value.get("fixture_path", ""),
             first_failure_stage=value.get("first_failure_stage", ""),
             provider_calls=value.get("provider_calls", 0),
             provider_authorization_ref=value.get("provider_authorization_ref", ""),
@@ -313,6 +424,7 @@ class ReleaseEvidenceRecord:
     status: LayerStatus
     evidence_refs: tuple[str, ...]
     oracle_identity: str
+    fixture_path: str = ""
     first_failure_stage: str = ""
     provider_calls: int = 0
     provider_authorization_ref: str = ""
@@ -342,6 +454,7 @@ class ReleaseEvidenceRecord:
             status=LayerStatus(value.get("status", "")),
             evidence_refs=tuple(value.get("evidence_refs") or ()),
             oracle_identity=value.get("oracle_identity", ""),
+            fixture_path=value.get("fixture_path", ""),
             first_failure_stage=value.get("first_failure_stage", ""),
             provider_calls=value.get("provider_calls", 0),
             provider_authorization_ref=value.get("provider_authorization_ref", ""),
@@ -365,6 +478,7 @@ class ReleaseEvidenceRecord:
             status=self.status,
             evidence_refs=self.evidence_refs,
             oracle_identity=self.oracle_identity,
+            fixture_path=self.fixture_path,
             first_failure_stage=self.first_failure_stage,
             provider_calls=self.provider_calls,
             provider_authorization_ref=self.provider_authorization_ref,
@@ -389,6 +503,7 @@ def _receipt_payload(receipt: ReleaseReceipt) -> dict[str, Any]:
     }
     optional_fields = {
         "first_failure_stage": receipt.first_failure_stage,
+        "fixture_path": receipt.fixture_path,
         "provider_calls": receipt.provider_calls,
         "provider_authorization_ref": receipt.provider_authorization_ref,
         "semantic_dimensions": {
@@ -438,7 +553,7 @@ def project_release_status(
             stage = "conflicting_receipts"
         else:
             receipt = matches[0]
-            if receipt.status is LayerStatus.PASS and _receipt_covers_requirement(receipt, requirement.scenario):
+            if receipt.status is LayerStatus.PASS and _receipt_covers_requirement(receipt, requirement):
                 category = "pass"
             elif receipt.status is LayerStatus.PASS:
                 category = "incomplete"
@@ -555,6 +670,23 @@ def load_release_matrix(path: Path | str) -> ReleaseMatrix:
     shared_runtime = value.get("shared_runtime")
     if not isinstance(shared_runtime, dict):
         raise ValueError("release matrix shared_runtime is required")
+    representative = value.get("representative_validation")
+    if not isinstance(representative, dict):
+        raise ValueError("release matrix representative_validation is required")
+
+    def targets(field_name: str) -> tuple[RepresentativeValidationTarget, ...]:
+        raw_targets = representative.get(field_name)
+        if not isinstance(raw_targets, list) or not all(
+            isinstance(item, dict) for item in raw_targets
+        ):
+            raise ValueError(f"representative_validation {field_name} is required")
+        return tuple(
+            RepresentativeValidationTarget(
+                scenario_id=item.get("scenario_id", ""),
+                fixture=item.get("fixture", ""),
+            )
+            for item in raw_targets
+        )
     scenarios = []
     for item in value["scenarios"]:
         if not isinstance(item, dict):
@@ -582,6 +714,16 @@ def load_release_matrix(path: Path | str) -> ReleaseMatrix:
         shared_runtime_layers=tuple(
             ValidationLayer(layer) for layer in shared_runtime.get("layers") or ()
         ),
+        shared_runtime_required_semantic_events=tuple(
+            shared_runtime.get("required_semantic_events") or ()
+        ),
+        shared_runtime_required_interactions=tuple(
+            shared_runtime.get("required_interactions") or ()
+        ),
+        shared_runtime_chart_policy=shared_runtime.get("chart_policy", ""),
+        representative_provider_targets=targets("real_provider"),
+        representative_human_targets=targets("human_semantic"),
+        provider_call_budget=representative.get("provider_call_budget", 0),
     )
 
 
@@ -622,7 +764,7 @@ def evaluate_release_readiness(
             conflicts.append(requirement.requirement_id)
         elif matches[0].status is not LayerStatus.PASS:
             non_pass.append(requirement.requirement_id)
-        elif not _receipt_covers_requirement(matches[0], requirement.scenario):
+        elif not _receipt_covers_requirement(matches[0], requirement):
             incomplete_ids.append(matches[0].receipt_id)
 
     ready = not (missing or non_pass or conflicts or unknown_ids or incomplete_ids)
@@ -645,24 +787,45 @@ def evaluate_release_readiness(
 
 
 def _receipt_covers_requirement(
-    receipt: ReleaseReceipt, scenario: ScenarioRequirement
+    receipt: ReleaseReceipt, requirement: ReleaseRequirement
 ) -> bool:
     if receipt.forbidden_behavior_hits:
         return False
-    if receipt.layer is ValidationLayer.SSE_TRANSPORT_CONTRACT:
-        return set(receipt.observed_semantic_events) >= set(scenario.required_semantic_events)
-    if receipt.layer is ValidationLayer.BROWSER_INTERACTION_JOURNEY:
-        if not set(receipt.observed_interactions) >= set(scenario.required_interactions):
-            return False
-        if scenario.chart_policy == "required":
+    if receipt.layer in {
+        ValidationLayer.SCENARIO_SEMANTIC_ORACLE,
+        ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+        ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+    } and receipt.fixture_path != requirement.expected_fixture.replace("\\", "/"):
+        return False
+
+    def chart_policy_covered() -> bool:
+        if requirement.chart_policy == "required":
             return receipt.chart_observation == "rendered"
-        if scenario.chart_policy == "conditional":
+        if requirement.chart_policy == "conditional":
             return receipt.chart_observation in {"rendered", "not_warranted"}
         return receipt.chart_observation == "forbidden_absent"
+
+    if receipt.layer is ValidationLayer.SSE_TRANSPORT_CONTRACT:
+        return set(receipt.observed_semantic_events) >= set(requirement.required_semantic_events)
+    if receipt.layer is ValidationLayer.BROWSER_INTERACTION_JOURNEY:
+        if not set(receipt.observed_interactions) >= set(requirement.required_interactions):
+            return False
+        return chart_policy_covered()
     if receipt.layer is ValidationLayer.REFRESH_PERSISTENCE_JOURNEY:
         return "refresh_restore" in receipt.observed_interactions
+    if receipt.layer is ValidationLayer.SCENARIO_SEMANTIC_ORACLE:
+        return (
+            set(receipt.observed_semantic_events) >= set(requirement.required_semantic_events)
+            and set(receipt.observed_block_types) >= set(requirement.required_block_types)
+            and chart_policy_covered()
+        )
     if receipt.layer is ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY:
-        return set(receipt.observed_block_types) >= set(scenario.required_block_types)
+        return (
+            receipt.provider_calls == 1
+            and set(receipt.observed_semantic_events) >= set(requirement.required_semantic_events)
+            and set(receipt.observed_block_types) >= set(requirement.required_block_types)
+            and chart_policy_covered()
+        )
     return True
 
 

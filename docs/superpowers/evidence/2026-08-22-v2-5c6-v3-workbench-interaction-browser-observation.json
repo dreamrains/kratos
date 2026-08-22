@@ -1,0 +1,71 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_runner_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "steer": "v2_0f14901c1508",
+    "stop": "v2_5423696236ec",
+    "isolation": "v2_c7e0d8bfc93a"
+  },
+  "observations": {
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  },
+  "observed_turns": {
+    "steer_source": {
+      "session_id": "v2_0f14901c1508",
+      "turn_id": "turn_f430401bee45",
+      "status": "finalized",
+      "block_count": 4
+    },
+    "steer_target": {
+      "session_id": "v2_0f14901c1508",
+      "turn_id": "turn_04e62adfa66e",
+      "status": "finalized",
+      "block_count": 4
+    },
+    "stop": {
+      "session_id": "v2_5423696236ec",
+      "turn_id": "turn_5119be38557c",
+      "status": "interrupted",
+      "block_count": 0
+    },
+    "recovery_failed": {
+      "session_id": "v2_c7e0d8bfc93a",
+      "turn_id": "turn_62828a77eeb2",
+      "status": "failed",
+      "block_count": 0
+    },
+    "recovery_finalized": {
+      "session_id": "v2_c7e0d8bfc93a",
+      "turn_id": "turn_7641f168add9",
+      "status": "finalized",
+      "block_count": 3
+    }
+  },
+  "browser_observations": {
+    "steer": "运行中问题输入保持可编辑；消息排队后自动启动同一 session 的新 turn；两个 turn 均完成。",
+    "stop": "同一浏览器动作序列中开始并停止；页面显示已停止，答案为空；刷新仍为已停止。",
+    "recovery": "缺失指标先显示失败；修正为 sales 后在同一 session 的新 turn 完成。",
+    "task_overlay": "各会话运行动态覆盖层均保持默认折叠。"
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
