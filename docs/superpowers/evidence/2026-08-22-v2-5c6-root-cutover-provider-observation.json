@@ -1,0 +1,81 @@
+{
+  "version": "v2_real_provider_journey_observation.v1",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "git_head": "b13b93a1e0733d200b4c182486942e27b9a4e175",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "semantic_context": {
+    "confirmed_analysis_unit_column": "unit_id"
+  },
+  "preflight": {
+    "path": "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-provider-preflight.json",
+    "status": "pass",
+    "reason_codes": [],
+    "request_fingerprint": "sha256:ca76886d26b33886f8de61114c180643c7e2d456a217fb6d149b36833de2aff2"
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_50b55f9219da41079508d6e2526a3883",
+    "purpose": "analysis_planning",
+    "provider_calls_authorized": 1,
+    "status": "consumed"
+  },
+  "provider_attempt": {
+    "planning_http_status": 201,
+    "planning_status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "aggregation": "sum",
+      "analysis_unit": "unit_id",
+      "frequency": "daily",
+      "group": "channel",
+      "metric": "sales",
+      "time_field": "date"
+    },
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "repair_calls": 0
+  },
+  "deterministic_continuation": {
+    "executed_after_ready_plan": true,
+    "http_status": 200,
+    "status": "finalized",
+    "event_names": [
+      "turn_started",
+      "commitment_snapshot",
+      "tool_started",
+      "tool_finished",
+      "artifact_created",
+      "outcome_snapshot",
+      "final_block_delta",
+      "turn_completed"
+    ],
+    "block_count": 4,
+    "artifact_count": 2
+  },
+  "independent_deterministic_replay": {
+    "provider_calls": 0,
+    "upload_http_status": 200,
+    "execution_http_status": 200,
+    "status": "finalized",
+    "block_types": [
+      "executive_answer",
+      "key_finding",
+      "comparison",
+      "method"
+    ],
+    "artifact_count": 2
+  },
+  "data_handling": {
+    "fixture_kind": "repository synthetic fixture",
+    "raw_provider_response_persisted": false,
+    "provider_reasoning_persisted": false,
+    "planner_rationale_persisted": false,
+    "reference_test_doc_sent_to_provider": false
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
