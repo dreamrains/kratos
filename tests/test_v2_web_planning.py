@@ -72,6 +72,7 @@ def _issue_authorization(
     question: str,
     client_action_id: str,
     planning_input_id: str = "",
+    confirmed_analysis_unit_column: str = "",
 ) -> str:
     payload = {
         "session_id": session_id,
@@ -84,6 +85,10 @@ def _issue_authorization(
     }
     if planning_input_id:
         payload["planning_input_id"] = planning_input_id
+    if confirmed_analysis_unit_column:
+        payload["semantic_context"] = {
+            "confirmed_analysis_unit_column": confirmed_analysis_unit_column
+        }
     response = client.post(
         "/api/v2/provider-authorizations",
         json=payload,
@@ -94,10 +99,14 @@ def _issue_authorization(
 
 class FakePlanner:
     calls = 0
+    confirmed_analysis_unit_column = ""
     model_id = "provider/test-model"
 
     def plan(self, question, context):
         type(self).calls += 1
+        type(self).confirmed_analysis_unit_column = (
+            context.confirmed_analysis_unit_column
+        )
         return AnalysisPlan(
             status=PlanStatus.READY,
             user_question=question,
@@ -281,7 +290,13 @@ def test_planning_estimate_reports_full_model_budget_without_authorization(
     )
 
     assert response.status_code == 200
-    assert response.get_json() == estimate.to_dict()
+    assert response.get_json() == {
+        **estimate.to_dict(),
+        "semantic_context": {"confirmed_analysis_unit_column": ""},
+        "semantic_options": {
+            "analysis_unit_columns": ["unit_id", "sales"]
+        },
+    }
     auth_path = (
         tmp_path
         / "sessions"
@@ -374,6 +389,82 @@ def test_plan_rechecks_context_before_consuming_authorization_or_calling_planner
         tmp_path / "sessions", "session_budget_recheck"
     ).get(authorization_id)
     assert authorization.status is ProviderAuthorizationStatus.ISSUED
+
+
+def test_plan_rejects_preflight_semantic_context_drift_before_provider_call(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_preflight_semantic_drift",
+        question="compare sales",
+        client_action_id="action_preflight_semantic_drift",
+        confirmed_analysis_unit_column="unit_id",
+    )
+    FakePlanner.calls = 0
+    FakePlanner.confirmed_analysis_unit_column = ""
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakePlanner())
+
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_preflight_semantic_drift",
+            "filename": "sales.csv",
+            "question": "compare sales",
+            "client_request_id": "client_preflight_semantic_drift",
+            "provider_authorization_id": authorization_id,
+            "semantic_context": {
+                "confirmed_analysis_unit_column": "sales"
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert "different" in response.get_json()["error"]
+    assert FakePlanner.calls == 0
+    authorization = ProviderAuthorizationStore(
+        tmp_path / "sessions", "session_preflight_semantic_drift"
+    ).get(authorization_id)
+    assert authorization.status is ProviderAuthorizationStatus.ISSUED
+
+
+def test_plan_passes_matching_preflight_semantic_context_to_planner(
+    monkeypatch, tmp_path
+):
+    client = _client(monkeypatch, tmp_path)
+    import data_agent.web.blueprints.v2 as v2_module
+
+    authorization_id = _issue_authorization(
+        client,
+        session_id="session_preflight_semantic_match",
+        question="compare sales",
+        client_action_id="action_preflight_semantic_match",
+        confirmed_analysis_unit_column="unit_id",
+    )
+    FakePlanner.calls = 0
+    FakePlanner.confirmed_analysis_unit_column = ""
+    monkeypatch.setattr(v2_module, "V2_PLANNER_FACTORY", lambda: FakePlanner())
+
+    response = client.post(
+        "/api/v2/plans",
+        json={
+            "session_id": "session_preflight_semantic_match",
+            "filename": "sales.csv",
+            "question": "compare sales",
+            "client_request_id": "client_preflight_semantic_match",
+            "provider_authorization_id": authorization_id,
+            "semantic_context": {
+                "confirmed_analysis_unit_column": "unit_id"
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert FakePlanner.calls == 1
+    assert FakePlanner.confirmed_analysis_unit_column == "unit_id"
 
 
 def test_plan_rejects_fit_but_changed_authorized_context_before_provider_call(

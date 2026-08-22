@@ -27,6 +27,14 @@ def main() -> int:
         type=Path,
         help="Validate an existing preflight instead of building a new one.",
     )
+    parser.add_argument(
+        "--confirmed-analysis-unit-column",
+        default="",
+        help=(
+            "Bind a user-confirmed analysis-unit column before the first Provider "
+            "call; no column is inferred when omitted."
+        ),
+    )
     args = parser.parse_args()
 
     source = compute_release_source_digest(args.root)
@@ -35,6 +43,7 @@ def main() -> int:
         fixture_path=args.root / UNIFIED_FIXTURE_PATH,
         source_digest=source.source_digest,
         config=cfg,
+        confirmed_analysis_unit_column=args.confirmed_analysis_unit_column,
     )
     preflight = (
         json.loads(args.preflight.read_text(encoding="utf-8"))

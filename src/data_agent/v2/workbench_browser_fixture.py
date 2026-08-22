@@ -29,8 +29,33 @@ class DeterministicJourneyPlanner:
     def __init__(self) -> None:
         self.calls = 0
 
+    def _ready(self, question):
+        return AnalysisPlan(
+            status=PlanStatus.READY,
+            user_question=question,
+            analysis_kind=AnalysisKind.MULTI_FINDING_SYNTHESIS,
+            parameters={
+                "time_field": "date",
+                "metric": "sales",
+                "frequency": "daily",
+                "aggregation": "mean",
+                "group": "channel",
+                "analysis_unit": "unit_id",
+            },
+            rationale="根据已确认的业务语义执行趋势与双组综合分析。",
+            questions=(),
+            maximum_claim_class="inferential",
+            planner_invocations=1,
+            model_id="provider-neutral-fixture",
+        )
+
     def plan(self, question, context, *, clarifications=()):
         self.calls += 1
+        if (
+            self.calls == 1
+            and context.confirmed_analysis_unit_column == "unit_id"
+        ):
+            return self._ready(question)
         if self.calls == 1:
             return AnalysisPlan(
                 status=PlanStatus.NEEDS_INPUT,
@@ -48,24 +73,7 @@ class DeterministicJourneyPlanner:
         if self.calls == 2:
             raise RuntimeError("synthetic provider failure")
         if self.calls == 3:
-            return AnalysisPlan(
-                status=PlanStatus.READY,
-                user_question=question,
-                analysis_kind=AnalysisKind.MULTI_FINDING_SYNTHESIS,
-                parameters={
-                    "time_field": "date",
-                    "metric": "sales",
-                    "frequency": "daily",
-                    "aggregation": "mean",
-                    "group": "channel",
-                    "analysis_unit": "unit_id",
-                },
-                rationale="根据已持久化的业务语义执行趋势与双组综合分析。",
-                questions=(),
-                maximum_claim_class="inferential",
-                planner_invocations=1,
-                model_id="provider-neutral-fixture",
-            )
+            return self._ready(question)
         raise AssertionError("browser fixture observed an unexpected hidden retry")
 
 

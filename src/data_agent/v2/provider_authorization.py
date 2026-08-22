@@ -34,12 +34,14 @@ class ProviderAuthorizationRecord:
     status: ProviderAuthorizationStatus
     planning_input_id: str = ""
     planning_context: dict[str, Any] | None = None
+    semantic_context: dict[str, str] | None = None
     consumer_request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["status"] = self.status.value
         value["planning_context"] = dict(self.planning_context or {})
+        value["semantic_context"] = dict(self.semantic_context or {})
         return value
 
 
@@ -88,6 +90,21 @@ def _planning_context(value: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _semantic_context(value: dict[str, Any] | None) -> dict[str, str]:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError("semantic_context must be an object")
+    allowed = {"confirmed_analysis_unit_column"}
+    if set(value) - allowed:
+        raise ValueError("semantic_context fields are invalid")
+    return {
+        "confirmed_analysis_unit_column": str(
+            value.get("confirmed_analysis_unit_column") or ""
+        ).strip()
+    }
+
+
 def runtime_authorization_fingerprint(
     *,
     purpose: str,
@@ -97,6 +114,7 @@ def runtime_authorization_fingerprint(
     model_id: str,
     planning_context: dict[str, Any],
     planning_input_id: str = "",
+    semantic_context: dict[str, Any] | None = None,
 ) -> str:
     """Bind one runtime Provider permission to request, model, and token context."""
 
@@ -106,6 +124,7 @@ def runtime_authorization_fingerprint(
     normalized_question = str(question or "").strip()
     normalized_model = str(model_id or "").strip()
     normalized_context = _planning_context(planning_context)
+    normalized_semantic_context = _semantic_context(semantic_context)
     normalized_input = str(planning_input_id or "").strip()
     if normalized_input:
         normalized_input = require_storage_id(
@@ -132,6 +151,7 @@ def runtime_authorization_fingerprint(
             "planning_input_id": normalized_input,
             "model_id": normalized_model,
             "planning_context": normalized_context,
+            "semantic_context": normalized_semantic_context,
         }
     )
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
@@ -217,6 +237,9 @@ class ProviderAuthorizationStore:
                     status=ProviderAuthorizationStatus.ISSUED,
                     planning_input_id=str(event.get("planning_input_id") or ""),
                     planning_context=dict(event.get("planning_context") or {}),
+                    semantic_context=_semantic_context(
+                        event.get("semantic_context")
+                    ),
                 )
                 order.append(authorization_id)
                 continue
@@ -263,6 +286,7 @@ class ProviderAuthorizationStore:
         model_id: str,
         planning_context: dict[str, Any],
         planning_input_id: str = "",
+        semantic_context: dict[str, Any] | None = None,
     ) -> ProviderAuthorizationRecord:
         action_id = require_storage_id(client_action_id, "client_action_id")
         if confirm_provider_call is not True:
@@ -274,6 +298,7 @@ class ProviderAuthorizationStore:
             raise ValueError("provider_calls_authorized must equal 1")
         normalized_model = str(model_id or "").strip()
         normalized_planning_context = _planning_context(planning_context)
+        normalized_semantic_context = _semantic_context(semantic_context)
         authorization_fingerprint = runtime_authorization_fingerprint(
             purpose=purpose,
             filename=filename,
@@ -282,6 +307,7 @@ class ProviderAuthorizationStore:
             model_id=normalized_model,
             planning_context=normalized_planning_context,
             planning_input_id=planning_input_id,
+            semantic_context=normalized_semantic_context,
         )
         normalized_purpose = str(purpose).strip()
         normalized_filename = str(filename).strip()
@@ -306,6 +332,7 @@ class ProviderAuthorizationStore:
                     == provider_calls_authorized
                     and existing.planning_input_id == normalized_input
                     and existing.planning_context == normalized_planning_context
+                    and existing.semantic_context == normalized_semantic_context
                 )
                 if not same:
                     raise ProviderAuthorizationConflict(
@@ -330,6 +357,7 @@ class ProviderAuthorizationStore:
                     "provider_calls_authorized": provider_calls_authorized,
                     "planning_input_id": normalized_input,
                     "planning_context": normalized_planning_context,
+                    "semantic_context": normalized_semantic_context,
                 }
             )
             return self.get(authorization_id)
@@ -346,11 +374,13 @@ class ProviderAuthorizationStore:
         model_id: str,
         planning_context: dict[str, Any],
         planning_input_id: str = "",
+        semantic_context: dict[str, Any] | None = None,
     ) -> ProviderAuthorizationRecord:
         safe_id = require_storage_id(authorization_id, "authorization_id")
         consumer_id = require_storage_id(client_request_id, "client_request_id")
         normalized_model = str(model_id or "").strip()
         normalized_planning_context = _planning_context(planning_context)
+        normalized_semantic_context = _semantic_context(semantic_context)
         authorization_fingerprint = runtime_authorization_fingerprint(
             purpose=purpose,
             filename=filename,
@@ -359,6 +389,7 @@ class ProviderAuthorizationStore:
             model_id=normalized_model,
             planning_context=normalized_planning_context,
             planning_input_id=planning_input_id,
+            semantic_context=normalized_semantic_context,
         )
         with _AUTHORIZATION_LOCK:
             current = self.get(safe_id)
@@ -369,6 +400,10 @@ class ProviderAuthorizationStore:
             if current.planning_context != normalized_planning_context:
                 raise ProviderAuthorizationConflict(
                     "provider authorization is bound to a different planning context"
+                )
+            if current.semantic_context != normalized_semantic_context:
+                raise ProviderAuthorizationConflict(
+                    "provider authorization is bound to a different semantic context"
                 )
             if (
                 current.runtime_authorization_fingerprint

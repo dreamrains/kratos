@@ -116,6 +116,43 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     assert result.reason_codes == ()
 
 
+def test_preflight_binds_explicit_confirmed_analysis_unit_before_first_call():
+    digest = "sha256:" + "f" * 64
+    preflight = build_real_provider_preflight(
+        fixture_path=FIXTURE,
+        source_digest=digest,
+        config=_config(),
+        token_counter=_token_counter,
+        confirmed_analysis_unit_column="unit_id",
+    )
+
+    assert preflight["semantic_context"] == {
+        "confirmed_analysis_unit_column": "unit_id"
+    }
+    assert preflight["planner_contract_gate"]["ready_variant_count"] == 6
+    assert preflight["planner_contract_gate"]["needs_input_variants"] == [
+        {
+            "analysis_kind": "factor_relationship",
+            "missing_prerequisites": ["compatible_column_binding"],
+        }
+    ]
+
+    tampered = deepcopy(preflight)
+    tampered["semantic_context"] = {
+        "confirmed_analysis_unit_column": "channel"
+    }
+    result = validate_real_provider_preflight(
+        tampered,
+        expected_source_digest=digest,
+        expected_model_id="openai/deepseek-v4-flash",
+        expected_dataset_fingerprint=_fixture_fingerprint(),
+        expected_planner_contract_gate=preflight["planner_contract_gate"],
+    )
+
+    assert result.passed is False
+    assert "real_provider_request_fingerprint_mismatch" in result.reason_codes
+
+
 def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_authorization():
     digest = "sha256:" + "b" * 64
     preflight = build_real_provider_preflight(

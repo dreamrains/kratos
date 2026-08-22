@@ -119,6 +119,18 @@ def test_v2_workbench_requires_controlled_analysis_unit_selection():
     assert "请选择已确认的独立观察单位列" in js
 
 
+def test_v2_workbench_can_freeze_analysis_unit_before_first_provider_call():
+    client = create_app().test_client()
+    page = client.get("/v2-workbench").get_data(as_text=True)
+    js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)
+
+    assert 'id="planning-semantic-unit"' in page
+    assert "semantic_options" in js
+    assert "confirmed_analysis_unit_column" in js
+    assert "semantic_context: planningSemanticContext()" in js
+    assert "暂不确认，允许规划器在需要时提问" in page
+
+
 def test_v2_workbench_manual_retries_keep_session_and_create_new_turn():
     client = create_app().test_client()
     js = client.get("/static/js/v2_workbench.js").get_data(as_text=True)

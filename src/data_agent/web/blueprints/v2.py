@@ -7,6 +7,7 @@ import threading
 import uuid
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from flask import Blueprint, Response, jsonify, request
@@ -31,6 +32,7 @@ from data_agent.v2.provider_authorization import (
     ProviderAuthorizationStore,
 )
 from data_agent.v2.planner import (
+    ColumnRole,
     DatasetPlanningContext,
     PlannerContractError,
     StructuredAnalysisPlanner,
@@ -44,6 +46,7 @@ from data_agent.v2.planning_input import (
 )
 from data_agent.v2.planning_budget import (
     PlanningContextBudget,
+    PlanningContextEstimate,
     PlanningContextTooLarge,
     PlanningContextWindowUnknown,
     PlanningTokenEstimateUnavailable,
@@ -213,6 +216,44 @@ def _planning_source(inbox_root: Path | str, filename: str) -> DatasetPlanningCo
         source_fingerprint=source_fingerprint,
         frame=frame,
     )
+
+
+def _context_with_request_semantics(
+    payload: dict[str, Any],
+    context: DatasetPlanningContext,
+) -> DatasetPlanningContext:
+    if "semantic_context" not in payload:
+        return context
+    raw = payload.get("semantic_context")
+    if not isinstance(raw, dict):
+        raise ValueError("semantic_context must be an object")
+    if set(raw) - {"confirmed_analysis_unit_column"}:
+        raise ValueError("semantic_context fields are invalid")
+    confirmed_column = str(
+        raw.get("confirmed_analysis_unit_column") or ""
+    ).strip()
+    return context.with_confirmed_analysis_unit_column(confirmed_column)
+
+
+def _planning_estimate_payload(
+    estimate: PlanningContextEstimate,
+    context: DatasetPlanningContext,
+) -> dict[str, Any]:
+    return {
+        **estimate.to_dict(),
+        "semantic_context": {
+            "confirmed_analysis_unit_column": (
+                context.confirmed_analysis_unit_column
+            )
+        },
+        "semantic_options": {
+            "analysis_unit_columns": [
+                item.name
+                for item in context.columns
+                if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+            ]
+        },
+    }
 
 
 def _source_context_for_plan(
@@ -522,6 +563,16 @@ def create_v2_plan() -> Response:
                 question=question,
                 context=context,
             )
+        request_context = _context_with_request_semantics(payload, context)
+        if (
+            planning_input is not None
+            and request_context.confirmed_analysis_unit_column
+            != context.confirmed_analysis_unit_column
+        ):
+            raise PlanningInputConflict(
+                "explicit semantic context differs from planning input"
+            )
+        context = request_context
         parent_plan_id = (
             planning_input.source_plan_id if planning_input is not None else ""
         )
@@ -551,6 +602,7 @@ def create_v2_plan() -> Response:
                 model_id=planning_context.model_id,
                 planning_context=planning_context.to_dict(),
                 planning_input_id=planning_input_id,
+                semantic_context=context.to_prompt_dict()["semantic_context"],
             )
             restored = store.require_replayable(requested.plan_id)
             return jsonify(restored.to_dict()), 200
@@ -570,6 +622,7 @@ def create_v2_plan() -> Response:
             model_id=planner_model_id,
             planning_context=planning_context.to_dict(),
             planning_input_id=planning_input_id,
+            semantic_context=context.to_prompt_dict()["semantic_context"],
         )
         requested = store.request(
             client_request_id=client_request_id,
@@ -670,6 +723,16 @@ def estimate_v2_planning_context() -> Response:
                 question=question,
                 context=context,
             )
+        request_context = _context_with_request_semantics(payload, context)
+        if (
+            planning_input is not None
+            and request_context.confirmed_analysis_unit_column
+            != context.confirmed_analysis_unit_column
+        ):
+            raise PlanningInputConflict(
+                "explicit semantic context differs from planning input"
+            )
+        context = request_context
         estimate = _planning_context_estimate(
             question=question,
             context=context,
@@ -687,7 +750,7 @@ def estimate_v2_planning_context() -> Response:
         return _planning_budget_error(exc)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(estimate.to_dict())
+    return jsonify(_planning_estimate_payload(estimate, context))
 
 
 @v2_bp.post("/v2/provider-authorizations")
@@ -727,6 +790,16 @@ def issue_v2_provider_authorization() -> Response:
                 question=question,
                 context=context,
             )
+        request_context = _context_with_request_semantics(payload, context)
+        if (
+            planning_input is not None
+            and request_context.confirmed_analysis_unit_column
+            != context.confirmed_analysis_unit_column
+        ):
+            raise PlanningInputConflict(
+                "explicit semantic context differs from planning input"
+            )
+        context = request_context
         estimate = _planning_context_estimate(
             question=question,
             context=context,
@@ -752,6 +825,7 @@ def issue_v2_provider_authorization() -> Response:
             model_id=estimate.model_id,
             planning_context=estimate.to_dict(),
             planning_input_id=planning_input_id,
+            semantic_context=context.to_prompt_dict()["semantic_context"],
         )
     except (FileNotFoundError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 404

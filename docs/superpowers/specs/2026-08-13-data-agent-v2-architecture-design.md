@@ -1161,3 +1161,18 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 6. planner contract gate v3 和 real-provider preflight v4 绑定新的 schema/预算身份。未确认 fixture 上的 needs-input variant 是正确的预检结果，不得被改写为 ready 或自动回答。
 
 该切片的浏览器旅程使用 provider-neutral fixture，没有向外部 Provider 发送数据。浏览器中选择的 `unit_id` 只证明产品链路可用，不等同于用户为下一次真实调用作出的授权或语义确认。源码变化后，5C5T 及更早 source-bound receipts 相对当前实现均失效；需要 clean commit、新 preflight 和新的精确调用授权。
+
+## 40. Slice 5C5V 实施补充：首次 Provider 调用前的语义冻结
+
+5C5U 让 needs-input 派生请求能够持久化分析单位，但如果确定性的业务语义只能在第一次 Provider 调用后收集，系统仍会浪费一次调用来发现一个已知前提。首次调用链路必须与派生链路使用同等级别的身份约束。
+
+5C5V 按以下合同前移确认：
+
+1. planning estimate 返回服务端根据 dataset role 过滤的 eligible analysis-unit columns，但不自动选择；首次 estimate 不签发 authorization，也不调用 Provider；
+2. 用户必须显式选择一列或明确选择“暂不确认”。选择变化会清空旧 estimate 和 pending request identity，只有重新估算后才显示单次调用确认；
+3. estimate、authorization issue 和 plan create 接收同一个受控 `semantic_context`。planning-input 派生请求仍由不可变 Ledger 解析主导，显式 payload 不得覆盖或漂移；
+4. runtime authorization fingerprint 和 Ledger event 持久化规范化 semantic context。模型、token context、问题、数据、planning input 或 semantic context 任一变化都在 Provider 调用前 fail closed；
+5. real-provider preflight v5 接受显式 `confirmed_analysis_unit_column`，并将 semantic context 直接纳入 release request fingerprint。未提供参数时保持空确认，不通过 fixture 列名推断；
+6. provider-neutral fixture 同时保留两条路径：未确认时进入原 needs-input/failure/retry 流；预确认 `unit_id` 时第一次 Planner invocation 即可生成 ready multi-finding plan。
+
+该前移不把浏览器夹具中的 `unit_id` 选择冒充真实业务确认，也不授权 Provider 调用。源码变化使 5C5U 及更早 source-bound evidence 相对当前实现 stale；真实旅程仍需 clean commit、用户明确语义确认、新 preflight 和精确次数授权。

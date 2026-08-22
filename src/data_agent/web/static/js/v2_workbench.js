@@ -193,9 +193,36 @@
 
     function renderPlanningEstimate(estimate) {
         state.planningEstimate = estimate || null;
+        if (estimate?.semantic_options) {
+            const select = byId('planning-semantic-unit');
+            const previous = select.value;
+            const confirmed = estimate.semantic_context?.confirmed_analysis_unit_column || '';
+            const columns = estimate.semantic_options.analysis_unit_columns || [];
+            select.innerHTML = `
+                <option value="">请选择已确认的业务列或明确暂不确认</option>
+                <option value="__defer__">暂不确认，允许规划器在需要时提问</option>
+                ${columns.map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`).join('')}`;
+            const preferred = confirmed || (columns.includes(previous) || previous === '__defer__' ? previous : '');
+            select.value = preferred;
+            select.disabled = false;
+        }
         byId('planning-estimate').textContent = estimate
             ? `预计输入 ${estimate.estimated_input_tokens} tokens；模型窗口 ${estimate.model_context_window_tokens}；预留输出 ${estimate.reserved_output_tokens}；可用输入 ${estimate.available_input_tokens}。`
             : '尚未估算。估算本身不会签发授权或调用模型。';
+    }
+
+    function planningSemanticContext() {
+        const selected = byId('planning-semantic-unit').value;
+        return {
+            confirmed_analysis_unit_column: selected === '__defer__' ? '' : selected,
+        };
+    }
+
+    function resetPlanningSemanticOptions() {
+        const select = byId('planning-semantic-unit');
+        select.innerHTML = '<option value="">请先估算以加载候选列</option><option value="__defer__">暂不确认，允许规划器在需要时提问</option>';
+        select.value = '';
+        select.disabled = true;
     }
 
     async function estimatePlanning(planningInputId = '') {
@@ -203,8 +230,12 @@
             session_id: state.sessionId,
             filename: state.filename,
             question: byId('question').value.trim(),
+            semantic_context: planningSemanticContext(),
         };
-        if (planningInputId) body.planning_input_id = planningInputId;
+        if (planningInputId) {
+            body.planning_input_id = planningInputId;
+            delete body.semantic_context;
+        }
         const estimate = await fetchJson('/api/v2/planning-estimates', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -270,8 +301,12 @@
             purpose: 'analysis_planning',
             provider_calls_authorized: 1,
             confirm_provider_call: true,
+            semantic_context: planningSemanticContext(),
         };
-        if (planningInputId) body.planning_input_id = planningInputId;
+        if (planningInputId) {
+            body.planning_input_id = planningInputId;
+            delete body.semantic_context;
+        }
         return fetchJson('/api/v2/provider-authorizations', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -346,8 +381,12 @@
                 question,
                 client_request_id: identities.clientRequestId,
                 provider_authorization_id: identities.authorizationId,
+                semantic_context: planningSemanticContext(),
             };
-            if (planningInputId) requestBody.planning_input_id = planningInputId;
+            if (planningInputId) {
+                requestBody.planning_input_id = planningInputId;
+                delete requestBody.semantic_context;
+            }
             const plan = await fetchJson('/api/v2/plans', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(requestBody),
@@ -382,6 +421,11 @@
         try {
             setStatus('正在估算完整规划请求；不会调用模型');
             await estimatePlanning('');
+            if (!byId('planning-semantic-unit').value) {
+                byId('plan-confirm').hidden = true;
+                setStatus('请选择独立观察单位或明确暂不确认，然后再次估算');
+                return;
+            }
             byId('plan-confirm').hidden = false;
             setStatus('估算完成；确认后才会调用模型 1 次');
         } catch (error) {
@@ -949,12 +993,19 @@
         state.pendingPlanningRequest = null;
         hidePlanning();
         renderPlanningEstimate(null);
+        resetPlanningSemanticOptions();
         byId('plan-confirm').hidden = true;
         byId('file-state').textContent = '等待上传';
     });
     byId('question').addEventListener('input', () => {
         state.pendingPlanningRequest = null;
         renderPlanningEstimate(null);
+        byId('plan-confirm').hidden = true;
+    });
+    byId('planning-semantic-unit').addEventListener('change', () => {
+        state.pendingPlanningRequest = null;
+        state.planningEstimate = null;
+        byId('planning-estimate').textContent = '语义选择已变化；请重新估算。';
         byId('plan-confirm').hidden = true;
     });
     showKindFields();

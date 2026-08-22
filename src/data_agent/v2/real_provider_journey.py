@@ -24,7 +24,7 @@ from data_agent.v2.planning_budget import (
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v4"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v5"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (
@@ -62,6 +62,7 @@ def build_real_provider_preflight(
     source_digest: str,
     config: AgentConfig | None = None,
     token_counter: Callable[..., int] | None = None,
+    confirmed_analysis_unit_column: str = "",
 ) -> dict[str, Any]:
     """Build the exact first-call request budget without issuing authorization."""
 
@@ -80,6 +81,10 @@ def build_real_provider_preflight(
         source_fingerprint=dataset_fingerprint,
         frame=frame,
     )
+    if str(confirmed_analysis_unit_column or "").strip():
+        context = context.with_confirmed_analysis_unit_column(
+            confirmed_analysis_unit_column
+        )
     client = LLMClient(
         model_id=cfg.model_id,
         api_base=cfg.api_base,
@@ -115,6 +120,7 @@ def build_real_provider_preflight(
         "question": UNIFIED_QUESTION,
         "model_id": client.model_id,
         "planning_context": estimate.to_dict(),
+        "semantic_context": context.to_prompt_dict()["semantic_context"],
         "planner_contract_gate": planner_contract_gate,
     }
     return {
@@ -181,11 +187,22 @@ def validate_real_provider_preflight(
             "question",
             "model_id",
             "planning_context",
+            "semantic_context",
             "planner_contract_gate",
         )
     }
     if request_fingerprint != _fingerprint(request_identity):
         reasons.append("real_provider_request_fingerprint_mismatch")
+
+    semantic_context = preflight.get("semantic_context")
+    if (
+        not isinstance(semantic_context, dict)
+        or set(semantic_context) != {"confirmed_analysis_unit_column"}
+        or not isinstance(
+            semantic_context.get("confirmed_analysis_unit_column"), str
+        )
+    ):
+        reasons.append("invalid_real_provider_semantic_context")
 
     planner_gate = preflight.get("planner_contract_gate")
     if not isinstance(planner_gate, dict):

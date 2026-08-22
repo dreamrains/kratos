@@ -156,6 +156,31 @@ def test_authorization_is_bound_to_one_planning_input(tmp_path):
     assert consumed.planning_input_id == "planning_input_one"
 
 
+def test_authorization_rejects_confirmed_semantic_context_drift_before_consumption(
+    tmp_path,
+):
+    store = ProviderAuthorizationStore(tmp_path, "session_auth_semantic_context")
+    issued = _issue(
+        store,
+        semantic_context={"confirmed_analysis_unit_column": "unit_id"},
+    )
+
+    with pytest.raises(ProviderAuthorizationConflict, match="different"):
+        store.consume(
+            issued.authorization_id,
+            client_request_id="client_plan_semantic_drift",
+            purpose="analysis_planning",
+            filename="sales.csv",
+            source_fingerprint="sha256:" + "a" * 64,
+            question="What is average sales?",
+            model_id=issued.model_id,
+            planning_context=issued.planning_context,
+            semantic_context={"confirmed_analysis_unit_column": "sales"},
+        )
+
+    assert store.get(issued.authorization_id).status is ProviderAuthorizationStatus.ISSUED
+
+
 @pytest.mark.parametrize(
     ("field", "changed"),
     [

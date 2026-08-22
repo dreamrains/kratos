@@ -189,6 +189,28 @@ def test_fixture_planner_fails_exactly_once_then_requires_explicit_third_call():
     assert planner.calls == 3
 
 
+def test_fixture_planner_uses_preconfirmed_analysis_unit_on_first_call():
+    planner = DeterministicJourneyPlanner()
+    context = DatasetPlanningContext(
+        filename="planning_journey.csv",
+        source_fingerprint="sha256:" + "a" * 64,
+        row_count=4,
+        columns=(
+            DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+            DatasetColumnContext("date", "datetime64[ns]", ColumnRole.DATETIME),
+            DatasetColumnContext("channel", "object", ColumnRole.CATEGORICAL),
+            DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+        ),
+        confirmed_analysis_unit_column="unit_id",
+    )
+
+    plan = planner.plan("销售额如何？", context)
+
+    assert plan.status.value == "ready"
+    assert plan.parameters["analysis_unit"] == "unit_id"
+    assert planner.calls == 1
+
+
 def test_fixture_router_preserves_real_runtime_and_only_delays_events(tmp_path):
     workspace = tmp_path / "workspace"
     inbox = workspace / "inbox"
