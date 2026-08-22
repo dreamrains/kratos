@@ -64,16 +64,16 @@
       "evidence": "The current-source authorized Provider journey, deterministic continuation, real-result refresh, and provider-neutral actual-browser interaction journey all passed without hidden Provider calls."
     },
     "stability": {
-      "status": "blocked",
-      "evidence": "The current source digest has one successful real Provider planning sample. Provider-neutral browser repetition proves lifecycle stability but not real Planner output repeatability; prior 5C5S samples are stale and did not achieve the frozen three-matching-pass criterion."
+      "status": "fail",
+      "evidence": "The current-source 5C5X baseline used action_risk=medium, while authorized 5C5AA additional trial 1 returned a contract-valid ready plan with action_risk=low and otherwise matching identity. The exact-identity stability protocol failed and stopped before trial 2."
     }
   },
   "decision": "not_eligible_for_human_semantic_review_pass",
   "reason_codes": [
-    "current_source_real_provider_stability_not_established"
+    "current_source_real_provider_stability_failed"
   ],
   "provider_calls_during_review": 0,
-  "human_semantic_release_receipt_status": "blocked",
+  "human_semantic_release_receipt_status": "fail",
   "release_readiness_claimed": false,
   "root_switch_authorized": false
 }

@@ -126,7 +126,7 @@
     "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
     "scenario_id": "unified_analysis_entry",
     "layer": "human_semantic_review",
-    "status": "blocked",
+    "status": "fail",
     "evidence_refs": [
       "docs/superpowers/evidence/2026-08-22-v2-5c5z-human-semantic-review.json",
       "docs/superpowers/evidence/2026-08-22-v2-5c5x-deterministic-continuation.json",
@@ -145,7 +145,7 @@
       "chart_value": "pass",
       "recommendation_quality": "pass",
       "journey_integrity": "pass",
-      "stability": "blocked"
+      "stability": "fail"
     }
   }
 ]

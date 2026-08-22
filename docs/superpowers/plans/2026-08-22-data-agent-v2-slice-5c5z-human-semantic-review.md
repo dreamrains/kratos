@@ -14,10 +14,12 @@
 
 既有 `human_semantic_review` receipt 还强制包含 `stability`。5C5S 明确定义真实 Planner 稳定性需要同一冻结身份的三个匹配 PASS；当时只得到两个 ready 和一个合法 needs-input，因此判定 FAIL。后续 5C5T–5C5W 修复了 needs-input 资格、分析单位语义与首次调用前绑定，但没有正式废除或放宽该稳定性标准。
 
-当前 source digest 只有 5C5X 的一次真实 Provider planning PASS。5C5Y 的 provider-neutral 重复验证证明交互与生命周期稳定，不能冒充真实 Planner 输出重复性。因此本次必须记录为 10 个维度 PASS、`stability=blocked`，并签发 BLOCKED 而非 PASS receipt。独立人工确认已被完整保留，但不能单独覆盖技术稳定性缺口。
+最初当前 source digest 只有 5C5X 的一次真实 Provider planning PASS。5C5Y 的 provider-neutral 重复验证证明交互与生命周期稳定，不能冒充真实 Planner 输出重复性，因此当时记录为 10 个维度 PASS、`stability=blocked`。
+
+5C5AA 随后按精确授权执行第一份追加样本。它返回合同合法的 ready 计划，但 `action_risk` 从 baseline 的 `medium` 漂移为 `low`，触发 exact plan identity 失败并按协议停止，第二份没有签发或调用。因此 stability 从 blocked 更新为 FAIL，human receipt 同步更新为 FAIL。独立人工确认仍被完整保留，但不能单独覆盖技术稳定性失败。
 
 ## 当前边界与下一步
 
-`unified_analysis_entry` 仍为 `not_ready`，唯一 non-pass 层是 `human_semantic_review`，原因仅为 current-source real Provider stability 未建立。完整产品矩阵其他场景仍有各自缺口。
+`unified_analysis_entry` 仍为 `not_ready`，唯一 non-pass 层是 `human_semantic_review`，原因仅为 current-source real Provider stability FAIL。完整产品矩阵其他场景仍有各自缺口。
 
-若继续沿用 5C5S 的三样本标准，当前 digest 已有一个 baseline，还需要按条件顺序执行最多两份新的单次 `analysis_planning` 调用；每份都必须重新生成 source-bound preflight 并由用户按模型、digest、目的和精确次数授权。任一失败立即停止，不重试、不 repair、不补跑。
+不得继续补跑 5C5AA。下一步应离线审查 stability 合同中 `action_risk` 是否属于必须逐字段相等的发布关键身份，还是应由独立、预先定义的材料性语义合同判定；在完成 RED 回归和共享合同决定前，不申请新的 Provider 调用，也不根据本次单一漂移直接放宽标准。

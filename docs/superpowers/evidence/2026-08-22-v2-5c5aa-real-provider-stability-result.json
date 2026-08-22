@@ -1,0 +1,139 @@
+{
+  "version": "v2_real_provider_stability_result.v2",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "git_head": "f184dfd3cc3e7ef2b9a66fe687dd05a9abb7a179",
+  "scenario_id": "unified_analysis_entry",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "preflight_request_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+  "stability_protocol_fingerprint": "sha256:579139a662e87799317adb0681af918a10edacadc03be3060e58d80dd249600c",
+  "baseline": {
+    "sample_id": "5c5x_baseline",
+    "evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-provider-attempt.json",
+    "status": "pass",
+    "planning_status": "ready",
+    "plan_identity_fingerprint": "sha256:e3c1a3bfbc8ac82b99bdb15832b88b1114b932570e92a2ac772379dc860228e9",
+    "action_risk": "medium",
+    "provider_calls": 1,
+    "automatic_retries": 0
+  },
+  "additional_trials": [
+    {
+      "trial_id": "5c5aa_additional_1",
+      "status": "fail",
+      "planning_http_status": 201,
+      "planning_status": "ready",
+      "plan_id": "plan_863c9c1e594d7a1e2f7b434f",
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "action_risk": "low",
+        "aggregation": "sum",
+        "analysis_unit": "unit_id",
+        "frequency": "daily",
+        "group": "channel",
+        "metric": "sales",
+        "recommendation_intent": "investigate",
+        "reversible": true,
+        "time_field": "date"
+      },
+      "plan_identity_fingerprint": "sha256:14b3a58c479384045b056544fba8f762480bd834a533a7940f99770e14c3d64c",
+      "plan_identity_matches_baseline": false,
+      "identity_difference": {
+        "field": "parameters.action_risk",
+        "baseline": "medium",
+        "observed": "low"
+      },
+      "authorization": {
+        "authorization_id": "provider_auth_e38f5db1db68435ca8c26c4b5f0bcd6e",
+        "client_action_id": "action_real_5c5aa_1",
+        "consumer_request_id": "request_real_5c5aa_1",
+        "runtime_authorization_fingerprint": "sha256:413c02c35b268a95d8d116a37ed1756cd10e78fbe7890f289773809af0cb5fc0",
+        "provider_calls_authorized": 1,
+        "status": "consumed"
+      },
+      "planning_context": {
+        "model_id": "openai/deepseek-v4-flash",
+        "estimated_input_tokens": 2972,
+        "model_context_window_tokens": 1000000,
+        "reserved_output_tokens": 8000,
+        "available_input_tokens": 992000,
+        "fits": true
+      },
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "provider_calls_observed": 1,
+      "automatic_retries": 0,
+      "deterministic_continuation": {
+        "executed": false,
+        "reason": "plan identity changed; protocol required immediate stop before continuation"
+      },
+      "independent_recalculation": {
+        "status": "pass",
+        "daily_trend_estimate": 1.2723032069970808,
+        "daily_trend_confidence_interval": [
+          1.2249842114157639,
+          1.3196222025783977
+        ],
+        "daily_trend_p_value": 1.0252220673682181e-34,
+        "group_difference": 14.0,
+        "group_confidence_interval": [
+          4.3235219134951475,
+          23.67647808650485
+        ],
+        "group_p_value": 0.005663925517338145,
+        "hedges_g": 0.885372557357838
+      },
+      "failure_reason_codes": [
+        "plan_identity_changed",
+        "action_risk_changed"
+      ]
+    }
+  ],
+  "aggregate": {
+    "target_total_passes": 3,
+    "current_source_samples_observed": 2,
+    "current_source_matching_passes": 1,
+    "current_source_failed_trials": 1,
+    "provider_calls_in_5c5aa": 1,
+    "authorizations_issued_in_5c5aa": 1,
+    "authorizations_consumed_in_5c5aa": 1,
+    "automatic_retries_in_5c5aa": 0,
+    "repair_or_followup_calls": 0,
+    "second_trial_authorization_issued": false,
+    "second_trial_provider_calls": 0
+  },
+  "assessment": {
+    "status": "fail",
+    "reason_codes": [
+      "required_three_matching_passes_not_met",
+      "additional_1_plan_identity_changed",
+      "action_risk_not_repeatable"
+    ],
+    "verified_fact": "The current-source baseline and first additional sample both returned contract-valid ready multi_finding_synthesis plans, but action_risk changed from medium to low while all other normalized plan fields matched.",
+    "inference": "The evidence demonstrates Provider planning variation in the bounded advisory risk field; it does not identify the Provider's internal reason or justify silently weakening the frozen exact-identity criterion.",
+    "not_supported": [
+      "transport failure",
+      "Planner contract failure",
+      "context-window overflow",
+      "analysis-unit semantic drift",
+      "automatic retry",
+      "statistical recalculation failure"
+    ]
+  },
+  "authorization_exhaustion": {
+    "5c5aa_additional_1": "consumed",
+    "5c5aa_additional_2": "not_issued_due_to_first_trial_failure",
+    "new_provider_call_allowed": false
+  },
+  "data_handling": {
+    "api_key_persisted": false,
+    "raw_provider_response_persisted": false,
+    "reasoning_persisted": false,
+    "uncontrolled_model_text_persisted": false
+  },
+  "human_semantic_stability": "fail",
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

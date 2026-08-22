@@ -24,7 +24,7 @@
   "provider_calls": 1,
   "human_review_dimensions": {
     "pass": 10,
-    "blocked": [
+    "fail": [
       "stability"
     ]
   },
