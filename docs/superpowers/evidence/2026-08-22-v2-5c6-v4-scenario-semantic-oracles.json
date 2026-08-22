@@ -1,0 +1,344 @@
+{
+  "version": "v2_scenario_semantic_oracle.v1",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "provider_calls": 0,
+  "scenarios": [
+    {
+      "scenario_id": "descriptive_analysis",
+      "fixture_path": "tests/fixtures/v2_slice1_sales.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore"
+      ],
+      "chart_observation": "not_warranted",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "factor_relationships",
+      "fixture_path": "tests/fixtures/v2_slice2_factors.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method",
+        "limitation"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "analysis_unit_bound": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "semantic_date_transformation",
+      "fixture_path": "tests/fixtures/v2_slice3_ambiguous_dates.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "outcome_snapshot",
+        "user_input_required",
+        "tool_finished",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "semantic_confirmation",
+        "resume"
+      ],
+      "chart_observation": "forbidden_absent",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "date_confirmation_resumed": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "group_comparison",
+      "fixture_path": "tests/fixtures/v2_slice4a_groups.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "analysis_unit_bound": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "historical_trend",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "backtested_forecast",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "forecast_backtest_calibrated": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "multi_finding_synthesis",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "comparison",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "analysis_unit_bound": true,
+        "independent_findings_preserved": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "exploratory_python",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "supplemental_artifact_created",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method",
+        "supplemental"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore"
+      ],
+      "chart_observation": "forbidden_absent",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "exploration_not_promoted": true
+      },
+      "forbidden_behavior_hits": []
+    },
+    {
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "comparison",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered",
+      "assertions": {
+        "persisted_finalized": true,
+        "answer_blocks_persisted": true,
+        "no_internal_evidence_marker": true,
+        "source_fixture_bound": true,
+        "terminal_event_completed": true,
+        "method_specific_finding_persisted": true,
+        "no_unexpected_input": true,
+        "analysis_unit_bound": true,
+        "independent_findings_preserved": true
+      },
+      "forbidden_behavior_hits": []
+    }
+  ]
+}

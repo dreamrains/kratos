@@ -1,0 +1,54 @@
+{
+  "version": "v2_provider_neutral_workbench_composition.v1",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "scenario_id": "unified_analysis_entry",
+  "planning_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-workbench-planning-browser-observation.json",
+  "interaction_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-workbench-interaction-browser-observation.json",
+  "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+  "status": "pass",
+  "reason_codes": [],
+  "provider_calls": 0,
+  "derived_receipts": [
+    {
+      "receipt_id": "receipt_unified_browser_8205d28f08254b11",
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:8dc88cd7eff0f80200a3c06237c1f1ab1220506ccf5b5b37dda5417880bd00b8",
+        "actual-browser:interaction:sha256:1e56960cbfbf94e97363b7b07aeb4f994bb7231543c4cb1dce8ee3d9eaa7dede"
+      ],
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "receipt_id": "receipt_unified_refresh_8205d28f08254b11",
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:8dc88cd7eff0f80200a3c06237c1f1ab1220506ccf5b5b37dda5417880bd00b8",
+        "actual-browser:interaction:sha256:1e56960cbfbf94e97363b7b07aeb4f994bb7231543c4cb1dce8ee3d9eaa7dede"
+      ],
+      "observed_interactions": ["refresh_restore"]
+    }
+  ],
+  "root_entry": "/",
+  "legacy_rollback_route": "/legacy",
+  "root_switch_authorized": true,
+  "release_readiness_claimed": false
+}

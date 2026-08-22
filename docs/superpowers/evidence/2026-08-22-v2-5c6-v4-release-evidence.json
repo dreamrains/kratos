@@ -1,0 +1,473 @@
+{
+  "version": "v2_release_evidence.v1",
+  "records": [
+    {
+      "evidence_id": "evidence_v4_unified_owner_c48ee356f502009f",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "owner_contract",
+      "status": "pass",
+      "evidence_refs": [
+        "deterministic:unified:sha256:c48ee356f502009ff5660ca5b9a69613d4e929f3a22cb96f210501a203baf234",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1"
+    },
+    {
+      "evidence_id": "evidence_v4_unified_incident_c48ee356f502009f",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "incident_replay",
+      "status": "pass",
+      "evidence_refs": [
+        "deterministic:unified:sha256:c48ee356f502009ff5660ca5b9a69613d4e929f3a22cb96f210501a203baf234",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1"
+    },
+    {
+      "evidence_id": "evidence_v4_unified_sse_c48ee356f502009f",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "sse_transport_contract",
+      "status": "pass",
+      "evidence_refs": [
+        "deterministic:unified:sha256:c48ee356f502009ff5660ca5b9a69613d4e929f3a22cb96f210501a203baf234",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed",
+        "turn_interrupted"
+      ]
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_descriptive_a92841b4079d6d96",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "descriptive_analysis",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:a92841b4079d6d9644a2e53e766f8eada7cf4ab71507f7ff0a7af3d55b598c18",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice1_sales.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore"
+      ],
+      "chart_observation": "not_warranted"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_factors_b6f9a6ed821458b4",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "factor_relationships",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:b6f9a6ed821458b48d1df5c2af9e42e3dfba9f012524f934157a8f2ae86f919e",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice2_factors.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method",
+        "limitation"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_dates_0bcf299f0fd4d296",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "semantic_date_transformation",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:0bcf299f0fd4d29650ca5c1d95ca8a058b71eff85ea9da4873ac227db7523aa6",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice3_ambiguous_dates.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "outcome_snapshot",
+        "user_input_required",
+        "tool_finished",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "semantic_confirmation",
+        "resume"
+      ],
+      "chart_observation": "forbidden_absent"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_groups_6268edc31cb600f3",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "group_comparison",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:6268edc31cb600f31893d859bda9ddd935ccbec5561457689e0314cbff5c2837",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4a_groups.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_trend_97a522902576db1b",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "historical_trend",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:97a522902576db1b7095a5d56ac213d85ad10406dae7f7d2e2ba7f6d23fa8450",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_forecast_0f1395cb1895a611",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "backtested_forecast",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:0f1395cb1895a6110e86d8b0e68f597869c2f0087a513f22418412483a4dc7e4",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_multi_51049c2b35ce29d2",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "multi_finding_synthesis",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:51049c2b35ce29d2cc78eb01f0389be37c7929427de5f67f9b81b2f03385c814",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "comparison",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_exploratory_35b74a2022e09768",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "exploratory_python",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:35b74a2022e09768ce03939b5182d1a0b84e3314799ca558add7a6080820000e",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "supplemental_artifact_created",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method",
+        "supplemental"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore"
+      ],
+      "chart_observation": "forbidden_absent"
+    },
+    {
+      "evidence_id": "evidence_v4_semantic_unified_c4a3b096a4a8f25a",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "scenario_semantic_oracle",
+      "status": "pass",
+      "evidence_refs": [
+        "semantic-oracle:c4a3b096a4a8f25a39bbe50ed2763260cdacbd89074c692f1fc3685dfbf99d7c",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-scenario-semantic-oracles.json"
+      ],
+      "oracle_identity": "v2_scenario_semantic_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "comparison",
+        "method"
+      ],
+      "observed_interactions": [
+        "upload",
+        "live_progress",
+        "refresh_restore",
+        "inline_charts"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_unified_browser_8205d28f08254b11",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:8dc88cd7eff0f80200a3c06237c1f1ab1220506ccf5b5b37dda5417880bd00b8",
+        "actual-browser:interaction:sha256:1e56960cbfbf94e97363b7b07aeb4f994bb7231543c4cb1dce8ee3d9eaa7dede",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_unified_refresh_8205d28f08254b11",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "actual-browser:planning:sha256:8dc88cd7eff0f80200a3c06237c1f1ab1220506ccf5b5b37dda5417880bd00b8",
+        "actual-browser:interaction:sha256:1e56960cbfbf94e97363b7b07aeb4f994bb7231543c4cb1dce8ee3d9eaa7dede",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+      "observed_interactions": [
+        "refresh_restore"
+      ]
+    },
+    {
+      "evidence_id": "evidence_v4_unified_provider_f5aafca07c74708f",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "real_provider_analysis_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-representative-provider-preflight.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-representative-provider-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-workbench-browser-composition.json"
+      ],
+      "oracle_identity": "v2_representative_provider_preflight.v1+v2_deterministic_execution_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "provider_calls": 1,
+      "provider_authorization_ref": "provider_auth_130b29040f934a06b774c2b801985ffe",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "key_finding",
+        "comparison",
+        "method"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "evidence_id": "evidence_v4_forecast_provider_f5aafca07c74708f",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "backtested_forecast",
+      "layer": "real_provider_analysis_journey",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-representative-provider-preflight.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-representative-provider-observation.json",
+        "semantic-oracle:0f1395cb1895a6110e86d8b0e68f597869c2f0087a513f22418412483a4dc7e4"
+      ],
+      "oracle_identity": "v2_representative_provider_preflight.v1+v2_deterministic_execution_oracle.v1",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "provider_calls": 1,
+      "provider_authorization_ref": "provider_auth_cde0abf8565141faa7a0fee8827c6099",
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "artifact_created",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed"
+      ],
+      "observed_block_types": [
+        "executive_answer",
+        "method"
+      ],
+      "chart_observation": "rendered"
+    }
+  ]
+}

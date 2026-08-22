@@ -1,0 +1,60 @@
+{
+  "version": "v2_root_cutover_gap_report.v2",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "git_head": "11f09063b7c7d6428a230043f3fda17632dd5f9a",
+  "root_switch": {
+    "authorized": true,
+    "root_entry": "/",
+    "root_entry_status": "v2_active",
+    "legacy_rollback_route": "/legacy",
+    "legacy_rollback_status": "available"
+  },
+  "release_contract": {
+    "matrix_version": "v2_release_matrix.v4",
+    "total": 18,
+    "pass": 16,
+    "fail": 0,
+    "blocked": 0,
+    "not_run": 2,
+    "conflict": 0,
+    "incomplete": 0,
+    "stale_receipts": 0
+  },
+  "completed_current_source_layers": {
+    "shared_runtime": 5,
+    "scenario_semantic_oracles": 9,
+    "representative_provider_journeys": 2,
+    "actual_browser_root_journey": "pass",
+    "real_data_root_canary": "pass"
+  },
+  "provider_boundary": {
+    "authorized_calls": 2,
+    "observed_calls": 2,
+    "ready_plans": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "fallback_calls": 0,
+    "automatic_followups": 0,
+    "additional_calls_authorized": 0
+  },
+  "remaining_gaps": [
+    {
+      "requirement": "unified_analysis_entry:human_semantic_review",
+      "status": "not_run",
+      "next_action": "record current-source independent business-semantic confirmation"
+    },
+    {
+      "requirement": "historical_trend:human_semantic_review",
+      "status": "not_run",
+      "next_action": "record current-source independent business-semantic confirmation"
+    }
+  ],
+  "stop_conditions": [
+    "do not reuse the stale v3 human review receipt",
+    "do not claim ready_for_root_cutover_decision before both current-source human receipts pass",
+    "do not issue additional Provider authorization without a new exact user authorization",
+    "do not merge, push, deploy, or delete the legacy system without separate authorization"
+  ],
+  "status": "awaiting_current_source_human_review",
+  "release_readiness_claimed": false
+}

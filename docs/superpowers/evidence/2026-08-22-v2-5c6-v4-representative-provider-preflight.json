@@ -1,0 +1,186 @@
+{
+  "version": "v2_representative_provider_preflight.v1",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "provider_call_budget": 2,
+  "calls": [
+    {
+      "version": "v2_real_provider_journey_preflight.v7",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+      "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+      "model_id": "openai/deepseek-v4-flash",
+      "planning_context": {
+        "model_id": "openai/deepseek-v4-flash",
+        "estimated_input_tokens": 2812,
+        "model_context_window_tokens": 1000000,
+        "reserved_output_tokens": 8000,
+        "available_input_tokens": 992000,
+        "fits": true
+      },
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "planner_contract_gate": {
+        "version": "v2_planner_contract_parity.v4",
+        "passed": true,
+        "schema_fingerprint": "sha256:b7a289247056f1de83379873071b965f3aff03b6059e93eb9eb43487848632f7",
+        "automatic_analysis_kinds": [
+          "descriptive",
+          "factor_relationship",
+          "date_transformation",
+          "group_comparison",
+          "time_trend",
+          "forecast",
+          "multi_finding_synthesis"
+        ],
+        "ready_variant_count": 6,
+        "needs_input_variants": [
+          {
+            "analysis_kind": "factor_relationship",
+            "missing_prerequisites": ["compatible_column_binding"]
+          }
+        ],
+        "needs_input_variant_count": 1,
+        "unsupported_variant_count": 1,
+        "status_variant_count": 8
+      },
+      "provider_host": "api.deepseek.com",
+      "request_fingerprint": "sha256:189899570bb16cefb2ef1d1399f58061bb2bc0d2d04dcb627e5faef99966b471",
+      "authorization_request": {
+        "mode": "per_call",
+        "purpose": "analysis_planning",
+        "provider_calls": 1
+      },
+      "conditional_followup": {
+        "allowed_only_if_status": "needs_input",
+        "provider_calls": 1,
+        "requires_new_user_authorization": true,
+        "requires_fresh_token_estimate": true
+      },
+      "stop_conditions": [
+        "source_digest_changed",
+        "dataset_fingerprint_changed",
+        "analysis_unit_semantics_unconfirmed",
+        "planning_context_too_large",
+        "provider_error",
+        "planner_contract_error",
+        "unsupported_plan",
+        "needs_input_without_new_authorization"
+      ],
+      "provider_calls_observed": 0,
+      "authorization_issued": false,
+      "release_readiness_claimed": false,
+      "root_switch_authorized": true
+    },
+    {
+      "version": "v2_real_provider_journey_preflight.v7",
+      "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+      "scenario_id": "backtested_forecast",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "dataset_fingerprint": "sha256:20e118a5a8e334571e0467aa2a33087a991c5863accf070838e885aa01cfb1cf",
+      "question": "未来七天销售基线是多少？仅在时间外回测优于朴素基线时发布校准预测，并说明不确定性、方法局限和结论边界。",
+      "model_id": "openai/deepseek-v4-flash",
+      "planning_context": {
+        "model_id": "openai/deepseek-v4-flash",
+        "estimated_input_tokens": 1928,
+        "model_context_window_tokens": 1000000,
+        "reserved_output_tokens": 8000,
+        "available_input_tokens": 992000,
+        "fits": true
+      },
+      "semantic_context": {
+        "confirmed_analysis_unit_column": ""
+      },
+      "planner_contract_gate": {
+        "version": "v2_planner_contract_parity.v4",
+        "passed": true,
+        "schema_fingerprint": "sha256:c98a2a9c21076dd2a7605a21cd47dc67880faafc4463dc7e0c6994267d02b2ce",
+        "automatic_analysis_kinds": [
+          "descriptive",
+          "factor_relationship",
+          "date_transformation",
+          "group_comparison",
+          "time_trend",
+          "forecast",
+          "multi_finding_synthesis"
+        ],
+        "ready_variant_count": 4,
+        "needs_input_variants": [
+          {
+            "analysis_kind": "factor_relationship",
+            "missing_prerequisites": [
+              "analysis_unit_semantics",
+              "compatible_column_binding"
+            ]
+          },
+          {
+            "analysis_kind": "group_comparison",
+            "missing_prerequisites": [
+              "analysis_unit_semantics",
+              "compatible_column_binding"
+            ]
+          },
+          {
+            "analysis_kind": "multi_finding_synthesis",
+            "missing_prerequisites": [
+              "analysis_unit_semantics",
+              "compatible_column_binding"
+            ]
+          }
+        ],
+        "needs_input_variant_count": 3,
+        "unsupported_variant_count": 1,
+        "status_variant_count": 8
+      },
+      "provider_host": "api.deepseek.com",
+      "request_fingerprint": "sha256:7eeb0ae8e51bee9cb01182ae002504fb8a9c7dbed0415a2c88913ddae708bb51",
+      "authorization_request": {
+        "mode": "per_call",
+        "purpose": "analysis_planning",
+        "provider_calls": 1
+      },
+      "conditional_followup": {
+        "allowed_only_if_status": "needs_input",
+        "provider_calls": 1,
+        "requires_new_user_authorization": true,
+        "requires_fresh_token_estimate": true
+      },
+      "stop_conditions": [
+        "source_digest_changed",
+        "dataset_fingerprint_changed",
+        "analysis_unit_semantics_unconfirmed",
+        "planning_context_too_large",
+        "provider_error",
+        "planner_contract_error",
+        "unsupported_plan",
+        "needs_input_without_new_authorization"
+      ],
+      "provider_calls_observed": 0,
+      "authorization_issued": false,
+      "release_readiness_claimed": false,
+      "root_switch_authorized": true
+    }
+  ],
+  "authorization_request": {
+    "mode": "grouped_exact_calls",
+    "purpose": "analysis_planning",
+    "provider_calls": 2
+  },
+  "stop_policy": {
+    "stop_after_any_non_ready": true,
+    "retry": false,
+    "repair": false,
+    "fallback": false,
+    "automatic_followup": false,
+    "needs_input_requires_new_authorization": true
+  },
+  "provider_calls_observed": 0,
+  "authorization_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": true,
+  "group_fingerprint": "sha256:f5aafca07c74708f1face3cd5194a12b993ad6e65c599cd5002eba503bcaca05"
+}
