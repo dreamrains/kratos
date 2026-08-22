@@ -39,8 +39,15 @@ class PlannerFailureReason(StrEnum):
     PLAN_STATUS_PAYLOAD_INVALID = "plan_status_payload_invalid"
     PLAN_NEEDS_INPUT_ROUTE_PRESENT = "plan_needs_input_route_present"
     PLAN_NEEDS_INPUT_QUESTIONS_MISSING = "plan_needs_input_questions_missing"
+    PLAN_NEEDS_INPUT_IDENTITY_INVALID = "plan_needs_input_identity_invalid"
+    PLAN_NEEDS_INPUT_NOT_JUSTIFIED = "plan_needs_input_not_justified"
+    PLAN_NEEDS_INPUT_PREREQUISITES_MISMATCH = (
+        "plan_needs_input_prerequisites_mismatch"
+    )
     PLAN_UNSUPPORTED_PAYLOAD_PRESENT = "plan_unsupported_payload_present"
     PLAN_READY_QUESTIONS_PRESENT = "plan_ready_questions_present"
+    PLAN_READY_PREREQUISITES_PRESENT = "plan_ready_prerequisites_present"
+    PLAN_READY_PREREQUISITES_MISSING = "plan_ready_prerequisites_missing"
     PLAN_INVALID_ANALYSIS_KIND = "plan_invalid_analysis_kind"
     PLAN_PARAMETER_CONTRACT_INVALID = "plan_parameter_contract_invalid"
     PLAN_PARAMETER_FIELDS_UNEXPECTED = "plan_parameter_fields_unexpected"
@@ -183,6 +190,8 @@ class AnalysisPlan:
     maximum_claim_class: str
     planner_invocations: int
     model_id: str
+    pending_analysis_kind: AnalysisKind | None = None
+    missing_prerequisites: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +227,7 @@ _DIAGNOSTIC_MAX_TOOL_CALLS = 8
 _DIAGNOSTIC_MAX_ARGUMENT_FIELDS = 32
 _DIAGNOSTIC_MAX_TEXT = 64
 _DIAGNOSTIC_UNKNOWN_PARAMETER_COUNT_CAP = 33
-PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v1"
+PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v2"
 _CONTROLLED_PARAMETER_FIELDS = frozenset(
     {
         "action_risk",
@@ -234,6 +243,19 @@ _CONTROLLED_PARAMETER_FIELDS = frozenset(
         "reversible",
         "target",
         "time_field",
+    }
+)
+_COMPATIBLE_COLUMN_BINDING = "compatible_column_binding"
+_CONTROLLED_MISSING_PREREQUISITES = frozenset(
+    {
+        "analysis_unit",
+        "date_column",
+        "features",
+        "group",
+        "metric",
+        "target",
+        "time_field",
+        _COMPATIBLE_COLUMN_BINDING,
     }
 )
 
@@ -300,6 +322,26 @@ def _plan_payload_shape_diagnostic(arguments: dict[str, Any]) -> dict[str, Any]:
         and any(str(item or "").strip() for item in raw_questions)
     )
     parameters = arguments.get("parameters")
+    raw_pending_kind = str(arguments.get("pending_analysis_kind") or "").strip()
+    recognized_pending_kind = ""
+    try:
+        pending_kind = AnalysisKind(raw_pending_kind)
+    except ValueError:
+        pending_kind = None
+    if pending_kind in _AUTOMATIC_KIND_SET:
+        recognized_pending_kind = pending_kind.value
+    raw_missing = arguments.get("missing_prerequisites")
+    recognized_missing = (
+        sorted(
+            {
+                str(item)
+                for item in raw_missing
+                if str(item) in _CONTROLLED_MISSING_PREREQUISITES
+            }
+        )
+        if isinstance(raw_missing, list)
+        else []
+    )
     return {
         "recognized_status": recognized_status,
         "analysis_kind_present": bool(
@@ -307,6 +349,8 @@ def _plan_payload_shape_diagnostic(arguments: dict[str, Any]) -> dict[str, Any]:
         ),
         "parameters_empty_object": isinstance(parameters, dict) and not parameters,
         "questions_present": questions_present,
+        "recognized_pending_analysis_kind": recognized_pending_kind,
+        "recognized_missing_prerequisites": recognized_missing,
     }
 
 
@@ -324,11 +368,16 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
         "argument_top_level_fields",
         "metadata_truncated",
     }
-    payload_shape_fields = {
+    legacy_payload_shape_fields = {
         "recognized_status",
         "analysis_kind_present",
         "parameters_empty_object",
         "questions_present",
+    }
+    payload_shape_fields = {
+        *legacy_payload_shape_fields,
+        "recognized_pending_analysis_kind",
+        "recognized_missing_prerequisites",
     }
     parameter_shape_fields = {
         "recognized_analysis_kind",
@@ -341,7 +390,11 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
     }
     accepted_field_sets = {
         frozenset(base_fields),
+        frozenset(base_fields | legacy_payload_shape_fields),
         frozenset(base_fields | payload_shape_fields),
+        frozenset(
+            base_fields | legacy_payload_shape_fields | parameter_shape_fields
+        ),
         frozenset(base_fields | payload_shape_fields | parameter_shape_fields),
     }
     if frozenset(value) not in accepted_field_sets:
@@ -376,11 +429,11 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
         ),
         "metadata_truncated": value["metadata_truncated"],
     }
-    if payload_shape_fields.issubset(value):
+    if legacy_payload_shape_fields.issubset(value):
         recognized_status = str(value.get("recognized_status") or "")
         if recognized_status not in {"", *(item.value for item in PlanStatus)}:
             raise ValueError("planner failure recognized_status is invalid")
-        for name in payload_shape_fields - {"recognized_status"}:
+        for name in legacy_payload_shape_fields - {"recognized_status"}:
             if not isinstance(value.get(name), bool):
                 raise ValueError(f"planner failure {name} is invalid")
         normalized.update(
@@ -391,6 +444,38 @@ def normalize_planner_failure_diagnostic(value: dict[str, Any]) -> dict[str, Any
                 "questions_present": value["questions_present"],
             }
         )
+        if payload_shape_fields.issubset(value):
+            recognized_pending_kind = str(
+                value.get("recognized_pending_analysis_kind") or ""
+            )
+            if recognized_pending_kind:
+                try:
+                    pending_kind = AnalysisKind(recognized_pending_kind)
+                except ValueError as exc:
+                    raise ValueError(
+                        "planner failure recognized_pending_analysis_kind is invalid"
+                    ) from exc
+                if pending_kind not in _AUTOMATIC_KIND_SET:
+                    raise ValueError(
+                        "planner failure recognized_pending_analysis_kind is invalid"
+                    )
+            missing_prerequisites = value.get("recognized_missing_prerequisites")
+            if (
+                not isinstance(missing_prerequisites, list)
+                or missing_prerequisites != sorted(set(missing_prerequisites))
+                or not set(missing_prerequisites).issubset(
+                    _CONTROLLED_MISSING_PREREQUISITES
+                )
+            ):
+                raise ValueError(
+                    "planner failure recognized_missing_prerequisites is invalid"
+                )
+            normalized.update(
+                {
+                    "recognized_pending_analysis_kind": recognized_pending_kind,
+                    "recognized_missing_prerequisites": missing_prerequisites,
+                }
+            )
     if parameter_shape_fields.issubset(value):
         recognized_kind = str(value.get("recognized_analysis_kind") or "")
         if recognized_kind:
@@ -768,6 +853,78 @@ def _invalid_parameter_relation_fields(
     return sorted(invalid)
 
 
+def _required_column_candidates(
+    field: str,
+    context: DatasetPlanningContext,
+) -> tuple[Any, ...]:
+    column_names = tuple(item.name for item in context.columns)
+    numeric_columns = tuple(
+        item.name for item in context.columns if item.role is ColumnRole.NUMERIC
+    )
+    datetime_columns = tuple(
+        item.name for item in context.columns if item.role is ColumnRole.DATETIME
+    )
+    analysis_unit_columns = tuple(
+        item.name
+        for item in context.columns
+        if item.role not in {ColumnRole.DATETIME, ColumnRole.UNKNOWN}
+    )
+    if field in _NUMERIC_COLUMN_PARAMETERS:
+        return numeric_columns
+    if field in _DATETIME_COLUMN_PARAMETERS:
+        return datetime_columns
+    if field in _ANALYSIS_UNIT_COLUMN_PARAMETERS:
+        return analysis_unit_columns
+    if field in _ANY_COLUMN_PARAMETERS:
+        return column_names
+    if field in _NUMERIC_COLUMN_ARRAY_PARAMETERS:
+        return tuple([name] for name in numeric_columns)
+    return ()
+
+
+def _missing_prerequisites_for_kind(
+    kind: AnalysisKind,
+    context: DatasetPlanningContext,
+) -> tuple[str, ...]:
+    """Return context-provable blockers for one otherwise supported route."""
+
+    column_fields = tuple(
+        field
+        for field in _REQUIRED_PARAMETERS[kind]
+        if field
+        in (
+            frozenset(_NUMERIC_COLUMN_PARAMETERS)
+            | frozenset(_DATETIME_COLUMN_PARAMETERS)
+            | frozenset(_ANALYSIS_UNIT_COLUMN_PARAMETERS)
+            | frozenset(_ANY_COLUMN_PARAMETERS)
+            | frozenset(_NUMERIC_COLUMN_ARRAY_PARAMETERS)
+        )
+    )
+    candidates = {
+        field: _required_column_candidates(field, context) for field in column_fields
+    }
+    missing = tuple(field for field in column_fields if not candidates[field])
+    if missing:
+        return missing
+
+    ordered_fields = sorted(column_fields, key=lambda field: len(candidates[field]))
+
+    def has_compatible_binding(index: int, bound: dict[str, Any]) -> bool:
+        if index == len(ordered_fields):
+            return not _invalid_parameter_relation_fields(kind, bound)
+        field = ordered_fields[index]
+        for value in candidates[field]:
+            bound[field] = value
+            if has_compatible_binding(index + 1, bound):
+                return True
+        bound.pop(field, None)
+        return False
+
+    if not has_compatible_binding(0, {}):
+        return (_COMPATIBLE_COLUMN_BINDING,)
+    return ()
+
+
 def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
     required = [
         "status",
@@ -775,6 +932,8 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
         "parameters",
         "rationale",
         "questions",
+        "pending_analysis_kind",
+        "missing_prerequisites",
     ]
     non_empty_text = {"type": "string", "pattern": r".*\S.*"}
     empty_parameters = {
@@ -788,6 +947,8 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
         analysis_kinds: list[str],
         parameters: dict[str, Any],
         questions: dict[str, Any],
+        pending_analysis_kinds: list[str],
+        missing_prerequisites: dict[str, Any],
         description: str,
     ) -> dict[str, Any]:
         return {
@@ -801,6 +962,11 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
                 "parameters": parameters,
                 "rationale": non_empty_text,
                 "questions": questions,
+                "pending_analysis_kind": {
+                    "type": "string",
+                    "enum": pending_analysis_kinds,
+                },
+                "missing_prerequisites": missing_prerequisites,
             },
         }
 
@@ -822,28 +988,42 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
                             "items": non_empty_text,
                             "maxItems": 0,
                         },
+                        pending_analysis_kinds=[""],
+                        missing_prerequisites={"type": "array", "maxItems": 0},
                         description=(
                             f"An executable {kind.value} route using only the declared "
                             "parameters and dataset columns, with questions empty."
                         ),
                     )
                     for kind in _AUTOMATIC_KINDS
+                    if not _missing_prerequisites_for_kind(kind, context)
                 ],
-                variant(
-                    PlanStatus.NEEDS_INPUT,
-                    analysis_kinds=[""],
-                    parameters=empty_parameters,
-                    questions={
-                        "type": "array",
-                        "items": non_empty_text,
-                        "minItems": 1,
-                        "maxItems": 3,
-                    },
-                    description=(
-                        "A clarification is required: leave analysis_kind and "
-                        "parameters empty and ask one to three questions."
-                    ),
-                ),
+                *[
+                    variant(
+                        PlanStatus.NEEDS_INPUT,
+                        analysis_kinds=[""],
+                        parameters=empty_parameters,
+                        questions={
+                            "type": "array",
+                            "items": non_empty_text,
+                            "minItems": 1,
+                            "maxItems": 3,
+                        },
+                        pending_analysis_kinds=[kind.value],
+                        missing_prerequisites={
+                            "type": "array",
+                            "const": list(missing),
+                        },
+                        description=(
+                            f"The supported {kind.value} route is blocked by exactly "
+                            f"these dataset prerequisites: {', '.join(missing)}. Leave "
+                            "analysis_kind and parameters empty and ask one to three "
+                            "questions only about those prerequisites."
+                        ),
+                    )
+                    for kind in _AUTOMATIC_KINDS
+                    if (missing := _missing_prerequisites_for_kind(kind, context))
+                ],
                 variant(
                     PlanStatus.UNSUPPORTED,
                     analysis_kinds=[""],
@@ -853,6 +1033,8 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
                         "items": non_empty_text,
                         "maxItems": 0,
                     },
+                    pending_analysis_kinds=[""],
+                    missing_prerequisites={"type": "array", "maxItems": 0},
                     description=(
                         "No supported route exists: leave analysis_kind, parameters, "
                         "and questions empty."
@@ -864,12 +1046,18 @@ def _tool_definition(context: DatasetPlanningContext) -> dict[str, Any]:
 
 
 def build_planner_contract_gate(context: DatasetPlanningContext) -> dict[str, Any]:
-    """Prove the emitted ready variants match the local parameter contract."""
+    """Prove executable and clarification variants match the local contract."""
 
     tool = _tool_definition(context)
     variants = tool["parameters"]["anyOf"]
     expected_kinds = [kind.value for kind in _AUTOMATIC_KINDS]
+    expected_ready_kinds = [
+        kind.value
+        for kind in _AUTOMATIC_KINDS
+        if not _missing_prerequisites_for_kind(kind, context)
+    ]
     ready_kinds: list[str] = []
+    needs_input_variants: list[dict[str, Any]] = []
     ready_parameter_contracts_match = True
     for item in variants:
         properties = item.get("properties", {})
@@ -888,10 +1076,45 @@ def build_planner_contract_gate(context: DatasetPlanningContext) -> dict[str, An
         if properties.get("parameters") != _parameter_schema(kind, context):
             ready_parameter_contracts_match = False
 
+    for item in variants:
+        properties = item.get("properties", {})
+        if properties.get("status", {}).get("enum") != [
+            PlanStatus.NEEDS_INPUT.value
+        ]:
+            continue
+        pending_values = properties.get("pending_analysis_kind", {}).get("enum", [])
+        missing_values = properties.get("missing_prerequisites", {}).get("const")
+        if len(pending_values) != 1 or not isinstance(missing_values, list):
+            continue
+        needs_input_variants.append(
+            {
+                "analysis_kind": pending_values[0],
+                "missing_prerequisites": missing_values,
+            }
+        )
+
+    expected_needs_input_variants = [
+        {
+            "analysis_kind": kind.value,
+            "missing_prerequisites": list(missing),
+        }
+        for kind in _AUTOMATIC_KINDS
+        if (missing := _missing_prerequisites_for_kind(kind, context))
+    ]
+    unsupported_variant_count = sum(
+        1
+        for item in variants
+        if item.get("properties", {}).get("status", {}).get("enum")
+        == [PlanStatus.UNSUPPORTED.value]
+    )
+
     passed = (
         ready_parameter_contracts_match
-        and ready_kinds == expected_kinds
-        and len(variants) == len(expected_kinds) + 2
+        and ready_kinds == expected_ready_kinds
+        and needs_input_variants == expected_needs_input_variants
+        and unsupported_variant_count == 1
+        and len(variants)
+        == len(expected_ready_kinds) + len(expected_needs_input_variants) + 1
     )
     canonical = json.dumps(
         tool, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -902,6 +1125,9 @@ def build_planner_contract_gate(context: DatasetPlanningContext) -> dict[str, An
         "schema_fingerprint": "sha256:" + hashlib.sha256(canonical).hexdigest(),
         "automatic_analysis_kinds": expected_kinds,
         "ready_variant_count": len(ready_kinds),
+        "needs_input_variants": needs_input_variants,
+        "needs_input_variant_count": len(needs_input_variants),
+        "unsupported_variant_count": unsupported_variant_count,
         "status_variant_count": len(variants),
     }
 
@@ -928,6 +1154,52 @@ def _questions(value: Any) -> tuple[str, ...]:
             reason_code="plan_questions_invalid",
         )
     return result
+
+
+def _controlled_missing_prerequisites(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise PlannerContractError(
+            "missing_prerequisites must be an array",
+            reason_code="plan_needs_input_identity_invalid",
+        )
+    result = tuple(str(item or "").strip() for item in value)
+    if (
+        any(not item for item in result)
+        or len(result) != len(set(result))
+        or not set(result).issubset(_CONTROLLED_MISSING_PREREQUISITES)
+    ):
+        raise PlannerContractError(
+            "missing_prerequisites contains an invalid controlled identity",
+            reason_code="plan_needs_input_identity_invalid",
+        )
+    return result
+
+
+def normalize_needs_input_identity(
+    pending_analysis_kind: AnalysisKind | str,
+    missing_prerequisites: tuple[str, ...] | list[str],
+) -> tuple[AnalysisKind, tuple[str, ...]]:
+    """Normalize the bounded non-executable identity shared with the Ledger."""
+
+    try:
+        kind = AnalysisKind(pending_analysis_kind)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "pending_analysis_kind is not automatically supported"
+        ) from exc
+    if kind not in _AUTOMATIC_KIND_SET:
+        raise ValueError("pending_analysis_kind is not automatically supported")
+    if not isinstance(missing_prerequisites, (tuple, list)):
+        raise ValueError("missing_prerequisites must be an array")
+    missing = tuple(str(item or "").strip() for item in missing_prerequisites)
+    if (
+        not missing
+        or any(not item for item in missing)
+        or len(missing) != len(set(missing))
+        or not set(missing).issubset(_CONTROLLED_MISSING_PREREQUISITES)
+    ):
+        raise ValueError("missing_prerequisites identity is invalid")
+    return kind, missing
 
 
 def _clarifications(value: Any) -> tuple[dict[str, str], ...]:
@@ -1091,8 +1363,14 @@ class StructuredAnalysisPlanner:
                 "a supported method and bind existing columns. Do not calculate, infer "
                 "results, write findings, generate Python, or claim completion. Use the "
                 "submit_analysis_plan tool exactly once. For ready, provide one supported "
-                "analysis_kind and its parameters with questions empty. For needs_input, "
-                "leave analysis_kind and parameters empty and ask one to three questions. "
+                "analysis_kind and its parameters with questions empty, "
+                "pending_analysis_kind empty, and missing_prerequisites empty. Use "
+                "needs_input only when the tool schema exposes a needs_input variant for "
+                "the supported method that answers the user question. Copy that variant's "
+                "pending_analysis_kind and exact missing_prerequisites, leave analysis_kind "
+                "and parameters empty, and ask one to three questions only about those "
+                "missing prerequisites. Never use needs_input for a method whose required "
+                "bindings are available. "
                 "For unsupported, leave analysis_kind, parameters, and questions empty. "
                 "For ready, use only parameter fields and dataset column values declared "
                 "by the selected analysis_kind schema. analysis_unit identifies the "
@@ -1113,6 +1391,8 @@ class StructuredAnalysisPlanner:
             "parameters",
             "rationale",
             "questions",
+            "pending_analysis_kind",
+            "missing_prerequisites",
         }
         unexpected = sorted(set(arguments) - allowed_keys)
         if unexpected:
@@ -1135,6 +1415,12 @@ class StructuredAnalysisPlanner:
                 reason_code="plan_parameters_not_object",
             )
         raw_kind = str(arguments.get("analysis_kind") or "").strip()
+        raw_pending_kind = str(
+            arguments.get("pending_analysis_kind") or ""
+        ).strip()
+        missing_prerequisites = _controlled_missing_prerequisites(
+            arguments.get("missing_prerequisites")
+        )
 
         if status is PlanStatus.NEEDS_INPUT:
             if raw_kind or parameters:
@@ -1147,12 +1433,47 @@ class StructuredAnalysisPlanner:
                     "needs_input requires at least one question",
                     reason_code="plan_needs_input_questions_missing",
                 )
+            try:
+                pending_kind, missing_prerequisites = normalize_needs_input_identity(
+                    raw_pending_kind,
+                    missing_prerequisites,
+                )
+            except ValueError as exc:
+                raise PlannerContractError(
+                    "needs_input requires a controlled pending route identity",
+                    reason_code="plan_needs_input_identity_invalid",
+                ) from exc
+            expected_missing = _missing_prerequisites_for_kind(pending_kind, context)
+            if not expected_missing:
+                raise PlannerContractError(
+                    "needs_input is not justified by the dataset planning context",
+                    reason_code="plan_needs_input_not_justified",
+                )
+            if missing_prerequisites != expected_missing:
+                raise PlannerContractError(
+                    "needs_input prerequisites do not match the planning context",
+                    reason_code="plan_needs_input_prerequisites_mismatch",
+                )
             return self._result(
-                status, question, None, {}, rationale, questions, maximum_claim_class=""
+                status,
+                question,
+                None,
+                {},
+                rationale,
+                questions,
+                maximum_claim_class="",
+                pending_analysis_kind=pending_kind,
+                missing_prerequisites=missing_prerequisites,
             )
 
         if status is PlanStatus.UNSUPPORTED:
-            if raw_kind or parameters or questions:
+            if (
+                raw_kind
+                or parameters
+                or questions
+                or raw_pending_kind
+                or missing_prerequisites
+            ):
                 raise PlannerContractError(
                     "unsupported cannot contain a route or user questions",
                     reason_code="plan_unsupported_payload_present",
@@ -1166,6 +1487,11 @@ class StructuredAnalysisPlanner:
                 "ready plan cannot contain user questions",
                 reason_code="plan_ready_questions_present",
             )
+        if raw_pending_kind or missing_prerequisites:
+            raise PlannerContractError(
+                "ready plan cannot contain pending prerequisites",
+                reason_code="plan_ready_prerequisites_present",
+            )
         try:
             kind = AnalysisKind(raw_kind)
         except ValueError as exc:
@@ -1177,6 +1503,11 @@ class StructuredAnalysisPlanner:
             raise PlannerContractError(
                 f"{kind.value} is not available to automatic planning",
                 reason_code="plan_invalid_analysis_kind",
+            )
+        if _missing_prerequisites_for_kind(kind, context):
+            raise PlannerContractError(
+                "ready route is blocked by missing dataset prerequisites",
+                reason_code="plan_ready_prerequisites_missing",
             )
         normalized = self._validate_parameters(kind, parameters, context)
         return self._result(
@@ -1199,6 +1530,8 @@ class StructuredAnalysisPlanner:
         questions: tuple[str, ...],
         *,
         maximum_claim_class: str,
+        pending_analysis_kind: AnalysisKind | None = None,
+        missing_prerequisites: tuple[str, ...] = (),
     ) -> AnalysisPlan:
         return AnalysisPlan(
             status=status,
@@ -1210,6 +1543,8 @@ class StructuredAnalysisPlanner:
             maximum_claim_class=maximum_claim_class,
             planner_invocations=1,
             model_id=str(getattr(self.client, "model_id", "unknown") or "unknown"),
+            pending_analysis_kind=pending_analysis_kind,
+            missing_prerequisites=missing_prerequisites,
         )
 
     @staticmethod

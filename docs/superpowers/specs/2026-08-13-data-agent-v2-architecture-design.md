@@ -1128,3 +1128,21 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 6. release preflight identity fingerprint、runtime authorization fingerprint 和 plan identity fingerprint 分别绑定发布输入、单次运行权限与规范化计划语义，三者不能互相替代。
 
 该协议不调用 Provider、不签发 authorization、不改变现有真实 Provider receipt，也不授权根入口切换、旧系统删除、push 或 merge。
+
+5C5S 的实际三样本结果为两次相同 `ready/multi_finding_synthesis` 与一次合同合法的 `needs_input`。三次请求的 source、fixture、问题、模型、planning context 和 Planner schema 均相同，两次追加调用各消费一份独立 authorization，均为恰好 1 次且无 retry。第二次追加调用没有执行确定性续跑或 follow-up。该结果不支持最小重复性 PASS，也不能由已有的一次成功 real-provider receipt 掩盖；但它同样不是 transport 或本地 Planner contract 失败。后续必须先分析“为什么同一完整上下文仍可被判为 needs-input”的共享 prompt/decision boundary，不能通过自动回答、重试或放宽 status 合同消除证据。
+
+## 38. Slice 5C5T 实施补充：受控 needs-input 资格合同
+
+5C5S 暴露的共享缺口不是 `needs_input` 状态本身，而是任何上下文都能选择一个没有服务端依据的自由追问分支。5C5T 将非执行计划绑定到受控身份：`pending_analysis_kind` 指明被阻塞的受支持方法，`missing_prerequisites` 只能取该方法所需列角色或 `compatible_column_binding`。服务端基于同一份 required-parameter、column-policy 和 cross-field relation 声明计算精确缺口。
+
+合同同时作用于五个边界：
+
+1. tool schema 对每个方法只发出一个状态分支：前提满足时发出 `ready`，前提缺失时发出带精确 `const` 缺口的 `needs_input`；`unsupported` 独立保留；
+2. system contract 禁止在可执行方法上追问，并要求复制 schema 中的受控身份；
+3. compiler 独立重算缺口。完整上下文中的 needs-input、缺口代码漂移、缺少受控身份，以及不完整上下文中的 ready 都以稳定 reason code fail closed；
+4. Plan Ledger 持久化并公开这两个受控字段，拒绝结构不完整的新增 needs-input 结果，同时通过缺省值继续读取字段引入前的历史事件；详细诊断仍不进入公共 HTTP plan；
+5. planner contract gate 升级为 v2，分别证明 ready、needs-input 和 unsupported variant 计数与身份。real-provider preflight validator 不再假设七个方法在每个数据集上都可执行。
+
+安全诊断只记录已识别的 pending method 和受控 missing code，不保存问题文本、参数值、reasoning 或原始 Provider 响应。该切片没有调用 Provider、自动回答、repair、重试或补跑。
+
+当前服务端可证明的是列角色存在性与字段身份兼容性；粗粒度 `identifier` 角色仍不等同于已确认的业务行粒度。5C5T 不把该剩余语义边界包装成完成，也不据此签发真实 Provider、稳定性或 human-semantic PASS。源码变化使 `sha256:4d0895...` 上的所有 release receipts 与 5C5S 样本相对当前源码 stale；任何新真实调用都必须重新预检并获得精确授权。

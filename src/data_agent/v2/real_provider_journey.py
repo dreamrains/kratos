@@ -24,7 +24,7 @@ from data_agent.v2.planning_budget import (
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v2"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v3"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (
@@ -205,9 +205,30 @@ def validate_real_provider_preflight(
     ):
         reasons.append("invalid_planner_analysis_kind_matrix")
         analysis_kinds = []
-    if planner_gate.get("ready_variant_count") != len(analysis_kinds):
+    ready_variant_count = planner_gate.get("ready_variant_count")
+    if (
+        isinstance(ready_variant_count, bool)
+        or not isinstance(ready_variant_count, int)
+        or ready_variant_count < 0
+    ):
         reasons.append("invalid_planner_ready_variant_count")
-    if planner_gate.get("status_variant_count") != len(analysis_kinds) + 2:
+        ready_variant_count = 0
+    needs_input_variants = planner_gate.get("needs_input_variants")
+    if not isinstance(needs_input_variants, list):
+        needs_input_variants = []
+        reasons.append("invalid_planner_needs_input_variants")
+    if planner_gate.get("needs_input_variant_count") != len(
+        needs_input_variants
+    ):
+        reasons.append("invalid_planner_needs_input_variant_count")
+    if ready_variant_count + len(needs_input_variants) != len(analysis_kinds):
+        reasons.append("invalid_planner_ready_variant_count")
+        reasons.append("incomplete_planner_analysis_kind_matrix")
+    if planner_gate.get("unsupported_variant_count") != 1:
+        reasons.append("invalid_planner_unsupported_variant_count")
+    if planner_gate.get("status_variant_count") != (
+        ready_variant_count + len(needs_input_variants) + 1
+    ):
         reasons.append("invalid_planner_status_variant_count")
     if planner_gate != expected_planner_contract_gate:
         reasons.append("planner_contract_gate_mismatch")

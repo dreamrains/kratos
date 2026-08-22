@@ -1,10 +1,10 @@
 # Data Agent V2 Slice 5C5S：真实 Planner 最小重复性协议
 
 - **日期**：2026-08-20
-- **状态**：零调用协议与预检已准备；精确条件式授权待用户确认
+- **状态**：两份条件式单次调用已完成；稳定性 FAIL，已停止
 - **基线提交**：`d465b405ded787774f4dfff904ef3881ec5e0726`
 - **source digest**：`sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93`
-- **本切片当前 Provider calls**：0
+- **本切片 Provider calls**：2
 
 ## 1. 实施时发现并纠正的边界
 
@@ -63,3 +63,27 @@ Provider/Planner 错误、`needs_input`、unsupported、plan identity 漂移、�
 
 - `docs/superpowers/evidence/2026-08-20-v2-5c5s-real-provider-stability-preflight.json`；
 - `docs/superpowers/evidence/2026-08-20-v2-5c5s-deterministic-evidence.json`。
+
+## 6. 条件式调用结果
+
+用户按本协议授权两份顺序执行的单次调用。第一轮使用全新的 session、authorization、client action 和 consumer request identity，恰好调用 1 次、0 retry，返回与 baseline 完全一致的 `ready/multi_finding_synthesis` 计划；确定性续跑为 HTTP 200/200、5 个 blocks、2 张图，语义指纹与 baseline 相同，独立统计复算一致。因此满足第二轮签发条件。
+
+第二轮再次使用全新的运行时身份，恰好调用 1 次、0 retry；upload/estimate 为 HTTP 200，authorization/planning 为 HTTP 201，authorization 已 consumed。Provider 返回合同合法的 `needs_input` 计划，包含 2 个问题，没有 route 或 parameters。它不是 transport、Planner contract 或 context-window 失败，但与 baseline/第一轮的 normalized plan identity 不一致。
+
+协议因此判定 FAIL：3 个同 digest 样本中 2 个 PASS、1 个 FAIL，没有达到 3 个匹配 PASS。第二轮没有执行确定性分析，没有保存或回答问题文本，没有 follow-up、repair、retry 或补跑；两份授权均已耗尽，用户此前保留的 3 次预算并未自动获得授权。
+
+当前安全证据只能确认同一冻结请求产生了两次相同 ready plan 和一次合法 needs-input 分歧。该现象与 Provider/模型规划变异或 prompt 中仍存在可被不同解释的歧义一致，但现有脱敏证据不能确定 Provider 内部原因。不得据此直接放宽 `needs_input` 合同或自动填答。
+
+新增证据：
+
+- `docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-1-attempt.json`；
+- `docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-2-attempt.json`；
+- `docs/superpowers/evidence/2026-08-20-v2-5c5s-stability-result.json`。
+
+## 7. 共享合同诊断与下一切片
+
+代码核查确认，当前 planning metadata 只包含 filename、source fingerprint、row count 与列的 name/dtype/role；它没有显式说明行粒度或观察单位的业务语义。`needs_input` schema 在每个 DatasetPlanningContext 中都可选，只约束空 route 和 1–3 个问题；system prompt 没有定义何时才允许选择该分支，compiler 也不验证受控 prerequisite 是否确实缺失。现有测试证明 status/payload 形状一致，却没有覆盖 `needs_input` 的语义资格。
+
+这构成共享合同缺口，但不能据此简单强制 ready：identifier role 或字段名并不能证明独立观察单位。下一切片应先写 RED 回归，为缺失 prerequisite 增加受控身份，并使 tool schema、system contract、compiler、Plan Ledger 与 HTTP 投影共同约束 `needs_input`；完整上下文上的无依据 needs-input 必须 fail closed，真正缺失语义的上下文仍保留澄清路径。该修复会改变 source digest，开始前必须明确接受现有 source-bound receipts 将 stale；本切片不直接实施。
+
+诊断证据：`docs/superpowers/evidence/2026-08-20-v2-5c5s-needs-input-diagnosis.json`。

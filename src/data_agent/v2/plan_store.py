@@ -15,6 +15,7 @@ from data_agent.v2.planner import (
     PlannerFailureReason,
     PlannerFailureStage,
     PlanStatus,
+    normalize_needs_input_identity,
     normalize_planner_failure_diagnostic,
 )
 from data_agent.v2.planning_input import planning_question_blocks
@@ -46,6 +47,8 @@ class DurablePlanRecord:
     parameters: dict[str, Any] | None = None
     rationale: str = ""
     questions: tuple[str, ...] = ()
+    pending_analysis_kind: str = ""
+    missing_prerequisites: tuple[str, ...] = ()
     maximum_claim_class: str = ""
     planner_invocations: int = 0
     model_id: str = ""
@@ -64,6 +67,7 @@ class DurablePlanRecord:
         value["status"] = self.status.value
         value["parameters"] = dict(self.parameters or {})
         value["questions"] = list(self.questions)
+        value["missing_prerequisites"] = list(self.missing_prerequisites)
         value.pop("diagnostic", None)
         if not self.error_reason_code:
             value.pop("error_reason_code", None)
@@ -187,6 +191,12 @@ class PlanStore:
                     parameters=dict(event.get("parameters") or {}),
                     rationale=str(event.get("rationale") or ""),
                     questions=tuple(event.get("questions") or ()),
+                    pending_analysis_kind=str(
+                        event.get("pending_analysis_kind") or ""
+                    ),
+                    missing_prerequisites=tuple(
+                        event.get("missing_prerequisites") or ()
+                    ),
                     maximum_claim_class=str(
                         event.get("maximum_claim_class") or ""
                     ),
@@ -381,9 +391,43 @@ class PlanStore:
                     raise PlanConflict("ready planner result requires an executable route")
                 if not result.maximum_claim_class:
                     raise PlanConflict("ready planner result requires a claim ceiling")
+                if (
+                    result.questions
+                    or result.pending_analysis_kind is not None
+                    or result.missing_prerequisites
+                ):
+                    raise PlanConflict(
+                        "ready planner result cannot contain pending prerequisites"
+                    )
             elif result.analysis_kind is not None or result.parameters:
                 raise PlanConflict(
                     f"{event_type} planner result cannot contain an executable route"
+                )
+            elif result.status is PlanStatus.NEEDS_INPUT:
+                if (
+                    not result.questions
+                    or result.pending_analysis_kind is None
+                    or not result.missing_prerequisites
+                ):
+                    raise PlanConflict(
+                        "needs_input planner result requires controlled prerequisites"
+                    )
+                try:
+                    normalize_needs_input_identity(
+                        result.pending_analysis_kind,
+                        result.missing_prerequisites,
+                    )
+                except ValueError as exc:
+                    raise PlanConflict(
+                        "needs_input planner result has invalid controlled prerequisites"
+                    ) from exc
+            elif (
+                result.questions
+                or result.pending_analysis_kind is not None
+                or result.missing_prerequisites
+            ):
+                raise PlanConflict(
+                    "unsupported planner result cannot contain pending prerequisites"
                 )
             self._append(
                 {
@@ -396,6 +440,12 @@ class PlanStore:
                     "parameters": result.parameters,
                     "rationale": result.rationale,
                     "questions": list(result.questions),
+                    "pending_analysis_kind": (
+                        result.pending_analysis_kind.value
+                        if result.pending_analysis_kind
+                        else ""
+                    ),
+                    "missing_prerequisites": list(result.missing_prerequisites),
                     "maximum_claim_class": result.maximum_claim_class,
                     "planner_invocations": result.planner_invocations,
                     "model_id": result.model_id,

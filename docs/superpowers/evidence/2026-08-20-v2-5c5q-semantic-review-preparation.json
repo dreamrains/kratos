@@ -2,18 +2,22 @@
   "version": "v2_semantic_review_preparation.v2",
   "scenario_id": "unified_analysis_entry",
   "reviewer_type": "implementation_agent",
-  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
-  "same_digest_real_provider_evidence": [
+  "source_digest": "sha256:5be3c2147254f94aaa42114a85094d7e1e2af425e7fd616d770fcb394cb6cabe",
+  "current_digest_real_provider_evidence": [],
+  "stale_prior_digest_real_provider_evidence": [
     "docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-attempt.json",
     "docs/superpowers/evidence/2026-08-20-v2-5c5q-deterministic-continuation.json",
-    "docs/superpowers/evidence/2026-08-20-v2-5c5r-real-result-browser-restore.json"
+    "docs/superpowers/evidence/2026-08-20-v2-5c5r-real-result-browser-restore.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-1-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-2-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-stability-result.json"
   ],
-  "same_digest_provider_neutral_browser_evidence": [
+  "stale_prior_digest_provider_neutral_browser_evidence": [
     "docs/superpowers/evidence/2026-08-20-v2-5c5r-planning-browser.json",
     "docs/superpowers/evidence/2026-08-20-v2-5c5r-interaction-browser.json"
   ],
-  "same_digest_stability_protocol": "docs/superpowers/evidence/2026-08-20-v2-5c5s-real-provider-stability-preflight.json",
-  "implementation_assessment": {
+  "stale_prior_digest_stability_protocol": "docs/superpowers/evidence/2026-08-20-v2-5c5s-real-provider-stability-preflight.json",
+  "prior_digest_implementation_assessment": {
     "question_understanding": {"status": "pass", "evidence": "Planner selected multi_finding_synthesis and bound date, sales, channel, and unit_id."},
     "data_scope": {"status": "pass", "evidence": "Published output states the exact date range, 42 source and valid rows, 42 observed daily periods, zero missing, boundary, and imputed periods, 42 effective unit_id values, and the non-generalization boundary."},
     "method_fit": {"status": "pass", "evidence": "Daily HAC trend with weekday controls and an independent-unit Welch comparison answer the two requested observational questions."},
@@ -24,13 +28,13 @@
     "chart_value": {"status": "pass", "evidence": "An actual browser restored two unique adjacent figures; both chart shells reached data-chart-loaded=true before and after page reload, and the rendered directions matched their supported findings."},
     "recommendation_quality": {"status": "pass", "evidence": "The only advice is a low-risk, reversible investigation aligned with recommendation_intent=investigate."},
     "journey_integrity": {"status": "pass", "evidence": "The same-digest real Provider API planning and execution passed; actual-browser restore verified that real result, while a same-digest provider-neutral actual-browser journey covered explicit planning, needs_input, stable failure, retry, live progress, steer, stop, recovery, isolation, charts, and refresh."},
-    "stability": {"status": "blocked", "evidence": "This digest has one successful real Provider planning sample. A two-trial conditional stability protocol is prepared, but no new runtime authorization has been issued and no additional Provider call has occurred."}
+    "stability": {"status": "blocked", "evidence": "Three same-digest samples were observed: the baseline and 5C5S trial 1 returned the same ready plan, while 5C5S trial 2 returned a valid needs_input plan with two questions. The required three matching passes were not achieved."}
   },
   "decision": "not_eligible_for_human_semantic_review_pass",
-  "reason_codes": ["reviewer_not_human", "real_provider_stability_not_established"],
-  "real_provider_release_receipt_issued": true,
-  "refresh_persistence_release_receipt_issued": true,
-  "browser_interaction_release_receipt_issued": true,
+  "reason_codes": ["reviewer_not_human", "current_source_has_no_real_provider_receipt", "all_prior_release_receipts_stale", "real_provider_stability_not_established", "business_row_grain_semantics_not_server_verified"],
+  "real_provider_release_receipt_issued": false,
+  "refresh_persistence_release_receipt_issued": false,
+  "browser_interaction_release_receipt_issued": false,
   "human_semantic_release_receipt_issued": false,
   "release_readiness_claimed": false,
   "root_switch_authorized": false

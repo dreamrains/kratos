@@ -40,6 +40,8 @@ class FakePlannerClient:
     model_id = "fake-planner"
 
     def __init__(self, arguments: dict, *, text: str = "") -> None:
+        arguments.setdefault("pending_analysis_kind", "")
+        arguments.setdefault("missing_prerequisites", [])
         self.arguments = arguments
         self.text = text
         self.calls = []
@@ -52,9 +54,9 @@ class FakePlannerClient:
         )
 
 
-def _planner_tool_schema() -> dict:
+def _planner_tool_schema(context: DatasetPlanningContext | None = None) -> dict:
     planner = StructuredAnalysisPlanner(FakePlannerClient({}))
-    _, request = planner.build_request("分析销售额", _context())
+    _, request = planner.build_request("分析销售额", context or _context())
     return request.tools[0]["parameters"]
 
 
@@ -103,6 +105,8 @@ def _ready_arguments(kind: str, parameters: dict) -> dict:
         "parameters": parameters,
         "rationale": "使用受支持的确定性方法。",
         "questions": [],
+        "pending_analysis_kind": "",
+        "missing_prerequisites": [],
     }
 
 
@@ -168,21 +172,150 @@ def test_planner_rejects_nonexistent_or_wrong_role_columns():
 
 
 def test_planner_needs_input_does_not_create_executable_route():
+    context = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "d" * 64,
+        row_count=120,
+        columns=(
+            DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+            DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+        ),
+    )
     client = FakePlannerClient(
         {
             "status": "needs_input",
             "analysis_kind": "",
             "parameters": {},
-            "rationale": "用户没有说明每行代表订单还是客户。",
-            "questions": ["每行数据代表一笔订单，还是一个客户？"],
+            "rationale": "趋势分析缺少时间字段。",
+            "questions": ["哪个字段表示观测时间？"],
+            "pending_analysis_kind": "time_trend",
+            "missing_prerequisites": ["time_field"],
         }
     )
 
-    result = StructuredAnalysisPlanner(client).plan("比较不同渠道表现", _context())
+    result = StructuredAnalysisPlanner(client).plan("销售如何随时间变化？", context)
 
     assert result.status is PlanStatus.NEEDS_INPUT
     assert result.analysis_kind is None
-    assert result.questions == ("每行数据代表一笔订单，还是一个客户？",)
+    assert result.questions == ("哪个字段表示观测时间？",)
+
+
+def test_planner_rejects_needs_input_when_claimed_prerequisite_is_available():
+    client = FakePlannerClient(
+        {
+            "status": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "声称缺少分析单位。",
+            "questions": ["每行代表什么观察单位？"],
+            "pending_analysis_kind": "multi_finding_synthesis",
+            "missing_prerequisites": ["analysis_unit"],
+        }
+    )
+
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(client).plan("比较渠道并分析趋势", _context())
+
+    assert caught.value.reason_code == "plan_needs_input_not_justified"
+
+
+def test_planner_accepts_needs_input_with_exact_missing_time_prerequisite():
+    context = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "b" * 64,
+        row_count=120,
+        columns=(
+            DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+            DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+        ),
+    )
+    client = FakePlannerClient(
+        {
+            "status": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "趋势分析缺少时间字段。",
+            "questions": ["哪个字段表示观测时间？"],
+            "pending_analysis_kind": "time_trend",
+            "missing_prerequisites": ["time_field"],
+        }
+    )
+
+    result = StructuredAnalysisPlanner(client).plan("销售如何随时间变化？", context)
+
+    assert result.status is PlanStatus.NEEDS_INPUT
+    assert result.analysis_kind is None
+    assert result.pending_analysis_kind is AnalysisKind.TIME_TREND
+    assert result.missing_prerequisites == ("time_field",)
+
+
+def test_planner_rejects_ready_route_when_context_prerequisite_is_missing():
+    context = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "e" * 64,
+        row_count=120,
+        columns=(
+            DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+            DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+        ),
+    )
+    client = FakePlannerClient(
+        {
+            "status": "ready",
+            "analysis_kind": "time_trend",
+            "parameters": {
+                "time_field": "unit_id",
+                "metric": "sales",
+                "frequency": "daily",
+                "aggregation": "sum",
+            },
+            "rationale": "错误地声称可执行趋势。",
+            "questions": [],
+        }
+    )
+
+    with pytest.raises(PlannerContractError) as caught:
+        StructuredAnalysisPlanner(client).plan("销售如何随时间变化？", context)
+
+    assert caught.value.reason_code == "plan_ready_prerequisites_missing"
+    assert list(
+        Draft202012Validator(_planner_tool_schema(context)).iter_errors(
+            client.arguments
+        )
+    )
+
+
+def test_planner_tool_schema_requires_controlled_needs_input_identity():
+    context = DatasetPlanningContext(
+        filename="sales.csv",
+        source_fingerprint="sha256:" + "c" * 64,
+        row_count=120,
+        columns=(
+            DatasetColumnContext("sales", "float64", ColumnRole.NUMERIC),
+            DatasetColumnContext("unit_id", "object", ColumnRole.IDENTIFIER),
+        ),
+    )
+    schema = _planner_tool_schema(context)
+    validator = Draft202012Validator(schema)
+    controlled = {
+        "status": "needs_input",
+        "analysis_kind": "",
+        "parameters": {},
+        "rationale": "趋势分析缺少时间字段。",
+        "questions": ["哪个字段表示观测时间？"],
+        "pending_analysis_kind": "time_trend",
+        "missing_prerequisites": ["time_field"],
+    }
+    legacy_unbounded = {
+        "status": "needs_input",
+        "analysis_kind": "",
+        "parameters": {},
+        "rationale": "自由决定追问。",
+        "questions": ["还需要什么？"],
+    }
+
+    assert list(validator.iter_errors(controlled)) == []
+    assert list(validator.iter_errors(legacy_unbounded))
 
 
 def test_planner_receives_clarifications_as_bounded_data():
@@ -247,13 +380,8 @@ def test_planner_can_report_unsupported_without_inventing_a_fallback():
             "parameters": {"metric": "sales"},
             "rationale": "描述销售额。",
             "questions": [],
-        },
-        {
-            "status": "needs_input",
-            "analysis_kind": "",
-            "parameters": {},
-            "rationale": "缺少分析单位。",
-            "questions": ["每行代表什么？"],
+            "pending_analysis_kind": "",
+            "missing_prerequisites": [],
         },
         {
             "status": "unsupported",
@@ -261,6 +389,8 @@ def test_planner_can_report_unsupported_without_inventing_a_fallback():
             "parameters": {},
             "rationale": "不支持因果识别。",
             "questions": [],
+            "pending_analysis_kind": "",
+            "missing_prerequisites": [],
         },
     ],
 )

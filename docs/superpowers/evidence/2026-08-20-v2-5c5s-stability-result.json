@@ -1,0 +1,89 @@
+{
+  "version": "v2_real_provider_stability_result.v1",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "git_head": "771fda098a85292b2bdf0756c44610b4e3adf08c",
+  "scenario_id": "unified_analysis_entry",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "stability_protocol_fingerprint": "sha256:36ccb1ba8d621f0cad1f0d09b1484aa4cc77cf872d8e1ea667da4c06fcbb512f",
+  "samples": [
+    {
+      "sample_id": "5c5q_baseline",
+      "evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-attempt.json",
+      "status": "pass",
+      "planning_status": "ready",
+      "plan_identity_fingerprint": "sha256:e3c1a3bfbc8ac82b99bdb15832b88b1114b932570e92a2ac772379dc860228e9",
+      "provider_calls": 1,
+      "automatic_retries": 0
+    },
+    {
+      "sample_id": "5c5s_additional_1",
+      "evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-1-attempt.json",
+      "status": "pass",
+      "planning_status": "ready",
+      "plan_identity_fingerprint": "sha256:e3c1a3bfbc8ac82b99bdb15832b88b1114b932570e92a2ac772379dc860228e9",
+      "provider_calls": 1,
+      "automatic_retries": 0
+    },
+    {
+      "sample_id": "5c5s_additional_2",
+      "evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-2-attempt.json",
+      "status": "fail",
+      "planning_status": "needs_input",
+      "questions_count": 2,
+      "plan_identity_fingerprint": "sha256:5fdf330d9fc512de18960a4724fccf35c374beff542eed28fc29111116f12d1d",
+      "provider_calls": 1,
+      "automatic_retries": 0,
+      "primary_failure_classification": "valid_needs_input_divergence"
+    }
+  ],
+  "aggregate": {
+    "target_total_passes": 3,
+    "observed_samples": 3,
+    "observed_passes": 2,
+    "observed_failures": 1,
+    "provider_calls_on_current_digest": 3,
+    "provider_calls_in_5c5s": 2,
+    "authorizations_issued_in_5c5s": 2,
+    "authorizations_consumed_in_5c5s": 2,
+    "automatic_retries_in_5c5s": 0,
+    "repair_or_followup_calls": 0
+  },
+  "identity_comparison": {
+    "release_preflight_identity_match_all_samples": true,
+    "runtime_model_match_all_samples": true,
+    "planning_context_match_all_samples": true,
+    "planner_schema_match_all_samples": true,
+    "runtime_authorization_ids_unique": true,
+    "client_action_ids_unique": true,
+    "consumer_request_ids_unique": true,
+    "plan_identity_match_all_samples": false
+  },
+  "assessment": {
+    "status": "fail",
+    "reason_codes": [
+      "required_three_passes_not_met",
+      "additional_2_returned_needs_input",
+      "plan_identity_not_repeatable"
+    ],
+    "verified_fact": "The same frozen request produced two ready plans with the same normalized identity and one valid needs_input plan with two questions.",
+    "inference": "The observed divergence is consistent with Provider/model planning variability or unresolved ambiguity in the planning prompt; the safe evidence does not identify which internal Provider behavior caused it.",
+    "not_supported": [
+      "local Planner contract failure",
+      "transport failure",
+      "context-window overflow",
+      "automatic retry",
+      "general Provider reliability rate"
+    ]
+  },
+  "authorization_exhaustion": {
+    "5c5s_additional_1": "consumed",
+    "5c5s_additional_2": "consumed",
+    "remaining_contingency_budget_authorized": false,
+    "new_provider_call_allowed": false
+  },
+  "human_semantic_stability": "blocked",
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

@@ -59,7 +59,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     assert preflight["authorization_request"]["provider_calls"] == 1
     assert preflight["authorization_request"]["mode"] == "per_call"
     assert preflight["planner_contract_gate"] == {
-        "version": "v2_planner_contract_parity.v1",
+            "version": "v2_planner_contract_parity.v2",
         "passed": True,
         "schema_fingerprint": preflight["planner_contract_gate"][
             "schema_fingerprint"
@@ -73,8 +73,16 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
             "forecast",
             "multi_finding_synthesis",
         ],
-        "ready_variant_count": 7,
-        "status_variant_count": 9,
+            "ready_variant_count": 6,
+            "needs_input_variants": [
+                {
+                    "analysis_kind": "factor_relationship",
+                    "missing_prerequisites": ["compatible_column_binding"],
+                }
+            ],
+            "needs_input_variant_count": 1,
+            "unsupported_variant_count": 1,
+            "status_variant_count": 8,
     }
     assert preflight["planner_contract_gate"]["schema_fingerprint"].startswith(
         "sha256:"
@@ -112,7 +120,7 @@ def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_author
     preflight["dataset_fingerprint"] = "sha256:" + "d" * 64
     preflight["stop_conditions"].remove("provider_error")
     preflight["planner_contract_gate"]["passed"] = False
-    preflight["planner_contract_gate"]["ready_variant_count"] = 6
+    preflight["planner_contract_gate"]["ready_variant_count"] = 5
 
     result = validate_real_provider_preflight(
         preflight,

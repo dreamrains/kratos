@@ -222,6 +222,8 @@ def test_plan_store_persists_sanitized_failure_diagnostic_without_exposing_it_pu
         "analysis_kind_present": True,
         "parameters_empty_object": False,
         "questions_present": True,
+        "recognized_pending_analysis_kind": "",
+        "recognized_missing_prerequisites": [],
         "recognized_analysis_kind": "descriptive",
         "recognized_parameter_fields": ["horizon", "metric"],
         "missing_required_parameter_fields": [],
@@ -280,6 +282,8 @@ def test_plan_store_persists_parameter_relation_failure_without_exposing_diagnos
         "analysis_kind_present": True,
         "parameters_empty_object": False,
         "questions_present": False,
+        "recognized_pending_analysis_kind": "",
+        "recognized_missing_prerequisites": [],
         "recognized_analysis_kind": "multi_finding_synthesis",
         "recognized_parameter_fields": [
             "aggregation",
@@ -343,3 +347,71 @@ def test_unsupported_plan_is_terminal_without_an_executable_route(tmp_path):
     assert terminal.analysis_kind == ""
     with pytest.raises(PlanConflict, match="cannot consume unsupported"):
         store.consume(requested.plan_id, target_turn_id="turn_target")
+
+
+def test_needs_input_plan_persists_controlled_prerequisite_identity(tmp_path):
+    store = PlanStore(tmp_path, "session_plan_needs_input_identity")
+    requested = store.request(
+        client_request_id="client_needs_input_identity",
+        question="销售如何随时间变化？",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_needs_input_identity",
+        provider_calls_authorized=1,
+    )
+    result = AnalysisPlan(
+        status=PlanStatus.NEEDS_INPUT,
+        user_question="销售如何随时间变化？",
+        analysis_kind=None,
+        parameters={},
+        rationale="缺少时间字段。",
+        questions=("哪个字段表示观测时间？",),
+        maximum_claim_class="",
+        planner_invocations=1,
+        model_id="fake-planner",
+        pending_analysis_kind=AnalysisKind.TIME_TREND,
+        missing_prerequisites=("time_field",),
+    )
+
+    completed = store.complete(requested.plan_id, result)
+    restored = PlanStore(tmp_path, "session_plan_needs_input_identity").get(
+        requested.plan_id
+    )
+
+    assert restored == completed
+    assert restored.pending_analysis_kind == "time_trend"
+    assert restored.missing_prerequisites == ("time_field",)
+    assert restored.to_dict()["missing_prerequisites"] == ["time_field"]
+
+
+def test_historical_needs_input_event_without_controlled_identity_remains_readable(
+    tmp_path,
+):
+    store = PlanStore(tmp_path, "session_historical_needs_input")
+    requested = store.request(
+        client_request_id="client_historical_needs_input",
+        question="比较表现",
+        dataset_context=_context(),
+        provider_authorization_ref="auth_historical_needs_input",
+        provider_calls_authorized=1,
+    )
+    store._append(
+        {
+            "event_id": "plan_event_historical_needs_input",
+            "plan_id": requested.plan_id,
+            "event_type": "needs_input",
+            "analysis_kind": "",
+            "parameters": {},
+            "rationale": "历史事件。",
+            "questions": ["每行代表什么？"],
+            "maximum_claim_class": "",
+            "planner_invocations": 1,
+            "model_id": "historical-planner",
+            "provider_calls": 1,
+        }
+    )
+
+    restored = store.get(requested.plan_id)
+
+    assert restored.status is DurablePlanStatus.NEEDS_INPUT
+    assert restored.pending_analysis_kind == ""
+    assert restored.missing_prerequisites == ()

@@ -121,6 +121,8 @@ class FakeNeedsInputPlanner:
             maximum_claim_class="",
             planner_invocations=1,
             model_id=self.model_id,
+            pending_analysis_kind=AnalysisKind.GROUP_COMPARISON,
+            missing_prerequisites=("compatible_column_binding",),
         )
 
 
@@ -737,6 +739,8 @@ def test_plan_api_persists_needs_input_without_creating_executable_route(
     body = response.get_json()
     assert response.status_code == 201
     assert body["status"] == "needs_input"
+    assert body["pending_analysis_kind"] == "group_comparison"
+    assert body["missing_prerequisites"] == ["compatible_column_binding"]
     assert body["analysis_kind"] == ""
     assert body["parameters"] == {}
     assert body["message_blocks"] == [
