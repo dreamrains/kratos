@@ -1,0 +1,49 @@
+[
+  {
+    "receipt_id": "receipt_unified_browser_e38aa729033cf36d",
+    "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "browser_interaction_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:fa210210365df9fcccd7a46a965727e62e3fd9ddc655ca8cf633745f5d680826",
+      "actual-browser:interaction:sha256:1464a0ef702dd0d23712d57cf59129f3923e418a6c30d9ccc195f933018f1a55"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": [
+      "upload",
+      "planning_estimate_without_authorization",
+      "explicit_planning_confirmation",
+      "needs_input",
+      "planning_answer_persisted",
+      "planning_failure_stable",
+      "explicit_planning_retry",
+      "live_progress",
+      "task_overlay_collapsed",
+      "refresh_restore",
+      "draft_while_running",
+      "queued_steer",
+      "stop",
+      "error_recovery",
+      "session_isolation"
+    ],
+    "chart_observation": "rendered",
+    "forbidden_behavior_hits": []
+  },
+  {
+    "receipt_id": "receipt_unified_refresh_e38aa729033cf36d",
+    "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "refresh_persistence_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:fa210210365df9fcccd7a46a965727e62e3fd9ddc655ca8cf633745f5d680826",
+      "actual-browser:interaction:sha256:1464a0ef702dd0d23712d57cf59129f3923e418a6c30d9ccc195f933018f1a55"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": [
+      "refresh_restore"
+    ],
+    "forbidden_behavior_hits": []
+  }
+]

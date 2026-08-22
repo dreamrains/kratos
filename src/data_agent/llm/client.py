@@ -11,12 +11,20 @@ from data_agent.config import get_config
 
 
 class ToolCall:
-    __slots__ = ("id", "name", "arguments")
+    __slots__ = ("id", "name", "arguments", "arguments_parse_error")
 
-    def __init__(self, id: str, name: str, arguments: dict[str, Any]):
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        arguments: Any,
+        *,
+        arguments_parse_error: str = "",
+    ):
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.arguments_parse_error = str(arguments_parse_error or "")
 
 
 class Response:
@@ -63,6 +71,19 @@ def _convert_tools(tool_defs: list[dict]) -> list[dict]:
     return result
 
 
+def prepare_provider_prompt(
+    messages: list[dict],
+    tools: Optional[list[dict]] = None,
+    system: Optional[str] = None,
+) -> tuple[list[dict], list[dict]]:
+    """Return the exact messages and tool schema sent to LiteLLM."""
+
+    prepared_messages = list(messages)
+    if system:
+        prepared_messages = [{"role": "system", "content": system}] + prepared_messages
+    return prepared_messages, _convert_tools(tools or [])
+
+
 def _sanitize(text: str) -> str:
     """清理字符串中的非法 UTF-8 代理字符。"""
     if not text:
@@ -81,13 +102,22 @@ def _parse_response(resp: Any) -> Response:
     if message.tool_calls:
         for tc in message.tool_calls:
             args = tc.function.arguments
+            arguments_parse_error = ""
             if isinstance(args, str):
                 args = _sanitize(args)
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError:
+                    arguments_parse_error = "invalid_json"
                     args = {"raw": args}
-            tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+            tool_calls.append(
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=args,
+                    arguments_parse_error=arguments_parse_error,
+                )
+            )
 
     return Response(
         text=text,
@@ -122,9 +152,12 @@ class LLMClient:
         self.temperature = temperature
 
     def _base_kwargs(self, messages, tools=None, system=None) -> dict:
+        prepared_messages, prepared_tools = prepare_provider_prompt(
+            messages, tools, system
+        )
         kwargs: dict[str, Any] = {
             "model": self.model_id,
-            "messages": messages,
+            "messages": prepared_messages,
             "max_tokens": self.max_tokens,
             "timeout": self.timeout,
         }
@@ -134,10 +167,8 @@ class LLMClient:
             kwargs["api_key"] = self.api_key
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
-        if system:
-            kwargs["messages"] = [{"role": "system", "content": system}] + list(kwargs["messages"])
-        if tools:
-            kwargs["tools"] = _convert_tools(tools)
+        if prepared_tools:
+            kwargs["tools"] = prepared_tools
         return kwargs
 
     def chat(
@@ -163,6 +194,7 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
+
             except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError) as e:
                 last_error = e
                 if attempt < self._MAX_RETRIES:
@@ -172,6 +204,16 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
+
+    def chat_once(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        system: Optional[str] = None,
+    ) -> Response:
+        """Make exactly one provider request without an implicit retry."""
+
+        return _parse_response(completion(**self._base_kwargs(messages, tools, system)))
 
     def stream_chat_structured(
         self,
@@ -227,14 +269,17 @@ class LLMClient:
                 for idx in sorted(tc_accum.keys()):
                     entry = tc_accum[idx]
                     args_str = _sanitize(entry["arguments"])
+                    arguments_parse_error = ""
                     try:
                         args = json.loads(args_str) if args_str else {}
                     except json.JSONDecodeError:
+                        arguments_parse_error = "invalid_json"
                         args = {"raw": args_str}
                     tool_calls.append(ToolCall(
                         id=entry["id"],
                         name=entry["name"],
                         arguments=args,
+                        arguments_parse_error=arguments_parse_error,
                     ))
 
                 response = Response(

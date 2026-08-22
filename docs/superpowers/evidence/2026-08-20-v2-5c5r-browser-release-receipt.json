@@ -1,0 +1,33 @@
+[
+  {
+    "receipt_id": "receipt_unified_browser_9626ed8b160068c2",
+    "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "browser_interaction_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:46f0a19d8970fe7b4573160c8b34fe6e42fd5b1b0169125580abd91db297eb1a",
+      "actual-browser:interaction:sha256:9f5ee2a6d09054f4793b5ae033ee2d3448c104528a5d189377cfdfe1f790f941"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": [
+      "upload",
+      "planning_estimate_without_authorization",
+      "explicit_planning_confirmation",
+      "needs_input",
+      "planning_answer_persisted",
+      "planning_failure_stable",
+      "explicit_planning_retry",
+      "live_progress",
+      "task_overlay_collapsed",
+      "refresh_restore",
+      "draft_while_running",
+      "queued_steer",
+      "stop",
+      "error_recovery",
+      "session_isolation"
+    ],
+    "chart_observation": "rendered",
+    "forbidden_behavior_hits": []
+  }
+]

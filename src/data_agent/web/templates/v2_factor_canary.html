@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 2 因素关系</title>
+    <style>
+        :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #f5f6f3; color: #1d2824; }
+        main { width: min(980px, calc(100% - 32px)); margin: 38px auto 80px; }
+        header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+        h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -.03em; }
+        .subtitle { color: #65716d; margin: 0; line-height: 1.55; }
+        .badge { background: #e8eefb; color: #274b91; border: 1px solid #ccd9f4; border-radius: 999px; padding: 7px 11px; font-size: 12px; white-space: nowrap; }
+        .panel { background: #fff; border: 1px solid #dfe5e1; border-radius: 16px; padding: 20px; box-shadow: 0 12px 32px rgba(24,45,38,.06); margin-bottom: 18px; }
+        .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+        label { display: block; font-size: 12px; font-weight: 700; color: #59645f; margin: 0 0 7px; }
+        input, button { font: inherit; }
+        input[type="text"], input[type="file"] { width: 100%; min-height: 44px; border: 1px solid #cfd8d3; border-radius: 10px; padding: 10px 12px; background: #fcfdfc; }
+        input:focus { outline: 3px solid rgba(52,100,190,.15); border-color: #456fbe; }
+        .hint { color: #78837e; font-size: 12px; margin-top: 5px; }
+        .actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+        button { border: 0; border-radius: 10px; min-height: 42px; padding: 0 18px; background: #315ea8; color: white; font-weight: 700; cursor: pointer; }
+        button:hover { background: #274d8a; }
+        button:disabled { background: #9ba9c0; cursor: wait; }
+        .secondary { background: #edf0f5; color: #3b4e70; }
+        .status, .run-id, .file-state { font-size: 12px; color: #66716c; }
+        .progress { display: none; }
+        .progress.visible { display: block; }
+        .progress-list { display: grid; gap: 8px; margin-top: 12px; }
+        .progress-item { display: flex; gap: 9px; align-items: center; color: #53605b; font-size: 13px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #4777ca; box-shadow: 0 0 0 4px #e2eafb; }
+        .answer { display: grid; gap: 14px; }
+        .answer:empty::before { content: "完成后，因素结论、统计边界和诊断会显示在这里。"; color: #83908a; }
+        .answer-block { border-left: 3px solid #527ec7; padding: 4px 0 4px 16px; }
+        .answer-block h2 { margin: 0 0 8px; font-size: 17px; }
+        .answer-block p { margin: 0; line-height: 1.7; color: #384640; }
+        .answer-block ul { margin: 8px 0 0; color: #63706b; }
+        .chart-shell { margin: 16px 0 6px; border: 1px solid #dfe5e1; border-radius: 12px; overflow: hidden; background: #fff; }
+        .chart-shell figcaption { padding: 10px 14px; font-size: 13px; font-weight: 700; border-bottom: 1px solid #edf0ee; }
+        .chart-frame { display: block; width: 100%; height: 360px; border: 0; }
+        .supplemental { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e6ebe8; }
+        .error { display: none; background: #fff0ef; color: #8c2d27; border: 1px solid #f0c6c2; border-radius: 12px; padding: 13px 15px; margin-bottom: 16px; }
+        .error.visible { display: block; }
+        @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } header { flex-direction: column; } }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>因素关系分析</h1>
+            <p class="subtitle">Slice 2 canary：显式目标、候选因素与分析单位；只发布调整后统计关联，不发布因果影响。</p>
+        </div>
+        <span class="badge">Structured factor canary</span>
+    </header>
+    <div id="error" class="error" role="alert"></div>
+    <section class="panel" aria-labelledby="input-heading">
+        <h2 id="input-heading">分析规范</h2>
+        <div class="grid">
+            <div>
+                <label for="file">上传数据文件</label>
+                <input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet">
+                <div id="file-state" class="file-state">尚未上传文件</div>
+            </div>
+            <div>
+                <label for="target">目标数值列</label>
+                <input id="target" type="text" value="target" autocomplete="off">
+            </div>
+            <div>
+                <label for="features">候选因素列</label>
+                <input id="features" type="text" value="marketing,service,noise_feature" autocomplete="off">
+                <div class="hint">使用英文逗号分隔；不会自动使用其他列。</div>
+            </div>
+            <div>
+                <label for="analysis-unit">分析单位列</label>
+                <input id="analysis-unit" type="text" value="unit_id" autocomplete="off">
+            </div>
+            <div>
+                <label for="time-field">时间列（可选）</label>
+                <input id="time-field" type="text" value="" autocomplete="off" placeholder="重复观测时需要">
+            </div>
+            <div>
+                <label for="question">问题</label>
+                <input id="question" type="text" value="哪些因素与 target 存在可靠关系？" autocomplete="off">
+            </div>
+        </div>
+        <div class="actions">
+            <button id="run" type="button">开始分析</button>
+            <button id="restore" class="secondary" type="button">刷新恢复</button>
+            <span id="status" class="status">等待输入</span>
+        </div>
+        <div id="run-id" class="run-id"></div>
+    </section>
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading">
+        <h2 id="progress-heading">实时进度</h2>
+        <div id="progress-list" class="progress-list" aria-live="polite"></div>
+    </section>
+    <section class="panel" aria-labelledby="answer-heading">
+        <h2 id="answer-heading">分析结果</h2>
+        <div id="answer" class="answer" aria-live="polite"></div>
+    </section>
+</main>
+<script src="{{ url_for('static', filename='js/v2_factor_canary.js', v='slice2b4') }}"></script>
+</body>
+</html>

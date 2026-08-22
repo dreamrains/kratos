@@ -31,27 +31,35 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from data_fixture_catalog import (
+    REFERENCE_DATA_DIR,
+    reference_data_available,
+    reference_data_path,
+)
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # === 真实数据文件路径 ===
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
-HAS_TEST_DATA = TEST_DATA_DIR.exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
 
 # 旧会话使用的文件
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
-CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+CARD_PAYMENT = reference_data_path("0201到0510购卡用户付费数据.xlsx")
+VOUCHER_DETAIL = reference_data_path("代金券明细订单.xlsx")
+BEFORE_AFTER = reference_data_path("购卡前后订单.xlsx")
+CARD_ORDER = reference_data_path("省钱卡订单.xlsx")
 
 # 备用测试数据
-ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
-ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
+ECARD_FLOW = reference_data_path("省钱卡用户最近流水_20260511.xlsx")
+ECARD_ORDER = reference_data_path("省钱卡订单_20260507.xlsx")
+
+HAS_REAL_DATA = all(path.is_file() for path in (CARD_PAYMENT, VOUCHER_DETAIL, BEFORE_AFTER, CARD_ORDER))
+HAS_TEST_DATA = reference_data_available(
+    "省钱卡用户最近流水_20260511.xlsx",
+    "省钱卡订单_20260507.xlsx",
+)
 
 # 旧会话中用户的完整提示词
 ORIGINAL_PROMPT = (

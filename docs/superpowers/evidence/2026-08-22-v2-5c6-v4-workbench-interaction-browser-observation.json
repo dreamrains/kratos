@@ -1,0 +1,82 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_runner_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "planning": "v2_407785d536a3",
+    "steer": "v2_41ef50b52382",
+    "stop": "v2_ffe556546d22",
+    "isolation": "v2_8a958c1e4b81"
+  },
+  "observations": {
+    "root_is_v2": true,
+    "legacy_rollback_route_available": true,
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  },
+  "observed_turns": {
+    "planning": {
+      "session_id": "v2_407785d536a3",
+      "turn_id": "turn_145055eeeedd",
+      "status": "finalized",
+      "block_count": 4
+    },
+    "steer_source": {
+      "session_id": "v2_41ef50b52382",
+      "turn_id": "turn_77bff472aad1",
+      "status": "finalized",
+      "block_count": 4
+    },
+    "steer_target": {
+      "session_id": "v2_41ef50b52382",
+      "turn_id": "turn_96cf7bf2146b",
+      "status": "finalized",
+      "block_count": 4
+    },
+    "stop": {
+      "session_id": "v2_ffe556546d22",
+      "turn_id": "turn_294c272258fc",
+      "status": "interrupted",
+      "block_count": 0
+    },
+    "recovery_failed": {
+      "session_id": "v2_8a958c1e4b81",
+      "turn_id": "turn_cd9ebddbd1e2",
+      "status": "failed",
+      "block_count": 0
+    },
+    "recovery_finalized": {
+      "session_id": "v2_8a958c1e4b81",
+      "turn_id": "turn_efe99d920068",
+      "status": "finalized",
+      "block_count": 3
+    }
+  },
+  "browser_observations": {
+    "root": "根入口显示 V2 Workbench；/legacy 仍显示旧版观澜入口。",
+    "steer": "运行中问题输入保持可编辑；消息排队后自动启动同一 session 的新 turn；两个 turn 均完成。",
+    "stop": "同一浏览器动作序列中开始并停止；页面显示已停止，答案为空；刷新仍为已停止。",
+    "recovery": "缺失指标先显示失败；修正为 sales 后在同一 session 的新 turn 完成。",
+    "session_isolation": "四个浏览器标签保持各自 session、turn 与答案块，未发生跨会话投影。",
+    "task_overlay": "各会话运行动态覆盖层均保持默认折叠。"
+  },
+  "root_switch_authorized": true,
+  "release_readiness_claimed": false
+}

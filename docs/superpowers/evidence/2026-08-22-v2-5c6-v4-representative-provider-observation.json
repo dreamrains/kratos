@@ -1,0 +1,137 @@
+{
+  "version": "v2_representative_provider_group_observation.v1",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "git_head": "11f09063b7c7d6428a230043f3fda17632dd5f9a",
+  "group_fingerprint": "sha256:f5aafca07c74708f1face3cd5194a12b993ad6e65c599cd5002eba503bcaca05",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "purpose": "analysis_planning",
+  "authorization": {
+    "mode": "grouped_exact_calls",
+    "provider_calls_authorized": 2,
+    "provider_calls_observed": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "fallback_calls": 0,
+    "automatic_followups": 0
+  },
+  "stop_reason": "",
+  "calls": [
+    {
+      "call_index": 1,
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+      "request_fingerprint": "sha256:189899570bb16cefb2ef1d1399f58061bb2bc0d2d04dcb627e5faef99966b471",
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "authorization_id": "provider_auth_130b29040f934a06b774c2b801985ffe",
+      "authorization_http_status": 201,
+      "authorization_status": "consumed",
+      "provider_calls": 1,
+      "planning_http_status": 201,
+      "planning_status": "ready",
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "aggregation": "sum",
+        "analysis_unit": "unit_id",
+        "frequency": "daily",
+        "group": "channel",
+        "metric": "sales",
+        "time_field": "date"
+      },
+      "deterministic_continuation": {
+        "execution_http_status": 200,
+        "refresh_http_status": 200,
+        "status": "finalized",
+        "event_names": [
+          "turn_started",
+          "commitment_snapshot",
+          "tool_started",
+          "tool_finished",
+          "tool_started",
+          "tool_finished",
+          "artifact_created",
+          "artifact_created",
+          "outcome_snapshot",
+          "final_block_delta",
+          "final_block_delta",
+          "final_block_delta",
+          "final_block_delta",
+          "turn_completed"
+        ],
+        "block_count": 4,
+        "block_types": [
+          "executive_answer",
+          "key_finding",
+          "comparison",
+          "method"
+        ],
+        "artifact_count": 2,
+        "recommendation_mode": "none",
+        "action_risk": "unknown",
+        "reversible": true
+      }
+    },
+    {
+      "call_index": 2,
+      "scenario_id": "backtested_forecast",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "dataset_fingerprint": "sha256:20e118a5a8e334571e0467aa2a33087a991c5863accf070838e885aa01cfb1cf",
+      "request_fingerprint": "sha256:7eeb0ae8e51bee9cb01182ae002504fb8a9c7dbed0415a2c88913ddae708bb51",
+      "semantic_context": {
+        "confirmed_analysis_unit_column": ""
+      },
+      "authorization_id": "provider_auth_cde0abf8565141faa7a0fee8827c6099",
+      "authorization_http_status": 201,
+      "authorization_status": "consumed",
+      "provider_calls": 1,
+      "planning_http_status": 201,
+      "planning_status": "ready",
+      "analysis_kind": "forecast",
+      "parameters": {
+        "aggregation": "sum",
+        "frequency": "daily",
+        "horizon": 7,
+        "metric": "sales",
+        "time_field": "date"
+      },
+      "deterministic_continuation": {
+        "execution_http_status": 200,
+        "refresh_http_status": 200,
+        "status": "finalized",
+        "event_names": [
+          "turn_started",
+          "commitment_snapshot",
+          "tool_started",
+          "tool_finished",
+          "artifact_created",
+          "outcome_snapshot",
+          "final_block_delta",
+          "final_block_delta",
+          "turn_completed"
+        ],
+        "block_count": 2,
+        "block_types": [
+          "executive_answer",
+          "method"
+        ],
+        "artifact_count": 1,
+        "recommendation_mode": "none",
+        "action_risk": "unknown",
+        "reversible": true
+      }
+    }
+  ],
+  "data_handling": {
+    "fixture_kind": "repository synthetic fixtures",
+    "raw_provider_response_persisted": false,
+    "provider_reasoning_persisted": false,
+    "planner_rationale_persisted": false,
+    "reference_test_doc_sent_to_provider": false
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": true,
+  "root_switched": true
+}

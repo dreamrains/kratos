@@ -1,0 +1,63 @@
+{
+  "version": "v2_real_provider_browser_restore.v1",
+  "date": "2026-08-20",
+  "observer": "actual_browser",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "git_head": "5d4245f60ee6196eb853c543ae845dccb38aae79",
+  "scenario_id": "unified_analysis_entry",
+  "source_plan_id": "plan_be601d811361b4587b54b6a5",
+  "session_id": "session_real_5c5q",
+  "turn_id": "turn_real_5c5q_deterministic",
+  "provider_authorization_ref": "provider_auth_fa49f16d382945ab81304baaaf214d40",
+  "provider_calls_observed_during_browser_restore": 0,
+  "automatic_retries": 0,
+  "browser": {
+    "surface": "codex_in_app_browser",
+    "url": "http://127.0.0.1:5001/v2-workbench?session_id=session_real_5c5q&turn_id=turn_real_5c5q_deterministic",
+    "console_errors": [],
+    "server_request_methods": ["GET"],
+    "provider_or_analysis_post_observed": false
+  },
+  "initial_restore": {
+    "status_text": "已从持久化消息块恢复",
+    "session_line": "session session_real_5c5q · turn turn_real_5c5q_deterministic",
+    "article_count": 5,
+    "headings": ["直接回答", "历史趋势", "双组比较", "方法与共同边界", "建议的验证步骤"],
+    "figure_count": 2,
+    "iframe_count": 2,
+    "figure_titles": ["sales 的历史日趋势", "sales 的channel双组分布"],
+    "chart_loaded_states": ["true", "true"],
+    "plotly_toolbars_observed": 2,
+    "visible_error": ""
+  },
+  "after_page_reload": {
+    "status_text": "已从持久化消息块恢复",
+    "session_line": "session session_real_5c5q · turn turn_real_5c5q_deterministic",
+    "article_count": 5,
+    "headings": ["直接回答", "历史趋势", "双组比较", "方法与共同边界", "建议的验证步骤"],
+    "figure_count": 2,
+    "iframe_count": 2,
+    "figure_titles": ["sales 的历史日趋势", "sales 的channel双组分布"],
+    "chart_loaded_states": ["true", "true"],
+    "visible_error": ""
+  },
+  "visual_review": {
+    "trend_chart_rendered": true,
+    "group_chart_rendered": true,
+    "charts_adjacent_to_supported_blocks": true,
+    "trend_chart_matches_positive_daily_pattern": true,
+    "group_chart_matches_b_higher_than_a": true,
+    "application_duplicate_figures_observed": false,
+    "capture_note": "The full-page stitched screenshot repeated iframe pixels below their DOM positions. DOM snapshots before and after reload each contained exactly two unique figures and two chart iframes, so this was treated as a capture artifact rather than application duplication."
+  },
+  "result": {
+    "browser_restore": "pass",
+    "chart_render": "pass",
+    "refresh_persistence": "pass"
+  },
+  "refresh_release_receipt_issued": true,
+  "browser_interaction_release_receipt_issued": false,
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

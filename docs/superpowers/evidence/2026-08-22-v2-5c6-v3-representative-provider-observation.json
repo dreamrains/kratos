@@ -1,0 +1,129 @@
+{
+  "version": "v2_representative_provider_group_observation.v1",
+  "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+  "git_head": "633834477fd82f93043b2b4e1c81900caff078db",
+  "group_fingerprint": "sha256:504dc3e38c4682f019c46910bc06bce357acee8bf9f0c24ecf9060e2a86320a4",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "purpose": "analysis_planning",
+  "authorization": {
+    "mode": "grouped_exact_calls",
+    "provider_calls_authorized": 2,
+    "provider_calls_observed": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "fallback_calls": 0,
+    "automatic_followups": 0
+  },
+  "stop_reason": "",
+  "calls": [
+    {
+      "call_index": 1,
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+      "request_fingerprint": "sha256:ec20ec1617a649ee58ea32c630fbe6a7ec4328f0f58c3214fb08ccca1472874a",
+      "semantic_context": {
+        "confirmed_analysis_unit_column": "unit_id"
+      },
+      "authorization_id": "provider_auth_21684c739b2e4b0f94e84ae2e7568fde",
+      "authorization_http_status": 201,
+      "authorization_status": "consumed",
+      "provider_calls": 1,
+      "planning_http_status": 201,
+      "planning_status": "ready",
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "aggregation": "sum",
+        "analysis_unit": "unit_id",
+        "frequency": "daily",
+        "group": "channel",
+        "metric": "sales",
+        "time_field": "date"
+      },
+      "deterministic_continuation": {
+        "execution_http_status": 200,
+        "refresh_http_status": 200,
+        "status": "finalized",
+        "event_names": [
+          "turn_started",
+          "commitment_snapshot",
+          "tool_started",
+          "tool_finished",
+          "artifact_created",
+          "outcome_snapshot",
+          "final_block_delta",
+          "turn_completed"
+        ],
+        "block_count": 4,
+        "block_types": [
+          "executive_answer",
+          "key_finding",
+          "comparison",
+          "method"
+        ],
+        "artifact_count": 2,
+        "recommendation_mode": "none",
+        "action_risk": "unknown",
+        "reversible": true
+      }
+    },
+    {
+      "call_index": 2,
+      "scenario_id": "backtested_forecast",
+      "fixture_path": "tests/fixtures/v2_slice4b_daily.csv",
+      "dataset_fingerprint": "sha256:20e118a5a8e334571e0467aa2a33087a991c5863accf070838e885aa01cfb1cf",
+      "request_fingerprint": "sha256:fa1476632dd03295098e63da3a3bede12bdfabc342a773c7a3ff2305fe6c4476",
+      "semantic_context": {
+        "confirmed_analysis_unit_column": ""
+      },
+      "authorization_id": "provider_auth_02b8fe37634c4cc5b0cded2979b9d84b",
+      "authorization_http_status": 201,
+      "authorization_status": "consumed",
+      "provider_calls": 1,
+      "planning_http_status": 201,
+      "planning_status": "ready",
+      "analysis_kind": "forecast",
+      "parameters": {
+        "aggregation": "sum",
+        "frequency": "daily",
+        "horizon": 7,
+        "metric": "sales",
+        "time_field": "date"
+      },
+      "deterministic_continuation": {
+        "execution_http_status": 200,
+        "refresh_http_status": 200,
+        "status": "finalized",
+        "event_names": [
+          "turn_started",
+          "commitment_snapshot",
+          "tool_started",
+          "tool_finished",
+          "artifact_created",
+          "outcome_snapshot",
+          "final_block_delta",
+          "turn_completed"
+        ],
+        "block_count": 2,
+        "block_types": [
+          "executive_answer",
+          "method"
+        ],
+        "artifact_count": 1,
+        "recommendation_mode": "none",
+        "action_risk": "unknown",
+        "reversible": true
+      }
+    }
+  ],
+  "data_handling": {
+    "fixture_kind": "repository synthetic fixtures",
+    "raw_provider_response_persisted": false,
+    "provider_reasoning_persisted": false,
+    "planner_rationale_persisted": false,
+    "reference_test_doc_sent_to_provider": false
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

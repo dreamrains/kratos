@@ -1,0 +1,57 @@
+[
+  {
+    "receipt_id": "receipt_unified_owner_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "owner_contract",
+    "status": "pass",
+    "evidence_refs": ["deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1"
+  },
+  {
+    "receipt_id": "receipt_unified_incident_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "incident_replay",
+    "status": "pass",
+    "evidence_refs": ["deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1"
+  },
+  {
+    "receipt_id": "receipt_unified_sse_b16f8ab9193d8355",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "sse_transport_contract",
+    "status": "pass",
+    "evidence_refs": ["deterministic:unified:sha256:b16f8ab9193d8355ce1f72639e1d05f18c92cbe034f6c47cb8b5a8190ac70db4"],
+    "oracle_identity": "v2_unified_deterministic_oracle.v1",
+    "observed_semantic_events": ["turn_started", "commitment_snapshot", "tool_started", "tool_finished", "outcome_snapshot", "final_block_delta", "turn_completed", "turn_interrupted"]
+  },
+  {
+    "receipt_id": "receipt_unified_browser_6b580335f05f64a7",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "browser_interaction_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:d11b0f880b88b11e85a1830512f2ed9351fdf45a87e6b36edca204862e55409f",
+      "actual-browser:interaction:sha256:a60cbb5c4dd570ca68ff79ea2d6e5a4e15e882a8e81fb083475a72e8966e4bd5"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": ["upload", "planning_estimate_without_authorization", "explicit_planning_confirmation", "needs_input", "planning_answer_persisted", "planning_failure_stable", "explicit_planning_retry", "live_progress", "task_overlay_collapsed", "refresh_restore", "draft_while_running", "queued_steer", "stop", "error_recovery", "session_isolation"],
+    "chart_observation": "rendered"
+  },
+  {
+    "receipt_id": "receipt_unified_refresh_6b580335f05f64a7",
+    "source_digest": "sha256:f48187be392cc2875d4d9c6a0dca577f69f7eea379013cd77ae2990bb3d060ff",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "refresh_persistence_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:d11b0f880b88b11e85a1830512f2ed9351fdf45a87e6b36edca204862e55409f",
+      "actual-browser:interaction:sha256:a60cbb5c4dd570ca68ff79ea2d6e5a4e15e882a8e81fb083475a72e8966e4bd5"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": ["refresh_restore"]
+  }
+]

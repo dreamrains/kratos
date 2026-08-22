@@ -21,16 +21,18 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from data_fixture_catalog import REFERENCE_DATA_DIR, reference_data_path
+
 # Ensure UTF-8 output on Windows
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+TEST_DATA_DIR = REFERENCE_DATA_DIR
 
 
 def _data_path(filename: str) -> str:
-    p = TEST_DATA_DIR / filename
+    p = reference_data_path(filename)
     assert p.exists(), f"Test data file not found: {p}"
     return str(p)
 

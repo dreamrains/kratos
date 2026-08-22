@@ -1,0 +1,28 @@
+{
+  "version": "v2_provider_neutral_browser_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "answer_characters": 6400,
+  "answer_before_digest": "sha256:380ed028afb6d3ea1d6434939fb67b5d9d12b300b87cc7f7e207860f452fe614",
+  "answer_after_digest": "sha256:380ed028afb6d3ea1d6434939fb67b5d9d12b300b87cc7f7e207860f452fe614",
+  "final_answer_digest": "sha256:9e0b676b21277b1332f6e9414f16adeba42c72a41d5c55c237888cbc425d6fc4",
+  "data_scope_observed": true,
+  "chart_observation": "rendered",
+  "chart_count": 2,
+  "checkpoints": [
+    {"name": "loaded", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "等待输入"},
+    {"name": "estimated", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "估算完成；确认后才会调用模型 1 次"},
+    {"name": "needs_input", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "等待补充规划信息"},
+    {"name": "answer_estimated", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "回答已保存并完成估算；确认后才会调用模型 1 次"},
+    {"name": "failed", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "规划失败；不会自动重试"},
+    {"name": "failure_stable", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "已恢复规划终态"},
+    {"name": "retry_estimated", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "重试估算完成；确认后才会调用模型 1 次"},
+    {"name": "completed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "分析完成"},
+    {"name": "refreshed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "已从持久化消息块恢复"}
+  ]
+}

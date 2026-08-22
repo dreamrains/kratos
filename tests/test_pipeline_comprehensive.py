@@ -22,14 +22,27 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from data_fixture_catalog import (
+    REFERENCE_DATA_DIR,
+    reference_data_available,
+    reference_data_path,
+)
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-HAS_TEST_DATA = TEST_DATA_DIR.exists()
-HAS_REAL_DATA = Path("D:/Project/Daily/备用/20260512测试").exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
+HAS_TEST_DATA = reference_data_available(
+    "游戏A内购数据.xlsx",
+    "游戏Abanner汇总数据.xlsx",
+    "游戏A激励视频汇总数据报表.xlsx",
+    "游戏互推.xlsx",
+    "省钱卡订单_20260507.xlsx",
+    "省钱卡用户最近流水_20260511.xlsx",
+)
+HAS_REAL_DATA = reference_data_available("购卡前后订单.xlsx")
 
 
 @pytest.fixture
@@ -318,7 +331,7 @@ class TestABTestEdge:
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.statistics import ab_test
-        load_data(str(Path("D:/Project/Daily/备用/20260512测试/购卡前后订单.xlsx")), name="ba")
+        load_data(str(reference_data_path("购卡前后订单.xlsx")), name="ba")
         r = ab_test("ba", group_col="用户类型（1是购卡前30天内，2是购卡后30天内）", metric_col="实收金额")
         parsed = json.loads(r)
         assert "test" in parsed
@@ -561,7 +574,7 @@ class TestRealDataPipeline:
     ])
     def test_load_describe_eda(self, env, filename, name):
         """每个真实数据文件：加载 → 描述 → 基础 EDA。"""
-        path = TEST_DATA_DIR / filename
+        path = reference_data_path(filename)
         if not path.exists():
             pytest.skip(f"{filename} 不存在")
 
@@ -602,13 +615,14 @@ class TestRealDataPipeline:
 
     def test_ecard_order_analysis(self, env):
         """省钱卡订单分析流程。"""
-        if not (TEST_DATA_DIR / "省钱卡订单_20260507.xlsx").exists():
+        order_path = reference_data_path("省钱卡订单_20260507.xlsx")
+        if not order_path.exists():
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import distribution_analysis
         from data_agent.session.workspace import workspace
 
-        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
+        load_data(str(order_path), name="card")
         df = workspace.get("card")
         assert df is not None
 
@@ -635,14 +649,15 @@ class TestRealDataPipeline:
 
     def test_large_dataset_performance(self, env):
         """大数据集(13K+ rows)加载性能。"""
-        if not (TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx").exists():
+        flow_path = reference_data_path("省钱卡用户最近流水_20260511.xlsx")
+        if not flow_path.exists():
             pytest.skip()
         import time
         from data_agent.tools.data_io import load_data
         from data_agent.session.workspace import workspace
 
         t0 = time.time()
-        load_data(str(TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"), name="big")
+        load_data(str(flow_path), name="big")
         elapsed = time.time() - t0
 
         df = workspace.get("big")
@@ -909,7 +924,7 @@ class TestFunnelAnalysis:
             pytest.skip()
         from data_agent.tools.data_io import load_data
         from data_agent.tools.eda import funnel_analysis
-        load_data(str(TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"), name="card")
+        load_data(str(reference_data_path("省钱卡订单_20260507.xlsx")), name="card")
 
         from data_agent.session.workspace import workspace
         df = workspace.get("card")

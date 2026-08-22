@@ -1,0 +1,73 @@
+{
+  "version": "v2_real_provider_journey_preflight.v6",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "planning_context": {
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 2972,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "semantic_context": {
+    "confirmed_analysis_unit_column": "unit_id"
+  },
+  "planner_contract_gate": {
+    "version": "v2_planner_contract_parity.v3",
+    "passed": true,
+    "schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+    "automatic_analysis_kinds": [
+      "descriptive",
+      "factor_relationship",
+      "date_transformation",
+      "group_comparison",
+      "time_trend",
+      "forecast",
+      "multi_finding_synthesis"
+    ],
+    "ready_variant_count": 6,
+    "needs_input_variants": [
+      {
+        "analysis_kind": "factor_relationship",
+        "missing_prerequisites": [
+          "compatible_column_binding"
+        ]
+      }
+    ],
+    "needs_input_variant_count": 1,
+    "unsupported_variant_count": 1,
+    "status_variant_count": 8
+  },
+  "provider_host": "api.deepseek.com",
+  "request_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+  "authorization_request": {
+    "mode": "per_call",
+    "purpose": "analysis_planning",
+    "provider_calls": 1
+  },
+  "conditional_followup": {
+    "allowed_only_if_status": "needs_input",
+    "provider_calls": 1,
+    "requires_new_user_authorization": true,
+    "requires_fresh_token_estimate": true
+  },
+  "stop_conditions": [
+    "source_digest_changed",
+    "dataset_fingerprint_changed",
+    "analysis_unit_semantics_unconfirmed",
+    "planning_context_too_large",
+    "provider_error",
+    "planner_contract_error",
+    "unsupported_plan",
+    "needs_input_without_new_authorization"
+  ],
+  "provider_calls_observed": 0,
+  "authorization_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

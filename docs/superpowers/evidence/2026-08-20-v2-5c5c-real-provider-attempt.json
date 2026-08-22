@@ -1,0 +1,83 @@
+{
+  "version": "v2_real_provider_journey_attempt.v2",
+  "source_digest": "sha256:ce17634adf292aeab07d9a8b7063793372cdaa86be1d02451dd89870a5e5a719",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "planning_context": {
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 357,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_01c8f6e3ea244375a7a19d188cc13de0",
+    "client_action_id": "action_real_5c5c_initial",
+    "purpose": "analysis_planning",
+    "filename": "v2_slice4d_combined.csv",
+    "model_id": "openai/deepseek-v4-flash",
+    "runtime_authorization_fingerprint": "sha256:bfd4dfffc8d96b39274c6c251d9e27b14d70a755f605872037b3e959c33f00aa",
+    "provider_calls_authorized": 1,
+    "status": "consumed",
+    "planning_input_id": "",
+    "planning_context": {
+      "model_id": "openai/deepseek-v4-flash",
+      "estimated_input_tokens": 357,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "consumer_request_id": "request_real_5c5c_initial"
+  },
+  "journey": [
+    {"operation": "upload", "http_status": 200, "provider_calls": 0},
+    {"operation": "planning_estimate", "http_status": 200, "provider_calls": 0},
+    {"operation": "authorization_issue", "http_status": 201, "provider_calls": 0},
+    {"operation": "analysis_planning", "http_status": 502, "provider_calls": 1}
+  ],
+  "result": {
+    "plan_id": "plan_4603e45ba88bbd0bdd915969",
+    "status": "failed",
+    "error_code": "PlannerContractError",
+    "message": "planner invocation or contract validation failed",
+    "error_reason_code": "plan_status_payload_invalid",
+    "failure_stage": "plan_compilation",
+    "provider_calls": 1,
+    "planner_invocations": 0,
+    "automatic_retries": 0,
+    "stop_condition": "planner_contract_error"
+  },
+  "safe_diagnostic": {
+    "failure_stage": "plan_compilation",
+    "finish_reason": "tool_calls",
+    "tool_call_count": 1,
+    "tool_names": ["submit_analysis_plan"],
+    "tool_argument_types": ["dict"],
+    "argument_top_level_fields": [
+      "analysis_kind",
+      "parameters",
+      "questions",
+      "rationale",
+      "status"
+    ],
+    "metadata_truncated": false
+  },
+  "provider_attempts": [
+    {
+      "model_id": "openai/deepseek-v4-flash",
+      "api_base": "https://api.deepseek.com"
+    }
+  ],
+  "provider_calls_observed": 1,
+  "automatic_retries": 0,
+  "downstream_analysis_executed": false,
+  "release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

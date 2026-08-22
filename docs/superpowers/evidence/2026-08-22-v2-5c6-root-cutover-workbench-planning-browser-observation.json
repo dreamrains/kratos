@@ -1,0 +1,84 @@
+{
+  "version": "v2_provider_neutral_browser_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "answer_characters": 249,
+  "answer_before_digest": "sha256:1e5d93a1e4e906bf1b7cecf94b7853c470a614dc848e075adf6db06176cc5bd3",
+  "answer_after_digest": "sha256:1e5d93a1e4e906bf1b7cecf94b7853c470a614dc848e075adf6db06176cc5bd3",
+  "chart_observation": "rendered",
+  "chart_count": 2,
+  "checkpoints": [
+    {
+      "name": "loaded",
+      "planner_invocations": 0,
+      "authorizations_issued": 0,
+      "authorizations_consumed": 0,
+      "visible_state": "未上传文件；没有估算或模型调用"
+    },
+    {
+      "name": "estimated",
+      "planner_invocations": 0,
+      "authorizations_issued": 0,
+      "authorizations_consumed": 0,
+      "visible_state": "上传完成，显示独立观察单位候选列与零调用估算"
+    },
+    {
+      "name": "needs_input",
+      "planner_invocations": 1,
+      "authorizations_issued": 1,
+      "authorizations_consumed": 1,
+      "visible_state": "等待补充规划信息；显示分析单位问题"
+    },
+    {
+      "name": "answer_estimated",
+      "planner_invocations": 1,
+      "authorizations_issued": 1,
+      "authorizations_consumed": 1,
+      "visible_state": "回答已保存并完成估算；重新规划仍需显式确认"
+    },
+    {
+      "name": "failed",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "方法规划失败；不会自动重试"
+    },
+    {
+      "name": "failure_stable",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "失败状态保持稳定，只有重新估算按钮可启动下一次显式操作"
+    },
+    {
+      "name": "retry_estimated",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "重试估算完成；确认后才会调用模型 1 次"
+    },
+    {
+      "name": "completed",
+      "planner_invocations": 3,
+      "authorizations_issued": 3,
+      "authorizations_consumed": 3,
+      "visible_state": "趋势与双组综合分析完成，显示四个结构化答案块与两张图表"
+    },
+    {
+      "name": "refreshed",
+      "planner_invocations": 3,
+      "authorizations_issued": 3,
+      "authorizations_consumed": 3,
+      "visible_state": "已从持久化消息块恢复；规划回答与答案指纹在刷新前后保持一致"
+    }
+  ],
+  "analysis_answer_before_digest": "sha256:79ebfd64610732039c6739ae63b6a65bb46867ae8853cf8f32ee63bdbeaaa31b",
+  "analysis_answer_after_digest": "sha256:79ebfd64610732039c6739ae63b6a65bb46867ae8853cf8f32ee63bdbeaaa31b",
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

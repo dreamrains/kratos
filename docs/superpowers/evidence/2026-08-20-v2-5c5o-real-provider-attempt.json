@@ -1,0 +1,109 @@
+{
+  "version": "v2_real_provider_journey_attempt.v5",
+  "source_digest": "sha256:db3464a5249f9ae6ea7787998298bcbdf5aae4ea2fe56b1e5aef656840b7151c",
+  "git_head": "dfa9f0c3aa735d045244adeb7636c4f979cbc5dd",
+  "preflight_request_fingerprint": "sha256:2221702dbc3d4870f1cf2fed175a8468e4ab34bfc64138f4d03bb40f50f3ff30",
+  "planner_schema_fingerprint": "sha256:6d0eaf57ac63110ee5cc6ca5a6290bc7fe206c69cb6a7b4d943cf60a9ac363e8",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "planning_context": {
+    "model_id": "openai/deepseek-v4-flash",
+    "estimated_input_tokens": 3510,
+    "model_context_window_tokens": 1000000,
+    "reserved_output_tokens": 8000,
+    "available_input_tokens": 992000,
+    "fits": true
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_390dc641d71c46a59282b07ca0f33b64",
+    "client_action_id": "action_real_5c5o_initial",
+    "purpose": "analysis_planning",
+    "model_id": "openai/deepseek-v4-flash",
+    "runtime_authorization_fingerprint": "sha256:36c7a147e4ae6f2296311adfda35295924e7f20da97ef20e49d9d77f6f9b6f57",
+    "provider_calls_authorized": 1,
+    "status": "consumed",
+    "consumer_request_id": "request_real_5c5o_initial"
+  },
+  "journey": [
+    {"operation": "upload", "http_status": 200, "provider_calls": 0},
+    {"operation": "planning_estimate", "http_status": 200, "provider_calls": 0},
+    {"operation": "authorization_issue", "http_status": 201, "provider_calls": 0},
+    {"operation": "analysis_planning", "http_status": 201, "provider_calls": 1}
+  ],
+  "result": {
+    "plan_id": "plan_b9163ff88f3fa2b70d1106dd",
+    "status_after_planning": "ready",
+    "status_after_deterministic_execution": "consumed",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "aggregation": "sum",
+      "analysis_unit": "unit_id",
+      "frequency": "weekly",
+      "group": "channel",
+      "metric": "sales",
+      "time_field": "date"
+    },
+    "questions_count": 0,
+    "maximum_claim_class": "inferential",
+    "planner_invocations": 1,
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_calls": 1,
+    "error_code": "",
+    "diagnostic_fields": []
+  },
+  "semantic_review": {
+    "status": "fail",
+    "reason_code": "incomplete_boundary_periods_compared",
+    "analysis_unit_binding": "pass",
+    "group_comparison_calculation": "pass",
+    "time_trend_calculation_identity": "pass",
+    "time_trend_methodology": "fail",
+    "observed_data_window": "2026-01-01/2026-02-11",
+    "published_period_window": "2025-12-29/2026-02-09",
+    "weekly_period_count": 7,
+    "incomplete_boundary_period_count": 2,
+    "first_partial_week_days": 4,
+    "last_partial_week_days": 3,
+    "first_partial_week_sum": 432,
+    "last_partial_week_sum": 475,
+    "explanation": "The weekly sum trend compared two partial boundary weeks with five complete weeks. The resulting null trend is not a trustworthy answer to the historical-change question."
+  },
+  "independent_spot_checks": {
+    "weekly_trend": {
+      "estimate": 26.464285714285722,
+      "confidence_low": -120.5607608014889,
+      "confidence_high": 173.48933223006034,
+      "p_value": 0.663017607057492
+    },
+    "group_comparison": {
+      "group_a_n": 21,
+      "group_b_n": 21,
+      "effective_units": 42,
+      "duplicate_units": false,
+      "difference": 14.0,
+      "confidence_low": 4.3235219134951475,
+      "confidence_high": 23.67647808650485,
+      "p_value": 0.005663925517338145,
+      "hedges_g": 0.885372557357838
+    }
+  },
+  "provider_attempts": [
+    {"model_id": "openai/deepseek-v4-flash", "api_base": "https://api.deepseek.com"}
+  ],
+  "provider_calls_observed": 1,
+  "automatic_retries": 0,
+  "data_handling": {
+    "api_key_persisted": false,
+    "raw_provider_response_persisted": false,
+    "reasoning_copied_to_attempt_evidence": false,
+    "rationale_copied_to_attempt_evidence": false
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

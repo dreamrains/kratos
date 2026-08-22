@@ -1,0 +1,72 @@
+{
+  "version": "v2_provider_neutral_interaction_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_interactions.v1",
+  "fixture_runner_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "sessions": {
+    "steer": "v2_7f0a27e43bc9",
+    "stop": "v2_34b5b2b05b4e",
+    "isolation": "v2_906dbaccfff0"
+  },
+  "observations": {
+    "upload": true,
+    "live_progress": true,
+    "draft_while_running": true,
+    "queued_steer_persisted": true,
+    "queued_steer_completed": true,
+    "stop_receipt_persisted": true,
+    "turn_interrupted": true,
+    "no_final_after_interrupt": true,
+    "task_overlay_collapsed": true,
+    "refresh_completed_restore": true,
+    "refresh_interrupted_restore": true,
+    "session_isolation": true,
+    "error_recovery": true
+  },
+  "observed_turns": {
+    "steer_source": {
+      "session_id": "v2_7f0a27e43bc9",
+      "turn_id": "turn_5c09f073b71d",
+      "status": "finalized",
+      "block_count": 3
+    },
+    "steer_target": {
+      "session_id": "v2_7f0a27e43bc9",
+      "turn_id": "turn_5aba9bc897d2",
+      "status": "finalized",
+      "block_count": 3
+    },
+    "stop": {
+      "session_id": "v2_34b5b2b05b4e",
+      "turn_id": "turn_389fcdd4891e",
+      "status": "interrupted",
+      "block_count": 0
+    },
+    "recovery_failed": {
+      "session_id": "v2_906dbaccfff0",
+      "turn_id": "turn_b87b8925a28a",
+      "status": "failed",
+      "block_count": 0,
+      "error": "unknown metric column: missing_metric"
+    },
+    "recovery_finalized": {
+      "session_id": "v2_906dbaccfff0",
+      "turn_id": "turn_21b0a5f70a80",
+      "status": "finalized",
+      "block_count": 3
+    }
+  },
+  "browser_observations": {
+    "steer": "运行中问题输入保持可编辑；消息持久化后自动启动同一 session 的新 turn；完成态刷新恢复答案。",
+    "stop": "同一浏览器动作序列中开始并停止；页面显示已停止，答案为空；刷新仍为已停止。",
+    "recovery": "缺失指标先显示失败；修正为 sales 后在同一 session 的新 turn 完成。",
+    "task_overlay": "三个会话的运行动态覆盖层均为默认折叠。"
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

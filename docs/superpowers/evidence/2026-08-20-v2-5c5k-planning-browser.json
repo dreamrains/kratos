@@ -1,0 +1,26 @@
+{
+  "version": "v2_provider_neutral_browser_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:60dd53c73d7e104ca36d623e669937d5006bd9bebb58081e616a039169383804",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "answer_characters": 6400,
+  "answer_before_digest": "sha256:c03fbb75c2ec64a83c35e0405ba158ce46919d0be91ae1bd4de8b14ad35edd87",
+  "answer_after_digest": "sha256:c03fbb75c2ec64a83c35e0405ba158ce46919d0be91ae1bd4de8b14ad35edd87",
+  "chart_observation": "rendered",
+  "chart_count": 2,
+  "checkpoints": [
+    {"name": "loaded", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "等待输入"},
+    {"name": "estimated", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "估算完成；确认后才会调用模型 1 次"},
+    {"name": "needs_input", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "等待补充规划信息"},
+    {"name": "answer_estimated", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "回答已保存并完成估算；确认后才会调用模型 1 次"},
+    {"name": "failed", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "规划失败；不会自动重试"},
+    {"name": "failure_stable", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "已恢复规划终态"},
+    {"name": "retry_estimated", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "重试估算完成；确认后才会调用模型 1 次"},
+    {"name": "completed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "分析完成"},
+    {"name": "refreshed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "已从持久化消息块恢复"}
+  ]
+}

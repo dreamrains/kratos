@@ -1,0 +1,38 @@
+{
+  "version": "v2_real_provider_deterministic_continuation.v2",
+  "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+  "scenario_id": "unified_analysis_entry",
+  "source_plan_id": "plan_892483484a1f23d1e13b0b94",
+  "turn_id": "turn_real_5c5m_deterministic",
+  "provider_calls_observed_during_continuation": 0,
+  "analysis_http_status": 200,
+  "refresh_http_status": 200,
+  "terminal_event": "turn_completed",
+  "restored_status": "finalized",
+  "block_count": 4,
+  "chart_count": 2,
+  "finding_count": 2,
+  "analysis_parameters": {
+    "time_field": "date",
+    "metric": "sales",
+    "frequency": "daily",
+    "aggregation": "sum",
+    "group": "channel",
+    "analysis_unit": "date"
+  },
+  "method_observations": {
+    "source_rows": 42,
+    "effective_analysis_units": 42,
+    "published_analysis_unit": "date",
+    "published_population_scope": "analysis_unit:date"
+  },
+  "semantic_review": {
+    "status": "fail",
+    "reason_code": "analysis_unit_role_invalid",
+    "explanation": "Transport, deterministic execution, persistence, and refresh completed, but the comparison treated the datetime field as the independent observation identity. This is not a semantically valid end-to-end PASS."
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "provider_followup_authorized": false,
+  "root_switch_authorized": false
+}

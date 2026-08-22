@@ -1,0 +1,1032 @@
+(() => {
+    const state = {
+        filename: '', sessionId: '', turnId: '', runId: '', analysisKind: 'descriptive',
+        blocks: [], artifacts: [], running: false, stoppable: false,
+        stopRequested: false, awaitingConfirmation: false, proposal: null,
+        activityCount: 0, queuedSteer: null, queuedTargetTurnId: '', terminalStatus: '',
+        pendingSteerRequest: null, planning: false, planId: '', planningInputId: '',
+        planningPlan: null, pendingPlanningRequest: null, pendingReplyId: '',
+        planningEstimate: null,
+    };
+    const byId = (id) => document.getElementById(id);
+    const escapeHtml = (value) => String(value ?? '').replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    const setStatus = (text) => { byId('status').textContent = text; };
+
+    function showError(message = '') {
+        byId('error').textContent = message;
+        byId('error').classList.toggle('visible', Boolean(message));
+    }
+
+    function updateUrl() {
+        if (!state.sessionId) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('session_id', state.sessionId);
+        if (state.turnId) url.searchParams.set('turn_id', state.turnId);
+        else url.searchParams.delete('turn_id');
+        if (state.planId) url.searchParams.set('plan_id', state.planId);
+        else url.searchParams.delete('plan_id');
+        if (state.planningInputId) url.searchParams.set('planning_input_id', state.planningInputId);
+        else url.searchParams.delete('planning_input_id');
+        history.replaceState({}, '', url);
+        const run = state.runId ? ` · run ${state.runId}` : '';
+        const turn = state.turnId ? ` · turn ${state.turnId}` : '';
+        const plan = state.planId ? ` · plan ${state.planId}` : '';
+        byId('run-id').textContent = `session ${state.sessionId}${turn}${plan}${run}`;
+    }
+
+    function showKindFields() {
+        state.analysisKind = byId('analysis-kind').value;
+        document.querySelectorAll('[data-kinds]').forEach((node) => {
+            node.hidden = !node.dataset.kinds.split(' ').includes(state.analysisKind);
+        });
+    }
+
+    function activity(label) {
+        state.activityCount += 1;
+        byId('activity-count').textContent = String(state.activityCount);
+        const item = document.createElement('div');
+        item.className = 'activity-item';
+        item.innerHTML = `<span class="dot"></span><span>${escapeHtml(label)}</span>`;
+        byId('activity-list').appendChild(item);
+    }
+
+    function canContinueSteer() {
+        return !state.running
+            && state.queuedSteer?.status === 'queued'
+            && ['completed', 'failed'].includes(state.terminalStatus);
+    }
+
+    function updateRunControls() {
+        const stop = byId('stop');
+        const steer = byId('steer');
+        const continueSteer = byId('continue-steer');
+        stop.hidden = !state.running;
+        stop.disabled = !state.stoppable || state.stopRequested;
+        steer.hidden = !state.running;
+        steer.disabled = !state.stoppable || state.stopRequested || !state.runId;
+        continueSteer.hidden = !canContinueSteer();
+        continueSteer.disabled = !canContinueSteer();
+        byId('run').disabled = state.running;
+        byId('plan-run').disabled = state.running || state.planning;
+        byId('plan-confirm').disabled = state.running || state.planning;
+        byId('run').disabled = state.running || state.planning;
+        byId('planning-submit').disabled = state.running || state.planning;
+        byId('planning-confirm').disabled = state.running || state.planning;
+        byId('execute-plan').disabled = state.running || state.planning;
+        byId('restore').disabled = state.running || state.planning;
+    }
+
+    const artifactUrl = (id) => `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/artifacts/${encodeURIComponent(id)}`;
+
+    function chartHtml(artifact) {
+        return `<figure class="chart-shell" data-chart-id="${escapeHtml(artifact.chart_id)}" data-chart-loaded="false"><figcaption>${escapeHtml(artifact.title)}</figcaption><iframe class="chart-frame" title="${escapeHtml(artifact.title)}" src="${artifactUrl(artifact.chart_id)}" loading="eager"></iframe></figure>`;
+    }
+
+    function bindCharts() {
+        byId('answer').querySelectorAll('.chart-frame').forEach((frame) => {
+            const wait = (attempt = 0) => {
+                try {
+                    if (frame.contentDocument?.querySelector('.plotly-graph-div .main-svg')) {
+                        frame.closest('.chart-shell').dataset.chartLoaded = 'true';
+                        return;
+                    }
+                } catch (_) {}
+                if (attempt === 20 && frame.dataset.navigationRetried !== 'true') {
+                    frame.dataset.navigationRetried = 'true';
+                    const retry = new URL(frame.src, window.location.origin);
+                    retry.searchParams.set('_retry', String(Date.now()));
+                    frame.src = retry.toString();
+                    window.setTimeout(() => wait(0), 50);
+                    return;
+                }
+                if (attempt < 100) window.setTimeout(() => wait(attempt + 1), 50);
+            };
+            frame.addEventListener('load', () => wait(), {once: true});
+            wait();
+        });
+    }
+
+    function renderBlocks(blocks, artifacts = state.artifacts, showCharts = true) {
+        state.blocks = blocks || [];
+        state.artifacts = artifacts || [];
+        const visible = showCharts ? state.artifacts : [];
+        const artifactById = new Map(visible.map((item) => [item.chart_id, item]));
+        const consumed = new Set();
+        const body = state.blocks.map((block) => {
+            const charts = (block.chart_refs || []).map((id) => {
+                const artifact = artifactById.get(id);
+                if (!artifact) return '';
+                consumed.add(id);
+                return chartHtml(artifact);
+            }).join('');
+            const limits = (block.limitations || []).length
+                ? `<ul>${block.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '';
+            return `<article class="answer-block" data-block-type="${escapeHtml(block.block_type)}" data-calibration="${escapeHtml(block.calibration)}"><h2>${escapeHtml(block.headline)}</h2><p>${escapeHtml(block.narrative)}</p>${charts}${limits}</article>`;
+        }).join('');
+        const extra = visible.filter((item) => !consumed.has(item.chart_id));
+        const supplement = extra.length
+            ? `<section class="supplemental"><h2>补充图表</h2>${extra.map(chartHtml).join('')}</section>` : '';
+        byId('answer').innerHTML = body + supplement;
+        bindCharts();
+    }
+
+    async function uploadSelected() {
+        const file = byId('file').files[0];
+        if (!file) throw new Error('请先选择数据文件。');
+        const form = new FormData();
+        form.append('file', file);
+        setStatus('正在上传');
+        const response = await fetch('/api/upload', {method: 'POST', body: form});
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || '上传失败');
+        state.filename = body.filename;
+        byId('file-state').textContent = `已上传：${body.filename}`;
+    }
+
+    function requestIdentity(prefix) {
+        return `${prefix}_${crypto.randomUUID().replaceAll('-', '')}`;
+    }
+
+    function ensurePlanningSession() {
+        state.sessionId ||= `v2_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+        updateUrl();
+    }
+
+    async function fetchJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(body.error || '请求失败');
+            error.body = body;
+            error.status = response.status;
+            throw error;
+        }
+        return body;
+    }
+
+    function planningErrorMessage(error) {
+        const context = error.body?.planning_context;
+        if (error.body?.error_code === 'planning_context_too_large' && context) {
+            return `规划上下文超过模型能力：预计输入 ${context.estimated_input_tokens} tokens；模型窗口 ${context.model_context_window_tokens}；预留输出 ${context.reserved_output_tokens}；可用输入 ${context.available_input_tokens}。未裁剪任何内容。`;
+        }
+        return error.message;
+    }
+
+    function showPlanningError(error) {
+        if (error.body?.planning_context) {
+            renderPlanningEstimate(error.body.planning_context);
+        }
+        showError(planningErrorMessage(error));
+    }
+
+    function hidePlanning() {
+        state.planningPlan = null;
+        byId('planning-input').hidden = true;
+        byId('planning-questions').innerHTML = '';
+        byId('planning-submit').hidden = false;
+        byId('planning-confirm').hidden = true;
+        byId('planning-retry').hidden = true;
+        byId('execute-plan').hidden = true;
+    }
+
+    function renderPlanningEstimate(estimate) {
+        state.planningEstimate = estimate || null;
+        if (estimate?.semantic_options) {
+            const select = byId('planning-semantic-unit');
+            const previous = select.value;
+            const confirmed = estimate.semantic_context?.confirmed_analysis_unit_column || '';
+            const columns = estimate.semantic_options.analysis_unit_columns || [];
+            select.innerHTML = `
+                <option value="">请选择已确认的业务列或明确暂不确认</option>
+                <option value="__defer__">暂不确认，允许规划器在需要时提问</option>
+                ${columns.map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`).join('')}`;
+            const preferred = confirmed || (columns.includes(previous) || previous === '__defer__' ? previous : '');
+            select.value = preferred;
+            select.disabled = false;
+        }
+        byId('planning-estimate').textContent = estimate
+            ? `预计输入 ${estimate.estimated_input_tokens} tokens；模型窗口 ${estimate.model_context_window_tokens}；预留输出 ${estimate.reserved_output_tokens}；可用输入 ${estimate.available_input_tokens}。`
+            : '尚未估算。估算本身不会签发授权或调用模型。';
+    }
+
+    function planningSemanticContext() {
+        const selected = byId('planning-semantic-unit').value;
+        return {
+            confirmed_analysis_unit_column: selected === '__defer__' ? '' : selected,
+        };
+    }
+
+    function resetPlanningSemanticOptions() {
+        const select = byId('planning-semantic-unit');
+        select.innerHTML = '<option value="">请先估算以加载候选列</option><option value="__defer__">暂不确认，允许规划器在需要时提问</option>';
+        select.value = '';
+        select.disabled = true;
+    }
+
+    async function estimatePlanning(planningInputId = '') {
+        const body = {
+            session_id: state.sessionId,
+            filename: state.filename,
+            question: byId('question').value.trim(),
+            semantic_context: planningSemanticContext(),
+        };
+        if (planningInputId) {
+            body.planning_input_id = planningInputId;
+            delete body.semantic_context;
+        }
+        const estimate = await fetchJson('/api/v2/planning-estimates', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        renderPlanningEstimate(estimate);
+        return estimate;
+    }
+
+    function renderPlanning(plan, planningInput = null) {
+        state.planningPlan = plan;
+        state.planId = plan.plan_id;
+        state.planningInputId = planningInput?.planning_input_id || plan.planning_input_id || '';
+        const panel = byId('planning-input');
+        panel.hidden = false;
+        byId('planning-rationale').textContent = plan.rationale || plan.message || '';
+        const submit = byId('planning-submit');
+        const execute = byId('execute-plan');
+        const retry = byId('planning-retry');
+        submit.hidden = plan.status !== 'needs_input';
+        execute.hidden = plan.status !== 'ready';
+        retry.hidden = plan.status !== 'failed';
+        const headings = {
+            needs_input: '规划需要补充信息',
+            ready: '分析计划已就绪',
+            unsupported: '当前方法目录无法支持该问题',
+            failed: '方法规划失败',
+        };
+        byId('planning-heading').textContent = headings[plan.status] || '分析规划';
+        const answerById = new Map((planningInput?.answers || []).map((item) => [item.question_id, item.answer]));
+        const resolutionByCode = new Map((planningInput?.semantic_resolutions || []).map((item) => [item.prerequisite_code, item.column]));
+        const semanticFields = (plan.missing_prerequisites || []).includes('analysis_unit_semantics') ? `
+            <div class="planning-question planning-semantic-resolution">
+                <label for="semantic-analysis-unit">哪一列标识独立观察单位？</label>
+                <select id="semantic-analysis-unit" data-prerequisite-code="analysis_unit_semantics">
+                    <option value="">请选择已确认的业务列</option>
+                    ${(plan.dataset_context?.columns || [])
+                        .filter((item) => !['datetime', 'unknown'].includes(item.role))
+                        .map((item) => `<option value="${escapeHtml(item.name)}" ${resolutionByCode.get('analysis_unit_semantics') === item.name ? 'selected' : ''}>${escapeHtml(item.name)}</option>`)
+                        .join('')}
+                </select>
+            </div>` : '';
+        byId('planning-questions').innerHTML = semanticFields + (plan.message_blocks || []).map((block) => `
+            <div class="planning-question">
+                <label for="answer-${escapeHtml(block.question_id)}">${escapeHtml(block.text)}</label>
+                <textarea id="answer-${escapeHtml(block.question_id)}" data-question-id="${escapeHtml(block.question_id)}" placeholder="请提供完整业务语义；回答不会被截断。">${escapeHtml(answerById.get(block.question_id) || '')}</textarea>
+            </div>`).join('');
+        byId('planning-questions').querySelectorAll('textarea, select[data-prerequisite-code]').forEach((input) => {
+            input.addEventListener('input', () => {
+                state.planningInputId = '';
+                byId('planning-confirm').hidden = true;
+                updateUrl();
+            });
+        });
+        updateUrl();
+    }
+
+    async function issuePlanningAuthorization(planningInputId, identities) {
+        const body = {
+            session_id: state.sessionId,
+            filename: state.filename,
+            question: byId('question').value.trim(),
+            client_action_id: identities.clientActionId,
+            purpose: 'analysis_planning',
+            provider_calls_authorized: 1,
+            confirm_provider_call: true,
+            semantic_context: planningSemanticContext(),
+        };
+        if (planningInputId) {
+            body.planning_input_id = planningInputId;
+            delete body.semantic_context;
+        }
+        return fetchJson('/api/v2/provider-authorizations', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+    }
+
+    async function handlePlanningResult(plan, {autoExecute = true} = {}) {
+        state.planId = plan.plan_id;
+        state.pendingPlanningRequest = null;
+        updateUrl();
+        if (plan.status === 'ready') {
+            restoreFields({
+                analysis_kind: plan.analysis_kind,
+                filename: plan.dataset_context?.filename,
+                question: plan.question,
+                ...(plan.parameters || {}),
+            });
+            if (!autoExecute) {
+                renderPlanning(plan);
+                setStatus('计划已恢复，可直接执行');
+                return;
+            }
+            hidePlanning();
+            state.turnId = requestIdentity('turn').slice(0, 17);
+            updateUrl();
+            await executeAnalysis({
+                session_id: state.sessionId,
+                turn_id: state.turnId,
+                plan_id: plan.plan_id,
+                recommendation_intent: byId('recommendation-intent').value,
+                action_risk: byId('action-risk').value,
+                reversible: byId('reversible').checked,
+            });
+            return;
+        }
+        renderPlanning(plan);
+        if (plan.status === 'needs_input') setStatus('等待补充规划信息');
+        else if (plan.status === 'unsupported') setStatus('当前方法目录不支持该问题');
+        else setStatus('规划失败；不会自动重试');
+    }
+
+    async function requestPlan(planningInputId = '', {autoExecute = true} = {}) {
+        if (state.running || state.planning) return;
+        const question = byId('question').value.trim();
+        if (!question) {
+            showError('请输入需要分析的问题。');
+            return;
+        }
+        ensurePlanningSession();
+        const pending = state.pendingPlanningRequest;
+        const identities = pending && pending.planningInputId === planningInputId
+            ? pending
+            : {
+                planningInputId,
+                clientActionId: requestIdentity('action'),
+                clientRequestId: requestIdentity('client'),
+                authorizationId: '',
+            };
+        state.pendingPlanningRequest = identities;
+        state.planning = true;
+        showError('');
+        updateRunControls();
+        try {
+            setStatus('正在计算完整规划请求 token');
+            await estimatePlanning(planningInputId);
+            setStatus('正在取得一次性规划授权');
+            if (!identities.authorizationId) {
+                const authorization = await issuePlanningAuthorization(planningInputId, identities);
+                identities.authorizationId = authorization.authorization_id;
+            }
+            setStatus('正在选择分析方法（模型调用 1 次）');
+            const requestBody = {
+                session_id: state.sessionId,
+                filename: state.filename,
+                question,
+                client_request_id: identities.clientRequestId,
+                provider_authorization_id: identities.authorizationId,
+                semantic_context: planningSemanticContext(),
+            };
+            if (planningInputId) {
+                requestBody.planning_input_id = planningInputId;
+                delete requestBody.semantic_context;
+            }
+            const plan = await fetchJson('/api/v2/plans', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody),
+            });
+            await handlePlanningResult(plan, {autoExecute});
+        } catch (error) {
+            if (error.body?.plan) {
+                state.pendingPlanningRequest = null;
+                await handlePlanningResult(error.body.plan, {autoExecute: false});
+            }
+            showPlanningError(error);
+            setStatus('规划失败；不会自动重试');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function planAndRun() {
+        if (state.running || state.planning) return;
+        try {
+            if (!state.filename) await uploadSelected();
+        } catch (error) {
+            showError(error.message);
+            setStatus('上传失败');
+            return;
+        }
+        ensurePlanningSession();
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            setStatus('正在估算完整规划请求；不会调用模型');
+            await estimatePlanning('');
+            if (!byId('planning-semantic-unit').value) {
+                byId('plan-confirm').hidden = true;
+                setStatus('请选择独立观察单位或明确暂不确认，然后再次估算');
+                return;
+            }
+            byId('plan-confirm').hidden = false;
+            setStatus('估算完成；确认后才会调用模型 1 次');
+        } catch (error) {
+            showPlanningError(error);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function answerAndReplan() {
+        const plan = state.planningPlan;
+        if (!plan || plan.status !== 'needs_input' || state.running || state.planning) return;
+        const answers = [...byId('planning-questions').querySelectorAll('textarea')].map((input) => ({
+            question_id: input.dataset.questionId,
+            answer: input.value.trim(),
+        }));
+        if (!answers.length || answers.some((item) => !item.answer)) {
+            showError('请完整回答所有规划问题。');
+            return;
+        }
+        const semanticResolutions = [...byId('planning-questions').querySelectorAll('select[data-prerequisite-code]')].map((input) => ({
+            prerequisite_code: input.dataset.prerequisiteCode,
+            column: input.value,
+        }));
+        if (semanticResolutions.some((item) => !item.column)) {
+            showError('请选择已确认的独立观察单位列。');
+            return;
+        }
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            if (!state.planningInputId) {
+                state.pendingReplyId ||= requestIdentity('reply');
+                setStatus('正在保存规划回答');
+                const planningInput = await fetchJson(
+                    `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/plans/${encodeURIComponent(plan.plan_id)}/answers`,
+                    {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            client_reply_id: state.pendingReplyId,
+                            answers,
+                            semantic_resolutions: semanticResolutions,
+                        }),
+                    },
+                );
+                state.planningInputId = planningInput.planning_input_id;
+                state.pendingReplyId = '';
+                updateUrl();
+            }
+        } catch (error) {
+            showPlanningError(error);
+            setStatus('回答保存失败；未调用模型');
+            return;
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+        state.planning = true;
+        updateRunControls();
+        try {
+            setStatus('正在估算回答后的完整规划请求；不会调用模型');
+            await estimatePlanning(state.planningInputId);
+            byId('planning-confirm').hidden = false;
+            setStatus('回答已保存并完成估算；确认后才会调用模型 1 次');
+        } catch (error) {
+            showPlanningError(error);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    async function confirmInitialPlanning() {
+        if (!state.planningEstimate) return;
+        byId('plan-confirm').hidden = true;
+        await requestPlan('');
+    }
+
+    async function confirmPlanningAnswer() {
+        if (!state.planningEstimate || !state.planningInputId) return;
+        byId('planning-confirm').hidden = true;
+        await requestPlan(state.planningInputId);
+    }
+
+    async function retryPlanning() {
+        if (state.running || state.planning) return;
+        state.pendingPlanningRequest = null;
+        state.planningEstimate = null;
+        byId('planning-retry').hidden = true;
+        state.planning = true;
+        updateRunControls();
+        showError('');
+        try {
+            setStatus('正在重新估算规划；不会调用模型');
+            await estimatePlanning(state.planningInputId);
+            if (state.planningInputId) byId('planning-confirm').hidden = false;
+            else byId('plan-confirm').hidden = false;
+            setStatus('重试估算完成；确认后才会调用模型 1 次');
+        } catch (error) {
+            byId('planning-retry').hidden = false;
+            showPlanningError(error);
+            setStatus('规划估算失败；未调用模型');
+        } finally {
+            state.planning = false;
+            updateRunControls();
+        }
+    }
+
+    function payload() {
+        const kind = byId('analysis-kind').value;
+        const value = {analysis_kind: kind, filename: state.filename, question: byId('question').value.trim()};
+        if (['descriptive', 'group_comparison', 'time_trend', 'forecast', 'multi_finding_synthesis', 'exploratory_python'].includes(kind)) value.metric = byId('metric').value.trim();
+        if (kind === 'factor_relationship') {
+            value.target = byId('target').value.trim();
+            value.features = byId('features').value.split(',').map((item) => item.trim()).filter(Boolean);
+            value.analysis_unit = byId('analysis-unit').value.trim();
+            value.time_field = byId('time-field').value.trim();
+        }
+        if (kind === 'date_transformation') value.date_column = byId('date-column').value.trim();
+        if (['group_comparison', 'multi_finding_synthesis'].includes(kind)) {
+            value.group = byId('group').value.trim();
+            value.analysis_unit = byId('analysis-unit').value.trim();
+        }
+        if (['time_trend', 'forecast', 'multi_finding_synthesis'].includes(kind)) {
+            value.time_field = byId('time-field').value.trim();
+            value.frequency = byId('frequency').value;
+            value.aggregation = byId('aggregation').value;
+        }
+        if (kind === 'forecast') value.horizon = Number(byId('horizon').value);
+        if (kind === 'curve_fitting') {
+            const series = byId('series-columns').value.split(',').map((item) => item.trim()).filter(Boolean);
+            if (series.length >= 5) value.series_columns = series;
+            else {
+                value.x_column = byId('curve-x').value.trim();
+                value.y_column = byId('curve-y').value.trim();
+            }
+            value.zero_values = byId('zero-values').value;
+        }
+        if (['group_comparison', 'time_trend', 'forecast', 'multi_finding_synthesis'].includes(kind)) {
+            value.recommendation_intent = byId('recommendation-intent').value;
+            value.action_risk = byId('action-risk').value;
+            value.reversible = byId('reversible').checked;
+        }
+        if (kind === 'exploratory_python') {
+            value.purpose = byId('purpose').value.trim();
+            value.code = byId('code').value;
+        }
+        return value;
+    }
+
+    function toolLabel(data, finished = false) {
+        const names = {describe_numeric: '描述统计', factor_relationship: '因素关系', date_transform: '日期转换', group_comparison: '双组比较', time_trend: '历史趋势', forecast: '回测预测', exploratory_python: '探索性 Python'};
+        const label = names[data.name] || data.name || '结构化分析';
+        return finished ? `${label}已完成` : `正在执行${label}`;
+    }
+
+    function renderConfirmation(proposal) {
+        state.proposal = proposal;
+        state.awaitingConfirmation = true;
+        state.terminalStatus = 'awaiting_input';
+        byId('confirmation').classList.add('visible');
+        byId('confirmation-message').textContent = '日期字段存在多种无损解释。请选择符合业务语义的格式。';
+        byId('confirmation-options').innerHTML = (proposal.options || []).map((option) => `<button type="button" data-option-key="${escapeHtml(option.option_key)}">${escapeHtml(option.label)}</button>`).join('');
+        byId('confirmation-options').querySelectorAll('button').forEach((button) => button.addEventListener('click', () => resolveDate(button.dataset.optionKey)));
+        setStatus('等待日期语义确认');
+    }
+
+    function hideConfirmation() {
+        state.proposal = null;
+        state.awaitingConfirmation = false;
+        byId('confirmation').classList.remove('visible');
+        byId('confirmation-options').innerHTML = '';
+    }
+
+    function handleEvent(event, data) {
+        if (event === 'turn_started') {
+            activity('分析会话已建立');
+            state.sessionId = data.session_id || state.sessionId;
+            state.turnId = data.turn_id || state.turnId;
+            state.runId = data.run_id || '';
+            state.terminalStatus = 'running';
+            updateUrl();
+        } else if (event === 'commitment_snapshot') {
+            state.stoppable = true;
+            updateRunControls();
+            activity('分析承诺已冻结');
+        } else if (event === 'steer_received') {
+            state.queuedSteer = data;
+            setStatus('消息已排队，当前分析继续运行');
+            activity('下一轮消息已持久化');
+            updateRunControls();
+        } else if (event === 'tool_started') activity(toolLabel(data));
+        else if (event === 'tool_finished') activity(toolLabel(data, true));
+        else if (event === 'artifact_created') {
+            state.artifacts = [...state.artifacts, data.artifact];
+            activity('图表产物已持久化');
+        } else if (event === 'artifact_failed') activity('图表不可用，继续发布文本结论');
+        else if (event === 'supplemental_artifact_created') activity('探索性补充已持久化');
+        else if (event === 'outcome_snapshot') activity(data.publishable ? '核心承诺已达到可发布终态' : '核心承诺等待更多事实');
+        else if (event === 'user_input_required') {
+            state.stoppable = false;
+            updateRunControls();
+            renderConfirmation(data);
+            activity('等待用户确认日期语义');
+        } else if (event === 'final_block_delta') {
+            renderBlocks([...state.blocks, data.block], state.artifacts, false);
+            activity('正在发布校准答案');
+        } else if (event === 'turn_completed') {
+            state.stoppable = false;
+            state.terminalStatus = 'completed';
+            hideConfirmation();
+            setStatus('分析完成');
+            activity('最终答案已持久化');
+        } else if (event === 'turn_interrupted') {
+            state.stoppable = false;
+            state.stopRequested = true;
+            state.queuedSteer = null;
+            state.queuedTargetTurnId = '';
+            state.terminalStatus = 'interrupted';
+            hideConfirmation();
+            setStatus('已停止');
+            activity('停止事实已持久化，运行已在安全边界结束');
+        } else if (event === 'turn_failed') {
+            state.terminalStatus = 'failed';
+            throw new Error(data.message || data.error_code || '分析失败');
+        }
+    }
+
+    async function consumeSse(response) {
+        if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.error || '无法建立统一分析事件流。');
+        }
+        if (!response.body) throw new Error('统一分析事件流不可用。');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+            const frames = buffer.split('\n\n');
+            buffer = frames.pop() || '';
+            for (const frame of frames) {
+                let event = '';
+                let data = null;
+                for (const line of frame.split('\n')) {
+                    if (line.startsWith('event: ')) event = line.slice(7).trim();
+                    if (line.startsWith('data: ')) data = JSON.parse(line.slice(6));
+                }
+                if (event && data) handleEvent(event, data);
+            }
+        }
+    }
+
+    function resetRunView() {
+        showError('');
+        hideConfirmation();
+        state.blocks = [];
+        state.artifacts = [];
+        state.runId = '';
+        state.terminalStatus = '';
+        renderBlocks([]);
+        state.activityCount = 0;
+        byId('activity-count').textContent = '0';
+        byId('activity-list').innerHTML = '';
+    }
+
+    function afterCurrentStreamCloses() {
+        return new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+
+    async function executeAnalysis(requestBody, {consumingSteer = false} = {}) {
+        if (state.running) return;
+        state.running = true;
+        state.stoppable = false;
+        state.stopRequested = false;
+        resetRunView();
+        updateRunControls();
+        let autoContinue = false;
+        try {
+            setStatus(consumingSteer ? '正在开始排队的下一轮' : '分析进行中');
+            const response = await fetch('/api/v2/analyze', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody),
+            });
+            if (response.ok && consumingSteer) {
+                state.queuedSteer = null;
+                state.queuedTargetTurnId = '';
+            }
+            await consumeSse(response);
+            renderBlocks(state.blocks, state.artifacts, true);
+            if (state.awaitingConfirmation) setStatus('等待日期语义确认');
+            autoContinue = state.terminalStatus === 'completed' && state.queuedSteer?.status === 'queued';
+        } catch (error) {
+            showError(error.message);
+            setStatus('分析失败，可修改输入后重试');
+        } finally {
+            state.running = false;
+            state.stoppable = false;
+            updateRunControls();
+        }
+        if (autoContinue) {
+            await afterCurrentStreamCloses();
+            await runQueuedSteer();
+        }
+    }
+
+    async function run() {
+        if (state.running) return;
+        try {
+            if (!state.filename) await uploadSelected();
+        } catch (error) {
+            showError(error.message);
+            setStatus('上传失败');
+            return;
+        }
+        state.planId = '';
+        state.planningInputId = '';
+        state.pendingPlanningRequest = null;
+        hidePlanning();
+        renderPlanningEstimate(null);
+        ensurePlanningSession();
+        state.turnId = requestIdentity('turn').slice(0, 17);
+        updateUrl();
+        await executeAnalysis({
+            ...payload(),
+            session_id: state.sessionId,
+            turn_id: state.turnId,
+        });
+    }
+
+    async function sendSteer() {
+        if (!state.running || !state.stoppable || state.stopRequested || !state.runId) return;
+        const message = byId('question').value.trim();
+        if (!message) {
+            showError('请输入要发送到下一轮的问题。');
+            return;
+        }
+        const pending = state.pendingSteerRequest;
+        const clientRequestId = pending
+            && pending.runId === state.runId
+            && pending.message === message
+            ? pending.clientRequestId
+            : `client_${crypto.randomUUID().replaceAll('-', '')}`;
+        state.pendingSteerRequest = {runId: state.runId, message, clientRequestId};
+        byId('steer').disabled = true;
+        showError('');
+        setStatus('正在持久化下一轮消息');
+        try {
+            const response = await fetch('/api/v2/runs/steer', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    session_id: state.sessionId, turn_id: state.turnId,
+                    expected_run_id: state.runId, client_request_id: clientRequestId,
+                    message,
+                }),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || '下一轮消息排队失败');
+            state.pendingSteerRequest = null;
+            state.queuedSteer = body;
+            state.queuedTargetTurnId = '';
+            activity('下一轮消息已持久化');
+            setStatus('消息已排队，当前分析继续运行');
+        } catch (error) {
+            showError(error.message);
+            setStatus('排队失败，当前分析仍在运行');
+        } finally {
+            updateRunControls();
+        }
+    }
+
+    async function runQueuedSteer() {
+        if (state.running || state.queuedSteer?.status !== 'queued') return;
+        const queued = state.queuedSteer;
+        state.queuedTargetTurnId ||= `turn_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+        byId('question').value = queued.message;
+        await executeAnalysis({
+            session_id: state.sessionId,
+            turn_id: state.queuedTargetTurnId,
+            steer_id: queued.steer_id,
+        }, {consumingSteer: true});
+    }
+
+    async function stop() {
+        if (!state.running || !state.stoppable || state.stopRequested) return;
+        state.stopRequested = true;
+        updateRunControls();
+        setStatus('正在持久化停止请求');
+        try {
+            const response = await fetch('/api/v2/runs/stop', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({session_id: state.sessionId, turn_id: state.turnId}),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || '停止请求失败');
+            state.queuedSteer = null;
+            state.queuedTargetTurnId = '';
+            state.pendingSteerRequest = null;
+            activity('停止事实已持久化');
+            setStatus('正在安全停止');
+        } catch (error) {
+            state.stopRequested = false;
+            updateRunControls();
+            showError(error.message);
+            setStatus('停止失败，分析仍在运行');
+        }
+    }
+
+    async function resolveDate(optionKey) {
+        if (state.running || !state.proposal) return;
+        state.running = true;
+        updateRunControls();
+        showError('');
+        setStatus('正在应用已确认语义');
+        let autoContinue = false;
+        try {
+            const proposal = state.proposal;
+            const response = await fetch('/api/v2/transform-dates/resolve', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    session_id: state.sessionId, turn_id: state.turnId,
+                    proposal_id: proposal.proposal_id, option_key: optionKey,
+                    expected_parent_version_id: proposal.parent_version_id,
+                    expected_parent_content_fingerprint: proposal.parent_content_fingerprint,
+                }),
+            });
+            await consumeSse(response);
+            renderBlocks(state.blocks, state.artifacts, true);
+            autoContinue = state.terminalStatus === 'completed' && state.queuedSteer?.status === 'queued';
+        } catch (error) {
+            showError(error.message);
+            setStatus('确认失败，可重新选择');
+        } finally {
+            state.running = false;
+            updateRunControls();
+        }
+        if (autoContinue) {
+            await afterCurrentStreamCloses();
+            await runQueuedSteer();
+        }
+    }
+
+    function restoreFields(context) {
+        if (context.analysis_kind) {
+            byId('analysis-kind').value = context.analysis_kind;
+            showKindFields();
+        }
+        const mappings = {metric: 'metric', target: 'target', analysis_unit: 'analysis-unit', time_field: 'time-field', date_column: 'date-column', group: 'group', frequency: 'frequency', aggregation: 'aggregation', horizon: 'horizon', recommendation_intent: 'recommendation-intent', action_risk: 'action-risk', purpose: 'purpose', x_column: 'curve-x', y_column: 'curve-y', zero_values: 'zero-values', question: 'question'};
+        Object.entries(mappings).forEach(([key, id]) => { if (context[key]) byId(id).value = context[key]; });
+        if (context.features) byId('features').value = context.features;
+        if (context.series_columns) byId('series-columns').value = context.series_columns;
+        if (context.reversible) byId('reversible').checked = context.reversible === 'true';
+        if (context.filename) {
+            state.filename = context.filename;
+            byId('file-state').textContent = `已关联：${context.filename}`;
+        }
+    }
+
+    async function restore() {
+        const params = new URLSearchParams(window.location.search);
+        state.sessionId ||= params.get('session_id') || '';
+        state.turnId ||= params.get('turn_id') || '';
+        state.planId ||= params.get('plan_id') || '';
+        state.planningInputId ||= params.get('planning_input_id') || '';
+        if (!state.sessionId || !state.turnId) {
+            showError('当前页面没有可恢复的 V2 分析。');
+            return;
+        }
+        showError('');
+        setStatus('正在恢复');
+        const response = await fetch(`/api/v2/sessions/${encodeURIComponent(state.sessionId)}/turns/${encodeURIComponent(state.turnId)}`);
+        const body = await response.json();
+        if (!response.ok) {
+            showError(body.error || '恢复失败');
+            setStatus('恢复失败');
+            return;
+        }
+        restoreFields(body.request_context || {});
+        state.artifacts = body.artifacts || [];
+        renderBlocks(body.blocks || [], state.artifacts);
+        if (body.transformation?.status==='pending') renderConfirmation(body.transformation.proposal);
+        state.queuedSteer = [...(body.steers || [])].reverse().find((item) => item.status === 'queued') || null;
+        state.queuedTargetTurnId = '';
+        state.terminalStatus = body.status === 'finalized' ? 'completed' : body.status;
+        updateUrl();
+        updateRunControls();
+        if (body.status === 'interrupted') setStatus('已停止');
+        else if (canContinueSteer()) setStatus('有已持久化的下一轮消息待继续');
+        else setStatus(state.awaitingConfirmation ? '等待日期语义确认' : '已从持久化消息块恢复');
+    }
+
+    async function restorePlanning() {
+        const params = new URLSearchParams(window.location.search);
+        state.sessionId ||= params.get('session_id') || '';
+        state.planId ||= params.get('plan_id') || '';
+        state.planningInputId ||= params.get('planning_input_id') || '';
+        if (!state.sessionId || !state.planId) {
+            showError('当前页面没有可恢复的 V2 规划。');
+            return;
+        }
+        showError('');
+        setStatus('正在恢复分析规划');
+        try {
+            const plan = await fetchJson(
+                `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/plans/${encodeURIComponent(state.planId)}`,
+            );
+            state.filename = plan.dataset_context?.filename || '';
+            if (state.filename) byId('file-state').textContent = `已关联：${state.filename}`;
+            byId('question').value = plan.question || '';
+            let planningInput = null;
+            if (state.planningInputId) {
+                planningInput = await fetchJson(
+                    `/api/v2/sessions/${encodeURIComponent(state.sessionId)}/planning-inputs/${encodeURIComponent(state.planningInputId)}`,
+                );
+            }
+            if (plan.status === 'ready') {
+                restoreFields({
+                    analysis_kind: plan.analysis_kind,
+                    filename: plan.dataset_context?.filename,
+                    question: plan.question,
+                    ...(plan.parameters || {}),
+                });
+            }
+            renderPlanning(plan, planningInput);
+            if (plan.status === 'needs_input') setStatus('已恢复规划问题与回答');
+            else if (plan.status === 'ready') setStatus('计划已恢复，可直接执行');
+            else setStatus('已恢复规划终态');
+        } catch (error) {
+            showError(error.message);
+            setStatus('规划恢复失败');
+        }
+    }
+
+    async function executeRestoredPlan() {
+        const plan = state.planningPlan;
+        if (!plan || plan.status !== 'ready' || state.running || state.planning) return;
+        hidePlanning();
+        state.turnId = requestIdentity('turn').slice(0, 17);
+        updateUrl();
+        await executeAnalysis({
+            session_id: state.sessionId,
+            turn_id: state.turnId,
+            plan_id: plan.plan_id,
+            recommendation_intent: byId('recommendation-intent').value,
+            action_risk: byId('action-risk').value,
+            reversible: byId('reversible').checked,
+        });
+    }
+
+    function restoreCurrent() {
+        const params = new URLSearchParams(window.location.search);
+        if (state.turnId || params.has('turn_id')) restore();
+        else restorePlanning();
+    }
+
+    byId('analysis-kind').addEventListener('change', showKindFields);
+    byId('plan-run').addEventListener('click', planAndRun);
+    byId('plan-confirm').addEventListener('click', confirmInitialPlanning);
+    byId('run').addEventListener('click', run);
+    byId('planning-submit').addEventListener('click', answerAndReplan);
+    byId('planning-confirm').addEventListener('click', confirmPlanningAnswer);
+    byId('planning-retry').addEventListener('click', retryPlanning);
+    byId('execute-plan').addEventListener('click', executeRestoredPlan);
+    byId('steer').addEventListener('click', sendSteer);
+    byId('continue-steer').addEventListener('click', runQueuedSteer);
+    byId('stop').addEventListener('click', stop);
+    byId('restore').addEventListener('click', restoreCurrent);
+    byId('file').addEventListener('change', () => {
+        state.filename = '';
+        state.planId = '';
+        state.planningInputId = '';
+        state.pendingPlanningRequest = null;
+        hidePlanning();
+        renderPlanningEstimate(null);
+        resetPlanningSemanticOptions();
+        byId('plan-confirm').hidden = true;
+        byId('file-state').textContent = '等待上传';
+    });
+    byId('question').addEventListener('input', () => {
+        state.pendingPlanningRequest = null;
+        renderPlanningEstimate(null);
+        byId('plan-confirm').hidden = true;
+    });
+    byId('planning-semantic-unit').addEventListener('change', () => {
+        state.pendingPlanningRequest = null;
+        state.planningEstimate = null;
+        byId('planning-estimate').textContent = '语义选择已变化；请重新估算。';
+        byId('plan-confirm').hidden = true;
+    });
+    showKindFields();
+    updateRunControls();
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('turn_id')) restore();
+    else if (params.has('plan_id')) restorePlanning();
+})();

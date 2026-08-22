@@ -1,0 +1,29 @@
+[
+  {
+    "receipt_id": "receipt_unified_browser_78165d7e4df4c897",
+    "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "browser_interaction_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:d4d0166d43804b287682371148b06ef3fc84a75e5beda8acb7dd913428b09fce",
+      "actual-browser:interaction:sha256:910cc9e999f0e2f3a396e7126dc0c85c82e4ee26f1502510e8cd6cfb8ecacd55"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": ["upload", "planning_estimate_without_authorization", "explicit_planning_confirmation", "needs_input", "planning_answer_persisted", "planning_failure_stable", "explicit_planning_retry", "live_progress", "task_overlay_collapsed", "refresh_restore", "draft_while_running", "queued_steer", "stop", "error_recovery", "session_isolation"],
+    "chart_observation": "rendered"
+  },
+  {
+    "receipt_id": "receipt_unified_refresh_78165d7e4df4c897",
+    "source_digest": "sha256:402f4ac145c052bc291ea6b89be06fcf43de67afd807f4cfa1c281ec82328499",
+    "scenario_id": "unified_analysis_entry",
+    "layer": "refresh_persistence_journey",
+    "status": "pass",
+    "evidence_refs": [
+      "actual-browser:planning:sha256:d4d0166d43804b287682371148b06ef3fc84a75e5beda8acb7dd913428b09fce",
+      "actual-browser:interaction:sha256:910cc9e999f0e2f3a396e7126dc0c85c82e4ee26f1502510e8cd6cfb8ecacd55"
+    ],
+    "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+    "observed_interactions": ["refresh_restore"]
+  }
+]

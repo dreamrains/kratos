@@ -1,0 +1,44 @@
+{
+  "version": "v2_real_provider_deterministic_continuation.v3",
+  "source_digest": "sha256:db3464a5249f9ae6ea7787998298bcbdf5aae4ea2fe56b1e5aef656840b7151c",
+  "scenario_id": "unified_analysis_entry",
+  "source_plan_id": "plan_b9163ff88f3fa2b70d1106dd",
+  "turn_id": "turn_real_5c5o_deterministic",
+  "provider_calls_observed_during_continuation": 0,
+  "analysis_http_status": 200,
+  "refresh_http_status": 200,
+  "terminal_event": "turn_completed",
+  "restored_status": "finalized",
+  "block_types": ["executive_answer", "key_finding", "comparison", "method"],
+  "block_count": 4,
+  "chart_count": 2,
+  "finding_count": 2,
+  "analysis_parameters": {
+    "time_field": "date",
+    "metric": "sales",
+    "frequency": "weekly",
+    "aggregation": "sum",
+    "group": "channel",
+    "analysis_unit": "unit_id"
+  },
+  "published_claims": {
+    "time_trend": "no_reliable_linear_trend",
+    "group_comparison": "reliable_mean_difference",
+    "causal_upgrade": false
+  },
+  "data_scope_review": {
+    "legacy_fixed_daily_marker": false,
+    "frequency_aware_scope_fields_present": true,
+    "actual_data_window_published_correctly": false,
+    "incomplete_boundary_periods_disclosed": false
+  },
+  "semantic_review": {
+    "status": "fail",
+    "reason_code": "incomplete_boundary_periods_compared",
+    "explanation": "Execution and refresh completed, but the weekly-sum trend included partial first and last weeks and published period bucket starts as the data window."
+  },
+  "release_receipt_issued": false,
+  "human_semantic_pass_issued": false,
+  "provider_followup_authorized": false,
+  "root_switch_authorized": false
+}

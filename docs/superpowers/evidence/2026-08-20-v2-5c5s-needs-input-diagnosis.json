@@ -1,0 +1,48 @@
+{
+  "version": "v2_needs_input_stability_diagnosis.v1",
+  "source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+  "scenario_id": "unified_analysis_entry",
+  "trigger_evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5s-stability-result.json",
+  "verified_runtime_facts": [
+    "All three samples used the same release preflight identity, dataset fingerprint, question, model, planning context, and Planner schema fingerprint.",
+    "The baseline and 5C5S trial 1 returned the same ready multi_finding_synthesis plan identity.",
+    "5C5S trial 2 returned a contract-valid needs_input plan with two questions, HTTP 201, one consumed authorization, one Provider call, and zero retries.",
+    "No deterministic continuation, clarification answer, follow-up planning, repair, or retry occurred after trial 2."
+  ],
+  "verified_code_facts": {
+    "planning_metadata_fields": ["filename", "source_fingerprint", "row_count", "columns.name", "columns.dtype", "columns.role"],
+    "current_fixture_roles": {
+      "date": "datetime",
+      "unit_id": "identifier",
+      "channel": "categorical",
+      "sales": "numeric"
+    },
+    "explicit_row_grain_or_business_unit_semantics_present": false,
+    "needs_input_schema_availability": "The needs_input variant is offered for every DatasetPlanningContext and requires only empty route fields plus one to three non-empty questions.",
+    "system_prompt_decision_boundary": "The prompt describes the payload shape for ready, needs_input, and unsupported but does not define a server-owned eligibility predicate for choosing needs_input.",
+    "compiler_decision_boundary": "The compiler accepts needs_input whenever route fields are empty and at least one question exists; it does not verify that a controlled prerequisite is actually absent from the context.",
+    "existing_test_boundary": "Tests cover status/payload shape, bounded clarifications, and route absence; they do not cover semantic justification for needs_input on an otherwise executable context."
+  },
+  "root_cause_assessment": {
+    "confirmed_shared_contract_gap": "needs_input eligibility is not bound to a deterministic, server-owned missing-prerequisite contract",
+    "confirmed_context_gap": "planning metadata does not explicitly state row grain or the business semantics of the observational unit",
+    "provider_internal_cause": "unknown",
+    "why_not_a_transport_or_parser_bug": "The response passed Provider transport, tool shape, local compilation, persistence, and authorization checks.",
+    "why_not_safe_to_force_ready": "A coarse identifier role and unique-looking name do not by themselves prove the independent observational unit required by inferential methods."
+  },
+  "next_red_regressions": [
+    "A complete context with a server-verified executable prerequisite set must reject an unjustified needs_input result before publication.",
+    "A genuinely incomplete context must retain needs_input and identify missing prerequisites through controlled codes rather than only free-form questions.",
+    "Tool schema, system contract, compiler, Plan Ledger, and HTTP projection must agree on the controlled missing-prerequisite identity.",
+    "No clarification answer, repair, retry, or fallback may be generated automatically."
+  ],
+  "implementation_boundary": {
+    "source_fix_started": false,
+    "planner_contract_relaxed": false,
+    "provider_call_authorized": false,
+    "recommended_next_slice": "5C5T controlled needs-input eligibility contract"
+  },
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

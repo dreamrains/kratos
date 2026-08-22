@@ -1,0 +1,136 @@
+{
+  "version": "v2_5c5b_deterministic_evidence.v1",
+  "slice": "5C5B",
+  "baseline": {
+    "branch": "codex/data-agent-v2",
+    "git_head": "0131c6c266c0b2703668b30021595c7363da8773",
+    "source_digest": "sha256:2983e3090b6bd57a75358e8ee957aeda14bdc0c65d60375d7f885951debdf7e1"
+  },
+  "current_source_digest": "sha256:ce17634adf292aeab07d9a8b7063793372cdaa86be1d02451dd89870a5e5a719",
+  "red_phase": {
+    "provider_calls_observed": 0,
+    "result": "failed_as_expected",
+    "first_failure": "ImportError: cannot import name 'PlannerFailureStage' from data_agent.v2.planner",
+    "covered_contracts": [
+      "provider response shape classification",
+      "local plan compilation classification",
+      "bounded diagnostic persistence",
+      "safe HTTP failure projection",
+      "runtime model binding",
+      "full planning context binding"
+    ]
+  },
+  "planner_diagnostics": {
+    "failure_stages": [
+      "provider_response_shape",
+      "plan_compilation"
+    ],
+    "provider_response_reason_codes": [
+      "provider_response_missing_tool_call",
+      "provider_response_unexpected_tool_call_count",
+      "provider_response_unexpected_tool_name",
+      "provider_response_tool_arguments_invalid_json",
+      "provider_response_tool_arguments_not_object"
+    ],
+    "plan_compilation_reason_codes": [
+      "plan_contract_invalid",
+      "plan_unexpected_fields",
+      "plan_invalid_status",
+      "plan_required_field_missing",
+      "plan_questions_invalid",
+      "plan_parameters_not_object",
+      "plan_status_payload_invalid",
+      "plan_invalid_analysis_kind",
+      "plan_parameter_contract_invalid",
+      "plan_column_binding_invalid",
+      "plan_parameter_value_invalid"
+    ],
+    "persisted_metadata_allowlist": [
+      "failure_stage",
+      "finish_reason",
+      "tool_call_count",
+      "tool_names",
+      "tool_argument_types",
+      "argument_top_level_fields",
+      "metadata_truncated"
+    ],
+    "forbidden_persisted_content": [
+      "api_key",
+      "provider_raw_response",
+      "model_text",
+      "reasoning_content",
+      "tool_argument_values"
+    ]
+  },
+  "authorization_binding": {
+    "fingerprint_name": "runtime_authorization_fingerprint",
+    "bound_fields": [
+      "purpose",
+      "filename",
+      "source_fingerprint",
+      "question",
+      "planning_input_id",
+      "model_id",
+      "planning_context.model_id",
+      "planning_context.estimated_input_tokens",
+      "planning_context.model_context_window_tokens",
+      "planning_context.reserved_output_tokens",
+      "planning_context.available_input_tokens",
+      "planning_context.fits"
+    ],
+    "consume_recomputes_context": true,
+    "strict_equality_required": true,
+    "planner_model_checked_before_provider_call": true,
+    "authorization_remains_issued_on_pre_call_drift": true
+  },
+  "fingerprint_scopes": {
+    "release_preflight_identity_fingerprint": "source-bound release scenario identity; historical v1 JSON field remains request_fingerprint",
+    "runtime_authorization_fingerprint": "one exact runtime Provider permission bound to current request, model, and planning context",
+    "equivalent_or_interchangeable": false
+  },
+  "validation": {
+    "focused": {
+      "files": 6,
+      "passed": 61,
+      "failed": 0
+    },
+    "v2_and_current_config": {
+      "files": 55,
+      "passed": 272,
+      "failed": 0,
+      "config_files": [
+        "tests/test_config_judge_model.py",
+        "tests/test_workspace_config.py"
+      ]
+    },
+    "compileall": "PASS",
+    "git_diff_check": "PASS",
+    "pytest_cache_warning": "pytest could not write the pre-existing protected .pytest_cache; tests still completed successfully"
+  },
+  "provider_calls_observed": 0,
+  "automatic_retries": 0,
+  "repair_calls": 0,
+  "release_receipt_issued": false,
+  "real_provider_analysis_journey_pass": false,
+  "gate_f_claimed": false,
+  "product_completion_claimed": false,
+  "root_switch_authorized": false,
+  "stale_evidence": {
+    "reason": "source digest changed",
+    "source_bound_receipts": [
+      "docs/superpowers/evidence/2026-08-20-v2-5c4d-current-unified-release-receipts.json"
+    ],
+    "historical_non_pass_evidence": [
+      "docs/superpowers/evidence/2026-08-20-v2-5c5a-real-provider-preflight.json",
+      "docs/superpowers/evidence/2026-08-20-v2-5c5a-real-provider-attempt.json"
+    ],
+    "authorization_reusable": false
+  },
+  "fresh_5c5a_preflight": {
+    "implementation_ready": true,
+    "already_regenerated": false,
+    "requires_current_source_digest": true,
+    "requires_fresh_model_and_token_estimate": true,
+    "provider_call_authorization_issued": false
+  }
+}

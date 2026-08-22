@@ -1,0 +1,59 @@
+{
+  "version": "v2_unified_current_release_status.v1",
+  "source_digest": "sha256:5be3c2147254f94aaa42114a85094d7e1e2af425e7fd616d770fcb394cb6cabe",
+  "scenario_id": "unified_analysis_entry",
+  "receipt_sources": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5p-unified-deterministic-release-receipts.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5q-real-provider-release-receipt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5r-refresh-release-receipt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5r-browser-release-receipt.json"
+  ],
+  "additional_non_receipt_evidence": [
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-1-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-trial-2-attempt.json",
+    "docs/superpowers/evidence/2026-08-20-v2-5c5s-stability-result.json"
+  ],
+  "current_pass_layers": [],
+  "decision": {
+    "status": "not_ready",
+    "missing_requirements": [
+      "unified_analysis_entry:owner_contract",
+      "unified_analysis_entry:incident_replay",
+      "unified_analysis_entry:sse_transport_contract",
+      "unified_analysis_entry:browser_interaction_journey",
+      "unified_analysis_entry:refresh_persistence_journey",
+      "unified_analysis_entry:real_provider_analysis_journey",
+      "unified_analysis_entry:human_semantic_review"
+    ],
+    "non_pass_requirements": [],
+    "conflicting_requirements": [],
+    "stale_receipt_ids": [
+      "receipt_unified_owner_4613762cddc6ad28",
+      "receipt_unified_incident_4613762cddc6ad28",
+      "receipt_unified_sse_4613762cddc6ad28",
+      "receipt_unified_real_4d0895b17d6f5a62",
+      "receipt_unified_refresh_real_4d0895b17d6f5a62",
+      "receipt_unified_browser_9626ed8b160068c2"
+    ],
+    "unknown_receipt_ids": [],
+    "incomplete_receipt_ids": [],
+    "provider_calls": 0,
+    "root_switch_authorized": false
+  },
+  "provider_call_accounting": {
+    "release_receipt_provider_calls": 0,
+    "observed_provider_calls_on_current_digest": 0,
+    "observed_provider_calls_in_5c5s": 2,
+    "automatic_retries_in_5c5s": 0,
+    "historical_provider_calls_on_stale_digest": 3,
+    "note": "All three observed calls and all listed receipts are bound to sha256:4d0895... and are stale after the 5C5T source change."
+  },
+  "current_known_risks": [
+    "all_release_receipts_stale_after_5c5t_source_change",
+    "human_semantic_review_missing",
+    "real_provider_plan_identity_not_repeatable_in_prior_three_sample_protocol",
+    "business_row_grain_semantics_not_server_verified"
+  ],
+  "full_product_matrix_ready": false,
+  "release_readiness_claimed": false
+}

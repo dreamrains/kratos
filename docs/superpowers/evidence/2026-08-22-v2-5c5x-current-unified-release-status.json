@@ -1,0 +1,26 @@
+{
+  "version": "v2_current_unified_release_status.v1",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "status": "not_ready",
+  "current_pass_layers": [
+    "owner_contract",
+    "incident_replay",
+    "sse_transport_contract",
+    "refresh_persistence_journey",
+    "real_provider_analysis_journey"
+  ],
+  "missing_requirements": [
+    "unified_analysis_entry:browser_interaction_journey",
+    "unified_analysis_entry:human_semantic_review"
+  ],
+  "non_pass_requirements": [],
+  "conflicting_requirements": [],
+  "stale_receipt_ids_in_current_input": [],
+  "incomplete_receipt_ids": [],
+  "provider_calls": 1,
+  "all_prior_source_digest_receipts_remain_historical": true,
+  "full_product_matrix_ready": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

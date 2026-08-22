@@ -1,0 +1,101 @@
+{
+  "version": "v2_provider_neutral_browser_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "session_id": "v2_2a910752a2f6",
+  "needs_input_plan_id": "plan_d878534b18e4fe537a1b6a3e",
+  "failed_plan_id": "plan_9f15d47a388f7e59ad18b3f3",
+  "ready_plan_id": "plan_983d897edf7e5cb2f3f04f0f",
+  "completed_turn_id": "turn_068e1d8ee305",
+  "preauthorization_semantic_gate": {
+    "initial_estimate_visible_state": "请选择独立观察单位或明确暂不确认，然后再次估算",
+    "explicit_selection": "defer_to_planner",
+    "provider_calls_before_selection": 0,
+    "authorizations_before_selection": 0
+  },
+  "planning_answer_characters": 6400,
+  "planning_answer_digest": "sha256:f0f9017af78763ad2ac6c9d42150d3bba7ec08fcb4ec7b3c3ce7241a91ef95dc",
+  "answer_characters": 6400,
+  "answer_before_digest": "sha256:f0f9017af78763ad2ac6c9d42150d3bba7ec08fcb4ec7b3c3ce7241a91ef95dc",
+  "answer_after_digest": "sha256:f0f9017af78763ad2ac6c9d42150d3bba7ec08fcb4ec7b3c3ce7241a91ef95dc",
+  "final_answer_characters": 793,
+  "final_answer_before_digest": "sha256:47ed1b32e155b0bcdaf8ced3789ff3767e5d0947e95b84d2e50c9059464da3c9",
+  "final_answer_after_digest": "sha256:47ed1b32e155b0bcdaf8ced3789ff3767e5d0947e95b84d2e50c9059464da3c9",
+  "data_scope_observed": true,
+  "chart_observation": "rendered",
+  "chart_count": 2,
+  "chart_loaded_states": [
+    "true",
+    "true"
+  ],
+  "checkpoints": [
+    {
+      "name": "loaded",
+      "planner_invocations": 0,
+      "authorizations_issued": 0,
+      "authorizations_consumed": 0,
+      "visible_state": "等待输入"
+    },
+    {
+      "name": "estimated",
+      "planner_invocations": 0,
+      "authorizations_issued": 0,
+      "authorizations_consumed": 0,
+      "visible_state": "估算完成；确认后才会调用模型 1 次"
+    },
+    {
+      "name": "needs_input",
+      "planner_invocations": 1,
+      "authorizations_issued": 1,
+      "authorizations_consumed": 1,
+      "visible_state": "等待补充规划信息"
+    },
+    {
+      "name": "answer_estimated",
+      "planner_invocations": 1,
+      "authorizations_issued": 1,
+      "authorizations_consumed": 1,
+      "visible_state": "回答已保存并完成估算；确认后才会调用模型 1 次"
+    },
+    {
+      "name": "failed",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "规划失败；不会自动重试"
+    },
+    {
+      "name": "failure_stable",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "已恢复规划终态"
+    },
+    {
+      "name": "retry_estimated",
+      "planner_invocations": 2,
+      "authorizations_issued": 2,
+      "authorizations_consumed": 2,
+      "visible_state": "重试估算完成；确认后才会调用模型 1 次"
+    },
+    {
+      "name": "completed",
+      "planner_invocations": 3,
+      "authorizations_issued": 3,
+      "authorizations_consumed": 3,
+      "visible_state": "分析完成"
+    },
+    {
+      "name": "refreshed",
+      "planner_invocations": 3,
+      "authorizations_issued": 3,
+      "authorizations_consumed": 3,
+      "visible_state": "已从持久化消息块恢复"
+    }
+  ]
+}

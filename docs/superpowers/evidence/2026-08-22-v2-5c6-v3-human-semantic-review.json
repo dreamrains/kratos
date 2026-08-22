@@ -1,0 +1,129 @@
+{
+  "version": "v2_human_semantic_review.v2",
+  "source_digest": "sha256:434ea42329e26cbcf06e4463803aad7cebd7583beb27c9462bcee23f819bf227",
+  "git_head": "633834477fd82f93043b2b4e1c81900caff078db",
+  "technical_stability_is_separate": true,
+  "reviewer_type": "independent_business_reviewer",
+  "review_confirmation": {
+    "confirmed": true,
+    "recorded_on": "2026-08-22",
+    "reference": "conversation:2026-08-22:user-confirmed-two-v3-human-review-targets",
+    "confirmation": "The two outputs are understandable, useful, and not misleading in business semantics; the two documented caveats are accepted as non-blocking."
+  },
+  "accepted_non_blocking_caveats": [
+    "the answers state observational boundaries but do not enumerate concrete external events, campaigns, mix shifts, or structural breaks",
+    "timezone, currency, and business-unit semantics are inherited from the uploaded files rather than independently established"
+  ],
+  "targets": [
+    {
+      "scenario_id": "unified_analysis_entry",
+      "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+      "status": "pass",
+      "confidence_assessment": "ready_to_share_with_accepted_non_blocking_caveats",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-representative-provider-observation.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-workbench-browser-composition.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-human-review-preparation.json"
+      ],
+      "semantic_dimensions": {
+        "question_understanding": {
+          "status": "pass",
+          "evidence": "The Provider selected the intended trend-plus-channel route and bound the user-confirmed independent unit_id column."
+        },
+        "data_scope": {
+          "status": "pass",
+          "evidence": "The answer states 2026-01-01 through 2026-02-11, 42 observed daily periods, and 42 effective unit_id values with no automatic generalization."
+        },
+        "method_fit": {
+          "status": "pass",
+          "evidence": "Daily-sum HAC trend and independent-unit Welch comparison directly answer the two observational questions."
+        },
+        "statistical_rigor": {
+          "status": "pass",
+          "evidence": "The slope, confidence interval, HAC p-value, group difference, Welch interval and p-value, and Hedges g match current-source deterministic evidence."
+        },
+        "claim_calibration": {
+          "status": "pass",
+          "evidence": "The answer explicitly rejects causal and intervention-effect interpretations and does not present the trend as a forecast."
+        },
+        "alternative_explanations": {
+          "status": "pass",
+          "evidence": "The observational and non-generalization boundaries remain explicit; the absence of a concrete external-driver list was accepted as a non-blocking caveat."
+        },
+        "pyramid_structure": {
+          "status": "pass",
+          "evidence": "The rendered answer leads with a direct answer, then trend, comparison, and shared method boundaries."
+        },
+        "chart_value": {
+          "status": "pass",
+          "evidence": "Two adjacent charts support the trend and group comparison and were restored in actual-browser evidence."
+        },
+        "recommendation_quality": {
+          "status": "pass",
+          "evidence": "No operational recommendation was published for the analysis-only request."
+        },
+        "journey_integrity": {
+          "status": "pass",
+          "evidence": "One authorized Provider planning call, deterministic execution, browser rendering, and refresh restoration form a coherent journey."
+        }
+      }
+    },
+    {
+      "scenario_id": "historical_trend",
+      "fixture_path": "reference/test_doc/游戏A内购数据.xlsx",
+      "status": "pass",
+      "confidence_assessment": "ready_to_share_with_accepted_non_blocking_caveats",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-real-data-canary.json",
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-v3-human-review-preparation.json"
+      ],
+      "semantic_dimensions": {
+        "question_understanding": {
+          "status": "pass",
+          "evidence": "The output directly answers how daily in-app revenue changed over the available history."
+        },
+        "data_scope": {
+          "status": "pass",
+          "evidence": "The answer and canary bind 2021-03-01 through 2021-11-03, 248 source rows, and 248 effective daily periods."
+        },
+        "method_fit": {
+          "status": "pass",
+          "evidence": "Daily-sum aggregation with a linear trend, weekday controls, and HAC inference is fit for the stated historical trend question."
+        },
+        "statistical_rigor": {
+          "status": "pass",
+          "evidence": "The slope, interval, p-value, HAC lag, lag-1 autocorrelation, and Kendall tau support the calibrated conclusion."
+        },
+        "claim_calibration": {
+          "status": "pass",
+          "evidence": "The answer says no reliable linear trend was detected, explicitly avoids equating non-significance with constancy, and makes no causal or forecast claim."
+        },
+        "alternative_explanations": {
+          "status": "pass",
+          "evidence": "Seasonality, campaigns, product events, and structural breaks remain outside the identified linear result; not enumerating them in the answer was accepted as a non-blocking caveat."
+        },
+        "pyramid_structure": {
+          "status": "pass",
+          "evidence": "The direct result precedes method diagnostics and limitations."
+        },
+        "chart_value": {
+          "status": "pass",
+          "evidence": "The actual-browser daily trend chart makes the noisy history and lack of a reliable linear slope easier to evaluate and survives refresh."
+        },
+        "recommendation_quality": {
+          "status": "pass",
+          "evidence": "No operational recommendation was published without recommendation intent or causal evidence."
+        },
+        "journey_integrity": {
+          "status": "pass",
+          "evidence": "Real-file upload, deterministic analysis, terminal answer, chart rendering, and refresh restoration were observed without Provider calls."
+        }
+      }
+    }
+  ],
+  "decision": "pass",
+  "provider_calls_during_review": 0,
+  "human_semantic_release_receipt_status": "pass",
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

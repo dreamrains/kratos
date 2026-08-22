@@ -1,0 +1,26 @@
+{
+  "version": "v2_provider_neutral_browser_journey.v1",
+  "observer": "actual_browser",
+  "fixture_id": "v2_workbench_planning_failure_retry.v1",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "source_digest": "sha256:97f5ea43aaaf39aee1aa14d78e1455aa6e5b7420826053845abc341c713dd837",
+  "scenario_id": "unified_analysis_entry",
+  "provider_calls": 0,
+  "console_errors": [],
+  "answer_characters": 12480,
+  "answer_before_digest": "sha256:e1f75e1c5952019d204e0a3adc08315f5c4019396d28e293bf05d12a281c02f3",
+  "answer_after_digest": "sha256:e1f75e1c5952019d204e0a3adc08315f5c4019396d28e293bf05d12a281c02f3",
+  "chart_observation": "rendered",
+  "chart_count": 2,
+  "checkpoints": [
+    {"name": "loaded", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "idle"},
+    {"name": "estimated", "planner_invocations": 0, "authorizations_issued": 0, "authorizations_consumed": 0, "visible_state": "estimate_ready"},
+    {"name": "needs_input", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "needs_input"},
+    {"name": "answer_estimated", "planner_invocations": 1, "authorizations_issued": 1, "authorizations_consumed": 1, "visible_state": "answer_estimate_ready"},
+    {"name": "failed", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "failed_without_retry"},
+    {"name": "failure_stable", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "failed_stable"},
+    {"name": "retry_estimated", "planner_invocations": 2, "authorizations_issued": 2, "authorizations_consumed": 2, "visible_state": "retry_estimate_ready"},
+    {"name": "completed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "four_blocks_two_inline_charts"},
+    {"name": "refreshed", "planner_invocations": 3, "authorizations_issued": 3, "authorizations_consumed": 3, "visible_state": "result_and_charts_restored"}
+  ]
+}

@@ -7,4 +7,65 @@ pages_bp = Blueprint("pages", __name__)
 
 @pages_bp.route("/")
 def index():
+    """Primary Data Agent V2 workbench entry."""
+    return render_template("v2_workbench.html")
+
+
+@pages_bp.route("/legacy")
+def legacy_workbench():
+    """Explicit rollback entry for the preserved legacy workbench."""
     return render_template("index.html")
+
+
+@pages_bp.route("/v2-canary")
+def v2_canary():
+    """Isolated Slice 1 browser canary; not the legacy chat runtime."""
+    return render_template("v2_canary.html")
+
+
+@pages_bp.route("/v2-factor-canary")
+def v2_factor_canary():
+    """Isolated Slice 2 factor-relationship browser canary."""
+    return render_template("v2_factor_canary.html")
+
+
+@pages_bp.route("/v2-transform-canary")
+def v2_transform_canary():
+    """Isolated Slice 3 date-transformation browser canary."""
+    return render_template("v2_transform_canary.html")
+
+
+@pages_bp.route("/v2-group-canary")
+def v2_group_canary():
+    """Isolated Slice 4A group-comparison browser canary."""
+    return render_template("v2_group_canary.html")
+
+
+@pages_bp.route("/v2-time-canary")
+def v2_time_canary():
+    """Isolated Slice 4B historical-trend browser canary."""
+    return render_template("v2_time_canary.html")
+
+
+@pages_bp.route("/v2-forecast-canary")
+def v2_forecast_canary():
+    """Isolated Slice 4C backtested-forecast browser canary."""
+    return render_template("v2_forecast_canary.html")
+
+
+@pages_bp.route("/v2-multi-canary")
+def v2_multi_canary():
+    """Isolated Slice 4D multi-finding synthesis browser canary."""
+    return render_template("v2_multi_canary.html")
+
+
+@pages_bp.route("/v2-python-canary")
+def v2_python_canary():
+    """Isolated Slice 4E exploratory-Python browser canary."""
+    return render_template("v2_python_canary.html")
+
+
+@pages_bp.route("/v2-workbench")
+def v2_workbench():
+    """Compatibility alias for the unified V2 analysis workbench."""
+    return render_template("v2_workbench.html")

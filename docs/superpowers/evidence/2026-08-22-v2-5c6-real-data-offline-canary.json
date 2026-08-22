@@ -1,0 +1,42 @@
+{
+  "version": "v2_real_data_offline_canary.v1",
+  "source_digest": "sha256:cc5ad7379395b449ffce5d4776c6fa29a492648918070b859d1c698889db9705",
+  "fixture": "reference/test_doc/游戏A内购数据.xlsx",
+  "scenario": {
+    "question": "内购收入按日如何变化？",
+    "analysis_kind": "time_trend",
+    "time_field": "日期",
+    "metric": "内购收入",
+    "frequency": "daily",
+    "aggregation": "sum",
+    "analysis_unit": "daily aggregate"
+  },
+  "execution_boundary": {
+    "provider_calls": 0,
+    "planner": "offline/canary-planner",
+    "allowed_data_egress": "none",
+    "run_mode": "local Flask test client with deterministic offline planner"
+  },
+  "observed_journey": [
+    "upload",
+    "schema_and_data_scope_preflight",
+    "one_explicit_planning_authorization",
+    "ready_time_trend_plan",
+    "deterministic_sse_execution",
+    "finalized_persisted_turn",
+    "persisted_blocks_and_artifacts"
+  ],
+  "verification": {
+    "command": ".venv\\Scripts\\python.exe -m pytest -q tests\\test_v2_real_data_canary.py tests\\test_mvp_real_data_fixtures.py tests\\real_data",
+    "passed": 36,
+    "failed": 0,
+    "skipped": 1,
+    "warning": "pytest cache write was denied; it did not affect test outcomes"
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false,
+  "limitations": [
+    "This is an offline deterministic canary, not a real Provider result.",
+    "This record does not certify actual-browser real-data refresh or independent human semantic review."
+  ]
+}

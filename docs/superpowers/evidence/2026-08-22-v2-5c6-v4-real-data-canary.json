@@ -1,0 +1,76 @@
+{
+  "version": "v2_root_cutover_real_data_canary.v1",
+  "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+  "git_head": "11f09063b7c7d6428a230043f3fda17632dd5f9a",
+  "fixture": {
+    "path": "reference/test_doc/游戏A内购数据.xlsx",
+    "sha256": "fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e",
+    "size_bytes": 24466,
+    "rows": 248,
+    "date_field": "日期",
+    "date_min": "2021-03-01",
+    "date_max": "2021-11-03",
+    "metric": "内购收入",
+    "metric_missing_rows": 0
+  },
+  "scenario": {
+    "question": "内购收入按日如何变化？",
+    "analysis_kind": "time_trend",
+    "time_field": "日期",
+    "metric": "内购收入",
+    "frequency": "daily",
+    "aggregation": "sum"
+  },
+  "execution_boundary": {
+    "provider_calls": 0,
+    "planner_calls": 0,
+    "authorizations_issued": 0,
+    "authorizations_consumed": 0,
+    "run_mode": "root-entry localhost actual browser with deterministic V2 runtime",
+    "allowed_data_egress": "none"
+  },
+  "offline_suite": {
+    "command": ".venv\\Scripts\\python.exe -m pytest -q tests/test_v2_real_data_canary.py tests/test_mvp_real_data_fixtures.py tests/real_data",
+    "passed": 36,
+    "failed": 0,
+    "skipped": 1,
+    "elapsed_seconds": 5.43,
+    "warning": "pytest cache write was denied; it did not affect test outcomes"
+  },
+  "actual_browser": {
+    "observer": "actual_browser",
+    "entry": "/",
+    "session_id": "v2_161729e3f0f7",
+    "turn_id": "turn_11676bbdfc5e",
+    "status": "finalized",
+    "block_count": 2,
+    "chart_count": 1,
+    "loaded_chart_count": 1,
+    "answer_characters": 300,
+    "console_errors": [],
+    "refresh_restored": true,
+    "answer_before_equals_after": true
+  },
+  "observed_answer": {
+    "trend_per_day": 0.402,
+    "confidence_interval_95": [-0.64, 1.443],
+    "hac_p_value": 0.448,
+    "source_rows": 248,
+    "effective_daily_periods": 248,
+    "aggregation": "sum",
+    "incomplete_boundary_periods": 0,
+    "hac_max_lag": 4,
+    "weekday_controls": true,
+    "lag_1_autocorrelation": 0.18,
+    "kendall_tau": 0.015,
+    "claim": "No reliable linear trend was detected in the current historical range; this does not imply the metric was constant."
+  },
+  "human_semantic_review": {
+    "status": "not_run",
+    "reason_codes": ["current_source_independent_business_review_required"]
+  },
+  "legacy_rollback_route_verified": true,
+  "root_switch_authorized": true,
+  "root_switched": true,
+  "release_readiness_claimed": false
+}

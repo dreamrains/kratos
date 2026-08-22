@@ -1,0 +1,68 @@
+{
+  "version": "v2_root_cutover_gap_report.v1",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "matrix_version": "v2_release_matrix.v2",
+  "status": "not_ready",
+  "release_projection": {
+    "total": 23,
+    "pass": 6,
+    "fail": 0,
+    "blocked": 0,
+    "not_run": 17,
+    "conflict": 0,
+    "incomplete": 0,
+    "stale_receipts": 0,
+    "unknown_receipts": 0,
+    "provider_calls": 1,
+    "root_switch_authorized": false
+  },
+  "completed_current_source_obligations": [
+    "shared_runtime:owner_contract",
+    "shared_runtime:incident_replay",
+    "shared_runtime:sse_transport_contract",
+    "shared_runtime:browser_interaction_journey",
+    "shared_runtime:refresh_persistence_journey",
+    "unified_analysis_entry:real_provider_analysis_journey"
+  ],
+  "additional_current_source_evidence": {
+    "reference_test_doc_offline_suite": "36 passed, 0 failed, 1 skipped",
+    "reference_test_doc_actual_browser": "finalized, 2 blocks, 1 chart, refresh stable, 0 Provider calls",
+    "unified_human_review_preparation": "complete; independent review not run"
+  },
+  "finite_gaps": [
+    {
+      "gap_id": "acceptance_contract_alignment",
+      "kind": "code_plan_difference",
+      "fact": "The current matrix requires eight additional scenario-specific Provider receipts and nine scenario-specific human reviews after the unified Provider PASS.",
+      "plan_constraint": "5C6 Phase 4 targets a grouped total of 2-3 risk-representative Provider calls rather than one Provider call per historical scenario.",
+      "required_resolution": "Choose and encode a representative semantic-oracle contract before any further Provider authorization.",
+      "source_change_consequence": "Changing the matrix or evaluator changes the source digest and invalidates all current-source release receipts, including the completed Provider receipt."
+    },
+    {
+      "gap_id": "unified_independent_human_review",
+      "kind": "human_decision",
+      "fact": "The exact Provider plan and deterministic outcome are prepared for review, but no independent human semantic PASS has been issued.",
+      "review_focus": "Alternative explanations are only covered by a general non-causal boundary, not by concrete competing explanations."
+    },
+    {
+      "gap_id": "real_data_independent_human_review",
+      "kind": "human_decision",
+      "fact": "The actual-browser real-data canary passed technically, but daily-sum business semantics and the omission of explicit start/end dates from the published text remain unconfirmed by an independent reviewer."
+    },
+    {
+      "gap_id": "future_provider_group",
+      "kind": "authorization_boundary",
+      "fact": "The only authorized Provider call has been consumed successfully; zero additional calls are authorized.",
+      "required_resolution": "After acceptance-contract alignment and a new source freeze, generate one exact-count grouped preflight and request new authorization."
+    }
+  ],
+  "prohibited_shortcuts": [
+    "Do not relabel the unified receipt as another scenario receipt.",
+    "Do not reuse stale receipts after a source change.",
+    "Do not mark human review PASS without independent review.",
+    "Do not call, retry, repair, fallback, or follow up with a Provider without new exact-count authorization.",
+    "Do not switch the root entry or delete the legacy system without separate authorization."
+  ],
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

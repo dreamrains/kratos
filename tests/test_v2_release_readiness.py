@@ -1,0 +1,601 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+from data_agent.v2.release import (
+    LayerStatus,
+    ReleaseEvidenceRecord,
+    ReadinessStatus,
+    ReleaseReceipt,
+    ValidationLayer,
+    HUMAN_REVIEW_DIMENSIONS,
+    compute_release_source_digest,
+    evaluate_release_readiness,
+    project_release_status,
+    load_receipts,
+    load_release_evidence,
+    load_release_matrix,
+)
+
+
+MATRIX_PATH = Path("tests/release/v2_release_matrix.json")
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def test_source_digest_is_line_ending_portable_and_source_sensitive(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitattributes").write_text("*.py text eol=lf\n", encoding="utf-8")
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_bytes(b"value = 1\n")
+    _git(tmp_path, "add", ".gitattributes", "src/example.py")
+
+    lf = compute_release_source_digest(tmp_path)
+    source.write_bytes(b"value = 1\r\n")
+    crlf = compute_release_source_digest(tmp_path)
+    assert crlf.source_digest == lf.source_digest
+
+    source.write_bytes(b"value = 2\r\n")
+    modified = compute_release_source_digest(tmp_path)
+    assert modified.source_digest != lf.source_digest
+
+    extra = tmp_path / "tests" / "new_contract.py"
+    extra.parent.mkdir()
+    extra.write_text("assert True\n", encoding="utf-8")
+    with_untracked = compute_release_source_digest(tmp_path)
+    assert with_untracked.source_digest != modified.source_digest
+    assert "tests/new_contract.py" in with_untracked.files
+
+    source.unlink()
+    deleted = compute_release_source_digest(tmp_path)
+    assert deleted.source_digest != with_untracked.source_digest
+    assert "src/example.py" not in deleted.files
+
+
+def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
+    matrix = load_release_matrix(MATRIX_PATH)
+
+    assert matrix.version == "v2_release_matrix.v4"
+    assert len(matrix.scenarios) == 9
+    assert len({item.scenario_id for item in matrix.scenarios}) == 9
+    assert matrix.shared_runtime_scenario_id == "unified_analysis_entry"
+    assert set(matrix.shared_runtime_layers) == {
+        ValidationLayer.OWNER_CONTRACT,
+        ValidationLayer.INCIDENT_REPLAY,
+        ValidationLayer.SSE_TRANSPORT_CONTRACT,
+        ValidationLayer.BROWSER_INTERACTION_JOURNEY,
+        ValidationLayer.REFRESH_PERSISTENCE_JOURNEY,
+    }
+    assert all(
+        item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
+        for item in matrix.scenarios
+    )
+    assert all(item.entry == "/" for item in matrix.scenarios)
+    assert all("turn_completed" in item.required_semantic_events for item in matrix.scenarios)
+    assert all("executive_answer" in item.required_block_types for item in matrix.scenarios)
+    assert all(item.forbidden_behaviors for item in matrix.scenarios)
+    assert all(item.required_interactions for item in matrix.scenarios)
+    unified = next(item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry")
+    assert unified.entry == "/"
+    assert "stop" in unified.required_interactions
+    assert "draft_while_running" in unified.required_interactions
+    assert "planning_estimate_without_authorization" in unified.required_interactions
+    assert "explicit_planning_confirmation" in unified.required_interactions
+    assert "planning_answer_persisted" in unified.required_interactions
+    assert "planning_failure_stable" in unified.required_interactions
+    assert "explicit_planning_retry" in unified.required_interactions
+    assert "queued_steer" in unified.required_interactions
+    assert "implicit_provider_retry" in unified.forbidden_behaviors
+    assert "planning_answer_truncation" in unified.forbidden_behaviors
+    assert "silent_planning_context_trim" in unified.forbidden_behaviors
+    assert "turn_completed_after_interrupt" in unified.forbidden_behaviors
+
+
+def test_release_matrix_uses_offline_semantic_oracles_and_two_provider_representatives():
+    matrix = load_release_matrix(MATRIX_PATH)
+
+    assert matrix.version == "v2_release_matrix.v4"
+    assert all(item.entry == "/" for item in matrix.scenarios)
+    assert all(
+        item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
+        for item in matrix.scenarios
+    )
+    assert [item.scenario_id for item in matrix.representative_provider_targets] == [
+        "unified_analysis_entry",
+        "backtested_forecast",
+    ]
+    assert [item.scenario_id for item in matrix.representative_human_targets] == [
+        "unified_analysis_entry",
+        "historical_trend",
+    ]
+    assert matrix.representative_human_targets[1].fixture == (
+        "reference/test_doc/游戏A内购数据.xlsx"
+    )
+    assert matrix.provider_call_budget == 2
+    unified = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    assert "turn_interrupted" in matrix.shared_runtime_required_semantic_events
+    assert "turn_interrupted" not in unified.required_semantic_events
+    assert "stop" in matrix.shared_runtime_required_interactions
+
+    projection = project_release_status(
+        matrix,
+        (),
+        current_source_digest="sha256:" + "7" * 64,
+    )
+
+    assert projection["summary"]["total"] == 18
+    assert projection["root_cutover_gaps"] == [
+        "shared_runtime:owner_contract",
+        "shared_runtime:incident_replay",
+        "shared_runtime:sse_transport_contract",
+        "shared_runtime:browser_interaction_journey",
+        "shared_runtime:refresh_persistence_journey",
+        *[
+            f"{item.scenario_id}:scenario_semantic_oracle"
+            for item in matrix.scenarios
+        ],
+        "unified_analysis_entry:real_provider_analysis_journey",
+        "backtested_forecast:real_provider_analysis_journey",
+        "unified_analysis_entry:human_semantic_review",
+        "historical_trend:human_semantic_review",
+    ]
+
+
+def test_scenario_semantic_oracle_requires_exact_fixture_and_full_semantic_coverage():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(item for item in matrix.scenarios if item.scenario_id == "historical_trend")
+    digest = "sha256:" + "6" * 64
+    incomplete = ReleaseReceipt(
+        receipt_id="receipt_historical_semantic_incomplete",
+        source_digest=digest,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.SCENARIO_SEMANTIC_ORACLE,
+        status=LayerStatus.PASS,
+        evidence_refs=("offline:historical",),
+        oracle_identity="v2_scenario_semantic_oracle.v1",
+        fixture_path="tests/fixtures/not-the-bound-fixture.csv",
+        observed_semantic_events=scenario.required_semantic_events,
+        observed_block_types=scenario.required_block_types,
+        observed_interactions=scenario.required_interactions,
+        chart_observation="rendered",
+    )
+
+    decision = evaluate_release_readiness(
+        matrix, [incomplete], current_source_digest=digest
+    )
+
+    assert decision.incomplete_receipt_ids == (
+        "receipt_historical_semantic_incomplete",
+    )
+
+
+def test_unselected_real_provider_receipt_is_unknown_and_two_calls_are_incomplete():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "5" * 64
+    descriptive = next(
+        item for item in matrix.scenarios if item.scenario_id == "descriptive_analysis"
+    )
+    unified = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    unselected = ReleaseReceipt(
+        receipt_id="receipt_unselected_provider",
+        source_digest=digest,
+        scenario_id=descriptive.scenario_id,
+        layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+        status=LayerStatus.PASS,
+        evidence_refs=("provider:unselected",),
+        oracle_identity="provider-oracle:v1",
+        fixture_path=descriptive.fixture,
+        provider_calls=1,
+        provider_authorization_ref="authorization:one",
+        observed_semantic_events=descriptive.required_semantic_events,
+        observed_block_types=descriptive.required_block_types,
+        chart_observation="rendered",
+    )
+    over_budget = ReleaseReceipt(
+        receipt_id="receipt_unified_provider_two_calls",
+        source_digest=digest,
+        scenario_id=unified.scenario_id,
+        layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+        status=LayerStatus.PASS,
+        evidence_refs=("provider:two-calls",),
+        oracle_identity="provider-oracle:v1",
+        fixture_path=unified.fixture,
+        provider_calls=2,
+        provider_authorization_ref="authorization:two",
+        observed_semantic_events=unified.required_semantic_events,
+        observed_block_types=unified.required_block_types,
+        chart_observation="rendered",
+    )
+
+    decision = evaluate_release_readiness(
+        matrix, [unselected, over_budget], current_source_digest=digest
+    )
+
+    assert decision.unknown_receipt_ids == ("receipt_unselected_provider",)
+    assert decision.incomplete_receipt_ids == (
+        "receipt_unified_provider_two_calls",
+    )
+    assert decision.provider_calls == 2
+
+
+def test_human_semantic_review_excludes_machine_stability():
+    assert "stability" not in HUMAN_REVIEW_DIMENSIONS
+
+
+def test_historical_human_receipt_preserves_technical_stability_without_reclassifying_it():
+    receipts = load_receipts(
+        "docs/superpowers/evidence/2026-08-22-v2-5c5y-current-unified-release-receipts.json"
+    )
+    human_receipt = next(
+        receipt
+        for receipt in receipts
+        if receipt.layer is ValidationLayer.HUMAN_SEMANTIC_REVIEW
+    )
+
+    assert human_receipt.status is LayerStatus.FAIL
+    assert human_receipt.historical_technical_stability is LayerStatus.FAIL
+    assert all(status is LayerStatus.PASS for _, status in human_receipt.semantic_dimensions)
+
+
+def test_browser_pass_cannot_stand_in_for_other_layers():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "a" * 64
+    receipt = ReleaseReceipt(
+        receipt_id="receipt_browser",
+        source_digest=digest,
+        scenario_id=matrix.shared_runtime_scenario_id,
+        layer=ValidationLayer.BROWSER_INTERACTION_JOURNEY,
+        status=LayerStatus.PASS,
+        evidence_refs=("browser:observation:1",),
+        oracle_identity="oracle:v1",
+    )
+
+    decision = evaluate_release_readiness(matrix, [receipt], current_source_digest=digest)
+
+    assert decision.status is ReadinessStatus.NOT_READY
+    assert decision.provider_calls == 0
+    assert len(decision.missing_requirements) == 17
+    assert decision.incomplete_receipt_ids == ("receipt_browser",)
+    assert "product_pass" not in json.dumps(decision.to_dict())
+
+
+def test_shared_runtime_receipt_cannot_be_relabelled_as_a_scenario_receipt():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "0" * 64
+    receipt = ReleaseReceipt(
+        receipt_id="receipt_relabelled_owner",
+        source_digest=digest,
+        scenario_id="descriptive_analysis",
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:relabelled-owner",),
+        oracle_identity="oracle:v1",
+    )
+
+    decision = evaluate_release_readiness(matrix, [receipt], current_source_digest=digest)
+
+    assert decision.unknown_receipt_ids == ("receipt_relabelled_owner",)
+    assert "shared_runtime:owner_contract" in decision.missing_requirements
+
+
+def test_stale_and_conflicting_receipts_never_satisfy_requirement():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
+    current = "sha256:" + "b" * 64
+    stale = ReleaseReceipt(
+        receipt_id="receipt_stale",
+        source_digest="sha256:" + "a" * 64,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:old",),
+        oracle_identity="oracle:v1",
+    )
+    passed = ReleaseReceipt(
+        receipt_id="receipt_pass",
+        source_digest=current,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:new",),
+        oracle_identity="oracle:v1",
+    )
+    failed = ReleaseReceipt(
+        receipt_id="receipt_fail",
+        source_digest=current,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.FAIL,
+        evidence_refs=("pytest:failure",),
+        oracle_identity="oracle:v1",
+        first_failure_stage="owner assertion",
+    )
+
+    stale_decision = evaluate_release_readiness(matrix, [stale], current_source_digest=current)
+    conflict_decision = evaluate_release_readiness(
+        matrix, [passed, failed], current_source_digest=current
+    )
+
+    assert stale_decision.stale_receipt_ids == ("receipt_stale",)
+    assert conflict_decision.status is ReadinessStatus.NOT_READY
+    assert conflict_decision.conflicting_requirements == (
+        f"shared_runtime:{ValidationLayer.OWNER_CONTRACT.value}",
+    )
+
+
+def test_complete_current_receipts_only_reach_human_decision():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "c" * 64
+    receipts = []
+    shared_scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
+    for layer in matrix.shared_runtime_layers:
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_shared_runtime_{layer.value}",
+                source_digest=digest,
+                scenario_id=shared_scenario.scenario_id,
+                layer=layer,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:shared_runtime:{layer.value}",),
+                oracle_identity="oracle:v1",
+                observed_semantic_events=matrix.shared_runtime_required_semantic_events,
+                observed_interactions=matrix.shared_runtime_required_interactions,
+                chart_observation="rendered",
+            )
+        )
+    for scenario in matrix.scenarios:
+        for layer in scenario.required_layers:
+            receipts.append(
+                ReleaseReceipt(
+                    receipt_id=f"receipt_{scenario.scenario_id}_{layer.value}",
+                    source_digest=digest,
+                    scenario_id=scenario.scenario_id,
+                    layer=layer,
+                    status=LayerStatus.PASS,
+                    evidence_refs=(f"evidence:{scenario.scenario_id}:{layer.value}",),
+                    oracle_identity="oracle:v1",
+                    fixture_path=scenario.fixture,
+                    provider_calls=(1 if layer is ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY else 0),
+                    provider_authorization_ref=(
+                        "authorization:explicit:one-call"
+                        if layer is ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY else ""
+                    ),
+                    semantic_dimensions=(
+                        tuple((dimension, LayerStatus.PASS) for dimension in HUMAN_REVIEW_DIMENSIONS)
+                        if layer is ValidationLayer.HUMAN_SEMANTIC_REVIEW else ()
+                    ),
+                    observed_semantic_events=scenario.required_semantic_events,
+                    observed_block_types=scenario.required_block_types,
+                    observed_interactions=scenario.required_interactions,
+                    chart_observation=(
+                        "rendered" if scenario.chart_policy in {"required", "conditional"}
+                        else "forbidden_absent"
+                    ),
+                )
+            )
+    scenarios = {item.scenario_id: item for item in matrix.scenarios}
+    for target in matrix.representative_provider_targets:
+        scenario = scenarios[target.scenario_id]
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_{scenario.scenario_id}_provider",
+                source_digest=digest,
+                scenario_id=scenario.scenario_id,
+                layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:{scenario.scenario_id}:provider",),
+                oracle_identity="provider-oracle:v1",
+                fixture_path=target.fixture,
+                provider_calls=1,
+                provider_authorization_ref="authorization:explicit:one-call",
+                observed_semantic_events=scenario.required_semantic_events,
+                observed_block_types=scenario.required_block_types,
+                chart_observation=(
+                    "rendered" if scenario.chart_policy in {"required", "conditional"}
+                    else "forbidden_absent"
+                ),
+            )
+        )
+    for target in matrix.representative_human_targets:
+        scenario = scenarios[target.scenario_id]
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_{scenario.scenario_id}_human",
+                source_digest=digest,
+                scenario_id=scenario.scenario_id,
+                layer=ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:{scenario.scenario_id}:human",),
+                oracle_identity="human-rubric:v1",
+                fixture_path=target.fixture,
+                semantic_dimensions=tuple(
+                    (dimension, LayerStatus.PASS)
+                    for dimension in HUMAN_REVIEW_DIMENSIONS
+                ),
+            )
+        )
+
+    decision = evaluate_release_readiness(matrix, receipts, current_source_digest=digest)
+
+    assert decision.status is ReadinessStatus.READY_FOR_HUMAN_DECISION
+    assert decision.missing_requirements == ()
+    assert decision.provider_calls == 2
+    assert decision.root_switch_authorized is False
+
+
+def test_non_pass_receipt_requires_first_failure_stage():
+    try:
+        ReleaseReceipt(
+            receipt_id="receipt_blocked",
+            source_digest="sha256:" + "d" * 64,
+            scenario_id="descriptive_analysis",
+            layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+            status=LayerStatus.BLOCKED,
+            evidence_refs=("provider:not-authorized",),
+            oracle_identity="oracle:v1",
+        )
+    except ValueError as exc:
+        assert "first_failure_stage" in str(exc)
+    else:
+        raise AssertionError("blocked receipt without first_failure_stage was accepted")
+
+
+def test_provider_receipt_requires_explicit_authorization_reference():
+    try:
+        ReleaseReceipt(
+            receipt_id="receipt_provider",
+            source_digest="sha256:" + "e" * 64,
+            scenario_id="descriptive_analysis",
+            layer=ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+            status=LayerStatus.PASS,
+            evidence_refs=("provider:session:1",),
+            oracle_identity="oracle:v1",
+            provider_calls=1,
+        )
+    except ValueError as exc:
+        assert "provider_authorization_ref" in str(exc)
+    else:
+        raise AssertionError("provider receipt without authorization was accepted")
+
+
+def test_human_review_cannot_hide_a_failed_dimension_in_overall_pass():
+    dimensions = [
+        (dimension, LayerStatus.PASS) for dimension in HUMAN_REVIEW_DIMENSIONS
+    ]
+    dimensions[-1] = (dimensions[-1][0], LayerStatus.FAIL)
+    try:
+        ReleaseReceipt(
+            receipt_id="receipt_human",
+            source_digest="sha256:" + "f" * 64,
+            scenario_id="descriptive_analysis",
+            layer=ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+            status=LayerStatus.PASS,
+            evidence_refs=("review:form:1",),
+            oracle_identity="rubric:v1",
+            semantic_dimensions=tuple(dimensions),
+        )
+    except ValueError as exc:
+        assert "every dimension" in str(exc)
+    else:
+        raise AssertionError("human review hid a failed dimension")
+
+
+def test_pass_receipt_is_incomplete_when_required_sse_evidence_is_missing():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
+    digest = "sha256:" + "1" * 64
+    receipt = ReleaseReceipt(
+        receipt_id="receipt_incomplete_sse",
+        source_digest=digest,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.SSE_TRANSPORT_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("sse:trace:1",),
+        oracle_identity="oracle:v1",
+        observed_semantic_events=("turn_started", "turn_completed"),
+    )
+
+    decision = evaluate_release_readiness(matrix, [receipt], current_source_digest=digest)
+
+    assert decision.status is ReadinessStatus.NOT_READY
+    assert decision.incomplete_receipt_ids == ("receipt_incomplete_sse",)
+
+
+def test_append_only_evidence_projects_deterministic_receipts_and_a_bounded_status():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    digest = "sha256:" + "9" * 64
+    evidence = ReleaseEvidenceRecord(
+        evidence_id="evidence_unified_owner_current",
+        source_digest=digest,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:unified-owner",),
+        oracle_identity="v2_owner_oracle.v1",
+    )
+
+    projection = project_release_status(
+        matrix,
+        (evidence,),
+        current_source_digest=digest,
+    )
+
+    assert projection["version"] == "v2_release_status_projection.v1"
+    assert projection["status"] == "not_ready"
+    assert projection["summary"] == {
+        "total": 18,
+        "pass": 1,
+        "fail": 0,
+        "blocked": 0,
+        "not_run": 17,
+        "conflict": 0,
+        "incomplete": 0,
+    }
+    assert projection["first_failure"] == {
+        "requirement": "shared_runtime:incident_replay",
+        "stage": "not_run",
+    }
+    assert projection["root_cutover_gaps"][0] == "shared_runtime:incident_replay"
+    assert projection["receipts"] == [
+        {
+            "receipt_id": "receipt_evidence_unified_owner_current",
+            "source_digest": digest,
+            "scenario_id": "unified_analysis_entry",
+            "layer": "owner_contract",
+            "status": "pass",
+            "evidence_refs": ["pytest:unified-owner"],
+            "oracle_identity": "v2_owner_oracle.v1",
+        }
+    ]
+
+
+def test_evidence_bundle_loader_rejects_manual_receipt_shape_and_preserves_record_ids(tmp_path):
+    path = tmp_path / "evidence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "v2_release_evidence.v1",
+                "records": [
+                    {
+                        "evidence_id": "evidence_owner",
+                        "source_digest": "sha256:" + "8" * 64,
+                        "scenario_id": "unified_analysis_entry",
+                        "layer": "owner_contract",
+                        "status": "pass",
+                        "evidence_refs": ["pytest:owner"],
+                        "oracle_identity": "owner:v1",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    records = load_release_evidence(path)
+
+    assert records[0].evidence_id == "evidence_owner"
+    assert records[0].to_receipt().receipt_id == "receipt_evidence_owner"

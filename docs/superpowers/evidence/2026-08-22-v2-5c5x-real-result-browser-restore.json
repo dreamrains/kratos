@@ -1,0 +1,69 @@
+{
+  "version": "v2_actual_browser_real_result_restore.v2",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "scenario_id": "unified_analysis_entry",
+  "browser": "Codex In-app Browser",
+  "url": "http://127.0.0.1:5012/v2-workbench?session_id=session_real_5c5x&turn_id=turn_real_5c5x_deterministic",
+  "session_id": "session_real_5c5x",
+  "turn_id": "turn_real_5c5x_deterministic",
+  "source_plan_id": "plan_3f2cc581acb91892eb3fcc2e",
+  "initial_restore": {
+    "status_text": "已从持久化消息块恢复",
+    "article_headings": [
+      "直接回答",
+      "历史趋势",
+      "双组比较",
+      "方法与共同边界",
+      "建议的验证步骤"
+    ],
+    "unique_article_count": 5,
+    "unique_figure_count": 2,
+    "iframe_count": 2,
+    "chart_labels": [
+      "sales 的历史日趋势",
+      "sales 的channel双组分布"
+    ],
+    "all_charts_loaded": true,
+    "visible_errors": [],
+    "console_errors": []
+  },
+  "full_page_reload": {
+    "status_text": "已从持久化消息块恢复",
+    "article_headings": [
+      "直接回答",
+      "历史趋势",
+      "双组比较",
+      "方法与共同边界",
+      "建议的验证步骤"
+    ],
+    "unique_article_count": 5,
+    "unique_figure_count": 2,
+    "iframe_count": 2,
+    "chart_labels": [
+      "sales 的历史日趋势",
+      "sales 的channel双组分布"
+    ],
+    "all_charts_loaded": true,
+    "visible_errors": [],
+    "console_errors": []
+  },
+  "request_audit": {
+    "observed_methods": [
+      "GET"
+    ],
+    "planning_posts": 0,
+    "analysis_posts": 0,
+    "provider_calls": 0
+  },
+  "published_semantics": {
+    "analysis_unit": "unit_id",
+    "time_window": "2026-01-01/2026-02-11",
+    "causal_upgrade": false,
+    "intervention_effect_claimed": false,
+    "recommendation_mode": "investigative_next_step"
+  },
+  "refresh_persistence_pass": true,
+  "browser_interaction_journey_pass": false,
+  "human_semantic_pass_issued": false,
+  "root_switch_authorized": false
+}

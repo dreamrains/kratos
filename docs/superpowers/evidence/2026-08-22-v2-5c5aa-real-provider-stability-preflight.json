@@ -1,0 +1,164 @@
+{
+  "version": "v2_real_provider_stability_protocol.v2",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "git_head": "f184dfd3cc3e7ef2b9a66fe687dd05a9abb7a179",
+  "scenario_id": "unified_analysis_entry",
+  "provider_purpose": "analysis_planning",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "validated_single_call_preflight": {
+    "path": "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-provider-preflight.json",
+    "validation_status": "pass",
+    "validation_reason_codes": [],
+    "release_preflight_identity_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+    "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+    "planner_schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+    "semantic_context": {
+      "confirmed_analysis_unit_column": "unit_id"
+    },
+    "planning_context": {
+      "model_id": "openai/deepseek-v4-flash",
+      "estimated_input_tokens": 2972,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "provider_calls_per_authorization": 1,
+    "authorization_mode": "per_call"
+  },
+  "baseline_sample": {
+    "sample_id": "5c5x_baseline",
+    "attempt_evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-provider-attempt.json",
+    "deterministic_evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5x-deterministic-continuation.json",
+    "release_receipt": "docs/superpowers/evidence/2026-08-22-v2-5c5x-real-provider-release-receipt.json",
+    "provider_calls": 1,
+    "automatic_retries": 0,
+    "planning_status": "ready",
+    "deterministic_status": "consumed",
+    "implementation_semantic_assessment": "pass",
+    "independent_business_review": "pass_except_stability",
+    "plan_identity_fingerprint": "sha256:e3c1a3bfbc8ac82b99bdb15832b88b1114b932570e92a2ac772379dc860228e9",
+    "plan_identity": {
+      "analysis_kind": "multi_finding_synthesis",
+      "parameters": {
+        "action_risk": "medium",
+        "aggregation": "sum",
+        "analysis_unit": "unit_id",
+        "frequency": "daily",
+        "group": "channel",
+        "metric": "sales",
+        "recommendation_intent": "investigate",
+        "reversible": true,
+        "time_field": "date"
+      }
+    }
+  },
+  "target_total_samples": 3,
+  "required_additional_passes": 2,
+  "additional_trial_authorization_slots": [
+    {
+      "trial_id": "5c5aa_additional_1",
+      "issue_only_if": "5c5x_baseline_pass",
+      "authorization_mode": "per_call",
+      "provider_calls": 1,
+      "purpose": "analysis_planning",
+      "requires_fresh_runtime_planning_context_comparison": true,
+      "requires_unique_authorization_id": true,
+      "requires_unique_client_action_id": true,
+      "requires_unique_consumer_request_id": true
+    },
+    {
+      "trial_id": "5c5aa_additional_2",
+      "issue_only_if": "5c5aa_additional_1_pass",
+      "authorization_mode": "per_call",
+      "provider_calls": 1,
+      "purpose": "analysis_planning",
+      "requires_fresh_runtime_planning_context_comparison": true,
+      "requires_unique_authorization_id": true,
+      "requires_unique_client_action_id": true,
+      "requires_unique_consumer_request_id": true
+    }
+  ],
+  "execution_policy": {
+    "pooled_or_blanket_runtime_authorization_allowed": false,
+    "automatic_retries": 0,
+    "repair_provider_calls": 0,
+    "continue_after_failure": false,
+    "deterministic_continuation_after_each_ready_plan": true,
+    "provider_calls_for_deterministic_continuation": 0,
+    "second_trial_authorized_only_if_first_trial_passes": true
+  },
+  "acceptance_criteria": {
+    "required_total_passes": 3,
+    "exact_release_preflight_identity_match": true,
+    "exact_runtime_model_and_planning_context_match": true,
+    "exact_semantic_context_match": true,
+    "exact_plan_identity_match": true,
+    "each_authorization_consumed_once": true,
+    "each_trial_provider_calls": 1,
+    "each_trial_automatic_retries": 0,
+    "each_deterministic_continuation_pass": true,
+    "each_independent_recalculation_match": true,
+    "human_semantic_receipt_automatic": false
+  },
+  "stop_conditions": [
+    "source_digest_changed",
+    "dataset_fingerprint_changed",
+    "model_changed",
+    "planning_context_changed",
+    "semantic_context_changed",
+    "planner_contract_changed",
+    "previous_trial_failed",
+    "provider_error",
+    "planner_contract_error",
+    "unsupported_plan",
+    "needs_input",
+    "plan_identity_changed",
+    "deterministic_continuation_failed",
+    "independent_recalculation_mismatch"
+  ],
+  "privacy_boundary": {
+    "api_key_persisted": false,
+    "raw_provider_response_persisted": false,
+    "reasoning_persisted": false,
+    "uncontrolled_model_text_persisted": false
+  },
+  "protocol_identity": {
+    "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+    "scenario_id": "unified_analysis_entry",
+    "provider_purpose": "analysis_planning",
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_host": "api.deepseek.com",
+    "release_preflight_identity_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+    "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+    "planner_schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+    "semantic_context": {
+      "confirmed_analysis_unit_column": "unit_id"
+    },
+    "planning_context": {
+      "model_id": "openai/deepseek-v4-flash",
+      "estimated_input_tokens": 2972,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "baseline_plan_identity_fingerprint": "sha256:e3c1a3bfbc8ac82b99bdb15832b88b1114b932570e92a2ac772379dc860228e9",
+    "target_total_samples": 3,
+    "additional_trial_count": 2,
+    "provider_calls_per_trial": 1,
+    "authorization_mode": "per_call",
+    "second_trial_condition": "5c5aa_additional_1_pass",
+    "automatic_retries": 0,
+    "continue_after_failure": false
+  },
+  "protocol_identity_fingerprint": "sha256:579139a662e87799317adb0681af918a10edacadc03be3060e58d80dd249600c",
+  "provider_calls_observed": 1,
+  "authorizations_issued": 1,
+  "user_authorization_status": "first_consumed_second_not_issued_due_to_failure",
+  "execution_result": "docs/superpowers/evidence/2026-08-22-v2-5c5aa-real-provider-stability-result.json",
+  "human_semantic_release_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

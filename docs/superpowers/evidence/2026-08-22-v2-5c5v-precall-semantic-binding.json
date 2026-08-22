@@ -1,0 +1,138 @@
+{
+  "version": "v2_precall_semantic_binding_evidence.v1",
+  "slice": "5C5V",
+  "source_digest": "sha256:95bd2ca674d8275f0dc76fa805dc863766e149a3243c1d952b0c91c74bc5c562",
+  "git_head": "0f09ada28788cb688e00b10af1215de4258622ed",
+  "source_dirty": true,
+  "trigger": {
+    "evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5u-analysis-unit-semantic-context.json",
+    "confirmed_gap": "semantic resolution was bound only after a needs-input plan, so deterministic business context could not be frozen before the first Provider call"
+  },
+  "red_regressions": [
+    {
+      "case": "authorization_rejects_confirmed_semantic_context_drift_before_consumption",
+      "red_observation": "ProviderAuthorizationStore.issue rejected semantic_context as an unknown argument",
+      "green_behavior": "the authorization ledger and runtime fingerprint persist and compare the exact normalized semantic context"
+    },
+    {
+      "case": "plan_rejects_preflight_semantic_context_drift_before_provider_call",
+      "red_observation": "HTTP ignored semantic_context and invoked the Planner after unit_id was changed to sales",
+      "green_behavior": "HTTP 409 occurs before Planner invocation and the authorization remains issued"
+    },
+    {
+      "case": "plan_passes_matching_preflight_semantic_context_to_planner",
+      "red_observation": "matching semantic_context was discarded and the Planner received an empty confirmation",
+      "green_behavior": "the Planner receives confirmed_analysis_unit_column=unit_id"
+    },
+    {
+      "case": "preflight_binds_explicit_confirmed_analysis_unit_before_first_call",
+      "red_observation": "the release preflight builder had no explicit analysis-unit input",
+      "green_behavior": "semantic_context is included in request identity and tampering invalidates the request fingerprint"
+    },
+    {
+      "case": "workbench_can_freeze_analysis_unit_before_first_provider_call",
+      "red_observation": "the Workbench had no pre-call semantic selector",
+      "green_behavior": "the first estimate loads options; selection invalidates the estimate; re-estimation is required before call confirmation"
+    }
+  ],
+  "implemented_contract": {
+    "real_provider_preflight_version": "v2_real_provider_journey_preflight.v5",
+    "runtime_authorization_binds_semantic_context": true,
+    "authorization_ledger_persists_semantic_context": true,
+    "historical_authorization_default": {
+      "confirmed_analysis_unit_column": ""
+    },
+    "estimate_returns_server_eligible_columns": true,
+    "explicit_defer_supported": true,
+    "automatic_column_selection": false,
+    "semantic_change_invalidates_estimate": true,
+    "planning_input_semantics_remain_authoritative_for_derived_calls": true,
+    "provider_call_before_drift_rejection": false
+  },
+  "confirmed_unit_id_preflight_dry_build": {
+    "status": "pass",
+    "version": "v2_real_provider_journey_preflight.v5",
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_host": "api.deepseek.com",
+    "semantic_context": {
+      "confirmed_analysis_unit_column": "unit_id"
+    },
+    "planning_context": {
+      "estimated_input_tokens": 2972,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "planner_contract_gate": {
+      "version": "v2_planner_contract_parity.v3",
+      "passed": true,
+      "schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+      "ready_variant_count": 6,
+      "needs_input_variants": [
+        {
+          "analysis_kind": "factor_relationship",
+          "missing_prerequisites": [
+            "compatible_column_binding"
+          ]
+        }
+      ],
+      "needs_input_variant_count": 1,
+      "unsupported_variant_count": 1,
+      "status_variant_count": 8
+    },
+    "request_fingerprint": "sha256:411831fa42e28039ddb8d12b5ef18e928cf4069fe8b6c459b553ce63ecf14a09",
+    "provider_calls_observed": 0,
+    "authorization_issued": false
+  },
+  "provider_neutral_browser_journey": {
+    "upload_http_status": 200,
+    "initial_estimate_http_status": 200,
+    "initial_confirmation_button_visible": false,
+    "eligible_columns": [
+      "unit_id",
+      "channel",
+      "sales"
+    ],
+    "automatic_selection_observed": false,
+    "selected_column": "unit_id",
+    "selection_invalidated_prior_estimate": true,
+    "resolved_estimate_http_status": 200,
+    "authorization_issue_http_status": 201,
+    "plan_http_status": 201,
+    "plan_status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "turn_status": "finalized",
+    "answer_block_count": 4,
+    "planner_invocations": 1,
+    "authorizations_issued": 1,
+    "authorizations_consumed": 1,
+    "provider_calls": 0
+  },
+  "verification": {
+    "focused_authorization_http_preflight_workbench": "52 passed",
+    "v2_and_config": "396 passed, 2123 deselected",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "provider_neutral_browser_journey": "passed",
+    "provider_calls": 0,
+    "automatic_retries": 0
+  },
+  "stale_source_bound_evidence": {
+    "prior_source_digest": "sha256:94b1d48b6d9f456ebc545a2180dc5e3a9085e7692bba2596007dc3e83cc46381",
+    "all_prior_release_receipts_stale": true,
+    "historical_facts_retained": true
+  },
+  "next_preflight_boundary": {
+    "deterministic_preflight_builder_passed": true,
+    "committed_clean_source_required": true,
+    "real_provider_preflight_receipt_issued": false,
+    "user_confirmed_real_call_semantic_context": false,
+    "next_requirement": "review and commit 5C5V, obtain the user's explicit business-semantic confirmation for the real journey, generate a clean-source preflight, then obtain exact model, source digest, purpose and count authorization"
+  },
+  "real_provider_receipt_issued": false,
+  "stability_receipt_issued": false,
+  "human_semantic_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

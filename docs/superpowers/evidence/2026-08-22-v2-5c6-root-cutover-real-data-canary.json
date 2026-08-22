@@ -1,0 +1,76 @@
+{
+  "version": "v2_root_cutover_real_data_canary.v1",
+  "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+  "git_head": "f3a837227fe02646fc985698d6056aa75e034d1b",
+  "fixture": {
+    "path": "reference/test_doc/游戏A内购数据.xlsx",
+    "sha256": "fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e",
+    "size_bytes": 24466,
+    "rows": 248,
+    "date_field": "日期",
+    "date_min": "2021-03-01",
+    "date_max": "2021-11-03",
+    "metric": "内购收入",
+    "metric_missing_rows": 0
+  },
+  "scenario": {
+    "question": "内购收入按日如何变化？",
+    "analysis_kind": "time_trend",
+    "time_field": "日期",
+    "metric": "内购收入",
+    "frequency": "daily",
+    "aggregation": "sum"
+  },
+  "execution_boundary": {
+    "provider_calls": 0,
+    "planner_calls": 0,
+    "run_mode": "localhost actual browser with deterministic V2 runtime",
+    "allowed_data_egress": "none"
+  },
+  "offline_suite": {
+    "command": ".venv\\Scripts\\python.exe -m pytest -q tests\\test_v2_real_data_canary.py tests\\test_mvp_real_data_fixtures.py tests\\real_data",
+    "passed": 36,
+    "failed": 0,
+    "skipped": 1,
+    "warning": "pytest cache write was denied; it did not affect test outcomes"
+  },
+  "actual_browser": {
+    "observer": "actual_browser",
+    "session_id": "v2_34c3eb1ffc93",
+    "turn_id": "turn_5c726ec7518a",
+    "status": "finalized",
+    "block_count": 2,
+    "chart_count": 1,
+    "console_errors": [],
+    "refresh_restored": true,
+    "answer_before_digest": "sha256:756073326a6be0946ef2dab07b4c4002b10de67a4a9c218b873ec54b5c79ca43",
+    "answer_after_digest": "sha256:756073326a6be0946ef2dab07b4c4002b10de67a4a9c218b873ec54b5c79ca43"
+  },
+  "observed_answer": {
+    "trend_per_day": 0.402,
+    "confidence_interval_95": [-0.64, 1.443],
+    "hac_p_value": 0.448,
+    "source_rows": 248,
+    "effective_daily_periods": 248,
+    "aggregation": "sum",
+    "incomplete_boundary_periods": 0,
+    "hac_max_lag": 4,
+    "weekday_controls": true,
+    "lag_1_autocorrelation": 0.18,
+    "kendall_tau": 0.015,
+    "claim": "No reliable linear trend was detected in the current historical range; this does not imply the metric was constant."
+  },
+  "human_semantic_review": {
+    "status": "not_run",
+    "reason_codes": [
+      "independent_business_review_required"
+    ],
+    "review_focus": [
+      "Confirm that daily sum is the intended business aggregation for 内购收入.",
+      "Decide whether omitting the explicit 2021-03-01 through 2021-11-03 range from the published text is material to data-scope clarity.",
+      "Confirm that the non-significant linear trend and non-causal boundary are useful and not misleading."
+    ]
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

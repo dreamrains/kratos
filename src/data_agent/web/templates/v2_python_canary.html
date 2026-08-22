@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 4E 探索性 Python</title>
+    <style>
+        :root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;background:#f5f4f1;color:#282621}main{width:min(940px,calc(100% - 32px));margin:36px auto 72px}header{display:flex;justify-content:space-between;gap:22px;align-items:flex-start;margin-bottom:22px}h1{margin:0 0 8px;font-size:28px}h2{margin:0 0 14px;font-size:18px}.subtitle{margin:0;color:#736e64;line-height:1.55}.badge{padding:7px 11px;border:1px solid #e0c995;border-radius:999px;background:#fff5d9;color:#765a18;font-size:12px;white-space:nowrap}.warning{margin:0 0 16px;padding:13px 15px;border:1px solid #ead7a8;border-radius:12px;background:#fffaeb;color:#6f571f;line-height:1.55}.panel{margin-bottom:16px;padding:20px;border:1px solid #e3dfd5;border-radius:16px;background:#fff;box-shadow:0 12px 30px rgba(54,48,35,.05)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.wide{grid-column:1/-1}label{display:block;margin-bottom:7px;color:#665f54;font-size:12px;font-weight:700}input,textarea,button{font:inherit}input[type="text"],input[type="file"],textarea{width:100%;padding:10px 12px;border:1px solid #d5d0c5;border-radius:10px;background:#fefefd}textarea{min-height:130px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.5}.actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:16px}button{min-height:42px;padding:0 18px;border:0;border-radius:10px;background:#8b6923;color:#fff;font-weight:700;cursor:pointer}button:disabled{background:#b8b1a2;cursor:wait}.secondary{background:#f0ede6;color:#5d574d}.status,.file-state,.run-id{color:#777168;font-size:12px;overflow-wrap:anywhere}.progress{display:none}.progress.visible{display:block}.progress-list{display:grid;gap:8px}.progress-item{display:flex;gap:9px;align-items:center;color:#625d54;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#a07a2a;box-shadow:0 0 0 4px #f8edcf}.answer{display:grid;gap:14px}.answer:empty::before{content:"完成后，结构化结论与明确降级的探索性补充会显示在这里。";color:#8b867d}.answer-block{border-left:3px solid #ad8532;padding:4px 0 4px 16px}.answer-block[data-calibration="exploratory"]{border-left-style:dashed;background:#fffbef;padding:12px 14px}.answer-block h2{margin:0 0 8px;font-size:17px}.answer-block p{margin:0;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.answer-block ul{color:#6d665b}.error{display:none;margin-bottom:16px;padding:13px 15px;border:1px solid #f0c6c2;border-radius:12px;background:#fff0ef;color:#8c2d27}.error.visible{display:block}@media(max-width:700px){header{flex-direction:column}.grid{grid-template-columns:1fr}.wide{grid-column:auto}}
+    </style>
+</head>
+<body><main>
+    <header><div><h1>探索性 Python 补充</h1><p class="subtitle">先用结构化方法回答核心问题，再执行显式代码；两条证据路径严格分离。</p></div><span class="badge">Exploratory only</span></header>
+    <p class="warning"><strong>边界：</strong>自由 Python 输出不能作为结论证据，不能生成 verified Finding，也不能支持推断、预测或因果结论。</p>
+    <div id="error" class="error" role="alert"></div>
+    <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">分析与探索输入</h2><div class="grid">
+        <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
+        <div><label for="metric">核心描述指标</label><input id="metric" type="text" value="sales"></div>
+        <div class="wide"><label for="question">核心问题</label><input id="question" type="text" value="销售额的总体水平如何？"></div>
+        <div class="wide"><label for="purpose">探索目的</label><input id="purpose" type="text" value="检查中位数作为异常值敏感性补充"></div>
+        <div class="wide"><label for="code">只读探索代码（数据副本变量为 data，结果放入 result）</label><textarea id="code">print("rows", len(data))
+result = data["sales"].median()</textarea></div>
+    </div><div class="actions"><button id="run" type="button">开始分析</button><button id="restore" class="secondary" type="button">刷新恢复</button><span id="status" class="status">等待输入</span></div><div id="run-id" class="run-id"></div></section>
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading"><h2 id="progress-heading">实时进度</h2><div id="progress-list" class="progress-list" aria-live="polite"></div></section>
+    <section class="panel" aria-labelledby="answer-heading"><h2 id="answer-heading">分析结果</h2><div id="answer" class="answer" aria-live="polite"></div></section>
+</main><script src="{{ url_for('static', filename='js/v2_python_canary.js', v='slice4e1') }}"></script></body></html>

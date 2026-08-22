@@ -1,0 +1,98 @@
+{
+  "version": "v2_real_provider_journey_observation.v1",
+  "source_digest": "sha256:cc5ad7379395b449ffce5d4776c6fa29a492648918070b859d1c698889db9705",
+  "git_head": "37adae7a6d455f75123b239f6c1457dc0efcf6e0",
+  "scenario_id": "unified_analysis_entry",
+  "fixture_path": "tests/fixtures/v2_slice4d_combined.csv",
+  "dataset_fingerprint": "sha256:90457a00971443e408347fa586fa933e9f924d13e611a879f57165836c9db20a",
+  "question": "销售如何变化，不同渠道是否存在可靠差异？请给出严谨结论、统计不确定性、方法局限，并仅在上下文支持时给出建议。",
+  "model_id": "openai/deepseek-v4-flash",
+  "provider_host": "api.deepseek.com",
+  "semantic_context": {
+    "confirmed_analysis_unit_column": "unit_id"
+  },
+  "preflight": {
+    "version": "v2_real_provider_journey_preflight.v6",
+    "status": "pass",
+    "reason_codes": [],
+    "request_fingerprint": "sha256:6b4ac37cf722380f79ed859e278b850400f18620a172c52a17e0b79238cf266b",
+    "planning_context": {
+      "model_id": "openai/deepseek-v4-flash",
+      "estimated_input_tokens": 2812,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "planner_contract_gate": {
+      "version": "v2_planner_contract_parity.v4",
+      "passed": true,
+      "schema_fingerprint": "sha256:b7a289247056f1de83379873071b965f3aff03b6059e93eb9eb43487848632f7",
+      "ready_variant_count": 6,
+      "needs_input_variant_count": 1,
+      "unsupported_variant_count": 1,
+      "status_variant_count": 8
+    }
+  },
+  "authorization": {
+    "authorization_id": "provider_auth_35247c5242f74243b9622a0b29797add",
+    "purpose": "analysis_planning",
+    "provider_calls_authorized": 1,
+    "consumed_by_successful_plan_request": true
+  },
+  "provider_attempt": {
+    "planning_http_status": 201,
+    "planning_status": "ready",
+    "analysis_kind": "multi_finding_synthesis",
+    "parameters": {
+      "aggregation": "sum",
+      "analysis_unit": "unit_id",
+      "frequency": "daily",
+      "group": "channel",
+      "metric": "sales",
+      "time_field": "date"
+    },
+    "provider_calls_observed": 1,
+    "automatic_retries": 0,
+    "repair_calls": 0
+  },
+  "deterministic_continuation": {
+    "executed_after_ready_plan": true,
+    "http_status": 200,
+    "status": "finalized",
+    "event_names": [
+      "turn_started",
+      "commitment_snapshot",
+      "tool_started",
+      "tool_finished",
+      "artifact_created",
+      "outcome_snapshot",
+      "final_block_delta",
+      "turn_completed"
+    ],
+    "block_count": 4,
+    "artifact_count": 2
+  },
+  "independent_deterministic_replay": {
+    "provider_calls": 0,
+    "upload_http_status": 200,
+    "execution_http_status": 200,
+    "status": "finalized",
+    "block_types": [
+      "executive_answer",
+      "key_finding",
+      "comparison",
+      "method"
+    ],
+    "artifact_count": 2
+  },
+  "data_handling": {
+    "fixture_kind": "repository synthetic fixture",
+    "raw_provider_response_persisted": false,
+    "provider_reasoning_persisted": false,
+    "planner_rationale_persisted": false,
+    "reference_test_doc_sent_to_provider": false
+  },
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

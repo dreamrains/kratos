@@ -1,0 +1,72 @@
+{
+  "version": "v2_root_cutover_candidate.v2",
+  "candidate_status": "root_cutover_validation_complete",
+  "source_freeze": {
+    "git_head": "11f09063b7c7d6428a230043f3fda17632dd5f9a",
+    "source_digest": "sha256:12c63a951368dbc8571412c5d3f2b1dc4b0383f8d7fcd0ce12055d4ef88d9f40",
+    "source_dirty": false
+  },
+  "release_contract": {
+    "matrix_version": "v2_release_matrix.v4",
+    "projected_status": "ready_for_human_decision",
+    "total_requirements": 18,
+    "pass": 18,
+    "fail": 0,
+    "blocked": 0,
+    "not_run": 0,
+    "conflict": 0,
+    "incomplete": 0,
+    "stale_receipts": 0,
+    "root_cutover_gaps": []
+  },
+  "representative_provider_group": {
+    "group_fingerprint": "sha256:f5aafca07c74708f1face3cd5194a12b993ad6e65c599cd5002eba503bcaca05",
+    "provider_calls_authorized": 2,
+    "provider_calls_observed": 2,
+    "ready_plans": 2,
+    "automatic_retries": 0,
+    "repair_calls": 0,
+    "fallback_calls": 0,
+    "automatic_followups": 0,
+    "additional_provider_calls_authorized": 0,
+    "evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-representative-provider-observation.json"
+  },
+  "human_semantic_review": {
+    "targets": 2,
+    "passed": 2,
+    "dimensions_per_target": 10,
+    "technical_stability_is_separate": true,
+    "stale_human_receipts_reused": false,
+    "accepted_non_blocking_caveats": [
+      "concrete external events, campaigns, mix shifts, and structural breaks are not enumerated in the answers",
+      "timezone, currency, and business-unit semantics are inherited from the uploaded files"
+    ],
+    "evidence_ref": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-human-semantic-review.json"
+  },
+  "journey_evidence": {
+    "root_entry": "/",
+    "root_entry_v2": "pass",
+    "legacy_rollback_route": "/legacy",
+    "legacy_rollback_route_status": "pass",
+    "unified_entry_actual_browser": "pass",
+    "refresh_persistence": "pass",
+    "real_data_actual_browser_canary": "pass",
+    "provider_neutral_semantic_oracles": 9,
+    "shared_runtime_receipts": 5,
+    "evidence_bundle": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-release-evidence-complete.json",
+    "release_status": "docs/superpowers/evidence/2026-08-22-v2-5c6-v4-release-status-final.json"
+  },
+  "candidate_boundaries": {
+    "root_switch_authorized": true,
+    "root_switched": true,
+    "legacy_system_deleted": false,
+    "legacy_rollback_route_preserved": true,
+    "committed_source_freeze": true,
+    "evidence_group_committed": false,
+    "merged": false,
+    "pushed": false,
+    "deployed": false
+  },
+  "next_required_decision": "Explicit user authorization is required before committing the V4 evidence group, pushing, merging, or deploying.",
+  "release_readiness_claimed": true
+}

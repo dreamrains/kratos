@@ -129,8 +129,10 @@ def test_retention_analysis_records_quality_limits_for_descriptive_claims(audit_
 @pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
 def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit_env):
     """Savings-card analysis should support user-level order/flow joins and repeat metrics."""
-    order_file = TEST_DOC_DIR / "省钱卡订单_20260507.xlsx"
-    flow_file = TEST_DOC_DIR / "省钱卡用户最近流水_20260511.xlsx"
+    from data_fixture_catalog import reference_data_path
+
+    order_file = reference_data_path("省钱卡订单_20260507.xlsx")
+    flow_file = reference_data_path("省钱卡用户最近流水_20260511.xlsx")
     _skip_if_missing(order_file)
     _skip_if_missing(flow_file)
 
@@ -143,7 +145,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     orders = workspace.get("card_orders")
     flow = workspace.get("recent_flow")
     assert orders is not None and flow is not None
-    assert {"user_id", "商品名称", "支付金额", "支付时间", "创建时间"} <= set(orders.columns)
+    assert {"user_id", "商品名称", "售价", "支付时间", "创建时间"} <= set(orders.columns)
     assert {"user_id", "下单金额", "实收金额", "支付时间", "创角时间"} <= set(flow.columns)
 
     card_users = set(orders["user_id"].astype(str))
@@ -155,7 +157,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     repeat_rate = float((user_order_counts >= 2).sum() / user_order_counts.size)
     assert 0 <= repeat_rate <= 1
 
-    total_paid = float(orders["支付金额"].sum())
+    total_paid = float(orders["售价"].sum())
     assert total_paid > 0
 
     readiness = _load_json_tool_result(assess_readiness("card_orders", intent="分析省钱卡订单收入和复购"))

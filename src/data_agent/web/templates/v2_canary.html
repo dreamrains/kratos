@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Agent V2 · Slice 1 Canary</title>
+    <style>
+        :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #f6f7f4; color: #1c2724; }
+        main { width: min(920px, calc(100% - 32px)); margin: 38px auto 80px; }
+        header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+        h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.03em; }
+        .subtitle { color: #65716d; margin: 0; line-height: 1.55; }
+        .badge { background: #dff4ec; color: #12624f; border: 1px solid #b5e4d4; border-radius: 999px; padding: 7px 11px; font-size: 12px; white-space: nowrap; }
+        .panel { background: white; border: 1px solid #dfe5e1; border-radius: 16px; padding: 20px; box-shadow: 0 12px 32px rgba(24, 45, 38, 0.06); margin-bottom: 18px; }
+        .grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 14px; }
+        label { display: block; font-size: 12px; font-weight: 700; color: #59645f; margin: 0 0 7px; }
+        input, button { font: inherit; }
+        input[type="text"], input[type="file"] { width: 100%; min-height: 44px; border: 1px solid #cfd8d3; border-radius: 10px; padding: 10px 12px; background: #fcfdfc; }
+        input:focus { outline: 3px solid rgba(20, 184, 134, .16); border-color: #159976; }
+        .actions { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+        button { border: 0; border-radius: 10px; min-height: 42px; padding: 0 18px; background: #117a60; color: white; font-weight: 700; cursor: pointer; }
+        button:hover { background: #0d654f; }
+        button:disabled { background: #9cacA6; cursor: wait; }
+        .secondary { background: #edf2ef; color: #365047; }
+        .secondary:hover { background: #e1e9e5; }
+        .file-state, .run-id { color: #6a756f; font-size: 12px; }
+        .progress { display: none; }
+        .progress.visible { display: block; }
+        .progress-list { display: grid; gap: 8px; margin-top: 12px; }
+        .progress-item { display: flex; align-items: center; gap: 9px; color: #53605b; font-size: 13px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a37e; box-shadow: 0 0 0 4px #daf4eb; }
+        .answer { display: grid; gap: 14px; }
+        .answer:empty::before { content: "分析完成后，结构化答案块会显示在这里。"; color: #83908a; }
+        .answer-block { border-left: 3px solid #38a987; padding: 4px 0 4px 16px; }
+        .answer-block h2 { margin: 0 0 8px; font-size: 17px; }
+        .answer-block p { margin: 0; line-height: 1.7; color: #384640; }
+        .answer-block ul { margin: 8px 0 0; color: #63706b; }
+        .chart-shell { margin: 16px 0 6px; border: 1px solid #dfe5e1; border-radius: 12px; overflow: hidden; background: #fff; }
+        .chart-shell figcaption { padding: 10px 14px; font-size: 13px; font-weight: 700; color: #45534d; border-bottom: 1px solid #edf0ee; }
+        .chart-frame { display: block; width: 100%; height: 360px; border: 0; background: #fff; }
+        .supplemental { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e6ebe8; }
+        .supplemental > h2 { font-size: 16px; margin: 0 0 10px; color: #52615a; }
+        .error { display: none; background: #fff0ef; color: #8c2d27; border: 1px solid #f0c6c2; border-radius: 12px; padding: 13px 15px; margin-bottom: 16px; }
+        .error.visible { display: block; }
+        .status { font-size: 13px; color: #54615c; }
+        @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } header { flex-direction: column; } }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>Data Agent V2</h1>
+            <p class="subtitle">Slice 1 浏览器验收页：单文件、单指标描述分析。此页面与旧运行时隔离。</p>
+        </div>
+        <span class="badge">Fact-driven canary</span>
+    </header>
+
+    <div id="error" class="error" role="alert"></div>
+
+    <section class="panel" aria-labelledby="input-heading">
+        <h2 id="input-heading">分析输入</h2>
+        <div class="grid">
+            <div>
+                <label for="file">上传 CSV / Excel / JSON / Parquet</label>
+                <input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet">
+                <div id="file-state" class="file-state">尚未上传文件</div>
+            </div>
+            <div>
+                <label for="metric">数值指标列</label>
+                <input id="metric" type="text" value="sales" autocomplete="off">
+            </div>
+        </div>
+        <div style="margin-top: 14px">
+            <label for="question">问题</label>
+            <input id="question" type="text" value="平均销售额是多少？" autocomplete="off">
+        </div>
+        <div class="actions">
+            <button id="run" type="button">开始分析</button>
+            <button id="restore" class="secondary" type="button">刷新恢复</button>
+            <span id="status" class="status">等待输入</span>
+        </div>
+        <div id="run-id" class="run-id"></div>
+    </section>
+
+    <section id="progress" class="panel progress" aria-labelledby="progress-heading">
+        <h2 id="progress-heading">实时进度</h2>
+        <div id="progress-list" class="progress-list" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="answer-heading">
+        <h2 id="answer-heading">分析结果</h2>
+        <div id="answer" class="answer" aria-live="polite"></div>
+    </section>
+</main>
+<script src="{{ url_for('static', filename='js/v2_canary.js', v='slice1b4') }}"></script>
+</body>
+</html>

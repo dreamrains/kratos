@@ -1,0 +1,93 @@
+{
+  "version": "v2_semantic_preflight_gate_evidence.v1",
+  "slice": "5C5W",
+  "source_digest": "sha256:2dbb829eefb47652556222dfc055faa64a97b8fb0950e50d7d6518e675181fba",
+  "git_head": "80f9fd0eaffb53ebe76e627e3631ccc4e8979cc9",
+  "source_dirty": true,
+  "trigger": {
+    "evidence": "docs/superpowers/evidence/2026-08-22-v2-5c5v-precall-semantic-binding.json",
+    "confirmed_gap": "release preflight still passed when the unified journey analysis-unit semantic context was structurally valid but unconfirmed"
+  },
+  "red_regression": {
+    "case": "preflight_rejects_missing_explicit_analysis_unit_confirmation",
+    "red_observation": "validate_real_provider_preflight returned passed=true for an empty confirmed_analysis_unit_column",
+    "green_reason_code": "real_provider_analysis_unit_unconfirmed"
+  },
+  "implemented_contract": {
+    "real_provider_preflight_version": "v2_real_provider_journey_preflight.v6",
+    "explicit_analysis_unit_required_for_release_preflight": true,
+    "normal_product_defer_option_preserved": true,
+    "expected_semantic_context_recomputed": true,
+    "semantic_context_mismatch_reason": "real_provider_semantic_context_mismatch",
+    "request_fingerprint_still_binds_semantic_context": true,
+    "new_stop_condition": "analysis_unit_semantics_unconfirmed",
+    "provider_call_before_gate": false
+  },
+  "unconfirmed_cli_preflight": {
+    "status": "fail",
+    "reason_codes": [
+      "real_provider_analysis_unit_unconfirmed"
+    ],
+    "semantic_context": {
+      "confirmed_analysis_unit_column": ""
+    },
+    "request_fingerprint": "sha256:7076078161718fc81db93407299dd506d6e357877aedba93451eab94aed8ebdd",
+    "provider_calls_observed": 0,
+    "authorization_issued": false
+  },
+  "unit_id_cli_preflight_dry_build": {
+    "status": "pass",
+    "reason_codes": [],
+    "model_id": "openai/deepseek-v4-flash",
+    "provider_host": "api.deepseek.com",
+    "semantic_context": {
+      "confirmed_analysis_unit_column": "unit_id"
+    },
+    "planning_context": {
+      "estimated_input_tokens": 2972,
+      "model_context_window_tokens": 1000000,
+      "reserved_output_tokens": 8000,
+      "available_input_tokens": 992000,
+      "fits": true
+    },
+    "planner_contract_gate": {
+      "version": "v2_planner_contract_parity.v3",
+      "passed": true,
+      "schema_fingerprint": "sha256:06a22a92558ef0c17356af4238830dc71fad98a7af1b6c663f5fef95c14c1bdd",
+      "ready_variant_count": 6,
+      "needs_input_variant_count": 1,
+      "unsupported_variant_count": 1,
+      "status_variant_count": 8
+    },
+    "request_fingerprint": "sha256:f50076440811bc15bc82bca0441966740e8ddcdfa196eb2051169f3450fafa2a",
+    "provider_calls_observed": 0,
+    "authorization_issued": false
+  },
+  "verification": {
+    "focused_real_provider_preflight": "4 passed",
+    "unconfirmed_cli_exit_code": 1,
+    "confirmed_cli_exit_code": 0,
+    "v2_and_config": "397 passed, 2123 deselected",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "provider_calls": 0,
+    "automatic_retries": 0
+  },
+  "stale_source_bound_evidence": {
+    "prior_source_digest": "sha256:95bd2ca674d8275f0dc76fa805dc863766e149a3243c1d952b0c91c74bc5c562",
+    "all_prior_release_receipts_stale": true,
+    "historical_facts_retained": true
+  },
+  "next_preflight_boundary": {
+    "code_ready_for_semantic_confirmation": true,
+    "committed_clean_source_required": true,
+    "real_provider_preflight_receipt_issued": false,
+    "user_confirmed_real_call_semantic_context": false,
+    "next_requirement": "review and commit 5C5W, obtain explicit user confirmation that unit_id is the intended independent observational unit for the frozen unified fixture, then generate the clean-source preflight and request exact Provider-call authorization"
+  },
+  "real_provider_receipt_issued": false,
+  "stability_receipt_issued": false,
+  "human_semantic_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

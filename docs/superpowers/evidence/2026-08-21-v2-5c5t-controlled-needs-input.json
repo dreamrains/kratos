@@ -1,0 +1,84 @@
+{
+  "version": "v2_controlled_needs_input_evidence.v1",
+  "slice": "5C5T",
+  "source_digest": "sha256:5be3c2147254f94aaa42114a85094d7e1e2af425e7fd616d770fcb394cb6cabe",
+  "git_head": "771fda098a85292b2bdf0756c44610b4e3adf08c",
+  "source_dirty": true,
+  "trigger": {
+    "evidence": "docs/superpowers/evidence/2026-08-20-v2-5c5s-needs-input-diagnosis.json",
+    "confirmed_gap": "needs_input had no deterministic server-owned eligibility predicate or controlled missing-prerequisite identity"
+  },
+  "red_regressions": [
+    {
+      "case": "complete_context_rejects_claimed_missing_prerequisite",
+      "red_observation": "controlled fields were rejected only as unexpected fields",
+      "green_reason_code": "plan_needs_input_not_justified"
+    },
+    {
+      "case": "incomplete_time_context_accepts_exact_controlled_identity",
+      "red_observation": "controlled fields were rejected as unexpected fields",
+      "green_identity": {
+        "pending_analysis_kind": "time_trend",
+        "missing_prerequisites": ["time_field"]
+      }
+    },
+    {
+      "case": "schema_rejects_unbounded_needs_input_and_incomplete_ready",
+      "red_observation": "the old schema accepted free needs_input and could not express a controlled identity",
+      "green_reason_code": "plan_ready_prerequisites_missing"
+    }
+  ],
+  "implemented_contract": {
+    "planner_contract_gate_version": "v2_planner_contract_parity.v2",
+    "real_provider_preflight_version": "v2_real_provider_journey_preflight.v3",
+    "status_partition": "each automatic method emits ready when prerequisites are satisfiable, otherwise one needs_input variant with exact controlled missing prerequisites",
+    "controlled_fields": ["pending_analysis_kind", "missing_prerequisites"],
+    "controlled_missing_codes": ["analysis_unit", "compatible_column_binding", "date_column", "features", "group", "metric", "target", "time_field"],
+    "compiler_fail_closed": true,
+    "plan_ledger_persisted": true,
+    "http_public_projection": true,
+    "safe_diagnostic_only": true,
+    "historical_ledger_defaults_preserved": true
+  },
+  "unified_fixture_contract_gate": {
+    "version": "v2_planner_contract_parity.v2",
+    "passed": true,
+    "schema_fingerprint": "sha256:21e02e3b2a1a74d19ee38108d86ce07a7388a004c2cb64da51f814bf443a2f11",
+    "automatic_analysis_kind_count": 7,
+    "ready_variant_count": 6,
+    "needs_input_variants": [
+      {
+        "analysis_kind": "factor_relationship",
+        "missing_prerequisites": ["compatible_column_binding"]
+      }
+    ],
+    "needs_input_variant_count": 1,
+    "unsupported_variant_count": 1,
+    "status_variant_count": 8
+  },
+  "verification": {
+    "focused_planner_ledger_http_preflight": "95 passed",
+    "v2_and_config": "386 passed, 2123 deselected",
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "provider_calls": 0,
+    "automatic_retries": 0
+  },
+  "stale_source_bound_evidence": {
+    "prior_source_digest": "sha256:4d0895b17d6f5a62b0a8fd470ecb8d8b0efd3067495b538f86d0e15581906c93",
+    "all_prior_release_receipts_stale": true,
+    "all_5c5s_samples_stale_for_current_release": true,
+    "historical_facts_retained": true
+  },
+  "remaining_boundary": {
+    "business_row_grain_semantics_server_verified": false,
+    "reason": "column roles and compatible bindings do not prove the business meaning of the independent observational unit",
+    "new_real_provider_preflight_ready": false,
+    "next_requirement": "review the remaining semantic-context contract before generating a new source-bound preflight"
+  },
+  "real_provider_receipt_issued": false,
+  "stability_receipt_issued": false,
+  "human_semantic_receipt_issued": false,
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}

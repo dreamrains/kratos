@@ -17,6 +17,9 @@ class AgentConfig(BaseSettings):
     api_base: Optional[str] = Field(alias="API_BASE", default=None)
     api_key: Optional[str] = Field(alias="API_KEY", default=None)
     max_tokens: int = Field(alias="MAX_TOKENS", default=8000)
+    model_context_window: Optional[int] = Field(
+        alias="MODEL_CONTEXT_WINDOW", default=None
+    )
     quality_judge_model: Optional[str] = Field(alias="QUALITY_JUDGE_MODEL", default=None)
 
     # Paths
@@ -68,6 +71,13 @@ class AgentConfig(BaseSettings):
     def validate_max_tokens(cls, v: int) -> int:
         if v < 100 or v > 128000:
             raise ValueError("MAX_TOKENS must be between 100 and 128000")
+        return v
+
+    @field_validator("model_context_window")
+    @classmethod
+    def validate_model_context_window(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v <= 0:
+            raise ValueError("MODEL_CONTEXT_WINDOW must be positive")
         return v
 
     @field_validator("token_threshold")
@@ -150,6 +160,7 @@ class AgentConfig(BaseSettings):
 
 ENV_KEY_MAP = {
     "model_id": "MODEL_ID",
+    "model_context_window": "MODEL_CONTEXT_WINDOW",
     "api_base": "API_BASE",
     "api_key": "API_KEY",
 }

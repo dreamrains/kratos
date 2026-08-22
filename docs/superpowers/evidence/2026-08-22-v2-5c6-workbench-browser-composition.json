@@ -1,0 +1,44 @@
+{
+  "version": "v2_provider_neutral_workbench_composition.v1",
+  "source_digest": "sha256:cc5ad7379395b449ffce5d4776c6fa29a492648918070b859d1c698889db9705",
+  "scenario_id": "unified_analysis_entry",
+  "planning_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-planning-browser-observation.json",
+  "interaction_observation": "docs/superpowers/evidence/2026-08-22-v2-5c6-workbench-interaction-browser-observation.json",
+  "oracle_identity": "v2_provider_neutral_workbench_composer.v1",
+  "status": "pass",
+  "reason_codes": [],
+  "provider_calls": 0,
+  "derived_receipts": [
+    {
+      "layer": "browser_interaction_journey",
+      "status": "pass",
+      "observed_interactions": [
+        "upload",
+        "planning_estimate_without_authorization",
+        "explicit_planning_confirmation",
+        "needs_input",
+        "planning_answer_persisted",
+        "planning_failure_stable",
+        "explicit_planning_retry",
+        "live_progress",
+        "task_overlay_collapsed",
+        "refresh_restore",
+        "draft_while_running",
+        "queued_steer",
+        "stop",
+        "error_recovery",
+        "session_isolation"
+      ],
+      "chart_observation": "rendered"
+    },
+    {
+      "layer": "refresh_persistence_journey",
+      "status": "pass",
+      "observed_interactions": [
+        "refresh_restore"
+      ]
+    }
+  ],
+  "release_readiness_claimed": false,
+  "root_switch_authorized": false
+}
