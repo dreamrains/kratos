@@ -24,20 +24,21 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from data_fixture_catalog import REFERENCE_DATA_DIR, reference_data_path
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
 
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
-CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+CARD_PAYMENT = reference_data_path("0201到0510购卡用户付费数据.xlsx")
+VOUCHER_DETAIL = reference_data_path("代金券明细订单.xlsx")
+BEFORE_AFTER = reference_data_path("购卡前后订单.xlsx")
+CARD_ORDER = reference_data_path("省钱卡订单.xlsx")
+HAS_REAL_DATA = all(path.is_file() for path in (CARD_PAYMENT, VOUCHER_DETAIL, BEFORE_AFTER, CARD_ORDER))
 
 
 @pytest.fixture
@@ -47,19 +48,27 @@ def analysis_env(tmp_path):
     from data_agent.config import AgentConfig
     from data_agent.session.workspace import Workspace
     from data_agent.agent.context import AgentContext, set_current_context, reset_current_context
+    from data_agent.session.task_manager import task_manager
 
     old_cfg = config._config
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
     config._config = AgentConfig(
         PROJECT_DIR=tmp_path / "project",
         SESSIONS_DIR=tmp_path / "sessions",
     )
+    task_manager._dir = tmp_path / "tasks"
+    task_manager.reset_for_testing()
 
     ctx = AgentContext(session_id="quality_test", workspace=Workspace())
     token = set_current_context(ctx)
-    yield ctx, tmp_path
-
-    reset_current_context(token)
-    config._config = old_cfg
+    try:
+        yield ctx, tmp_path
+    finally:
+        reset_current_context(token)
+        config._config = old_cfg
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
 
 
 def _load_real_or_skip():
@@ -80,7 +89,7 @@ def _load_real_or_skip():
     for name, path in datasets.items():
         result = load_data(path, name=name)
         if "Error" in result:
-            pytest.skip(f"加载数据失败: {name}")
+            pytest.fail(f"仓库内 fixture 加载失败: {name}: {result}")
 
     return workspace
 

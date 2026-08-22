@@ -188,8 +188,8 @@ class ReleaseMatrix:
             for item in self.scenarios
         ):
             raise ValueError("every scenario requires exactly one semantic oracle")
-        if any(item.entry != "/v2-workbench" for item in self.scenarios):
-            raise ValueError("release scenarios must use the unified workbench entry")
+        if any(item.entry != "/" for item in self.scenarios):
+            raise ValueError("release scenarios must use the root V2 entry")
         for field_name in (
             "representative_provider_targets",
             "representative_human_targets",

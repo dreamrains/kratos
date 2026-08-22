@@ -18,7 +18,7 @@ def main() -> int:
         tempfile.mkdtemp(prefix="data-agent-v2-browser-")
     )
     app = build_provider_neutral_fixture(state_root)
-    print(f"url=http://127.0.0.1:{args.port}/v2-workbench", flush=True)
+    print(f"url=http://127.0.0.1:{args.port}/", flush=True)
     print(f"state_root={state_root.resolve()}", flush=True)
     print(
         f"fixture_csv={app.config['PROVIDER_NEUTRAL_FIXTURE_CSV']}", flush=True

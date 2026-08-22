@@ -60,7 +60,7 @@ def test_source_digest_is_line_ending_portable_and_source_sensitive(tmp_path):
 def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
     matrix = load_release_matrix(MATRIX_PATH)
 
-    assert matrix.version == "v2_release_matrix.v3"
+    assert matrix.version == "v2_release_matrix.v4"
     assert len(matrix.scenarios) == 9
     assert len({item.scenario_id for item in matrix.scenarios}) == 9
     assert matrix.shared_runtime_scenario_id == "unified_analysis_entry"
@@ -75,13 +75,13 @@ def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
         item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
         for item in matrix.scenarios
     )
-    assert all(item.entry == "/v2-workbench" for item in matrix.scenarios)
+    assert all(item.entry == "/" for item in matrix.scenarios)
     assert all("turn_completed" in item.required_semantic_events for item in matrix.scenarios)
     assert all("executive_answer" in item.required_block_types for item in matrix.scenarios)
     assert all(item.forbidden_behaviors for item in matrix.scenarios)
     assert all(item.required_interactions for item in matrix.scenarios)
     unified = next(item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry")
-    assert unified.entry == "/v2-workbench"
+    assert unified.entry == "/"
     assert "stop" in unified.required_interactions
     assert "draft_while_running" in unified.required_interactions
     assert "planning_estimate_without_authorization" in unified.required_interactions
@@ -99,8 +99,8 @@ def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
 def test_release_matrix_uses_offline_semantic_oracles_and_two_provider_representatives():
     matrix = load_release_matrix(MATRIX_PATH)
 
-    assert matrix.version == "v2_release_matrix.v3"
-    assert all(item.entry == "/v2-workbench" for item in matrix.scenarios)
+    assert matrix.version == "v2_release_matrix.v4"
+    assert all(item.entry == "/" for item in matrix.scenarios)
     assert all(
         item.required_layers == (ValidationLayer.SCENARIO_SEMANTIC_ORACLE,)
         for item in matrix.scenarios

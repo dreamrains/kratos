@@ -7,6 +7,13 @@ pages_bp = Blueprint("pages", __name__)
 
 @pages_bp.route("/")
 def index():
+    """Primary Data Agent V2 workbench entry."""
+    return render_template("v2_workbench.html")
+
+
+@pages_bp.route("/legacy")
+def legacy_workbench():
+    """Explicit rollback entry for the preserved legacy workbench."""
     return render_template("index.html")
 
 
@@ -60,5 +67,5 @@ def v2_python_canary():
 
 @pages_bp.route("/v2-workbench")
 def v2_workbench():
-    """Unified V2 analysis workbench; root cutover remains a separate decision."""
+    """Compatibility alias for the unified V2 analysis workbench."""
     return render_template("v2_workbench.html")

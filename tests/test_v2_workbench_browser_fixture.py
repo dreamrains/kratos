@@ -42,6 +42,7 @@ def test_fixture_exposes_isolated_state_and_never_reports_provider_calls(tmp_pat
 
     state = client.get("/__acceptance/state").get_json()
 
+    assert client.get("/").status_code == 200
     assert client.get("/v2-workbench").status_code == 200
     assert state["fixture_id"] == "v2_workbench_planning_failure_retry.v1"
     assert state["planner_invocations"] == 0

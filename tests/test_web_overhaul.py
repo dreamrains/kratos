@@ -22,7 +22,7 @@ def client():
 
 @pytest.fixture
 def html(client):
-    return client.get("/").data.decode("utf-8")
+    return client.get("/legacy").data.decode("utf-8")
 
 
 @pytest.fixture
@@ -161,9 +161,28 @@ class TestSessionSorting:
         assert resp.status_code == 200
         assert isinstance(resp.get_json(), list)
 
-    def test_sessions_sorted_by_saved_at_desc(self, sessions):
-        if len(sessions) <= 1:
-            pytest.skip("Need >1 session to verify sorting")
+    def test_sessions_sorted_by_saved_at_desc(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import save_session
+        from data_agent.web.app import create_app
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+        for session_id, saved_at in (
+            ("older", "2026-08-22T08:00:00"),
+            ("newer", "2026-08-22T09:00:00"),
+        ):
+            save_session([{"role": "user", "content": session_id}], session_id)
+            meta_path = cfg.sessions_resolved / session_id / "meta.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["saved_at"] = saved_at
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+        app = create_app()
+        app.config["TESTING"] = True
+        sessions = app.test_client().get("/api/sessions").get_json()
+        assert [item["session_id"] for item in sessions] == ["newer", "older"]
         dates = [s.get("saved_at", "") for s in sessions]
         for i in range(len(dates) - 1):
             if dates[i] and dates[i + 1]:
@@ -242,11 +261,25 @@ class TestRewindUI:
         # Old direct rewindToRound replaced with showRewindDialog
         assert "showRewindDialog()" in html
 
-    def test_rewind_info_endpoint_exists(self, client, sessions):
-        if not sessions:
-            pytest.skip("Need a session")
-        sid = sessions[0]["session_id"]
-        resp = client.get(f"/api/sessions/{sid}/rewind-info")
+    def test_rewind_info_endpoint_exists(self, tmp_path: Path, monkeypatch):
+        from data_agent import config as config_module
+        from data_agent.config import AgentConfig
+        from data_agent.session.history import save_session
+        from data_agent.web.app import create_app
+
+        cfg = AgentConfig(WORKSPACE_DIR=tmp_path / "workspace", SESSIONS_DIR=tmp_path / "sessions")
+        monkeypatch.setattr(config_module, "_config", cfg)
+        sid = "rewind_info"
+        save_session(
+            [
+                {"role": "user", "content": "round 1"},
+                {"role": "assistant", "content": "answer 1"},
+            ],
+            sid,
+        )
+        app = create_app()
+        app.config["TESTING"] = True
+        resp = app.test_client().get(f"/api/sessions/{sid}/rewind-info")
         assert resp.status_code == 200
 
     def test_show_toast_after_rewind(self, js):
@@ -544,8 +577,8 @@ class TestVisualPolish:
 class TestCoreRegression:
     """Ensure existing features are not broken."""
 
-    def test_homepage_loads(self, client):
-        resp = client.get("/")
+    def test_legacy_homepage_loads(self, client):
+        resp = client.get("/legacy")
         assert resp.status_code == 200
         assert b"Data Agent" in resp.data
 
