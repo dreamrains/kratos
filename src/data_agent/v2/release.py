@@ -247,6 +247,179 @@ class ReleaseReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseEvidenceRecord:
+    """An append-only validation observation that can deterministically mint one receipt."""
+
+    evidence_id: str
+    source_digest: str
+    scenario_id: str
+    layer: ValidationLayer
+    status: LayerStatus
+    evidence_refs: tuple[str, ...]
+    oracle_identity: str
+    first_failure_stage: str = ""
+    provider_calls: int = 0
+    provider_authorization_ref: str = ""
+    semantic_dimensions: tuple[tuple[str, LayerStatus], ...] = ()
+    observed_semantic_events: tuple[str, ...] = ()
+    observed_block_types: tuple[str, ...] = ()
+    observed_interactions: tuple[str, ...] = ()
+    chart_observation: str = ""
+    forbidden_behavior_hits: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence_id", _required(self.evidence_id, "evidence_id"))
+        object.__setattr__(self, "source_digest", _digest(self.source_digest))
+        object.__setattr__(self, "scenario_id", _required(self.scenario_id, "scenario_id"))
+        object.__setattr__(self, "layer", ValidationLayer(self.layer))
+        object.__setattr__(self, "status", LayerStatus(self.status))
+        # Reuse the receipt validator so evidence cannot mint a weaker receipt.
+        self.to_receipt()
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ReleaseEvidenceRecord":
+        return cls(
+            evidence_id=value.get("evidence_id", ""),
+            source_digest=value.get("source_digest", ""),
+            scenario_id=value.get("scenario_id", ""),
+            layer=ValidationLayer(value.get("layer", "")),
+            status=LayerStatus(value.get("status", "")),
+            evidence_refs=tuple(value.get("evidence_refs") or ()),
+            oracle_identity=value.get("oracle_identity", ""),
+            first_failure_stage=value.get("first_failure_stage", ""),
+            provider_calls=value.get("provider_calls", 0),
+            provider_authorization_ref=value.get("provider_authorization_ref", ""),
+            semantic_dimensions=tuple(
+                (key, LayerStatus(status))
+                for key, status in dict(value.get("semantic_dimensions") or {}).items()
+            ),
+            observed_semantic_events=tuple(value.get("observed_semantic_events") or ()),
+            observed_block_types=tuple(value.get("observed_block_types") or ()),
+            observed_interactions=tuple(value.get("observed_interactions") or ()),
+            chart_observation=value.get("chart_observation", ""),
+            forbidden_behavior_hits=tuple(value.get("forbidden_behavior_hits") or ()),
+        )
+
+    def to_receipt(self) -> ReleaseReceipt:
+        return ReleaseReceipt(
+            receipt_id=f"receipt_{self.evidence_id}",
+            source_digest=self.source_digest,
+            scenario_id=self.scenario_id,
+            layer=self.layer,
+            status=self.status,
+            evidence_refs=self.evidence_refs,
+            oracle_identity=self.oracle_identity,
+            first_failure_stage=self.first_failure_stage,
+            provider_calls=self.provider_calls,
+            provider_authorization_ref=self.provider_authorization_ref,
+            semantic_dimensions=self.semantic_dimensions,
+            observed_semantic_events=self.observed_semantic_events,
+            observed_block_types=self.observed_block_types,
+            observed_interactions=self.observed_interactions,
+            chart_observation=self.chart_observation,
+            forbidden_behavior_hits=self.forbidden_behavior_hits,
+        )
+
+
+def _receipt_payload(receipt: ReleaseReceipt) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "receipt_id": receipt.receipt_id,
+        "source_digest": receipt.source_digest,
+        "scenario_id": receipt.scenario_id,
+        "layer": receipt.layer.value,
+        "status": receipt.status.value,
+        "evidence_refs": list(receipt.evidence_refs),
+        "oracle_identity": receipt.oracle_identity,
+    }
+    optional_fields = {
+        "first_failure_stage": receipt.first_failure_stage,
+        "provider_calls": receipt.provider_calls,
+        "provider_authorization_ref": receipt.provider_authorization_ref,
+        "semantic_dimensions": {
+            key: status.value for key, status in receipt.semantic_dimensions
+        },
+        "observed_semantic_events": list(receipt.observed_semantic_events),
+        "observed_block_types": list(receipt.observed_block_types),
+        "observed_interactions": list(receipt.observed_interactions),
+        "chart_observation": receipt.chart_observation,
+        "forbidden_behavior_hits": list(receipt.forbidden_behavior_hits),
+    }
+    payload.update(
+        {key: value for key, value in optional_fields.items() if value not in ("", 0, {}, [])}
+    )
+    return payload
+
+
+def project_release_status(
+    matrix: ReleaseMatrix,
+    evidence: Iterable[ReleaseEvidenceRecord],
+    *,
+    current_source_digest: str,
+) -> dict[str, Any]:
+    """Project current readiness from append-only observations without mutating them."""
+
+    receipts = tuple(record.to_receipt() for record in evidence)
+    decision = evaluate_release_readiness(
+        matrix, receipts, current_source_digest=current_source_digest
+    )
+    requirements = sorted(
+        (
+            (scenario.scenario_id, layer)
+            for scenario in matrix.scenarios
+            for layer in scenario.required_layers
+        ),
+        key=lambda item: (item[0], item[1].value),
+    )
+    by_requirement: dict[tuple[str, ValidationLayer], list[ReleaseReceipt]] = {}
+    for receipt in receipts:
+        if receipt.source_digest == decision.source_digest:
+            by_requirement.setdefault((receipt.scenario_id, receipt.layer), []).append(receipt)
+
+    summary = {"total": len(requirements), "pass": 0, "fail": 0, "blocked": 0, "not_run": 0, "conflict": 0, "incomplete": 0}
+    gaps: list[str] = []
+    first_failure: dict[str, str] | None = None
+    scenario_by_id = {item.scenario_id: item for item in matrix.scenarios}
+    for scenario_id, layer in requirements:
+        requirement = f"{scenario_id}:{layer.value}"
+        matches = by_requirement.get((scenario_id, layer), [])
+        stage = ""
+        if not matches:
+            category = "not_run"
+            stage = "not_run"
+        elif len(matches) > 1:
+            category = "conflict"
+            stage = "conflicting_receipts"
+        else:
+            receipt = matches[0]
+            if receipt.status is LayerStatus.PASS and _receipt_covers_requirement(
+                receipt, scenario_by_id[scenario_id]
+            ):
+                category = "pass"
+            elif receipt.status is LayerStatus.PASS:
+                category = "incomplete"
+                stage = "receipt_coverage_incomplete"
+            else:
+                category = receipt.status.value
+                stage = receipt.first_failure_stage
+        summary[category] += 1
+        if category != "pass":
+            gaps.append(requirement)
+            if first_failure is None:
+                first_failure = {"requirement": requirement, "stage": stage}
+    return {
+        "version": "v2_release_status_projection.v1",
+        "source_digest": decision.source_digest,
+        "matrix_version": matrix.version,
+        "status": decision.status.value,
+        "summary": summary,
+        "first_failure": first_failure,
+        "root_cutover_gaps": gaps,
+        "decision": decision.to_dict(),
+        "receipts": [_receipt_payload(receipt) for receipt in receipts],
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseReadinessDecision:
     status: ReadinessStatus
     source_digest: str
@@ -450,3 +623,23 @@ def load_receipts(path: Path | str | None) -> tuple[ReleaseReceipt, ...]:
     if not isinstance(value, list):
         raise ValueError("receipt file must contain a JSON array")
     return tuple(ReleaseReceipt.from_dict(item) for item in value)
+
+
+def load_release_evidence(path: Path | str) -> tuple[ReleaseEvidenceRecord, ...]:
+    """Load only the append-only evidence-bundle shape used by the projector."""
+
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if (
+        not isinstance(value, dict)
+        or value.get("version") != "v2_release_evidence.v1"
+        or not isinstance(value.get("records"), list)
+        or set(value) != {"version", "records"}
+    ):
+        raise ValueError("invalid release evidence bundle")
+    records = tuple(ReleaseEvidenceRecord.from_dict(item) for item in value["records"] if isinstance(item, dict))
+    if len(records) != len(value["records"]):
+        raise ValueError("release evidence records must be objects")
+    ids = [record.evidence_id for record in records]
+    if len(ids) != len(set(ids)):
+        raise ValueError("release evidence ids must be unique")
+    return records

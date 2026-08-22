@@ -6,13 +6,16 @@ from pathlib import Path
 
 from data_agent.v2.release import (
     LayerStatus,
+    ReleaseEvidenceRecord,
     ReadinessStatus,
     ReleaseReceipt,
     ValidationLayer,
     HUMAN_REVIEW_DIMENSIONS,
     compute_release_source_digest,
     evaluate_release_readiness,
+    project_release_status,
     load_receipts,
+    load_release_evidence,
     load_release_matrix,
 )
 
@@ -287,3 +290,82 @@ def test_pass_receipt_is_incomplete_when_required_sse_evidence_is_missing():
 
     assert decision.status is ReadinessStatus.NOT_READY
     assert decision.incomplete_receipt_ids == ("receipt_incomplete_sse",)
+
+
+def test_append_only_evidence_projects_deterministic_receipts_and_a_bounded_status():
+    matrix = load_release_matrix(MATRIX_PATH)
+    scenario = next(
+        item for item in matrix.scenarios if item.scenario_id == "unified_analysis_entry"
+    )
+    digest = "sha256:" + "9" * 64
+    evidence = ReleaseEvidenceRecord(
+        evidence_id="evidence_unified_owner_current",
+        source_digest=digest,
+        scenario_id=scenario.scenario_id,
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:unified-owner",),
+        oracle_identity="v2_owner_oracle.v1",
+    )
+
+    projection = project_release_status(
+        matrix,
+        (evidence,),
+        current_source_digest=digest,
+    )
+
+    assert projection["version"] == "v2_release_status_projection.v1"
+    assert projection["status"] == "not_ready"
+    assert projection["summary"] == {
+        "total": 63,
+        "pass": 1,
+        "fail": 0,
+        "blocked": 0,
+        "not_run": 62,
+        "conflict": 0,
+        "incomplete": 0,
+    }
+    assert projection["first_failure"] == {
+        "requirement": "backtested_forecast:browser_interaction_journey",
+        "stage": "not_run",
+    }
+    assert projection["root_cutover_gaps"][0] == "backtested_forecast:browser_interaction_journey"
+    assert projection["receipts"] == [
+        {
+            "receipt_id": "receipt_evidence_unified_owner_current",
+            "source_digest": digest,
+            "scenario_id": "unified_analysis_entry",
+            "layer": "owner_contract",
+            "status": "pass",
+            "evidence_refs": ["pytest:unified-owner"],
+            "oracle_identity": "v2_owner_oracle.v1",
+        }
+    ]
+
+
+def test_evidence_bundle_loader_rejects_manual_receipt_shape_and_preserves_record_ids(tmp_path):
+    path = tmp_path / "evidence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": "v2_release_evidence.v1",
+                "records": [
+                    {
+                        "evidence_id": "evidence_owner",
+                        "source_digest": "sha256:" + "8" * 64,
+                        "scenario_id": "unified_analysis_entry",
+                        "layer": "owner_contract",
+                        "status": "pass",
+                        "evidence_refs": ["pytest:owner"],
+                        "oracle_identity": "owner:v1",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    records = load_release_evidence(path)
+
+    assert records[0].evidence_id == "evidence_owner"
+    assert records[0].to_receipt().receipt_id == "receipt_evidence_owner"
