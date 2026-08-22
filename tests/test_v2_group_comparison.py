@@ -167,9 +167,9 @@ def test_paired_design_with_too_few_pairs_is_limited():
     assert result.reason_code == "insufficient_paired_units"
 
 
-def test_group_comparison_requires_exactly_two_nonempty_groups():
+def test_group_comparison_with_a_single_group_is_limited():
     frame = _frame(rows_per_group=8)
-    frame.loc[len(frame)] = ["c0", "C", 110]
+    frame["channel"] = "A"
 
     result = analyze_group_comparison(
         frame, GroupComparisonSpec("revenue", "channel", "unit_id")
@@ -177,6 +177,52 @@ def test_group_comparison_requires_exactly_two_nonempty_groups():
 
     assert result.status == "limited"
     assert result.reason_code == "requires_exactly_two_groups"
+
+
+def test_more_than_two_groups_degrades_to_descriptive_ranking():
+    rows = []
+    levels = {"A": 10.0, "B": 30.0, "C": 20.0, "D": 25.0}
+    for index, (group_value, base) in enumerate(levels.items()):
+        for offset in range(6):
+            rows.append(
+                {"unit_id": f"{group_value}{offset}", "channel": group_value, "revenue": base + offset}
+            )
+    frame = pd.DataFrame(rows)
+
+    result = analyze_group_comparison(
+        frame, GroupComparisonSpec("revenue", "channel", "unit_id")
+    )
+
+    assert result.status == "descriptive_ranking"
+    assert result.reason_code == "more_than_two_groups_descriptive_ranking"
+    assert result.design == "ranking"
+    assert result.group_order == ("B", "D", "C", "A")
+    assert [item.group_value for item in result.groups] == ["B", "D", "C", "A"]
+    assert result.p_value is None
+    assert result.maximum_claim_class.value == "descriptive"
+    assert any("描述性排序" in item for item in result.limitations)
+
+
+def test_ranking_aggregates_repeated_units_before_sorting():
+    rows = []
+    levels = {"A": 10.0, "B": 30.0, "C": 20.0}
+    for group_value, base in levels.items():
+        for offset in range(5):
+            unit = f"{group_value}{offset}"
+            rows.append({"unit_id": unit, "channel": group_value, "revenue": base + offset})
+            if offset == 0:
+                # a second order for the same unit doubles its summed revenue
+                rows.append({"unit_id": unit, "channel": group_value, "revenue": base + offset})
+    frame = pd.DataFrame(rows)
+
+    result = analyze_group_comparison(
+        frame, GroupComparisonSpec("revenue", "channel", "unit_id")
+    )
+
+    assert result.status == "descriptive_ranking"
+    assert result.unit_aggregation == "sum"
+    assert result.group_order[0] == "B"
+    assert any("聚合" in item for item in result.limitations)
 
 
 def test_small_identifiable_groups_are_not_rejected_by_fixed_n_rule():

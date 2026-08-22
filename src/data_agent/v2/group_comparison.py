@@ -197,13 +197,64 @@ def analyze_group_comparison(
     complete_rows = len(working)
     effective_units = int(working[spec.analysis_unit].nunique(dropna=True))
     group_values = tuple(sorted(str(item) for item in working[spec.group].unique()))
-    if len(group_values) != 2:
+    if len(group_values) == 1:
         return _limited(
             frame,
             spec,
             reason_code="requires_exactly_two_groups",
             complete_rows=complete_rows,
             effective_units=effective_units,
+        )
+    if len(group_values) > 2:
+        # More than two groups: degrade honestly to a descriptive ranking
+        # instead of a dead end; no between-group inference is claimed.
+        rows_per_unit = working.groupby(spec.analysis_unit, dropna=True).size()
+        aggregated_design = bool((rows_per_unit > 1).any())
+        if aggregated_design:
+            aggregated = (
+                working.groupby([spec.analysis_unit, spec.group], dropna=True)[spec.metric]
+                .agg(spec.unit_aggregation)
+                .reset_index()
+            )
+            values_by_group = {
+                group_value: aggregated.loc[
+                    aggregated[spec.group].astype(str) == group_value, spec.metric
+                ].to_numpy(dtype=float)
+                for group_value in group_values
+            }
+        else:
+            values_by_group = {
+                group_value: working.loc[
+                    working[spec.group].astype(str) == group_value, spec.metric
+                ].to_numpy(dtype=float)
+                for group_value in group_values
+            }
+        ranked = sorted(
+            _group_summaries(values_by_group),
+            key=lambda item: (-item.mean, item.group_value),
+        )
+        return GroupComparisonResult(
+            status="descriptive_ranking",
+            reason_code="more_than_two_groups_descriptive_ranking",
+            metric=spec.metric,
+            group_field=spec.group,
+            group_order=tuple(item.group_value for item in ranked),
+            groups=tuple(ranked),
+            design="ranking",
+            unit_aggregation=spec.unit_aggregation if aggregated_design else "",
+            source_rows=len(frame),
+            complete_case_rows=complete_rows,
+            dropped_rows=len(frame) - complete_rows,
+            effective_units=effective_units,
+            alpha=spec.alpha,
+            maximum_claim_class=ClaimClass.DESCRIPTIVE,
+            limitations=(
+                "组数超过两个，以下为描述性排序；未做组间统计推断，不构成因果结论。",
+                *_aggregation_disclosure(
+                    "aggregated_independent" if aggregated_design else "independent",
+                    spec.unit_aggregation,
+                ),
+            ),
         )
 
     groups_per_unit = working.groupby(spec.analysis_unit, dropna=True)[spec.group].nunique()

@@ -130,6 +130,7 @@ def _group_finding(
         "supported": FindingKind.GROUP_COMPARISON,
         "null_result": FindingKind.NULL_RESULT,
         "limited": FindingKind.LIMITATION,
+        "descriptive_ranking": FindingKind.GROUP_COMPARISON,
     }[result.status]
     return Finding(
         finding_id=f"finding_{uuid.uuid4().hex}",
@@ -460,6 +461,19 @@ class Slice4DMultiFindingRuntime:
                 f"差值 {_number(group_result.difference)}，Welch p{_p(group_result.p_value)}。"
             )
             group_claim = ClaimClass.INFERENTIAL
+        elif group_result.status == "descriptive_ranking":
+            ranking_lines = "；".join(
+                f"{rank}. {summary.group_value}：均值 {_number(summary.mean)}"
+                for rank, summary in enumerate(group_result.groups[:5], start=1)
+            )
+            remaining = len(group_result.groups) - min(5, len(group_result.groups))
+            group_narrative = (
+                f"分组字段 {group} 共 {len(group_result.groups)} 个非空组，超出双组比较范围。"
+                f"按 {metric} 每组均值的描述性排序（降序，前 5）：{ranking_lines}。"
+                + (f"其余 {remaining} 组见结构化结果。" if remaining > 0 else "")
+                + "该排序未做组间统计推断。"
+            )
+            group_claim = ClaimClass.DESCRIPTIVE
         else:
             group_narrative = (
                 "双组比较暂不能可靠估计；"

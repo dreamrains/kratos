@@ -86,6 +86,7 @@ class Slice4AGroupComparisonRuntime:
             "supported": FindingKind.GROUP_COMPARISON,
             "null_result": FindingKind.NULL_RESULT,
             "limited": FindingKind.LIMITATION,
+            "descriptive_ranking": FindingKind.GROUP_COMPARISON,
         }[result.status]
         return Finding(
             finding_id=f"finding_{uuid.uuid4().hex}",
@@ -340,7 +341,24 @@ class Slice4AGroupComparisonRuntime:
                 + "。"
             ),
         }.get(result.design, "")
-        if result.status == "supported":
+        if result.status == "descriptive_ranking":
+            aggregation_note = (
+                f"行级数据已按分析单位聚合（每单位取{'求和' if result.unit_aggregation == 'sum' else '均值'}）后排序。"
+                if result.unit_aggregation
+                else ""
+            )
+            ranking_lines = "；".join(
+                f"{rank}. {summary.group_value}：均值 {_number(summary.mean)}"
+                f"（中位数 {_number(summary.median)}，单位数 {summary.sample_size}）"
+                for rank, summary in enumerate(result.groups, start=1)
+            )
+            narrative = (
+                f"分组字段 {group} 共 {len(result.groups)} 个非空组，超出双组比较范围。"
+                f"以下为按 {metric} 每组均值的描述性排序（降序）：{ranking_lines}。"
+                f"{aggregation_note}该排序未做组间统计推断，不构成因果结论。"
+            )
+            claim_class = ClaimClass.DESCRIPTIVE
+        elif result.status == "supported":
             if result.design == "paired":
                 narrative = (
                     f"按“{second.group_value} - {first.group_value}”的配对差计算，"
@@ -387,7 +405,13 @@ class Slice4AGroupComparisonRuntime:
             }
             narrative = messages.get(result.reason_code, "当前数据条件不足，未发布可靠组间推断。")
             claim_class = ClaimClass.ASSOCIATIONAL
-        if result.status in {"supported", "null_result"}:
+        if result.status == "descriptive_ranking":
+            method = (
+                f"完整案例 {result.complete_case_rows}/{result.source_rows} 行，有效分析单位 "
+                f"{result.effective_units} 个。已执行：分组聚合与描述性排序（{len(result.groups)} 组）；"
+                "未执行：组间统计检验——组数超过双组比较设计。"
+            )
+        elif result.status in {"supported", "null_result"}:
             method = (
                 f"完整案例 {result.complete_case_rows}/{result.source_rows} 行，有效分析单位 "
                 f"{result.effective_units} 个。{design_note}"

@@ -126,7 +126,7 @@ def test_multi_finding_rejects_partial_boundary_weeks_and_reports_true_scope(
     assert "HAC" not in trend["narrative"]
 
 
-def test_limited_group_does_not_remove_supported_trend_or_chart(tmp_path):
+def test_multi_group_degrades_to_descriptive_ranking_alongside_trend(tmp_path):
     events, store, turn = _run(tmp_path, _frame(groups=3))
     projection_event = next(item for item in events if item.event == "outcome_snapshot")
     statuses = {
@@ -134,11 +134,13 @@ def test_limited_group_does_not_remove_supported_trend_or_chart(tmp_path):
     }
     rendered = json.dumps(turn, ensure_ascii=False)
 
+    # Both commitments are now satisfied: the trend inferentially, the
+    # multi-group part as a descriptive ranking instead of a dead end.
     assert OutcomeStatus.SUPPORTED.value in statuses
-    assert OutcomeStatus.LIMITED.value in statuses
+    assert OutcomeStatus.LIMITED.value not in statuses
     assert len(turn["artifacts"]) == 1
     assert "历史趋势" in rendered
-    assert "恰好两个组" in rendered
+    assert "描述性排序" in rendered
     assert events[-1].event == "turn_completed"
 
 
