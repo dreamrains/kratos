@@ -30,6 +30,52 @@
         "comparison",
         "method"
       ]
+    },
+    {
+      "evidence_id": "evidence_5c6_root_cutover_unified_owner_b13b93a",
+      "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "owner_contract",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1",
+      "provider_calls": 0
+    },
+    {
+      "evidence_id": "evidence_5c6_root_cutover_unified_incident_b13b93a",
+      "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "incident_replay",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1",
+      "provider_calls": 0
+    },
+    {
+      "evidence_id": "evidence_5c6_root_cutover_unified_sse_b13b93a",
+      "source_digest": "sha256:82b4222f046d10e2d7d6360cf56732aab555332afd8640b23976e3b6a912626d",
+      "scenario_id": "unified_analysis_entry",
+      "layer": "sse_transport_contract",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/superpowers/evidence/2026-08-22-v2-5c6-root-cutover-unified-deterministic-journey.json"
+      ],
+      "oracle_identity": "v2_unified_deterministic_oracle.v1",
+      "provider_calls": 0,
+      "observed_semantic_events": [
+        "turn_started",
+        "commitment_snapshot",
+        "tool_started",
+        "tool_finished",
+        "outcome_snapshot",
+        "final_block_delta",
+        "turn_completed",
+        "turn_interrupted"
+      ]
     }
   ]
 }
