@@ -13,6 +13,7 @@ import pandas as pd
 from data_agent.config import AgentConfig, get_config
 from data_agent.llm.client import LLMClient
 from data_agent.v2.planner import (
+    AUTOMATIC_ANALYSIS_KINDS,
     PLANNER_CONTRACT_GATE_VERSION,
     DatasetPlanningContext,
     StructuredAnalysisPlanner,
@@ -245,7 +246,7 @@ def validate_real_provider_preflight(
     analysis_kinds = planner_gate.get("automatic_analysis_kinds")
     if (
         not isinstance(analysis_kinds, list)
-        or len(analysis_kinds) != 7
+        or len(analysis_kinds) != len(AUTOMATIC_ANALYSIS_KINDS)
         or len(set(str(item) for item in analysis_kinds)) != len(analysis_kinds)
     ):
         reasons.append("invalid_planner_analysis_kind_matrix")

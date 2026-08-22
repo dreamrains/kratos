@@ -20,7 +20,7 @@
     <section class="panel" aria-labelledby="input-heading"><h2 id="input-heading">分析规范</h2><div class="grid">
         <div><label for="file">上传数据文件</label><input id="file" type="file" accept=".csv,.tsv,.xlsx,.xls,.json,.jsonl,.parquet"><div id="file-state" class="file-state">尚未上传文件</div></div>
         <div><label for="analysis-kind">分析类型</label><select id="analysis-kind">
-            <option value="descriptive">描述分析</option><option value="factor_relationship">因素关系</option><option value="date_transformation">日期语义转换</option><option value="group_comparison">双组比较</option><option value="time_trend">历史趋势</option><option value="forecast">回测预测</option><option value="multi_finding_synthesis">趋势与双组综合</option><option value="exploratory_python">探索性 Python</option>
+            <option value="descriptive">描述分析</option><option value="factor_relationship">因素关系</option><option value="date_transformation">日期语义转换</option><option value="group_comparison">双组比较</option><option value="time_trend">历史趋势</option><option value="forecast">回测预测</option><option value="multi_finding_synthesis">趋势与双组综合</option><option value="curve_fitting">曲线拟合</option><option value="exploratory_python">探索性 Python</option>
         </select></div>
         <div class="field" data-kinds="descriptive group_comparison time_trend forecast multi_finding_synthesis exploratory_python"><label for="metric">数值指标</label><input id="metric" type="text" value="sales"></div>
         <div class="field" data-kinds="factor_relationship"><label for="target">目标列</label><input id="target" type="text" value="target"></div>
@@ -35,6 +35,10 @@
         <div class="field" data-kinds="group_comparison time_trend forecast multi_finding_synthesis"><label for="recommendation-intent">建议意图</label><select id="recommendation-intent"><option value="none">只回答分析问题</option><option value="investigate">给调查建议</option><option value="act">给行动建议</option></select></div>
         <div class="field" data-kinds="group_comparison time_trend forecast multi_finding_synthesis"><label for="action-risk">行动风险</label><select id="action-risk"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></div>
         <div class="field check" data-kinds="group_comparison time_trend forecast multi_finding_synthesis"><input id="reversible" type="checkbox" checked><label for="reversible">候选行动可逆</label></div>
+        <div class="field wide" data-kinds="curve_fitting"><label for="series-columns">序列列（宽表模式，英文逗号分隔，≥5 列；留空则用 x/y 列模式）</label><input id="series-columns" type="text" value="1天后,3天后,7天后,14天后,30天后"></div>
+        <div class="field" data-kinds="curve_fitting"><label for="curve-x">x 列（长表模式）</label><input id="curve-x" type="text" value="day"></div>
+        <div class="field" data-kinds="curve_fitting"><label for="curve-y">y 列（长表模式）</label><input id="curve-y" type="text" value="retention"></div>
+        <div class="field" data-kinds="curve_fitting"><label for="zero-values">零值处理（宽表）</label><select id="zero-values"><option value="exclude">按截断缺失排除</option><option value="keep">保留零值</option></select></div>
         <div class="field wide" data-kinds="exploratory_python"><label for="purpose">探索目的</label><input id="purpose" type="text" value="检查中位数作为异常值敏感性补充"></div>
         <div class="field wide" data-kinds="exploratory_python"><label for="code">探索代码（数据副本为 data，输出放入 result）</label><textarea id="code">print("rows", len(data))
 result = data["sales"].median()</textarea></div>

@@ -246,14 +246,18 @@ _AUTOMATIC_KINDS = (
         AnalysisKind.TIME_TREND,
         AnalysisKind.FORECAST,
         AnalysisKind.MULTI_FINDING_SYNTHESIS,
+        AnalysisKind.CURVE_FITTING,
 )
 _AUTOMATIC_KIND_SET = frozenset(_AUTOMATIC_KINDS)
+# Public alias: validators derive the catalog size from the planner instead
+# of hardcoding counts that silently rot when the catalog grows.
+AUTOMATIC_ANALYSIS_KINDS = _AUTOMATIC_KINDS
 
 _DIAGNOSTIC_MAX_TOOL_CALLS = 8
 _DIAGNOSTIC_MAX_ARGUMENT_FIELDS = 32
 _DIAGNOSTIC_MAX_TEXT = 64
 _DIAGNOSTIC_UNKNOWN_PARAMETER_COUNT_CAP = 33
-PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v4"
+PLANNER_CONTRACT_GATE_VERSION = "v2_planner_contract_parity.v5"
 _CONTROLLED_PARAMETER_FIELDS = frozenset(
     {
         "aggregation",
@@ -264,15 +268,21 @@ _CONTROLLED_PARAMETER_FIELDS = frozenset(
         "group",
         "horizon",
         "metric",
+        "series_columns",
         "target",
         "time_field",
+        "x_column",
+        "y_column",
+        "zero_values",
     }
 )
 _COMPATIBLE_COLUMN_BINDING = "compatible_column_binding"
+_CURVE_BINDING = "curve_binding"
 _CONTROLLED_MISSING_PREREQUISITES = frozenset(
     {
         "analysis_unit",
         "analysis_unit_semantics",
+        "curve_binding",
         "date_column",
         "features",
         "group",
@@ -566,6 +576,7 @@ _CLAIM_CEILING = {
     AnalysisKind.TIME_TREND: "inferential",
     AnalysisKind.FORECAST: "predictive",
     AnalysisKind.MULTI_FINDING_SYNTHESIS: "inferential",
+    AnalysisKind.CURVE_FITTING: "descriptive",
 }
 
 _REQUIRED_PARAMETERS: dict[AnalysisKind, tuple[str, ...]] = {
@@ -598,20 +609,28 @@ _REQUIRED_PARAMETERS: dict[AnalysisKind, tuple[str, ...]] = {
         "group",
         "analysis_unit",
     ),
+    # curve fitting is a union contract: exactly one of
+    # series_columns (wide) or x_column+y_column (long), enforced by the
+    # dedicated schema and validator below.
+    AnalysisKind.CURVE_FITTING: (),
 }
 
 _OPTIONAL_PARAMETERS = {
     AnalysisKind.FACTOR_RELATIONSHIP: frozenset({"time_field"}),
+    AnalysisKind.CURVE_FITTING: frozenset(
+        {"series_columns", "x_column", "y_column", "zero_values"}
+    ),
 }
 
-_NUMERIC_COLUMN_PARAMETERS = ("metric", "target")
+_NUMERIC_COLUMN_PARAMETERS = ("metric", "target", "x_column", "y_column")
 _DATETIME_COLUMN_PARAMETERS = ("time_field",)
 _ANALYSIS_UNIT_COLUMN_PARAMETERS = ("analysis_unit",)
 _ANY_COLUMN_PARAMETERS = ("group", "date_column")
-_NUMERIC_COLUMN_ARRAY_PARAMETERS = ("features",)
+_NUMERIC_COLUMN_ARRAY_PARAMETERS = ("features", "series_columns")
 _ENUM_PARAMETER_VALUES: dict[str, tuple[str, ...]] = {
     "frequency": ("daily", "weekly", "monthly"),
     "aggregation": ("sum", "mean"),
+    "zero_values": ("exclude", "keep"),
 }
 _INTEGER_PARAMETER_RANGES = {"horizon": (1, 30)}
 _BOOLEAN_PARAMETERS: tuple[str, ...] = ()
@@ -628,6 +647,7 @@ _SCALAR_DISTINCT_RELATIONS: dict[
         ("metric", "group", "analysis_unit"),
         ("time_field", "analysis_unit"),
     ),
+    AnalysisKind.CURVE_FITTING: (("x_column", "y_column"),),
 }
 _ARRAY_EXCLUSION_RELATIONS: dict[
     AnalysisKind, tuple[tuple[str, tuple[str, ...]], ...]
@@ -636,6 +656,10 @@ _ARRAY_EXCLUSION_RELATIONS: dict[
         ("features", ("target", "analysis_unit", "time_field")),
     ),
 }
+
+# Wide-series mode needs enough distinct value columns for a meaningful
+# multi-family fit; the engine itself enforces the same floor.
+_CURVE_MIN_SERIES_COLUMNS = 5
 
 _PARAMETER_POLICY_FIELDS = (
     frozenset(_NUMERIC_COLUMN_PARAMETERS)
@@ -720,10 +744,59 @@ def _parameter_contract_diagnostic(
     }
 
 
+def _curve_parameter_schema(context: DatasetPlanningContext) -> dict[str, Any]:
+    """Union contract: exactly one binding mode for curve fitting."""
+
+    numeric_columns = [
+        item.name for item in context.columns if item.role is ColumnRole.NUMERIC
+    ]
+    properties: dict[str, dict[str, Any]] = {
+        "x_column": {"type": "string", "enum": numeric_columns},
+        "y_column": {"type": "string", "enum": numeric_columns},
+        "zero_values": {"type": "string", "enum": ["exclude", "keep"]},
+    }
+    branches: list[dict[str, Any]] = [{"required": ["x_column", "y_column"]}]
+    if len(numeric_columns) >= _CURVE_MIN_SERIES_COLUMNS:
+        properties["series_columns"] = {
+            "type": "array",
+            "items": {"type": "string", "enum": numeric_columns},
+            "minItems": _CURVE_MIN_SERIES_COLUMNS,
+            "uniqueItems": True,
+        }
+        branches.insert(0, {"required": ["series_columns"]})
+    relation_constraints: list[dict[str, Any]] = [
+        # binding modes are mutually exclusive
+        {"not": {"required": ["series_columns", "x_column"]}},
+        {"not": {"required": ["series_columns", "y_column"]}},
+    ]
+    for column_name in (item.name for item in context.columns):
+        relation_constraints.append(
+            {
+                "not": {
+                    "required": ["x_column", "y_column"],
+                    "properties": {
+                        "x_column": {"const": column_name},
+                        "y_column": {"const": column_name},
+                    },
+                }
+            }
+        )
+    schema: dict[str, Any] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "anyOf": branches,
+        "allOf": relation_constraints,
+    }
+    return schema
+
+
 def _parameter_schema(
     kind: AnalysisKind,
     context: DatasetPlanningContext,
 ) -> dict[str, Any]:
+    if kind is AnalysisKind.CURVE_FITTING:
+        return _curve_parameter_schema(context)
     column_names = [item.name for item in context.columns]
     numeric_columns = [
         item.name for item in context.columns if item.role is ColumnRole.NUMERIC
@@ -898,6 +971,13 @@ def _missing_prerequisites_for_kind(
 ) -> tuple[str, ...]:
     """Return context-provable blockers for one otherwise supported route."""
 
+    if kind is AnalysisKind.CURVE_FITTING:
+        numeric_count = sum(
+            1 for item in context.columns if item.role is ColumnRole.NUMERIC
+        )
+        if numeric_count >= 2:
+            return ()
+        return (_CURVE_BINDING,)
     column_fields = tuple(
         field
         for field in _REQUIRED_PARAMETERS[kind]
@@ -1688,6 +1768,73 @@ class StructuredAnalysisPlanner:
                     diagnostic={"invalid_parameter_fields": ["features"]},
                 )
             result["features"] = features
+
+        if kind is AnalysisKind.CURVE_FITTING:
+            has_series = "series_columns" in result
+            has_long = "x_column" in result or "y_column" in result
+            if has_series and has_long:
+                raise PlannerContractError(
+                    "curve fitting cannot bind both series_columns and x/y columns",
+                    reason_code="plan_parameter_relation_invalid",
+                    diagnostic={
+                        "invalid_parameter_fields": [
+                            field
+                            for field in ("series_columns", "x_column", "y_column")
+                            if field in result
+                        ]
+                    },
+                )
+            if has_series:
+                raw_series = result["series_columns"]
+                if not isinstance(raw_series, list) or not raw_series:
+                    raise PlannerContractError(
+                        "series_columns must be a non-empty array",
+                        reason_code="plan_parameter_value_invalid",
+                        diagnostic={"invalid_parameter_fields": ["series_columns"]},
+                    )
+                series: list[str] = []
+                for value in raw_series:
+                    name = str(value or "").strip()
+                    selected = columns.get(name)
+                    if selected is None:
+                        raise PlannerContractError(
+                            f"unknown column: {name}",
+                            reason_code="plan_column_binding_invalid",
+                            diagnostic={"invalid_parameter_fields": ["series_columns"]},
+                        )
+                    if selected.role is not ColumnRole.NUMERIC:
+                        raise PlannerContractError(
+                            "series_columns must be numeric",
+                            reason_code="plan_column_binding_invalid",
+                            diagnostic={"invalid_parameter_fields": ["series_columns"]},
+                        )
+                    series.append(name)
+                if len(series) != len(set(series)):
+                    raise PlannerContractError(
+                        "series_columns must be unique",
+                        reason_code="plan_parameter_value_invalid",
+                        diagnostic={"invalid_parameter_fields": ["series_columns"]},
+                    )
+                if len(series) < _CURVE_MIN_SERIES_COLUMNS:
+                    raise PlannerContractError(
+                        "series_columns requires at least "
+                        f"{_CURVE_MIN_SERIES_COLUMNS} columns",
+                        reason_code="plan_parameter_value_invalid",
+                        diagnostic={"invalid_parameter_fields": ["series_columns"]},
+                    )
+                result["series_columns"] = series
+            elif not has_long:
+                raise PlannerContractError(
+                    "curve fitting requires series_columns or x_column and y_column",
+                    reason_code="plan_parameter_fields_missing",
+                    diagnostic={
+                        "invalid_parameter_fields": [
+                            "series_columns",
+                            "x_column",
+                            "y_column",
+                        ]
+                    },
+                )
 
         invalid_relation_fields = _invalid_parameter_relation_fields(kind, result)
         if invalid_relation_fields:

@@ -67,7 +67,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     assert preflight["authorization_request"]["provider_calls"] == 1
     assert preflight["authorization_request"]["mode"] == "per_call"
     assert preflight["planner_contract_gate"] == {
-            "version": "v2_planner_contract_parity.v4",
+            "version": "v2_planner_contract_parity.v5",
         "passed": True,
         "schema_fingerprint": preflight["planner_contract_gate"][
             "schema_fingerprint"
@@ -80,6 +80,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
             "time_trend",
             "forecast",
             "multi_finding_synthesis",
+            "curve_fitting",
         ],
             "ready_variant_count": 6,
             "needs_input_variants": [
@@ -87,10 +88,14 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
                     "analysis_kind": "factor_relationship",
                     "missing_prerequisites": ["compatible_column_binding"],
                 },
+                {
+                    "analysis_kind": "curve_fitting",
+                    "missing_prerequisites": ["curve_binding"],
+                },
             ],
-            "needs_input_variant_count": 1,
+            "needs_input_variant_count": 2,
             "unsupported_variant_count": 1,
-            "status_variant_count": 8,
+            "status_variant_count": 9,
     }
     assert preflight["planner_contract_gate"]["schema_fingerprint"].startswith(
         "sha256:"
@@ -153,7 +158,11 @@ def test_preflight_binds_explicit_confirmed_analysis_unit_before_first_call():
         {
             "analysis_kind": "factor_relationship",
             "missing_prerequisites": ["compatible_column_binding"],
-        }
+        },
+        {
+            "analysis_kind": "curve_fitting",
+            "missing_prerequisites": ["curve_binding"],
+        },
     ]
 
     tampered = deepcopy(preflight)

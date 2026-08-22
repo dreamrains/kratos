@@ -562,6 +562,15 @@
             value.aggregation = byId('aggregation').value;
         }
         if (kind === 'forecast') value.horizon = Number(byId('horizon').value);
+        if (kind === 'curve_fitting') {
+            const series = byId('series-columns').value.split(',').map((item) => item.trim()).filter(Boolean);
+            if (series.length >= 5) value.series_columns = series;
+            else {
+                value.x_column = byId('curve-x').value.trim();
+                value.y_column = byId('curve-y').value.trim();
+            }
+            value.zero_values = byId('zero-values').value;
+        }
         if (['group_comparison', 'time_trend', 'forecast', 'multi_finding_synthesis'].includes(kind)) {
             value.recommendation_intent = byId('recommendation-intent').value;
             value.action_risk = byId('action-risk').value;
@@ -873,9 +882,10 @@
             byId('analysis-kind').value = context.analysis_kind;
             showKindFields();
         }
-        const mappings = {metric: 'metric', target: 'target', analysis_unit: 'analysis-unit', time_field: 'time-field', date_column: 'date-column', group: 'group', frequency: 'frequency', aggregation: 'aggregation', horizon: 'horizon', recommendation_intent: 'recommendation-intent', action_risk: 'action-risk', purpose: 'purpose', question: 'question'};
+        const mappings = {metric: 'metric', target: 'target', analysis_unit: 'analysis-unit', time_field: 'time-field', date_column: 'date-column', group: 'group', frequency: 'frequency', aggregation: 'aggregation', horizon: 'horizon', recommendation_intent: 'recommendation-intent', action_risk: 'action-risk', purpose: 'purpose', x_column: 'curve-x', y_column: 'curve-y', zero_values: 'zero-values', question: 'question'};
         Object.entries(mappings).forEach(([key, id]) => { if (context[key]) byId(id).value = context[key]; });
         if (context.features) byId('features').value = context.features;
+        if (context.series_columns) byId('series-columns').value = context.series_columns;
         if (context.reversible) byId('reversible').checked = context.reversible === 'true';
         if (context.filename) {
             state.filename = context.filename;
