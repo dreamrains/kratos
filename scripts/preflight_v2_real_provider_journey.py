@@ -61,6 +61,7 @@ def main() -> int:
             ).hexdigest()
         ),
         expected_planner_contract_gate=current_preflight["planner_contract_gate"],
+        expected_semantic_context=current_preflight["semantic_context"],
     )
     print(
         json.dumps(

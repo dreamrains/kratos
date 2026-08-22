@@ -43,6 +43,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
         source_digest=digest,
         config=_config(),
         token_counter=_token_counter,
+        confirmed_analysis_unit_column="unit_id",
     )
 
     result = validate_real_provider_preflight(
@@ -51,6 +52,7 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
         expected_model_id="openai/deepseek-v4-flash",
         expected_dataset_fingerprint=_fixture_fingerprint(),
         expected_planner_contract_gate=preflight["planner_contract_gate"],
+        expected_semantic_context=preflight["semantic_context"],
     )
 
     assert preflight["version"] == REAL_PROVIDER_JOURNEY_VERSION
@@ -73,25 +75,14 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
             "forecast",
             "multi_finding_synthesis",
         ],
-            "ready_variant_count": 4,
+            "ready_variant_count": 6,
             "needs_input_variants": [
                 {
                     "analysis_kind": "factor_relationship",
-                    "missing_prerequisites": [
-                        "analysis_unit_semantics",
-                        "compatible_column_binding",
-                    ],
-                },
-                {
-                    "analysis_kind": "group_comparison",
-                    "missing_prerequisites": ["analysis_unit_semantics"],
-                },
-                {
-                    "analysis_kind": "multi_finding_synthesis",
-                    "missing_prerequisites": ["analysis_unit_semantics"],
+                    "missing_prerequisites": ["compatible_column_binding"],
                 },
             ],
-            "needs_input_variant_count": 3,
+            "needs_input_variant_count": 1,
             "unsupported_variant_count": 1,
             "status_variant_count": 8,
     }
@@ -114,6 +105,28 @@ def test_preflight_counts_full_request_without_authorizing_or_calling_provider()
     }
     assert result.passed is True
     assert result.reason_codes == ()
+
+
+def test_preflight_rejects_missing_explicit_analysis_unit_confirmation():
+    digest = "sha256:" + "e" * 64
+    preflight = build_real_provider_preflight(
+        fixture_path=FIXTURE,
+        source_digest=digest,
+        config=_config(),
+        token_counter=_token_counter,
+    )
+
+    result = validate_real_provider_preflight(
+        preflight,
+        expected_source_digest=digest,
+        expected_model_id="openai/deepseek-v4-flash",
+        expected_dataset_fingerprint=_fixture_fingerprint(),
+        expected_planner_contract_gate=preflight["planner_contract_gate"],
+        expected_semantic_context=preflight["semantic_context"],
+    )
+
+    assert result.passed is False
+    assert "real_provider_analysis_unit_unconfirmed" in result.reason_codes
 
 
 def test_preflight_binds_explicit_confirmed_analysis_unit_before_first_call():
@@ -147,10 +160,14 @@ def test_preflight_binds_explicit_confirmed_analysis_unit_before_first_call():
         expected_model_id="openai/deepseek-v4-flash",
         expected_dataset_fingerprint=_fixture_fingerprint(),
         expected_planner_contract_gate=preflight["planner_contract_gate"],
+        expected_semantic_context={
+            "confirmed_analysis_unit_column": "unit_id"
+        },
     )
 
     assert result.passed is False
     assert "real_provider_request_fingerprint_mismatch" in result.reason_codes
+    assert "real_provider_semantic_context_mismatch" in result.reason_codes
 
 
 def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_authorization():
@@ -160,6 +177,7 @@ def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_author
         source_digest=digest,
         config=_config(),
         token_counter=_token_counter,
+        confirmed_analysis_unit_column="unit_id",
     )
     expected_planner_contract_gate = deepcopy(preflight["planner_contract_gate"])
     preflight["source_digest"] = "sha256:" + "c" * 64
@@ -176,6 +194,9 @@ def test_preflight_rejects_stale_source_hidden_retry_and_blanket_two_call_author
         expected_model_id="openai/deepseek-v4-flash",
         expected_dataset_fingerprint=_fixture_fingerprint(),
         expected_planner_contract_gate=expected_planner_contract_gate,
+        expected_semantic_context={
+            "confirmed_analysis_unit_column": "unit_id"
+        },
     )
 
     assert result.passed is False

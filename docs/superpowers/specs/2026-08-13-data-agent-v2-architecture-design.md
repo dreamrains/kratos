@@ -1176,3 +1176,17 @@ multi-finding 的确定性 publisher 因此必须在方法块投影：
 6. provider-neutral fixture 同时保留两条路径：未确认时进入原 needs-input/failure/retry 流；预确认 `unit_id` 时第一次 Planner invocation 即可生成 ready multi-finding plan。
 
 该前移不把浏览器夹具中的 `unit_id` 选择冒充真实业务确认，也不授权 Provider 调用。源码变化使 5C5U 及更早 source-bound evidence 相对当前实现 stale；真实旅程仍需 clean commit、用户明确语义确认、新 preflight 和精确次数授权。
+
+## 41. Slice 5C5W 实施补充：真实旅程的语义 preflight gate
+
+产品流可以允许用户明确暂不确认，并让 Planner 在需要时返回受控 needs-input；release real-provider journey 的目标不同。对于冻结 fixture 已经能够在调用前收集的业务语义，preflight 不得以“结构合法但为空”为 PASS，否则仍会把一次真实调用浪费在可预防的澄清上。
+
+5C5W 收紧发布预检边界：
+
+1. real-provider preflight v6 要求非空 `confirmed_analysis_unit_column` 才能 PASS；空确认返回 `real_provider_analysis_unit_unconfirmed`，CLI 以非零状态停止；
+2. validator 除了重算 request fingerprint 和 Planner gate，还必须接收当前命令从冻结输入重建的 `expected_semantic_context`。文件中的 semantic context 与预期不一致时返回 `real_provider_semantic_context_mismatch`；
+3. stop conditions 显式包含 `analysis_unit_semantics_unconfirmed`，使调用编排在 authorization 签发和 Provider 调用前停止；
+4. 该 gate 只用于 release real-provider preflight，不删除 Workbench/API 的明确 defer 能力，也不把列名、identifier role 或浏览器夹具选择当作用户业务确认；
+5. 显式 `unit_id` 的确定性 dry build 可证明 schema、预算和身份链闭合，但在用户为真实旅程确认该语义、源码 clean commit 并生成新 preflight 之前，不能签发调用 authorization 或 PASS receipt。
+
+该切片没有真实 Provider 调用、repair、retry 或补跑。源码变化使 5C5V 及更早 source-bound evidence 相对当前实现 stale。

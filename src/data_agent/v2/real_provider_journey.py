@@ -24,7 +24,7 @@ from data_agent.v2.planning_budget import (
 )
 
 
-REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v5"
+REAL_PROVIDER_JOURNEY_VERSION = "v2_real_provider_journey_preflight.v6"
 UNIFIED_SCENARIO_ID = "unified_analysis_entry"
 UNIFIED_FIXTURE_PATH = "tests/fixtures/v2_slice4d_combined.csv"
 UNIFIED_QUESTION = (
@@ -34,6 +34,7 @@ UNIFIED_QUESTION = (
 REQUIRED_STOP_CONDITIONS = (
     "source_digest_changed",
     "dataset_fingerprint_changed",
+    "analysis_unit_semantics_unconfirmed",
     "planning_context_too_large",
     "provider_error",
     "planner_contract_error",
@@ -154,6 +155,7 @@ def validate_real_provider_preflight(
     expected_model_id: str,
     expected_dataset_fingerprint: str,
     expected_planner_contract_gate: dict[str, Any],
+    expected_semantic_context: dict[str, str],
 ) -> RealProviderPreflightValidation:
     if not isinstance(preflight, dict):
         return RealProviderPreflightValidation(False, ("invalid_real_provider_preflight",))
@@ -203,6 +205,14 @@ def validate_real_provider_preflight(
         )
     ):
         reasons.append("invalid_real_provider_semantic_context")
+        semantic_context = {}
+    confirmed_analysis_unit = str(
+        semantic_context.get("confirmed_analysis_unit_column") or ""
+    ).strip()
+    if not confirmed_analysis_unit:
+        reasons.append("real_provider_analysis_unit_unconfirmed")
+    if semantic_context != expected_semantic_context:
+        reasons.append("real_provider_semantic_context_mismatch")
 
     planner_gate = preflight.get("planner_contract_gate")
     if not isinstance(planner_gate, dict):
