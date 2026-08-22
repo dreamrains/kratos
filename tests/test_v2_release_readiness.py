@@ -57,14 +57,28 @@ def test_source_digest_is_line_ending_portable_and_source_sensitive(tmp_path):
     assert "src/example.py" not in deleted.files
 
 
-def test_release_matrix_has_unique_scenarios_and_all_seven_layers():
+def test_release_matrix_separates_shared_runtime_from_scenario_semantics():
     matrix = load_release_matrix(MATRIX_PATH)
 
-    assert matrix.version == "v2_release_matrix.v1"
+    assert matrix.version == "v2_release_matrix.v2"
     assert len(matrix.scenarios) == 9
     assert len({item.scenario_id for item in matrix.scenarios}) == 9
-    expected = set(ValidationLayer)
-    assert all(set(item.required_layers) == expected for item in matrix.scenarios)
+    assert matrix.shared_runtime_scenario_id == "unified_analysis_entry"
+    assert set(matrix.shared_runtime_layers) == {
+        ValidationLayer.OWNER_CONTRACT,
+        ValidationLayer.INCIDENT_REPLAY,
+        ValidationLayer.SSE_TRANSPORT_CONTRACT,
+        ValidationLayer.BROWSER_INTERACTION_JOURNEY,
+        ValidationLayer.REFRESH_PERSISTENCE_JOURNEY,
+    }
+    assert all(
+        set(item.required_layers)
+        == {
+            ValidationLayer.REAL_PROVIDER_ANALYSIS_JOURNEY,
+            ValidationLayer.HUMAN_SEMANTIC_REVIEW,
+        }
+        for item in matrix.scenarios
+    )
     assert all("turn_completed" in item.required_semantic_events for item in matrix.scenarios)
     assert all("executive_answer" in item.required_block_types for item in matrix.scenarios)
     assert all(item.forbidden_behaviors for item in matrix.scenarios)
@@ -111,7 +125,7 @@ def test_browser_pass_cannot_stand_in_for_other_layers():
     receipt = ReleaseReceipt(
         receipt_id="receipt_browser",
         source_digest=digest,
-        scenario_id=matrix.scenarios[0].scenario_id,
+        scenario_id=matrix.shared_runtime_scenario_id,
         layer=ValidationLayer.BROWSER_INTERACTION_JOURNEY,
         status=LayerStatus.PASS,
         evidence_refs=("browser:observation:1",),
@@ -122,14 +136,37 @@ def test_browser_pass_cannot_stand_in_for_other_layers():
 
     assert decision.status is ReadinessStatus.NOT_READY
     assert decision.provider_calls == 0
-    assert len(decision.missing_requirements) == 62
+    assert len(decision.missing_requirements) == 22
     assert decision.incomplete_receipt_ids == ("receipt_browser",)
     assert "product_pass" not in json.dumps(decision.to_dict())
 
 
+def test_shared_runtime_receipt_cannot_be_relabelled_as_a_scenario_receipt():
+    matrix = load_release_matrix(MATRIX_PATH)
+    digest = "sha256:" + "0" * 64
+    receipt = ReleaseReceipt(
+        receipt_id="receipt_relabelled_owner",
+        source_digest=digest,
+        scenario_id="descriptive_analysis",
+        layer=ValidationLayer.OWNER_CONTRACT,
+        status=LayerStatus.PASS,
+        evidence_refs=("pytest:relabelled-owner",),
+        oracle_identity="oracle:v1",
+    )
+
+    decision = evaluate_release_readiness(matrix, [receipt], current_source_digest=digest)
+
+    assert decision.unknown_receipt_ids == ("receipt_relabelled_owner",)
+    assert "shared_runtime:owner_contract" in decision.missing_requirements
+
+
 def test_stale_and_conflicting_receipts_never_satisfy_requirement():
     matrix = load_release_matrix(MATRIX_PATH)
-    scenario = matrix.scenarios[0]
+    scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
     current = "sha256:" + "b" * 64
     stale = ReleaseReceipt(
         receipt_id="receipt_stale",
@@ -168,7 +205,7 @@ def test_stale_and_conflicting_receipts_never_satisfy_requirement():
     assert stale_decision.stale_receipt_ids == ("receipt_stale",)
     assert conflict_decision.status is ReadinessStatus.NOT_READY
     assert conflict_decision.conflicting_requirements == (
-        f"{scenario.scenario_id}:{ValidationLayer.OWNER_CONTRACT.value}",
+        f"shared_runtime:{ValidationLayer.OWNER_CONTRACT.value}",
     )
 
 
@@ -176,6 +213,26 @@ def test_complete_current_receipts_only_reach_human_decision():
     matrix = load_release_matrix(MATRIX_PATH)
     digest = "sha256:" + "c" * 64
     receipts = []
+    shared_scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
+    for layer in matrix.shared_runtime_layers:
+        receipts.append(
+            ReleaseReceipt(
+                receipt_id=f"receipt_shared_runtime_{layer.value}",
+                source_digest=digest,
+                scenario_id=shared_scenario.scenario_id,
+                layer=layer,
+                status=LayerStatus.PASS,
+                evidence_refs=(f"evidence:shared_runtime:{layer.value}",),
+                oracle_identity="oracle:v1",
+                observed_semantic_events=shared_scenario.required_semantic_events,
+                observed_interactions=shared_scenario.required_interactions,
+                chart_observation="rendered",
+            )
+        )
     for scenario in matrix.scenarios:
         for layer in scenario.required_layers:
             receipts.append(
@@ -273,7 +330,11 @@ def test_human_review_cannot_hide_a_failed_dimension_in_overall_pass():
 
 def test_pass_receipt_is_incomplete_when_required_sse_evidence_is_missing():
     matrix = load_release_matrix(MATRIX_PATH)
-    scenario = matrix.scenarios[0]
+    scenario = next(
+        item
+        for item in matrix.scenarios
+        if item.scenario_id == matrix.shared_runtime_scenario_id
+    )
     digest = "sha256:" + "1" * 64
     receipt = ReleaseReceipt(
         receipt_id="receipt_incomplete_sse",
@@ -317,19 +378,19 @@ def test_append_only_evidence_projects_deterministic_receipts_and_a_bounded_stat
     assert projection["version"] == "v2_release_status_projection.v1"
     assert projection["status"] == "not_ready"
     assert projection["summary"] == {
-        "total": 63,
+        "total": 23,
         "pass": 1,
         "fail": 0,
         "blocked": 0,
-        "not_run": 62,
+        "not_run": 22,
         "conflict": 0,
         "incomplete": 0,
     }
     assert projection["first_failure"] == {
-        "requirement": "backtested_forecast:browser_interaction_journey",
+        "requirement": "shared_runtime:incident_replay",
         "stage": "not_run",
     }
-    assert projection["root_cutover_gaps"][0] == "backtested_forecast:browser_interaction_journey"
+    assert projection["root_cutover_gaps"][0] == "shared_runtime:incident_replay"
     assert projection["receipts"] == [
         {
             "receipt_id": "receipt_evidence_unified_owner_current",

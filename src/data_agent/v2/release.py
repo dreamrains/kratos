@@ -126,6 +126,8 @@ class ScenarioRequirement:
 class ReleaseMatrix:
     version: str
     scenarios: tuple[ScenarioRequirement, ...]
+    shared_runtime_scenario_id: str
+    shared_runtime_layers: tuple[ValidationLayer, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "version", _required(self.version, "version"))
@@ -134,6 +136,60 @@ class ReleaseMatrix:
         ids = [item.scenario_id for item in self.scenarios]
         if len(ids) != len(set(ids)):
             raise ValueError("release matrix scenario ids must be unique")
+        object.__setattr__(
+            self,
+            "shared_runtime_scenario_id",
+            _required(self.shared_runtime_scenario_id, "shared_runtime_scenario_id"),
+        )
+        if self.shared_runtime_scenario_id not in ids:
+            raise ValueError("shared runtime scenario must exist in release matrix")
+        shared_layers = tuple(ValidationLayer(layer) for layer in self.shared_runtime_layers)
+        object.__setattr__(self, "shared_runtime_layers", shared_layers)
+        if not shared_layers:
+            raise ValueError("shared_runtime_layers is required")
+        if len(shared_layers) != len(set(shared_layers)):
+            raise ValueError("duplicate shared runtime layer")
+        shared = set(shared_layers)
+        if any(shared.intersection(item.required_layers) for item in self.scenarios):
+            raise ValueError("shared runtime layers cannot be scenario-specific layers")
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseRequirement:
+    """One bounded release obligation and the receipt identity that can satisfy it."""
+
+    requirement_id: str
+    scenario_id: str
+    layer: ValidationLayer
+    scenario: ScenarioRequirement
+
+
+def _release_requirements(matrix: ReleaseMatrix) -> tuple[ReleaseRequirement, ...]:
+    scenarios = {item.scenario_id: item for item in matrix.scenarios}
+    shared_scenario = scenarios[matrix.shared_runtime_scenario_id]
+    requirements = [
+        ReleaseRequirement(
+            requirement_id=f"shared_runtime:{layer.value}",
+            scenario_id=shared_scenario.scenario_id,
+            layer=layer,
+            scenario=shared_scenario,
+        )
+        for layer in matrix.shared_runtime_layers
+    ]
+    requirements.extend(
+        ReleaseRequirement(
+            requirement_id=f"{scenario.scenario_id}:{layer.value}",
+            scenario_id=scenario.scenario_id,
+            layer=layer,
+            scenario=scenario,
+        )
+        for scenario in matrix.scenarios
+        for layer in scenario.required_layers
+    )
+    targets = [(item.scenario_id, item.layer) for item in requirements]
+    if len(targets) != len(set(targets)):
+        raise ValueError("release matrix has duplicate receipt targets")
+    return tuple(requirements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,14 +418,7 @@ def project_release_status(
     decision = evaluate_release_readiness(
         matrix, receipts, current_source_digest=current_source_digest
     )
-    requirements = sorted(
-        (
-            (scenario.scenario_id, layer)
-            for scenario in matrix.scenarios
-            for layer in scenario.required_layers
-        ),
-        key=lambda item: (item[0], item[1].value),
-    )
+    requirements = _release_requirements(matrix)
     by_requirement: dict[tuple[str, ValidationLayer], list[ReleaseReceipt]] = {}
     for receipt in receipts:
         if receipt.source_digest == decision.source_digest:
@@ -378,10 +427,8 @@ def project_release_status(
     summary = {"total": len(requirements), "pass": 0, "fail": 0, "blocked": 0, "not_run": 0, "conflict": 0, "incomplete": 0}
     gaps: list[str] = []
     first_failure: dict[str, str] | None = None
-    scenario_by_id = {item.scenario_id: item for item in matrix.scenarios}
-    for scenario_id, layer in requirements:
-        requirement = f"{scenario_id}:{layer.value}"
-        matches = by_requirement.get((scenario_id, layer), [])
+    for requirement in requirements:
+        matches = by_requirement.get((requirement.scenario_id, requirement.layer), [])
         stage = ""
         if not matches:
             category = "not_run"
@@ -391,9 +438,7 @@ def project_release_status(
             stage = "conflicting_receipts"
         else:
             receipt = matches[0]
-            if receipt.status is LayerStatus.PASS and _receipt_covers_requirement(
-                receipt, scenario_by_id[scenario_id]
-            ):
+            if receipt.status is LayerStatus.PASS and _receipt_covers_requirement(receipt, requirement.scenario):
                 category = "pass"
             elif receipt.status is LayerStatus.PASS:
                 category = "incomplete"
@@ -403,9 +448,9 @@ def project_release_status(
                 stage = receipt.first_failure_stage
         summary[category] += 1
         if category != "pass":
-            gaps.append(requirement)
+            gaps.append(requirement.requirement_id)
             if first_failure is None:
-                first_failure = {"requirement": requirement, "stage": stage}
+                first_failure = {"requirement": requirement.requirement_id, "stage": stage}
     return {
         "version": "v2_release_status_projection.v1",
         "source_digest": decision.source_digest,
@@ -507,6 +552,9 @@ def load_release_matrix(path: Path | str) -> ReleaseMatrix:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict) or not isinstance(value.get("scenarios"), list):
         raise ValueError("invalid release matrix")
+    shared_runtime = value.get("shared_runtime")
+    if not isinstance(shared_runtime, dict):
+        raise ValueError("release matrix shared_runtime is required")
     scenarios = []
     for item in value["scenarios"]:
         if not isinstance(item, dict):
@@ -527,7 +575,14 @@ def load_release_matrix(path: Path | str) -> ReleaseMatrix:
                 forbidden_behaviors=tuple(item.get("forbidden_behaviors") or ()),
             )
         )
-    return ReleaseMatrix(version=value.get("version", ""), scenarios=tuple(scenarios))
+    return ReleaseMatrix(
+        version=value.get("version", ""),
+        scenarios=tuple(scenarios),
+        shared_runtime_scenario_id=shared_runtime.get("scenario_id", ""),
+        shared_runtime_layers=tuple(
+            ValidationLayer(layer) for layer in shared_runtime.get("layers") or ()
+        ),
+    )
 
 
 def evaluate_release_readiness(
@@ -537,11 +592,8 @@ def evaluate_release_readiness(
     current_source_digest: str,
 ) -> ReleaseReadinessDecision:
     digest = _digest(current_source_digest)
-    requirements = {
-        (scenario.scenario_id, layer)
-        for scenario in matrix.scenarios
-        for layer in scenario.required_layers
-    }
+    requirements = _release_requirements(matrix)
+    required_targets = {(item.scenario_id, item.layer) for item in requirements}
     current: dict[tuple[str, ValidationLayer], list[ReleaseReceipt]] = {}
     stale_ids: list[str] = []
     unknown_ids: list[str] = []
@@ -551,7 +603,7 @@ def evaluate_release_readiness(
             stale_ids.append(receipt.receipt_id)
             continue
         key = (receipt.scenario_id, receipt.layer)
-        if key not in requirements:
+        if key not in required_targets:
             unknown_ids.append(receipt.receipt_id)
             continue
         current.setdefault(key, []).append(receipt)
@@ -562,17 +614,15 @@ def evaluate_release_readiness(
     non_pass: list[str] = []
     conflicts: list[str] = []
     incomplete_ids: list[str] = []
-    scenario_by_id = {item.scenario_id: item for item in matrix.scenarios}
-    for scenario_id, layer in sorted(requirements, key=lambda item: (item[0], item[1].value)):
-        key_text = f"{scenario_id}:{layer.value}"
-        matches = current.get((scenario_id, layer), [])
+    for requirement in requirements:
+        matches = current.get((requirement.scenario_id, requirement.layer), [])
         if not matches:
-            missing.append(key_text)
+            missing.append(requirement.requirement_id)
         elif len(matches) > 1:
-            conflicts.append(key_text)
+            conflicts.append(requirement.requirement_id)
         elif matches[0].status is not LayerStatus.PASS:
-            non_pass.append(key_text)
-        elif not _receipt_covers_requirement(matches[0], scenario_by_id[scenario_id]):
+            non_pass.append(requirement.requirement_id)
+        elif not _receipt_covers_requirement(matches[0], requirement.scenario):
             incomplete_ids.append(matches[0].receipt_id)
 
     ready = not (missing or non_pass or conflicts or unknown_ids or incomplete_ids)

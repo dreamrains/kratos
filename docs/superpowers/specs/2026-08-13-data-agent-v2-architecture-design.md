@@ -849,7 +849,18 @@ stability contract 单独比较：Provider 原始响应可重复性只作诊断�
 recommendation safety 与 outcome 的材料性变化才是 release gate。人工 receipt
 可以引用该技术 receipt，但不能覆盖它。
 
-### 21.6 已知事故与设计约束追踪
+### 21.6 发布矩阵的共享运行时边界
+
+`/v2-workbench` 的 owner、incident replay、SSE、browser interaction 和 refresh
+是共享运行时能力。只要 matrix 明确把它们绑定到同一个 current-source unified
+receipt target，且该 receipt 覆盖完整的 unified 交互和事件合同，就只验证一次。
+
+方法场景仍各自需要 real-provider journey 与 human semantic review；共享 runtime
+receipt 不能被重标为某个场景专属 receipt，亦不能替代场景的统计、数据范围、图表
+策略或语义评审。状态投影将共享缺口命名为 `shared_runtime:<layer>`，与
+`<scenario>:<layer>` 的场景语义缺口明确区分。
+
+### 21.7 已知事故与设计约束追踪
 
 | 已知事故 | V2 约束 | 主要验收层 |
 |---|---|---|
