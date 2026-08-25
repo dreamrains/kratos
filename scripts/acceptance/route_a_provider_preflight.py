@@ -251,8 +251,11 @@ def _validate_request(request: Any) -> list[str]:
     errors: list[str] = []
     if unsupported := sorted(set(request) - _REQUEST_KEYS):
         errors.append(f"request contains unsupported keys: {unsupported}")
-    if request.get("temperature") != 0.0:
-        errors.append("request.temperature must be exactly 0.0")
+    # Some models fix temperature server-side (e.g. kimi-k3 pins it at 1.0 and
+    # rejects any explicit value), so an omitted temperature must be valid and
+    # means the request does not send it.
+    if "temperature" in request and request["temperature"] != 0.0:
+        errors.append("request.temperature must be 0.0 or omitted")
     ladder = request.get("max_tokens_ladder")
     has_scalar = "max_tokens" in request
     if has_scalar and ladder is not None:
@@ -481,7 +484,7 @@ def execute_authorized_batch(
     api_key = _env_or_dotenv(request["api_key_env"]) if request.get("api_key_env") else None
     effective_client = client or LLMClient(
         model_id=report["model_id"],
-        temperature=request["temperature"],
+        temperature=request.get("temperature"),
         timeout=request["timeout_seconds"],
         api_base=api_base,
         api_key=api_key,

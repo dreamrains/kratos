@@ -2,7 +2,6 @@
   "schema_version": "route_a_provider_candidates.v1",
   "model_id": "openai/kimi-k3",
   "request": {
-    "temperature": 0.0,
     "timeout_seconds": 120,
     "response_format": {
       "type": "json_object"

@@ -77,7 +77,7 @@ def test_preflight_rejects_model_or_budget_drift_without_provider_call(tmp_path)
     assert report["ready"] is False
     assert "configured model_id does not match frozen model_id" in report["errors"]
     assert "total_call_budget does not equal the sum of scenario budgets" in report["errors"]
-    assert "request.temperature must be exactly 0.0" in report["errors"]
+    assert "request.temperature must be 0.0 or omitted" in report["errors"]
 
 
 def test_transport_canary_is_a_separate_one_call_frozen_contract_without_provider_call():
@@ -579,6 +579,33 @@ def _provider_manifest(tmp_path, request_overrides):
     path = tmp_path / "provider.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def test_preflight_allows_an_omitted_temperature_for_fixed_temperature_models(tmp_path):
+    # kimi-k3 fixes temperature at 1.0 and rejects any explicit value with
+    # BadRequest; an omitted temperature means the request must not send it.
+    payload = _manifest()
+    payload["request"].pop("temperature")
+    path = tmp_path / "no_temperature.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    report = gate_c.preflight(
+        path,
+        reference_hashes={"d1": "h1", "d2": "h2"},
+        current_model_id="test/model",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True, report["errors"]
+    assert "temperature" not in report["request"]
+
+    payload["request"]["temperature"] = 0.2
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    report = gate_c.preflight(
+        path,
+        reference_hashes={"d1": "h1", "d2": "h2"},
+        current_model_id="test/model",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert "request.temperature must be 0.0 or omitted" in " ".join(report["errors"])
 
 
 def test_preflight_accepts_a_manifest_declared_provider_without_cfg_model_binding(tmp_path, monkeypatch):

@@ -103,12 +103,19 @@ def test_exhausted_ladder_returns_the_last_truncated_response_sanitized():
     assert set(json.loads(serialized)[0][0]) >= {"max_tokens", "finish_reason"}
 
 
-def test_round_cap_is_enforced():
+def test_round_cap_is_enforced_and_sticky():
     once = _FakeOnceLLM([_final_round("done")] * 5)
     client = CountableJourneyClient(round_cap=1, ladder=[2000], once_client=once)
     client.chat([])
     with pytest.raises(JourneyStructureError, match="round_cap_exceeded"):
         client.chat([])
+    # The loop's sync fallback re-invokes the client after a streaming
+    # failure; a terminated journey must refuse again without inflating the
+    # round count or consuming another slot.
+    with pytest.raises(JourneyStructureError, match="round_cap_exceeded"):
+        client.chat([])
+    assert client.rounds_served == 2
+    assert once.calls.__len__() == 1
 
 
 def test_real_loop_completes_the_r07_journey_through_the_countable_client():
@@ -179,7 +186,7 @@ def test_preflight_rejects_invalid_journeys(tmp_path):
     report = journey.journey_preflight(target, source_digest=lambda root: "sha256:source")
     assert report["ready"] is False
     errors = " ".join(report["errors"])
-    assert "temperature must be exactly 0.0" in errors
+    assert "temperature must be 0.0 or omitted" in errors
     assert "strictly ascending" in errors
     assert "round_cap must be a positive integer" in errors
     assert "session_id must be dedicated" in errors

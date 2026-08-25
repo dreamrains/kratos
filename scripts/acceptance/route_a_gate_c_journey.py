@@ -230,6 +230,7 @@ class CountableJourneyClient:
             raise JourneyStructureError("max_tokens_ladder must not be empty")
         self.calls_made = 0
         self.rounds_served = 0
+        self._terminated = False
         self.structure: list[dict] = []
         self.round_receipts: list[list[dict]] = []
         self.on_round = None
@@ -237,8 +238,14 @@ class CountableJourneyClient:
     def _serve(self, messages, tools, system):
         from scripts.acceptance.route_a_provider_preflight import _content_length_bucket
 
+        # Sticky refusal: the loop's sync fallback re-invokes the client after
+        # a streaming failure; a terminated journey must reject again without
+        # inflating the round count or consuming another slot.
+        if self._terminated:
+            raise JourneyStructureError("round_cap_exceeded")
         self.rounds_served += 1
         if self.rounds_served > self._round_cap:
+            self._terminated = True
             raise JourneyStructureError("round_cap_exceeded")
         self.structure.append({
             "round": self.rounds_served,
@@ -293,8 +300,8 @@ def _validate_candidate_request(request: Any) -> list[str]:
     errors: list[str] = []
     if not str(request.get("model_id", "")).strip():
         errors.append("request.model_id is required")
-    if request.get("temperature") != 0.0:
-        errors.append("request.temperature must be exactly 0.0")
+    if "temperature" in request and request["temperature"] != 0.0:
+        errors.append("request.temperature must be 0.0 or omitted")
     timeout = request.get("timeout_seconds")
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         errors.append("request.timeout_seconds must be a positive integer")
@@ -435,7 +442,7 @@ def execute_authorized_journey(
             api_base = _env_or_dotenv(request["api_base_env"])
         once_client = LLMClient(
             model_id=request["model_id"],
-            temperature=request["temperature"],
+            temperature=request.get("temperature"),
             timeout=request["timeout_seconds"],
             api_base=api_base,
             api_key=_env_or_dotenv(request["api_key_env"]) if request.get("api_key_env") else None,
