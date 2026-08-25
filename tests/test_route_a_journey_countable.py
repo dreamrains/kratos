@@ -192,6 +192,16 @@ def test_preflight_rejects_invalid_journeys(tmp_path):
     assert "session_id must be dedicated" in errors
 
 
+def test_r07_question_carries_the_product_file_reference():
+    # The web frontend appends "分析文件: {filename}" to the user message on
+    # upload (app.js sendMessage); the frozen question must match that shape
+    # or the model has no way to learn the uploaded filename.
+    path = journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_candidate.json"
+    manifest = journey._read_manifest_with_schema(path, journey.JOURNEY_CANDIDATE_SCHEMA)
+    assert manifest["question"].startswith("分析文件: 省钱卡订单.xlsx\n")
+    assert manifest.get("uploads") == [{"data_id": "savings_card_orders", "as": "省钱卡订单.xlsx"}]
+
+
 def test_r09_routing_journey_freezes_an_unambiguous_data_reference():
     # The R07 four-run lesson: "uploaded data" wording triggers clarification
     # suspension in a headless context. R09's question must name the file.
@@ -204,8 +214,8 @@ def test_r09_routing_journey_freezes_an_unambiguous_data_reference():
         source_digest=lambda root: "sha256:source",
     )
     assert report["ready"] is True, report["errors"]
-    assert report["max_call_budget"] == 30
-    assert report["request"]["round_cap"] == 10
+    assert report["max_call_budget"] == 36
+    assert report["request"]["round_cap"] == 12
     assert report["data"][0]["id"] == "game_b_retention"
 
 
