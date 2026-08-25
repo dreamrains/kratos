@@ -1,0 +1,31 @@
+{
+  "schema_version": "route_a_journey_replay.v1",
+  "journey_id": "R07_end_to_end_publication_journey",
+  "session_id": "gate_c_journey_replay_r07",
+  "question": "上传的省钱卡订单数据覆盖 2026-04-07 至 2026-05-06。请比较前 15 天与后 15 天的收入变化，给出可发布结论及其边界。",
+  "data": [
+    {"id": "savings_card_orders", "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"}
+  ],
+  "script": {
+    "round_cap": 3,
+    "rounds": [
+      {
+        "tool_calls": [
+          {"name": "load_data", "arguments": {"source": "reference/test_doc/省钱卡订单.xlsx", "name": "r07_orders"}}
+        ]
+      },
+      {
+        "tool_calls": [
+          {"name": "compare_periods", "arguments": {"name": "r07_orders", "date_col": "支付时间", "metrics": "售价", "period_a": "2026-04-07~2026-04-21", "period_b": "2026-04-22~2026-05-06"}}
+        ]
+      },
+      {
+        "text": "结论：省钱卡订单收入明显下降。前 15 天（2026-04-07 至 2026-04-21）收入 1818，后 15 天（2026-04-22 至 2026-05-06）收入 684，总计 71 笔订单，覆盖完整 30 个自然日（其中含 4 个零订单日）。依据：compare_periods 按支付时间对售价汇总的对比结果。边界：这是描述性趋势，不能解释收入变化的原因，观察窗口仅 30 天，不应外推。"
+      }
+    ]
+  },
+  "contract": {
+    "required_tool_calls": ["load_data", "compare_periods"],
+    "final_answer_numeric_anchors": ["1818", "684", "71", "30"]
+  }
+}
