@@ -328,7 +328,7 @@ def causal_analysis(name: str, treatment_col: str, outcome_col: str = "", target
     },
 )
 def shap_analysis(name: str, target_col: str) -> str:
-    from data_agent.tools.ml import _trained_models
+    from data_agent.tools.ml import _trained_models, _trained_model_metadata
 
     # 查找已训练的模型
     for suffix in ("_reg_", "_cls_"):
@@ -341,11 +341,18 @@ def shap_analysis(name: str, target_col: str) -> str:
             "error": f"未找到目标 '{target_col}' 的已训练模型。请先调用 regression_analysis 或 classification 训练模型。",
         }, ensure_ascii=False)
 
+    metadata = _trained_model_metadata.get(model_key, {})
+    if metadata.get("data_identity") != workspace.get_data_identity(name):
+        return json.dumps({
+            "error": "训练模型与当前数据版本不一致；请在当前版本重新训练后再解释。",
+            "error_type": "stale_model_data_identity",
+        }, ensure_ascii=False)
+
     df, err = get_df(name)
     if err:
         return err
 
-    feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
+    feature_cols = list(metadata.get("feature_cols") or [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col])
     if not feature_cols:
         return json.dumps({"error": "没有可用的数值特征列"}, ensure_ascii=False)
 
@@ -368,6 +375,12 @@ def shap_analysis(name: str, target_col: str) -> str:
         )
 
         result = {
+            "method_contract": "analysis_method_result.v1",
+            "status": "supported",
+            "data_identity": metadata.get("data_identity", {}),
+            "model_identity": {key: metadata.get(key) for key in ("model_key", "kind", "target_col", "feature_cols")},
+            "claim_ceiling": "associational",
+            "limitations": ["SHAP 解释模型预测，不识别因果效应。"],
             "model_type": type(model).__name__,
             "target": target_col,
             "n_features": len(feature_cols),
