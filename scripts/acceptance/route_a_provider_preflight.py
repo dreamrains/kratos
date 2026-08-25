@@ -250,12 +250,17 @@ def _assert_sanitized_report(value: Any) -> None:
             _assert_sanitized_report(item)
 
 
-def write_execution_report(path: Path, report: dict[str, Any]) -> Path:
-    """Atomically persist only the sanitized batch receipt under docs/audit."""
+def _audit_report_path(path: Path) -> Path:
     target = Path(path).resolve()
     audit_root = (ROOT / "docs" / "audit").resolve()
     if target.parent != audit_root or target.suffix != ".json":
         raise ProviderPreflightError("report path must be a .json file directly under docs/audit")
+    return target
+
+
+def write_execution_report(path: Path, report: dict[str, Any]) -> Path:
+    """Atomically persist only the sanitized batch receipt under docs/audit."""
+    target = _audit_report_path(path)
     _assert_sanitized_report(report)
     temporary = target.with_name(f".{target.name}.tmp")
     temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -263,11 +268,20 @@ def write_execution_report(path: Path, report: dict[str, Any]) -> Path:
     return target
 
 
+def initialize_execution_report(path: Path, report: dict[str, Any]) -> Path:
+    """Reserve an empty audit receipt before any Provider request starts."""
+    target = _audit_report_path(path)
+    if target.exists():
+        raise ProviderPreflightError("report path already exists; refusing to overwrite an audit receipt")
+    return write_execution_report(target, report)
+
+
 def execute_authorized_batch(
     manifest_path: Path,
     *,
     authorized_source_digest: str,
     client=None,
+    report_path: Path | None = None,
 ) -> dict[str, Any]:
     """Execute every frozen scenario once; failures are recorded without retries.
 
@@ -293,7 +307,21 @@ def execute_authorized_batch(
         timeout=request["timeout_seconds"],
     )
     results = []
+
+    def persisted_result(*, in_flight: str | None = None) -> dict[str, Any]:
+        status = "passed" if results and len(results) == len(manifest["scenarios"]) and all(item["status"] == "passed" for item in results) else "in_progress"
+        if len(results) == len(manifest["scenarios"]) and status != "passed":
+            status = "completed_with_failures"
+        value = {**report, "mode": "executed", "status": status, "calls_made": len(results), "results": results}
+        if in_flight is not None:
+            value["in_flight_scenario_id"] = in_flight
+        return value
+
+    if report_path is not None:
+        initialize_execution_report(report_path, persisted_result())
     for scenario in manifest["scenarios"]:
+        if report_path is not None:
+            write_execution_report(report_path, persisted_result(in_flight=scenario["id"]))
         try:
             response = effective_client.chat_once(
                 messages=[{"role": "user", "content": _prompt_for(scenario)}],
@@ -318,8 +346,9 @@ def execute_authorized_batch(
             })
         else:
             results.append({"id": scenario["id"], "status": "passed", "response_summary": _response_summary(payload)})
-    status = "passed" if all(item["status"] == "passed" for item in results) else "completed_with_failures"
-    return {**report, "mode": "executed", "status": status, "calls_made": len(results), "results": results}
+        if report_path is not None:
+            write_execution_report(report_path, persisted_result())
+    return persisted_result()
 
 
 def main() -> int:
@@ -336,8 +365,11 @@ def main() -> int:
     else:
         if args.report_path is None:
             parser.error("--report-path is required with --execute before any Provider request")
-        result = execute_authorized_batch(args.manifest, authorized_source_digest=args.authorized_source_digest)
-        write_execution_report(args.report_path, result)
+        result = execute_authorized_batch(
+            args.manifest,
+            authorized_source_digest=args.authorized_source_digest,
+            report_path=args.report_path,
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if (result.get("status") == "passed" if args.execute else result.get("ready")) else 2
 

@@ -217,3 +217,34 @@ def test_execution_report_is_atomic_sanitized_and_limited_to_audit_directory(tmp
         gate_c.write_execution_report(audit_root / "unsafe.json", {"response": "uncontrolled"})
     with pytest.raises(gate_c.ProviderPreflightError, match="docs/audit"):
         gate_c.write_execution_report(tmp_path / "outside.json", report)
+
+
+def test_executor_persists_in_flight_and_each_completed_call(tmp_path, monkeypatch):
+    path = _write_manifest(tmp_path)
+    audit_root = tmp_path / "docs" / "audit"
+    audit_root.mkdir(parents=True)
+    report_path = audit_root / "batch.json"
+    monkeypatch.setattr(gate_c, "ROOT", tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+
+    class RecordingClient(_FakeOnceClient):
+        def chat_once(self, messages, tools=None, system=None):
+            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            assert persisted["calls_made"] == len(self.calls)
+            assert persisted["in_flight_scenario_id"] in {"one", "two"}
+            return super().chat_once(messages, tools=tools, system=system)
+
+    client = RecordingClient([_valid_response("one", "f1"), _valid_response("two", "f2")])
+    result = gate_c.execute_authorized_batch(
+        path,
+        authorized_source_digest="sha256:source",
+        client=client,
+        report_path=report_path,
+    )
+    persisted = json.loads(report_path.read_text(encoding="utf-8"))
+    assert result["status"] == "passed"
+    assert persisted == result
+    assert "in_flight_scenario_id" not in persisted
+    with pytest.raises(gate_c.ProviderPreflightError, match="already exists"):
+        gate_c.initialize_execution_report(report_path, result)
