@@ -92,6 +92,44 @@ def _prompt_hash(scenario: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
+def _decode_response_object(response: Any) -> tuple[dict[str, Any], str]:
+    """Accept one JSON object, optionally wrapped by a presentation envelope.
+
+    Provider text is used transiently and never returned or persisted.  The
+    envelope label makes a format deviation auditable without retaining it.
+    """
+    raw = getattr(response, "text", "") or ""
+    if not isinstance(raw, str):
+        raise ProviderResponseValidationError("response_not_json")
+    candidate = raw.strip()
+    try:
+        payload = json.loads(candidate)
+        envelope = "direct"
+    except json.JSONDecodeError:
+        fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            try:
+                payload = json.loads(fenced.group(1))
+            except json.JSONDecodeError as exc:
+                raise ProviderResponseValidationError("response_not_json") from exc
+            envelope = "fenced"
+        else:
+            start = candidate.find("{")
+            if start < 0:
+                raise ProviderResponseValidationError("response_not_json")
+            try:
+                payload, end = json.JSONDecoder().raw_decode(candidate[start:])
+            except json.JSONDecodeError as exc:
+                raise ProviderResponseValidationError("response_not_json") from exc
+            trailing = candidate[start + end:].strip()
+            if trailing not in ("", "```"):
+                raise ProviderResponseValidationError("response_not_json")
+            envelope = "embedded"
+    if not isinstance(payload, dict):
+        raise ProviderResponseValidationError("response_not_json_object")
+    return payload, envelope
+
+
 def _validate_scenario(scenario: Any, reference_hashes: dict[str, str]) -> list[str]:
     if not isinstance(scenario, dict):
         return ["scenario must be an object"]
@@ -194,11 +232,8 @@ def preflight(
 def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any]:
     if getattr(response, "tool_calls", None):
         raise ProviderResponseValidationError("tool_calls_disallowed")
-    try:
-        payload = json.loads(_text(getattr(response, "text", "")))
-    except json.JSONDecodeError as exc:
-        raise ProviderResponseValidationError("response_not_json") from exc
-    if not isinstance(payload, dict) or payload.get("scenario_id") != scenario["id"]:
+    payload, envelope = _decode_response_object(response)
+    if payload.get("scenario_id") != scenario["id"]:
         raise ProviderResponseValidationError("scenario_id_mismatch")
     fact_ids = {str(item.get("id")) for item in scenario["fact_packet"]}
     used = {str(item) for item in payload.get("fact_ids_used", []) if isinstance(item, str)}
@@ -225,6 +260,7 @@ def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any
         raise ProviderResponseValidationError("missing_method_limitations")
     if any(_text(item) == _LIMITATION_PLACEHOLDER for item in payload["method_limitations"]):
         raise ProviderResponseValidationError("placeholder_method_limitations")
+    payload["_gate_c_json_envelope"] = envelope
     return payload
 
 
@@ -236,6 +272,7 @@ def _response_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "prohibited_inference_acknowledged": payload["prohibited_inference_acknowledged"],
         "decision_characters": len(_text(payload["decision"])),
         "next_action_characters": len(_text(payload["next_action"])),
+        "json_envelope": payload["_gate_c_json_envelope"],
     }
 
 

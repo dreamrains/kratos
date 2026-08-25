@@ -135,6 +135,7 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
         "prohibited_inference_acknowledged": True,
         "decision_characters": 18,
         "next_action_characters": 35,
+        "json_envelope": "direct",
     }
 
 
@@ -203,6 +204,25 @@ def test_response_rejects_template_echo_and_requires_a_frozen_numeric_anchor():
     }))
     with pytest.raises(gate_c.ProviderResponseValidationError, match="decision_missing_frozen_numeric_anchor"):
         gate_c._validate_response(scenario, ungrounded)
+
+
+@pytest.mark.parametrize("envelope", [
+    lambda payload: f"```json\n{payload}\n```",
+    lambda payload: f"JSON follows:\n{payload}",
+])
+def test_response_accepts_one_wrapped_json_object_without_retaining_wrapper(envelope):
+    scenario = _manifest()["scenarios"][0]
+    payload = json.dumps({
+        "scenario_id": "one",
+        "decision": "bounded decision 1",
+        "fact_ids_used": ["f1"],
+        "method_limitations": ["observational"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "collect a control group",
+    })
+    summary = gate_c._response_summary(gate_c._validate_response(scenario, Response(text=envelope(payload))))
+    assert summary["json_envelope"] in {"fenced", "embedded"}
+    assert "response" not in summary
 
 
 def test_execution_report_is_atomic_sanitized_and_limited_to_audit_directory(tmp_path, monkeypatch):
