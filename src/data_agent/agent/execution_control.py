@@ -70,6 +70,7 @@ class TurnExecutionState:
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
     estimated_tokens_used: int = 0
+    tool_receipt_ids: list[str] = field(default_factory=list)
     _call_order: list = field(default_factory=list)
 
     @property

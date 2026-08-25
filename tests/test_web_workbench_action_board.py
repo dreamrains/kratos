@@ -17,9 +17,9 @@ def _seed_session(tmp_path, session_id, messages):
     state = {
         "session_id": session_id,
         "evidence_records": [
-            {"claim": "收入下降", "confidence": "high", "dataset": "d", "result_summary": "-10%", "limitations": []},
+            {"id": "ev_income_down", "claim": "收入下降", "confidence": "high", "dataset": "d", "result_summary": "-10%", "limitations": []},
         ],
-        "verification_reports": [],
+        "verification_reports": [{"overall_status": "pass", "passed_evidence_ids": ["ev_income_down"]}],
         "data_understanding_bundles": [],
         "route_proposals": [],
         "file_relationships": [],
@@ -45,7 +45,8 @@ def test_trust_endpoint_returns_action_board_and_full_answer(tmp_path, monkeypat
     data = resp.get_json()
     workbench = data["workbench"]
     assert set(["action_board", "full_answer", "multifile_analysis", "details"]).issubset(workbench.keys())
-    assert workbench["action_board"]["confirmed"][0]["claim"] == "收入下降"
+    assert workbench["action_board"]["confirmed"] == []
+    assert workbench["action_board"]["uncertain"][0]["reason"] == "awaiting_verification"
     # Newlines must survive the round-trip so marked.js can parse the
     # heading/paragraph/list structure. A previous _text() collapse flattened
     # this to a single run-on line.

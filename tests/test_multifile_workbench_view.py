@@ -2,6 +2,7 @@ import json
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.data_understanding import build_data_understanding_bundle
+from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
 
 
 def _state_with_multifile_context() -> AnalysisSessionState:
@@ -63,7 +64,11 @@ def _state_with_multifile_context() -> AnalysisSessionState:
         "overall_status": "passed",
         "claim_count": 1,
         "failed_count": 0,
+        "passed_evidence_ids": ["ev_gmv"],
     }]
+    state.verification_reports[0]["evidence_fingerprint"] = _evidence_fingerprint(
+        state, state.evidence_records
+    )
     return state
 
 
@@ -110,7 +115,7 @@ from data_agent.agent.workbench_view import build_action_board
 
 
 def _ab_state(evidence, verification=None, route_proposals=None, bundles=None):
-    return SimpleNamespace(
+    state = SimpleNamespace(
         evidence_records=evidence,
         verification_reports=verification or [],
         route_proposals=route_proposals or [],
@@ -119,20 +124,26 @@ def _ab_state(evidence, verification=None, route_proposals=None, bundles=None):
         goal="评估省钱卡业务",
         data_state="data_loaded",
     )
+    for report in state.verification_reports:
+        if isinstance(report, dict) and report.get("passed_evidence_ids"):
+            report["evidence_fingerprint"] = _evidence_fingerprint(state, state.evidence_records)
+    return state
 
 
 def test_action_board_confirmed_and_uncertain_by_confidence():
     state = _ab_state(
         [
-            {"claim": "购卡后消费下降30%", "confidence": "high", "dataset": "orders",
+            {"id": "ev_drop", "claim": "购卡后消费下降30%", "confidence": "high", "dataset": "orders",
              "result_summary": "-30%", "limitations": []},
-            {"claim": "复购意愿弱", "confidence": "medium", "dataset": "orders",
+            {"id": "ev_repeat", "claim": "复购意愿弱", "confidence": "medium", "dataset": "orders",
              "result_summary": "复购低", "limitations": ["样本仅1月"]},
-            {"claim": "优惠券驱动复购", "confidence": "speculative", "dataset": "vouchers",
+            {"id": "ev_coupon", "claim": "优惠券驱动复购", "confidence": "speculative", "dataset": "vouchers",
              "result_summary": "不确定", "limitations": []},
         ],
         verification=[{"overall_status": "pass_with_downgrades", "claim_count": 3,
-                       "failed_count": 0, "downgraded_count": 1}],
+                       "failed_count": 0, "downgraded_count": 1,
+                       "passed_evidence_ids": ["ev_drop", "ev_repeat"],
+                       "downgraded_evidence_ids": ["ev_coupon"]}],
     )
     ab = build_action_board(state)
     confirmed_claims = [c["claim"] for c in ab["confirmed"]]
@@ -151,7 +162,7 @@ def test_action_board_confirmed_and_uncertain_by_confidence():
 
 def test_action_board_next_steps_from_routes_and_confirmations():
     state = _ab_state(
-        [{"claim": "x", "confidence": "high", "dataset": "d", "result_summary": "", "limitations": []}],
+        [{"id": "ev_x", "claim": "x", "confidence": "high", "dataset": "d", "result_summary": "", "limitations": []}],
         bundles=[{"id": "b1", "data_fingerprint": "f", "datasets": [{"dataset": "d"}],
                   "supported_questions": [], "unsupported_questions": ["还需渠道成本"],
                   "needed_confirmations": ["确认对比口径"]}],
@@ -169,3 +180,16 @@ def test_action_board_empty_when_state_none():
     assert ab["confirmed"] == [] and ab["uncertain"] == [] and ab["next_steps"] == []
     assert ab["trust_basis"]["verification_status"] == "not_run"
     assert ab["trust_basis"]["evidence_count"] == 0
+
+
+def test_action_board_does_not_reuse_a_stale_verification_result():
+    state = _ab_state(
+        [{"id": "ev_1", "claim": "收入下降", "confidence": "high", "dataset": "d", "result_summary": "-10%"}],
+        verification=[{"overall_status": "pass", "passed_evidence_ids": ["ev_1"]}],
+    )
+    state.evidence_records[0]["result_summary"] = "-20%"
+
+    board = build_action_board(state)
+
+    assert board["confirmed"] == []
+    assert board["uncertain"][0]["reason"] == "awaiting_verification"

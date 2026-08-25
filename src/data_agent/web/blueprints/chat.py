@@ -83,6 +83,10 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                 return
             elif etype == "error":
                 eq.put(SSEEvent("error", {"message": event["message"]}))
+        # Make turn_end a durable publication boundary.  The loop normally
+        # saves its final response itself; this second idempotent save covers
+        # every terminal generator path before the browser can mark complete.
+        loop._auto_save()
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
             "turn_id": turn_id,
@@ -90,6 +94,10 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
             **_pct_payload(),
         }))
     except Exception as e:
+        try:
+            loop._auto_save()
+        except Exception:
+            pass
         eq.put(SSEEvent("error", {"message": str(e)}))
         eq.put(SSEEvent("turn_end", {
             "session_id": loop.session_id,
@@ -97,10 +105,6 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
             "status": "error",
         }))
     finally:
-        try:
-            loop._auto_save()
-        except Exception:
-            pass
         eq.close()
 
 

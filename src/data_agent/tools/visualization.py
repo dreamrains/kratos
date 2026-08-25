@@ -148,6 +148,30 @@ def _parsed_evidence_ids(evidence_ids: str) -> list[str]:
     return [item.strip() for item in (evidence_ids or "").split(",") if item.strip()]
 
 
+def _unresolved_evidence_ids(evidence_ids: list[str]) -> list[str]:
+    """Return evidence ids that are not present in the active session state.
+
+    A chart is an artifact, not evidence by itself.  Allowing an LLM to attach
+    arbitrary strings here made a chart look source-bound even when no actual
+    evidence record existed.  Keep this lookup deliberately small and local:
+    the evidence record remains the authority for the claim and calculation.
+    """
+    try:
+        from data_agent.agent.context import get_current_context
+
+        context = get_current_context()
+        state = getattr(context, "analysis_state", None) if context is not None else None
+        records = getattr(state, "evidence_records", None) if state is not None else None
+        known_ids = {
+            str(record.get("id"))
+            for record in (records or [])
+            if isinstance(record, dict) and record.get("id")
+        }
+    except Exception:
+        known_ids = set()
+    return [evidence_id for evidence_id in evidence_ids if evidence_id not in known_ids]
+
+
 def _first_present(row: dict, keys: tuple[str, ...]):
     for key in keys:
         value = row.get(key)
@@ -502,11 +526,37 @@ def create_chart(
                 )
             metadata["purpose"] = normalized_purpose
             metadata["evidence_ids"] = _parsed_evidence_ids(evidence_ids)
+            # A chart used as evidence must remain traceable to the exact
+            # session dataset (and, for a derived table, its parent dataset).
+            # Do not infer this from the chart title or LLM prose.
+            dataset_info = workspace.list_datasets().get(data_name, {}) if data_name else {}
+            parent_dataset = dataset_info.get("derived_from", "")
+            source_dataset = parent_dataset or data_name
+            source_meta = workspace.get_metadata(source_dataset) if source_dataset else {}
+            metadata["data_identity"] = {
+                "dataset": data_name,
+                "source_dataset": source_dataset,
+                "derived_from": parent_dataset,
+                "source_path": source_meta.get("_source_path", ""),
+                "source_fingerprint": source_meta.get("source_fingerprint", ""),
+            }
             if normalized_purpose in {"evidence", "insight"} and not metadata["evidence_ids"]:
                 return _chart_error(
                     "purpose 'evidence' or 'insight' requires evidence_ids",
                     ["missing evidence_ids for evidence-backed chart"],
                 )
+            if normalized_purpose in {"evidence", "insight"} and not data_name:
+                return _chart_error(
+                    "evidence-backed chart requires a registered session dataset",
+                    ["data_json may be used for exploratory charts only"],
+                )
+            if normalized_purpose in {"evidence", "insight"}:
+                unresolved_ids = _unresolved_evidence_ids(metadata["evidence_ids"])
+                if unresolved_ids:
+                    return _chart_error(
+                        "evidence_ids do not resolve in the active session",
+                        [f"unknown evidence ids: {', '.join(unresolved_ids)}"],
+                    )
 
         y_cols_for_plot = [c.strip() for c in y_col.split(",") if c.strip()]
         contract = validate_chart_request(

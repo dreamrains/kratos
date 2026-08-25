@@ -129,6 +129,7 @@ class AnalysisSessionState:
     analysis_plan: dict[str, Any] | None = None
     analysis_spec: dict[str, Any] | None = None
     evidence_records: list[dict[str, Any]] = field(default_factory=list)
+    tool_receipts: list[dict[str, Any]] = field(default_factory=list)
     insight_records: list[dict[str, Any]] = field(default_factory=list)
     dataset_contracts: list[dict[str, Any]] = field(default_factory=list)
     data_understanding_bundles: list[dict[str, Any]] = field(default_factory=list)
@@ -161,6 +162,7 @@ class AnalysisSessionState:
             analysis_plan=data.get("analysis_plan") or data.get("analysis_spec"),
             analysis_spec=data.get("analysis_spec"),
             evidence_records=list(data.get("evidence_records") or []),
+            tool_receipts=list(data.get("tool_receipts") or []),
             insight_records=list(data.get("insight_records") or []),
             dataset_contracts=list(data.get("dataset_contracts") or []),
             data_understanding_bundles=_dict_list_or_empty(data.get("data_understanding_bundles")),
@@ -191,6 +193,7 @@ class AnalysisSessionState:
             "analysis_plan": self.analysis_plan,
             "analysis_spec": self.analysis_spec,
             "evidence_records": self.evidence_records,
+            "tool_receipts": self.tool_receipts,
             "insight_records": self.insight_records,
             "dataset_contracts": self.dataset_contracts,
             "data_understanding_bundles": self.data_understanding_bundles,
@@ -297,6 +300,14 @@ class AnalysisSessionState:
         item.setdefault("created_at", _now())
         self.evidence_records.append(item)
         self.stage = "execute"
+        return item
+
+    def add_tool_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Persist one successful tool result as an auditable execution receipt."""
+        item = dict(receipt)
+        item.setdefault("id", "tr_" + uuid.uuid4().hex[:12])
+        item.setdefault("created_at", _now())
+        self.tool_receipts.append(item)
         return item
 
     def upsert_evidence_record(self, record: dict[str, Any]) -> dict[str, Any]:

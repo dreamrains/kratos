@@ -439,6 +439,7 @@ class AgentContext:
     mcp_visible: bool = True
     analysis_state: object | None = None
     turn_state: object | None = None
+    turn_receipt_ids: list[str] = field(default_factory=list)
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
     turn_intent: object | None = None
@@ -453,7 +454,14 @@ class AgentContext:
         self.project_name = value
 
     def reset_turn_state(self) -> None:
-        """Reset per-turn tool routing state."""
+        """Reset per-turn tool routing state.
+
+        Receipt IDs deliberately outlive this routing reset.  A data load can
+        cause the analysis controller to re-plan and re-select tool groups
+        within the *same* turn; clearing the receipts here would make later
+        evidence unable to prove the earlier load actually happened.  The
+        owning loop resets receipts explicitly at the start of a new turn.
+        """
         self.active_tool_groups = {"core"}
         self.executed_tools.clear()
         self.turn_state = None
@@ -479,6 +487,7 @@ def _create_agent_context_type(
         mcp_visible: bool = True,
         analysis_state: object | None = None,
         turn_state: object | None = None,
+        turn_receipt_ids: list[str] | None = None,
         user_proficiency: str = "auto",
         user_quality_requirements: str = "",
         turn_intent: object | None = None,
@@ -490,6 +499,7 @@ def _create_agent_context_type(
         object.__setattr__(self, "mcp_visible", mcp_visible)
         object.__setattr__(self, "analysis_state", analysis_state)
         object.__setattr__(self, "turn_state", turn_state)
+        object.__setattr__(self, "turn_receipt_ids", [] if turn_receipt_ids is None else list(turn_receipt_ids))
         object.__setattr__(self, "turn_intent", turn_intent)
         object.__setattr__(self, "user_proficiency", user_proficiency)
         object.__setattr__(self, "user_quality_requirements", user_quality_requirements)

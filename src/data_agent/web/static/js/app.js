@@ -159,6 +159,18 @@ function chatApp() {
             this.isCompact = s.isCompact;
         },
 
+        _syncSessionUrl(sessionId) {
+            const url = new URL(window.location.href);
+            if (sessionId && sessionId !== '_pending_') {
+                url.searchParams.set('session_id', sessionId);
+            } else {
+                url.searchParams.delete('session_id');
+            }
+            if (url.href !== window.location.href) {
+                window.history.replaceState({}, '', url);
+            }
+        },
+
         _confirmationFromPayload(payload) {
             if (!payload) return null;
             return {
@@ -217,6 +229,10 @@ function chatApp() {
                 this.loadModelInfo(),
                 this.loadTasks(),
             ]);
+            const requestedSessionId = new URLSearchParams(window.location.search).get('session_id');
+            if (requestedSessionId && this.sessions.some(s => s.session_id === requestedSessionId)) {
+                await this.switchSession(requestedSessionId);
+            }
             document.addEventListener('click', (e) => {
                 if (this.activePopover && !e.target.closest('[data-popover]')) {
                     this.activePopover = null;
@@ -938,13 +954,18 @@ function chatApp() {
             this.isLoading = false;
             this.tokenPct = 0;
             this.isCompact = false;
+            this._syncSessionUrl(null);
         },
 
         async switchSession(sessionId) {
-            if (sessionId === this.currentSessionId) return;
+            if (sessionId === this.currentSessionId) {
+                this._syncSessionUrl(sessionId);
+                return;
+            }
             // Save current session state (allows background SSE to keep running)
             this._saveCurrentState();
             this.currentSessionId = sessionId;
+            this._syncSessionUrl(sessionId);
             this._restoreState(sessionId);
             this.activeProjectName = '';
             this.lastWorkbenchResult = null;
@@ -2348,6 +2369,7 @@ function chatApp() {
                         this._sessionStates[data.session_id] = oldState || state;
                         if (this.currentSessionId === '_pending_') {
                             this.currentSessionId = data.session_id;
+                            this._syncSessionUrl(data.session_id);
                         }
                         sessionId = data.session_id;
                         migratedSid = sessionId;

@@ -1153,6 +1153,7 @@ class AgentLoop:
         self._turn_verification_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
+        self.context.turn_receipt_ids = []
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -1163,12 +1164,58 @@ class AgentLoop:
             or lowered.startswith("error")
         )
 
-    def _record_turn_tool_result(self, tool_name: str, tool_msg_content: str) -> None:
+    def _record_turn_tool_result(
+        self,
+        tool_name: str,
+        tool_msg_content: str,
+        tool_args: dict | None = None,
+        tool_call_id: str = "",
+    ) -> str:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
         self._turn_tools_used.append(tool_name)
         if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
+        if self._tool_content_is_error(tool_msg_content):
+            return ""
+
+        state = getattr(self.context, "analysis_state", None)
+        add_receipt = getattr(state, "add_tool_receipt", None)
+        if not callable(add_receipt):
+            return ""
+        try:
+            import hashlib
+
+            args = dict(tool_args or {})
+            dataset_refs = [
+                str(args[key])
+                for key in ("name", "data", "source")
+                if isinstance(args.get(key), str) and args[key].strip()
+            ]
+            receipt = add_receipt({
+                "tool_name": tool_name,
+                "tool_call_id": str(tool_call_id or ""),
+                "arguments": args,
+                "dataset_refs": dataset_refs,
+                "result_sha256": "sha256:" + hashlib.sha256(
+                    (tool_msg_content or "").encode("utf-8")
+                ).hexdigest(),
+                "result_preview": (tool_msg_content or "")[:2000],
+            })
+            receipt_id = str(receipt.get("id") or "")
+            if receipt_id:
+                self.context.turn_receipt_ids.append(receipt_id)
+            turn_state = getattr(self.context, "turn_state", None)
+            receipt_ids = getattr(turn_state, "tool_receipt_ids", None)
+            if receipt_id and isinstance(receipt_ids, list):
+                receipt_ids.append(receipt_id)
+            return receipt_id
+        except Exception as exc:
+            logger.warning(
+                "Tool receipt recording skipped",
+                extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
+            )
+            return ""
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -1256,6 +1303,26 @@ class AgentLoop:
         )
         self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
         self._turn_synthesis_policy_injected = True
+
+    def _verify_before_publication(self, user_input: str) -> None:
+        """Refresh deterministic claim verification at the publication boundary.
+
+        Tool rounds may create an EvidenceRecord after the earlier synthesis
+        hook ran.  A final answer must not be published with that fresh record
+        still labelled unverified in the Workbench.
+        """
+        state = getattr(self.context, "analysis_state", None)
+        if state is None or not getattr(state, "evidence_records", None):
+            return
+        try:
+            from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
+
+            maybe_verify_turn_claims(user_input, state)
+        except Exception as exc:
+            logger.warning(
+                "Publication-boundary verification skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._is_analysis_quality_guard_candidate()
@@ -1817,9 +1884,10 @@ class AgentLoop:
     def _stream_llm_round(self, round_num: int):
         """Execute one LLM round using streaming. Yields SSE event dicts.
 
-        Text deltas are yielded in real-time. When the round completes, the
-        final Response is returned via a ``{"type": "_response", ...}`` event
-        so the caller can decide what to do next.
+        The caller buffers text until the round is durably persisted, then
+        decides whether it is safe to publish it.  When the round completes,
+        the final Response is returned via a ``{"type": "_response", ...}``
+        event so the caller can decide what to do next.
         """
         from data_agent.llm.client import StreamTextDelta, StreamComplete
 
@@ -1921,7 +1989,7 @@ class AgentLoop:
             if scope_error:
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                self._record_turn_tool_result(tc.name, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -1956,7 +2024,7 @@ class AgentLoop:
                 )
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                self._record_turn_tool_result(tc.name, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -1976,7 +2044,7 @@ class AgentLoop:
             elif turn_state is not None:
                 turn_state.record_tool_success()
 
-            self._record_turn_tool_result(tc.name, tool_msg_content)
+            self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
@@ -2070,7 +2138,11 @@ class AgentLoop:
                 yield self._suspended_event(blocked_confirmation)
                 return
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            # A completed final answer must be persisted before any of its
+            # text reaches the browser.  Buffering one LLM round also lets us
+            # discard a premature final response when the quality guard needs
+            # another substantive-tool round.
+            buffer_text_events = True
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2133,15 +2205,21 @@ class AgentLoop:
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
-                if buffer_text_events:
-                    for ev in pending_text_events:
-                        yield ev
-                # Text was already streamed; just archive and save
+                self._verify_before_publication(user_input)
+                # Persist the final message and its state before the client
+                # can render the final delta or receive turn_end.
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
+                for ev in pending_text_events:
+                    yield ev
                 return
 
             if buffer_text_events:
+                # This is an intermediate tool-call round rather than the
+                # final answer, but it is still browser-visible text.  Persist
+                # the assistant message before publishing it so refresh/replay
+                # cannot lose text that the user already saw.
+                self._auto_save()
                 for ev in pending_text_events:
                     yield ev
 
@@ -2233,7 +2311,9 @@ class AgentLoop:
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            # Keep final-answer publication ordered exactly as in the normal
+            # streaming path: persist first, then expose the answer.
+            buffer_text_events = True
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2290,11 +2370,11 @@ class AgentLoop:
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
-                if buffer_text_events:
-                    for ev in pending_text_events:
-                        yield ev
+                self._verify_before_publication(resumed_input)
                 self._maybe_archive(resumed_input, final_text)
                 self._auto_save()
+                for ev in pending_text_events:
+                    yield ev
                 return
 
             if buffer_text_events:
@@ -2395,7 +2475,7 @@ class AgentLoop:
         if scope_error:
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-            self._record_turn_tool_result(tc.name, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -2427,7 +2507,7 @@ class AgentLoop:
             )
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-            self._record_turn_tool_result(tc.name, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -2445,7 +2525,7 @@ class AgentLoop:
         elif turn_state is not None:
             turn_state.record_tool_success()
 
-        self._record_turn_tool_result(tc.name, tool_msg_content)
+        self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
         self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
@@ -2618,6 +2698,7 @@ class AgentLoop:
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
+                self._verify_before_publication(user_input)
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
@@ -2652,7 +2733,7 @@ class AgentLoop:
                 if can_parallelize:
                     results = self._execute_tools_parallel(tool_calls)
                     for tc, tool_msg_content in results:
-                        self._record_turn_tool_result(tc.name, tool_msg_content)
+                        self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,

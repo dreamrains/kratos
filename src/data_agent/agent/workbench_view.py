@@ -68,6 +68,7 @@ def build_action_board(state: Any, *, capabilities: dict[str, Any] | None = None
     evidence = _list_attr(state, "evidence_records")
     verification_reports = _list_attr(state, "verification_reports")
     latest_verification = verification_reports[-1] if verification_reports else {}
+    verified_evidence_ids = _current_verified_evidence_ids(state, evidence, latest_verification)
 
     confirmed: list[dict[str, Any]] = []
     uncertain: list[dict[str, Any]] = []
@@ -76,7 +77,8 @@ def build_action_board(state: Any, *, capabilities: dict[str, Any] | None = None
         if not claim:
             continue
         confidence = _text(item.get("confidence")) or "medium"
-        if confidence in {"high", "medium"}:
+        evidence_id = _text(item.get("id"))
+        if confidence in {"high", "medium"} and evidence_id in verified_evidence_ids:
             confirmed.append({
                 "claim": claim,
                 "confidence": confidence,
@@ -86,7 +88,7 @@ def build_action_board(state: Any, *, capabilities: dict[str, Any] | None = None
         else:
             uncertain.append({
                 "label": claim,
-                "reason": "low_confidence",
+                "reason": "awaiting_verification" if confidence in {"high", "medium"} else "low_confidence",
                 "detail": _text(item.get("result_summary")),
             })
     confirmed.sort(key=lambda e: _ACTION_CONFIDENCE_ORDER.get(e["confidence"], 2))
@@ -152,6 +154,36 @@ def _empty_action_board() -> dict[str, Any]:
             "verification_status": "not_run",
             "datasets_used": [],
         },
+    }
+
+
+def _current_verified_evidence_ids(
+    state: Any,
+    evidence: list[dict[str, Any]],
+    latest_verification: dict[str, Any],
+) -> set[str]:
+    """Return only verification results bound to the current evidence payload.
+
+    A verification report becomes stale as soon as evidence, routing context, or
+    cleaning history changes.  Do not project its old pass result as a current
+    conclusion.  Reports created before source-bound verification were added
+    intentionally produce no "confirmed" entries and must be rerun.
+    """
+    expected = _text(latest_verification.get("evidence_fingerprint"))
+    if not expected:
+        return set()
+    try:
+        from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
+
+        actual = _evidence_fingerprint(state, evidence)
+    except Exception:
+        return set()
+    if actual != expected:
+        return set()
+    return {
+        str(evidence_id)
+        for evidence_id in _text_list(latest_verification.get("passed_evidence_ids"))
+        if str(evidence_id)
     }
 
 
