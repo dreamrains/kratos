@@ -1,0 +1,212 @@
+{
+  "schema_version": "route_a_journey_execute_report.v1",
+  "mode": "executed",
+  "source_digest": "sha256:e322387054a6e3e58f0f71a9cd0954c4355a165034091bf163a123727a848d9f",
+  "provider_calls": 10,
+  "journey_id": "R07_end_to_end_publication_journey",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "model_id": "openai/deepseek-v4-flash",
+    "temperature": 0.0,
+    "timeout_seconds": 120,
+    "max_tokens_ladder": [
+      2000,
+      8000,
+      32000
+    ],
+    "round_cap": 10
+  },
+  "data": [
+    {
+      "id": "savings_card_orders",
+      "sha256": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+    }
+  ],
+  "max_call_budget": 30,
+  "status": "failed",
+  "errors": [
+    "LLM 返回为空"
+  ],
+  "rounds_used": 11,
+  "round_cap": 10,
+  "structure": [
+    {
+      "round": 1,
+      "prompt_sha256": "sha256:a2ecc9149a14ead917112d95a3e7842af915ff4775a5167b80d3240868714d64",
+      "tools_count": 64,
+      "tools_sha256": "sha256:cb639f967b09c8975b345beac7d99322bf3594141dd04d7a3b82e0e2ccf9ec28"
+    },
+    {
+      "round": 2,
+      "prompt_sha256": "sha256:c8cfac522bd980cdf591df1f305da1586c12d4d15904d00208e066b9fa54b8de",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 3,
+      "prompt_sha256": "sha256:e4b5cc37a3d3744baf8fbd3dd8dc27b1fab8df8b257634aea55f238469b5caec",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 4,
+      "prompt_sha256": "sha256:3238dcb21a9221c6c366601a88c43593960f30dd403c7eba253229223d36971e",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 5,
+      "prompt_sha256": "sha256:6df13c303c149fc86a9d477132590bd26bf86b42e53b60b75c5728a3f17ca7d3",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 6,
+      "prompt_sha256": "sha256:a4f53079d690a82875b256f20d3ac2408810635e429bd7e96ab511eed701320c",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 7,
+      "prompt_sha256": "sha256:5bf24828f9eef3e8a0097bd538c3fa06580bd7c13bdb77a81e21ff8a95f7b13d",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 8,
+      "prompt_sha256": "sha256:e35502ab950e5b69c7331178ff1ac92f6172b10fbb396a0d7d92d7a04dee21d0",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 9,
+      "prompt_sha256": "sha256:ff61844a54ff798b65760e34d2be4aef1de4251ec0bcbdbf338feaecab6ff9c4",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    },
+    {
+      "round": 10,
+      "prompt_sha256": "sha256:c26490b09fde00839df98efc0e299f8fd4a574749396dbc22e6910fd80e02fc3",
+      "tools_count": 70,
+      "tools_sha256": "sha256:5e54505ec25fff179ec0586c8702f8a5ea9774774be1c82393adaa42829a38ec"
+    }
+  ],
+  "round_receipts": [
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ]
+  ],
+  "tool_calls_executed": [
+    "load_data",
+    "preview_data",
+    "describe_dataset",
+    "run_python",
+    "compare_periods",
+    "contribute_decomposition",
+    "read_file",
+    "tool_search",
+    "transform_data",
+    "preview_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "transform_data",
+    "preview_data",
+    "preview_data",
+    "preview_data"
+  ],
+  "contract_verdicts": {
+    "required_tools_present": true,
+    "final_answer_numeric_anchors_present": false,
+    "no_error_events": false,
+    "rounds_within_cap": false
+  },
+  "uploads": [
+    {
+      "as": "省钱卡订单.xlsx",
+      "sha256": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+    }
+  ]
+}
