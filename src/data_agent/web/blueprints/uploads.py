@@ -5,10 +5,11 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 from data_agent.config import get_config
+from data_agent.file_formats import SUPPORTED_DATA_EXTENSIONS
 
 uploads_bp = Blueprint("uploads", __name__)
 
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".jsonl", ".tsv", ".parquet"}
+ALLOWED_EXTENSIONS = SUPPORTED_DATA_EXTENSIONS
 
 
 @uploads_bp.post("/upload")

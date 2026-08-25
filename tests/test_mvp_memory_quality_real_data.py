@@ -2,13 +2,15 @@ from pathlib import Path
 
 import pytest
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.knowledge.memory import MemoryStore
 from data_agent.session.history import save_session
 
 
-TEST_DOC_DIR = Path("reference/test_doc")
+TEST_DOC_DIR = REFERENCE_DATA_DIR
 
 
 def _configure(tmp_path: Path, monkeypatch):
@@ -17,7 +19,7 @@ def _configure(tmp_path: Path, monkeypatch):
     return cfg
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_ordinary_real_data_analysis_does_not_create_memory_candidates(tmp_path: Path, monkeypatch):
     cfg = _configure(tmp_path, monkeypatch)
     data_file = TEST_DOC_DIR / "游戏B留存.xlsx"
@@ -42,7 +44,7 @@ def test_ordinary_real_data_analysis_does_not_create_memory_candidates(tmp_path:
     assert candidates == []
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_explicit_metric_memory_from_real_data_session_has_traceable_source(
     tmp_path: Path,
     monkeypatch,
@@ -68,7 +70,7 @@ def test_explicit_metric_memory_from_real_data_session_has_traceable_source(
     assert candidates[0].domain == "game"
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_user_correction_from_order_data_requires_review(tmp_path: Path, monkeypatch):
     cfg = _configure(tmp_path, monkeypatch)
 

@@ -483,8 +483,6 @@ class TestWorkbenchRedesign:
     def test_report_generation_section(self, html):
         assert "生成报告" not in html
         assert "generateSessionReport(" not in html
-        assert "generate_analysis_brief" not in html
-        assert "generate_formal_report" not in html
 
     def test_conversation_export_section(self, html):
         assert "exportConversation('html')" in html

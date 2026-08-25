@@ -91,28 +91,13 @@ def test_report_prompt_uses_conversation_synthesis_instead_of_report_tools():
 
     loaded = "- main: 10 rows x 3 cols, columns: date, revenue, channel"
     prompt = build_system_prompt(
-        tool_list="create_chart, record_evidence_record, generate_analysis_brief, generate_formal_report",
+        tool_list="create_chart, record_evidence_record, export_conversation",
         session_context=loaded,
         user_input="generate a complete analysis report",
     )
 
     assert "record_evidence_record" in prompt
-    assert "generate_formal_report" not in prompt
-    assert "generate_analysis_brief" not in prompt
-
-
-def test_complete_analysis_prompt_filters_deprecated_report_tools():
-    from data_agent.agent.prompts import build_system_prompt
-
-    prompt = build_system_prompt(
-        tool_list="record_evidence_record, create_chart, generate_analysis_brief, generate_formal_report",
-        session_context="- main: 10 rows x 3 cols, columns: user_id, revenue, date",
-        user_input="请完整分析功能效果，并告诉我还有哪些维度可以分析",
-    )
-
-    assert "record_evidence_record" in prompt
-    assert "generate_formal_report" not in prompt
-    assert "generate_analysis_brief" not in prompt
+    assert "在对话中输出综合结论" in prompt
 
 
 def test_data_command_parses_multiple_quoted_paths_and_context():

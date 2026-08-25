@@ -1,0 +1,96 @@
+{
+  "schema_version": "reference_data_manifest.v1",
+  "root": "reference/test_doc",
+  "files": [
+    {
+      "id": "savings_card_user_payments",
+      "filename": "省钱卡0201到0510购卡用户付费数据.xlsx",
+      "sha256": "cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03",
+      "bytes": 843465,
+      "rows": 13757,
+      "sheets": ["Sheet1"],
+      "required_headers": ["order_id", "user_id", "product_id", "下单金额", "实收金额", "支付时间", "购卡时间"],
+      "uses": ["长期付费", "用户分群", "多文件省钱卡分析"]
+    },
+    {
+      "id": "savings_card_vouchers",
+      "filename": "省钱卡代金券明细订单.xlsx",
+      "sha256": "cda47a61c8bbbcd6bcf545c485dbeb1eb877e2f0d2ad244613e7c7199c4a5e90",
+      "bytes": 89611,
+      "rows": 1075,
+      "sheets": ["Sheet1"],
+      "required_headers": ["主用户ID", "代金券面值(分)", "状态", "领取时间", "使用时间", "产品用户ID", "实付"],
+      "uses": ["优惠券使用", "金额与中文字段", "多文件省钱卡分析"]
+    },
+    {
+      "id": "savings_card_orders",
+      "filename": "省钱卡订单.xlsx",
+      "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3",
+      "bytes": 13406,
+      "rows": 71,
+      "sheets": ["Sheet1"],
+      "required_headers": ["user_id", "商品名称", "售价", "支付时间", "创建时间"],
+      "uses": ["省钱卡购买", "复购", "订单收入"]
+    },
+    {
+      "id": "savings_card_before_after",
+      "filename": "省钱卡购卡前后订单.xlsx",
+      "sha256": "e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37",
+      "bytes": 294144,
+      "rows": 7206,
+      "sheets": ["Sheet1"],
+      "required_headers": ["user_id", "下单金额", "实收金额", "支付时间", "购卡时间", "用户类型（1是购卡前30天内，2是购卡后30天内）"],
+      "uses": ["配对前后", "窗口截断", "运营建议"]
+    },
+    {
+      "id": "game_cross_promotion",
+      "filename": "游戏互推.xlsx",
+      "sha256": "063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83",
+      "bytes": 98661,
+      "rows": 1985,
+      "sheets": ["Sheet1"],
+      "required_headers": ["日期", "流量主游戏", "广告主游戏", "公司", "卖量收入", "曝光次数", "有效点击次数", "二次确认次数"],
+      "uses": ["脏数值", "组合分析单位", "收益排序"]
+    },
+    {
+      "id": "game_a_rewarded_video",
+      "filename": "游戏A激励视频汇总数据报表.xlsx",
+      "sha256": "cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7",
+      "bytes": 50148,
+      "rows": 248,
+      "sheets": ["数据"],
+      "required_headers": ["日期", "活跃用户数", "视频广告收入", "视频eCPM", "观看次数", "完整观看次数", "完播率"],
+      "uses": ["广告趋势", "完整周期", "多文件游戏分析"]
+    },
+    {
+      "id": "game_a_in_app_purchase",
+      "filename": "游戏A内购数据.xlsx",
+      "sha256": "fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e",
+      "bytes": 24466,
+      "rows": 248,
+      "sheets": ["数据"],
+      "required_headers": ["日期", "活跃用户", "新增用户", "付费人数", "内购收入", "付费率", "内购arpu", "内购arppu"],
+      "uses": ["内购趋势", "付费指标", "多文件游戏分析"]
+    },
+    {
+      "id": "game_a_banner",
+      "filename": "游戏Abanner汇总数据.xlsx",
+      "sha256": "21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a",
+      "bytes": 44704,
+      "rows": 248,
+      "sheets": ["数据"],
+      "required_headers": ["日期", "活跃用户数", "BN_广告收入", "BN_eCPM", "BN_曝光量", "BN_点击量", "BN_点击率"],
+      "uses": ["Banner趋势", "广告结构", "多文件游戏分析"]
+    },
+    {
+      "id": "game_b_retention",
+      "filename": "游戏B留存.xlsx",
+      "sha256": "63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+      "bytes": 16520,
+      "rows": 62,
+      "sheets": ["Sheet1"],
+      "required_headers": ["日期", "日活跃", "日新增", "1天后", "7天后", "30天后"],
+      "uses": ["留存曲线", "曲线拟合", "预测边界"]
+    }
+  ]
+}

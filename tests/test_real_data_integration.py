@@ -5,16 +5,18 @@ from pathlib import Path
 
 import pytest
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.library import KnowledgeLibrary
 from data_agent.knowledge.memory import MemoryStore
 from data_agent.knowledge.models import MemoryType
 from data_agent.knowledge.retrieval import KnowledgeRetrievalService
 
-TEST_DOC_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+TEST_DOC_DIR = REFERENCE_DATA_DIR
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="test_doc directory not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 class TestRealDataFiles:
     def test_real_data_files_exist(self):
         """Verify all expected test data files are accessible."""

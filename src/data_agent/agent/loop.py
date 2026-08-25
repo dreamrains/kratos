@@ -57,15 +57,11 @@ _SUBSTANTIVE_TOOLS = {
     "record_analysis_spec",
     "record_analysis_plan",
     "record_evidence_record",
-    "record_insight_record",
     "compare_periods",
     "analyze_time_series",
     "funnel_analysis",
     "correlation_analysis",
     "ab_test",
-    "generate_report",
-    "generate_analysis_brief",
-    "generate_formal_report",
     "run_python",
 }
 

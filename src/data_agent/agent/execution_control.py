@@ -20,15 +20,11 @@ _META_TOOLS: set[str] = {
     "record_evidence_record",
     "record_analysis_spec",
     "record_data_requirement",
-    "record_insight_record",
     "record_analysis_plan",
     "task_create",
     "task_update",
     "task_list",
     "ask_user_question",
-    "generate_formal_report",
-    "generate_analysis_brief",
-    "generate_report",
 }
 
 
@@ -215,7 +211,6 @@ class TurnExecutionState:
             "record_analysis_spec",
             "record_analysis_plan",
             "record_data_requirement",
-            "record_insight_record",
             "task_update",
             "ask_user_question",
         }

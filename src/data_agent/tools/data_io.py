@@ -10,6 +10,7 @@ from data_agent.config import get_config
 from data_agent.session.workspace import workspace
 from data_agent.tools._utils import validate_path_in_allowed, validate_sql_query, sanitize_filename
 from data_agent.tools.registry import registry
+from data_agent.file_formats import DATA_EXTENSION_TO_FORMAT
 
 
 def _resolve_source(source: str) -> Path:
@@ -61,8 +62,7 @@ def _detect_format(source: str, fmt: Optional[str] = None) -> str:
     if fmt:
         return fmt.lower()
     suffix = Path(source).suffix.lower()
-    fmt_map = {".csv": "csv", ".xlsx": "excel", ".xls": "excel", ".json": "json", ".jsonl": "json"}
-    return fmt_map.get(suffix, "csv")
+    return DATA_EXTENSION_TO_FORMAT.get(suffix, "")
 
 
 def _detect_injection_patterns(df: pd.DataFrame) -> list[str]:
@@ -353,14 +353,14 @@ def _register_loaded_data_bundle(
         "加载数据文件到工作空间，自动执行类型清洗、数据概览和洞察扫描。"
         "使用场景：分析流程的起点，所有数据必须先加载后才能分析。"
         "不适用场景：数据库数据（用 load_sql）、已有工作空间数据（用 list_data 查看）。"
-        "参数说明：source 为文件路径（支持 CSV/Excel/JSON），name 为数据集别名。"
+        "参数说明：source 为文件路径（支持 CSV/TSV/XLSX/JSON/JSONL），name 为数据集别名。"
         "加载后自动执行：类型清洗（日期/百分比）、数据概览、业务语义推断、主动洞察。"
         "常见错误：文件路径不正确、编码问题（自动尝试 UTF-8 和 GBK）。"
     ),
     recovery_hint=(
         "数据加载失败。请检查："
         "1) 文件路径是否正确（支持相对路径和绝对路径）"
-        "2) 文件格式是否为 CSV/Excel/JSON"
+            "2) 文件格式是否为 CSV/TSV/XLSX/JSON/JSONL"
         "3) 文件编码（自动尝试 UTF-8 和 GBK）"
         "4) 文件是否存在于项目数据目录或 inbox 目录中"
     ),
@@ -375,12 +375,22 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 df = pd.read_csv(path, encoding="utf-8-sig")
             except UnicodeDecodeError:
                 df = pd.read_csv(path, encoding="gbk")
+        elif detected_fmt == "tsv":
+            try:
+                df = pd.read_csv(path, sep="\t", encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                df = pd.read_csv(path, sep="\t", encoding="gbk")
         elif detected_fmt == "excel":
             df = pd.read_excel(path)
         elif detected_fmt == "json":
             df = pd.read_json(path)
+        elif detected_fmt == "jsonl":
+            df = pd.read_json(path, lines=True)
         else:
-            return f"Error: Unsupported format '{detected_fmt}'. Supported: csv, excel, json"
+            return (
+                f"Error: Unsupported file extension '{Path(source).suffix.lower()}'. "
+                "Supported: .csv, .tsv, .xlsx, .json, .jsonl"
+            )
 
         # 自动类型清洗
         from data_agent.tools.data_clean import auto_clean

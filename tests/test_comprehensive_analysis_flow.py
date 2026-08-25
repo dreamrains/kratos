@@ -29,6 +29,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import (
+    REFERENCE_DATA_AVAILABLE,
+    REFERENCE_DATA_DIR,
+    reference_data_path,
+)
+
 # Windows encoding
 if sys.platform == "win32":
     os.system("")
@@ -37,15 +43,15 @@ if sys.platform == "win32":
 
 # ── Helpers ──────────────────────────────────────────────
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-HAS_REAL_DATA = TEST_DATA_DIR.exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
+HAS_REAL_DATA = REFERENCE_DATA_AVAILABLE
 
 GAME_PURCHASE = TEST_DATA_DIR / "游戏A内购数据.xlsx"
 GAME_BANNER = TEST_DATA_DIR / "游戏Abanner汇总数据.xlsx"
 GAME_VIDEO = TEST_DATA_DIR / "游戏A激励视频汇总数据报表.xlsx"
 GAME_CROSS = TEST_DATA_DIR / "游戏互推.xlsx"
-ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
-ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
+ECARD_ORDER = reference_data_path("savings_card_orders")
+ECARD_FLOW = reference_data_path("savings_card_user_payments")
 
 
 def _make_df(rows=100, seed=42):

@@ -24,20 +24,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import (
+    REFERENCE_DATA_AVAILABLE,
+    REFERENCE_DATA_DIR,
+    reference_data_path,
+)
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
+HAS_REAL_DATA = REFERENCE_DATA_AVAILABLE
 
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
-CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+CARD_PAYMENT = reference_data_path("savings_card_user_payments")
+VOUCHER_DETAIL = reference_data_path("savings_card_vouchers")
+BEFORE_AFTER = reference_data_path("savings_card_before_after")
+CARD_ORDER = reference_data_path("savings_card_orders")
 
 
 @pytest.fixture

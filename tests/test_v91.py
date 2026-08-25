@@ -27,7 +27,10 @@ if sys.platform == "win32":
 
 # 确保项目路径
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from scripts.acceptance.real_data_manifest import reference_data_path
 
 RESULTS: list[dict] = []
 
@@ -233,7 +236,7 @@ def test_summary_fallback():
 
     # 4.5 运行时兜底测试
     try:
-        # 模拟 generate_report 的兜底逻辑
+        # 模拟对话内分析摘要的兜底逻辑
         insight_list = [
             {"title": "趋势上升", "description": "销售量持续上升，月增长率 15%"},
             {"title": "异常检测", "description": "第 3 周发现销售异常峰值"},
@@ -526,7 +529,7 @@ def test_manual_compact():
 # ──────────────────────────────────────────────────────────
 def test_integration():
     module = "Int"
-    test_data = PROJECT_ROOT / "reference/test_doc/游戏Abanner汇总数据.xlsx"
+    test_data = reference_data_path("game_a_banner")
 
     if not test_data.exists():
         record(module, "测试数据文件存在", "FAIL", "文件不存在")
@@ -594,7 +597,7 @@ def test_integration():
             record(module, "报告摘要兜底集成", "FAIL", str(e))
 
         # I5: 用 游戏互推.xlsx 检测多轴
-        xlsx_path = PROJECT_ROOT / "reference/test_doc/游戏互推.xlsx"
+        xlsx_path = reference_data_path("game_cross_promotion")
         if xlsx_path.exists():
             try:
                 df2 = pd.read_excel(str(xlsx_path))

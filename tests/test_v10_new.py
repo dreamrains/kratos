@@ -23,6 +23,9 @@ SKIP = 0
 ERRORS = []
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.acceptance.real_data_manifest import reference_data_path
 
 
 def test(name, func):
@@ -313,7 +316,7 @@ def test_interpret_nonexistent():
 def test_interpret_theme_game():
     """游戏互推数据应匹配游戏主题。"""
     from data_agent.tools.data_understand import interpret_dataset
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏互推.xlsx")
+    df = pd.read_excel(reference_data_path("game_cross_promotion"))
     workspace.add("game_data", df)
     try:
         result = interpret_dataset("game_data")
@@ -330,7 +333,7 @@ def test_interpret_theme_game():
 def test_interpret_theme_ads():
     """banner/激励视频数据应匹配广告营销主题。"""
     from data_agent.tools.data_understand import interpret_dataset
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏Abanner汇总数据.xlsx")
+    df = pd.read_excel(reference_data_path("game_a_banner"))
     workspace.add("ads_data", df)
     try:
         result = interpret_dataset("ads_data")
@@ -348,7 +351,7 @@ def test_interpret_rate_metrics():
     """内购数据中的率列（清洗后数值型）应被识别为 rate_metrics。"""
     from data_agent.tools.data_understand import interpret_dataset
     from data_agent.tools.data_clean import auto_clean
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏A内购数据.xlsx")
+    df = pd.read_excel(reference_data_path("game_a_in_app_purchase"))
     # auto_clean converts percentage strings to floats
     df, _, _ = auto_clean(df)
     workspace.add("purchase_data", df)
@@ -495,7 +498,7 @@ def test_contribute_toolresult_fields():
 
 def test_contribute_with_real_data():
     """用游戏互推数据测试贡献度分解。"""
-    df = pd.read_excel(PROJECT_ROOT / "reference/test_doc/游戏互推.xlsx")
+    df = pd.read_excel(reference_data_path("game_cross_promotion"))
     # Convert date column first — Excel dates may be "2020/01/19" format
     df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
     workspace.add("game_cd", df)
@@ -1336,34 +1339,31 @@ def test_load_data_csv():
     from data_agent.tools.data_io import load_data
     from data_agent.config import get_config
 
-    cfg = get_config()
-    test_csv = PROJECT_ROOT / "reference/test_doc/test_sales.csv"
-    if not test_csv.exists():
-        return "skip"
-
-    result = load_data(str(test_csv), name="test_load_integration")
-    if "Error" in result:
-        return f"load_data failed: {result[:200]}"
-
-    # Check that interpret_dataset was called (look for [data_interpretation] block)
-    if "[data_interpretation]" not in result:
-        return "load_data result should contain [data_interpretation] block"
-
-    # Check that quick_profile was called (look for [data_profile] block)
-    if "[data_profile]" not in result:
-        return "load_data result should contain [data_profile] block"
-
-    # Cleanup
-    workspace.remove("test_load_integration")
-    return True
+    get_config()
+    handle, filename = tempfile.mkstemp(suffix=".csv")
+    os.close(handle)
+    test_csv = Path(filename)
+    pd.DataFrame(
+        {"日期": ["2026-01-01", "2026-01-02"], "销售额": [100, 120]}
+    ).to_csv(test_csv, index=False, encoding="utf-8")
+    try:
+        result = load_data(str(test_csv), name="test_load_integration")
+        if "Error" in result:
+            return f"load_data failed: {result[:200]}"
+        if "[data_interpretation]" not in result:
+            return "load_data result should contain [data_interpretation] block"
+        if "[data_profile]" not in result:
+            return "load_data result should contain [data_profile] block"
+        return True
+    finally:
+        workspace.remove("test_load_integration")
+        test_csv.unlink(missing_ok=True)
 
 
 def test_load_data_xlsx():
     """Excel 文件加载。"""
     from data_agent.tools.data_io import load_data
-    test_xlsx = PROJECT_ROOT / "reference/test_doc/内购数据.xlsx"
-    if not test_xlsx.exists():
-        return "skip"
+    test_xlsx = reference_data_path("game_a_in_app_purchase")
 
     result = load_data(str(test_xlsx), name="test_load_xlsx")
     if "Error" in result:
@@ -1377,20 +1377,23 @@ def test_load_data_xlsx():
 def test_load_data_context_param():
     """context 参数应保存到元数据。"""
     from data_agent.tools.data_io import load_data
-    test_csv = PROJECT_ROOT / "reference/test_doc/test_sales.csv"
-    if not test_csv.exists():
-        return "skip"
-
-    result = load_data(str(test_csv), name="test_ctx", context="ARPU定义: 总收入/活跃用户数")
-    if "Error" in result:
-        return f"load with context failed: {result[:200]}"
-
-    ctx = workspace.get_metadata("test_ctx", "context")
-    if ctx != "ARPU定义: 总收入/活跃用户数":
-        return f"context metadata should be saved, got: {ctx}"
-
-    workspace.remove("test_ctx")
-    return True
+    handle, filename = tempfile.mkstemp(suffix=".csv")
+    os.close(handle)
+    test_csv = Path(filename)
+    pd.DataFrame({"收入": [100, 120], "活跃用户": [10, 12]}).to_csv(
+        test_csv, index=False, encoding="utf-8"
+    )
+    try:
+        result = load_data(str(test_csv), name="test_ctx", context="ARPU定义: 总收入/活跃用户数")
+        if "Error" in result:
+            return f"load with context failed: {result[:200]}"
+        ctx = workspace.get_metadata("test_ctx", "context")
+        if ctx != "ARPU定义: 总收入/活跃用户数":
+            return f"context metadata should be saved, got: {ctx}"
+        return True
+    finally:
+        workspace.remove("test_ctx")
+        test_csv.unlink(missing_ok=True)
 
 
 test("load_data: CSV + interpret + profile", test_load_data_csv)

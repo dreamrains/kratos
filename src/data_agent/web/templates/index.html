@@ -468,7 +468,7 @@
                             <label class="composer-icon-btn hover:bg-stone-100 dark:hover:bg-stone-800 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 cursor-pointer transition-colors" :class="{ 'animate-pulse text-brand-500': isUploading }">
                                 <svg x-show="!isUploading" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
                                 <svg x-show="isUploading" class="w-5 h-5 task-spinner" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                                <input type="file" multiple class="hidden" accept=".csv,.xlsx,.xls,.json,.jsonl,.tsv,.parquet" @change="uploadFile($event)">
+                                <input type="file" multiple class="hidden" accept=".csv,.tsv,.xlsx,.json,.jsonl" @change="uploadFile($event)">
                             </label>
                             <!-- Pause button -->
                             <button x-show="isLoading || hasActiveConfirmation" @click="interruptTurn()"
