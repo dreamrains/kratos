@@ -519,6 +519,9 @@ class AgentLoop:
             return
 
         restored = 0
+        from data_agent.migration import read_session_migration_status
+        migration_status = read_session_migration_status(self.session_id)
+        is_read_only_missing_original = migration_status.get("mode") == "read_only_missing_original"
         for name, info in meta.items():
             df = None
 
@@ -545,8 +548,9 @@ class AgentLoop:
                     except Exception:
                         df = None
 
-            # Strategy B: fall back to local dataset backup
-            if df is None:
+            # A migrated session whose original input is gone is intentionally
+            # read-only. Do not present its backup as a re-uploaded source.
+            if df is None and not is_read_only_missing_original:
                 parquet_path = sdir / "data" / f"{name}.parquet"
                 if parquet_path.exists():
                     try:

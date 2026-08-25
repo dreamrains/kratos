@@ -90,7 +90,7 @@
 | Slice 4 | 多文件综合、关系与范围完整性 | **已完成（Provider 除外）** | [多文件完整性冻结收据](../../audit/2026-08-25-slice-4-multifile-integrity-freeze.md)：R04 三源对齐、多父血缘、R05 many-to-many 拒绝；Provider 0 |
 | Slice 5 | 开放分析、建议、知识/记忆与长上下文 | **已完成（Provider 除外）** | [开放分析完整性冻结收据](../../audit/2026-08-25-slice-5-open-analysis-integrity-freeze.md)：动态工具可达、探索回放收据、建议/竞争解释纪律、知识冲突披露与压缩身份义务保留；Provider 0 |
 | Slice 6 | Workbench 精简与 Web 交互收口 | **已完成（Provider 除外）** | [Workbench 最小投影冻结收据](../../audit/2026-08-25-slice-6-workbench-minimal-freeze.md)：只保留已验证结论、产出物和导出；真实本地浏览器验证当前页与导出入口；Provider 0 |
-| Slice 7 | 历史、回退、分支、迁移与完整回归 | 未开始 | 无损迁移 dry-run；全部旧切片回归 |
+| Slice 7 | 历史、回退、分支、迁移与完整回归 | **实现完成（Provider 除外）** | [历史迁移与回归冻结收据](../../audit/2026-08-25-slice-7-history-migration-regression-freeze.md)：只读迁移审计、显式 apply、缺原文件只读、历史/任务/能力与离线矩阵回归；上传型浏览器五旅程与 Gate C 仍需单独授权 |
 | Gate C | 真实 Provider 冻结与授权 | 未开始 | 用户确认精确模型、prompt、数据、调用次数、零重试 |
 | Gate D | 发布候选审阅 | 未开始 | 当前 digest 的 L0–L4 收据；用户决定是否进入部署流程 |
 

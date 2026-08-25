@@ -11,7 +11,7 @@ from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.agent.execution_control import TurnExecutionState
 from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
-from data_agent.agent.workbench_view import build_action_board
+from data_agent.agent.workbench_view import build_workbench_view
 from data_agent.config import get_config
 from data_agent.session.workspace import Workspace
 from data_agent.tools.analysis_flow import record_evidence_record
@@ -218,11 +218,10 @@ def test_r07_evidence_chart_and_confirmed_conclusion_share_one_verified_record(t
         assert chart_result.startswith("Chart saved: sessions/slice1_r07_verified/charts/")
         assert verification is not None
         assert verification["overall_status"] == "pass"
-        board = build_action_board(state)
-        assert [item["claim"] for item in board["confirmed"]] == [
+        view = build_workbench_view(state)
+        assert [item["claim"] for item in view["verified_conclusions"]] == [
             "按支付时间汇总的 30 个自然日中，后 15 天收入低于前 15 天。"
         ]
-        assert board["uncertain"]
-        assert any("描述性结果" in item["label"] for item in board["uncertain"])
+        assert "limitations" not in view["verified_conclusions"][0]
     finally:
         cfg.sessions_dir = old_sessions

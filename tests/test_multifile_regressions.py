@@ -51,7 +51,7 @@ def test_scope_plan_keeps_relationship_evidence_out_of_file_assignment():
     assert all("relationship" not in item for item in plan["file_decisions"])
 
 
-def test_method_confirmation_surfaces_an_answerable_question_across_trust_view():
+def test_method_confirmation_remains_in_internal_state_not_workbench_projection():
     state = AnalysisSessionState(session_id="6ed6b0a043fb_regression", data_state="data_loaded")
     state.active_scope["active_mode"] = "data_loaded"
     state.pending_confirmations = [
@@ -64,15 +64,8 @@ def test_method_confirmation_surfaces_an_answerable_question_across_trust_view()
         }
     ]
 
-    view = build_trust_view(state)
-
-    confirmations = view["workbench"]["details"]["confirmation"]
-    assert confirmations == {
-        "status": "needs_confirmation",
-        "question": "是否按未来 90 天收入与优惠成本评估省钱卡 ROI？",
-        "blocking_reason": "需要先确认评估周期和 ROI 口径。",
-    }
-    assert confirmations["question"].strip()
+    assert state.pending_confirmations[0]["question"].strip()
+    assert build_trust_view(state)["workbench"] == {"verified_conclusions": []}
 
 
 def test_unsupported_retention_route_is_exploratory_when_identity_fields_are_missing():
@@ -117,16 +110,8 @@ def test_orphan_relationship_flag_does_not_create_an_actionable_confirmation_gat
         }
     ]
 
-    view = build_trust_view(state)
-
-    assert view["workbench"]["details"]["confirmation"] == {
-        "status": "clear",
-        "question": "",
-        "blocking_reason": "",
-    }
-    assert view["workbench"]["details"]["scope"]["files"] == []
-    relationship = view["workbench"]["multifile_analysis"]["relationships"][0]
-    assert relationship["diagnostic_only"] is True
+    assert state.file_relationships[0]["relationship_id"] == "rel_orders_coupon"
+    assert build_trust_view(state)["workbench"] == {"verified_conclusions": []}
 
 
 def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
@@ -135,9 +120,4 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
     view = build_trust_view(state)
 
     assert view["status"] == "empty"
-    assert view["workbench"]["details"]["scope"] == {
-        "goal": "",
-        "status": "ready",
-        "files": [],
-        "notes": [],
-    }
+    assert view["workbench"] == {"verified_conclusions": []}

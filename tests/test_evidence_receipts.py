@@ -8,7 +8,7 @@ from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import use_agent_context
 from data_agent.agent.execution_control import TurnExecutionState
 from data_agent.agent.loop import AgentLoop
-from data_agent.agent.workbench_view import build_action_board
+from data_agent.agent.workbench_view import build_workbench_view
 from data_agent.tools.analysis_flow import record_evidence_record
 
 
@@ -86,7 +86,7 @@ def test_publication_boundary_verifies_current_receipted_evidence():
         loop._verify_before_publication("分析收入趋势")
 
     assert state.verification_reports[-1]["overall_status"] == "pass"
-    assert build_action_board(state)["confirmed"][0]["claim"] == payload["claim"]
+    assert build_workbench_view(state)["verified_conclusions"][0]["claim"] == payload["claim"]
 
 
 def test_receipt_binding_and_plan_binding_survive_a_turn_state_replan():

@@ -226,7 +226,7 @@ def load_session(session_id: str) -> Optional[dict]:
             messages = messages + jsonl_messages
 
     messages = _sanitize_messages(messages)
-    return {
+    result = {
         "session_id": session_id,
         "saved_at": meta.get("saved_at", ""),
         "tag": meta.get("tag", ""),
@@ -236,6 +236,14 @@ def load_session(session_id: str) -> Optional[dict]:
         "summary": meta.get("summary", ""),
         "project_name": meta.get("project_name") or meta.get("object_name"),
     }
+    try:
+        from data_agent.migration import read_session_migration_status
+        status = read_session_migration_status(session_id)
+        if status:
+            result["migration_status"] = status
+    except Exception:
+        logger.debug("Session migration status unavailable", exc_info=True)
+    return result
 
 
 def list_sessions(object_name: str = "", project_name: str = "") -> list[dict]:

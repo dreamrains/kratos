@@ -1,4 +1,4 @@
-"""HTTP contract: the trust endpoint serves action_board + full_answer."""
+"""HTTP contract: the trust endpoint serves verified conclusions only."""
 
 import json
 
@@ -28,7 +28,7 @@ def _seed_session(tmp_path, session_id, messages):
     (sdir / "analysis_state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
-def test_trust_endpoint_returns_action_board_and_full_answer(tmp_path, monkeypatch):
+def test_trust_endpoint_returns_only_verified_conclusions(tmp_path, monkeypatch):
     from data_agent import config
     from data_agent.config import AgentConfig
 
@@ -44,12 +44,6 @@ def test_trust_endpoint_returns_action_board_and_full_answer(tmp_path, monkeypat
     assert resp.status_code == 200
     data = resp.get_json()
     workbench = data["workbench"]
-    assert set(["action_board", "full_answer", "multifile_analysis", "details"]).issubset(workbench.keys())
-    assert workbench["action_board"]["confirmed"] == []
-    assert workbench["action_board"]["uncertain"][0]["reason"] == "awaiting_verification"
-    # Newlines must survive the round-trip so marked.js can parse the
-    # heading/paragraph/list structure. A previous _text() collapse flattened
-    # this to a single run-on line.
-    assert workbench["full_answer"] == seeded_answer
-    assert "\n" in workbench["full_answer"]
-    assert workbench["full_answer"].startswith("## 结论")
+    assert set(workbench) == {"verified_conclusions"}
+    assert workbench["verified_conclusions"] == []
+    assert seeded_answer not in json.dumps(workbench, ensure_ascii=False)

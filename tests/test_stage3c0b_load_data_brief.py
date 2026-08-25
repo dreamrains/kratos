@@ -92,9 +92,8 @@ def test_user_data_brief_is_compact_and_hides_internal_fields():
     assert "sessions/s1/tool_outputs/private.json" not in rendered
 
 
-def test_trust_view_exposes_latest_user_data_brief():
+def test_user_data_brief_remains_an_internal_analysis_artifact():
     from data_agent.agent.data_understanding import build_data_understanding_bundle
-    from data_agent.agent.trust_view import build_trust_view
 
     state = AnalysisSessionState(session_id="brief_view", data_state="data_loaded")
     bundle = build_data_understanding_bundle(
@@ -113,8 +112,5 @@ def test_trust_view_exposes_latest_user_data_brief():
     )
     state.add_data_understanding_bundle_ref(bundle)
 
-    view = build_trust_view(state)
-
-    brief = view["workbench"]["multifile_analysis"]["data_understanding"]
-    assert brief["bundle_id"] == bundle["id"]
-    assert brief["datasets"][0]["dataset"] == "orders"
+    assert state.data_understanding_bundles[-1]["id"] == bundle["id"]
+    assert state.data_understanding_bundles[-1]["datasets"][0]["dataset"] == "orders"
