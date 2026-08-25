@@ -98,6 +98,26 @@ def test_transport_canary_is_a_separate_one_call_frozen_contract_without_provide
     }]
 
 
+def test_r03_truncation_canary_freezes_only_the_failed_scenario_with_an_explicit_larger_budget():
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_r03_truncation_canary.json"
+    report = gate_c.preflight(
+        path,
+        reference_hashes={"game_cross_promotion": "hash-cross-promotion"},
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 1
+    assert report["request"] == {
+        "temperature": 0.0,
+        "max_tokens": 2000,
+        "timeout_seconds": 120,
+        "response_format": {"type": "json_object"},
+    }
+    assert report["scenarios"][0]["id"] == "R03_dirty_cross_promotion"
+    assert report["scenarios"][0]["prompt_sha256"] == "sha256:980727a4567acc13a8d0227a477f1e2771f3e88a7bae9542f994622e95be4b9c"
+
+
 def test_chat_once_makes_one_call_and_never_retries():
     calls = []
 
