@@ -173,6 +173,25 @@ class LLMClient:
                 else:
                     raise
 
+    def chat_once(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        system: Optional[str] = None,
+    ) -> Response:
+        """Make exactly one synchronous Provider request without retry or fallback.
+
+        This is intentionally separate from ``chat()``.  It is for an
+        externally authorized, count-bounded evaluation batch where a failed
+        request must consume its slot and stop the batch instead of being
+        retried implicitly.
+        """
+        kwargs = self._base_kwargs(messages, tools, system)
+        # LiteLLM may otherwise apply its retry policy independently of this
+        # client.  Gate C counts request attempts, so this path must opt out.
+        kwargs["num_retries"] = 0
+        return _parse_response(completion(**kwargs))
+
     def stream_chat_structured(
         self,
         messages: list[dict],

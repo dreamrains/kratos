@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+import pytest
+
+from data_agent.llm.client import LLMClient, Response
+from scripts.acceptance import route_a_provider_preflight as gate_c
+
+
+def _manifest() -> dict:
+    return {
+        "schema_version": gate_c.MANIFEST_SCHEMA,
+        "model_id": "test/model",
+        "request": {"temperature": 0.0, "max_tokens": 1000, "timeout_seconds": 120},
+        "total_call_budget": 2,
+        "scenarios": [
+            {
+                "id": "one",
+                "call_budget": 1,
+                "tools_allowed": False,
+                "data_ids": ["d1"],
+                "question": "q1",
+                "fact_packet": [{"id": "f1", "value": "v1"}],
+            },
+            {
+                "id": "two",
+                "call_budget": 1,
+                "tools_allowed": False,
+                "data_ids": ["d2"],
+                "question": "q2",
+                "fact_packet": [{"id": "f2", "value": "v2"}],
+            },
+        ],
+    }
+
+
+def _write_manifest(tmp_path):
+    path = tmp_path / "candidates.json"
+    path.write_text(json.dumps(_manifest()), encoding="utf-8")
+    return path
+
+
+def test_preflight_freezes_data_prompt_model_and_exact_budget_without_provider_call(tmp_path):
+    path = _write_manifest(tmp_path)
+    report = gate_c.preflight(
+        path,
+        reference_hashes={"d1": "hash-1", "d2": "hash-2"},
+        current_model_id="test/model",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 2
+    assert [item["call_budget"] for item in report["scenarios"]] == [1, 1]
+    assert all(item["prompt_sha256"].startswith("sha256:") for item in report["scenarios"])
+
+
+def test_preflight_rejects_model_or_budget_drift_without_provider_call(tmp_path):
+    path = _write_manifest(tmp_path)
+    payload = _manifest()
+    payload["total_call_budget"] = 3
+    payload["request"]["temperature"] = 0.2
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    report = gate_c.preflight(path, reference_hashes={"d1": "h1", "d2": "h2"}, current_model_id="other", source_digest=lambda root: "sha256:source")
+    assert report["ready"] is False
+    assert "configured model_id does not match frozen model_id" in report["errors"]
+    assert "total_call_budget does not equal the sum of scenario budgets" in report["errors"]
+    assert "request.temperature must be exactly 0.0" in report["errors"]
+
+
+def test_chat_once_makes_one_call_and_never_retries():
+    calls = []
+
+    def fail_once(**kwargs):
+        calls.append(kwargs)
+        raise RuntimeError("transport failure")
+
+    with patch("data_agent.llm.client.completion", fail_once):
+        with pytest.raises(RuntimeError, match="transport failure"):
+            LLMClient(model_id="test/model").chat_once([{"role": "user", "content": "q"}])
+    assert len(calls) == 1
+    assert calls[0]["num_retries"] == 0
+
+
+class _FakeOnceClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    def chat_once(self, messages, tools=None, system=None):
+        self.calls.append({"messages": messages, "tools": tools, "system": system})
+        return next(self.responses)
+
+
+def _valid_response(scenario_id, fact_id):
+    return Response(text=json.dumps({
+        "scenario_id": scenario_id,
+        "decision": "bounded decision",
+        "fact_ids_used": [fact_id],
+        "method_limitations": ["observational"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "collect the missing comparison data",
+    }))
+
+
+def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_path, monkeypatch):
+    path = _write_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([_valid_response("one", "f1"), _valid_response("two", "f2")])
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["status"] == "passed"
+    assert result["calls_made"] == 2
+    assert len(client.calls) == 2
+    assert all(call["tools"] is None for call in client.calls)
+
+
+def test_executor_stops_after_first_failed_response_without_retrying_or_advancing(tmp_path, monkeypatch):
+    path = _write_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([Response(text="not json"), _valid_response("two", "f2")])
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["status"] == "stopped_on_failure"
+    assert result["calls_made"] == 1
+    assert len(client.calls) == 1
