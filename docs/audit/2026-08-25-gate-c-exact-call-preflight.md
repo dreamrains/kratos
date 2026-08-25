@@ -8,7 +8,7 @@
 
 - 准备前基线提交：`efd23a551c73842fe7041949ab381f731e7a5595`（`feat: complete slice 7 history migration regression`）。
 - 当前受控源码摘要：`sha256:91f0aaf412bc3be8f0e65cbf6e0fcba60b6a14ccc2ed4dcd624400a81e0e11e1`。
-- 本预检调用真实 Provider：`0`；历史获授权批次见[批次 1 收据](2026-08-25-gate-c-authorized-batch-1.md)和[批次 2 收据](2026-08-25-gate-c-authorized-batch-2-protocol-pass.md)。未上传数据；未触碰、暂存或提交 `artifacts/`、`tmp/`。
+- 本预检调用真实 Provider：`0`；历史获授权批次见[批次 1 收据](2026-08-25-gate-c-authorized-batch-1.md)、[批次 2 收据](2026-08-25-gate-c-authorized-batch-2-protocol-pass.md)和[批次 3 收据](2026-08-25-gate-c-authorized-batch-3-grounded-pass.md)。未上传数据；未触碰、暂存或提交 `artifacts/`、`tmp/`。
 - 本批次刻意不驱动可变轮数的 `AgentLoop`。它只评估冻结事实包上的模型遵循、范围、方法边界与发布语义；完整工具编排继续由既有 provider-neutral 和本地 Web 收据覆盖。
 
 ## 执行契约
