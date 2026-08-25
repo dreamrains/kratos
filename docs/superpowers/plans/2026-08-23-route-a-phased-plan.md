@@ -91,7 +91,7 @@
 | Slice 5 | 开放分析、建议、知识/记忆与长上下文 | **已完成（Provider 除外）** | [开放分析完整性冻结收据](../../audit/2026-08-25-slice-5-open-analysis-integrity-freeze.md)：动态工具可达、探索回放收据、建议/竞争解释纪律、知识冲突披露与压缩身份义务保留；Provider 0 |
 | Slice 6 | Workbench 精简与 Web 交互收口 | **已完成（Provider 除外）** | [Workbench 最小投影冻结收据](../../audit/2026-08-25-slice-6-workbench-minimal-freeze.md)：只保留已验证结论、产出物和导出；真实本地浏览器验证当前页与导出入口；Provider 0 |
 | Slice 7 | 历史、回退、分支、迁移与完整回归 | **实现完成（Provider 除外）** | [历史迁移与回归冻结收据](../../audit/2026-08-25-slice-7-history-migration-regression-freeze.md)：只读迁移审计、显式 apply、缺原文件只读、历史/任务/能力与离线矩阵回归；上传型浏览器五旅程与 Gate C 仍需单独授权 |
-| Gate C | 真实 Provider 冻结与授权 | **预检完成，等待精确授权** | [精确调用预检收据](../../audit/2026-08-25-gate-c-exact-call-preflight.md)：4 个冻结场景、每场景 1 次、总计最多 4 次；未调用 Provider |
+| Gate C | 真实 Provider 冻结与授权 | **首次获授权批次已停止** | [精确调用预检收据](../../audit/2026-08-25-gate-c-exact-call-preflight.md) 与 [R02 停止收据](../../audit/2026-08-25-gate-c-authorized-r02-stop.md)：R02 仅 1 次非 JSON 后停止；R03/R04/R07 未调用、无重试 |
 | Gate D | 发布候选审阅 | 未开始 | 当前 digest 的 L0–L4 收据；用户决定是否进入部署流程 |
 
 每个切片结束时停止并交付：源码摘要、工作树、改动、测试、未通过项、真实调用消耗（若有）、风险和下一切片提案。不会因计划写了“下一步”就自动提交或继续高风险动作。
