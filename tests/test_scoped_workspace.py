@@ -858,7 +858,8 @@ def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
     assert store.get("new") is None
     assert store.get("derived") is None
     assert store._derived_lineage == {}
-    assert store.get_metadata("orders") == {"quality": {"missing": 0}}
+    assert store.get_metadata("orders")["quality"] == {"missing": 0}
+    assert store.get_data_identity("orders")["role"] == "raw"
     assert store.get_transform_log() == []
     assert store.active_project == "original-project"
     assert not (tmp_path / "workspace_meta.json").exists()

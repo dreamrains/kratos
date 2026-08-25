@@ -18,25 +18,97 @@ from data_agent.tools.registry import registry
     description=(
         "进行 A/B 测试统计检验。比较两组之间的指标差异。"
         "auto 模式自动判断正态性并选择检验方法，附加 Levene 方差齐性检验。"
+        "同一 analysis_unit 同时出现在两组时自动改用配对比较。"
     ),
     schema_overrides={
         "name": {"description": "数据集名称"},
         "group_col": {"description": "分组列名（二值列，区分实验组和对照组）"},
         "metric_col": {"description": "指标列名"},
+        "unit_col": {"description": "分析单位列；为空时自动尝试 user_id。单位跨两组时按单位聚合后配对比较"},
+        "unit_aggregation": {"description": "同一单位同组多行的聚合方式", "enum": ["sum", "mean"]},
         "method": {"description": "检验方法", "enum": ["auto", "ttest", "mannwhitneyu", "chi2"]},
     },
 )
-def ab_test(name: str, group_col: str, metric_col: str, method: str = "auto") -> str:
+def ab_test(
+    name: str,
+    group_col: str,
+    metric_col: str,
+    method: str = "auto",
+    unit_col: str = "",
+    unit_aggregation: str = "sum",
+) -> str:
     df, err = get_df(name)
     if err:
         return err
 
     if group_col not in df.columns or metric_col not in df.columns:
         return f"Error: 列不存在。可用列: {list(df.columns)}"
+    if unit_aggregation not in {"sum", "mean"}:
+        return json.dumps({"error": "unit_aggregation must be sum or mean"}, ensure_ascii=False)
 
     groups = df[group_col].dropna().unique()
     if len(groups) < 2:
         return f"Error: 分组列只有 {len(groups)} 个唯一值，至少需要 2 个"
+
+    # A repeated business unit observed in both groups is a paired design, not
+    # two independent bags of rows.  Prefer an explicit unit; user_id is the
+    # safe conventional fallback for user-level before/after datasets.
+    paired_unit = unit_col or ("user_id" if "user_id" in df.columns else "")
+    if paired_unit and paired_unit not in df.columns:
+        return json.dumps({"error": f"分析单位列 '{paired_unit}' 不存在"}, ensure_ascii=False)
+
+    if paired_unit and len(groups) == 2 and method != "chi2":
+        working = pd.DataFrame({
+            "group": df[group_col],
+            "metric": pd.to_numeric(df[metric_col], errors="coerce"),
+            "unit": df[paired_unit],
+        }).dropna()
+        group_order = sorted(working["group"].unique().tolist(), key=lambda value: str(value))
+        if len(group_order) == 2:
+            grouped = working.groupby(["unit", "group"], dropna=True)["metric"].agg(unit_aggregation).unstack()
+            first, second = group_order
+            paired = grouped.dropna(subset=[first, second])
+            if len(paired) >= 2:
+                before = paired[first].to_numpy(dtype=float)
+                after = paired[second].to_numpy(dtype=float)
+                differences = after - before
+                n_pairs = len(paired)
+                sd_difference = float(np.std(differences, ddof=1))
+                standard_error = sd_difference / np.sqrt(n_pairs)
+                degrees = n_pairs - 1
+                critical = float(sp_stats.t.ppf(0.975, degrees))
+                mean_difference = float(np.mean(differences))
+                t_stat, p_value = sp_stats.ttest_rel(before, after)
+                wilcoxon_p = None if np.all(differences == 0) else float(sp_stats.wilcoxon(before, after).pvalue)
+                result = {
+                    "group_col": group_col,
+                    "metric_col": metric_col,
+                    "method": "paired_ttest",
+                    "design": "paired",
+                    "analysis_unit": paired_unit,
+                    "unit_aggregation": unit_aggregation,
+                    "source_rows": int(len(df)),
+                    "complete_case_rows": int(len(working)),
+                    "paired_sample_size": int(n_pairs),
+                    "excluded_unpaired_units": int(len(grouped) - n_pairs),
+                    "groups": {
+                        str(first): {"n": int(n_pairs), "mean": round(float(np.mean(before)), 4), "std": round(float(np.std(before, ddof=1)), 4)},
+                        str(second): {"n": int(n_pairs), "mean": round(float(np.mean(after)), 4), "std": round(float(np.std(after, ddof=1)), 4)},
+                    },
+                    "difference": {
+                        "absolute": round(mean_difference, 4),
+                        "relative_pct": round(mean_difference / abs(float(np.mean(before))) * 100, 2) if np.mean(before) else None,
+                        "cohens_dz": round(mean_difference / sd_difference, 4) if sd_difference else None,
+                        "confidence_interval_95": [round(mean_difference - critical * standard_error, 4), round(mean_difference + critical * standard_error, 4)],
+                    },
+                    "test": {"statistic": round(float(t_stat), 4), "p_value": round(float(p_value), 6), "significant": bool(p_value < 0.05)},
+                    "wilcoxon_signed_rank": {"p_value": round(wilcoxon_p, 6) if wilcoxon_p is not None else None},
+                    "limitations": [
+                        "配对比较控制了单位间固定差异，但不识别处理或购卡的因果效应。",
+                        f"同一单位同组多行按 {unit_aggregation} 聚合；差值按第二组减第一组报告。",
+                    ],
+                }
+                return json.dumps(result, ensure_ascii=False, indent=2)
 
     g1_name, g2_name = str(groups[0]), str(groups[1])
 

@@ -615,9 +615,17 @@ def compare_periods(
         "n": {"description": "返回记录数"},
         "ascending": {"description": "是否升序（False=从大到小）"},
         "columns": {"description": "返回的列，逗号分隔，为空则返回所有列"},
+        "save_as": {"description": "可选：将选出的 Top N 保存为新的派生分析数据集，用于后续图表或导出"},
     },
 )
-def top_n(name: str, sort_by: str = "", n: int = 10, ascending: bool = False, columns: str = "") -> str:
+def top_n(
+    name: str,
+    sort_by: str = "",
+    n: int = 10,
+    ascending: bool = False,
+    columns: str = "",
+    save_as: str = "",
+) -> str:
     df, err = get_df(name)
     if err:
         return err
@@ -647,6 +655,17 @@ def top_n(name: str, sort_by: str = "", n: int = 10, ascending: bool = False, co
         "n": len(top),
         "records": json.loads(top.to_json(orient="records", date_format="iso", force_ascii=False)),
     }
+    if save_as:
+        derive_result = workspace.derive(
+            name,
+            save_as,
+            top,
+            expression=f"top_n(sort_by={sort_by}; n={n}; ascending={ascending})",
+        )
+        if derive_result.startswith("Error:"):
+            return json.dumps({"error": derive_result}, ensure_ascii=False)
+        result["dataset"] = save_as
+        result["source_dataset"] = name
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 

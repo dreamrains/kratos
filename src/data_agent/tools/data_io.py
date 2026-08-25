@@ -392,23 +392,51 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 "Supported: .csv, .tsv, .xlsx, .json, .jsonl"
             )
 
-        # 自动类型清洗
+        # Preserve the user-facing name as the analysis dataset so existing
+        # analysis tools keep receiving typed columns.  The original upload is
+        # stored as an immutable ``<name>__raw`` snapshot and is the sole
+        # parent of the analysis version.
+        if workspace.exists(name):
+            return f"Error: 数据集 '{name}' 已存在；请指定新的数据集名称以避免覆盖已有分析版本。"
+        raw_df = df.copy(deep=True)
         from data_agent.tools.data_clean import auto_clean
-        df, applied, needs_confirm = auto_clean(df)
+        analysis_df, applied, needs_confirm = auto_clean(raw_df)
 
         # 间接提示词注入检测
-        injection_warnings = _detect_injection_patterns(df)
+        injection_warnings = _detect_injection_patterns(raw_df)
 
-        # 注册到工作空间
-        load_msg = workspace.add(name, df)
+        raw_dataset_name = workspace.next_analysis_name(name, "raw")
+        raw_load_msg = workspace.add(raw_dataset_name, raw_df)
+        dataset_name = name
+        derive_result = workspace.derive(
+            raw_dataset_name,
+            dataset_name,
+            analysis_df,
+            expression=(
+                "automatic safe type parsing at load"
+                if applied else "analysis copy of raw upload; no automatic conversion applied"
+            ),
+        )
+        if derive_result.startswith("Error:"):
+            return derive_result
+        load_msg = (
+            f"{raw_load_msg}\n{derive_result}\n"
+            f"默认分析数据集为 '{dataset_name}'；原始快照保留为 '{raw_dataset_name}'。"
+        )
+        df = analysis_df
 
-        # 保存用户提供的上下文信息到数据集元数据
+        # Save source metadata on the immutable raw snapshot.  The analysis
+        # dataset retains a pointer to that source through data_identity.
         if context:
-            workspace.set_metadata(name, "context", context)
+            workspace.set_metadata(raw_dataset_name, "context", context)
 
         # 保存数据源信息，用于会话恢复时重新加载
-        workspace.set_metadata(name, "_source_path", str(path))
-        workspace.set_metadata(name, "_source_fmt", detected_fmt)
+        workspace.set_metadata(raw_dataset_name, "_source_path", str(path))
+        workspace.set_metadata(raw_dataset_name, "_source_fmt", detected_fmt)
+        if context:
+            workspace.set_metadata(dataset_name, "context", context)
+        workspace.set_metadata(dataset_name, "_source_path", str(path))
+        workspace.set_metadata(dataset_name, "_source_fmt", detected_fmt)
 
         # === 阶段化输出：紧凑摘要入上下文，完整分析持久化到磁盘 ===
         summary_parts = [load_msg]
@@ -420,7 +448,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         # 静默探查：quick_profile（紧凑模式）
         try:
             from data_agent.tools.data_understand import quick_profile
-            profile_result = quick_profile(name, compact=True)
+            profile_result = quick_profile(dataset_name, compact=True)
             detail_sections["data_profile"] = profile_result
             profile_lines = profile_result.strip().split("\n")
             key_lines = [l for l in profile_lines if any(
@@ -437,7 +465,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         try:
             from data_agent.tools.data_understand import interpret_dataset
             from data_agent.tools.registry import ToolResult
-            interp_result = interpret_dataset(name)
+            interp_result = interpret_dataset(dataset_name)
             if isinstance(interp_result, ToolResult):
                 detail_sections["data_interpretation"] = interp_result.summary
                 interpretation_data = dict(interp_result.data or {})
@@ -462,8 +490,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 set_cached_features,
             )
             quality_data = scan_data_quality(df)
-            card = build_data_characteristics_card(name, df, quality_data)
-            set_cached_features(name, card)
+            card = build_data_characteristics_card(dataset_name, df, quality_data)
+            set_cached_features(dataset_name, card)
             detail_sections["quality_card"] = card
             summary_parts.append(card)
         except Exception:
@@ -471,7 +499,10 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
 
         # Cross-dataset relationship hints
         try:
-            existing = {k: v for k, v in workspace.list_datasets().items() if k != name}
+            existing = {
+                k: v for k, v in workspace.list_datasets().items()
+                if k not in {raw_dataset_name, dataset_name}
+            }
             if existing:
                 from data_agent.utils.data_features import detect_cross_dataset_relationships
                 other_dfs = {}
@@ -480,7 +511,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                     if other_df is not None:
                         other_dfs[other_name] = other_df
                 if other_dfs:
-                    relationships = detect_cross_dataset_relationships({name: df, **other_dfs})
+                    relationships = detect_cross_dataset_relationships({dataset_name: df, **other_dfs})
                     if relationships:
                         rel_lines = [f"  {r['left']}.{r['column']} <-> {r['right']}.{r['column']} (overlap: {r['overlap_pct']:.0%})" for r in relationships[:5]]
                         rel_text = "Possible join keys:\n" + "\n".join(rel_lines)
@@ -492,7 +523,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         # 主动洞察扫描
         try:
             from data_agent.tools.auto_insight import auto_insight_scan, format_auto_insight
-            insight = auto_insight_scan(df, name)
+            insight = auto_insight_scan(df, dataset_name)
             insight_text = format_auto_insight(insight)
             if insight_text:
                 detail_sections["auto_insight"] = insight_text
@@ -544,7 +575,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             if ctx:
                 safe_session_id = sanitize_filename(ctx.session_id)
                 workspace.save_meta(safe_session_id)
-                workspace.persist_dataset(safe_session_id, name)
+                workspace.persist_dataset(safe_session_id, raw_dataset_name)
+                workspace.persist_dataset(safe_session_id, dataset_name)
         except Exception:
             pass
 
@@ -559,7 +591,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 contract_id, route_count, contract = _record_trust_workflow(
                     session_id=ctx.session_id,
                     state=state,
-                    dataset=name,
+                    dataset=dataset_name,
                     df=df,
                     applied=applied,
                     needs_confirm=needs_confirm,
@@ -581,7 +613,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                     state=state,
                     session_id=ctx.session_id,
                     path=path,
-                    dataset=name,
+                    dataset=dataset_name,
                     df=df,
                     contract=contract_for_bundle,
                     user_input=context,
@@ -595,7 +627,7 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 _record_data_understanding_bundle(
                     state=state,
                     session_id=ctx.session_id,
-                    dataset=name,
+                    dataset=dataset_name,
                     df=df,
                     contract=contract_for_bundle,
                     quality=quality_data,

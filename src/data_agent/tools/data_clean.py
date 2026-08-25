@@ -274,6 +274,19 @@ _AUTO_CONVERT_TYPES = {"datetime", "percentage_to_float", "date_int_to_datetime"
 _NOTIFY_CONVERT_TYPES = {"numeric_with_suffix", "numeric"}
 
 
+def _conversion_audit(source: pd.Series, converted: pd.Series) -> dict[str, int | float]:
+    """Describe parse loss without treating an unparseable value as zero."""
+    source_non_null = int(source.notna().sum())
+    converted_values = int(converted.loc[source.notna()].notna().sum())
+    failures = source_non_null - converted_values
+    return {
+        "source_non_null": source_non_null,
+        "converted_values": converted_values,
+        "conversion_failures": failures,
+        "conversion_failure_rate": round(failures / source_non_null, 6) if source_non_null else 0.0,
+    }
+
+
 def auto_clean(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
     """自动推断并转换数据类型。
 
@@ -312,15 +325,19 @@ def auto_clean(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict], list[dict]]:
         elif st in _NOTIFY_CONVERT_TYPES:
             try:
                 before = str(df[col].dtype)
+                source_values = df[col].copy()
                 df[col] = apply_conversion(df[col], st)
                 after = str(df[col].dtype)
-                applied.append({
+                entry = {
                     "column": col,
                     "from": before,
                     "to": after,
                     "action": st,
                     "reason": info["reason"],
-                })
+                }
+                if st == "numeric":
+                    entry.update(_conversion_audit(source_values, df[col]))
+                applied.append(entry)
             except Exception as e:
                 applied.append({"column": col, "action": st, "error": str(e)})
 
@@ -370,6 +387,10 @@ def _try_coerce_object_to_numeric(df: pd.DataFrame) -> tuple[pd.DataFrame, list[
                 "to": str(df[col].dtype),
                 "action": "object_to_numeric",
                 "reason": f"object 列含数值数据 ({success_count}/{total_count} 成功转换)",
+                "source_non_null": int(total_count),
+                "converted_values": int(success_count),
+                "conversion_failures": int(total_count - success_count),
+                "conversion_failure_rate": round(float((total_count - success_count) / total_count), 6),
             })
 
     return df, conversions
@@ -437,9 +458,13 @@ def apply_type_conversion(
             except Exception as e:
                 applied.append({"column": col, "error": str(e)})
 
-        workspace.add(name, df)
+        target_name = workspace.next_analysis_name(name, "type_clean")
+        derive_result = workspace.derive(name, target_name, df, expression="automatic safe type conversions")
+        if derive_result.startswith("Error:"):
+            return json.dumps({"error": derive_result}, ensure_ascii=False)
         return json.dumps({
-            "dataset": name,
+            "dataset": target_name,
+            "source_dataset": name,
             "auto_applied": applied,
         }, ensure_ascii=False, indent=2)
 
@@ -452,9 +477,13 @@ def apply_type_conversion(
 
     try:
         df[column] = apply_conversion(df[column], target_type)
-        workspace.add(name, df)
+        target_name = workspace.next_analysis_name(name, "type_clean")
+        derive_result = workspace.derive(name, target_name, df, expression=f"{column}: {target_type}")
+        if derive_result.startswith("Error:"):
+            return json.dumps({"error": derive_result}, ensure_ascii=False)
         return json.dumps({
-            "dataset": name,
+            "dataset": target_name,
+            "source_dataset": name,
             "converted": {"column": column, "to": target_type, "new_dtype": str(df[column].dtype)},
         }, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -482,22 +511,24 @@ _OUTLIER_STRATEGIES = {
     name="clean_data",
     description=(
         "对数据集执行显式清洗：缺失值处理、去重、异常值处理。"
-        "missing_strategy: drop（删除行）/ fill_mean / fill_median / fill_mode / fill_constant。"
+        "missing_strategy: keep（保留缺失值）/ drop（删除行）/ fill_mean / fill_median / fill_mode / fill_constant。"
         "outlier_strategy: mark（标记不处理）/ cap（截断到IQR边界）/ drop（删除行）。"
-        "columns 为空则处理所有列，否则只处理指定列（逗号分隔）。"
+        "deduplicate 仅在用户明确选择时去除完全重复行。所有结果都会创建新的派生分析数据集，不会修改来源数据。"
     ),
     schema_overrides={
         "name": {"description": "数据集名称"},
-        "missing_strategy": {"description": "缺失值处理策略", "enum": ["drop", "fill_mean", "fill_median", "fill_mode", "fill_constant"]},
+        "missing_strategy": {"description": "缺失值处理策略", "enum": ["keep", "drop", "fill_mean", "fill_median", "fill_mode", "fill_constant"]},
         "outlier_strategy": {"description": "异常值处理策略", "enum": ["mark", "cap", "drop"]},
+        "deduplicate": {"description": "是否去除完全重复行；仅在业务语义确认后使用"},
         "columns": {"description": "目标列，逗号分隔，为空则处理所有列"},
         "fill_value": {"description": "fill_constant 策略的填充值"},
     },
 )
 def clean_data(
     name: str,
-    missing_strategy: str = "drop",
+    missing_strategy: str = "keep",
     outlier_strategy: str = "mark",
+    deduplicate: bool = False,
     columns: str = "",
     fill_value: str = "",
 ) -> str:
@@ -512,11 +543,11 @@ def clean_data(
     # 确定目标列
     target_cols = [c.strip() for c in columns.split(",") if c.strip()] if columns else list(df.columns)
 
-    # 1. 去重
-    before_dedup = len(df)
-    df = df.drop_duplicates()
-    removed_dedup = before_dedup - len(df)
-    if removed_dedup > 0:
+    # 1. 去重是业务语义选择：没有稳定订单/事件主键时，完全重复行也可能是有效观测。
+    if deduplicate:
+        before_dedup = len(df)
+        df = df.drop_duplicates()
+        removed_dedup = before_dedup - len(df)
         report["actions"].append({
             "action": "deduplicate",
             "removed": removed_dedup,
@@ -527,7 +558,12 @@ def clean_data(
     total_missing = sum(missing_before.values())
 
     if total_missing > 0:
-        if missing_strategy == "drop":
+        if missing_strategy == "keep":
+            report["actions"].append({
+                "action": "missing_keep",
+                "columns_affected": {k: int(v) for k, v in missing_before.items() if v > 0},
+            })
+        elif missing_strategy == "drop":
             before = len(df)
             df = df.dropna(subset=[c for c in target_cols if c in df.columns])
             report["actions"].append({
@@ -594,5 +630,18 @@ def clean_data(
     report["final_rows"] = len(df)
     report["rows_removed"] = report["original_rows"] - len(df)
 
-    workspace.add(name, df)
+    target_name = workspace.next_analysis_name(name, "cleaned")
+    derive_result = workspace.derive(
+        name,
+        target_name,
+        df,
+        expression=(
+            f"missing={missing_strategy}; deduplicate={deduplicate}; "
+            f"outlier={outlier_strategy}; columns={columns or 'all'}"
+        ),
+    )
+    if derive_result.startswith("Error:"):
+        return json.dumps({"error": derive_result}, ensure_ascii=False)
+    report["dataset"] = target_name
+    report["source_dataset"] = name
     return json.dumps(report, ensure_ascii=False, indent=2)

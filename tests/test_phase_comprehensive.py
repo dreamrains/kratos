@@ -350,7 +350,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["rows"] > 0
         finally:
             workspace._datasets.pop("cross_filter", None)
-            workspace._datasets.pop("cross_filter_filtered", None)
+            workspace._datasets.pop("cross_filter__filtered", None)
 
     def test_transform_data_group_aggregate_structured(self):
         from data_agent.session.workspace import workspace
@@ -374,7 +374,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["rows"] > 0
         finally:
             workspace._datasets.pop("cross_grp", None)
-            workspace._datasets.pop("cross_grp_grouped", None)
+            workspace._datasets.pop("cross_grp__grouped", None)
 
     def test_transform_data_sort_structured(self):
         from data_agent.session.workspace import workspace
@@ -393,7 +393,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["operation"] == "sort"
         finally:
             workspace._datasets.pop("cross_sort", None)
-            workspace._datasets.pop("cross_sort_sorted", None)
+            workspace._datasets.pop("cross_sort__sorted", None)
 
 
 class TestPhase2ToolDescriptions:

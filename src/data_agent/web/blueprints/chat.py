@@ -145,7 +145,12 @@ def chat():
 
     t = threading.Thread(target=run_in_thread, daemon=True)
     t.start()
-    return _sse_response(eq)
+    response = _sse_response(eq)
+    # The client needs the durable id before it starts consuming the stream.
+    # Keeping it in a response header makes pending-session migration robust
+    # even when an intermediary coalesces the first SSE event.
+    response.headers["X-Data-Agent-Session-Id"] = sid
+    return response
 
 
 @chat_bp.post("/chat/resume")

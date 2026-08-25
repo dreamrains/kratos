@@ -158,10 +158,7 @@ def transform_data(
             "resample": "resampled", "pivot": "pivoted", "merge": "merged",
         }
         suffix = _op_suffix.get(operation, operation)
-        candidate = f"{name}_{suffix}"
-        if candidate == name:
-            candidate = f"{name}_{operation}_1"
-        target_name = candidate
+        target_name = workspace.next_analysis_name(name, suffix)
 
     # 合并结构化参数到 params dict
     try:
@@ -359,11 +356,16 @@ def transform_data(
     except Exception as e:
         return json.dumps({"error": f"变换失败: {e}"}, ensure_ascii=False)
 
-    workspace.add(target_name, result)
-    # 记录变换血缘
-    workspace.log_transform(name, operation, target_name, json.dumps({k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")}, ensure_ascii=False) if p else "")
+    expression = json.dumps(
+        {k: v for k, v in p.items() if k in ("group_by", "freq", "date_col", "condition", "agg")},
+        ensure_ascii=False,
+    ) if p else ""
+    derive_result = workspace.derive(name, target_name, result, expression=f"{operation}: {expression}")
+    if derive_result.startswith("Error:"):
+        return json.dumps({"error": derive_result}, ensure_ascii=False)
     return json.dumps({
         "dataset": target_name,
+        "source_dataset": name,
         "operation": operation,
         "rows": len(result),
         "columns": list(result.columns),

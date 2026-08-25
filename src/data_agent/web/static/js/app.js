@@ -1603,7 +1603,21 @@ function chatApp() {
                     const errData = await response.json().catch(() => ({ error: response.statusText }));
                     throw new Error(errData.error || `HTTP ${response.status}`);
                 }
-                await this._processSSE(response, turn, state, sseSessionId);
+                // A fetch response exposes headers before its SSE body.  Use
+                // the server-issued id as the authoritative migration path;
+                // `turn_start` remains the compatibility path for older
+                // servers, but no longer gates the workbench on event timing.
+                const responseSessionId = response.headers.get('X-Data-Agent-Session-Id');
+                let effectiveSessionId = sseSessionId;
+                if (sseSessionId === '_pending_' && responseSessionId) {
+                    const pendingState = this._sessionStates['_pending_'] || state;
+                    delete this._sessionStates['_pending_'];
+                    this._sessionStates[responseSessionId] = pendingState;
+                    this.currentSessionId = responseSessionId;
+                    this._syncSessionUrl(responseSessionId);
+                    effectiveSessionId = responseSessionId;
+                }
+                await this._processSSE(response, turn, state, effectiveSessionId);
             } catch (e) {
                 turn.isThinking = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
@@ -1621,6 +1635,19 @@ function chatApp() {
                 }
                 await this.loadSessions();
                 await this.loadTasks();
+                // A newly created session starts as `_pending_` and receives
+                // its durable id inside the SSE stream.  Refresh the side
+                // panel after that migration; relying only on the unawaited
+                // turn_end refresh could leave a completed analysis displayed
+                // as “未绑定会话”.
+                const completedSid = this.currentSessionId;
+                if (completedSid && completedSid !== '_pending_') {
+                    await Promise.all([
+                        this.loadAnalysisState(completedSid),
+                        this.loadTrustView(completedSid),
+                        this.loadSessionArtifacts(completedSid),
+                    ]);
+                }
                 requestAnimationFrame(() => {
                     const el = document.getElementById('messages-container');
                     if (el) this._renderMermaidInElement(el);

@@ -140,11 +140,19 @@ def derive_features(
     except Exception as e:
         return json.dumps({"error": f"特征派生失败: {e}"}, ensure_ascii=False)
 
-    target_name = save_as or name
-    workspace.add(target_name, df)
+    target_name = save_as or workspace.next_analysis_name(name, "features")
+    derive_result = workspace.derive(
+        name,
+        target_name,
+        df,
+        expression=f"feature_type={feature_type}; columns={columns or 'all'}",
+    )
+    if derive_result.startswith("Error:"):
+        return json.dumps({"error": derive_result}, ensure_ascii=False)
 
     return json.dumps({
         "dataset": target_name,
+        "source_dataset": name,
         "feature_type": feature_type,
         "new_columns": new_cols,
         "total_columns": len(df.columns),

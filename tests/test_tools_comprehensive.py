@@ -240,7 +240,7 @@ def test_clean_data_dedup():
     workspace.add("dup_test", pd.DataFrame({
         "a": [1, 1, 2], "b": [3, 3, 4]
     }))
-    result = clean_data("dup_test")
+    result = clean_data("dup_test", deduplicate=True)
     data = json.loads(result)
     if data["final_rows"] != 2:
         return f"should remove 1 duplicate, got {data['final_rows']} rows"
