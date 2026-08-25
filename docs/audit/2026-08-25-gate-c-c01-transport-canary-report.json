@@ -1,0 +1,52 @@
+{
+  "schema_version": "route_a_provider_preflight.v1",
+  "mode": "executed",
+  "ready": true,
+  "errors": [],
+  "source_digest": "sha256:e1b698fa7028c2099961e94fe0469f77ce407e51fe7ecb8f29875732100f921f",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "temperature": 0.0,
+    "max_tokens": 1000,
+    "timeout_seconds": 120,
+    "response_format": {
+      "type": "json_object"
+    }
+  },
+  "total_call_budget": 1,
+  "scenarios": [
+    {
+      "id": "C01_transport_contract",
+      "call_budget": 1,
+      "data": [
+        {
+          "id": "savings_card_before_after",
+          "sha256": "e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37"
+        }
+      ],
+      "prompt_sha256": "sha256:5e60aa47bac91456aa75cf40d7abbdc4d6f567f71196a66ed73f830c39387684"
+    }
+  ],
+  "status": "passed",
+  "calls_made": 1,
+  "results": [
+    {
+      "id": "C01_transport_contract",
+      "status": "passed",
+      "response_summary": {
+        "fact_ids_used": [
+          "c01_pairs",
+          "c01_limit"
+        ],
+        "method_limitations_count": 1,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 64,
+        "next_action_characters": 42,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_finish_reason": "stop"
+      }
+    }
+  ]
+}
