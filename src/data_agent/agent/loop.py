@@ -1359,7 +1359,10 @@ class AgentLoop:
         tools_used = set(getattr(self, "_turn_tools_used", []))
         if tools_used & _SUBSTANTIVE_TOOLS:
             return False
-        if not tools_used or not tools_used <= _PROFILING_TOOLS:
+        # Any tool use without a substantive analysis tool (including browsing
+        # helpers like list_files that fall outside the profiling set) still
+        # means the turn only profiled data and must not answer yet.
+        if not tools_used:
             return False
         return True
 

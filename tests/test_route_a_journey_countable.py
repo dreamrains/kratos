@@ -69,12 +69,27 @@ def test_zero_text_truncation_climbs_the_round_ladder_and_stops_at_success():
     assert [attempt["max_tokens"] for attempt in client.round_receipts[0]] == [2000, 8000, 32000]
 
 
-def test_partial_text_truncation_is_returned_without_escalation():
-    once = _FakeOnceLLM([Response(text="partial", finish_reason="length")])
+def test_partial_text_truncation_also_climbs_because_nothing_was_published():
+    # Unlike the streaming product client, a countable round is one
+    # non-streaming request whose body is published only after it completes,
+    # so ANY finish_reason=length response can be safely re-issued larger.
+    once = _FakeOnceLLM([Response(text="partial", finish_reason="length"), _final_round("complete")])
     client = CountableJourneyClient(round_cap=1, ladder=[2000, 8000, 32000], once_client=once)
     response = client.chat([{"role": "user", "content": "q"}])
-    assert response.text == "partial"
-    assert client.calls_made == 1
+    assert response.text == "complete"
+    assert client.calls_made == 2
+    assert [call["max_tokens"] for call in once.calls] == [2000, 8000]
+
+
+def test_truncated_tool_call_round_also_climbs_the_ladder():
+    once = _FakeOnceLLM([
+        Response(tool_calls=[ToolCall(id="c1", name="load_data", arguments={})], finish_reason="length"),
+        _tool_round("load_data"),
+    ])
+    client = CountableJourneyClient(round_cap=1, ladder=[2000, 8000], once_client=once)
+    response = client.chat([{"role": "user", "content": "q"}])
+    assert response.finish_reason == "tool_calls"
+    assert client.calls_made == 2
 
 
 def test_exhausted_ladder_returns_the_last_truncated_response_sanitized():

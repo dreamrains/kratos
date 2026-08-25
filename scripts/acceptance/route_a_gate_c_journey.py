@@ -263,10 +263,11 @@ class CountableJourneyClient:
                 "response_length_bucket": _content_length_bucket(getattr(response, "text", "")),
                 "response_reasoning_length_bucket": _content_length_bucket(getattr(response, "reasoning_content", "")),
             })
-            truncated = (
-                getattr(response, "finish_reason", None) == "length"
-                and not (getattr(response, "text", "") or "").strip()
-            )
+            # A countable round is one non-streaming request whose body is
+            # published only after it completes, so ANY finish_reason=length
+            # response -- empty, partial text, or truncated tool calls -- can
+            # be safely discarded and re-issued with a larger budget.
+            truncated = getattr(response, "finish_reason", None) == "length"
             if not truncated or index == len(self._ladder) - 1:
                 break
         self.round_receipts.append(attempts)
