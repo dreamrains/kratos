@@ -44,8 +44,9 @@ class ProviderPreflightError(ValueError):
 class ProviderResponseValidationError(ProviderPreflightError):
     """A sanitized, stable result-contract failure after one Provider call."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, diagnostics: dict[str, str] | None = None):
         self.code = code
+        self.diagnostics = diagnostics or {}
         super().__init__(code)
 
 
@@ -92,42 +93,95 @@ def _prompt_hash(scenario: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
-def _decode_response_object(response: Any) -> tuple[dict[str, Any], str]:
-    """Accept one JSON object, optionally wrapped by a presentation envelope.
+def _finish_reason_bucket(response: Any) -> str:
+    value = getattr(response, "finish_reason", None)
+    return value if value in {"stop", "length", "tool_calls", "content_filter"} else "missing_or_other"
+
+
+def _response_length_bucket(raw: Any) -> str:
+    if not isinstance(raw, str) or not raw:
+        return "empty_or_non_string"
+    length = len(raw)
+    if length <= 256:
+        return "1_to_256"
+    if length <= 1024:
+        return "257_to_1024"
+    if length <= 4096:
+        return "1025_to_4096"
+    return "over_4096"
+
+
+def _transport_diagnostics(response: Any, raw: Any, shape: str) -> dict[str, str]:
+    """Return response-shape evidence without retaining Provider-controlled text."""
+    return {
+        "response_shape": shape,
+        "response_length_bucket": _response_length_bucket(raw),
+        "response_finish_reason": _finish_reason_bucket(response),
+    }
+
+
+def _response_error(response: Any, raw: Any, code: str, shape: str) -> ProviderResponseValidationError:
+    return ProviderResponseValidationError(code, _transport_diagnostics(response, raw, shape))
+
+
+def _decode_response_object(response: Any) -> tuple[dict[str, Any], str, dict[str, str]]:
+    """Accept one unique JSON object, optionally wrapped by presentation text.
 
     Provider text is used transiently and never returned or persisted.  The
-    envelope label makes a format deviation auditable without retaining it.
+    structured object must still pass all semantic checks.  Diagnostics retain
+    only shape, bounded length, and finish reason, never Provider text.
     """
     raw = getattr(response, "text", "") or ""
     if not isinstance(raw, str):
-        raise ProviderResponseValidationError("response_not_json")
+        raise _response_error(response, raw, "response_not_json", "non_string")
     candidate = raw.strip()
+    if not candidate:
+        raise _response_error(response, raw, "response_not_json", "empty")
     try:
         payload = json.loads(candidate)
-        envelope = "direct"
+        if not isinstance(payload, dict):
+            raise _response_error(response, raw, "response_not_json_object", "direct_non_object")
+        return payload, "direct", _transport_diagnostics(response, raw, "direct_object")
     except json.JSONDecodeError:
         fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
         if fenced:
             try:
                 payload = json.loads(fenced.group(1))
             except json.JSONDecodeError as exc:
-                raise ProviderResponseValidationError("response_not_json") from exc
-            envelope = "fenced"
-        else:
-            start = candidate.find("{")
-            if start < 0:
-                raise ProviderResponseValidationError("response_not_json")
-            try:
-                payload, end = json.JSONDecoder().raw_decode(candidate[start:])
-            except json.JSONDecodeError as exc:
-                raise ProviderResponseValidationError("response_not_json") from exc
-            trailing = candidate[start + end:].strip()
-            if trailing not in ("", "```"):
-                raise ProviderResponseValidationError("response_not_json")
-            envelope = "embedded"
-    if not isinstance(payload, dict):
-        raise ProviderResponseValidationError("response_not_json_object")
-    return payload, envelope
+                raise _response_error(response, raw, "response_not_json", "invalid_fenced_object") from exc
+            if not isinstance(payload, dict):
+                raise _response_error(response, raw, "response_not_json_object", "fenced_non_object")
+            return payload, "fenced", _transport_diagnostics(response, raw, "fenced_object")
+
+    # A JSON-object mode is advisory for some OpenAI-compatible gateways.  A
+    # display prefix, suffix, or a brace in that display text must not hide one
+    # valid structured object.  Multiple independent objects remain rejected:
+    # selecting one would change the output semantics without a contract.
+    decoded: list[tuple[int, int, dict[str, Any]]] = []
+    decoder = json.JSONDecoder()
+    for start, character in enumerate(candidate):
+        if character != "{":
+            continue
+        try:
+            value, end = decoder.raw_decode(candidate[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            decoded.append((start, start + end, value))
+    top_level = [
+        item for index, item in enumerate(decoded)
+        if not any(
+            other_index != index and other[0] <= item[0] and item[1] <= other[1]
+            for other_index, other in enumerate(decoded)
+        )
+    ]
+    if not top_level:
+        shape = "no_json_object_start" if "{" not in candidate else "invalid_json_object"
+        raise _response_error(response, raw, "response_not_json", shape)
+    if len(top_level) != 1:
+        raise _response_error(response, raw, "response_ambiguous_json_objects", "multiple_json_objects")
+    _, _, payload = top_level[0]
+    return payload, "embedded", _transport_diagnostics(response, raw, "embedded_unique_object")
 
 
 def _validate_scenario(scenario: Any, reference_hashes: dict[str, str]) -> list[str]:
@@ -231,36 +285,42 @@ def preflight(
 
 def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any]:
     if getattr(response, "tool_calls", None):
-        raise ProviderResponseValidationError("tool_calls_disallowed")
-    payload, envelope = _decode_response_object(response)
-    if payload.get("scenario_id") != scenario["id"]:
-        raise ProviderResponseValidationError("scenario_id_mismatch")
-    fact_ids = {str(item.get("id")) for item in scenario["fact_packet"]}
-    used = {str(item) for item in payload.get("fact_ids_used", []) if isinstance(item, str)}
-    if not fact_ids <= used:
-        raise ProviderResponseValidationError("frozen_fact_ids_omitted")
-    if payload.get("prohibited_inference_acknowledged") is not True:
-        raise ProviderResponseValidationError("prohibited_inference_unacknowledged")
-    for field in ("decision", "next_action"):
-        if not _text(payload.get(field)):
-            raise ProviderResponseValidationError(f"missing_{field}")
-    decision = _text(payload["decision"])
-    if decision == _DECISION_PLACEHOLDER:
-        raise ProviderResponseValidationError("placeholder_decision")
-    if _text(payload["next_action"]) == _NEXT_ACTION_PLACEHOLDER:
-        raise ProviderResponseValidationError("placeholder_next_action")
-    numeric_anchors = {
-        match
-        for fact in scenario["fact_packet"]
-        for match in re.findall(r"\d+(?:\.\d+)?", fact["value"])
-    }
-    if numeric_anchors and not any(anchor in decision for anchor in numeric_anchors):
-        raise ProviderResponseValidationError("decision_missing_frozen_numeric_anchor")
-    if not isinstance(payload.get("method_limitations"), list) or not payload["method_limitations"]:
-        raise ProviderResponseValidationError("missing_method_limitations")
-    if any(_text(item) == _LIMITATION_PLACEHOLDER for item in payload["method_limitations"]):
-        raise ProviderResponseValidationError("placeholder_method_limitations")
+        raw = getattr(response, "text", "") or ""
+        raise _response_error(response, raw, "tool_calls_disallowed", "tool_calls")
+    payload, envelope, diagnostics = _decode_response_object(response)
+    try:
+        if payload.get("scenario_id") != scenario["id"]:
+            raise ProviderResponseValidationError("scenario_id_mismatch")
+        fact_ids = {str(item.get("id")) for item in scenario["fact_packet"]}
+        used = {str(item) for item in payload.get("fact_ids_used", []) if isinstance(item, str)}
+        if not fact_ids <= used:
+            raise ProviderResponseValidationError("frozen_fact_ids_omitted")
+        if payload.get("prohibited_inference_acknowledged") is not True:
+            raise ProviderResponseValidationError("prohibited_inference_unacknowledged")
+        for field in ("decision", "next_action"):
+            if not _text(payload.get(field)):
+                raise ProviderResponseValidationError(f"missing_{field}")
+        decision = _text(payload["decision"])
+        if decision == _DECISION_PLACEHOLDER:
+            raise ProviderResponseValidationError("placeholder_decision")
+        if _text(payload["next_action"]) == _NEXT_ACTION_PLACEHOLDER:
+            raise ProviderResponseValidationError("placeholder_next_action")
+        numeric_anchors = {
+            match
+            for fact in scenario["fact_packet"]
+            for match in re.findall(r"\d+(?:\.\d+)?", fact["value"])
+        }
+        if numeric_anchors and not any(anchor in decision for anchor in numeric_anchors):
+            raise ProviderResponseValidationError("decision_missing_frozen_numeric_anchor")
+        if not isinstance(payload.get("method_limitations"), list) or not payload["method_limitations"]:
+            raise ProviderResponseValidationError("missing_method_limitations")
+        if any(_text(item) == _LIMITATION_PLACEHOLDER for item in payload["method_limitations"]):
+            raise ProviderResponseValidationError("placeholder_method_limitations")
+    except ProviderResponseValidationError as exc:
+        exc.diagnostics = {**diagnostics, **exc.diagnostics}
+        raise
     payload["_gate_c_json_envelope"] = envelope
+    payload["_gate_c_response_diagnostics"] = diagnostics
     return payload
 
 
@@ -273,6 +333,7 @@ def _response_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "decision_characters": len(_text(payload["decision"])),
         "next_action_characters": len(_text(payload["next_action"])),
         "json_envelope": payload["_gate_c_json_envelope"],
+        **payload["_gate_c_response_diagnostics"],
     }
 
 
@@ -375,6 +436,7 @@ def execute_authorized_batch(
                 "status": "failed",
                 "failure_stage": "provider_response_validation",
                 "error_code": exc.code,
+                **exc.diagnostics,
             })
         except Exception as exc:
             results.append({

@@ -80,6 +80,24 @@ def test_preflight_rejects_model_or_budget_drift_without_provider_call(tmp_path)
     assert "request.temperature must be exactly 0.0" in report["errors"]
 
 
+def test_transport_canary_is_a_separate_one_call_frozen_contract_without_provider_call():
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_transport_canary.json"
+    report = gate_c.preflight(
+        path,
+        reference_hashes={"savings_card_before_after": "hash-before-after"},
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 1
+    assert report["scenarios"] == [{
+        "id": "C01_transport_contract",
+        "call_budget": 1,
+        "data": [{"id": "savings_card_before_after", "sha256": "hash-before-after"}],
+        "prompt_sha256": gate_c._prompt_hash(gate_c._read_manifest(path)["scenarios"][0]),
+    }]
+
+
 def test_chat_once_makes_one_call_and_never_retries():
     calls = []
 
@@ -136,6 +154,9 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
         "decision_characters": 18,
         "next_action_characters": 35,
         "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "1_to_256",
+        "response_finish_reason": "stop",
     }
 
 
@@ -153,6 +174,9 @@ def test_executor_records_a_failed_response_then_runs_remaining_frozen_scenarios
         "status": "failed",
         "failure_stage": "provider_response_validation",
         "error_code": "response_not_json",
+        "response_shape": "no_json_object_start",
+        "response_length_bucket": "1_to_256",
+        "response_finish_reason": "stop",
     }
     assert result["results"][1]["status"] == "passed"
 
@@ -209,6 +233,7 @@ def test_response_rejects_template_echo_and_requires_a_frozen_numeric_anchor():
 @pytest.mark.parametrize("envelope", [
     lambda payload: f"```json\n{payload}\n```",
     lambda payload: f"JSON follows:\n{payload}",
+    lambda payload: f"展示前缀 {{不是 JSON}}。\n{payload}\n展示后缀。",
 ])
 def test_response_accepts_one_wrapped_json_object_without_retaining_wrapper(envelope):
     scenario = _manifest()["scenarios"][0]
@@ -222,7 +247,56 @@ def test_response_accepts_one_wrapped_json_object_without_retaining_wrapper(enve
     })
     summary = gate_c._response_summary(gate_c._validate_response(scenario, Response(text=envelope(payload))))
     assert summary["json_envelope"] in {"fenced", "embedded"}
+    assert summary["response_shape"] in {"fenced_object", "embedded_unique_object"}
     assert "response" not in summary
+
+
+@pytest.mark.parametrize(("text", "code", "shape"), [
+    ("", "response_not_json", "empty"),
+    ("plain prose only", "response_not_json", "no_json_object_start"),
+    ("{not valid json", "response_not_json", "invalid_json_object"),
+    ("[]", "response_not_json_object", "direct_non_object"),
+])
+def test_response_failure_records_only_safe_transport_shape(text, code, shape):
+    scenario = _manifest()["scenarios"][0]
+    with pytest.raises(gate_c.ProviderResponseValidationError) as error:
+        gate_c._validate_response(scenario, Response(text=text, finish_reason="length"))
+    assert error.value.code == code
+    assert error.value.diagnostics == {
+        "response_shape": shape,
+        "response_length_bucket": "empty_or_non_string" if not text else "1_to_256",
+        "response_finish_reason": "length",
+    }
+
+
+def test_response_rejects_multiple_independent_json_objects_without_selecting_one():
+    scenario = _manifest()["scenarios"][0]
+    payload = json.dumps({
+        "scenario_id": "one",
+        "decision": "bounded decision 1",
+        "fact_ids_used": ["f1"],
+        "method_limitations": ["observational"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "collect a control group",
+    })
+    with pytest.raises(gate_c.ProviderResponseValidationError, match="response_ambiguous_json_objects") as error:
+        gate_c._validate_response(scenario, Response(text=f"{payload}\n{payload}"))
+    assert error.value.diagnostics["response_shape"] == "multiple_json_objects"
+
+
+def test_executor_persists_safe_transport_diagnostics_but_never_provider_text(tmp_path, monkeypatch):
+    path = _write_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    result = gate_c.execute_authorized_batch(
+        path,
+        authorized_source_digest="sha256:source",
+        client=_FakeOnceClient([Response(text="secret provider prose"), _valid_response("two", "f2")]),
+    )
+    failure = result["results"][0]
+    assert failure["response_shape"] == "no_json_object_start"
+    assert "secret provider prose" not in json.dumps(result)
+    assert "text" not in failure
 
 
 def test_execution_report_is_atomic_sanitized_and_limited_to_audit_directory(tmp_path, monkeypatch):
