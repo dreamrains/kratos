@@ -6,7 +6,7 @@
     "max_tokens": 1000,
     "timeout_seconds": 120
   },
-  "total_call_budget": 4,
+  "total_call_budget": 7,
   "scenarios": [
     {
       "id": "R02_paired_before_after",
@@ -54,6 +54,42 @@
         {"id": "r07_window", "value": "按支付时间汇总的完整 30 个自然日，保留 4 个零订单日。"},
         {"id": "r07_values", "value": "前 15 天收入 1818，后 15 天收入 684；总计 71 笔订单。"},
         {"id": "r07_limit", "value": "该描述性趋势不能解释收入变化原因，观察窗口仅 30 天。"}
+      ]
+    },
+    {
+      "id": "R01_retention_curve",
+      "call_budget": 1,
+      "tools_allowed": false,
+      "data_ids": ["game_b_retention"],
+      "question": "基于冻结留存曲线拟合事实，说明描述性拟合结论及其不可外推边界，不得把曲线拟合解释为因果。",
+      "fact_packet": [
+        {"id": "r01_window", "value": "留存数据有 62 个日级观测，日期为 2020-07-01 至 2020-08-31。"},
+        {"id": "r01_fit", "value": "1天后、7天后、30天后留存的幂律族为最优：a=0.18800129，b=-0.71667274，R²=0.98240474；6 个零值点被排除。"},
+        {"id": "r01_limit", "value": "拟合是描述性比较，不应作因果解释或向未观测周期外推。"}
+      ]
+    },
+    {
+      "id": "R05_relationship_scope",
+      "call_budget": 1,
+      "tools_allowed": false,
+      "data_ids": ["savings_card_orders", "savings_card_user_payments"],
+      "question": "基于冻结的订单与用户付费关系验证事实，说明能否直接 join 及可继续的安全分析路径。",
+      "fact_packet": [
+        {"id": "r05_volume", "value": "省钱卡订单有 71 行，购卡用户付费数据有 13757 行。"},
+        {"id": "r05_relationship", "value": "按 user_id 的关系为 many-to-many，左侧行覆盖率 0.98591549，右侧行覆盖率 1.0，行倍率 1.11325144。"},
+        {"id": "r05_limit", "value": "关系状态为 rejected，风险包括 many_to_many_join_explosion；不能物化原始 join，需先定义唯一键或分别聚合。"}
+      ]
+    },
+    {
+      "id": "R06_long_term_value_cohort",
+      "call_budget": 1,
+      "tools_allowed": false,
+      "data_ids": ["savings_card_user_payments"],
+      "question": "基于冻结的长期付费 cohort 事实，给出观察性稳定性判断与下一步，不能把截断 cohort 的零值解读为流失。",
+      "fact_packet": [
+        {"id": "r06_window", "value": "购卡用户付费数据有 13757 行、62 名用户；支付时间为 2026-02-01 至 2026-05-10。"},
+        {"id": "r06_cohorts", "value": "cohort 大小依次为 2026-02 的 45、2026-03 的 8、2026-04 的 8、2026-05 的 1；2026-02 的 month_1 留存为 97.78%。"},
+        {"id": "r06_limit", "value": "后进入 cohort 的可观察窗口较短，month_2/month_3 的零值可能来自右截断，不能直接解释为流失或长期价值下降。"}
       ]
     }
   ]
