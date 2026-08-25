@@ -116,12 +116,42 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
     assert all(call["tools"] is None for call in client.calls)
 
 
-def test_executor_stops_after_first_failed_response_without_retrying_or_advancing(tmp_path, monkeypatch):
+def test_executor_records_a_failed_response_then_runs_remaining_frozen_scenarios_once(tmp_path, monkeypatch):
     path = _write_manifest(tmp_path)
     frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
     monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
     client = _FakeOnceClient([Response(text="not json"), _valid_response("two", "f2")])
     result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
-    assert result["status"] == "stopped_on_failure"
-    assert result["calls_made"] == 1
-    assert len(client.calls) == 1
+    assert result["status"] == "completed_with_failures"
+    assert result["calls_made"] == 2
+    assert len(client.calls) == 2
+    assert result["results"][0] == {
+        "id": "one",
+        "status": "failed",
+        "failure_stage": "provider_response_validation",
+        "error_code": "response_not_json",
+    }
+    assert result["results"][1]["status"] == "passed"
+
+
+def test_executor_records_a_transport_failure_then_runs_remaining_frozen_scenarios_once(tmp_path, monkeypatch):
+    path = _write_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 2, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([RuntimeError("network failure"), _valid_response("two", "f2")])
+
+    def request_once(messages, tools=None, system=None):
+        value = next(client.responses)
+        client.calls.append({"messages": messages, "tools": tools, "system": system})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    client.chat_once = request_once
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["status"] == "completed_with_failures"
+    assert result["calls_made"] == 2
+    assert len(client.calls) == 2
+    assert result["results"][0]["failure_stage"] == "provider_request"
+    assert result["results"][0]["error_code"] == "provider_request_error"
+    assert result["results"][0]["exception_type"] == "RuntimeError"

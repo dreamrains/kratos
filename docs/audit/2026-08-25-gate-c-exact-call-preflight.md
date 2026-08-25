@@ -7,7 +7,7 @@
 本收据只冻结一次有价值的真实 Provider 评估批次；它不执行 Provider 请求，也不把离线、mock 或 Flask `test_client()` 结果表述为真实 Provider 或浏览器验证。
 
 - 准备前基线提交：`efd23a551c73842fe7041949ab381f731e7a5595`（`feat: complete slice 7 history migration regression`）。
-- 当前受控源码摘要：`sha256:b060f8fb04d47ce73a59f0ac9c4287c30e5c0205281700f3f03ff3cb178c6046`。
+- 当前受控源码摘要：`sha256:52bdffd2f21098c39506abed14dfc45948410589ac13a015fcd91ac604817f00`。
 - 未调用真实 Provider：`0`；未上传数据；未触碰、暂存或提交 `artifacts/`、`tmp/`。
 - 本批次刻意不驱动可变轮数的 `AgentLoop`。它只评估冻结事实包上的模型遵循、范围、方法边界与发布语义；完整工具编排继续由既有 provider-neutral 和本地 Web 收据覆盖。
 
@@ -16,8 +16,9 @@
 - 模型必须为：`openai/deepseek-v4-flash`，并与运行配置逐字匹配。
 - 请求参数固定为：`temperature=0.0`、`max_tokens=1000`、`timeout_seconds=120`。
 - 每场景只发 1 个非流式、无工具请求；`LLMClient.chat_once()` 显式传递 `num_retries=0`。
-- 不使用 AgentLoop、工具、模型切换、fallback 或第二次调用。任何传输异常、工具调用、非 JSON、遗漏冻结事实、越界确认缺失或评估不合格，均记为已消耗的该场景一次，并立即停止整批。
+- 不使用 AgentLoop、工具、模型切换、fallback 或第二次调用。预检/身份不匹配在零调用时阻断；获授权后，任何传输异常、工具调用、非 JSON、遗漏冻结事实、越界确认缺失或评估不合格，均记为已消耗的该场景一次并继续下一个独立场景，直到冻结批次结束。
 - 网络层是否已到达远端在连接中断时不可判定；本契约计数的是本客户端发起的 Provider 请求尝试，绝不以重试来消除该不确定性。
+- 批次只有全部场景通过时才返回 `passed`；否则返回 `completed_with_failures`，带稳定失败阶段和错误码，而不保留原始 Provider 文本。
 
 ## 冻结候选（总计最多 4 次）
 
@@ -34,15 +35,15 @@
 
 - `tests/test_route_a_provider_preflight.py` 覆盖数据、模型、请求参数、prompt hash 与精确预算的离线冻结；配置或预算漂移在任何请求前失败。
 - mock `completion` 传输失败验证 `chat_once()` 恰好一次，且 `num_retries=0`。
-- fake Provider 覆盖成功时每场景恰好一次、`tools=None`；首个非 JSON 响应后 `calls_made=1`，第二场景不再调用。
-- 当前运行：`16 passed`（Gate C 预检、模型配置、真实数据 manifest、release source）；`compileall` 与 `git diff --check` 通过。
+- fake Provider 覆盖成功时每场景恰好一次、`tools=None`；非 JSON 与传输失败均只消耗对应一次，随后场景仍各自恰好一次，最终以稳定失败码汇总。
+- 当前运行：`17 passed`（Gate C 预检、模型配置、真实数据 manifest、release source）；`compileall` 与 `git diff --check` 通过。
 
 ## 下一步与授权格式
 
 只有用户明确确认上表的模型、当前 source digest、四个数据/prompt hash、每场景 1 次和总计最多 4 次后，才能运行：
 
 ```text
-我授权 Gate C 批次：仅在 source digest sha256:b060f8fb04d47ce73a59f0ac9c4287c30e5c0205281700f3f03ff3cb178c6046 上，使用 openai/deepseek-v4-flash，执行本收据列出的 R02、R03、R04、R07；每场景恰好 1 次，总计最多 4 次，使用冻结的数据 hash、prompt hash 和请求参数。任一失败立即停止整批；不重试、不换模型、不回退、不补跑。
+我授权 Gate C 批次：仅在 source digest sha256:52bdffd2f21098c39506abed14dfc45948410589ac13a015fcd91ac604817f00 上，使用 openai/deepseek-v4-flash，执行本收据列出的 R02、R03、R04、R07；每个场景恰好 1 次，总计恰好 4 次，使用冻结的数据 hash、prompt hash 和请求参数。预检不通过则零调用；批内失败记录后继续其余场景。不重试、不换模型、不回退、不补跑。
 ```
 
 如源码、模型、数据、提示或请求参数变化，预检和授权均失效，必须重建冻结单；不能沿用本收据。

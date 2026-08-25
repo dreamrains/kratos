@@ -36,6 +36,14 @@ class ProviderPreflightError(ValueError):
     """Raised before any Provider request when a frozen batch is invalid."""
 
 
+class ProviderResponseValidationError(ProviderPreflightError):
+    """A sanitized, stable result-contract failure after one Provider call."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
 def _read_manifest(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -166,24 +174,24 @@ def preflight(
 
 def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any]:
     if getattr(response, "tool_calls", None):
-        raise ProviderPreflightError("Provider returned tool calls although the frozen batch disallows tools")
+        raise ProviderResponseValidationError("tool_calls_disallowed")
     try:
         payload = json.loads(_text(getattr(response, "text", "")))
     except json.JSONDecodeError as exc:
-        raise ProviderPreflightError("Provider response is not a JSON object") from exc
+        raise ProviderResponseValidationError("response_not_json") from exc
     if not isinstance(payload, dict) or payload.get("scenario_id") != scenario["id"]:
-        raise ProviderPreflightError("Provider response scenario_id does not match frozen scenario")
+        raise ProviderResponseValidationError("scenario_id_mismatch")
     fact_ids = {str(item.get("id")) for item in scenario["fact_packet"]}
     used = {str(item) for item in payload.get("fact_ids_used", []) if isinstance(item, str)}
     if not fact_ids <= used:
-        raise ProviderPreflightError("Provider response omitted one or more frozen fact ids")
+        raise ProviderResponseValidationError("frozen_fact_ids_omitted")
     if payload.get("prohibited_inference_acknowledged") is not True:
-        raise ProviderPreflightError("Provider response did not acknowledge the prohibited inference boundary")
+        raise ProviderResponseValidationError("prohibited_inference_unacknowledged")
     for field in ("decision", "next_action"):
         if not _text(payload.get(field)):
-            raise ProviderPreflightError(f"Provider response has no {field}")
+            raise ProviderResponseValidationError(f"missing_{field}")
     if not isinstance(payload.get("method_limitations"), list) or not payload["method_limitations"]:
-        raise ProviderPreflightError("Provider response has no method_limitations")
+        raise ProviderResponseValidationError("missing_method_limitations")
     return payload
 
 
@@ -193,7 +201,13 @@ def execute_authorized_batch(
     authorized_source_digest: str,
     client=None,
 ) -> dict[str, Any]:
-    """Execute the exact frozen budget once; any failure stops the batch."""
+    """Execute every frozen scenario once; failures are recorded without retries.
+
+    Preflight failures stop before any request.  Once an exact batch has been
+    authorized, each independent scenario consumes at most one request so the
+    caller receives one bounded diagnostic report instead of one failure per
+    authorization cycle.
+    """
     from data_agent.config import get_config
     from data_agent.llm.client import LLMClient
 
@@ -219,11 +233,25 @@ def execute_authorized_batch(
                 system=SYSTEM_PROMPT,
             )
             payload = _validate_response(scenario, response)
+        except ProviderResponseValidationError as exc:
+            results.append({
+                "id": scenario["id"],
+                "status": "failed",
+                "failure_stage": "provider_response_validation",
+                "error_code": exc.code,
+            })
         except Exception as exc:
-            results.append({"id": scenario["id"], "status": "failed", "error": str(exc)})
-            return {**report, "mode": "executed", "status": "stopped_on_failure", "calls_made": len(results), "results": results}
-        results.append({"id": scenario["id"], "status": "passed", "response": payload})
-    return {**report, "mode": "executed", "status": "passed", "calls_made": len(results), "results": results}
+            results.append({
+                "id": scenario["id"],
+                "status": "failed",
+                "failure_stage": "provider_request",
+                "error_code": "provider_request_error",
+                "exception_type": type(exc).__name__,
+            })
+        else:
+            results.append({"id": scenario["id"], "status": "passed", "response": payload})
+    status = "passed" if all(item["status"] == "passed" for item in results) else "completed_with_failures"
+    return {**report, "mode": "executed", "status": status, "calls_made": len(results), "results": results}
 
 
 def main() -> int:
