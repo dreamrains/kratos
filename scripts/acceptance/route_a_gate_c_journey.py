@@ -279,10 +279,10 @@ class CountableJourneyClient:
         # inflating the round count or consuming another slot.
         if self._terminated:
             raise JourneyStructureError("round_cap_exceeded")
-        self.rounds_served += 1
-        if self.rounds_served > self._round_cap:
+        if self.rounds_served >= self._round_cap:
             self._terminated = True
             raise JourneyStructureError("round_cap_exceeded")
+        self.rounds_served += 1
         self.structure.append({
             "round": self.rounds_served,
             "prompt_sha256": _digest({"system": system or "", "messages": list(messages or [])}),

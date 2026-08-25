@@ -51,6 +51,14 @@ def _wrap_up_count(loop):
     )
 
 
+def _finalization_count(loop):
+    return sum(
+        1
+        for message in loop.messages
+        if message.get("role") == "system" and "<analysis_finalization_mode>" in str(message.get("content") or "")
+    )
+
+
 def test_wrap_up_nudge_injects_once_after_the_threshold_round(monkeypatch):
     from data_agent.config import get_config
 
@@ -63,6 +71,49 @@ def test_wrap_up_nudge_injects_once_after_the_threshold_round(monkeypatch):
     assert _wrap_up_count(loop) == 1
     loop._maybe_inject_wrap_up(round_num=3)
     assert _wrap_up_count(loop) == 1  # once per turn
+    assert loop._turn_finalization_mode is False
+
+
+def test_wrap_up_closes_tools_only_after_substantive_analysis(monkeypatch):
+    from data_agent.config import get_config
+    from data_agent.llm.client import Response, StreamComplete
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 2)
+    loop = AgentLoop(client=None, session_id="wrap_up_finalization")
+    loop._reset_turn_tracking()
+    loop._turn_tools_used = ["load_data", "curve_fitting"]
+    loop._turn_successful_substantive_tools = {"curve_fitting"}
+    loop._maybe_inject_wrap_up(round_num=2)
+
+    assert loop._turn_finalization_mode is True
+    assert _finalization_count(loop) == 1
+    assert loop._tools_for_current_round() is None
+
+    class CaptureClient:
+        def __init__(self):
+            self.tools_seen = []
+
+        def stream_chat_structured(self, **kwargs):
+            self.tools_seen.append(kwargs["tools"])
+            yield StreamComplete(response=Response(text="基于已有证据收尾"))
+
+    client = CaptureClient()
+    loop.client = client
+    list(loop._stream_llm_round(3))
+    assert client.tools_seen == [None]
+
+
+def test_failed_substantive_tool_does_not_unlock_finalization(monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 1)
+    loop = AgentLoop(client=None, session_id="wrap_up_failed_analysis")
+    loop._reset_turn_tracking()
+    loop._record_turn_tool_result("curve_fitting", '{"error":"insufficient data"}')
+    loop._maybe_inject_wrap_up(round_num=1)
+
+    assert loop._turn_finalization_mode is False
+    assert _wrap_up_count(loop) == 1
 
 
 def test_wrap_up_nudge_can_be_disabled(monkeypatch):

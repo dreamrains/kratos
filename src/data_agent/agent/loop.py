@@ -63,6 +63,18 @@ _SUBSTANTIVE_TOOLS = {
     "correlation_analysis",
     "ab_test",
     "run_python",
+    "curve_fitting",
+    "contribute_decomposition",
+    "distribution_analysis",
+    "segmentation_analysis",
+    "cohort_analysis",
+    "causal_analysis",
+    "shap_analysis",
+    "forecast",
+    "classification",
+    "regression_analysis",
+    "attribution_analysis",
+    "what_if_simulation",
 }
 
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
@@ -80,6 +92,15 @@ _WRAP_UP_GUARD_MESSAGE = (
     "and limitations, and the next action. Start new exploratory tool calls only if "
     "strictly required to close the answer.\n"
     "</analysis_wrap_up_guard>"
+)
+
+_FINALIZATION_GUARD_MESSAGE = (
+    "<analysis_finalization_mode>\n"
+    "The turn has already completed substantive analysis. Tool use is now closed for "
+    "this turn. Continue reasoning over the verified results already in the conversation, "
+    "then provide the final answer with numbers, boundaries, limitations, and next action. "
+    "Do not claim facts that the available evidence does not support.\n"
+    "</analysis_finalization_mode>"
 )
 
 
@@ -1161,21 +1182,42 @@ class AgentLoop:
 
     def _reset_turn_tracking(self) -> None:
         self._turn_tools_used = []
+        self._turn_successful_substantive_tools = set()
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
         self._turn_wrap_up_injected = False
+        self._turn_finalization_mode = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
         self.context.turn_receipt_ids = []
 
+    def _has_substantive_turn_evidence(self) -> bool:
+        """Whether this turn has executed a computation suitable for synthesis."""
+        return bool(getattr(self, "_turn_successful_substantive_tools", set()))
+
+    def _tools_for_current_round(self):
+        """Offer tools until a sufficiently evidenced turn enters finalization.
+
+        Finalization still leaves the model free to reason and write its own
+        answer. It only closes further tool exploration after substantive
+        analysis, preventing a soft wrap-up reminder from being ignored until
+        an external journey budget is exhausted.
+        """
+        if getattr(self, "_turn_finalization_mode", False):
+            return None
+        return registry.active_definitions() or None
+
     def _maybe_inject_wrap_up(self, round_num: int) -> None:
-        """One-time nudge to conclude a turn that keeps exploring.
+        """Enter finalization after the threshold when evidence is sufficient.
 
         Observed on the real R07 journey: the model can spend the whole round
-        budget on tool calls without ever attempting a final answer. Once a
-        completed round reaches the configured threshold and the loop is
-        still going, ask it once to wrap up with the evidence at hand.
+        budget on tool calls without ever attempting a final answer. A soft
+        reminder alone did not reliably conclude the journey. Once the
+        threshold is reached, retain model reasoning but close tool schemas
+        only if this turn has already run substantive analysis. Without that
+        evidence, the existing guardrail remains advisory rather than forcing
+        an unsupported answer.
         """
         if getattr(self, "_turn_wrap_up_injected", False):
             return
@@ -1183,7 +1225,11 @@ class AgentLoop:
         if not threshold or round_num < threshold:
             return
         self._turn_wrap_up_injected = True
-        self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
+        if self._has_substantive_turn_evidence():
+            self._turn_finalization_mode = True
+            self.messages.append({"role": "system", "content": _FINALIZATION_GUARD_MESSAGE})
+        else:
+            self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -1204,6 +1250,8 @@ class AgentLoop:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
         self._turn_tools_used.append(tool_name)
+        if tool_name in _SUBSTANTIVE_TOOLS and not self._tool_content_is_error(tool_msg_content):
+            self._turn_successful_substantive_tools.add(tool_name)
         if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
         if self._tool_content_is_error(tool_msg_content):
@@ -1952,7 +2000,7 @@ class AgentLoop:
         try:
             for ev in self.client.stream_chat_structured(
                 messages=self.messages,
-                tools=registry.active_definitions() or None,
+                tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             ):
                 # Check interrupt between streaming chunks
@@ -1966,12 +2014,15 @@ class AgentLoop:
                 elif isinstance(ev, StreamComplete):
                     response = ev.response
         except Exception as e:
+            if type(e).__name__ == "JourneyStructureError" and str(e) == "round_cap_exceeded":
+                yield {"type": "_round_failure", "code": "round_cap_exceeded"}
+                return
             logger.warning("Streaming LLM call failed, falling back to sync", extra={"extra_data": {"error": str(e)}})
             # Fallback to synchronous call on streaming failure
             try:
                 response = self.client.chat(
                     messages=self.messages,
-                    tools=registry.active_definitions() or None,
+                    tools=self._tools_for_current_round(),
                     system=self._get_system_prompt(),
                 )
                 # Emit any text that wasn't streamed yet
@@ -1980,6 +2031,9 @@ class AgentLoop:
                     yield {"type": "text_delta", "text": new_text, "turn_id": None}
                     streamed_text += new_text
             except Exception as fallback_err:
+                if type(fallback_err).__name__ == "JourneyStructureError" and str(fallback_err) == "round_cap_exceeded":
+                    yield {"type": "_round_failure", "code": "round_cap_exceeded"}
+                    return
                 yield {"type": "_response", "response": None, "streamed_text": streamed_text}
                 return
 
@@ -2205,10 +2259,13 @@ class AgentLoop:
 
             response = None
             streamed_text = ""
+            round_failure = ""
             for ev in self._stream_llm_round(round_num):
                 if ev["type"] == "_response":
                     response = ev["response"]
                     streamed_text = ev["streamed_text"]
+                elif ev["type"] == "_round_failure":
+                    round_failure = str(ev.get("code") or "")
                 elif ev["type"] == "text_delta":
                     if buffer_text_events:
                         pending_text_events.append(ev)
@@ -2220,6 +2277,10 @@ class AgentLoop:
             # Check interrupt after streaming round
             if self._interrupt_event.is_set():
                 yield {"type": "error", "message": "Turn interrupted by user"}
+                return
+
+            if round_failure:
+                yield {"type": "error", "message": f"LLM 轮次已达到上限（{round_failure}）"}
                 return
 
             if response is None:
@@ -2727,7 +2788,7 @@ class AgentLoop:
 
             response = self.client.chat(
                 messages=self.messages,
-                tools=registry.active_definitions() or None,
+                tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             )
 

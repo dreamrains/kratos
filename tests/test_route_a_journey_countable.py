@@ -114,8 +114,23 @@ def test_round_cap_is_enforced_and_sticky():
     # round count or consuming another slot.
     with pytest.raises(JourneyStructureError, match="round_cap_exceeded"):
         client.chat([])
-    assert client.rounds_served == 2
+    assert client.rounds_served == 1
     assert once.calls.__len__() == 1
+
+
+def test_round_cap_failure_is_not_relabelled_as_an_empty_llm_response():
+    from data_agent.agent.loop import AgentLoop
+
+    once = _FakeOnceLLM([_final_round("done")])
+    client = CountableJourneyClient(round_cap=1, ladder=[2000], once_client=once)
+    loop = AgentLoop(client=client, session_id="journey_round_cap_classification")
+
+    list(loop._stream_llm_round(1))
+    events = list(loop._stream_llm_round(2))
+
+    assert events[-1] == {"type": "_round_failure", "code": "round_cap_exceeded"}
+    assert client.calls_made == 1
+    assert client.rounds_served == 1
 
 
 def test_real_loop_completes_the_r07_journey_through_the_countable_client():
