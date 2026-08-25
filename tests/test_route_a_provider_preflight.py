@@ -572,3 +572,44 @@ def test_r05_budget_ladder_canary_freezes_the_ladder_against_the_failed_call():
     main_r05 = next(item for item in main["scenarios"] if item["id"] == "R05_relationship_scope")
     assert scenario["prompt_sha256"] == gate_c._prompt_hash(main_r05)
     assert scenario["prompt_sha256"] == "sha256:2f3103f89767535d9509c9b931eb4cad652f3412c4e6f2a63de3ed903c41694d"
+
+
+def _reference_hash_map():
+    return {
+        "savings_card_before_after": "h-before-after",
+        "game_cross_promotion": "h-cross-promotion",
+        "game_a_rewarded_video": "h-video",
+        "game_a_in_app_purchase": "h-iap",
+        "game_a_banner": "h-banner",
+        "savings_card_orders": "h-orders",
+        "game_b_retention": "h-retention",
+        "savings_card_user_payments": "h-payments",
+    }
+
+
+def test_main_ladder_batch_freezes_identical_prompts_with_ladder_semantics():
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_main_ladder.json"
+    report = gate_c.preflight(
+        path,
+        reference_hashes=_reference_hash_map(),
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 21
+    assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
+    assert "max_tokens" not in report["request"]
+    assert all(item["call_budget"] == 3 for item in report["scenarios"])
+    assert len(report["scenarios"]) == 7
+
+    # Prompts stay byte-identical to the scalar main batch...
+    legacy = gate_c._read_manifest(gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_candidates.json")
+    legacy_hashes = {item["id"]: gate_c._prompt_hash(item) for item in legacy["scenarios"]}
+    assert {item["id"]: item["prompt_sha256"] for item in report["scenarios"]} == legacy_hashes
+    # ...and to the executed 2000-token batch receipt (single-variable delta).
+    executed = json.loads(
+        (gate_c.ROOT / "docs" / "audit" / "2026-08-25-gate-c-main-model-r01-r07-2000-batch-report.json")
+        .read_text(encoding="utf-8")
+    )
+    executed_hashes = {item["id"]: item["prompt_sha256"] for item in executed["scenarios"]}
+    assert {item["id"]: item["prompt_sha256"] for item in report["scenarios"]} == executed_hashes
