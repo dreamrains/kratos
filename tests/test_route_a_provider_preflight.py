@@ -56,6 +56,16 @@ def test_preflight_freezes_data_prompt_model_and_exact_budget_without_provider_c
     assert all(item["prompt_sha256"].startswith("sha256:") for item in report["scenarios"])
 
 
+def test_prompt_contains_an_exact_nonempty_response_schema_scaffold():
+    scenario = _manifest()["scenarios"][0]
+    prompt = gate_c._prompt_for(scenario)
+    assert '"scenario_id": "one"' in prompt
+    assert '"fact_ids_used": ["f1"]' in prompt
+    assert '"method_limitations": ["至少一条来自冻结事实的限制"]' in prompt
+    assert '"prohibited_inference_acknowledged": true' in prompt
+    assert "不得删除、改名或留空任一字段" in prompt
+
+
 def test_preflight_rejects_model_or_budget_drift_without_provider_call(tmp_path):
     path = _write_manifest(tmp_path)
     payload = _manifest()

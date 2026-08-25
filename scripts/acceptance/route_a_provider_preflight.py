@@ -28,7 +28,7 @@ from scripts.acceptance.release_source import release_source_digest
 MANIFEST_SCHEMA = "route_a_provider_candidates.v1"
 SYSTEM_PROMPT = (
     "你是受审计的数据分析评审员。只能使用提供的冻结事实包，不得调用工具、"
-    "不得补造数据或因果结论。只返回 JSON，不要 Markdown。"
+    "不得补造数据或因果结论。只返回一个 JSON 对象，不要 Markdown、解释文字或省略字段。"
 )
 
 
@@ -60,13 +60,24 @@ def _text(value: Any) -> str:
 
 def _prompt_for(scenario: dict[str, Any]) -> str:
     packet = scenario.get("fact_packet")
+    required_fact_ids = [item["id"] for item in packet]
+    response_template = {
+        "scenario_id": scenario["id"],
+        "decision": "基于冻结事实的有边界判断",
+        "fact_ids_used": required_fact_ids,
+        "method_limitations": ["至少一条来自冻结事实的限制"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "可执行的下一步",
+    }
     return "\n".join((
         f"场景：{scenario['id']}",
         f"问题：{scenario['question']}",
         "冻结事实包：",
         json.dumps(packet, ensure_ascii=False, sort_keys=True),
-        "输出 JSON，字段必须为 scenario_id、decision、fact_ids_used、method_limitations、"
-        "prohibited_inference_acknowledged、next_action。fact_ids_used 必须覆盖全部事实 ID。",
+        "只返回以下 JSON 对象结构（不得 Markdown，不得删除、改名或留空任一字段）：",
+        json.dumps(response_template, ensure_ascii=False),
+        "约束：fact_ids_used 必须逐项包含全部冻结事实 ID；method_limitations 必须为非空字符串数组；"
+        "prohibited_inference_acknowledged 必须是 JSON 布尔值 true；不得给出因果结论或把缺失补造为数据。",
     ))
 
 
