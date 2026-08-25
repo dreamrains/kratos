@@ -1,0 +1,20 @@
+{
+  "schema_version": "route_a_journey_candidate.v1",
+  "journey_id": "R07_end_to_end_publication_journey",
+  "session_id": "gate_c_journey_exec_r07",
+  "question": "上传的省钱卡订单数据覆盖 2026-04-07 至 2026-05-06。请比较前 15 天与后 15 天的收入变化，给出可发布结论及其边界。",
+  "data": [
+    {"id": "savings_card_orders", "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"}
+  ],
+  "request": {
+    "model_id": "openai/deepseek-v4-flash",
+    "temperature": 0.0,
+    "timeout_seconds": 120,
+    "max_tokens_ladder": [2000, 8000, 32000],
+    "round_cap": 6
+  },
+  "contract": {
+    "required_tool_calls": ["load_data"],
+    "final_answer_numeric_anchors": ["1818", "684", "71", "30"]
+  }
+}
