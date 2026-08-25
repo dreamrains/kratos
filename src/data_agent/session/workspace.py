@@ -250,6 +250,21 @@ class Workspace:
         self._log_transform(source, "derive", name, {"expression": expression})
         return f"派生数据集 '{name}' 已创建: {df.shape[0]} 行 x {df.shape[1]} 列"
 
+    def derive_multi(self, sources: list[str], name: str, df: pd.DataFrame, expression: str = "") -> str:
+        """Create one analysis version with explicit multi-parent lineage."""
+        parents = [self.get_data_identity(source) for source in sources]
+        if not sources or len(parents) != len(sources) or any(not item for item in parents):
+            return "Error: every multi-source parent must have a registered data identity"
+        if name in self._datasets:
+            return f"Error: derived dataset '{name}' already exists; choose a new analysis dataset name"
+        self._datasets[name] = df.copy()
+        parent_ids = [str(item["version_id"]) for item in parents]
+        self._derived_lineage[name] = {"sources": list(sources), "expression": expression}
+        self._set_identity(name, self._datasets[name], role="analysis", parent_version_ids=parent_ids, source_fingerprint="multi:" + ",".join(str(item["fingerprint"]) for item in parents), expression=expression)
+        for source in sources:
+            self._log_transform(source, "derive_multi", name, {"expression": expression, "sources": list(sources)})
+        return f"多父派生数据集 '{name}' 已创建: {df.shape[0]} 行 x {df.shape[1]} 列"
+
     def log_transform(self, source: str, operation: str, target: str, detail: str = "") -> None:
         """记录变换操作到血缘日志。供 transform_data 等工具调用。"""
         self._log_transform(source, operation, target, {"detail": detail} if detail else {})
@@ -311,6 +326,7 @@ def _create_workspace_registry(
     mutating_operations = frozenset({
         "add",
         "derive",
+        "derive_multi",
         "remove",
         "set_metadata",
         "log_transform",
@@ -454,6 +470,13 @@ def _create_workspace_registry(
             if scope.phase == "execution" and name not in storage._datasets:
                 return "Error: derived_scope_not_registered"
             return write_error(scope, name, True) or storage.derive(source, name, frame, expression)
+        if operation == "derive_multi":
+            sources, name, frame, expression = args
+            if scope.phase == "execution" and name not in storage._datasets:
+                return "Error: derived_scope_not_registered"
+            if any(not readable(scope, source) for source in sources):
+                return "Error: dataset_outside_current_task_scope"
+            return write_error(scope, name, True) or storage.derive_multi(sources, name, frame, expression)
         if operation == "remove":
             name = args[0]
             return write_error(scope, name) or storage.remove(name)
@@ -621,6 +644,9 @@ class WorkspaceProxy:
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
         return self.__operate("derive", source, name, df, expression)
+
+    def derive_multi(self, sources: list[str], name: str, df: pd.DataFrame, expression: str = "") -> str:
+        return self.__operate("derive_multi", sources, name, df, expression)
 
     def remove(self, name: str) -> str:
         return self.__operate("remove", name)

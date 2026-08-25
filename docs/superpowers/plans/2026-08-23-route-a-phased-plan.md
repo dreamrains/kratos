@@ -87,7 +87,7 @@
 | Slice 1 | 单文件可信分析黄金链路 | **已完成（Provider 除外）** | [R07 收据](../../audit/2026-08-25-slice-1-r07-freeze.md)：真实 D03 上传、本地 Web、回执链、证据/图表/确认投影、刷新、导出与停止；Provider 0 |
 | Slice 2 | 脏数据、配对分析、版本和确认边界 | **已完成（Provider 除外）** | [R02/R03 冻结收据](../../audit/2026-08-25-slice-2-r02-r03-freeze.md)：真实 D04/D05、本地 Web 浏览器、版本血缘、配对和脏数值契约；Provider 0 |
 | Slice 3 | 时间、曲线、因子、预测等统计能力 | **已完成（Provider 除外）** | [方法完整性冻结收据](../../audit/2026-08-25-slice-3-method-integrity-freeze.md)：D09 曲线 oracle、回测预测、因素降级、模型 identity 与本地 Web 上传；Provider 0 |
-| Slice 4 | 多文件综合、关系与范围完整性 | 未开始 | R04、R05；无静默收窄/stale binding |
+| Slice 4 | 多文件综合、关系与范围完整性 | **已完成（Provider 除外）** | [多文件完整性冻结收据](../../audit/2026-08-25-slice-4-multifile-integrity-freeze.md)：R04 三源对齐、多父血缘、R05 many-to-many 拒绝；Provider 0 |
 | Slice 5 | 开放分析、建议、知识/记忆与长上下文 | 未开始 | R06、R08、R09；探索与 verified 分离 |
 | Slice 6 | Workbench 精简与 Web 交互收口 | 未开始 | 只保留已验证结论、产出、导出；5 条浏览器旅程 |
 | Slice 7 | 历史、回退、分支、迁移与完整回归 | 未开始 | 无损迁移 dry-run；全部旧切片回归 |

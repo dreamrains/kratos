@@ -278,6 +278,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "describe_dataset", "preview_data",
         "compare_periods", "top_n",
         "contribute_decomposition", "funnel_analysis",
+        "synthesize_time_series",
         "interpret_dataset",
     },
     "ml": {
@@ -345,6 +346,7 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
     "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
     "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
+    "synthesize_time_series": _cap("analysis.multi_file_time_synthesis", "multi_file", ["trend", "relationship", "multi_file"], evidence_fields=["source_identities", "coverage", "missing_aligned_dates"]),
     "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["effect_size", "significance"], risk_level="medium", requires_confirmation=True),
     "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
     "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
