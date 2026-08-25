@@ -6,6 +6,9 @@
   "data": [
     {"id": "savings_card_orders", "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"}
   ],
+  "uploads": [
+    {"data_id": "savings_card_orders", "as": "省钱卡订单.xlsx"}
+  ],
   "request": {
     "model_id": "openai/deepseek-v4-flash",
     "temperature": 0.0,

@@ -204,8 +204,54 @@ def test_r09_routing_journey_freezes_an_unambiguous_data_reference():
         source_digest=lambda root: "sha256:source",
     )
     assert report["ready"] is True, report["errors"]
-    assert report["max_call_budget"] == 24
+    assert report["max_call_budget"] == 30
+    assert report["request"]["round_cap"] == 10
     assert report["data"][0]["id"] == "game_b_retention"
+
+
+def test_uploads_place_frozen_data_in_the_inbox_via_the_product_path(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "workspace_dir", tmp_path)
+    placed, errors = journey._perform_uploads([{"data_id": "savings_card_orders", "as": "省钱卡订单.xlsx"}])
+    assert errors == []
+    assert [item["as"] for item in placed] == ["省钱卡订单.xlsx"]
+    inbox = tmp_path / "inbox"
+    uploaded = inbox / "省钱卡订单.xlsx"
+    assert uploaded.is_file()
+    import hashlib
+
+    assert hashlib.sha256(uploaded.read_bytes()).hexdigest() == "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+
+    _, errors = journey._perform_uploads([{"data_id": "no_such_file", "as": "x.xlsx"}])
+    assert any("unknown upload data id" in error for error in errors)
+
+
+def test_executor_uploads_before_the_turn_and_the_model_loads_by_name(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "workspace_dir", tmp_path)
+    once = _FakeOnceLLM([
+        Response(tool_calls=[ToolCall(
+            id="c1", name="load_data",
+            arguments={"source": "省钱卡订单.xlsx", "name": "r07_orders"},
+        )], finish_reason="tool_calls"),
+        Response(tool_calls=[ToolCall(
+            id="c2", name="compare_periods",
+            arguments={"name": "r07_orders", "date_col": "支付时间", "metrics": "售价",
+                        "period_a": "2026-04-07~2026-04-21", "period_b": "2026-04-22~2026-05-06"},
+        )], finish_reason="tool_calls"),
+        _final_round("结论：前 15 天收入 1818，后 15 天收入 684，总计 71 笔订单覆盖 30 个自然日。边界：描述性趋势。"),
+    ])
+    report = journey.execute_authorized_journey(
+        journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_candidate.json",
+        authorized_source_digest="sha256:source",
+        once_client=once,
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["status"] == "passed", report
+    assert [item["as"] for item in report["uploads"]] == ["省钱卡订单.xlsx"]
+    assert report["tool_calls_executed"][:1] == ["load_data"]
 
 
 def test_executor_refuses_a_digest_mismatch_without_any_call():

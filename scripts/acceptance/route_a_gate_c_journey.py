@@ -109,6 +109,42 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _perform_uploads(uploads: list) -> tuple[list[dict], list[str]]:
+    """Place frozen reference files into the workspace inbox before a turn.
+
+    The plan defines journeys as starting from an upload; performing it via
+    the product's own inbox path makes "the uploaded data" a true premise
+    instead of an ambiguity the model has to resolve by luck.
+    """
+    import hashlib
+
+    from data_agent.config import get_config
+
+    from scripts.acceptance.real_data_manifest import REFERENCE_DATA
+
+    errors: list[str] = []
+    placed: list[dict] = []
+    inbox = get_config().inbox_dir
+    inbox.mkdir(parents=True, exist_ok=True)
+    for item in uploads or []:
+        data_id = str(item.get("data_id", ""))
+        reference = REFERENCE_DATA.by_id.get(data_id)
+        if reference is None:
+            errors.append(f"unknown upload data id: {data_id}")
+            continue
+        name = str(item.get("as") or reference.filename)
+        if not name.strip():
+            errors.append(f"upload 'as' must be a non-empty filename for {data_id}")
+            continue
+        source = REFERENCE_DATA.path(data_id)
+        if hashlib.sha256(source.read_bytes()).hexdigest() != reference.sha256:
+            errors.append(f"upload source hash mismatch for {data_id}")
+            continue
+        shutil.copyfile(source, inbox / name)
+        placed.append({"as": name, "sha256": f"sha256:{reference.sha256}"})
+    return placed, errors
+
+
 def run_journey_replay(
     manifest_path: Path,
     *,
@@ -383,6 +419,8 @@ def journey_preflight(
         anchors = contract.get("final_answer_numeric_anchors", [])
         if not isinstance(anchors, list) or not anchors or not all(str(item).strip() for item in anchors):
             errors.append("contract.final_answer_numeric_anchors must be a non-empty list")
+    from data_agent.config import get_config
+
     from scripts.acceptance.route_a_provider_preflight import _env_or_dotenv
 
     request = manifest.get("request") or {}
@@ -391,6 +429,16 @@ def journey_preflight(
             errors.append(f"environment variable {request[env_field]} is not set")
     ladder = request.get("max_tokens_ladder") if isinstance(request.get("max_tokens_ladder"), list) else []
     round_cap = request.get("round_cap") if isinstance(request.get("round_cap"), int) else 0
+    for item in manifest.get("uploads", []) or []:
+        if not isinstance(item, dict) or not str(item.get("data_id", "")).strip() or not str(item.get("as", "") or "").strip():
+            errors.append("uploads entries need non-empty data_id and as")
+    # Structural trap observed on the R09 run: with round_cap equal to the
+    # wrap-up threshold, the nudge arrives for a round the cap already refuses.
+    wrap_up = get_config().wrap_up_round
+    if wrap_up and round_cap and round_cap <= wrap_up:
+        errors.append(
+            f"round_cap must exceed the active wrap_up_round ({wrap_up}) so the wrap-up nudge gets at least one round"
+        )
     return {
         "schema_version": _EXECUTE_REPORT_SCHEMA,
         "mode": "preflight",
@@ -454,6 +502,11 @@ def execute_authorized_journey(
     if session_dir.exists():
         shutil.rmtree(session_dir)
 
+    uploads_placed, upload_errors = _perform_uploads(manifest.get("uploads", []))
+    if upload_errors:
+        preflight.update({"mode": "executed", "status": "failed", "errors": upload_errors})
+        return preflight
+
     client = CountableJourneyClient(
         round_cap=request["round_cap"],
         ladder=request["max_tokens_ladder"],
@@ -473,6 +526,7 @@ def execute_authorized_journey(
             "round_receipts": client.round_receipts,
             "tool_calls_executed": tool_calls_executed,
             "contract_verdicts": verdicts or {},
+            "uploads": uploads_placed,
             "in_flight_journey": True,
         }
 
