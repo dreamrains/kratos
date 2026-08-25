@@ -217,7 +217,32 @@ def _validate_scenario(scenario: Any, reference_hashes: dict[str, str], expected
     return errors
 
 
-_REQUEST_KEYS = {"temperature", "max_tokens", "timeout_seconds", "response_format", "max_tokens_ladder"}
+_REQUEST_KEYS = {"temperature", "max_tokens", "timeout_seconds", "response_format", "max_tokens_ladder", "api_base", "api_base_env", "api_key_env"}
+
+
+def _env_or_dotenv(name: str, dotenv_path: Path | None = None) -> str | None:
+    """Resolve a variable from the process environment, then the repo .env.
+
+    pydantic-settings loads .env into the config object but not into
+    os.environ, so manifest-declared credentials must fall back to parsing
+    the .env file explicitly.
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+    path = Path(dotenv_path) if dotenv_path is not None else ROOT / ".env"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, raw = stripped.partition("=")
+        if key.strip() == name:
+            return raw.strip().strip('"').strip("'") or None
+    return None
 
 
 def _validate_request(request: Any) -> list[str]:
@@ -249,6 +274,13 @@ def _validate_request(request: Any) -> list[str]:
         errors.append("request.timeout_seconds must be a positive integer")
     if request.get("response_format") != {"type": "json_object"}:
         errors.append("request.response_format must be exactly {'type': 'json_object'}")
+    api_base = request.get("api_base")
+    api_base_env = request.get("api_base_env")
+    if api_base is not None and api_base_env is not None:
+        errors.append("request.api_base and api_base_env are mutually exclusive")
+    for field, value in (("api_base", api_base), ("api_base_env", api_base_env), ("api_key_env", request.get("api_key_env"))):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            errors.append(f"request.{field} must be a non-empty string")
     return errors
 
 
@@ -286,10 +318,20 @@ def preflight(
     model_id = _text(manifest.get("model_id"))
     if not model_id:
         errors.append("model_id is required")
-    if current_model_id is not None and model_id != current_model_id:
-        errors.append("configured model_id does not match frozen model_id")
     request = manifest.get("request")
+    provider_declared = isinstance(request, dict) and any(
+        key in request for key in ("api_base", "api_base_env", "api_key_env")
+    )
+    # A manifest-declared provider (heterogeneous batch) is intentionally not
+    # bound to the configured main model.
+    if current_model_id is not None and model_id != current_model_id and not provider_declared:
+        errors.append("configured model_id does not match frozen model_id")
     errors.extend(_validate_request(request))
+    if isinstance(request, dict):
+        for env_field in ("api_base_env", "api_key_env"):
+            name = request.get(env_field)
+            if name and _env_or_dotenv(name) is None:
+                errors.append(f"environment variable {name} is not set")
     return {
         "schema_version": "route_a_provider_preflight.v1",
         "mode": "preflight",
@@ -433,10 +475,16 @@ def execute_authorized_batch(
     request = manifest["request"]
     rungs = request.get("max_tokens_ladder") or [request["max_tokens"]]
     ladder_batch = len(rungs) > 1
+    api_base = request.get("api_base")
+    if api_base is None and request.get("api_base_env"):
+        api_base = _env_or_dotenv(request["api_base_env"])
+    api_key = _env_or_dotenv(request["api_key_env"]) if request.get("api_key_env") else None
     effective_client = client or LLMClient(
         model_id=report["model_id"],
         temperature=request["temperature"],
         timeout=request["timeout_seconds"],
+        api_base=api_base,
+        api_key=api_key,
     )
     results = []
     calls_made = 0

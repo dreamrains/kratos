@@ -151,9 +151,9 @@ def test_preflight_freezes_the_journey_request_and_worst_case_budget():
         source_digest=lambda root: "sha256:source",
     )
     assert report["ready"] is True, report["errors"]
-    assert report["max_call_budget"] == 18
+    assert report["max_call_budget"] == 24
     assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
-    assert report["request"]["round_cap"] == 6
+    assert report["request"]["round_cap"] == 8
     assert report["model_id"] == "openai/deepseek-v4-flash"
     assert report["data"][0]["sha256"].startswith("sha256:")
 

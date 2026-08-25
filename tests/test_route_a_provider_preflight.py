@@ -549,6 +549,124 @@ def test_executor_does_not_escalate_transport_errors(tmp_path, monkeypatch):
     assert result["results"][0]["error_code"] == "provider_request_error"
 
 
+def test_env_or_dotenv_prefers_process_env_then_parses_dotenv(tmp_path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "# comment\n"
+        "PLAIN_KEY=from-file\n"
+        'QUOTED_KEY="quoted value"\n'
+        "EMPTY_KEY=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PLAIN_KEY", "from-env")
+    assert gate_c._env_or_dotenv("PLAIN_KEY", dotenv) == "from-env"
+    monkeypatch.delenv("PLAIN_KEY")
+    assert gate_c._env_or_dotenv("PLAIN_KEY", dotenv) == "from-file"
+    assert gate_c._env_or_dotenv("QUOTED_KEY", dotenv) == "quoted value"
+    assert gate_c._env_or_dotenv("EMPTY_KEY", dotenv) is None
+    assert gate_c._env_or_dotenv("ABSENT_KEY", dotenv) is None
+
+
+def _provider_manifest(tmp_path, request_overrides):
+    payload = _manifest()
+    payload["model_id"] = "openai/kimi-k3"
+    payload["request"].pop("max_tokens")
+    payload["request"].update({"max_tokens_ladder": [2000, 8000, 32000]})
+    for scenario in payload["scenarios"]:
+        scenario["call_budget"] = 3
+    payload["total_call_budget"] = 6
+    payload["request"].update(request_overrides)
+    path = tmp_path / "provider.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_preflight_accepts_a_manifest_declared_provider_without_cfg_model_binding(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_TEST_KEY", "secret")
+    # current_model_id deliberately differs from the manifest model: a
+    # manifest-declared provider is not bound to the configured main model.
+    report = gate_c.preflight(
+        _provider_manifest(tmp_path, {"api_base": "https://api.moonshot.cn/v1", "api_key_env": "KIMI_TEST_KEY"}),
+        reference_hashes={"d1": "h1", "d2": "h2"},
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True, report["errors"]
+    assert report["model_id"] == "openai/kimi-k3"
+    assert report["request"]["api_base"] == "https://api.moonshot.cn/v1"
+
+    conflicting = gate_c.preflight(
+        _provider_manifest(tmp_path, {"api_base": "https://api.moonshot.cn/v1", "api_base_env": "KIMI_BASE"}),
+        reference_hashes={"d1": "h1", "d2": "h2"},
+        current_model_id="openai/kimi-k3",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert "request.api_base and api_base_env are mutually exclusive" in " ".join(conflicting["errors"])
+
+    monkeypatch.delenv("DEFINITELY_MISSING_KEY_XYZ", raising=False)
+    missing = gate_c.preflight(
+        _provider_manifest(tmp_path, {"api_base": "https://api.moonshot.cn/v1", "api_key_env": "DEFINITELY_MISSING_KEY_XYZ"}),
+        reference_hashes={"d1": "h1", "d2": "h2"},
+        current_model_id="openai/kimi-k3",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert "environment variable DEFINITELY_MISSING_KEY_XYZ is not set" in " ".join(missing["errors"])
+
+
+def test_executor_builds_the_client_with_the_declared_provider(tmp_path, monkeypatch):
+    import data_agent.llm.client as client_module
+
+    monkeypatch.setenv("KIMI_TEST_KEY", "secret")
+    created = []
+
+    class RecordingOnce:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(kwargs)
+            self._responses = iter([_valid_response("one", "f1"), _valid_response("two", "f2")])
+
+        def chat_once(self, messages, tools=None, system=None, response_format=None, max_tokens=None):
+            return next(self._responses)
+
+    real_client = client_module.LLMClient
+    monkeypatch.setattr(client_module, "LLMClient", RecordingOnce)
+    try:
+        frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "openai/kimi-k3", "total_call_budget": 2, "scenarios": []}
+        monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+        result = gate_c.execute_authorized_batch(
+            _provider_manifest(tmp_path, {"api_base": "https://api.moonshot.cn/v1", "api_key_env": "KIMI_TEST_KEY"}),
+            authorized_source_digest="sha256:source",
+        )
+    finally:
+        monkeypatch.setattr(client_module, "LLMClient", real_client)
+    assert result["status"] == "passed"
+    assert created[0]["model_id"] == "openai/kimi-k3"
+    assert created[0]["api_base"] == "https://api.moonshot.cn/v1"
+    assert created[0]["api_key"] == "secret"
+
+
+def test_heterogeneous_kimi_manifest_freezes_identical_prompts_to_the_main_batch(monkeypatch):
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_heterogeneous_kimi.json"
+    report = gate_c.preflight(
+        path,
+        reference_hashes=_reference_hash_map(),
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True, report["errors"]
+    assert report["model_id"] == "openai/kimi-k3"
+    assert report["total_call_budget"] == 12
+    assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
+    assert report["request"]["api_base"] == "https://api.moonshot.cn/v1"
+    assert report["request"]["api_key_env"] == "MOONSHOT_API_KEY"
+    legacy = gate_c._read_manifest(gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_candidates.json")
+    legacy_hashes = {item["id"]: gate_c._prompt_hash(item) for item in legacy["scenarios"]}
+    scenario_ids = {item["id"]: item["prompt_sha256"] for item in report["scenarios"]}
+    assert set(scenario_ids) == {"R01_retention_curve", "R02_paired_before_after", "R04_game_a_synthesis", "R07_end_to_end_publication"}
+    for scenario_id, prompt_hash in scenario_ids.items():
+        assert prompt_hash == legacy_hashes[scenario_id]
+
+
 def test_r05_budget_ladder_canary_freezes_the_ladder_against_the_failed_call():
     path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_r05_budget_ladder_canary.json"
     report = gate_c.preflight(

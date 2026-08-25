@@ -312,10 +312,13 @@ def _validate_candidate_request(request: Any) -> list[str]:
     round_cap = request.get("round_cap")
     if not isinstance(round_cap, int) or isinstance(round_cap, bool) or round_cap < 1 or round_cap > 24:
         errors.append("request.round_cap must be a positive integer")
-    for env_field in ("api_base_env", "api_key_env"):
-        name = request.get(env_field)
-        if name is not None and (not isinstance(name, str) or not name.strip()):
-            errors.append(f"request.{env_field} must be a non-empty environment variable name")
+    api_base = request.get("api_base")
+    api_base_env = request.get("api_base_env")
+    if api_base is not None and api_base_env is not None:
+        errors.append("request.api_base and api_base_env are mutually exclusive")
+    for field, value in (("api_base", api_base), ("api_base_env", api_base_env), ("api_key_env", request.get("api_key_env"))):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            errors.append(f"request.{field} must be a non-empty string")
     return errors
 
 
@@ -373,11 +376,11 @@ def journey_preflight(
         anchors = contract.get("final_answer_numeric_anchors", [])
         if not isinstance(anchors, list) or not anchors or not all(str(item).strip() for item in anchors):
             errors.append("contract.final_answer_numeric_anchors must be a non-empty list")
-    import os
+    from scripts.acceptance.route_a_provider_preflight import _env_or_dotenv
 
     request = manifest.get("request") or {}
     for env_field in ("api_base_env", "api_key_env"):
-        if request.get(env_field) and not os.environ.get(request[env_field]):
+        if request.get(env_field) and _env_or_dotenv(request[env_field]) is None:
             errors.append(f"environment variable {request[env_field]} is not set")
     ladder = request.get("max_tokens_ladder") if isinstance(request.get("max_tokens_ladder"), list) else []
     round_cap = request.get("round_cap") if isinstance(request.get("round_cap"), int) else 0
@@ -423,16 +426,19 @@ def execute_authorized_journey(
     manifest = _read_manifest_with_schema(Path(manifest_path), JOURNEY_CANDIDATE_SCHEMA)
     request = manifest["request"]
     if once_client is None:
-        import os
-
         from data_agent.llm.client import LLMClient
 
+        from scripts.acceptance.route_a_provider_preflight import _env_or_dotenv
+
+        api_base = request.get("api_base")
+        if api_base is None and request.get("api_base_env"):
+            api_base = _env_or_dotenv(request["api_base_env"])
         once_client = LLMClient(
             model_id=request["model_id"],
             temperature=request["temperature"],
             timeout=request["timeout_seconds"],
-            api_base=os.environ.get(request["api_base_env"]) if request.get("api_base_env") else None,
-            api_key=os.environ.get(request["api_key_env"]) if request.get("api_key_env") else None,
+            api_base=api_base,
+            api_key=_env_or_dotenv(request["api_key_env"]) if request.get("api_key_env") else None,
         )
 
     from data_agent.config import get_config
