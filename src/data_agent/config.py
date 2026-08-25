@@ -27,6 +27,8 @@ class AgentConfig(BaseSettings):
     # Agent
     significance_level: float = Field(alias="SIGNIFICANCE_LEVEL", default=0.05)
     token_threshold: int = Field(alias="TOKEN_THRESHOLD", default=200_000)
+    # Round-driven wrap-up nudge for long tool loops; None disables it.
+    wrap_up_round: Optional[int] = Field(alias="WRAP_UP_ROUND", default=8)
 
     # Logging
     log_level: str = Field(alias="LOG_LEVEL", default="INFO")
@@ -70,6 +72,13 @@ class AgentConfig(BaseSettings):
         # max_tokens entirely, so the effective cap follows the model default.
         if v is not None and (v < 100 or v > 128000):
             raise ValueError("MAX_TOKENS must be between 100 and 128000")
+        return v
+
+    @field_validator("wrap_up_round")
+    @classmethod
+    def validate_wrap_up_round(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and (v < 1 or v > 100):
+            raise ValueError("WRAP_UP_ROUND must be between 1 and 100 or empty")
         return v
 
     @field_validator("token_threshold")

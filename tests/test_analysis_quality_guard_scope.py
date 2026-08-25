@@ -41,3 +41,87 @@ def test_guard_fires_once_per_turn_only():
     assert loop._should_continue_for_analysis_quality("比较收入", "answer") is True
     loop._inject_analysis_quality_guard()
     assert loop._should_continue_for_analysis_quality("比较收入", "answer") is False
+
+
+def _wrap_up_count(loop):
+    return sum(
+        1
+        for message in loop.messages
+        if message.get("role") == "system" and "<analysis_wrap_up_guard>" in str(message.get("content") or "")
+    )
+
+
+def test_wrap_up_nudge_injects_once_after_the_threshold_round(monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 2)
+    loop = AgentLoop(client=None, session_id="wrap_up_nudge_unit")
+    loop._reset_turn_tracking()
+    loop._maybe_inject_wrap_up(round_num=1)
+    assert _wrap_up_count(loop) == 0
+    loop._maybe_inject_wrap_up(round_num=2)
+    assert _wrap_up_count(loop) == 1
+    loop._maybe_inject_wrap_up(round_num=3)
+    assert _wrap_up_count(loop) == 1  # once per turn
+
+
+def test_wrap_up_nudge_can_be_disabled(monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", None)
+    loop = AgentLoop(client=None, session_id="wrap_up_nudge_disabled")
+    loop._reset_turn_tracking()
+    for round_num in range(1, 12):
+        loop._maybe_inject_wrap_up(round_num=round_num)
+    assert _wrap_up_count(loop) == 0
+
+
+def test_wrap_up_nudge_resets_between_turns(monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 1)
+    loop = AgentLoop(client=None, session_id="wrap_up_nudge_reset")
+    loop._reset_turn_tracking()
+    loop._maybe_inject_wrap_up(round_num=1)
+    assert _wrap_up_count(loop) == 1
+    loop._reset_turn_tracking()
+    loop._maybe_inject_wrap_up(round_num=1)
+    assert _wrap_up_count(loop) == 2
+
+
+def test_streaming_turn_wraps_up_long_tool_loops(monkeypatch):
+    from data_agent.config import get_config
+    from data_agent.llm.client import Response, ToolCall
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 2)
+    loop = AgentLoop(client=None, session_id="wrap_up_integration")
+
+    def scripted_round(round_num):
+        if round_num >= 3:
+            seen = any(
+                "<analysis_wrap_up_guard>" in str(message.get("content") or "")
+                for message in loop.messages
+            )
+            text = f"wrap-up visible before round 3: {seen}"
+            # The loop publishes final answers through delta events.
+            yield {"type": "text_delta", "text": text, "turn_id": None}
+            yield {
+                "type": "_response",
+                "response": Response(text=text),
+                "streamed_text": text,
+            }
+            return
+        yield {
+            "type": "_response",
+            "response": Response(
+                tool_calls=[ToolCall(id=f"c{round_num}", name="list_data", arguments={})],
+                finish_reason="tool_calls",
+            ),
+            "streamed_text": "",
+        }
+
+    loop._stream_llm_round = scripted_round
+    events = list(loop.stream_turn("分析数据"))
+    streamed = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
+    assert "wrap-up visible before round 3: True" in streamed
+    assert not [event for event in events if event.get("type") == "error"]

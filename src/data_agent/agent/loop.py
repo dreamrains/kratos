@@ -73,6 +73,15 @@ _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "</analysis_quality_guard>"
 )
 
+_WRAP_UP_GUARD_MESSAGE = (
+    "<analysis_wrap_up_guard>\n"
+    "The analysis has already run for many rounds. Conclude now with the evidence "
+    "already computed: state the verified findings with their numbers, the boundaries "
+    "and limitations, and the next action. Start new exploratory tool calls only if "
+    "strictly required to close the answer.\n"
+    "</analysis_wrap_up_guard>"
+)
+
 
 # === LoopResult: Agent loop return types ===
 
@@ -1155,9 +1164,26 @@ class AgentLoop:
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
+        self._turn_wrap_up_injected = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
         self.context.turn_receipt_ids = []
+
+    def _maybe_inject_wrap_up(self, round_num: int) -> None:
+        """One-time nudge to conclude a turn that keeps exploring.
+
+        Observed on the real R07 journey: the model can spend the whole round
+        budget on tool calls without ever attempting a final answer. Once a
+        completed round reaches the configured threshold and the loop is
+        still going, ask it once to wrap up with the evidence at hand.
+        """
+        if getattr(self, "_turn_wrap_up_injected", False):
+            return
+        threshold = get_config().wrap_up_round
+        if not threshold or round_num < threshold:
+            return
+        self._turn_wrap_up_injected = True
+        self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -2266,6 +2292,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
+            self._maybe_inject_wrap_up(round_num)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -2784,6 +2811,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
+            self._maybe_inject_wrap_up(round_num)
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)

@@ -11,7 +11,7 @@
     "temperature": 0.0,
     "timeout_seconds": 120,
     "max_tokens_ladder": [2000, 8000, 32000],
-    "round_cap": 8
+    "round_cap": 10
   },
   "contract": {
     "required_tool_calls": ["load_data"],
