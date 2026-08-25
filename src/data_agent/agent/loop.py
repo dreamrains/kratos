@@ -99,8 +99,19 @@ _FINALIZATION_GUARD_MESSAGE = (
     "The turn has already completed substantive analysis. Tool use is now closed for "
     "this turn. Continue reasoning over the verified results already in the conversation, "
     "then provide the final answer with numbers, boundaries, limitations, and next action. "
-    "Do not claim facts that the available evidence does not support.\n"
+    "Do not emit tool tags, tool_calls, or requests for more tools, and do not claim facts "
+    "that the available evidence does not support.\n"
     "</analysis_finalization_mode>"
+)
+
+_FINALIZATION_RECOVERY_MESSAGE = (
+    "<analysis_finalization_recovery>\n"
+    "Your previous response attempted tool-invocation markup after tools were intentionally "
+    "closed. That markup was not executed and will not be shown to the user. Do not emit "
+    "tool tags, tool_calls, or requests for more tools. Continue reasoning from the verified "
+    "results already available, then answer directly with numbers, boundaries, limitations, "
+    "and next action.\n"
+    "</analysis_finalization_recovery>"
 )
 
 
@@ -1188,6 +1199,7 @@ class AgentLoop:
         self._turn_verification_injected = False
         self._turn_wrap_up_injected = False
         self._turn_finalization_mode = False
+        self._turn_finalization_recovery_used = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
         self.context.turn_receipt_ids = []
@@ -1207,6 +1219,36 @@ class AgentLoop:
         if getattr(self, "_turn_finalization_mode", False):
             return None
         return registry.active_definitions() or None
+
+    @staticmethod
+    def _contains_unexecuted_tool_markup(text: str) -> bool:
+        """Recognize tool syntax emitted as ordinary final-answer text.
+
+        Some reasoning models emit DSML/OpenAI-style tool tags even when no
+        tool schema is offered. Those bytes are not executable tool calls and
+        must not be mistaken for a publishable analytical answer.
+        """
+        normalized = str(text or "").lower()
+        markers = (
+            "<｜｜dsml｜｜",
+            "<|dsml|>",
+            "<tool_calls>",
+            "<tool_call>",
+            "\"tool_calls\"",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _recover_finalization_tool_markup(self) -> bool:
+        """Request one no-tools correction after an unexecuted tool attempt."""
+        if getattr(self, "_turn_finalization_recovery_used", False):
+            return False
+        self._turn_finalization_recovery_used = True
+        self.messages.append({
+            "role": "assistant",
+            "content": "[未执行的最终化工具标记已省略；请基于现有证据直接作答。]",
+        })
+        self.messages.append({"role": "system", "content": _FINALIZATION_RECOVERY_MESSAGE})
+        return True
 
     def _maybe_inject_wrap_up(self, round_num: int) -> None:
         """Enter finalization after the threshold when evidence is sufficient.
@@ -2292,6 +2334,16 @@ class AgentLoop:
                 yield {"type": "error", "message": budget_truncation}
                 return
 
+            if (
+                getattr(self, "_turn_finalization_mode", False)
+                and not response.has_tool_calls
+                and self._contains_unexecuted_tool_markup(response.text)
+            ):
+                if self._recover_finalization_tool_markup():
+                    continue
+                yield {"type": "error", "message": "最终化轮未生成可发布回答（检测到未执行工具标记）"}
+                return
+
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
@@ -2791,6 +2843,15 @@ class AgentLoop:
                 tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             )
+
+            if (
+                getattr(self, "_turn_finalization_mode", False)
+                and not response.has_tool_calls
+                and self._contains_unexecuted_tool_markup(response.text)
+            ):
+                if self._recover_finalization_tool_markup():
+                    continue
+                return FinalResponse(content="最终化轮未生成可发布回答（检测到未执行工具标记）。")
 
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:

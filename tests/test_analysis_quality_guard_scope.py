@@ -116,6 +116,57 @@ def test_failed_substantive_tool_does_not_unlock_finalization(monkeypatch):
     assert _wrap_up_count(loop) == 1
 
 
+def test_finalization_discards_unexecuted_tool_markup_then_allows_one_direct_answer(monkeypatch):
+    from data_agent.llm.client import Response
+
+    loop = AgentLoop(client=None, session_id="wrap_up_tool_markup_recovery")
+    original_reset = loop._reset_turn_tracking
+
+    def reset_with_finalization():
+        original_reset()
+        loop._turn_finalization_mode = True
+
+    loop._reset_turn_tracking = reset_with_finalization
+    loop._prepare_analysis_turn = lambda _user_input: None
+    loop._ensure_mcp_initialized = lambda: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    loop._verify_before_publication = lambda *_args: None
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    calls = []
+
+    def scripted_round(round_num):
+        calls.append(round_num)
+        if round_num == 1:
+            text = '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="run_python">'
+        else:
+            text = "基于已验证结果的直接结论：1818。"
+        yield {"type": "text_delta", "text": text, "turn_id": None}
+        yield {"type": "_response", "response": Response(text=text), "streamed_text": text}
+
+    loop._stream_llm_round = scripted_round
+    events = list(loop.stream_turn("分析数据"))
+    published = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
+
+    assert calls == [1, 2]
+    assert "1818" in published
+    assert "DSML" not in published
+    assert _finalization_count(loop) == 0
+    assert any("<analysis_finalization_recovery>" in str(message.get("content") or "") for message in loop.messages)
+    assert not [event for event in events if event.get("type") == "error"]
+
+
+def test_finalization_tool_markup_recovery_is_bounded():
+    loop = AgentLoop(client=None, session_id="wrap_up_tool_markup_bound")
+    loop._reset_turn_tracking()
+
+    assert loop._contains_unexecuted_tool_markup('<｜｜DSML｜｜tool_calls>') is True
+    assert loop._contains_unexecuted_tool_markup('"tool_calls": []') is True
+    assert loop._contains_unexecuted_tool_markup("直接给出结论") is False
+    assert loop._recover_finalization_tool_markup() is True
+    assert loop._recover_finalization_tool_markup() is False
+
+
 def test_wrap_up_nudge_can_be_disabled(monkeypatch):
     from data_agent.config import get_config
 
