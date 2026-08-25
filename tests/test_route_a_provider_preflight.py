@@ -64,6 +64,7 @@ def test_prompt_contains_an_exact_nonempty_response_schema_scaffold():
     assert '"method_limitations": ["至少一条来自冻结事实的限制"]' in prompt
     assert '"prohibited_inference_acknowledged": true' in prompt
     assert "不得删除、改名或留空任一字段" in prompt
+    assert "至少一个原样数字" in prompt
 
 
 def test_preflight_rejects_model_or_budget_drift_without_provider_call(tmp_path):
@@ -106,7 +107,7 @@ class _FakeOnceClient:
 def _valid_response(scenario_id, fact_id):
     return Response(text=json.dumps({
         "scenario_id": scenario_id,
-        "decision": "bounded decision",
+        "decision": f"bounded decision {fact_id[-1]}",
         "fact_ids_used": [fact_id],
         "method_limitations": ["observational"],
         "prohibited_inference_acknowledged": True,
@@ -124,6 +125,13 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
     assert result["calls_made"] == 2
     assert len(client.calls) == 2
     assert all(call["tools"] is None for call in client.calls)
+    assert result["results"][0]["response_summary"] == {
+        "fact_ids_used": ["f1"],
+        "method_limitations_count": 1,
+        "prohibited_inference_acknowledged": True,
+        "decision_characters": 18,
+        "next_action_characters": 35,
+    }
 
 
 def test_executor_records_a_failed_response_then_runs_remaining_frozen_scenarios_once(tmp_path, monkeypatch):
@@ -165,3 +173,29 @@ def test_executor_records_a_transport_failure_then_runs_remaining_frozen_scenari
     assert result["results"][0]["failure_stage"] == "provider_request"
     assert result["results"][0]["error_code"] == "provider_request_error"
     assert result["results"][0]["exception_type"] == "RuntimeError"
+
+
+def test_response_rejects_template_echo_and_requires_a_frozen_numeric_anchor():
+    scenario = _manifest()["scenarios"][0]
+    scenario["fact_packet"] = [{"id": "f1", "value": "61 matched users"}]
+    echoed = Response(text=json.dumps({
+        "scenario_id": "one",
+        "decision": "基于冻结事实的有边界判断",
+        "fact_ids_used": ["f1"],
+        "method_limitations": ["observational"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "collect a control group",
+    }))
+    with pytest.raises(gate_c.ProviderResponseValidationError, match="placeholder_decision"):
+        gate_c._validate_response(scenario, echoed)
+
+    ungrounded = Response(text=json.dumps({
+        "scenario_id": "one",
+        "decision": "a bounded decision",
+        "fact_ids_used": ["f1"],
+        "method_limitations": ["observational"],
+        "prohibited_inference_acknowledged": True,
+        "next_action": "collect a control group",
+    }))
+    with pytest.raises(gate_c.ProviderResponseValidationError, match="decision_missing_frozen_numeric_anchor"):
+        gate_c._validate_response(scenario, ungrounded)

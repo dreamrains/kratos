@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Callable
 
@@ -30,6 +31,9 @@ SYSTEM_PROMPT = (
     "你是受审计的数据分析评审员。只能使用提供的冻结事实包，不得调用工具、"
     "不得补造数据或因果结论。只返回一个 JSON 对象，不要 Markdown、解释文字或省略字段。"
 )
+_DECISION_PLACEHOLDER = "基于冻结事实的有边界判断"
+_LIMITATION_PLACEHOLDER = "至少一条来自冻结事实的限制"
+_NEXT_ACTION_PLACEHOLDER = "可执行的下一步"
 
 
 class ProviderPreflightError(ValueError):
@@ -63,11 +67,11 @@ def _prompt_for(scenario: dict[str, Any]) -> str:
     required_fact_ids = [item["id"] for item in packet]
     response_template = {
         "scenario_id": scenario["id"],
-        "decision": "基于冻结事实的有边界判断",
+        "decision": _DECISION_PLACEHOLDER,
         "fact_ids_used": required_fact_ids,
-        "method_limitations": ["至少一条来自冻结事实的限制"],
+        "method_limitations": [_LIMITATION_PLACEHOLDER],
         "prohibited_inference_acknowledged": True,
-        "next_action": "可执行的下一步",
+        "next_action": _NEXT_ACTION_PLACEHOLDER,
     }
     return "\n".join((
         f"场景：{scenario['id']}",
@@ -77,7 +81,8 @@ def _prompt_for(scenario: dict[str, Any]) -> str:
         "只返回以下 JSON 对象结构（不得 Markdown，不得删除、改名或留空任一字段）：",
         json.dumps(response_template, ensure_ascii=False),
         "约束：fact_ids_used 必须逐项包含全部冻结事实 ID；method_limitations 必须为非空字符串数组；"
-        "prohibited_inference_acknowledged 必须是 JSON 布尔值 true；不得给出因果结论或把缺失补造为数据。",
+        "prohibited_inference_acknowledged 必须是 JSON 布尔值 true；decision 必须引用事实包中至少一个原样数字；"
+        "示例字符串仅示意字段类型，不能原样复述；不得给出因果结论或把缺失补造为数据。",
     ))
 
 
@@ -201,9 +206,34 @@ def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any
     for field in ("decision", "next_action"):
         if not _text(payload.get(field)):
             raise ProviderResponseValidationError(f"missing_{field}")
+    decision = _text(payload["decision"])
+    if decision == _DECISION_PLACEHOLDER:
+        raise ProviderResponseValidationError("placeholder_decision")
+    if _text(payload["next_action"]) == _NEXT_ACTION_PLACEHOLDER:
+        raise ProviderResponseValidationError("placeholder_next_action")
+    numeric_anchors = {
+        match
+        for fact in scenario["fact_packet"]
+        for match in re.findall(r"\d+(?:\.\d+)?", fact["value"])
+    }
+    if numeric_anchors and not any(anchor in decision for anchor in numeric_anchors):
+        raise ProviderResponseValidationError("decision_missing_frozen_numeric_anchor")
     if not isinstance(payload.get("method_limitations"), list) or not payload["method_limitations"]:
         raise ProviderResponseValidationError("missing_method_limitations")
+    if any(_text(item) == _LIMITATION_PLACEHOLDER for item in payload["method_limitations"]):
+        raise ProviderResponseValidationError("placeholder_method_limitations")
     return payload
+
+
+def _response_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return verification metadata only; never persist uncontrolled model text."""
+    return {
+        "fact_ids_used": payload["fact_ids_used"],
+        "method_limitations_count": len(payload["method_limitations"]),
+        "prohibited_inference_acknowledged": payload["prohibited_inference_acknowledged"],
+        "decision_characters": len(_text(payload["decision"])),
+        "next_action_characters": len(_text(payload["next_action"])),
+    }
 
 
 def execute_authorized_batch(
@@ -260,7 +290,7 @@ def execute_authorized_batch(
                 "exception_type": type(exc).__name__,
             })
         else:
-            results.append({"id": scenario["id"], "status": "passed", "response": payload})
+            results.append({"id": scenario["id"], "status": "passed", "response_summary": _response_summary(payload)})
     status = "passed" if all(item["status"] == "passed" for item in results) else "completed_with_failures"
     return {**report, "mode": "executed", "status": status, "calls_made": len(results), "results": results}
 

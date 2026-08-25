@@ -7,8 +7,8 @@
 本收据只冻结一次有价值的真实 Provider 评估批次；它不执行 Provider 请求，也不把离线、mock 或 Flask `test_client()` 结果表述为真实 Provider 或浏览器验证。
 
 - 准备前基线提交：`efd23a551c73842fe7041949ab381f731e7a5595`（`feat: complete slice 7 history migration regression`）。
-- 当前受控源码摘要：`sha256:7aa0e6c1d13b64b30ddd864a12e1534053a96eb083062a5e913dda47c44008d4`。
-- 本预检调用真实 Provider：`0`；历史获授权批次见[批次 1 收据](2026-08-25-gate-c-authorized-batch-1.md)。未上传数据；未触碰、暂存或提交 `artifacts/`、`tmp/`。
+- 当前受控源码摘要：`sha256:91f0aaf412bc3be8f0e65cbf6e0fcba60b6a14ccc2ed4dcd624400a81e0e11e1`。
+- 本预检调用真实 Provider：`0`；历史获授权批次见[批次 1 收据](2026-08-25-gate-c-authorized-batch-1.md)和[批次 2 收据](2026-08-25-gate-c-authorized-batch-2-protocol-pass.md)。未上传数据；未触碰、暂存或提交 `artifacts/`、`tmp/`。
 - 本批次刻意不驱动可变轮数的 `AgentLoop`。它只评估冻结事实包上的模型遵循、范围、方法边界与发布语义；完整工具编排继续由既有 provider-neutral 和本地 Web 收据覆盖。
 
 ## 执行契约
@@ -24,10 +24,10 @@
 
 | 场景 | 真实数据 ID 与 SHA-256 | Prompt SHA-256 | 调用预算 |
 |---|---|---|---:|
-| `R02_paired_before_after` | `savings_card_before_after` `e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37` | `6fec7abcc01fda7ae08a1629efae005e76f07c877857f989b5b9e3ebc25f8426` | 1 |
-| `R03_dirty_cross_promotion` | `game_cross_promotion` `063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83` | `02dd0bd8674dae41db50023976808ef8ccd0cae4c0a42694e1c210d35b10d65c` | 1 |
-| `R04_game_a_synthesis` | `game_a_rewarded_video` `cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7`; `game_a_in_app_purchase` `fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e`; `game_a_banner` `21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a` | `a3f01b15702532e94db6c64890d590748f0d611dcabef7e300219bc104418d8b` | 1 |
-| `R07_end_to_end_publication` | `savings_card_orders` `9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3` | `6ca897949e244968435091a2b5a17e441f0db594f9472fbd3132547037a362cd` | 1 |
+| `R02_paired_before_after` | `savings_card_before_after` `e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37` | `ce3a489e2e2fe0c52d670b996558e5cf26fd610ff1edb74043d2497f5e68dec7` | 1 |
+| `R03_dirty_cross_promotion` | `game_cross_promotion` `063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83` | `980727a4567acc13a8d0227a477f1e2771f3e88a7bae9542f994622e95be4b9c` | 1 |
+| `R04_game_a_synthesis` | `game_a_rewarded_video` `cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7`; `game_a_in_app_purchase` `fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e`; `game_a_banner` `21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a` | `469349d64f70d04c6107b0073689781a0fbf7b3e99060d0522e529a416cd840e` | 1 |
+| `R07_end_to_end_publication` | `savings_card_orders` `9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3` | `018865ff3f65135a32251757a68f813c7424e3f911f96a58e04d0fa1a013f7e8` | 1 |
 
 事实包只包含已经由当前离线 oracle 验证的数值、数据质量边界和方法限制。Provider 的输出必须是 JSON，并使用全部事实 ID、承认禁止的因果/缺失补造推断、给出非空判断、限制和下一步。因此，这四次调用回答的是此前最易发生语义退步的四类问题，而不是用真实调用探索未知的协议缺口。
 
@@ -36,14 +36,14 @@
 - `tests/test_route_a_provider_preflight.py` 覆盖数据、模型、请求参数、prompt hash 与精确预算的离线冻结；配置或预算漂移在任何请求前失败。
 - mock `completion` 传输失败验证 `chat_once()` 恰好一次，且 `num_retries=0`。
 - fake Provider 覆盖成功时每场景恰好一次、`tools=None`；非 JSON 与传输失败均只消耗对应一次，随后场景仍各自恰好一次，最终以稳定失败码汇总。
-- 当前运行：`18 passed`（Gate C 预检、模型配置、真实数据 manifest、release source）；`compileall` 与 `git diff --check` 通过。
+- 当前运行：`19 passed`（Gate C 预检、模型配置、真实数据 manifest、release source）；`compileall` 与 `git diff --check` 通过。
 
 ## 下一步与授权格式
 
 只有用户明确确认上表的模型、当前 source digest、四个数据/prompt hash、每场景 1 次和总计最多 4 次后，才能运行：
 
 ```text
-我授权 Gate C 批次：仅在 source digest sha256:7aa0e6c1d13b64b30ddd864a12e1534053a96eb083062a5e913dda47c44008d4 上，使用 openai/deepseek-v4-flash，执行本收据列出的 R02、R03、R04、R07；每个场景恰好 1 次，总计恰好 4 次，使用冻结的数据 hash、prompt hash 和请求参数。预检不通过则零调用；批内失败记录后继续其余场景。不重试、不换模型、不回退、不补跑。
+我授权 Gate C 批次：仅在 source digest sha256:91f0aaf412bc3be8f0e65cbf6e0fcba60b6a14ccc2ed4dcd624400a81e0e11e1 上，使用 openai/deepseek-v4-flash，执行本收据列出的 R02、R03、R04、R07；每个场景恰好 1 次，总计恰好 4次，使用冻结的数据 hash、prompt hash 和请求参数。预检不通过则零调用；批内失败记录后继续其余场景。不重试、不换模型、不回退、不补跑。
 ```
 
 如源码、模型、数据、提示或请求参数变化，预检和授权均失效，必须重建冻结单；不能沿用本收据。
