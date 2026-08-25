@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -236,6 +237,32 @@ def _response_summary(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _assert_sanitized_report(value: Any) -> None:
+    """Reject report payloads that could retain uncontrolled Provider content."""
+    if isinstance(value, dict):
+        forbidden = {"response", "text", "reasoning", "raw"} & set(value)
+        if forbidden:
+            raise ProviderPreflightError(f"report contains forbidden raw-response keys: {sorted(forbidden)}")
+        for item in value.values():
+            _assert_sanitized_report(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_sanitized_report(item)
+
+
+def write_execution_report(path: Path, report: dict[str, Any]) -> Path:
+    """Atomically persist only the sanitized batch receipt under docs/audit."""
+    target = Path(path).resolve()
+    audit_root = (ROOT / "docs" / "audit").resolve()
+    if target.parent != audit_root or target.suffix != ".json":
+        raise ProviderPreflightError("report path must be a .json file directly under docs/audit")
+    _assert_sanitized_report(report)
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, target)
+    return target
+
+
 def execute_authorized_batch(
     manifest_path: Path,
     *,
@@ -300,13 +327,17 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=ROOT / "tests" / "acceptance" / "route_a_gate_c_candidates.json")
     parser.add_argument("--execute", action="store_true", help="make the frozen Provider calls; requires exact authorization")
     parser.add_argument("--authorized-source-digest", default="")
+    parser.add_argument("--report-path", type=Path, help="sanitized JSON receipt required for --execute")
     args = parser.parse_args()
     from data_agent.config import get_config
 
     if not args.execute:
         result = preflight(args.manifest, current_model_id=get_config().model_id)
     else:
+        if args.report_path is None:
+            parser.error("--report-path is required with --execute before any Provider request")
         result = execute_authorized_batch(args.manifest, authorized_source_digest=args.authorized_source_digest)
+        write_execution_report(args.report_path, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if (result.get("status") == "passed" if args.execute else result.get("ready")) else 2
 

@@ -199,3 +199,21 @@ def test_response_rejects_template_echo_and_requires_a_frozen_numeric_anchor():
     }))
     with pytest.raises(gate_c.ProviderResponseValidationError, match="decision_missing_frozen_numeric_anchor"):
         gate_c._validate_response(scenario, ungrounded)
+
+
+def test_execution_report_is_atomic_sanitized_and_limited_to_audit_directory(tmp_path, monkeypatch):
+    audit_root = tmp_path / "docs" / "audit"
+    audit_root.mkdir(parents=True)
+    monkeypatch.setattr(gate_c, "ROOT", tmp_path)
+    report = {
+        "source_digest": "sha256:source",
+        "status": "passed",
+        "results": [{"id": "one", "response_summary": {"decision_characters": 18}}],
+    }
+    path = gate_c.write_execution_report(audit_root / "batch.json", report)
+    assert json.loads(path.read_text(encoding="utf-8")) == report
+    assert not (audit_root / ".batch.json.tmp").exists()
+    with pytest.raises(gate_c.ProviderPreflightError, match="forbidden raw-response"):
+        gate_c.write_execution_report(audit_root / "unsafe.json", {"response": "uncontrolled"})
+    with pytest.raises(gate_c.ProviderPreflightError, match="docs/audit"):
+        gate_c.write_execution_report(tmp_path / "outside.json", report)
