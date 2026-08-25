@@ -156,6 +156,7 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
         "json_envelope": "direct",
         "response_shape": "direct_object",
         "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "empty_or_non_string",
         "response_finish_reason": "stop",
     }
 
@@ -176,6 +177,7 @@ def test_executor_records_a_failed_response_then_runs_remaining_frozen_scenarios
         "error_code": "response_not_json",
         "response_shape": "no_json_object_start",
         "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "empty_or_non_string",
         "response_finish_reason": "stop",
     }
     assert result["results"][1]["status"] == "passed"
@@ -251,20 +253,38 @@ def test_response_accepts_one_wrapped_json_object_without_retaining_wrapper(enve
     assert "response" not in summary
 
 
-@pytest.mark.parametrize(("text", "code", "shape"), [
-    ("", "response_not_json", "empty"),
-    ("plain prose only", "response_not_json", "no_json_object_start"),
-    ("{not valid json", "response_not_json", "invalid_json_object"),
-    ("[]", "response_not_json_object", "direct_non_object"),
+@pytest.mark.parametrize(("text", "finish_reason", "code", "shape"), [
+    ("", "stop", "response_not_json", "empty"),
+    ("plain prose only", "stop", "response_not_json", "no_json_object_start"),
+    ("{not valid json", "stop", "response_not_json", "invalid_json_object"),
+    ("[]", "stop", "response_not_json_object", "direct_non_object"),
 ])
-def test_response_failure_records_only_safe_transport_shape(text, code, shape):
+def test_response_failure_records_only_safe_transport_shape(text, finish_reason, code, shape):
     scenario = _manifest()["scenarios"][0]
     with pytest.raises(gate_c.ProviderResponseValidationError) as error:
-        gate_c._validate_response(scenario, Response(text=text, finish_reason="length"))
+        gate_c._validate_response(scenario, Response(text=text, finish_reason=finish_reason))
     assert error.value.code == code
     assert error.value.diagnostics == {
         "response_shape": shape,
         "response_length_bucket": "empty_or_non_string" if not text else "1_to_256",
+        "response_reasoning_length_bucket": "empty_or_non_string",
+        "response_finish_reason": finish_reason,
+    }
+
+
+def test_response_length_is_a_truncation_even_if_partial_text_looks_structured():
+    scenario = _manifest()["scenarios"][0]
+    response = Response(
+        text=json.dumps({"scenario_id": "one"}),
+        finish_reason="length",
+        reasoning_content="internal reasoning" * 30,
+    )
+    with pytest.raises(gate_c.ProviderResponseValidationError, match="response_truncated") as error:
+        gate_c._validate_response(scenario, response)
+    assert error.value.diagnostics == {
+        "response_shape": "truncated_before_complete",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024",
         "response_finish_reason": "length",
     }
 

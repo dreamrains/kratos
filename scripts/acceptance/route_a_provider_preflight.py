@@ -98,7 +98,7 @@ def _finish_reason_bucket(response: Any) -> str:
     return value if value in {"stop", "length", "tool_calls", "content_filter"} else "missing_or_other"
 
 
-def _response_length_bucket(raw: Any) -> str:
+def _content_length_bucket(raw: Any) -> str:
     if not isinstance(raw, str) or not raw:
         return "empty_or_non_string"
     length = len(raw)
@@ -115,7 +115,8 @@ def _transport_diagnostics(response: Any, raw: Any, shape: str) -> dict[str, str
     """Return response-shape evidence without retaining Provider-controlled text."""
     return {
         "response_shape": shape,
-        "response_length_bucket": _response_length_bucket(raw),
+        "response_length_bucket": _content_length_bucket(raw),
+        "response_reasoning_length_bucket": _content_length_bucket(getattr(response, "reasoning_content", "") or ""),
         "response_finish_reason": _finish_reason_bucket(response),
     }
 
@@ -284,8 +285,10 @@ def preflight(
 
 
 def _validate_response(scenario: dict[str, Any], response: Any) -> dict[str, Any]:
+    raw = getattr(response, "text", "") or ""
+    if getattr(response, "finish_reason", None) == "length":
+        raise _response_error(response, raw, "response_truncated", "truncated_before_complete")
     if getattr(response, "tool_calls", None):
-        raw = getattr(response, "text", "") or ""
         raise _response_error(response, raw, "tool_calls_disallowed", "tool_calls")
     payload, envelope, diagnostics = _decode_response_object(response)
     try:
