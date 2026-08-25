@@ -192,6 +192,22 @@ def test_preflight_rejects_invalid_journeys(tmp_path):
     assert "session_id must be dedicated" in errors
 
 
+def test_r09_routing_journey_freezes_an_unambiguous_data_reference():
+    # The R07 four-run lesson: "uploaded data" wording triggers clarification
+    # suspension in a headless context. R09's question must name the file.
+    path = journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r09_candidate.json"
+    manifest = journey._read_manifest_with_schema(path, journey.JOURNEY_CANDIDATE_SCHEMA)
+    assert "reference/test_doc/" in manifest["question"]
+    assert manifest["contract"]["required_tool_calls"] == ["load_data", "curve_fitting"]
+    report = journey.journey_preflight(
+        path,
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True, report["errors"]
+    assert report["max_call_budget"] == 24
+    assert report["data"][0]["id"] == "game_b_retention"
+
+
 def test_executor_refuses_a_digest_mismatch_without_any_call():
     once = _FakeOnceLLM([])
     report = journey.execute_authorized_journey(
