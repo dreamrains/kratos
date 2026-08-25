@@ -1328,6 +1328,23 @@ class AgentLoop:
                 extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
             )
 
+    @staticmethod
+    def _budget_truncation_message(response) -> str | None:
+        """Explicit guidance when reasoning exhausted the output budget.
+
+        The client already attempted its bounded budget escalations before the
+        response surfaced here; remaining truncation needs user action, not a
+        silent empty answer.
+        """
+        if response is None or getattr(response, "finish_reason", None) != "length":
+            return None
+        if (getattr(response, "text", "") or "").strip():
+            return None
+        return (
+            "模型推理耗尽了输出预算（已自动提升预算重试仍被截断）。"
+            "请在设置中提高 MAX_TOKENS 或更换模型后重试。"
+        )
+
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._is_analysis_quality_guard_candidate()
 
@@ -2180,6 +2197,11 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
+            budget_truncation = self._budget_truncation_message(response)
+            if budget_truncation:
+                yield {"type": "error", "message": budget_truncation}
+                return
+
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
@@ -2347,6 +2369,11 @@ class AgentLoop:
 
             if response is None:
                 yield {"type": "error", "message": "LLM 返回为空"}
+                return
+
+            budget_truncation = self._budget_truncation_message(response)
+            if budget_truncation:
+                yield {"type": "error", "message": budget_truncation}
                 return
 
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}

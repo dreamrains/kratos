@@ -91,7 +91,7 @@
 | Slice 5 | 开放分析、建议、知识/记忆与长上下文 | **已完成（Provider 除外）** | [开放分析完整性冻结收据](../../audit/2026-08-25-slice-5-open-analysis-integrity-freeze.md)：动态工具可达、探索回放收据、建议/竞争解释纪律、知识冲突披露与压缩身份义务保留；Provider 0 |
 | Slice 6 | Workbench 精简与 Web 交互收口 | **已完成（Provider 除外）** | [Workbench 最小投影冻结收据](../../audit/2026-08-25-slice-6-workbench-minimal-freeze.md)：只保留已验证结论、产出物和导出；真实本地浏览器验证当前页与导出入口；Provider 0 |
 | Slice 7 | 历史、回退、分支、迁移与完整回归 | **实现完成（Provider 除外）** | [历史迁移与回归冻结收据](../../audit/2026-08-25-slice-7-history-migration-regression-freeze.md)：只读迁移审计、显式 apply、缺原文件只读、历史/任务/能力与离线矩阵回归；上传型浏览器五旅程与 Gate C 仍需单独授权 |
-| Gate C | 真实 Provider 冻结与授权 | **四场景历史批次通过；R01–R07 JSON-object 批次为 6 通过/1 非 JSON，严格信封解析批次已重新冻结，待精确授权** | [四场景预检](../../audit/2026-08-25-gate-c-exact-call-preflight.md)、[R01–R07 旧预检](../../audit/2026-08-25-gate-c-main-model-r01-r07-preflight.md)、[首次不可审计收据](../../audit/2026-08-25-gate-c-main-model-r01-r07-report-unavailable.md)、[审计批次](../../audit/2026-08-25-gate-c-main-model-r01-r07-audited-batch.md)、[JSON-object 批次](../../audit/2026-08-25-gate-c-main-model-r01-r07-json-object-batch.md)、[严格信封预检](../../audit/2026-08-25-gate-c-main-model-r01-r07-wrapped-json-preflight.md)、[R02 停止收据](../../audit/2026-08-25-gate-c-authorized-r02-stop.md)、[批次 1](../../audit/2026-08-25-gate-c-authorized-batch-1.md)、[批次 2](../../audit/2026-08-25-gate-c-authorized-batch-2-protocol-pass.md) 与 [批次 3](../../audit/2026-08-25-gate-c-authorized-batch-3-grounded-pass.md)：新增 R01/R05/R06 已有真实数据 oracle；异构模型和完整 AgentLoop/Web 仍未覆盖 |
+| Gate C | 真实 Provider 冻结与授权 | **2000-token R01–R07 批次恰好 7 次执行：6 通过，R05 因推理耗尽预算截断；主模型全量批次未通过。已落地预算架构修复（Provider 托管默认 + 有界升级 + 冻结阶梯），R05 阶梯 canary 已冻结待精确授权** | [2000-token 批次报告](../../audit/2026-08-25-gate-c-main-model-r01-r07-2000-batch-report.json)、[截断诊断修复](../../audit/2026-08-25-gate-c-length-truncation-remediation.md)、[R05 预算阶梯修复与 canary 预检](../../audit/2026-08-25-gate-c-r05-budget-ladder-remediation.md)；更早批次见 [四场景预检](../../audit/2026-08-25-gate-c-exact-call-preflight.md)、[审计批次](../../audit/2026-08-25-gate-c-main-model-r01-r07-audited-batch.md)、[JSON-object 批次](../../audit/2026-08-25-gate-c-main-model-r01-r07-json-object-batch.md)、[批次 1](../../audit/2026-08-25-gate-c-authorized-batch-1.md)、[批次 2](../../audit/2026-08-25-gate-c-authorized-batch-2-protocol-pass.md) 与 [批次 3](../../audit/2026-08-25-gate-c-authorized-batch-3-grounded-pass.md)：新增 R01/R05/R06 已有真实数据 oracle；异构模型和完整 AgentLoop/Web 仍未覆盖 |
 | Gate D | 发布候选审阅 | 未开始 | 当前 digest 的 L0–L4 收据；用户决定是否进入部署流程 |
 
 每个切片结束时停止并交付：源码摘要、工作树、改动、测试、未通过项、真实调用消耗（若有）、风险和下一切片提案。不会因计划写了“下一步”就自动提交或继续高风险动作。
@@ -293,6 +293,8 @@
 - R09 只选真实适用的高级能力，不为覆盖而强行调用。
 
 在申请授权前先用离线回放测出每个旅程的实际调用结构，然后向用户提交精确冻结单：模型、prompt、文件 hash、场景、每场景调用次数和总次数。授权格式必须是可计数的；任何失败立即停止整批，不重试、不换模型、不修复后补跑。
+
+2026-08-25 起输出预算授权支持冻结阶梯（`max_tokens_ladder`，1–3 档严格升序）：每档单次请求、仅前档 `response_truncated` 才升档、任何一档成功即停；总次数按最坏情形（场景数 × 档数）声明并在收据中记录实际调用数与命中档位。产品侧同日落地对应架构：模型路由归一化（裸名可路由）、`MAX_TOKENS` 默认省略（Provider 托管）、推理截断的有界自动升级与终态显式提示；`reasoning_effort` 类降级参数被否决，不进入产品或批次默认。
 
 ### 评估
 

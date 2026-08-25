@@ -185,7 +185,7 @@ def _decode_response_object(response: Any) -> tuple[dict[str, Any], str, dict[st
     return payload, "embedded", _transport_diagnostics(response, raw, "embedded_unique_object")
 
 
-def _validate_scenario(scenario: Any, reference_hashes: dict[str, str]) -> list[str]:
+def _validate_scenario(scenario: Any, reference_hashes: dict[str, str], expected_call_budget: int = 1) -> list[str]:
     if not isinstance(scenario, dict):
         return ["scenario must be an object"]
     scenario_id = _text(scenario.get("id"))
@@ -195,8 +195,13 @@ def _validate_scenario(scenario: Any, reference_hashes: dict[str, str]) -> list[
     for field in ("question",):
         if not _text(scenario.get(field)):
             errors.append(f"{scenario_id}: {field} is required")
-    if scenario.get("call_budget") != 1:
-        errors.append(f"{scenario_id}: call_budget must be exactly 1")
+    if scenario.get("call_budget") != expected_call_budget:
+        detail = (
+            "call_budget must equal the max_tokens_ladder length"
+            if expected_call_budget != 1
+            else "call_budget must be exactly 1"
+        )
+        errors.append(f"{scenario_id}: {detail}")
     if scenario.get("tools_allowed") is not False:
         errors.append(f"{scenario_id}: tools_allowed must be false")
     data_ids = scenario.get("data_ids")
@@ -212,13 +217,33 @@ def _validate_scenario(scenario: Any, reference_hashes: dict[str, str]) -> list[
     return errors
 
 
+_REQUEST_KEYS = {"temperature", "max_tokens", "timeout_seconds", "response_format", "max_tokens_ladder"}
+
+
 def _validate_request(request: Any) -> list[str]:
     if not isinstance(request, dict):
         return ["request must be an object"]
     errors: list[str] = []
+    if unsupported := sorted(set(request) - _REQUEST_KEYS):
+        errors.append(f"request contains unsupported keys: {unsupported}")
     if request.get("temperature") != 0.0:
         errors.append("request.temperature must be exactly 0.0")
-    if not isinstance(request.get("max_tokens"), int) or request["max_tokens"] <= 0:
+    ladder = request.get("max_tokens_ladder")
+    has_scalar = "max_tokens" in request
+    if has_scalar and ladder is not None:
+        errors.append("request.max_tokens and max_tokens_ladder are mutually exclusive")
+    if ladder is not None:
+        if (
+            not isinstance(ladder, list)
+            or not 1 <= len(ladder) <= 3
+            or not all(isinstance(value, int) and not isinstance(value, bool) for value in ladder)
+        ):
+            errors.append("request.max_tokens_ladder must be a list of 1 to 3 integer rungs")
+        elif any(later <= earlier for earlier, later in zip(ladder, ladder[1:])):
+            errors.append("request.max_tokens_ladder rungs must be strictly ascending")
+        elif any(value < 100 or value > 128000 for value in ladder):
+            errors.append("request.max_tokens_ladder rungs must be between 100 and 128000")
+    elif not has_scalar or not isinstance(request.get("max_tokens"), int) or request["max_tokens"] <= 0:
         errors.append("request.max_tokens must be a positive integer")
     if not isinstance(request.get("timeout_seconds"), int) or request["timeout_seconds"] <= 0:
         errors.append("request.timeout_seconds must be a positive integer")
@@ -250,8 +275,11 @@ def preflight(
     scenario_ids = [_text(item.get("id")) for item in scenarios if isinstance(item, dict)]
     if len(scenario_ids) != len(set(scenario_ids)):
         errors.append("scenario ids must be unique")
+    request = manifest.get("request")
+    ladder = request.get("max_tokens_ladder") if isinstance(request, dict) else None
+    expected_call_budget = len(ladder) if isinstance(ladder, list) and ladder else 1
     for scenario in scenarios:
-        errors.extend(_validate_scenario(scenario, reference_hashes))
+        errors.extend(_validate_scenario(scenario, reference_hashes, expected_call_budget))
     total_budget = sum(item.get("call_budget", 0) for item in scenarios if isinstance(item, dict) and isinstance(item.get("call_budget"), int))
     if manifest.get("total_call_budget") != total_budget:
         errors.append("total_call_budget does not equal the sum of scenario budgets")
@@ -403,19 +431,21 @@ def execute_authorized_batch(
         raise ProviderPreflightError("authorized source digest does not match current source")
     manifest = _read_manifest(Path(manifest_path))
     request = manifest["request"]
+    rungs = request.get("max_tokens_ladder") or [request["max_tokens"]]
+    ladder_batch = len(rungs) > 1
     effective_client = client or LLMClient(
         model_id=report["model_id"],
         temperature=request["temperature"],
-        max_tokens=request["max_tokens"],
         timeout=request["timeout_seconds"],
     )
     results = []
+    calls_made = 0
 
     def persisted_result(*, in_flight: str | None = None) -> dict[str, Any]:
         status = "passed" if results and len(results) == len(manifest["scenarios"]) and all(item["status"] == "passed" for item in results) else "in_progress"
         if len(results) == len(manifest["scenarios"]) and status != "passed":
             status = "completed_with_failures"
-        value = {**report, "mode": "executed", "status": status, "calls_made": len(results), "results": results}
+        value = {**report, "mode": "executed", "status": status, "calls_made": calls_made, "results": results}
         if in_flight is not None:
             value["in_flight_scenario_id"] = in_flight
         return value
@@ -425,32 +455,71 @@ def execute_authorized_batch(
     for scenario in manifest["scenarios"]:
         if report_path is not None:
             write_execution_report(report_path, persisted_result(in_flight=scenario["id"]))
-        try:
-            response = effective_client.chat_once(
-                messages=[{"role": "user", "content": _prompt_for(scenario)}],
-                tools=None,
-                system=SYSTEM_PROMPT,
-                response_format=request["response_format"],
-            )
-            payload = _validate_response(scenario, response)
-        except ProviderResponseValidationError as exc:
-            results.append({
+        attempts: list[dict[str, Any]] = []
+        outcome: dict[str, Any] | None = None
+        for rung in rungs:
+            try:
+                response = effective_client.chat_once(
+                    messages=[{"role": "user", "content": _prompt_for(scenario)}],
+                    tools=None,
+                    system=SYSTEM_PROMPT,
+                    response_format=request["response_format"],
+                    max_tokens=rung,
+                )
+                payload = _validate_response(scenario, response)
+            except ProviderResponseValidationError as exc:
+                calls_made += 1
+                attempts.append({"max_tokens": rung, "error_code": exc.code, **exc.diagnostics})
+                if exc.code != "response_truncated":
+                    # Only a truncated response climbs the ladder; semantic
+                    # failures would fail identically at every rung.
+                    outcome = {
+                        "id": scenario["id"],
+                        "status": "failed",
+                        "failure_stage": "provider_response_validation",
+                        "error_code": exc.code,
+                        **({"max_tokens_attempts": attempts} if ladder_batch else {}),
+                        **exc.diagnostics,
+                    }
+                    break
+            except Exception as exc:
+                calls_made += 1
+                attempts.append({
+                    "max_tokens": rung,
+                    "error_code": "provider_request_error",
+                    "exception_type": type(exc).__name__,
+                })
+                outcome = {
+                    "id": scenario["id"],
+                    "status": "failed",
+                    "failure_stage": "provider_request",
+                    "error_code": "provider_request_error",
+                    "exception_type": type(exc).__name__,
+                    **({"max_tokens_attempts": attempts} if ladder_batch else {}),
+                }
+                break
+            else:
+                calls_made += 1
+                outcome = {
+                    "id": scenario["id"],
+                    "status": "passed",
+                    **({"max_tokens_used": rung, "max_tokens_attempts": attempts} if ladder_batch else {}),
+                    "response_summary": _response_summary(payload),
+                }
+                break
+            if report_path is not None:
+                write_execution_report(report_path, persisted_result(in_flight=scenario["id"]))
+        if outcome is None:
+            last = attempts[-1]
+            outcome = {
                 "id": scenario["id"],
                 "status": "failed",
                 "failure_stage": "provider_response_validation",
-                "error_code": exc.code,
-                **exc.diagnostics,
-            })
-        except Exception as exc:
-            results.append({
-                "id": scenario["id"],
-                "status": "failed",
-                "failure_stage": "provider_request",
-                "error_code": "provider_request_error",
-                "exception_type": type(exc).__name__,
-            })
-        else:
-            results.append({"id": scenario["id"], "status": "passed", "response_summary": _response_summary(payload)})
+                "error_code": "response_truncated",
+                "max_tokens_attempts": attempts,
+                **{key: value for key, value in last.items() if key not in {"max_tokens", "error_code"}},
+            }
+        results.append(outcome)
         if report_path is not None:
             write_execution_report(report_path, persisted_result())
     return persisted_result()

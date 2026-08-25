@@ -164,8 +164,14 @@ class _FakeOnceClient:
         self.responses = iter(responses)
         self.calls = []
 
-    def chat_once(self, messages, tools=None, system=None, response_format=None):
-        self.calls.append({"messages": messages, "tools": tools, "system": system, "response_format": response_format})
+    def chat_once(self, messages, tools=None, system=None, response_format=None, max_tokens=None):
+        self.calls.append({
+            "messages": messages,
+            "tools": tools,
+            "system": system,
+            "response_format": response_format,
+            "max_tokens": max_tokens,
+        })
         return next(self.responses)
 
 
@@ -233,9 +239,9 @@ def test_executor_records_a_transport_failure_then_runs_remaining_frozen_scenari
     monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
     client = _FakeOnceClient([RuntimeError("network failure"), _valid_response("two", "f2")])
 
-    def request_once(messages, tools=None, system=None, response_format=None):
+    def request_once(messages, tools=None, system=None, response_format=None, max_tokens=None):
         value = next(client.responses)
-        client.calls.append({"messages": messages, "tools": tools, "system": system, "response_format": response_format})
+        client.calls.append({"messages": messages, "tools": tools, "system": system, "response_format": response_format, "max_tokens": max_tokens})
         if isinstance(value, Exception):
             raise value
         return value
@@ -391,11 +397,11 @@ def test_executor_persists_in_flight_and_each_completed_call(tmp_path, monkeypat
     monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
 
     class RecordingClient(_FakeOnceClient):
-        def chat_once(self, messages, tools=None, system=None, response_format=None):
+        def chat_once(self, messages, tools=None, system=None, response_format=None, max_tokens=None):
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
             assert persisted["calls_made"] == len(self.calls)
             assert persisted["in_flight_scenario_id"] in {"one", "two"}
-            return super().chat_once(messages, tools=tools, system=system, response_format=response_format)
+            return super().chat_once(messages, tools=tools, system=system, response_format=response_format, max_tokens=max_tokens)
 
     client = RecordingClient([_valid_response("one", "f1"), _valid_response("two", "f2")])
     result = gate_c.execute_authorized_batch(
@@ -410,3 +416,159 @@ def test_executor_persists_in_flight_and_each_completed_call(tmp_path, monkeypat
     assert "in_flight_scenario_id" not in persisted
     with pytest.raises(gate_c.ProviderPreflightError, match="already exists"):
         gate_c.initialize_execution_report(report_path, result)
+
+
+def _ladder_manifest() -> dict:
+    return {
+        "schema_version": gate_c.MANIFEST_SCHEMA,
+        "model_id": "test/model",
+        "request": {
+            "temperature": 0.0,
+            "timeout_seconds": 120,
+            "response_format": {"type": "json_object"},
+            "max_tokens_ladder": [2000, 8000, 32000],
+        },
+        "total_call_budget": 3,
+        "scenarios": [
+            {
+                "id": "one",
+                "call_budget": 3,
+                "tools_allowed": False,
+                "data_ids": ["d1"],
+                "question": "q1",
+                "fact_packet": [{"id": "f1", "value": "v1"}],
+            }
+        ],
+    }
+
+
+def _write_ladder_manifest(tmp_path):
+    path = tmp_path / "ladder.json"
+    path.write_text(json.dumps(_ladder_manifest()), encoding="utf-8")
+    return path
+
+
+def test_preflight_freezes_the_budget_ladder_and_its_worst_case_budget(tmp_path):
+    report = gate_c.preflight(
+        _write_ladder_manifest(tmp_path),
+        reference_hashes={"d1": "h1"},
+        current_model_id="test/model",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 3
+    assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
+
+
+def test_preflight_rejects_invalid_budget_ladders(tmp_path):
+    def errors_for(request_overrides, scenario_overrides=None):
+        payload = _ladder_manifest()
+        payload["request"].update(request_overrides)
+        if scenario_overrides:
+            payload["scenarios"][0].update(scenario_overrides)
+        path = tmp_path / "invalid.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        report = gate_c.preflight(
+            path,
+            reference_hashes={"d1": "h1"},
+            current_model_id="test/model",
+            source_digest=lambda root: "sha256:source",
+        )
+        return " ".join(report["errors"])
+
+    assert "max_tokens and max_tokens_ladder are mutually exclusive" in errors_for({"max_tokens": 2000})
+    assert "strictly ascending" in errors_for({"max_tokens_ladder": [8000, 2000]})
+    assert "1 to 3" in errors_for({"max_tokens_ladder": []})
+    assert "1 to 3" in errors_for({"max_tokens_ladder": [1, 2, 3, 4]})
+    assert "must be between 100 and 128000" in errors_for({"max_tokens_ladder": [50, 8000]})
+    assert "call_budget must equal the max_tokens_ladder length" in errors_for(
+        {"max_tokens_ladder": [2000, 8000, 32000]}, {"call_budget": 1},
+    )
+
+
+def _truncated() -> Response:
+    return Response(text="", finish_reason="length")
+
+
+def test_executor_climbs_the_ladder_only_on_truncation_and_stops_at_success(tmp_path, monkeypatch):
+    path = _write_ladder_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 3, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([_truncated(), _truncated(), _valid_response("one", "f1")])
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["status"] == "passed"
+    assert result["calls_made"] == 3
+    assert [call["max_tokens"] for call in client.calls] == [2000, 8000, 32000]
+    scenario_result = result["results"][0]
+    assert scenario_result["status"] == "passed"
+    assert scenario_result["max_tokens_used"] == 32000
+    assert [attempt["max_tokens"] for attempt in scenario_result["max_tokens_attempts"]] == [2000, 8000]
+    assert scenario_result["max_tokens_attempts"][0]["error_code"] == "response_truncated"
+
+
+def test_executor_does_not_escalate_semantic_failures(tmp_path, monkeypatch):
+    path = _write_ladder_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 3, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([Response(text="not json")])
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["calls_made"] == 1
+    assert result["results"][0]["status"] == "failed"
+    assert result["results"][0]["error_code"] == "response_not_json"
+
+
+def test_executor_reports_failure_after_exhausting_the_ladder(tmp_path, monkeypatch):
+    path = _write_ladder_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 3, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([_truncated(), _truncated(), _truncated()])
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["status"] == "completed_with_failures"
+    assert result["calls_made"] == 3
+    failure = result["results"][0]
+    assert failure["error_code"] == "response_truncated"
+    assert [attempt["max_tokens"] for attempt in failure["max_tokens_attempts"]] == [2000, 8000, 32000]
+
+
+def test_executor_does_not_escalate_transport_errors(tmp_path, monkeypatch):
+    path = _write_ladder_manifest(tmp_path)
+    frozen = {"ready": True, "source_digest": "sha256:source", "model_id": "test/model", "total_call_budget": 3, "scenarios": []}
+    monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
+    client = _FakeOnceClient([RuntimeError("network failure")])
+
+    def request_once(messages, tools=None, system=None, response_format=None, max_tokens=None):
+        value = next(client.responses)
+        client.calls.append({"messages": messages, "max_tokens": max_tokens})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    client.chat_once = request_once
+    result = gate_c.execute_authorized_batch(path, authorized_source_digest="sha256:source", client=client)
+    assert result["calls_made"] == 1
+    assert result["results"][0]["error_code"] == "provider_request_error"
+
+
+def test_r05_budget_ladder_canary_freezes_the_ladder_against_the_failed_call():
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_r05_budget_ladder_canary.json"
+    report = gate_c.preflight(
+        path,
+        reference_hashes={
+            "savings_card_orders": "h-orders",
+            "savings_card_user_payments": "h-payments",
+        },
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 3
+    assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
+    assert "max_tokens" not in report["request"]
+    scenario = report["scenarios"][0]
+    assert scenario["id"] == "R05_relationship_scope"
+    # The prompt stays byte-identical to the failed main-batch call; the only
+    # delta is the frozen escalation ladder.
+    main = gate_c._read_manifest(gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_candidates.json")
+    main_r05 = next(item for item in main["scenarios"] if item["id"] == "R05_relationship_scope")
+    assert scenario["prompt_sha256"] == gate_c._prompt_hash(main_r05)
+    assert scenario["prompt_sha256"] == "sha256:2f3103f89767535d9509c9b931eb4cad652f3412c4e6f2a63de3ed903c41694d"

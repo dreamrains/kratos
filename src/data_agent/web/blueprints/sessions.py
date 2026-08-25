@@ -21,12 +21,9 @@ sessions_bp = Blueprint("sessions", __name__)
 
 def _get_model_context_window(model_id: str) -> int | None:
     """Try to get the actual context window (max_input_tokens) for the model."""
-    try:
-        import litellm
-        info = litellm.get_model_info(model_id)
-        return info.get("max_input_tokens") or info.get("max_tokens")
-    except Exception:
-        return None
+    from data_agent.llm.routing import model_context_window
+
+    return model_context_window(model_id)
 
 
 @sessions_bp.get("/sessions")

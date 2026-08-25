@@ -16,7 +16,7 @@ class AgentConfig(BaseSettings):
     model_id: str = Field(alias="MODEL_ID", default="gpt-4o")
     api_base: Optional[str] = Field(alias="API_BASE", default=None)
     api_key: Optional[str] = Field(alias="API_KEY", default=None)
-    max_tokens: int = Field(alias="MAX_TOKENS", default=8000)
+    max_tokens: Optional[int] = Field(alias="MAX_TOKENS", default=None)
     quality_judge_model: Optional[str] = Field(alias="QUALITY_JUDGE_MODEL", default=None)
 
     # Paths
@@ -65,8 +65,10 @@ class AgentConfig(BaseSettings):
 
     @field_validator("max_tokens")
     @classmethod
-    def validate_max_tokens(cls, v: int) -> int:
-        if v < 100 or v > 128000:
+    def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
+        # None means the output budget is provider-managed: the request omits
+        # max_tokens entirely, so the effective cap follows the model default.
+        if v is not None and (v < 100 or v > 128000):
             raise ValueError("MAX_TOKENS must be between 100 and 128000")
         return v
 
