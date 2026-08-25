@@ -207,6 +207,34 @@ def test_preflight_rejects_invalid_journeys(tmp_path):
     assert "session_id must be dedicated" in errors
 
 
+def test_preflight_reserves_a_finalization_recovery_round(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "wrap_up_round", 8)
+    payload = {
+        "schema_version": "route_a_journey_candidate.v1",
+        "journey_id": "too_little_finalization_headroom",
+        "session_id": "gate_c_journey_headroom",
+        "question": "q",
+        "data": [{"id": "savings_card_orders", "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"}],
+        "request": {
+            "model_id": "test/model",
+            "temperature": 0.0,
+            "timeout_seconds": 120,
+            "max_tokens_ladder": [2000],
+            "round_cap": 9,
+        },
+        "contract": {"required_tool_calls": ["load_data"], "final_answer_numeric_anchors": ["1"]},
+    }
+    target = tmp_path / "too_little_headroom.json"
+    target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    report = journey.journey_preflight(target, source_digest=lambda root: "sha256:source")
+
+    assert report["ready"] is False
+    assert "two finalization rounds" in " ".join(report["errors"])
+
+
 def test_r07_question_carries_the_product_file_reference():
     # The web frontend appends "分析文件: {filename}" to the user message on
     # upload (app.js sendMessage); the frozen question must match that shape

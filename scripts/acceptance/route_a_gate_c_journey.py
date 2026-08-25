@@ -432,12 +432,13 @@ def journey_preflight(
     for item in manifest.get("uploads", []) or []:
         if not isinstance(item, dict) or not str(item.get("data_id", "")).strip() or not str(item.get("as", "") or "").strip():
             errors.append("uploads entries need non-empty data_id and as")
-    # Structural trap observed on the R09 run: with round_cap equal to the
-    # wrap-up threshold, the nudge arrives for a round the cap already refuses.
+    # Finalization can need two no-tools rounds: the first direct answer and
+    # one bounded correction when a reasoning model emits tool markup as text.
+    # The cap must reserve both after the wrap-up threshold.
     wrap_up = get_config().wrap_up_round
-    if wrap_up and round_cap and round_cap <= wrap_up:
+    if wrap_up and round_cap and round_cap < wrap_up + 2:
         errors.append(
-            f"round_cap must exceed the active wrap_up_round ({wrap_up}) so the wrap-up nudge gets at least one round"
+            f"round_cap must leave two finalization rounds after the active wrap_up_round ({wrap_up})"
         )
     return {
         "schema_version": _EXECUTE_REPORT_SCHEMA,
