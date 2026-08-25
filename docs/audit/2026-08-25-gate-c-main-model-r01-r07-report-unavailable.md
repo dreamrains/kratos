@@ -8,8 +8,8 @@
 - 不将此批次记为通过、失败或零调用；不重跑、不补跑，也不以另一调用替代缺失报告。
 - 后续修复：执行前要求 `--report-path` 指向 `docs/audit/*.json`，执行完成后原子写入只包含 source digest、预算、稳定失败码和响应摘要的 JSON；拒绝原始响应、文本、推理或 raw 字段。修复后 source digest 变化，任何新真实调用必须重新预检和精确授权。
 
-## 第二次不可审计调用尝试
+## 第二次调用的迟到审计报告
 
-- 修复后用户于 source digest `sha256:63166cea90bf2e516a83587c6fb123230958bae618e1178727a873ec2d3dd2a7` 授权同一 7 场景批次，并指定报告文件 `docs/audit/2026-08-25-gate-c-main-model-r01-r07-batch-report.json`。
-- 进程结束后该文件不存在，控制台通道也未返回 JSON；此版本仅在整批完成后写报告，故同样不能确认场景结果或调用次数，且不重跑。
-- 新修复改为请求前持久化 `in_flight_scenario_id`，每个完成场景后更新 `calls_made/results`；若中断，现存报告将成为精确的已达调用上界和恢复依据。
+- 用户于 source digest `sha256:63166cea90bf2e516a83587c6fb123230958bae618e1178727a873ec2d3dd2a7` 授权同一 7 场景批次，并指定报告文件 `docs/audit/2026-08-25-gate-c-main-model-r01-r07-batch-report.json`。
+- 初次检查时该文件尚未可读；随后报告出现并确认 `calls_made=7`、`completed_with_failures`：R01/R03/R04/R05/R06/R07 通过，R02 为 `response_not_json`。完整稳定元数据见同路径 JSON 与 [审计批次收据](2026-08-25-gate-c-main-model-r01-r07-audited-batch.md)。
+- 逐场景 checkpoint 仍保留：它解决的是将来进程在整批结束前断开时的可审计性，不重写已经发生的本次报告。

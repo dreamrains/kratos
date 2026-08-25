@@ -13,7 +13,7 @@ def _manifest() -> dict:
     return {
         "schema_version": gate_c.MANIFEST_SCHEMA,
         "model_id": "test/model",
-        "request": {"temperature": 0.0, "max_tokens": 1000, "timeout_seconds": 120},
+        "request": {"temperature": 0.0, "max_tokens": 1000, "timeout_seconds": 120, "response_format": {"type": "json_object"}},
         "total_call_budget": 2,
         "scenarios": [
             {
@@ -89,9 +89,12 @@ def test_chat_once_makes_one_call_and_never_retries():
 
     with patch("data_agent.llm.client.completion", fail_once):
         with pytest.raises(RuntimeError, match="transport failure"):
-            LLMClient(model_id="test/model").chat_once([{"role": "user", "content": "q"}])
+            LLMClient(model_id="test/model").chat_once(
+                [{"role": "user", "content": "q"}], response_format={"type": "json_object"}
+            )
     assert len(calls) == 1
     assert calls[0]["num_retries"] == 0
+    assert calls[0]["response_format"] == {"type": "json_object"}
 
 
 class _FakeOnceClient:
@@ -99,8 +102,8 @@ class _FakeOnceClient:
         self.responses = iter(responses)
         self.calls = []
 
-    def chat_once(self, messages, tools=None, system=None):
-        self.calls.append({"messages": messages, "tools": tools, "system": system})
+    def chat_once(self, messages, tools=None, system=None, response_format=None):
+        self.calls.append({"messages": messages, "tools": tools, "system": system, "response_format": response_format})
         return next(self.responses)
 
 
@@ -125,6 +128,7 @@ def test_executor_makes_exactly_one_no_tool_call_per_successful_scenario(tmp_pat
     assert result["calls_made"] == 2
     assert len(client.calls) == 2
     assert all(call["tools"] is None for call in client.calls)
+    assert all(call["response_format"] == {"type": "json_object"} for call in client.calls)
     assert result["results"][0]["response_summary"] == {
         "fact_ids_used": ["f1"],
         "method_limitations_count": 1,
@@ -158,9 +162,9 @@ def test_executor_records_a_transport_failure_then_runs_remaining_frozen_scenari
     monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
     client = _FakeOnceClient([RuntimeError("network failure"), _valid_response("two", "f2")])
 
-    def request_once(messages, tools=None, system=None):
+    def request_once(messages, tools=None, system=None, response_format=None):
         value = next(client.responses)
-        client.calls.append({"messages": messages, "tools": tools, "system": system})
+        client.calls.append({"messages": messages, "tools": tools, "system": system, "response_format": response_format})
         if isinstance(value, Exception):
             raise value
         return value
@@ -229,11 +233,11 @@ def test_executor_persists_in_flight_and_each_completed_call(tmp_path, monkeypat
     monkeypatch.setattr(gate_c, "preflight", lambda *args, **kwargs: frozen)
 
     class RecordingClient(_FakeOnceClient):
-        def chat_once(self, messages, tools=None, system=None):
+        def chat_once(self, messages, tools=None, system=None, response_format=None):
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
             assert persisted["calls_made"] == len(self.calls)
             assert persisted["in_flight_scenario_id"] in {"one", "two"}
-            return super().chat_once(messages, tools=tools, system=system)
+            return super().chat_once(messages, tools=tools, system=system, response_format=response_format)
 
     client = RecordingClient([_valid_response("one", "f1"), _valid_response("two", "f2")])
     result = gate_c.execute_authorized_batch(

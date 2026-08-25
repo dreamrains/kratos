@@ -129,6 +129,8 @@ def _validate_request(request: Any) -> list[str]:
         errors.append("request.max_tokens must be a positive integer")
     if not isinstance(request.get("timeout_seconds"), int) or request["timeout_seconds"] <= 0:
         errors.append("request.timeout_seconds must be a positive integer")
+    if request.get("response_format") != {"type": "json_object"}:
+        errors.append("request.response_format must be exactly {'type': 'json_object'}")
     return errors
 
 
@@ -327,6 +329,7 @@ def execute_authorized_batch(
                 messages=[{"role": "user", "content": _prompt_for(scenario)}],
                 tools=None,
                 system=SYSTEM_PROMPT,
+                response_format=request["response_format"],
             )
             payload = _validate_response(scenario, response)
         except ProviderResponseValidationError as exc:

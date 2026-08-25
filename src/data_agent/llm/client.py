@@ -178,6 +178,7 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         system: Optional[str] = None,
+        response_format: Optional[dict[str, Any]] = None,
     ) -> Response:
         """Make exactly one synchronous Provider request without retry or fallback.
 
@@ -190,6 +191,8 @@ class LLMClient:
         # LiteLLM may otherwise apply its retry policy independently of this
         # client.  Gate C counts request attempts, so this path must opt out.
         kwargs["num_retries"] = 0
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         return _parse_response(completion(**kwargs))
 
     def stream_chat_structured(

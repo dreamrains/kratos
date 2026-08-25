@@ -4,7 +4,8 @@
   "request": {
     "temperature": 0.0,
     "max_tokens": 1000,
-    "timeout_seconds": 120
+    "timeout_seconds": 120,
+    "response_format": {"type": "json_object"}
   },
   "total_call_budget": 7,
   "scenarios": [
