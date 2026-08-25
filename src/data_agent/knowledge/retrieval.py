@@ -202,6 +202,14 @@ def _cjk_bigrams(text: str) -> set[str]:
     return {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
 
 
+def _explicit_claim_anchors(text: str) -> set[str]:
+    """Return stable identifiers, never generic token-overlap guesses."""
+    return {
+        anchor.upper()
+        for anchor in re.findall(r"\b[A-Z][A-Z0-9_]{1,}\b", text)
+    }
+
+
 class KnowledgeRetrievalService:
     def __init__(self, root: Path | None = None, sessions_dir: Path | None = None):
         self.root = root or get_config().knowledge_dir
@@ -272,7 +280,7 @@ class KnowledgeRetrievalService:
             evidence_chars = 0
             total = 0
         else:
-            conflicts = self.detect_conflicts(knowledge_items, memory_items)
+            conflicts = self.detect_conflicts(knowledge_items, memory_items, subject=search_query)
             total = _rendered_context_size(
                 knowledge_items,
                 memory_items,
@@ -298,14 +306,14 @@ class KnowledgeRetrievalService:
                     else:
                         break
                     trimmed = True
-                    conflicts = self.detect_conflicts(knowledge_items, memory_items)
+                    conflicts = self.detect_conflicts(knowledge_items, memory_items, subject=search_query)
                     total = _rendered_context_size(
                         knowledge_items,
                         memory_items,
                         evidence_items,
                         conflicts,
                     )
-        conflicts = self.detect_conflicts(knowledge_items, memory_items)
+        conflicts = self.detect_conflicts(knowledge_items, memory_items, subject=search_query)
         total = _rendered_context_size(
             knowledge_items,
             memory_items,
@@ -338,13 +346,15 @@ class KnowledgeRetrievalService:
         self,
         knowledge_items: list[KnowledgeItem],
         memory_items: list[MemoryItem],
+        *,
+        subject: str = "",
     ) -> list[ConflictRecord]:
         conflicts: list[ConflictRecord] = []
         for knowledge in knowledge_items:
-            knowledge_text = f"{knowledge.title} {knowledge.summary} {knowledge.content}".lower()
+            knowledge_text = f"{knowledge.title} {knowledge.summary} {knowledge.content}"
             for memory in memory_items:
-                memory_text = f"{memory.summary} {memory.text}".lower()
-                if self._looks_conflicting(knowledge_text, memory_text):
+                memory_text = f"{memory.summary} {memory.text}"
+                if self._looks_conflicting(knowledge_text, memory_text, subject=subject):
                     conflicts.append(
                         ConflictRecord(
                             severity=ConflictSeverity.REVIEW,
@@ -380,7 +390,7 @@ class KnowledgeRetrievalService:
     def _compose_conflict_section(self, items: list[ConflictRecord]) -> str:
         return _compose_conflict_section_text(items)
 
-    def _looks_conflicting(self, left: str, right: str) -> bool:
+    def _looks_conflicting(self, left: str, right: str, *, subject: str = "") -> bool:
         negative_markers = (
             " exclude",
             " excludes",
@@ -410,16 +420,12 @@ class KnowledgeRetrievalService:
         )
         if not has_opposing_markers:
             return False
-        has_cjk_marker = any(
-            marker in left or marker in right
-            for marker in ("排除", "不包含", "不含", "不包括", "包含", "包括", "全部", "所有")
-        )
-        if has_cjk_marker:
-            left_bigrams = _cjk_bigrams(left)
-            right_bigrams = _cjk_bigrams(right)
-            return bool(left_bigrams & right_bigrams)
-        overlap = set(_normalize_query(left).split()) & set(_normalize_query(right).split())
-        return len(overlap) >= 2
+        # Common words or CJK bigrams do not prove that claims refer to the
+        # same subject. An explicit identifier (for example GMV or ARPU) is
+        # sufficient. Otherwise, only surface a REVIEW conflict when both
+        # records were retrieved under the user's explicit topic; this is a
+        # disclosure cue, not a token-overlap claim of semantic equivalence.
+        return bool(_explicit_claim_anchors(left) & _explicit_claim_anchors(right)) or bool(subject.strip())
 
     def _has_any_marker(self, text: str, markers: tuple[str, ...]) -> bool:
         normalized = f" {text.lower()} "

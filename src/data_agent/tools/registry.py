@@ -836,6 +836,11 @@ def tool_search(keyword: str) -> str:
     if not keyword.strip():
         return json.dumps({"error": "请提供搜索关键词"}, ensure_ascii=False)
 
+    # `tool_search` is the escape hatch for capabilities that were not part of
+    # the initial prompt. Searching a partially discovered registry silently
+    # amputates those capabilities, so discovery belongs to the search contract.
+    registry._ensure_discovered()
+
     kw = keyword.lower().strip()
     matches = []
     for tool in registry._tools.values():
