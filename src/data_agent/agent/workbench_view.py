@@ -1,318 +1,67 @@
-"""User-value Workbench projections for multifile analysis."""
+"""Minimal, conclusion-only Workbench projection."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from data_agent.agent.data_understanding import build_user_data_brief
-from data_agent.agent.multi_file_scope import build_analysis_scope_plan
-from data_agent.agent.route_capabilities import build_route_capabilities
+
+_CONFIDENCE_ORDER = {"high": 0, "medium": 1}
 
 
 def build_workbench_view(state: Any) -> dict[str, Any]:
-    """Build the Workbench contract: action board, multifile analysis, and details."""
+    """Expose only current, verified conclusions to the Workbench."""
+    return {"verified_conclusions": _verified_conclusions(state)}
+
+
+def _verified_conclusions(state: Any) -> list[dict[str, str]]:
     if state is None:
-        return {
-            "action_board": build_action_board(None),
-            "multifile_analysis": build_multifile_workbench_view(None, capabilities={}),
-            "details": _details_section(None, {}, {}),
-        }
-
-    capabilities = build_route_capabilities(state)
-    goal = _text(getattr(state, "goal", ""))
-    scope_plan = build_analysis_scope_plan(state, user_goal=goal)
-    confirmation = capabilities.get("confirmation_gate")
-    if not isinstance(confirmation, dict):
-        confirmation = {}
-    return {
-        "action_board": build_action_board(state, capabilities=capabilities),
-        "multifile_analysis": build_multifile_workbench_view(
-            state,
-            capabilities=capabilities,
-        ),
-        "details": _details_section(state, scope_plan, confirmation),
-    }
-
-
-def build_multifile_workbench_view(
-    state: Any,
-    *,
-    capabilities: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build a read-only Workbench model from existing state.
-
-    Sections: data understanding + relationships. Analysis directions live in
-    the action board (next_steps); answer coverage lives in the action board
-    (confirmed / uncertain / trust_basis).
-    """
-    return {
-        "data_understanding": _data_understanding_section(state),
-        "relationships": _relationship_section(state),
-    }
-
-
-_ACTION_CONFIDENCE_ORDER = {"high": 0, "medium": 1}
-
-
-def build_action_board(state: Any, *, capabilities: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Conclusion-first primary view: 已确认 / 仍不确定 / 建议下一步 / 为什么可以信任.
-
-    Read-only projection from existing state. No total score, never blocks.
-    """
-    if state is None:
-        return _empty_action_board()
-
-    if capabilities is None:
-        capabilities = build_route_capabilities(state)
-    brief = _data_understanding_section(state)
+        return []
     evidence = _list_attr(state, "evidence_records")
-    verification_reports = _list_attr(state, "verification_reports")
-    latest_verification = verification_reports[-1] if verification_reports else {}
-    verified_evidence_ids = _current_verified_evidence_ids(state, evidence, latest_verification)
-
-    confirmed: list[dict[str, Any]] = []
-    uncertain: list[dict[str, Any]] = []
+    reports = _list_attr(state, "verification_reports")
+    latest = reports[-1] if reports else {}
+    verified_ids = _current_verified_evidence_ids(state, evidence, latest)
+    conclusions = []
     for item in evidence:
-        claim = _text(item.get("claim"))
-        if not claim:
-            continue
-        confidence = _text(item.get("confidence")) or "medium"
         evidence_id = _text(item.get("id"))
-        if confidence in {"high", "medium"} and evidence_id in verified_evidence_ids:
-            confirmed.append({
+        confidence = _text(item.get("confidence")) or "medium"
+        claim = _text(item.get("claim"))
+        if claim and confidence in _CONFIDENCE_ORDER and evidence_id in verified_ids:
+            conclusions.append({
+                "id": evidence_id,
                 "claim": claim,
+                "summary": _text(item.get("result_summary")),
                 "confidence": confidence,
                 "dataset": _text(item.get("dataset")),
-                "summary": _text(item.get("result_summary")),
             })
-        else:
-            uncertain.append({
-                "label": claim,
-                "reason": "awaiting_verification" if confidence in {"high", "medium"} else "low_confidence",
-                "detail": _text(item.get("result_summary")),
-            })
-    confirmed.sort(key=lambda e: _ACTION_CONFIDENCE_ORDER.get(e["confidence"], 2))
-    confirmed = confirmed[:6]
-
-    for limitation in _flatten_limitations(evidence):
-        uncertain.append({"label": limitation, "reason": "limitation", "detail": limitation})
-    for question in _text_list(brief.get("unanswerable_questions")):
-        uncertain.append({"label": question, "reason": "data_gap", "detail": question})
-    uncertain = uncertain[:6]
-
-    next_steps: list[dict[str, Any]] = []
-    for item in _list_items(capabilities.get("executable")) + _list_items(capabilities.get("exploratory")):
-        direction = _text(item.get("direction") or item.get("route"))
-        if not direction:
-            continue
-        next_steps.append({
-            "direction": direction,
-            "reason": _text(item.get("reason")) or "; ".join(_text_list(item.get("support_reasons"))),
-            "kind": "route",
-            "auto_submit": False,
-        })
-    for confirmation in _text_list(brief.get("needed_confirmations")):
-        next_steps.append({"direction": confirmation, "reason": confirmation, "kind": "confirmation"})
-    next_steps = next_steps[:6]
-
-    trust_basis = {
-        "evidence_count": len(evidence),
-        "verified_claim_count": _int_value(
-            latest_verification.get("claim_count"), fallback=len(evidence)
-        ),
-        "failed_count": _int_value(latest_verification.get("failed_count")),
-        "downgraded_count": _int_value(latest_verification.get("downgraded_count")),
-        "verification_status": _text(
-            latest_verification.get("overall_status")
-            or latest_verification.get("status")
-            or "not_run"
-        ),
-        "datasets_used": [
-            _text(d.get("dataset"))
-            for d in _list_items(brief.get("datasets"))
-            if _text(d.get("dataset"))
-        ],
-    }
-    return {
-        "confirmed": confirmed,
-        "uncertain": uncertain,
-        "next_steps": next_steps,
-        "trust_basis": trust_basis,
-    }
+    return sorted(conclusions, key=lambda item: _CONFIDENCE_ORDER[item["confidence"]])[:6]
 
 
-def _empty_action_board() -> dict[str, Any]:
-    return {
-        "confirmed": [],
-        "uncertain": [],
-        "next_steps": [],
-        "trust_basis": {
-            "evidence_count": 0,
-            "verified_claim_count": 0,
-            "failed_count": 0,
-            "downgraded_count": 0,
-            "verification_status": "not_run",
-            "datasets_used": [],
-        },
-    }
-
-
-def _current_verified_evidence_ids(
-    state: Any,
-    evidence: list[dict[str, Any]],
-    latest_verification: dict[str, Any],
-) -> set[str]:
-    """Return only verification results bound to the current evidence payload.
-
-    A verification report becomes stale as soon as evidence, routing context, or
-    cleaning history changes.  Do not project its old pass result as a current
-    conclusion.  Reports created before source-bound verification were added
-    intentionally produce no "confirmed" entries and must be rerun.
-    """
-    expected = _text(latest_verification.get("evidence_fingerprint"))
+def _current_verified_evidence_ids(state: Any, evidence: list[dict[str, Any]], report: dict[str, Any]) -> set[str]:
+    expected = _text(report.get("evidence_fingerprint"))
     if not expected:
         return set()
     try:
         from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
 
-        actual = _evidence_fingerprint(state, evidence)
+        if _evidence_fingerprint(state, evidence) != expected:
+            return set()
     except Exception:
         return set()
-    if actual != expected:
-        return set()
-    return {
-        str(evidence_id)
-        for evidence_id in _text_list(latest_verification.get("passed_evidence_ids"))
-        if str(evidence_id)
-    }
-
-
-def _data_understanding_section(state: Any) -> dict[str, Any]:
-    for bundle in reversed(_list_attr(state, "data_understanding_bundles")):
-        try:
-            brief = build_user_data_brief(bundle)
-        except Exception:
-            continue
-        if brief.get("bundle_id"):
-            return brief
-    return {
-        "bundle_id": "",
-        "fingerprint": "",
-        "datasets": [],
-        "relationships": [],
-        "quality_findings": [],
-        "answerable_questions": [],
-        "unanswerable_questions": [],
-        "recommended_paths": [],
-        "needed_confirmations": [],
-        "analysis_constraints": [],
-    }
-
-
-def _relationship_section(state: Any) -> list[dict[str, Any]]:
-    relationships = []
-    for item in _list_attr(state, "file_relationships"):
-        relationship_id = _text(item.get("relationship_id") or item.get("id"))
-        relationships.append({
-            "id": relationship_id,
-            "status": _text(item.get("status") or item.get("relationship_status")),
-            "file_ids": _text_list(item.get("file_ids")),
-            "requires_confirmation": bool(item.get("requires_confirmation")),
-            "confirmation_type": _text(item.get("confirmation_type")),
-            "value": _text(item.get("value") or item.get("reason")),
-            "risk": _text(item.get("risk") or item.get("risk_level")),
-            "evidence": _text_list(item.get("evidence"))[:4],
-            "uncertainties": _text_list(item.get("uncertainties"))[:4],
-            "diagnostic_only": True,
-        })
-    return relationships
-
-
-def _details_section(
-    state: Any,
-    scope_plan: dict[str, Any],
-    confirmation: dict[str, Any],
-) -> dict[str, Any]:
-    file_decisions = _list_items(scope_plan.get("file_decisions"))
-    return {
-        "scope": {
-            "goal": _text(scope_plan.get("goal")) or _text(getattr(state, "goal", "")),
-            "status": _text(scope_plan.get("scope_status")) or "ready",
-            "files": [
-                {
-                    "file_id": _text(item.get("file_id")),
-                    "dataset": _text(item.get("dataset")),
-                    "filename": _text(item.get("filename")),
-                    "assignment": _text(item.get("assignment")),
-                    "eligibility": _text(item.get("eligibility")),
-                    "reason": _text(item.get("reason")),
-                    "task_count": len(item.get("task_refs") or [])
-                    if isinstance(item.get("task_refs"), list)
-                    else 0,
-                }
-                for item in file_decisions
-            ],
-            "notes": _text_list(scope_plan.get("notes")),
-        },
-        "confirmation": {
-            "status": _text(confirmation.get("status")) or "clear",
-            "question": _text(confirmation.get("question")),
-            "blocking_reason": _text(confirmation.get("blocking_reason")),
-        },
-    }
-
-
-def _flatten_limitations(evidence: list[dict[str, Any]], limit: int = 6) -> list[str]:
-    limitations: list[str] = []
-    for item in evidence:
-        for text in _text_list(item.get("limitations")):
-            if text and text not in limitations:
-                limitations.append(text)
-            if len(limitations) >= limit:
-                return limitations
-    return limitations
+    return {str(item) for item in _text_list(report.get("passed_evidence_ids")) if str(item)}
 
 
 def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:
     value = getattr(state, name, None)
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
-
-
-def _list_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _text_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    result: list[str] = []
-    for item in value:
-        text = _text(item)
-        if text:
-            result.append(text)
-    return result
+    return [_text(item) for item in value if _text(item)] if isinstance(value, list) else []
 
 
 def _text(value: Any) -> str:
-    if value is None:
-        return ""
     if isinstance(value, str):
         return " ".join(value.split())
     if isinstance(value, (int, float, bool)):
         return str(value)
     return ""
-
-
-def _int_value(value: Any, fallback: int = 0) -> int:
-    if isinstance(value, bool):
-        return fallback
-    if isinstance(value, int):
-        return value
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback

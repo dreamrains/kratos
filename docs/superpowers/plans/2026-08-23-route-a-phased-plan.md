@@ -89,7 +89,7 @@
 | Slice 3 | 时间、曲线、因子、预测等统计能力 | **已完成（Provider 除外）** | [方法完整性冻结收据](../../audit/2026-08-25-slice-3-method-integrity-freeze.md)：D09 曲线 oracle、回测预测、因素降级、模型 identity 与本地 Web 上传；Provider 0 |
 | Slice 4 | 多文件综合、关系与范围完整性 | **已完成（Provider 除外）** | [多文件完整性冻结收据](../../audit/2026-08-25-slice-4-multifile-integrity-freeze.md)：R04 三源对齐、多父血缘、R05 many-to-many 拒绝；Provider 0 |
 | Slice 5 | 开放分析、建议、知识/记忆与长上下文 | **已完成（Provider 除外）** | [开放分析完整性冻结收据](../../audit/2026-08-25-slice-5-open-analysis-integrity-freeze.md)：动态工具可达、探索回放收据、建议/竞争解释纪律、知识冲突披露与压缩身份义务保留；Provider 0 |
-| Slice 6 | Workbench 精简与 Web 交互收口 | 未开始 | 只保留已验证结论、产出、导出；5 条浏览器旅程 |
+| Slice 6 | Workbench 精简与 Web 交互收口 | **已完成（Provider 除外）** | [Workbench 最小投影冻结收据](../../audit/2026-08-25-slice-6-workbench-minimal-freeze.md)：只保留已验证结论、产出物和导出；真实本地浏览器验证当前页与导出入口；Provider 0 |
 | Slice 7 | 历史、回退、分支、迁移与完整回归 | 未开始 | 无损迁移 dry-run；全部旧切片回归 |
 | Gate C | 真实 Provider 冻结与授权 | 未开始 | 用户确认精确模型、prompt、数据、调用次数、零重试 |
 | Gate D | 发布候选审阅 | 未开始 | 当前 digest 的 L0–L4 收据；用户决定是否进入部署流程 |

@@ -1245,44 +1245,8 @@ function chatApp() {
             }
         },
 
-        multifileWorkbench() {
-            return this.trustView?.workbench?.multifile_analysis || {};
-        },
-
-        actionBoard() {
-            // Full empty shape (not {}) so the action-board x-show/x-text/x-for
-            // don't throw before /trust resolves (no session / mid-load).
-            // Mirrors backend _empty_action_board().
-            return this.trustView?.workbench?.action_board || {
-                confirmed: [],
-                uncertain: [],
-                next_steps: [],
-                trust_basis: {
-                    evidence_count: 0,
-                    verified_claim_count: 0,
-                    failed_count: 0,
-                    downgraded_count: 0,
-                    verification_status: 'not_run',
-                    datasets_used: [],
-                },
-            };
-        },
-        fullAnswer()    { return this.trustView?.workbench?.full_answer || ''; },
-
-        workbenchScope() {
-            return this.trustView?.workbench?.details?.scope || {};
-        },
-
-        workbenchConfirmation() {
-            return this.trustView?.workbench?.details?.confirmation || {};
-        },
-
-        multifileDataUnderstanding() {
-            return this.multifileWorkbench().data_understanding || {};
-        },
-
-        multifileRelationships() {
-            return this.multifileWorkbench().relationships || [];
+        verifiedConclusions() {
+            return this.trustView?.workbench?.verified_conclusions || [];
         },
 
         visibleListItems(key, items, defaultLimit = 6) {
