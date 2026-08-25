@@ -3,7 +3,7 @@
   "model_id": "openai/deepseek-v4-flash",
   "request": {
     "temperature": 0.0,
-    "max_tokens": 1000,
+    "max_tokens": 2000,
     "timeout_seconds": 120,
     "response_format": {"type": "json_object"}
   },

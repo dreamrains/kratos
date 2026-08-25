@@ -118,6 +118,30 @@ def test_r03_truncation_canary_freezes_only_the_failed_scenario_with_an_explicit
     assert report["scenarios"][0]["prompt_sha256"] == "sha256:980727a4567acc13a8d0227a477f1e2771f3e88a7bae9542f994622e95be4b9c"
 
 
+def test_main_batch_uses_the_r03_canarys_verified_token_budget():
+    path = gate_c.ROOT / "tests" / "acceptance" / "route_a_gate_c_candidates.json"
+    manifest = gate_c._read_manifest(path)
+    assert manifest["request"]["max_tokens"] == 2000
+    report = gate_c.preflight(
+        path,
+        reference_hashes={
+            "savings_card_before_after": "h-before-after",
+            "game_cross_promotion": "h-cross-promotion",
+            "game_a_rewarded_video": "h-video",
+            "game_a_in_app_purchase": "h-iap",
+            "game_a_banner": "h-banner",
+            "savings_card_orders": "h-orders",
+            "game_b_retention": "h-retention",
+            "savings_card_user_payments": "h-payments",
+        },
+        current_model_id="openai/deepseek-v4-flash",
+        source_digest=lambda root: "sha256:source",
+    )
+    assert report["ready"] is True
+    assert report["total_call_budget"] == 7
+    assert report["request"]["max_tokens"] == 2000
+
+
 def test_chat_once_makes_one_call_and_never_retries():
     calls = []
 
