@@ -2,16 +2,19 @@
   "schema_version": "route_a_journey_replay.v1",
   "journey_id": "R07_end_to_end_publication_journey",
   "session_id": "gate_c_journey_replay_r07",
-  "question": "上传的省钱卡订单数据覆盖 2026-04-07 至 2026-05-06。请比较前 15 天与后 15 天的收入变化，给出可发布结论及其边界。",
+  "question": "分析文件: 省钱卡订单.xlsx\n上传的省钱卡订单数据覆盖 2026-04-07 至 2026-05-06。请比较前 15 天与后 15 天的收入变化，给出可发布结论及其边界。",
   "data": [
     {"id": "savings_card_orders", "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"}
+  ],
+  "uploads": [
+    {"data_id": "savings_card_orders", "as": "省钱卡订单.xlsx"}
   ],
   "script": {
     "round_cap": 3,
     "rounds": [
       {
         "tool_calls": [
-          {"name": "load_data", "arguments": {"source": "reference/test_doc/省钱卡订单.xlsx", "name": "r07_orders"}}
+          {"name": "load_data", "arguments": {"source": "省钱卡订单.xlsx", "name": "r07_orders"}}
         ]
       },
       {
@@ -26,6 +29,16 @@
   },
   "contract": {
     "required_tool_calls": ["load_data", "compare_periods"],
-    "final_answer_numeric_anchors": ["1818", "684", "71", "30"]
+    "final_answer_numeric_anchors": ["1818", "684", "71", "30"],
+    "tool_oracle": {
+      "assertions": [
+        {"tool": "compare_periods", "path": "period_a.rows", "equals": 47},
+        {"tool": "compare_periods", "path": "period_b.rows", "equals": 24},
+        {"tool": "compare_periods", "path": "period_a.day_count", "equals": 15},
+        {"tool": "compare_periods", "path": "period_b.day_count", "equals": 15},
+        {"tool": "compare_periods", "path": "metrics.售价.period_a", "equals": 1818.0},
+        {"tool": "compare_periods", "path": "metrics.售价.period_b", "equals": 684.0}
+      ]
+    }
   }
 }

@@ -726,6 +726,31 @@ class TestStatisticalTestRecommendation:
         assert "metrics" in parsed
         assert result.data == parsed
 
+    def test_compare_periods_includes_timestamped_events_on_the_end_date(self, compare_env):
+        """Calendar periods include the full stated end day, not just midnight."""
+        from data_agent.session.workspace import workspace
+        from data_agent.tools.eda import compare_periods
+
+        workspace.add("inclusive_period_end", pd.DataFrame({
+            "日期": pd.to_datetime([
+                "2026-03-01 09:00:00", "2026-03-02 23:59:59",
+                "2026-03-03 08:00:00", "2026-03-04 23:59:59",
+            ]),
+            "金额": [10, 45, 20, 30],
+        }))
+        parsed = json.loads(compare_periods(
+            name="inclusive_period_end",
+            date_col="日期",
+            metrics="金额",
+            period_a="2026-03-01~2026-03-02",
+            period_b="2026-03-03~2026-03-04",
+        ))
+
+        assert parsed["period_a"]["rows"] == 2
+        assert parsed["period_b"]["rows"] == 2
+        assert parsed["metrics"]["金额"]["period_a"] == 55.0
+        assert parsed["metrics"]["金额"]["period_b"] == 50.0
+
     def test_compare_periods_no_recommendation_when_no_diff(self, tmp_path):
         """两组数据无差异时不应推荐统计检验。"""
         from data_agent import config

@@ -42,6 +42,78 @@ def _digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _file_digest(path: Path) -> str:
+    """Return a source-controlled file digest for a frozen replay reference."""
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _read_dotted_path(payload: dict[str, Any], path: str) -> tuple[bool, Any]:
+    """Read a scalar oracle field without allowing arbitrary expressions."""
+    value: Any = payload
+    for segment in path.split("."):
+        if not segment or not isinstance(value, dict) or segment not in value:
+            return False, None
+        value = value[segment]
+    return True, value
+
+
+def _verify_tool_oracle(
+    contract: dict[str, Any],
+    tool_results: dict[str, list[dict[str, Any]]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Compare declared scalar facts with the real structured tool result.
+
+    Final-answer anchors prove only what a model happened to say.  This
+    contract instead freezes the product tool output that the answer must be
+    grounded in, using simple dotted paths so both receipts and tests remain
+    inspectable.
+    """
+    oracle = contract.get("tool_oracle")
+    if oracle is None:
+        return [], []
+    if not isinstance(oracle, dict):
+        return ["contract.tool_oracle must be an object"], []
+    assertions = oracle.get("assertions")
+    if not isinstance(assertions, list) or not assertions:
+        return ["contract.tool_oracle.assertions must be a non-empty list"], []
+
+    errors: list[str] = []
+    observed: list[dict[str, Any]] = []
+    for index, assertion in enumerate(assertions):
+        if not isinstance(assertion, dict):
+            errors.append(f"tool oracle assertion {index} must be an object")
+            continue
+        tool_name = assertion.get("tool")
+        path = assertion.get("path")
+        if not isinstance(tool_name, str) or not tool_name.strip() or not isinstance(path, str) or not path.strip() or "equals" not in assertion:
+            errors.append(f"tool oracle assertion {index} needs tool, path, and equals")
+            continue
+        results = tool_results.get(tool_name, [])
+        if not results:
+            errors.append(f"tool oracle missing result for {tool_name}")
+            continue
+        found, actual = _read_dotted_path(results[-1], path)
+        if not found:
+            errors.append(f"tool oracle missing path {tool_name}.{path}")
+            continue
+        expected = assertion["equals"]
+        observed.append({"tool": tool_name, "path": path, "actual": actual, "expected": expected})
+        if actual != expected:
+            errors.append(f"tool oracle mismatch {tool_name}.{path}: expected {expected!r}, got {actual!r}")
+    return errors, observed
+
+
+def _resolve_oracle_replay(path_value: Any) -> Path | None:
+    if not isinstance(path_value, str) or not path_value.strip():
+        return None
+    candidate = (ROOT / path_value).resolve()
+    try:
+        candidate.relative_to(ROOT.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
 class ScriptedJourneyClient:
     """Replay frozen model rounds against the real AgentLoop.
 
@@ -191,6 +263,11 @@ def run_journey_replay(
     if session_dir.exists():
         shutil.rmtree(session_dir)
 
+    uploads_placed, upload_errors = _perform_uploads(manifest.get("uploads", []))
+    if upload_errors:
+        receipt.update({"status": "failed", "errors": upload_errors, "uploads": uploads_placed})
+        return receipt
+
     script = manifest.get("script", {})
     client = ScriptedJourneyClient(script.get("rounds", []), script.get("round_cap"))
 
@@ -198,6 +275,7 @@ def run_journey_replay(
 
     loop = AgentLoop(client=client, session_id=session_id)
     tool_calls_executed: list[str] = []
+    tool_results: dict[str, list[dict[str, Any]]] = {}
     error_events: list[str] = []
     final_text_parts: list[str] = []
     try:
@@ -207,6 +285,12 @@ def run_journey_replay(
                 final_text_parts.append(str(event.get("text", "")))
             elif kind == "tool_call":
                 tool_calls_executed.append(str(event.get("name", "")))
+            elif kind == "tool_result":
+                tool_name = str(event.get("name", ""))
+                web = event.get("web")
+                data = web.get("data") if isinstance(web, dict) else None
+                if tool_name and isinstance(data, dict):
+                    tool_results.setdefault(tool_name, []).append(data)
             elif kind == "error":
                 error_events.append(str(event.get("message", "")))
     except JourneyStructureError as exc:
@@ -223,22 +307,26 @@ def run_journey_replay(
     contract = manifest.get("contract", {})
     required_tools = [str(item) for item in contract.get("required_tool_calls", [])]
     anchors = [str(item) for item in contract.get("final_answer_numeric_anchors", [])]
+    tool_oracle_errors, tool_oracle_observed = _verify_tool_oracle(contract, tool_results)
     final_text = "".join(final_text_parts)
     verdicts = {
         "required_tools_present": all(tool in tool_calls_executed for tool in required_tools),
         "final_answer_numeric_anchors_present": all(anchor in final_text for anchor in anchors),
+        "tool_oracle_matches": not tool_oracle_errors,
         "no_error_events": not error_events,
         "rounds_match_script": client.rounds_served == len(script.get("rounds", [])),
     }
     receipt.update({
         "status": "passed" if all(verdicts.values()) else "failed",
-        "errors": error_events[:10],
+        "errors": (error_events + tool_oracle_errors)[:10],
         "rounds_used": client.rounds_served,
         "rounds_scripted": len(script.get("rounds", [])),
         "structure": client.structure,
         "tool_calls_executed": tool_calls_executed,
         "contract_verdicts": verdicts,
+        "tool_oracle": {"observed": tool_oracle_observed, "errors": tool_oracle_errors},
         "data": manifest.get("data", []),
+        "uploads": uploads_placed,
     })
     return receipt
 
@@ -419,6 +507,21 @@ def journey_preflight(
         anchors = contract.get("final_answer_numeric_anchors", [])
         if not isinstance(anchors, list) or not anchors or not all(str(item).strip() for item in anchors):
             errors.append("contract.final_answer_numeric_anchors must be a non-empty list")
+        oracle_replay = contract.get("tool_oracle_replay")
+        if oracle_replay is not None:
+            if not isinstance(oracle_replay, dict):
+                errors.append("contract.tool_oracle_replay must be an object")
+            else:
+                replay_path = _resolve_oracle_replay(oracle_replay.get("manifest"))
+                expected_digest = oracle_replay.get("sha256")
+                if replay_path is None or not replay_path.is_file():
+                    errors.append("contract.tool_oracle_replay.manifest must name a tracked replay manifest")
+                elif not isinstance(expected_digest, str) or expected_digest != _file_digest(replay_path):
+                    errors.append("contract.tool_oracle_replay.sha256 does not match replay manifest")
+                else:
+                    replay = run_journey_replay(replay_path, source_digest=source_digest)
+                    if replay.get("status") != "passed":
+                        errors.append("contract.tool_oracle_replay did not pass: " + "; ".join(replay.get("errors", [])[:3]))
     from data_agent.config import get_config
 
     from scripts.acceptance.route_a_provider_preflight import _env_or_dotenv

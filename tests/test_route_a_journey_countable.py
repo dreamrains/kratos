@@ -336,4 +336,4 @@ def test_executor_fails_the_journey_when_anchors_are_missing():
     )
     assert report["status"] == "failed"
     assert report["contract_verdicts"]["final_answer_numeric_anchors_present"] is False
-    assert report["contract_verdicts"]["required_tools_present"] is True
+    assert report["contract_verdicts"]["required_tools_present"] is False

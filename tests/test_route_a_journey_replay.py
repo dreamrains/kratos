@@ -56,8 +56,17 @@ def test_r07_replay_measures_the_real_loop_structure_without_provider_calls():
     verdicts = report["contract_verdicts"]
     assert verdicts["required_tools_present"] is True
     assert verdicts["final_answer_numeric_anchors_present"] is True
+    assert verdicts["tool_oracle_matches"] is True
     assert verdicts["no_error_events"] is True
     assert verdicts["rounds_match_script"] is True
+    assert report["tool_oracle"]["observed"] == [
+        {"tool": "compare_periods", "path": "period_a.rows", "actual": 47, "expected": 47},
+        {"tool": "compare_periods", "path": "period_b.rows", "actual": 24, "expected": 24},
+        {"tool": "compare_periods", "path": "period_a.day_count", "actual": 15, "expected": 15},
+        {"tool": "compare_periods", "path": "period_b.day_count", "actual": 15, "expected": 15},
+        {"tool": "compare_periods", "path": "metrics.售价.period_a", "actual": 1818.0, "expected": 1818.0},
+        {"tool": "compare_periods", "path": "metrics.售价.period_b", "actual": 684.0, "expected": 684.0},
+    ]
 
 
 def test_replay_fails_when_the_final_answer_misses_frozen_anchors(tmp_path):
@@ -70,6 +79,19 @@ def test_replay_fails_when_the_final_answer_misses_frozen_anchors(tmp_path):
     report = journey.run_journey_replay(target)
     assert report["status"] == "failed"
     assert report["contract_verdicts"]["final_answer_numeric_anchors_present"] is False
+
+
+def test_replay_fails_when_the_real_tool_output_misses_the_frozen_oracle(tmp_path):
+    source = journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_replay.json"
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["session_id"] = "gate_c_journey_replay_oracle_miss"
+    payload["contract"]["tool_oracle"]["assertions"][0]["equals"] = 999
+    target = tmp_path / "oracle_miss.json"
+    target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    report = journey.run_journey_replay(target)
+    assert report["status"] == "failed"
+    assert report["contract_verdicts"]["tool_oracle_matches"] is False
+    assert any("tool oracle mismatch compare_periods.period_a.rows" in error for error in report["errors"])
 
 
 def test_replay_refuses_unknown_data_or_foreign_session_ids(tmp_path):

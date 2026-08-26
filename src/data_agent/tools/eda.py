@@ -10,7 +10,7 @@ import pandas as pd
 from scipy import stats as sp_stats
 
 from data_agent.session.workspace import workspace
-from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range, analyze_period_structure, compare_period_structures
+from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range, inclusive_date_period_mask, analyze_period_structure, compare_period_structures
 from data_agent.tools.registry import ToolResult
 from data_agent.tools.registry import registry
 
@@ -493,8 +493,8 @@ def compare_periods(
     if not pa or not pb:
         return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
 
-    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
-    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    mask_a = inclusive_date_period_mask(df[date_col], pa[0], pa[1])
+    mask_b = inclusive_date_period_mask(df[date_col], pb[0], pb[1])
     df_a = df[mask_a]
     df_b = df[mask_b]
 
@@ -721,8 +721,8 @@ def contribute_decomposition(
     if not pa or not pb:
         return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
 
-    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
-    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    mask_a = inclusive_date_period_mask(df[date_col], pa[0], pa[1])
+    mask_b = inclusive_date_period_mask(df[date_col], pb[0], pb[1])
     df_a = df[mask_a]
     df_b = df[mask_b]
 

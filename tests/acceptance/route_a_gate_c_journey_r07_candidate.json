@@ -17,7 +17,11 @@
     "round_cap": 10
   },
   "contract": {
-    "required_tool_calls": ["load_data"],
-    "final_answer_numeric_anchors": ["1818", "684", "71", "30"]
+    "required_tool_calls": ["load_data", "compare_periods"],
+    "final_answer_numeric_anchors": ["1818", "684", "71", "30"],
+    "tool_oracle_replay": {
+      "manifest": "tests/acceptance/route_a_gate_c_journey_r07_replay.json",
+      "sha256": "sha256:ebcbef8687a26a791b9348300ae3fd42eb55a777866e800f8e058fd9199519ec"
+    }
   }
 }

@@ -281,6 +281,24 @@ def parse_period_range(
     return None
 
 
+def inclusive_date_period_mask(
+    values: pd.Series,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.Series:
+    """Return the mask for an inclusive pair of calendar-date boundaries.
+
+    ``parse_period_range`` exposes business periods as dates, not instants.
+    Comparing a timestamp column to its normalized end date with ``<=``
+    silently discards all events later that day.  A half-open next-day bound
+    keeps the public date contract inclusive while retaining timestamp-level
+    precision and is shared by every period-comparison tool.
+    """
+    start_day = pd.Timestamp(start).normalize()
+    next_day = pd.Timestamp(end).normalize() + pd.Timedelta(days=1)
+    return (values >= start_day) & (values < next_day)
+
+
 def analyze_period_structure(
     start: pd.Timestamp,
     end: pd.Timestamp,
