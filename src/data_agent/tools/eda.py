@@ -402,30 +402,6 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@registry.register(
-    name="compare_periods",
-    description=(
-        "比较两个时间段的数据差异，自动计算各指标的变化量和变化率。"
-        "使用场景：环比/同比分析、活动前后效果对比、不同时期业务表现对比。"
-        "不适用场景：无时间列的数据、单时间点快照。"
-        "参数说明：period 格式为 'YYYY-MM-DD~YYYY-MM-DD' 或快捷词（last_month/this_month/last_week/this_week）。"
-        "常见错误：日期格式不匹配、时间段内无数据（先用 preview_data 确认时间范围）。"
-    ),
-    recovery_hint=(
-        "时段对比失败。常见原因："
-        "1) 日期格式不正确（需要 YYYY-MM-DD 格式或快捷词）"
-        "2) 指定时间段内无数据（用 preview_data 检查时间范围）"
-        "3) date_col 不是日期类型（用 describe_dataset 检查）"
-    ),
-    schema_overrides={
-        "name": {"description": "数据集名称"},
-        "date_col": {"description": "日期列名"},
-        "metrics": {"description": "要比较的指标列，逗号分隔，为空则比较所有数值列"},
-        "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
-        "period_b": {"description": "时间段 B（对比期），格式同上"},
-        "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
-    },
-)
 def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: dict) -> dict | None:
     """Recommend a statistical test based on the comparison context."""
     if n_a < 2 or n_b < 2 or not metric_cols:
@@ -460,6 +436,30 @@ def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: d
     }
 
 
+@registry.register(
+    name="compare_periods",
+    description=(
+        "比较两个时间段的数据差异，自动计算各指标的变化量和变化率。"
+        "使用场景：环比/同比分析、活动前后效果对比、不同时期业务表现对比。"
+        "不适用场景：无时间列的数据、单时间点快照。"
+        "参数说明：period 格式为 'YYYY-MM-DD~YYYY-MM-DD' 或快捷词（last_month/this_month/last_week/this_week）。"
+        "常见错误：日期格式不匹配、时间段内无数据（先用 preview_data 确认时间范围）。"
+    ),
+    recovery_hint=(
+        "时段对比失败。常见原因："
+        "1) 日期格式不正确（需要 YYYY-MM-DD 格式或快捷词）"
+        "2) 指定时间段内无数据（用 preview_data 检查时间范围）"
+        "3) date_col 不是日期类型（用 describe_dataset 检查）"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "date_col": {"description": "日期列名"},
+        "metrics": {"description": "要比较的指标列，逗号分隔，为空则比较所有数值列"},
+        "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
+        "period_b": {"description": "时间段 B（对比期），格式同上"},
+        "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
+    },
+)
 def compare_periods(
     name: str,
     date_col: str = "",

@@ -707,6 +707,25 @@ class TestStatisticalTestRecommendation:
         assert "suggested_args" in rec
         assert "reason" in rec
 
+    def test_registry_executes_compare_periods_not_its_recommendation_helper(self, compare_env):
+        """The LLM tool path must bind the public comparison callable."""
+        from data_agent.tools import discover_tools
+        from data_agent.tools.registry import registry
+
+        discover_tools()
+        result = registry.execute("compare_periods", {
+            "name": "test_compare",
+            "date_col": "日期",
+            "metrics": "金额",
+            "period_a": "2026-03-01~2026-03-30",
+            "period_b": "2026-04-01~2026-04-30",
+        })
+
+        parsed = json.loads(result.summary)
+        assert "error" not in parsed
+        assert "metrics" in parsed
+        assert result.data == parsed
+
     def test_compare_periods_no_recommendation_when_no_diff(self, tmp_path):
         """两组数据无差异时不应推荐统计检验。"""
         from data_agent import config

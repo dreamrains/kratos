@@ -1202,6 +1202,7 @@ class AgentLoop:
         self._turn_finalization_recovery_used = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
+        self._turn_publication_packet = None
         self.context.turn_receipt_ids = []
 
     def _has_substantive_turn_evidence(self) -> bool:
@@ -1250,7 +1251,7 @@ class AgentLoop:
         self.messages.append({"role": "system", "content": _FINALIZATION_RECOVERY_MESSAGE})
         return True
 
-    def _maybe_inject_wrap_up(self, round_num: int) -> None:
+    def _maybe_inject_wrap_up(self, round_num: int, user_input: str = "") -> None:
         """Enter finalization after the threshold when evidence is sufficient.
 
         Observed on the real R07 journey: the model can spend the whole round
@@ -1270,6 +1271,11 @@ class AgentLoop:
         if self._has_substantive_turn_evidence():
             self._turn_finalization_mode = True
             self.messages.append({"role": "system", "content": _FINALIZATION_GUARD_MESSAGE})
+            packet = self._prepare_publication_packet(user_input)
+            if packet and packet.get("status") == "ready":
+                from data_agent.agent.publication_synthesis import publication_packet_prompt
+
+                self.messages.append({"role": "system", "content": publication_packet_prompt(packet)})
         else:
             self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
 
@@ -1288,6 +1294,7 @@ class AgentLoop:
         tool_msg_content: str,
         tool_args: dict | None = None,
         tool_call_id: str = "",
+        structured_data: dict | None = None,
     ) -> str:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
@@ -1321,6 +1328,7 @@ class AgentLoop:
                     (tool_msg_content or "").encode("utf-8")
                 ).hexdigest(),
                 "result_preview": (tool_msg_content or "")[:2000],
+                "publication_facts": self._publication_facts_for_tool(structured_data),
             })
             receipt_id = str(receipt.get("id") or "")
             if receipt_id:
@@ -1336,6 +1344,81 @@ class AgentLoop:
                 extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
             )
             return ""
+
+    @staticmethod
+    def _publication_facts_for_tool(structured_data: dict | None) -> list[dict[str, str]]:
+        if not isinstance(structured_data, dict):
+            return []
+        try:
+            from data_agent.agent.publication_synthesis import extract_publication_facts
+
+            return extract_publication_facts(structured_data)
+        except Exception:
+            return []
+
+    def _prepare_publication_packet(self, user_input: str) -> dict | None:
+        """Freeze a bounded, receipt-backed hand-off before tools are closed."""
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return None
+        try:
+            from data_agent.agent.publication_synthesis import build_publication_packet
+
+            packet = build_publication_packet(
+                state,
+                user_input=user_input,
+                substantive_tools=_SUBSTANTIVE_TOOLS,
+                receipt_ids=self.context.turn_receipt_ids,
+            )
+            self._turn_publication_packet = packet
+            if packet.get("status") == "ready":
+                add_packet = getattr(state, "add_publication_packet", None)
+                if callable(add_packet):
+                    add_packet(packet)
+            return packet
+        except Exception as exc:
+            logger.warning(
+                "Publication synthesis packet skipped",
+                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
+            )
+            return None
+
+    def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
+        """Attach deterministic evidence to a finalization answer before publication."""
+        packet = getattr(self, "_turn_publication_packet", None)
+        if not isinstance(packet, dict) or packet.get("status") != "ready":
+            return final_text, None
+        try:
+            from data_agent.agent.publication_synthesis import render_verified_appendix, validate_final_narrative
+
+            error = validate_final_narrative(final_text)
+            if error:
+                return None, error
+            return f"{final_text.rstrip()}\n\n---\n\n{render_verified_appendix(packet)}", None
+        except Exception as exc:
+            logger.warning(
+                "Publication synthesis rendering skipped",
+                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
+            )
+            return final_text, None
+
+    def _render_terminal_publication(self, user_input: str, final_text: str) -> tuple[str | None, str | None]:
+        """Publish a receipt-backed appendix for every evidenced terminal answer.
+
+        A model can choose to answer before the soft wrap-up threshold.  Its
+        final response still crosses the same product publication boundary,
+        so collecting the receipt packet only in forced finalization would
+        leave normal short analyses ungrounded.
+        """
+        packet = getattr(self, "_turn_publication_packet", None)
+        if (
+            self._has_substantive_turn_evidence()
+            and (not isinstance(packet, dict) or packet.get("status") != "ready")
+        ):
+            packet = self._prepare_publication_packet(user_input)
+        if isinstance(packet, dict) and packet.get("status") == "ready":
+            return self._render_finalized_publication(final_text)
+        return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -2190,7 +2273,13 @@ class AgentLoop:
             elif turn_state is not None:
                 turn_state.record_tool_success()
 
-            self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
+            self._record_turn_tool_result(
+                tc.name,
+                tool_msg_content,
+                tc.arguments,
+                tc.id,
+                getattr(tool_result, "data", None),
+            )
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
@@ -2366,6 +2455,13 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                if publication_error:
+                    yield {"type": "error", "message": publication_error}
+                    return
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
+                pending_text_events = [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2405,7 +2501,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
-            self._maybe_inject_wrap_up(round_num)
+            self._maybe_inject_wrap_up(round_num, user_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -2699,7 +2795,13 @@ class AgentLoop:
         elif turn_state is not None:
             turn_state.record_tool_success()
 
-        self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
+        self._record_turn_tool_result(
+            tc.name,
+            tool_msg_content,
+            tc.arguments,
+            tc.id,
+            getattr(tool_result, "data", None),
+        )
         self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
@@ -2727,7 +2829,7 @@ class AgentLoop:
         tool_calls,
         _scope_guard=_protected_scope_guard,
     ) -> list[tuple]:
-        """Execute read-only tool calls in parallel. Returns [(tc, tool_msg_content), ...]."""
+        """Execute read-only tool calls in parallel with structured result facts."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from contextvars import copy_context
 
@@ -2751,7 +2853,7 @@ class AgentLoop:
             try:
                 scope_error = guard_errors.get(tc.id, "")
                 if scope_error:
-                    return (tc, scope_error, None)
+                    return (tc, scope_error, None, None)
                 t0 = time.monotonic()
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
@@ -2763,7 +2865,7 @@ class AgentLoop:
                     )
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                    return (tc, scope_error, post_scope)
+                    return (tc, scope_error, post_scope, None)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -2774,12 +2876,12 @@ class AgentLoop:
                 elif turn_state is not None:
                     turn_state.record_tool_success()
 
-                return (tc, tool_msg_content, None)
+                return (tc, tool_msg_content, None, getattr(tool_result, "data", None))
             except Exception as e:
                 error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, error_content)
-                return (tc, error_content, None)
+                return (tc, error_content, None, None)
 
         import time
 
@@ -2794,10 +2896,10 @@ class AgentLoop:
                 futures[future] = tc.id
 
             for future in as_completed(futures):
-                tc_obj, content, refresh_error = future.result()
+                tc_obj, content, refresh_error, structured_data = future.result()
                 if refresh_error is not None:
                     self.__context_operation("record_worker_refresh_error", refresh_error)
-                results[tc_obj.id] = (tc_obj, content)
+                results[tc_obj.id] = (tc_obj, content, structured_data)
 
         # Return in original order
         return [results[tc.id] for tc in tool_calls if tc.id in results]
@@ -2875,6 +2977,11 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                if publication_error:
+                    return FinalResponse(content=publication_error)
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2915,8 +3022,14 @@ class AgentLoop:
 
                 if can_parallelize:
                     results = self._execute_tools_parallel(tool_calls)
-                    for tc, tool_msg_content in results:
-                        self._record_turn_tool_result(tc.name, tool_msg_content, tc.arguments, tc.id)
+                    for tc, tool_msg_content, structured_data in results:
+                        self._record_turn_tool_result(
+                            tc.name,
+                            tool_msg_content,
+                            tc.arguments,
+                            tc.id,
+                            structured_data,
+                        )
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -2933,7 +3046,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
-            self._maybe_inject_wrap_up(round_num)
+            self._maybe_inject_wrap_up(round_num, user_input)
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)

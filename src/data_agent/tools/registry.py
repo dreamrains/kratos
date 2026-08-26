@@ -35,7 +35,17 @@ class ToolResult:
 
     @staticmethod
     def from_str(s: str) -> "ToolResult":
-        return ToolResult(summary=s)
+        # Most legacy tools return their analytic payload as JSON text.  Keep
+        # that public summary unchanged for existing LLM/CLI consumers while
+        # preserving the object on the shared ToolResult contract for Web,
+        # receipts and publication.  This avoids asking every legacy tool to
+        # grow a parallel return type and prevents result facts being lost at
+        # the registry boundary.
+        try:
+            parsed = json.loads(s)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = None
+        return ToolResult(summary=s, data=parsed if isinstance(parsed, dict) else None)
 
     def to_cli(self) -> str:
         return self.summary
