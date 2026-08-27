@@ -43,4 +43,17 @@ def test_current_panel_has_no_removed_workbench_surfaces_and_keeps_output_export
     assert "exportConversation('markdown')" in html
     assert "sessionArtifacts" in html
     assert "verifiedConclusions()" in js
-    assert "actionBoard()" not in js
+    for removed in (
+        "actionBoard", "fullAnswer", "workbenchScope", "workbenchConfirmation",
+        "multifileWorkbench", "multifileDataUnderstanding", "multifileRelationships",
+    ):
+        assert removed not in js
+
+
+def test_workbench_scope_label_distinguishes_session_from_project_binding():
+    client = create_app().test_client()
+    html = client.get("/").get_data(as_text=True)
+
+    assert "项目：" in html
+    assert "会话：" in html
+    assert "currentSessionId" in html

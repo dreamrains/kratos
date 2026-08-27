@@ -1,0 +1,269 @@
+{
+  "schema_version": "route_a_journey_execute_report.v1",
+  "mode": "executed",
+  "source_digest": "sha256:ea127a942d6a3bbfe2a7459de22782f499b77a5cd9ee2d4ce40f2c1e0fac07e8",
+  "provider_calls": 15,
+  "journey_id": "R01_retention_curve_routing_journey",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "model_id": "openai/deepseek-v4-flash",
+    "temperature": 0.0,
+    "timeout_seconds": 120,
+    "max_tokens_ladder": [
+      2000,
+      8000,
+      32000
+    ],
+    "round_cap": 12,
+    "auxiliary_llm": {
+      "mode": "counted_once",
+      "max_tokens": 300,
+      "call_cap": 6,
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  "data": [
+    {
+      "id": "game_b_retention",
+      "sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+    }
+  ],
+  "main_max_call_budget": 36,
+  "auxiliary_max_call_budget": 6,
+  "max_call_budget": 42,
+  "status": "passed",
+  "errors": [],
+  "main_provider_calls": 11,
+  "auxiliary_provider_calls": 4,
+  "rounds_used": 10,
+  "round_cap": 12,
+  "structure": [
+    {
+      "round": 1,
+      "prompt_sha256": "sha256:d909bd4e5c2a1c71ed739d316eab1a70034fb054942f46fb95cadad927f3171f",
+      "tools_count": 60,
+      "tools_sha256": "sha256:099dcdfea93c8d72831ce7de8fc41a176c10987e99f5fcfcf398a5e7d6544dc6"
+    },
+    {
+      "round": 2,
+      "prompt_sha256": "sha256:3fe0aa076574b2b0c1360a8fa2079e0132c1cab68a8554d784e8a40fe0635d80",
+      "tools_count": 60,
+      "tools_sha256": "sha256:099dcdfea93c8d72831ce7de8fc41a176c10987e99f5fcfcf398a5e7d6544dc6"
+    },
+    {
+      "round": 3,
+      "prompt_sha256": "sha256:3e84c62ba55f98df5490667b3ad3fbcdab280880027c9923140a66a57c056fab",
+      "tools_count": 60,
+      "tools_sha256": "sha256:099dcdfea93c8d72831ce7de8fc41a176c10987e99f5fcfcf398a5e7d6544dc6"
+    },
+    {
+      "round": 4,
+      "prompt_sha256": "sha256:05b4e6c6cc2bf359e9a64a558cb9959b2afa1c4395ae5fc3a56f12f4736ea36c",
+      "tools_count": 70,
+      "tools_sha256": "sha256:44abb31699e8e98b14fd722ee0892d76fc2ea3b6d8ab6f05a6db925489e0cdce"
+    },
+    {
+      "round": 5,
+      "prompt_sha256": "sha256:61ac4a663a48aa2a1fec73b5cf571d8a464b5cea7c886b5f3c3743946d1abce1",
+      "tools_count": 70,
+      "tools_sha256": "sha256:44abb31699e8e98b14fd722ee0892d76fc2ea3b6d8ab6f05a6db925489e0cdce"
+    },
+    {
+      "round": 6,
+      "prompt_sha256": "sha256:c290273842abcb15b5669c26d590884772ba67dbf3ddf05f7128b2c9185f403f",
+      "tools_count": 70,
+      "tools_sha256": "sha256:44abb31699e8e98b14fd722ee0892d76fc2ea3b6d8ab6f05a6db925489e0cdce"
+    },
+    {
+      "round": 7,
+      "prompt_sha256": "sha256:e15a7a5f1816a59dd270c45b647d714bd7c3d6938db1b281aeebd6ae8bc2573f",
+      "tools_count": 70,
+      "tools_sha256": "sha256:44abb31699e8e98b14fd722ee0892d76fc2ea3b6d8ab6f05a6db925489e0cdce"
+    },
+    {
+      "round": 8,
+      "prompt_sha256": "sha256:7ad3ce547db6dd5ddee8895b9902cdbe964f0482352086a91dbd4be2a972086b",
+      "tools_count": 70,
+      "tools_sha256": "sha256:44abb31699e8e98b14fd722ee0892d76fc2ea3b6d8ab6f05a6db925489e0cdce"
+    },
+    {
+      "round": 9,
+      "prompt_sha256": "sha256:2067af656ef62eafcc835a289ccdbca36fc00a22a846f51e0ce5543be4a37cd4",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "round": 10,
+      "prompt_sha256": "sha256:40c679591d8d9f87675ed4bddb77285e9afe25dbbef40d7d6d5f0c922bd7f882",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "round_receipts": [
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "empty_or_non_string",
+        "response_reasoning_length_bucket": "1_to_256"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "tool_calls",
+        "response_length_bucket": "1_to_256",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "length",
+        "response_length_bucket": "1025_to_4096",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      },
+      {
+        "max_tokens": 8000,
+        "outcome": "response",
+        "finish_reason": "stop",
+        "response_length_bucket": "1025_to_4096",
+        "response_reasoning_length_bucket": "257_to_1024"
+      }
+    ],
+    [
+      {
+        "max_tokens": 2000,
+        "outcome": "response",
+        "finish_reason": "stop",
+        "response_length_bucket": "1025_to_4096",
+        "response_reasoning_length_bucket": "1025_to_4096"
+      }
+    ]
+  ],
+  "auxiliary_receipts": [
+    {
+      "call": 1,
+      "prompt_sha256": "sha256:6e5783b9b488c0b4a240b282b9d4ac1702d65ec3a8663fdb2dc3d681386c305f",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "max_tokens": 300,
+      "outcome": "response",
+      "finish_reason": "stop",
+      "response_length_bucket": "1_to_256",
+      "response_reasoning_length_bucket": "257_to_1024"
+    },
+    {
+      "call": 2,
+      "prompt_sha256": "sha256:4603ad7da492c2db75d2001b2e7739dc7efe3674696936b32a215ef531fd4b9a",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "max_tokens": 300,
+      "outcome": "response",
+      "finish_reason": "length",
+      "response_length_bucket": "empty_or_non_string",
+      "response_reasoning_length_bucket": "257_to_1024"
+    },
+    {
+      "call": 3,
+      "prompt_sha256": "sha256:5064304111570db51b530e303fb76ca2e136ecff26fe8536e43a9afa8eda6cce",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "max_tokens": 300,
+      "outcome": "response",
+      "finish_reason": "stop",
+      "response_length_bucket": "1_to_256",
+      "response_reasoning_length_bucket": "1_to_256"
+    },
+    {
+      "call": 4,
+      "prompt_sha256": "sha256:2e7be5fe5f9c2d3d3d35bda941dff2613d07068ca02f3aeb1a01e4c02a25023e",
+      "tools_count": 0,
+      "tools_sha256": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "max_tokens": 300,
+      "outcome": "response",
+      "finish_reason": "length",
+      "response_length_bucket": "empty_or_non_string",
+      "response_reasoning_length_bucket": "257_to_1024"
+    }
+  ],
+  "tool_calls_executed": [
+    "load_data",
+    "list_files",
+    "list_files",
+    "load_data",
+    "preview_data",
+    "describe_dataset",
+    "curve_fitting",
+    "read_file",
+    "list_files",
+    "run_python"
+  ],
+  "contract_verdicts": {
+    "acceptance_mode": "routing_integrity",
+    "required_tools_present": true,
+    "final_answer_numeric_anchors_present": "not_required",
+    "no_error_events": true,
+    "rounds_within_cap": true
+  },
+  "uploads": []
+}

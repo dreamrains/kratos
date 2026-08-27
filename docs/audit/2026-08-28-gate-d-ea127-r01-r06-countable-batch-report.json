@@ -1,0 +1,246 @@
+{
+  "schema_version": "route_a_provider_preflight.v1",
+  "mode": "executed",
+  "ready": true,
+  "errors": [],
+  "source_digest": "sha256:ea127a942d6a3bbfe2a7459de22782f499b77a5cd9ee2d4ce40f2c1e0fac07e8",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "temperature": 0.0,
+    "timeout_seconds": 120,
+    "response_format": {
+      "type": "json_object"
+    },
+    "max_tokens_ladder": [
+      2000,
+      8000,
+      32000
+    ]
+  },
+  "total_call_budget": 18,
+  "scenarios": [
+    {
+      "id": "R02_paired_before_after",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "savings_card_before_after",
+          "sha256": "e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37"
+        }
+      ],
+      "prompt_sha256": "sha256:ce3a489e2e2fe0c52d670b996558e5cf26fd610ff1edb74043d2497f5e68dec7"
+    },
+    {
+      "id": "R03_dirty_cross_promotion",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "game_cross_promotion",
+          "sha256": "063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83"
+        }
+      ],
+      "prompt_sha256": "sha256:980727a4567acc13a8d0227a477f1e2771f3e88a7bae9542f994622e95be4b9c"
+    },
+    {
+      "id": "R04_game_a_synthesis",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "game_a_rewarded_video",
+          "sha256": "cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7"
+        },
+        {
+          "id": "game_a_in_app_purchase",
+          "sha256": "fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e"
+        },
+        {
+          "id": "game_a_banner",
+          "sha256": "21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a"
+        }
+      ],
+      "prompt_sha256": "sha256:469349d64f70d04c6107b0073689781a0fbf7b3e99060d0522e529a416cd840e"
+    },
+    {
+      "id": "R01_retention_curve",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "game_b_retention",
+          "sha256": "63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+        }
+      ],
+      "prompt_sha256": "sha256:85af8c9c7320ad6f906683facdc43570b6449ed1eb3f482ca6638c798af6fb2b"
+    },
+    {
+      "id": "R05_relationship_scope",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "savings_card_orders",
+          "sha256": "9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+        },
+        {
+          "id": "savings_card_user_payments",
+          "sha256": "cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03"
+        }
+      ],
+      "prompt_sha256": "sha256:2f3103f89767535d9509c9b931eb4cad652f3412c4e6f2a63de3ed903c41694d"
+    },
+    {
+      "id": "R06_long_term_value_cohort",
+      "call_budget": 3,
+      "data": [
+        {
+          "id": "savings_card_user_payments",
+          "sha256": "cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03"
+        }
+      ],
+      "prompt_sha256": "sha256:1c22ed1548b54abf6218de897810f3218b2609fb1424ac14243d4bf2e4a75f1e"
+    }
+  ],
+  "status": "passed",
+  "calls_made": 7,
+  "results": [
+    {
+      "id": "R02_paired_before_after",
+      "status": "passed",
+      "max_tokens_used": 2000,
+      "max_tokens_attempts": [],
+      "response_summary": {
+        "fact_ids_used": [
+          "r02_pairs",
+          "r02_effect",
+          "r02_limit"
+        ],
+        "method_limitations_count": 1,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 99,
+        "next_action_characters": 51,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1025_to_4096",
+        "response_finish_reason": "stop"
+      }
+    },
+    {
+      "id": "R03_dirty_cross_promotion",
+      "status": "passed",
+      "max_tokens_used": 2000,
+      "max_tokens_attempts": [],
+      "response_summary": {
+        "fact_ids_used": [
+          "r03_parse",
+          "r03_unit",
+          "r03_limit"
+        ],
+        "method_limitations_count": 2,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 53,
+        "next_action_characters": 46,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "257_to_1024",
+        "response_finish_reason": "stop"
+      }
+    },
+    {
+      "id": "R04_game_a_synthesis",
+      "status": "passed",
+      "max_tokens_used": 2000,
+      "max_tokens_attempts": [],
+      "response_summary": {
+        "fact_ids_used": [
+          "r04_alignment",
+          "r04_lineage",
+          "r04_limit"
+        ],
+        "method_limitations_count": 1,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 34,
+        "next_action_characters": 44,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1025_to_4096",
+        "response_finish_reason": "stop"
+      }
+    },
+    {
+      "id": "R01_retention_curve",
+      "status": "passed",
+      "max_tokens_used": 8000,
+      "max_tokens_attempts": [
+        {
+          "max_tokens": 2000,
+          "error_code": "response_truncated",
+          "response_shape": "truncated_before_complete",
+          "response_length_bucket": "empty_or_non_string",
+          "response_reasoning_length_bucket": "1025_to_4096",
+          "response_finish_reason": "length"
+        }
+      ],
+      "response_summary": {
+        "fact_ids_used": [
+          "r01_window",
+          "r01_fit",
+          "r01_limit"
+        ],
+        "method_limitations_count": 2,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 79,
+        "next_action_characters": 31,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1025_to_4096",
+        "response_finish_reason": "stop"
+      }
+    },
+    {
+      "id": "R05_relationship_scope",
+      "status": "passed",
+      "max_tokens_used": 2000,
+      "max_tokens_attempts": [],
+      "response_summary": {
+        "fact_ids_used": [
+          "r05_volume",
+          "r05_relationship",
+          "r05_limit"
+        ],
+        "method_limitations_count": 2,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 125,
+        "next_action_characters": 32,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1_to_256",
+        "response_finish_reason": "stop"
+      }
+    },
+    {
+      "id": "R06_long_term_value_cohort",
+      "status": "passed",
+      "max_tokens_used": 2000,
+      "max_tokens_attempts": [],
+      "response_summary": {
+        "fact_ids_used": [
+          "r06_window",
+          "r06_cohorts",
+          "r06_limit"
+        ],
+        "method_limitations_count": 1,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 128,
+        "next_action_characters": 58,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1_to_256",
+        "response_finish_reason": "stop"
+      }
+    }
+  ]
+}

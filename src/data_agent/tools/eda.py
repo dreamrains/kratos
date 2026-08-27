@@ -505,6 +505,9 @@ def compare_periods(
     struct_a = analyze_period_structure(pa[0], pa[1])
     struct_b = analyze_period_structure(pb[0], pb[1])
     comparability = compare_period_structures(struct_a, struct_b)
+    combined_dates = pd.date_range(pa[0].normalize(), pa[1].normalize(), freq="D").union(
+        pd.date_range(pb[0].normalize(), pb[1].normalize(), freq="D")
+    )
 
     # 指标列
     if metrics:
@@ -550,6 +553,10 @@ def compare_periods(
             "weekday_count": struct_b["weekday_count"],
             "weekend_count": struct_b["weekend_count"],
             **({"dates": struct_b["dates"]} if "dates" in struct_b else {}),
+        },
+        "combined": {
+            "row_count": int((mask_a | mask_b).sum()),
+            "day_count": int(len(combined_dates)),
         },
         "comparability": comparability,
     }

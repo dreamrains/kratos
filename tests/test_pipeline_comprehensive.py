@@ -12,8 +12,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -27,11 +25,6 @@ from scripts.acceptance.real_data_manifest import (
     REFERENCE_DATA_DIR,
     reference_data_path,
 )
-
-if sys.platform == "win32":
-    os.system("")
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 TEST_DATA_DIR = REFERENCE_DATA_DIR
 HAS_TEST_DATA = REFERENCE_DATA_AVAILABLE
@@ -213,6 +206,45 @@ class TestComparePeriodsEdge:
         metrics = parsed.get("metrics", {})
         if "订单金额" in metrics:
             assert metrics["订单金额"]["change_pct"] == 0
+
+    def test_combined_scope_counts_union_rows_and_calendar_days(self, env):
+        ws, _, _ = env
+        ws.add("combined", _ecom_df(60))
+        from data_agent.tools.eda import compare_periods
+
+        disjoint = json.loads(compare_periods(
+            "combined",
+            date_col="日期",
+            metrics="订单金额",
+            period_a="2025-01-01~2025-01-15",
+            period_b="2025-01-16~2025-01-30",
+        ))
+        overlap = json.loads(compare_periods(
+            "combined",
+            date_col="日期",
+            metrics="订单金额",
+            period_a="2025-01-01~2025-01-15",
+            period_b="2025-01-10~2025-01-20",
+        ))
+
+        assert disjoint["combined"] == {"row_count": 30, "day_count": 30}
+        assert overlap["combined"] == {"row_count": 20, "day_count": 20}
+
+    def test_obvious_string_date_column_is_auto_detected(self):
+        from data_agent.tools._utils import resolve_date_col
+
+        frame = pd.DataFrame({
+            "date": pd.Series(
+                ["2026-01-01", "2026-01-02", "2026-01-03"],
+                dtype="string",
+            ),
+            "value": [1, 2, 3],
+        })
+
+        date_col, error = resolve_date_col(frame)
+
+        assert error is None
+        assert date_col == "date"
 
     def test_with_dimensions(self, env):
         ws, _, _ = env

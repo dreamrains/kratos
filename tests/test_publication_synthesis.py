@@ -83,6 +83,31 @@ def test_metric_period_totals_outscore_calendar_detail_in_the_fact_budget():
     assert {"1818", "684", "-1134"} <= values
 
 
+def test_combined_period_scope_is_retained_in_the_bounded_fact_budget():
+    facts = extract_publication_facts({
+        "period_a": {
+            "rows": 47, "day_count": 15, "weekday_count": 11, "weekend_count": 4,
+            "label": "前期", "range": "2026-04-07~2026-04-21",
+        },
+        "period_b": {
+            "rows": 24, "day_count": 15, "weekday_count": 11, "weekend_count": 4,
+            "label": "后期", "range": "2026-04-22~2026-05-06",
+        },
+        "combined": {"row_count": 71, "day_count": 30},
+        "metrics": {"revenue": {
+            "period_a": 1818, "period_b": 684, "diff": -1134,
+            "change_pct": -62.38, "daily_avg_a": 121.2,
+            "daily_avg_b": 45.6, "daily_avg_change_pct": -62.38,
+        }},
+    })
+    by_path = {item["path"]: item["value"] for item in facts}
+
+    assert by_path["combined.row_count"] == "71"
+    assert by_path["combined.day_count"] == "30"
+    assert by_path["metrics.revenue.period_a"] == "1818"
+    assert by_path["metrics.revenue.period_b"] == "684"
+
+
 def test_structured_result_preview_does_not_duplicate_raw_json_into_publication():
     state = AnalysisSessionState(session_id="publication_compact_preview")
     receipt = _receipt("compare_periods", "tr_compact", _period_data())

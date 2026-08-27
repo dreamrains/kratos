@@ -604,6 +604,13 @@ class TestDirectedAnalysis:
         result = plan_turn_intent("is this product worth investing in", DATA_LOADED_CTX)
         assert result.intent_type == "directed_analysis"
 
+    @pytest.mark.parametrize("text", ["情景模拟", "模拟分析收入变化"])
+    def test_simulation_terms_are_analysis_requests(self, text):
+        result = plan_turn_intent(text, DATA_LOADED_CTX)
+
+        assert result.intent_type == "directed_analysis"
+        assert result.recommended_action == "run_analysis"
+
 
 # ══════════════════════════════════════════════════════════════
 # 16. intent_negotiation / data_requirement via guidance keywords

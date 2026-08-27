@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""全面工具单元测试 — 覆盖所有工具的边界条件、错误路径和核心逻辑。
+"""离线工具表面 smoke — 覆盖主要工具的边界条件、错误路径和核心逻辑。
 
-使用 pytest 运行: pytest tests/test_tools_comprehensive.py -v
-直接运行: python tests/test_tools_comprehensive.py
+由 tests/test_offline_tool_surface_smoke.py 作为隔离子进程运行。
 """
 
 import json
@@ -1438,28 +1437,5 @@ if FAIL > 0:
 else:
     print("\n所有工具单元测试通过！")
 
-
-# ============================================================
-# pytest 兼容：当通过 pytest 运行时，将上述自定义 test() 调用
-# 转为 pytest 可发现的形式。直接运行 python 时走自定义框架。
-# ============================================================
-
-if "pytest" in sys.modules:
-    import pytest
-
-    def _make_pytest_test(func):
-        """将自定义测试函数包装为 pytest test。"""
-        def wrapper():
-            result = func()
-            assert result is True, result
-        wrapper.__name__ = func.__name__
-        return wrapper
-
-    # 动态收集所有已执行的测试函数并注册为 pytest test
-    _test_functions = []
-
-    # 重新定义为 pytest 风格的收集
-    def pytest_collect_file(parent, file_path):
-        if file_path.name == "test_tools_comprehensive.py":
-            return PytestModule.from_parent(parent, path=file_path)
+raise SystemExit(1 if FAIL else 0)
 

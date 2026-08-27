@@ -232,6 +232,27 @@ def test_preflight_freezes_the_journey_request_and_worst_case_budget():
     assert report["data"][0]["sha256"].startswith("sha256:")
 
 
+def test_oracle_replay_digest_is_portable_across_lf_and_crlf(tmp_path):
+    replay = tmp_path / "replay.json"
+    replay.write_bytes(b'{\n  "schema_version": "route_a_journey_replay.v1"\n}\n')
+    lf_digest = journey._file_digest(replay)
+
+    replay.write_bytes(b'{\r\n  "schema_version": "route_a_journey_replay.v1"\r\n}\r\n')
+
+    assert journey._file_digest(replay) == lf_digest
+
+
+def test_tracked_r07_oracle_replay_matches_its_frozen_digest_on_this_checkout():
+    candidate = journey._read_manifest_with_schema(
+        journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_candidate.json",
+        journey.JOURNEY_CANDIDATE_SCHEMA,
+    )
+    oracle = candidate["contract"]["tool_oracle_replay"]
+    replay = journey.ROOT / oracle["manifest"]
+
+    assert journey._file_digest(replay) == oracle["sha256"]
+
+
 def test_preflight_rejects_invalid_journeys(tmp_path):
     payload = {
         "schema_version": "route_a_journey_candidate.v1",

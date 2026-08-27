@@ -507,7 +507,8 @@
         <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
             <div x-show="!trustInspectorCollapsed" x-transition.opacity>
                 <p class="text-sm font-medium text-stone-800 dark:text-stone-200">分析工作台</p>
-                <p class="text-[10px] text-stone-400" x-text="activeProjectName ? ('项目：' + activeProjectName) : '未绑定会话'"></p>
+                <p class="text-[10px] text-stone-400"
+                   x-text="activeProjectName ? ('项目：' + activeProjectName) : ((currentSessionId && currentSessionId !== '_pending_') ? ('会话：' + (sessionTitle || currentSessionId)) : '未绑定会话')"></p>
             </div>
             <div class="flex items-center gap-2">
                 <!-- Compact analysis stage indicator -->

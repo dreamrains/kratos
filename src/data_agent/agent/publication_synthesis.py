@@ -69,6 +69,11 @@ def extract_publication_facts(data: Any, *, max_facts: int = _MAX_FACTS_PER_SOUR
     for path, value in _walk_facts(data):
         lower_path = path.lower()
         score = sum(4 for hint in _FACT_PATH_HINTS if hint in lower_path)
+        # A period comparison's union scope is necessary to interpret the two
+        # window totals.  Keep it ahead of per-window calendar trivia when the
+        # bounded fact budget is full.
+        if re.fullmatch(r"combined\.(?:row_count|day_count)", lower_path):
+            score += 12
         if re.search(r"(?:^|[.\]])(?:a|b|k|n)$", lower_path):
             score += 2
         if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", value, flags=re.I):

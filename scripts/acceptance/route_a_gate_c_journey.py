@@ -46,8 +46,14 @@ def _digest(value: Any) -> str:
 
 
 def _file_digest(path: Path) -> str:
-    """Return a source-controlled file digest for a frozen replay reference."""
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    """Return a checkout-portable digest for a frozen text replay reference.
+
+    Git may materialize tracked JSON with CRLF on Windows even though the
+    canonical blob uses LF.  Replay manifests are UTF-8 text contracts, so the
+    frozen identity must not change solely because of checkout line endings.
+    """
+    canonical = path.read_bytes().replace(b"\r\n", b"\n")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
 def _read_dotted_path(payload: dict[str, Any], path: str) -> tuple[bool, Any]:
