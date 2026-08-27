@@ -43,6 +43,13 @@ def _final_round(text):
     return Response(text=text, finish_reason="stop")
 
 
+def _auxiliary_round(primary="trend_period_comparison"):
+    return Response(
+        text=json.dumps({"primary": primary, "supporting": [], "reason": "test"}),
+        finish_reason="stop",
+    )
+
+
 def test_each_round_makes_exactly_one_call_and_never_escalates_tool_rounds():
     once = _FakeOnceLLM([_tool_round("load_data"), _final_round("answer 71")])
     client = CountableJourneyClient(round_cap=2, ladder=[2000, 8000, 32000], once_client=once)
@@ -133,8 +140,49 @@ def test_round_cap_failure_is_not_relabelled_as_an_empty_llm_response():
     assert client.rounds_served == 1
 
 
+def test_countable_client_failure_never_uses_the_loop_sync_fallback():
+    from data_agent.agent.loop import AgentLoop
+
+    once = _FakeOnceLLM([RuntimeError("first request failed"), _final_round("must not be used")])
+    client = CountableJourneyClient(round_cap=2, ladder=[2000], once_client=once)
+    loop = AgentLoop(client=client, session_id="journey_no_sync_fallback")
+
+    events = list(loop._stream_llm_round(1))
+
+    assert events[-1] == {"type": "_round_failure", "code": "provider_request_failed"}
+    assert client.calls_made == 1
+    assert len(once.calls) == 1
+    assert client.round_receipts == [[{"max_tokens": 2000, "outcome": "error:RuntimeError"}]]
+
+
+def test_auxiliary_provider_failure_stops_before_the_first_main_round(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "workspace_dir", tmp_path)
+    once = _FakeOnceLLM([
+        RuntimeError("auxiliary request failed"),
+        _final_round("must not be used"),
+    ])
+
+    report = journey.execute_authorized_journey(
+        journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_candidate.json",
+        authorized_source_digest="sha256:source",
+        once_client=once,
+        source_digest=lambda root: "sha256:source",
+    )
+
+    assert report["status"] == "failed"
+    assert report["provider_calls"] == 1
+    assert report["main_provider_calls"] == 0
+    assert report["auxiliary_provider_calls"] == 1
+    assert len(once.calls) == 1
+    assert report["auxiliary_receipts"][0]["outcome"] == "error:RuntimeError"
+    assert "auxiliary_provider_request_failed" in " ".join(report["errors"])
+
+
 def test_real_loop_completes_the_r07_journey_through_the_countable_client():
     once = _FakeOnceLLM([
+        _auxiliary_round(),
         Response(tool_calls=[ToolCall(
             id="c1", name="load_data",
             arguments={"source": "reference/test_doc/省钱卡订单.xlsx", "name": "r07_orders"},
@@ -153,7 +201,9 @@ def test_real_loop_completes_the_r07_journey_through_the_countable_client():
         source_digest=lambda root: "sha256:source",
     )
     assert report["status"] == "passed", report
-    assert report["provider_calls"] == 3
+    assert report["provider_calls"] == 4
+    assert report["main_provider_calls"] == 3
+    assert report["auxiliary_provider_calls"] == 1
     assert report["rounds_used"] == 3
     assert report["tool_calls_executed"] == ["load_data", "compare_periods"]
     assert all(entry["prompt_sha256"].startswith("sha256:") for entry in report["structure"])
@@ -173,7 +223,9 @@ def test_preflight_freezes_the_journey_request_and_worst_case_budget():
         source_digest=lambda root: "sha256:source",
     )
     assert report["ready"] is True, report["errors"]
-    assert report["max_call_budget"] == 30
+    assert report["main_max_call_budget"] == 30
+    assert report["auxiliary_max_call_budget"] == 6
+    assert report["max_call_budget"] == 36
     assert report["request"]["max_tokens_ladder"] == [2000, 8000, 32000]
     assert report["request"]["round_cap"] == 10
     assert report["model_id"] == "openai/deepseek-v4-flash"
@@ -257,9 +309,47 @@ def test_r09_routing_journey_freezes_an_unambiguous_data_reference():
         source_digest=lambda root: "sha256:source",
     )
     assert report["ready"] is True, report["errors"]
-    assert report["max_call_budget"] == 36
+    assert report["main_max_call_budget"] == 36
+    assert report["auxiliary_max_call_budget"] == 6
+    assert report["max_call_budget"] == 42
     assert report["request"]["round_cap"] == 12
     assert report["data"][0]["id"] == "game_b_retention"
+
+
+def test_routing_integrity_contract_is_explicit_and_does_not_require_final_anchors(tmp_path):
+    source = journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_candidate.json"
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["session_id"] = "gate_c_journey_routing_integrity_contract"
+    payload["contract"] = {
+        "acceptance_mode": "routing_integrity",
+        "required_tool_calls": ["list_data"],
+        "final_answer_numeric_anchors": [],
+    }
+    target = tmp_path / "routing_integrity.json"
+    target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    report = journey.journey_preflight(target, source_digest=lambda root: "sha256:source")
+
+    assert report["ready"] is True, report["errors"]
+
+
+def test_routing_integrity_passes_on_tool_reachability_without_a_publication_answer():
+    status, verdicts = journey._evaluate_contract(
+        {
+            "acceptance_mode": "routing_integrity",
+            "required_tool_calls": ["load_data", "curve_fitting"],
+            "final_answer_numeric_anchors": [],
+        },
+        tool_calls_executed=["load_data", "curve_fitting"],
+        final_text="",
+        error_events=[],
+        rounds_used=3,
+        round_cap=12,
+    )
+
+    assert status == "passed"
+    assert verdicts["acceptance_mode"] == "routing_integrity"
+    assert verdicts["final_answer_numeric_anchors_present"] == "not_required"
 
 
 def test_uploads_place_frozen_data_in_the_inbox_via_the_product_path(tmp_path, monkeypatch):
@@ -285,10 +375,12 @@ def test_executor_uploads_before_the_turn_and_the_model_loads_by_name(tmp_path, 
 
     monkeypatch.setattr(get_config(), "workspace_dir", tmp_path)
     once = _FakeOnceLLM([
+        _auxiliary_round(),
         Response(tool_calls=[ToolCall(
             id="c1", name="load_data",
             arguments={"source": "省钱卡订单.xlsx", "name": "r07_orders"},
         )], finish_reason="tool_calls"),
+        _auxiliary_round(),
         Response(tool_calls=[ToolCall(
             id="c2", name="compare_periods",
             arguments={"name": "r07_orders", "date_col": "支付时间", "metrics": "售价",
@@ -322,6 +414,7 @@ def test_executor_refuses_a_digest_mismatch_without_any_call():
 
 def test_executor_fails_the_journey_when_anchors_are_missing():
     once = _FakeOnceLLM([
+        _auxiliary_round(),
         Response(tool_calls=[ToolCall(
             id="c1", name="load_data",
             arguments={"source": "reference/test_doc/省钱卡订单.xlsx", "name": "r07_orders"},

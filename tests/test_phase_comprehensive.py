@@ -786,7 +786,7 @@ class TestPhase4ParallelExecution:
 
         results = loop._execute_tools_parallel([mock_tc1, mock_tc2])
         assert len(results) == 2
-        for _, content in results:
+        for _, content, _structured_data in results:
             assert "error" not in content.lower()[:30]
 
 

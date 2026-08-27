@@ -9,7 +9,6 @@ runtime mode or an alternative web application.
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -36,7 +35,7 @@ class _LocalPublicationClient:
             return Response(tool_calls=[ToolCall(
                 id="local_load_orders",
                 name="load_data",
-                arguments={"source": "publication_synthesis_orders.xlsx", "name": "publication_orders"},
+                arguments={"source": "省钱卡订单.xlsx", "name": "publication_orders"},
             )])
         if self._round == 2:
             return Response(tool_calls=[ToolCall(
@@ -91,16 +90,6 @@ class _LocalPublicationManager:
         return self._loops.get(session_id)
 
 
-def _place_reference_upload() -> None:
-    from data_agent.config import get_config
-    from scripts.acceptance.real_data_manifest import REFERENCE_DATA
-
-    source = REFERENCE_DATA.path("savings_card_orders")
-    target = get_config().inbox_dir / "publication_synthesis_orders.xlsx"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-
-
 def main() -> None:
     import os
 
@@ -108,7 +97,6 @@ def main() -> None:
     from data_agent.web.app import create_app
 
     discover_tools()
-    _place_reference_upload()
     app = create_app()
     app.config["agent_manager"] = _LocalPublicationManager()
     host = os.environ.get("DATA_AGENT_WEB_HOST", "127.0.0.1")

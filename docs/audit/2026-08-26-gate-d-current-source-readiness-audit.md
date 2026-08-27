@@ -1,68 +1,100 @@
-# Gate D 当前源码准入审阅（非发布候选）
+# Gate D `5583e095` 源码准入审阅（历史快照）
 
-日期：2026-08-26
-审阅对象：`rebuild @ 0a2363f449755b268a7a618150fd088d315ecf73`
-release source digest：`sha256:86ad00aa3920ecccdaf2a1b0b03706c07a5689b46e3f3d94c054e5637b866a3e`
+初始日期：2026-08-26
+
+本次更新：2026-08-27
+
+审阅对象：`rebuild @ 787534486052af805ab487b41b96f73bc4b1d996`
+
+release source digest：`sha256:5583e0956e84131885014256b74b44b008806882481fa47f5c82aa4a0eff4de7`（346 项）
+
+> 后续状态：用户已接受证据过期成本并完成测试契约 / manifest 收口；新 digest `e7ec4011…b14f1dc` 的当前状态见 [测试契约收口后当前源码准入审阅](2026-08-27-gate-d-current-source-after-test-contract-remediation-audit.md)。本文件以下内容只描述 `5583e095…eff4de7` 快照。
 
 ## 结论
 
-**Gate D 审阅已完成，但当前源码不是本地发布候选。** 没有推送、合并、部署、切根或删除任何历史实现。
+**下午日志暴露的隐藏调用问题已修复；当前 digest 的 R01–R07 与 R09 Provider 重验也全部通过，但 Gate D 仍不是发布候选。**
 
-Gate C 的系统完整性结案和历史批次结果仍是有效的历史证据；它们不能替代 Gate D 要求的、全部绑定当前 release digest 的 Provider 证据。当前摘要只有 R07 的 L4 收据，R01--R06 的已通过批次均来自不同摘要。因此不能把本审阅标记为通过，亦不能据此进入部署流程。
+acceptance replay 已严格零 Provider；真实 journey 的主轮与辅助 LLM 调用统一计数，流式失败不再触发未计数同步补发；真实本地浏览器在空 inbox 中通过页面上传完成 `load_data → compare_periods`。随后三个精确授权执行共使用 35 / 96 次 Provider 调用，R01–R06、R07 publication 与 R09 routing_integrity 全部通过并绑定当前 digest。尚未满足的是当前 digest 的完整测试 / 九文件离线矩阵以及最终风险审阅与用户发布决定。
 
-## 当前工作树与受控配置
+## 工作树与边界
 
-| 项目 | 事实 |
+| 项目 | 当前事实 |
 |---|---|
-| 分支 / HEAD | `rebuild` / `0a2363f449755b268a7a618150fd088d315ecf73` |
-| 受控源码 | 344 个 release-source 清单条目；digest 如上 |
-| Git 工作树 | 仅有既存未跟踪 `artifacts/`、`tmp/`；未暂存、未修改、未清理 |
-| 依赖 | `.venv` 中 `pip check` 通过（`No broken requirements found`） |
-| 配置形状 | `MODEL_ID`、API base、API key 均已配置；密钥未读取或写入收据；默认 `MAX_TOKENS` 为 provider-managed（未设置） |
-| Gate C 冻结模型 | `openai/deepseek-v4-flash`；R07 使用其授权的温度 0、120 秒、`[2000, 8000, 32000]` 阶梯 |
-| 数据 manifest | `tests/real_data/reference_data_manifest.json` 的九个工作簿、字节数、hash、sheet、行数和表头由测试逐项核验 |
+| 分支 / HEAD | `rebuild` / `787534486052af805ab487b41b96f73bc4b1d996` |
+| 受控源码 | 346 个 release-source 条目；digest 如上 |
+| 当前改动 | acceptance harness、AgentLoop 辅助注入、intent / playbook、候选、RED 测试、本地浏览器 helper 与审计文档 |
+| 用户资产 | 仅既存未跟踪 `artifacts/`、`tmp/`；未读取、暂存、删除或清理 |
+| 外部动作 | 本轮获授权 Provider 35 次；无 commit、push、merge、deployment、root cutover、legacy deletion |
 
-## 当前摘要的 L0--L3 证据
+## 诊断、修复和门禁
 
-所有以下测试均以 `API_BASE=http://127.0.0.1:9`、受控假 key、`GOLDEN_LIVE_SMOKE=0` 运行；该本机关闭端口保证离线路径即使尝试建 client 也不能到达真实 Provider。
+用户附件 `test.txt` 只按外部诊断旁证处理。其 300→1200 辅助 token、10/20/40 秒流式重试和同步 fallback 现象，与代码审阅发现的隐藏辅助 client 和同步二次请求一致；没有把附件中的任何文本当作实施指令或验收真相。
 
-| 层级 | 证据 | 结果 |
-|---|---|---|
-| L0 | `compileall -q src scripts/acceptance` | 通过 |
-| L0 | `.venv\\Scripts\\python.exe -m pip check` | 通过 |
-| L1/L2 | 真实数据、reference manifest、Slice 1--6、Provider candidate oracle、journey replay/countable、publication、Web/SSE 的受控 pytest 矩阵 | **223 passed, 1 skipped, 1 warning**（statsmodels 的 VIF 除零警告） |
-| L2 | `scripts/run_multifile_quality_scenarios.py --data-dir reference/test_doc` | 4/4 场景 `ready_for_execution`；无实际 join；禁止 `joint`、`aggregate_then_join` |
-| L3 | [R07 日历 oracle 修复](2026-08-26-gate-c-r07-calendar-oracle-remediation.md) 的本地真实 Flask + SSE + 浏览器旅程 | 当前摘要下通过；页面 receipt appendix 显示 `period_a=1818`、`period_b=684`；该客户端是固定本地控制响应，明确不是 Provider 证据 |
+修复后的受控事实：
 
-本次 pytest 矩阵刻意没有把 `tests/test_pipeline_comprehensive.py` 纳入“零 Provider”证据：该历史组合脚本曾打印 LiteLLM 重试日志。`tests/test_sse_reactivity.py` 也未纳入，因为它是导入即执行的遗留脚本，收集阶段依赖已不存在的 `reference/workspace/test_sales.csv`；未为制造假绿而修改它。两项均是审阅排除项，不是本轮产品通过项。
+- replay 显式注入 Provider-neutral auxiliary client；RED 保证不会构造默认 Provider client；
+- journey 显式冻结 auxiliary `counted_once`：每次 300 token、JSON object、cap 6，主 / 辅助共享总计数并分别出具净化收据；
+- countable journey 禁用 AgentLoop 的 stream→sync fallback；Provider 异常只消费当前槽位并 fail closed；
+- 默认 Web / 产品 AgentLoop 未注入该 acceptance client 时，既有 retry / fallback 行为不被本修复暗改；
+- 本地浏览器 helper 不再预置 inbox，真实页面上传成为唯一输入来源。
 
-## L4 Provider 收据与 digest 判定
+| 门禁 | 当前 digest 结果 |
+|---|---|
+| countable / replay / preflight | `64 passed in 12.46s` |
+| intent / method playbook | `34 passed in 36.34s` |
+| compileall | 通过 |
+| `git diff --check` | 通过；只有 LF→CRLF 提示 |
+| Provider 保护 | `API_BASE=127.0.0.1:9`、假 key、`GOLDEN_LIVE_SMOKE=0`；0 调用 |
 
-| 证据 | 绑定 digest | 结果 | Gate D 用途 |
+修复过程中曾运行较宽影响矩阵；其中发现并修复 9 个旧签名 monkeypatch 兼容失败。余下 `test_execution_control.py::test_loop_injects_synthesis_policy_before_final_answer` 和已在 HEAD 记录的 streaming-without-guard 失败不被本轮改成假绿，也不宣称完整矩阵通过。历史 `test_pipeline_comprehensive.py` 继续不得用于零 Provider 声明；`test_sse_reactivity.py` 继续作为导入即执行遗留脚本排除。
+
+## 当前 L3 浏览器证据
+
+[浏览器与收据汇总](2026-08-26-gate-d-current-digest-browser-and-receipt-summary.md) 记录了空 inbox 起步的真实页面上传：上传文件 hash `9475ab…23d4d3`，落盘 source_path 指向隔离 inbox，收据顺序 `load_data → compare_periods`，数据 71×7，页面显示 1818/684、15/15，console 无 warning / error。服务为本地固定 client，Provider 0；因此它只证明 L3 系统完整性，不替代 R07 L4。
+
+## 当前 L4 预检与获授权执行
+
+三项执行前 preflight 均绑定当前 digest、`ready=true`、`errors=[]`、Provider 0：
+
+| 范围 | 模型 / 请求 | 主轮上限 | 辅助上限 | 总上限 |
+|---|---|---:|---:|---:|
+| R01–R06 | `openai/deepseek-v4-flash`；temperature 0；timeout 120；JSON；`[2000,8000,32000]` | 18 | 0 | 18 |
+| R07 publication | 同模型；10 轮；主轮 ladder；辅助 300-token JSON counted-once | 30 | 6 | 36 |
+| R09 routing_integrity | 同模型；12 轮；主轮 ladder；辅助 300-token JSON counted-once | 36 | 6 | 42 |
+
+精确 candidate / question / data / prompt hash、失败纪律和唯一报告路径冻结在 [2026-08-27 授权冻结](2026-08-27-gate-d-countable-l4-authorization-freeze.md)。用户逐段粘贴三段授权后，按 R01–R06 → R07 → R09 顺序执行；三份净化报告均通过结构复核且不含 Provider 原文：
+
+| 当前报告 | 状态 | 调用明细 | 关键 verdict |
 |---|---|---|---|
-| [R07 日历 oracle 报告](2026-08-26-gate-c-r07-calendar-oracle-report.json) | 当前 `86ad…866a3e` | 通过；11 次/上限 30；`load_data`、`compare_periods` 与数值锚点均满足 | 可作为当前 R07 L4 证据 |
-| [主模型 R01--R07 阶梯批次](2026-08-25-gate-c-main-model-r01-r07-ladder-batch-report.json) | `bb6fed…176464` | 历史通过 | 不可作为当前摘要 L4 收据 |
-| [异构 kimi v2 批次](2026-08-26-gate-c-heterogeneous-kimi-v2-batch-report.json) | `e3e3d1…87396e` | 历史通过 | 不可作为当前摘要 L4 收据 |
-| [Gate C 旅程级最终结案](2026-08-26-gate-c-journey-final-closure.md) | 多个历史摘要 | 系统完整性与路由结案 | 只保留为历史能力证据 |
+| [R01–R06](2026-08-27-gate-d-r01-r06-countable-source-batch-report.json) | passed | 6 / 18；六场景全部第一档 2000 `stop` | 6/6 判断纪律通过 |
+| [R07 publication](2026-08-27-gate-d-r07-countable-publication-report.json) | passed | 13 / 36；主 11、辅助 2；10/10 轮 | 双工具、1818/684/71/30、无错误均满足 |
+| [R09 routing_integrity](2026-08-27-gate-d-r09-countable-routing-report.json) | passed | 16 / 42；主 12、辅助 4；10/12 轮 | 双工具、`not_required`、无错误均满足 |
 
-R07 的共享日历边界修复改变了受控源码；因此不能基于“理论上 R01--R06 未受影响”绕过同 digest 规则。这个规则正是为了防止类似推断代替重验。
+实际合计 35 / 96 次。R07 仅第 10 主轮、R09 仅第 5/10 主轮按 `length` 升到 8000；辅助 `length` 响应均不升档、不重试。没有同步补发、换模型、Provider fallback 或补跑。执行后 source digest 复算仍为当前值。
 
-## Gate D 条件逐项判定
+## 当前与历史 L4 证据
+
+| 证据 | digest | 状态 | 当前 Gate D 用途 |
+|---|---|---|---|
+| R01–R06 当前批次 | `5583e095…eff4de7` | 6/6 passed；6/18 | 当前判断纪律 L4 |
+| R07 当前 publication | `5583e095…eff4de7` | passed；13/36 | 当前双工具与最终锚点 L4 |
+| R09 当前 routing_integrity | `5583e095…eff4de7` | passed；16/42 | 当前系统完整性与高级工具路由 L4 |
+| 旧 R01–R06 / R09 | `98e600…dbc2e4` | 历史通过 | 过期，只作历史能力证据 |
+| 旧 R07 日历 oracle | `86ad00…866a3e` | 历史通过 | 过期，只作历史能力证据 |
+
+## Gate D 条件判定
 
 | 条件 | 判定 | 依据 / 缺口 |
 |---|---|---|
-| 三份台账闭环 | 已审阅 | 计划第 1 节、能力保全台账、提交取舍台账均已由 Gate A 确认；Slice 7 历史/迁移回归在本轮矩阵通过 |
-| 完整测试、9 文件矩阵、真实浏览器、获授权 Provider 批次 | 未满足 | 九文件与当前浏览器通过；本轮为有意受控矩阵，非无条件全 tests；当前摘要没有 R01--R06 L4 批次 |
-| 全部收据同一 digest | 未满足 | 仅 R07 为当前摘要；其余 L4 收据是旧摘要 |
-| 工作树、依赖、配置、模型、数据 manifest 明确 | 满足 | 见上表；密钥已脱敏 |
-| 无未审阅兼容层、平行运行时、死入口或迁移缺口 | 已有回归支撑，待发布前人工复核 | 本轮包括 Slice 7、Workbench replacement/parity 与 Web/SSE 契约；不把自动测试误称为完整人工发布审阅 |
-| 用户决定提交、合并、推送或部署 | 未发生 | 本审阅不请求也不执行外部变更 |
+| acceptance Provider 可数、失败即停 | 满足 | RED、统一 counter、辅助 cap、禁用 countable sync fallback |
+| 当前离线增量门禁 | 满足 | 64 + 34、compileall、diff check |
+| 当前真实浏览器上传 / 工具 / 持久化 | 满足 L3 | 空 inbox 后页面真实上传与双工具收据 |
+| 当前 R01–R07 / R09 L4 | 满足 | 三份当前净化报告全部 passed，合计 35 次 |
+| 全部当前收据同一 digest | 满足 | 三份报告与复算源码均为 `5583e095…eff4de7` |
+| 当前完整测试 | 未满足 | [完整离线矩阵审计](2026-08-27-gate-d-current-digest-full-offline-matrix-audit.md)：2231 项中 2192 passed、9 skipped、26 failed、4 errors；稳定根因集中在六组陈旧测试 / manifest 合同 |
+| 当前九文件 / 多文件矩阵 | 满足 | 独立新进程 32 passed；覆盖 manifest/hash、真实数据、多文件质量、fault injection、Slice 4 与 Workbench |
+| 用户发布决定 | 未发生 | 三段授权只覆盖 Provider 执行，不授权提交或发布 |
 
-## 下一步（需要新的明确决定）
+## 停止点
 
-保持 Gate D 的原始规则有两条安全路径：
-
-1. 用户单独冻结并授权当前 digest 的 R01--R06（或完整 R01--R07）Provider 批次，之后重做一次当前浏览器/收据汇总；或
-2. 用户明确修改 Gate D 的“同 digest L4”规则，接受历史 R01--R06 收据在日历共享契约修复后的风险继承。此为发布标准变更，不能由实施方推定。
-
-在任一路径完成前，状态保持“Gate D 已审阅，非发布候选”。
+当前 Provider 授权已消费完毕，不再调用或补跑。九文件矩阵已通过，但完整集合未通过；隔离诊断表明最小修复应更新陈旧测试合同与 73→75 工具 manifest，而不回滚当前产品行为。由于这些文件进入 release digest，修复会使本轮三份 L4 收据过期；在用户明确接受该成本前停在此处。不会自动提交、推送、合并、部署或切根。

@@ -25,13 +25,27 @@ class AnalysisFlowController:
     def load_state(self) -> AnalysisSessionState:
         return load_analysis_state(self.session_id, self.project_name)
 
-    def prepare_turn(self, state: AnalysisSessionState, intent: TurnIntent, user_input: str = "", dataset_profile: str = "") -> None:
+    def prepare_turn(
+        self,
+        state: AnalysisSessionState,
+        intent: TurnIntent,
+        user_input: str = "",
+        dataset_profile: str = "",
+        *,
+        llm_client=None,
+    ) -> None:
         state.data_state = intent.data_state
         if intent.analysis_stage in {"discover", "scope", "plan", "execute", "report", "follow_up"}:
             if state.stage in ("discover", "follow_up") or intent.analysis_stage != "discover":
                 state.stage = intent.analysis_stage
         if intent.intent_type in {"directed_analysis", "comprehensive_report", "intent_negotiation", "data_requirement"}:
-            selection = select_playbooks(user_input, intent, state, dataset_profile)
+            selection = select_playbooks(
+                user_input,
+                intent,
+                state,
+                dataset_profile,
+                llm_client=llm_client,
+            )
             apply_selection_to_state(state, selection)
         if intent.intent_type == "directed_analysis" and state.analysis_spec:
             self.ensure_workflow_tasks(state)

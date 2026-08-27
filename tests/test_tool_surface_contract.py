@@ -22,7 +22,7 @@ def test_registered_tool_surface_matches_reviewed_manifest_exactly():
     manifest = _tool_manifest()
     assert manifest["schema_version"] == "tool_surface_manifest.v1"
     assert set(registry.tool_names) == set(manifest["tools"])
-    assert len(registry.tool_names) == len(set(manifest["tools"])) == 73
+    assert len(registry.tool_names) == len(set(manifest["tools"])) == 75
 
 
 def test_static_tool_references_resolve_to_registered_tools():

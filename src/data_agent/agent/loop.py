@@ -441,11 +441,13 @@ class AgentLoop:
         session_id: Optional[str] = None,
         object_name: Optional[str] = None,
         project_name: Optional[str] = None,
+        auxiliary_llm_client=None,
     ):
         global _skill_loader, _mcp_manager, _mcp_bridge
 
         cfg = get_config()
         self.client = client or LLMClient()
+        self.auxiliary_llm_client = auxiliary_llm_client
         self.session_id = session_id or uuid.uuid4().hex[:12]
         active_project = project_name if project_name is not None else object_name
         self.context = AgentContext(
@@ -866,7 +868,14 @@ class AgentLoop:
                 f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
             )
         session_ctx = "\n".join(context_parts)
-        intent = plan_turn_intent(user_input, session_ctx)
+        if self.auxiliary_llm_client is None:
+            intent = plan_turn_intent(user_input, session_ctx)
+        else:
+            intent = plan_turn_intent(
+                user_input,
+                session_ctx,
+                llm_client=self.auxiliary_llm_client,
+            )
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
         self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
@@ -887,7 +896,21 @@ class AgentLoop:
             for c in getattr(state, "pending_confirmations", []) or []
             if self._is_actionable_pending_confirmation(c)
         }
-        controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
+        if self.auxiliary_llm_client is None:
+            controller.prepare_turn(
+                state,
+                intent,
+                user_input=user_input,
+                dataset_profile=session_ctx,
+            )
+        else:
+            controller.prepare_turn(
+                state,
+                intent,
+                user_input=user_input,
+                dataset_profile=session_ctx,
+                llm_client=self.auxiliary_llm_client,
+            )
         try:
             from data_agent.agent.question_need_detector import detect_question_need
 
@@ -1011,7 +1034,8 @@ class AgentLoop:
                 "如果没有明确要求，返回空字符串。\n\n"
                 f"用户消息：\n{user_input[:2000]}"
             )
-            resp = self.client.chat(
+            client = self.auxiliary_llm_client or self.client
+            resp = client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 system="你是要求提取专家。只输出提取的要求，不要解释。如无要求输出空。",
             )
@@ -2142,6 +2166,14 @@ class AgentLoop:
             if type(e).__name__ == "JourneyStructureError" and str(e) == "round_cap_exceeded":
                 yield {"type": "_round_failure", "code": "round_cap_exceeded"}
                 return
+            if not getattr(self.client, "allow_stream_sync_fallback", True):
+                code = str(e) if type(e).__name__ == "JourneyStructureError" else "provider_request_failed"
+                logger.warning(
+                    "Streaming LLM call failed with sync fallback disabled",
+                    extra={"extra_data": {"error": type(e).__name__, "code": code}},
+                )
+                yield {"type": "_round_failure", "code": code}
+                return
             logger.warning("Streaming LLM call failed, falling back to sync", extra={"extra_data": {"error": str(e)}})
             # Fallback to synchronous call on streaming failure
             try:
@@ -2364,7 +2396,7 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
@@ -2411,7 +2443,11 @@ class AgentLoop:
                 return
 
             if round_failure:
-                yield {"type": "error", "message": f"LLM 轮次已达到上限（{round_failure}）"}
+                if round_failure == "round_cap_exceeded":
+                    message = f"LLM 轮次已达到上限（{round_failure}）"
+                else:
+                    message = f"LLM 请求失败（{round_failure}）"
+                yield {"type": "error", "message": message}
                 return
 
             if response is None:
@@ -2572,7 +2608,7 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
@@ -2929,7 +2965,7 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 

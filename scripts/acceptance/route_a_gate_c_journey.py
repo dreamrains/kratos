@@ -31,6 +31,9 @@ JOURNEY_CANDIDATE_SCHEMA = "route_a_journey_candidate.v1"
 _REPORT_SCHEMA = "route_a_journey_replay_report.v1"
 _EXECUTE_REPORT_SCHEMA = "route_a_journey_execute_report.v1"
 _SESSION_PREFIX = "gate_c_journey"
+_PUBLICATION_ACCEPTANCE = "publication"
+_ROUTING_INTEGRITY_ACCEPTANCE = "routing_integrity"
+_ACCEPTANCE_MODES = {_PUBLICATION_ACCEPTANCE, _ROUTING_INTEGRITY_ACCEPTANCE}
 
 
 class JourneyStructureError(ValueError):
@@ -112,6 +115,21 @@ def _resolve_oracle_replay(path_value: Any) -> Path | None:
     except ValueError:
         return None
     return candidate
+
+
+class ProviderNeutralAuxiliaryClient:
+    """Exercise auxiliary routing hooks without constructing a Provider client."""
+
+    provider_calls = 0
+
+    def __init__(self):
+        self.local_calls = 0
+
+    def chat(self, messages, tools=None, system=None):
+        from data_agent.llm.client import Response
+
+        self.local_calls += 1
+        return Response(text="", finish_reason="stop")
 
 
 class ScriptedJourneyClient:
@@ -270,10 +288,15 @@ def run_journey_replay(
 
     script = manifest.get("script", {})
     client = ScriptedJourneyClient(script.get("rounds", []), script.get("round_cap"))
+    auxiliary_client = ProviderNeutralAuxiliaryClient()
 
     from data_agent.agent.loop import AgentLoop
 
-    loop = AgentLoop(client=client, session_id=session_id)
+    loop = AgentLoop(
+        client=client,
+        auxiliary_llm_client=auxiliary_client,
+        session_id=session_id,
+    )
     tool_calls_executed: list[str] = []
     tool_results: dict[str, list[dict[str, Any]]] = {}
     error_events: list[str] = []
@@ -327,6 +350,11 @@ def run_journey_replay(
         "tool_oracle": {"observed": tool_oracle_observed, "errors": tool_oracle_errors},
         "data": manifest.get("data", []),
         "uploads": uploads_placed,
+        "auxiliary_llm": {
+            "mode": "provider_neutral",
+            "provider_calls": auxiliary_client.provider_calls,
+            "local_calls": auxiliary_client.local_calls,
+        },
     })
     return receipt
 
@@ -334,30 +362,58 @@ def run_journey_replay(
 class CountableJourneyClient:
     """Drive the real AgentLoop with exactly-countable Provider requests.
 
-    Each loop round performs single non-retrying requests through the
-    injected ``once_client`` (``chat_once`` semantics: no retry, no fallback,
-    no client-side escalation).  A round climbs the frozen per-round budget
-    ladder only on the silent truncation shape (``finish_reason=length``
-    with zero visible text) and stops at the first non-truncated response.
-    Every request is counted; per-round receipts carry rung, finish reason
-    and length buckets only -- never Provider text.
+    Main loop rounds perform non-retrying requests through the injected
+    ``once_client`` and climb the frozen ladder only on
+    ``finish_reason=length``.  Intent, playbook, compaction, and requirement
+    helpers use a separate one-shot view backed by the same counter and an
+    explicit auxiliary cap.  Sync fallback is disabled for this client.
+    Receipts contain hashes, rungs, outcomes, and length buckets only -- never
+    Provider text.
     """
 
-    def __init__(self, *, round_cap: int, ladder: list[int], once_client, response_format=None):
+    allow_stream_sync_fallback = False
+
+    class _AuxiliaryClient:
+        def __init__(self, owner: "CountableJourneyClient"):
+            self._owner = owner
+
+        def chat(self, messages, tools=None, system=None):
+            return self._owner._serve_auxiliary(messages, tools, system)
+
+    def __init__(
+        self,
+        *,
+        round_cap: int,
+        ladder: list[int],
+        once_client,
+        response_format=None,
+        auxiliary_max_tokens: int = 300,
+        auxiliary_call_cap: int = 0,
+        auxiliary_response_format=None,
+    ):
         self._once = once_client
         self._round_cap = int(round_cap)
         self._ladder = [int(value) for value in ladder]
         self._response_format = response_format
+        self._auxiliary_max_tokens = int(auxiliary_max_tokens)
+        self._auxiliary_call_cap = int(auxiliary_call_cap)
+        self._auxiliary_response_format = auxiliary_response_format
         if self._round_cap < 1:
             raise JourneyStructureError("round_cap must be a positive integer")
         if not self._ladder:
             raise JourneyStructureError("max_tokens_ladder must not be empty")
         self.calls_made = 0
+        self.main_calls_made = 0
+        self.auxiliary_calls_made = 0
         self.rounds_served = 0
         self._terminated = False
+        self._auxiliary_failure = ""
         self.structure: list[dict] = []
         self.round_receipts: list[list[dict]] = []
+        self.auxiliary_receipts: list[dict] = []
         self.on_round = None
+        self.on_auxiliary_call = None
+        self.auxiliary_client = self._AuxiliaryClient(self)
 
     def _serve(self, messages, tools, system):
         from scripts.acceptance.route_a_provider_preflight import _content_length_bucket
@@ -365,6 +421,8 @@ class CountableJourneyClient:
         # Sticky refusal: the loop's sync fallback re-invokes the client after
         # a streaming failure; a terminated journey must reject again without
         # inflating the round count or consuming another slot.
+        if self._auxiliary_failure:
+            raise JourneyStructureError(self._auxiliary_failure)
         if self._terminated:
             raise JourneyStructureError("round_cap_exceeded")
         if self.rounds_served >= self._round_cap:
@@ -381,15 +439,27 @@ class CountableJourneyClient:
         response = None
         for index, rung in enumerate(self._ladder):
             self.calls_made += 1
-            response = self._once.chat_once(
-                messages=messages,
-                tools=tools,
-                system=system,
-                response_format=self._response_format,
-                max_tokens=rung,
-            )
+            self.main_calls_made += 1
+            try:
+                response = self._once.chat_once(
+                    messages=messages,
+                    tools=tools,
+                    system=system,
+                    response_format=self._response_format,
+                    max_tokens=rung,
+                )
+            except Exception as exc:
+                attempts.append({
+                    "max_tokens": rung,
+                    "outcome": f"error:{type(exc).__name__}",
+                })
+                self.round_receipts.append(attempts)
+                if self.on_round is not None:
+                    self.on_round()
+                raise
             attempts.append({
                 "max_tokens": rung,
+                "outcome": "response",
                 "finish_reason": getattr(response, "finish_reason", None) or "",
                 "response_length_bucket": _content_length_bucket(getattr(response, "text", "")),
                 "response_reasoning_length_bucket": _content_length_bucket(getattr(response, "reasoning_content", "")),
@@ -404,6 +474,53 @@ class CountableJourneyClient:
         self.round_receipts.append(attempts)
         if self.on_round is not None:
             self.on_round()
+        return response
+
+    def _serve_auxiliary(self, messages, tools, system):
+        from scripts.acceptance.route_a_provider_preflight import _content_length_bucket
+
+        if self._auxiliary_failure:
+            raise JourneyStructureError(self._auxiliary_failure)
+        if self.auxiliary_calls_made >= self._auxiliary_call_cap:
+            self._auxiliary_failure = "auxiliary_call_cap_exceeded"
+            raise JourneyStructureError(self._auxiliary_failure)
+
+        self.calls_made += 1
+        self.auxiliary_calls_made += 1
+        receipt = {
+            "call": self.auxiliary_calls_made,
+            "prompt_sha256": _digest({"system": system or "", "messages": list(messages or [])}),
+            "tools_count": len(tools or []),
+            "tools_sha256": _digest(tools or []),
+            "max_tokens": self._auxiliary_max_tokens,
+        }
+        try:
+            response = self._once.chat_once(
+                messages=messages,
+                tools=tools,
+                system=system,
+                response_format=self._auxiliary_response_format,
+                max_tokens=self._auxiliary_max_tokens,
+            )
+        except Exception as exc:
+            receipt["outcome"] = f"error:{type(exc).__name__}"
+            self.auxiliary_receipts.append(receipt)
+            self._auxiliary_failure = "auxiliary_provider_request_failed"
+            if self.on_auxiliary_call is not None:
+                self.on_auxiliary_call()
+            raise
+
+        receipt.update({
+            "outcome": "response",
+            "finish_reason": getattr(response, "finish_reason", None) or "",
+            "response_length_bucket": _content_length_bucket(getattr(response, "text", "")),
+            "response_reasoning_length_bucket": _content_length_bucket(
+                getattr(response, "reasoning_content", "")
+            ),
+        })
+        self.auxiliary_receipts.append(receipt)
+        if self.on_auxiliary_call is not None:
+            self.on_auxiliary_call()
         return response
 
     def chat(self, messages, tools=None, system=None):
@@ -443,6 +560,30 @@ def _validate_candidate_request(request: Any) -> list[str]:
     round_cap = request.get("round_cap")
     if not isinstance(round_cap, int) or isinstance(round_cap, bool) or round_cap < 1 or round_cap > 24:
         errors.append("request.round_cap must be a positive integer")
+    auxiliary = request.get("auxiliary_llm")
+    if not isinstance(auxiliary, dict):
+        errors.append("request.auxiliary_llm must be an object")
+    else:
+        if auxiliary.get("mode") != "counted_once":
+            errors.append("request.auxiliary_llm.mode must be counted_once")
+        auxiliary_max_tokens = auxiliary.get("max_tokens")
+        if (
+            not isinstance(auxiliary_max_tokens, int)
+            or isinstance(auxiliary_max_tokens, bool)
+            or auxiliary_max_tokens < 100
+            or auxiliary_max_tokens > 2000
+        ):
+            errors.append("request.auxiliary_llm.max_tokens must be an integer between 100 and 2000")
+        auxiliary_call_cap = auxiliary.get("call_cap")
+        if (
+            not isinstance(auxiliary_call_cap, int)
+            or isinstance(auxiliary_call_cap, bool)
+            or auxiliary_call_cap < 1
+            or auxiliary_call_cap > 24
+        ):
+            errors.append("request.auxiliary_llm.call_cap must be an integer between 1 and 24")
+        if auxiliary.get("response_format") != {"type": "json_object"}:
+            errors.append('request.auxiliary_llm.response_format must be {"type":"json_object"}')
     api_base = request.get("api_base")
     api_base_env = request.get("api_base_env")
     if api_base is not None and api_base_env is not None:
@@ -461,6 +602,16 @@ def _read_manifest_with_schema(path: Path, expected_schema: str) -> dict[str, An
     if not isinstance(payload, dict) or payload.get("schema_version") != expected_schema:
         raise JourneyStructureError(f"manifest schema_version must be {expected_schema}")
     return payload
+
+
+def _acceptance_mode(contract: dict[str, Any]) -> str:
+    """Return the frozen result contract, preserving publication as default.
+
+    A routing journey measures tool reachability and execution integrity; it
+    must not silently be interpreted as a publication-quality answer check.
+    """
+    value = contract.get("acceptance_mode", _PUBLICATION_ACCEPTANCE)
+    return value.strip() if isinstance(value, str) else ""
 
 
 def journey_preflight(
@@ -502,11 +653,20 @@ def journey_preflight(
     if not isinstance(contract, dict):
         errors.append("contract must be an object")
     else:
+        acceptance_mode = _acceptance_mode(contract)
+        if acceptance_mode not in _ACCEPTANCE_MODES:
+            errors.append("contract.acceptance_mode must be publication or routing_integrity")
         if not all(isinstance(item, str) for item in contract.get("required_tool_calls", [])):
             errors.append("contract.required_tool_calls must be a string list")
+        required_tools = contract.get("required_tool_calls", [])
+        if acceptance_mode == _ROUTING_INTEGRITY_ACCEPTANCE and not required_tools:
+            errors.append("routing_integrity requires at least one required_tool_call")
         anchors = contract.get("final_answer_numeric_anchors", [])
-        if not isinstance(anchors, list) or not anchors or not all(str(item).strip() for item in anchors):
-            errors.append("contract.final_answer_numeric_anchors must be a non-empty list")
+        if acceptance_mode == _PUBLICATION_ACCEPTANCE:
+            if not isinstance(anchors, list) or not anchors or not all(str(item).strip() for item in anchors):
+                errors.append("publication requires non-empty final_answer_numeric_anchors")
+        elif anchors != []:
+            errors.append("routing_integrity requires final_answer_numeric_anchors to be []")
         oracle_replay = contract.get("tool_oracle_replay")
         if oracle_replay is not None:
             if not isinstance(oracle_replay, dict):
@@ -532,6 +692,8 @@ def journey_preflight(
             errors.append(f"environment variable {request[env_field]} is not set")
     ladder = request.get("max_tokens_ladder") if isinstance(request.get("max_tokens_ladder"), list) else []
     round_cap = request.get("round_cap") if isinstance(request.get("round_cap"), int) else 0
+    auxiliary = request.get("auxiliary_llm") if isinstance(request.get("auxiliary_llm"), dict) else {}
+    auxiliary_call_cap = auxiliary.get("call_cap") if isinstance(auxiliary.get("call_cap"), int) else 0
     for item in manifest.get("uploads", []) or []:
         if not isinstance(item, dict) or not str(item.get("data_id", "")).strip() or not str(item.get("as", "") or "").strip():
             errors.append("uploads entries need non-empty data_id and as")
@@ -554,8 +716,47 @@ def journey_preflight(
         "model_id": str(request.get("model_id", "")),
         "request": request,
         "data": data_entries,
-        "max_call_budget": (round_cap * len(ladder)) if ladder and round_cap else 0,
+        "main_max_call_budget": (round_cap * len(ladder)) if ladder and round_cap else 0,
+        "auxiliary_max_call_budget": auxiliary_call_cap,
+        "max_call_budget": (
+            (round_cap * len(ladder) if ladder and round_cap else 0)
+            + auxiliary_call_cap
+        ),
     }
+
+
+def _evaluate_contract(
+    contract: dict[str, Any],
+    *,
+    tool_calls_executed: list[str],
+    final_text: str,
+    error_events: list[str],
+    rounds_used: int,
+    round_cap: int,
+) -> tuple[str, dict[str, Any]]:
+    """Evaluate a frozen journey contract without interpreting model prose."""
+    acceptance_mode = _acceptance_mode(contract)
+    required_tools = [str(item) for item in contract.get("required_tool_calls", [])]
+    anchors = [str(item) for item in contract.get("final_answer_numeric_anchors", [])]
+    verdicts = {
+        "acceptance_mode": acceptance_mode,
+        "required_tools_present": all(tool in tool_calls_executed for tool in required_tools),
+        "final_answer_numeric_anchors_present": (
+            all(anchor in final_text for anchor in anchors)
+            if acceptance_mode == _PUBLICATION_ACCEPTANCE
+            else "not_required"
+        ),
+        "no_error_events": not error_events,
+        "rounds_within_cap": rounds_used <= round_cap,
+    }
+    required_verdicts = [
+        verdicts["required_tools_present"],
+        verdicts["no_error_events"],
+        verdicts["rounds_within_cap"],
+    ]
+    if acceptance_mode == _PUBLICATION_ACCEPTANCE:
+        required_verdicts.append(verdicts["final_answer_numeric_anchors_present"])
+    return ("passed" if all(required_verdicts) else "failed"), verdicts
 
 
 def execute_authorized_journey(
@@ -611,10 +812,14 @@ def execute_authorized_journey(
         preflight.update({"mode": "executed", "status": "failed", "errors": upload_errors})
         return preflight
 
+    auxiliary_request = request["auxiliary_llm"]
     client = CountableJourneyClient(
         round_cap=request["round_cap"],
         ladder=request["max_tokens_ladder"],
         once_client=once_client,
+        auxiliary_max_tokens=auxiliary_request["max_tokens"],
+        auxiliary_call_cap=auxiliary_request["call_cap"],
+        auxiliary_response_format=auxiliary_request["response_format"],
     )
 
     def current_receipt(status: str, error_messages: list[str], verdicts=None) -> dict[str, Any]:
@@ -624,10 +829,13 @@ def execute_authorized_journey(
             "status": status,
             "errors": error_messages[:10],
             "provider_calls": client.calls_made,
+            "main_provider_calls": client.main_calls_made,
+            "auxiliary_provider_calls": client.auxiliary_calls_made,
             "rounds_used": client.rounds_served,
             "round_cap": request["round_cap"],
             "structure": client.structure,
             "round_receipts": client.round_receipts,
+            "auxiliary_receipts": client.auxiliary_receipts,
             "tool_calls_executed": tool_calls_executed,
             "contract_verdicts": verdicts or {},
             "uploads": uploads_placed,
@@ -650,10 +858,15 @@ def execute_authorized_journey(
 
     from data_agent.agent.loop import AgentLoop
 
-    loop = AgentLoop(client=client, session_id=manifest["session_id"])
+    loop = AgentLoop(
+        client=client,
+        auxiliary_llm_client=client.auxiliary_client,
+        session_id=manifest["session_id"],
+    )
     if report_path is not None:
         persist("in_progress", [])
     client.on_round = lambda: persist("in_progress", [])
+    client.on_auxiliary_call = lambda: persist("in_progress", [])
     try:
         for event in loop.stream_turn(str(manifest["question"])):
             kind = event.get("type")
@@ -668,15 +881,12 @@ def execute_authorized_journey(
     except Exception as exc:  # a failed request still consumed its slot
         return persist("failed", [f"provider_request: {type(exc).__name__}"])
 
-    contract = manifest.get("contract", {})
-    required_tools = [str(item) for item in contract.get("required_tool_calls", [])]
-    anchors = [str(item) for item in contract.get("final_answer_numeric_anchors", [])]
-    final_text = "".join(final_text_parts)
-    verdicts = {
-        "required_tools_present": all(tool in tool_calls_executed for tool in required_tools),
-        "final_answer_numeric_anchors_present": all(anchor in final_text for anchor in anchors),
-        "no_error_events": not error_events,
-        "rounds_within_cap": client.rounds_served <= request["round_cap"],
-    }
-    status = "passed" if all(verdicts.values()) else "failed"
+    status, verdicts = _evaluate_contract(
+        manifest.get("contract", {}),
+        tool_calls_executed=tool_calls_executed,
+        final_text="".join(final_text_parts),
+        error_events=error_events,
+        rounds_used=client.rounds_served,
+        round_cap=request["round_cap"],
+    )
     return persist(status, error_events, verdicts)

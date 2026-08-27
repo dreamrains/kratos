@@ -14,7 +14,13 @@
     "temperature": 0.0,
     "timeout_seconds": 120,
     "max_tokens_ladder": [2000, 8000, 32000],
-    "round_cap": 10
+    "round_cap": 10,
+    "auxiliary_llm": {
+      "mode": "counted_once",
+      "max_tokens": 300,
+      "call_cap": 6,
+      "response_format": {"type": "json_object"}
+    }
   },
   "contract": {
     "required_tool_calls": ["load_data", "compare_periods"],

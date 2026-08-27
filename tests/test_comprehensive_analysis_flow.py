@@ -526,7 +526,7 @@ class TestConversationFlow:
         assert "Final analysis" in streamed_text
         self._assert_final_guard_history_is_not_user_visible(loop)
 
-    def test_streaming_without_guard_yields_text_deltas_immediately(self, clean_workspace):
+    def test_streaming_without_guard_buffers_final_text_until_completion(self, clean_workspace):
         from data_agent.agent.loop import AgentLoop
         from data_agent.llm.client import Response, StreamComplete, StreamTextDelta
 
@@ -552,14 +552,10 @@ class TestConversationFlow:
         first = next(events)
         assert first["type"] == "llm_call_start"
         second = next(events)
-        assert second == {"type": "text_delta", "text": "Hello", "turn_id": None}
-        assert fake.completed is False
-        third = next(events)
-        assert third == {"type": "text_delta", "text": ", world", "turn_id": None}
-        assert fake.completed is False
+        assert second == {"type": "text_delta", "text": "Hello, world", "turn_id": None}
+        assert fake.completed is True
 
         remaining = list(events)
-        assert fake.completed is True
         assert not [ev for ev in remaining if ev.get("type") == "text_delta"]
 
 

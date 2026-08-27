@@ -69,6 +69,30 @@ def test_r07_replay_measures_the_real_loop_structure_without_provider_calls():
     ]
 
 
+def test_r07_replay_never_constructs_an_uninjected_auxiliary_llm_client(monkeypatch):
+    import data_agent.agent.llm_intent as llm_intent
+    import data_agent.agent.llm_playbook as llm_playbook
+    import data_agent.llm.client as client_module
+
+    constructed = []
+
+    class _ForbiddenProviderClient:
+        def __init__(self, *args, **kwargs):
+            constructed.append({"args": args, "kwargs": kwargs})
+            raise AssertionError("replay must inject every auxiliary LLM client")
+
+    monkeypatch.setattr(llm_intent, "_client", None)
+    monkeypatch.setattr(llm_playbook, "_client", None)
+    monkeypatch.setattr(client_module, "LLMClient", _ForbiddenProviderClient)
+
+    report = journey.run_journey_replay(
+        journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_replay.json"
+    )
+
+    assert report["status"] == "passed", report
+    assert constructed == []
+
+
 def test_replay_fails_when_the_final_answer_misses_frozen_anchors(tmp_path):
     source = journey.ROOT / "tests" / "acceptance" / "route_a_gate_c_journey_r07_replay.json"
     payload = json.loads(source.read_text(encoding="utf-8"))

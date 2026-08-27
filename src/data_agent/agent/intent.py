@@ -164,7 +164,12 @@ def infer_execution_readiness(user_input: str, session_context: str = "") -> Exe
     return "missing_data"
 
 
-def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
+def plan_turn_intent(
+    user_input: str,
+    session_context: str = "",
+    *,
+    llm_client=None,
+) -> TurnIntent:
     """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
     data_state = infer_data_state(session_context)
@@ -179,7 +184,7 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
 
     # ── Layer 2: LLM semantic classification ──
     # Triggered when fast path returns nothing or returns vague result
-    llm_result = _try_llm_classify(text, session_context)
+    llm_result = _try_llm_classify(text, session_context, client=llm_client)
     if llm_result is not None:
         intent_type, ambiguities = llm_result
         return TurnIntent(
@@ -363,10 +368,10 @@ def _action_for(intent_type: str, data_state: str, readiness: str | None = None)
     return "guide_analysis"
 
 
-def _try_llm_classify(text: str, session_context: str) -> tuple[str, list] | None:
+def _try_llm_classify(text: str, session_context: str, *, client=None) -> tuple[str, list] | None:
     try:
         from data_agent.agent.llm_intent import classify_intent_llm
-        result = classify_intent_llm(text, session_context)
+        result = classify_intent_llm(text, session_context, client=client)
         if result is None:
             return None
         return result["intent_type"], result.get("ambiguities", [])

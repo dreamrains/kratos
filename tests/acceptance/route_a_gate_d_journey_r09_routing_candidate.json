@@ -1,7 +1,7 @@
 {
   "schema_version": "route_a_journey_candidate.v1",
   "journey_id": "R01_retention_curve_routing_journey",
-  "session_id": "gate_c_journey_exec_r09",
+  "session_id": "gate_c_journey_gate_d_r09",
   "question": "请加载 reference/test_doc/游戏B留存.xlsx，对日留存曲线做曲线拟合分析，给出最优曲线族、拟合参数与不可外推的边界。",
   "data": [
     {
@@ -13,11 +13,7 @@
     "model_id": "openai/deepseek-v4-flash",
     "temperature": 0.0,
     "timeout_seconds": 120,
-    "max_tokens_ladder": [
-      2000,
-      8000,
-      32000
-    ],
+    "max_tokens_ladder": [2000, 8000, 32000],
     "round_cap": 12,
     "auxiliary_llm": {
       "mode": "counted_once",
@@ -27,14 +23,8 @@
     }
   },
   "contract": {
-    "required_tool_calls": [
-      "load_data",
-      "curve_fitting"
-    ],
-    "final_answer_numeric_anchors": [
-      "0.188",
-      "0.982",
-      "62"
-    ]
+    "acceptance_mode": "routing_integrity",
+    "required_tool_calls": ["load_data", "curve_fitting"],
+    "final_answer_numeric_anchors": []
   }
 }

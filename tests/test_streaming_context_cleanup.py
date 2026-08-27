@@ -67,23 +67,27 @@ def test_streaming_context_is_bound_only_while_generator_runs(
             events = loop.resume_turn_streaming("confirmation-1", "yes")
 
         assert get_current_context() is outer
-        if termination == "exception":
-            # Final-round text is intentionally buffered until it can be
-            # persisted. A stream failure therefore exposes no partial final
-            # response, but must still release the AgentContext correctly.
-            with pytest.raises(RuntimeError, match="stream exploded"):
-                next(events)
-            assert get_current_context() is outer
-            return
+        try:
+            if termination == "exception":
+                # Final-round text is intentionally buffered until it can be
+                # persisted. A stream failure therefore exposes no partial final
+                # response, but must still release the AgentContext correctly.
+                with pytest.raises(RuntimeError, match="stream exploded"):
+                    next(events)
+            else:
+                first = next(events)
+                assert first["type"] == "text_delta"
+                assert first["text"] == "chunk"
+                assert get_current_context() is loop.context
 
-        first = next(events)
-        assert first == {"type": "text_delta", "text": "chunk"}
-        assert get_current_context() is loop.context
-
-        if termination == "close":
+                if termination == "close":
+                    events.close()
+                else:
+                    assert list(events) == []
+        finally:
+            # A failed assertion must not leave the generator's AgentContext
+            # bound and contaminate later parametrized or full-suite tests.
             events.close()
-        else:
-            assert list(events) == []
 
         assert get_current_context() is outer
 
@@ -112,6 +116,11 @@ def test_final_stream_delta_is_persisted_before_it_is_yielded(monkeypatch, metho
     else:
         events = loop.resume_turn_streaming("confirmation-1", "yes")
 
-    assert next(events) == {"type": "text_delta", "text": "chunk"}
-    assert saves == ["saved"]
-    assert list(events) == []
+    try:
+        event = next(events)
+        assert event["type"] == "text_delta"
+        assert event["text"] == "chunk"
+        assert saves == ["saved"]
+        assert list(events) == []
+    finally:
+        events.close()

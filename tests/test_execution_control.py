@@ -724,7 +724,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     with use_agent_context(ctx):
         result = loop.run_turn("analyze retention formula")
 
-    assert result == "final answer"
+    assert result.startswith("final answer\n\n---\n\n### 已验证计算结果")
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]
