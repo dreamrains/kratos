@@ -19,30 +19,31 @@ sha256:e7ec4011ecced91664cbb492e7ccf0d1cfe6d13c16ab2facf0a20f165b14f1dc
 | 九文件 / 多文件矩阵 | `32 passed` |
 | 真实本地浏览器 L3 | 通过 |
 | 当前 digest L4 | R01–R06、R07 publication、R09 routing_integrity 全部通过；35 / 96 次 |
+| 候选源码提交 | `9af4a9aa6cd0bfaae44261fb3b1eb7c2fd9c9481` |
+| 主分支集成 | `f750a72762c679424a4bc07e41e2c55eae82cdb8`，已普通推送至 `origin/main` |
 
 证据见 [当前源码准入审阅](2026-08-27-gate-d-current-source-after-test-contract-remediation-audit.md) 与 [L4 执行结果及候选决定边界](2026-08-27-gate-d-e7ec-l4-execution-and-candidate-decision.md)。
 
-## 声明边界
+## 声明边界与后续执行
 
-本声明只确认上述精确 digest 是**本地发布候选**，不表示：
+本声明最初只确认上述精确 digest 是**本地发布候选**。用户随后另行授权提交、合并、推送与部署；执行结果如下：
 
-- 已创建 release commit；
-- 已合并或推送；
-- 已完成 staging / production 验证；
-- 已部署、切根或迁移历史数据；
-- 已授权再次调用 Provider；
-- 已授权处理 `artifacts/`、`tmp/` 或删除历史实现。
+- 候选提交、主分支 merge commit 与 `origin/main` 普通推送已完成；
+- 当前主机 `http://127.0.0.1:5001/` 的 Web 进程已部署，真实浏览器烟测通过；
+- 没有 staging / production 目标或 production server 配置，故未声称外部环境已部署；
+- 没有再次授权或调用 Provider；
+- 没有授权或处理 `artifacts/`、`tmp/`、历史数据迁移或历史实现删除。
 
-上述动作仍须单独、精确授权。任何 release-source 内容变化都会产生新 digest，并使本候选声明不再适用于变更后的源码；届时须重新评估受影响的证据层级。
+详细收据见 [主分支集成、推送与本机部署收据](2026-08-27-gate-d-e7ec-main-integration-and-local-deployment.md)。任何后续外部部署、切根、迁移或清理仍须单独、精确授权。任何 release-source 内容变化都会产生新 digest，并使本候选声明不再适用于变更后的源码；届时须重新评估受影响的证据层级。
 
 ## 已接受但未消失的风险
 
 用户是在已披露下列边界后作出候选声明：
 
-1. 当前工作树中的受控源码与审计变更尚未提交。
+1. 候选源码现已提交并合入主分支；后续仅文档收据不改变 release source digest。
 2. `test_pipeline_comprehensive.py` 与 `test_sse_reactivity.py` 仍是明确审计并排除的遗留边界。
 3. L3 关闭 API 时，辅助语义钩子存在 10 / 20 / 40 秒本地退避延迟。
-4. 本地发布候选不等于 staging 或 production 已验证。
+4. 本机 Web 部署已验证，但本地发布候选与本机部署都不等于 staging 或 production 已验证。
 5. 未跟踪用户资产 `artifacts/`、`tmp/` 继续保持未触碰、未暂存。
 
-因此，Gate D 的准确结案状态为：**上述精确 digest 已成为本地发布候选；所有 Git 写入后的提交、合并、推送及任何部署动作仍停在独立授权边界。**
+因此，Gate D 的准确结案状态为：**上述精确 digest 已成为本地发布候选，已提交、合并、推送并在当前主机部署；staging / production 外部部署仍没有目标配置与环境收据。**

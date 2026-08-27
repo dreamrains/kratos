@@ -2,6 +2,8 @@
 
 日期：2026-08-27
 
+> 后续状态：用户已另行授权并完成候选提交、主分支合并、普通推送及本机 Web 部署；见 [主分支集成、推送与本机部署收据](2026-08-27-gate-d-e7ec-main-integration-and-local-deployment.md)。以下工作区 / 授权描述保留 L4 执行结束时的快照，不冒充后续 staging / production 状态。
+
 ## 结论
 
 获授权的 R01–R06、R07 publication、R09 routing_integrity 三项 L4 均已在同一 release source digest 上通过。实际 Provider 调用合计 **35 / 96**；没有换模型、Provider 回退、countable stream→sync 补发、越权重试或补跑。
@@ -60,7 +62,7 @@
 
 Gate D 计划的技术条件 1–5 已有当前源码证据：既有三份台账与 Route A 切片已闭环；完整测试、九文件矩阵、真实浏览器和获授权 Provider 批次通过；收据同 digest；工作树 / 依赖 / 配置 / 模型 / 数据 manifest 已明确；本轮没有新增未审阅兼容层、平行运行时、死入口或迁移缺口。
 
-用户已在下列剩余风险被明确披露后，将精确 digest 声明为本地发布候选，因此 Gate D 的候选决定条件已经满足。用户没有授权后续 Git / 发布动作：
+用户已在下列剩余风险被明确披露后，将精确 digest 声明为本地发布候选，因此 Gate D 的候选决定条件已经满足。其后用户已另行授权并完成 Git 集成、推送与本机部署；下列条目保留候选决定时的风险快照：
 
 1. 当前工作树仍是未提交的受控源码与审计变更；尚无 release commit。
 2. `test_pipeline_comprehensive.py` 与 `test_sse_reactivity.py` 是明确排除并审计的遗留边界，不属于本次绿色集合。
@@ -68,4 +70,4 @@ Gate D 计划的技术条件 1–5 已有当前源码证据：既有三份台账
 4. 尚未做 staging 或 production 验证；本地发布候选也不等于已部署。
 5. `artifacts/`、`tmp/` 仍是用户未跟踪资产，本轮保持未触碰、未暂存。
 
-因此，当前准确状态是：**`sha256:e7ec4011…f1dc` 已由用户声明为本地发布候选；尚未授权任何提交、合并、推送、部署或外部环境验收动作。**
+因此，更新后的准确状态是：**`sha256:e7ec4011…f1dc` 已由用户声明为本地发布候选，并已提交、合并、推送及在当前主机部署；没有 staging / production 目标配置或外部环境验收收据。**

@@ -93,4 +93,4 @@ R07 只有第 10 主轮、R09 只有第 5 / 6 / 9 主轮按冻结纪律由 2000 
 | 当前全部收据同一 digest | 满足：离线、浏览器与 L4 均绑定 `e7ec4011…f1dc` |
 | 用户候选决定 | 满足：用户于 2026-08-27 将精确 digest 声明为本地发布候选 |
 
-**Gate D 已通过；用户已将 `sha256:e7ec4011…f1dc` 声明为本地发布候选。** 正式边界见 [本地发布候选声明](2026-08-27-gate-d-e7ec-local-release-candidate-declaration.md)。当前 Provider 授权已全部消费，不再调用或补跑；本地候选不等于 staging / production 已验证，也不授权自动提交、推送、合并、部署或切根。
+**Gate D 已通过；用户已将 `sha256:e7ec4011…f1dc` 声明为本地发布候选。** 用户随后另行授权的候选提交、主分支合并、普通推送与本机 Web 部署均已完成，详见 [集成与本机部署收据](2026-08-27-gate-d-e7ec-main-integration-and-local-deployment.md)。当前 Provider 授权已全部消费，不再调用或补跑；仓库没有外部部署目标或 production server 配置，因此本机部署不冒充 staging / production 已验证。
