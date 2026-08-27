@@ -10,7 +10,7 @@ import pandas as pd
 from scipy import stats as sp_stats
 
 from data_agent.session.workspace import workspace
-from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range, analyze_period_structure, compare_period_structures
+from data_agent.tools._utils import get_df, safe_jsonify, resolve_date_col, parse_period_range, inclusive_date_period_mask, analyze_period_structure, compare_period_structures
 from data_agent.tools.registry import ToolResult
 from data_agent.tools.registry import registry
 
@@ -402,30 +402,6 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@registry.register(
-    name="compare_periods",
-    description=(
-        "比较两个时间段的数据差异，自动计算各指标的变化量和变化率。"
-        "使用场景：环比/同比分析、活动前后效果对比、不同时期业务表现对比。"
-        "不适用场景：无时间列的数据、单时间点快照。"
-        "参数说明：period 格式为 'YYYY-MM-DD~YYYY-MM-DD' 或快捷词（last_month/this_month/last_week/this_week）。"
-        "常见错误：日期格式不匹配、时间段内无数据（先用 preview_data 确认时间范围）。"
-    ),
-    recovery_hint=(
-        "时段对比失败。常见原因："
-        "1) 日期格式不正确（需要 YYYY-MM-DD 格式或快捷词）"
-        "2) 指定时间段内无数据（用 preview_data 检查时间范围）"
-        "3) date_col 不是日期类型（用 describe_dataset 检查）"
-    ),
-    schema_overrides={
-        "name": {"description": "数据集名称"},
-        "date_col": {"description": "日期列名"},
-        "metrics": {"description": "要比较的指标列，逗号分隔，为空则比较所有数值列"},
-        "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
-        "period_b": {"description": "时间段 B（对比期），格式同上"},
-        "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
-    },
-)
 def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: dict) -> dict | None:
     """Recommend a statistical test based on the comparison context."""
     if n_a < 2 or n_b < 2 or not metric_cols:
@@ -460,6 +436,30 @@ def _recommend_statistical_test(n_a: int, n_b: int, metric_cols: list, result: d
     }
 
 
+@registry.register(
+    name="compare_periods",
+    description=(
+        "比较两个时间段的数据差异，自动计算各指标的变化量和变化率。"
+        "使用场景：环比/同比分析、活动前后效果对比、不同时期业务表现对比。"
+        "不适用场景：无时间列的数据、单时间点快照。"
+        "参数说明：period 格式为 'YYYY-MM-DD~YYYY-MM-DD' 或快捷词（last_month/this_month/last_week/this_week）。"
+        "常见错误：日期格式不匹配、时间段内无数据（先用 preview_data 确认时间范围）。"
+    ),
+    recovery_hint=(
+        "时段对比失败。常见原因："
+        "1) 日期格式不正确（需要 YYYY-MM-DD 格式或快捷词）"
+        "2) 指定时间段内无数据（用 preview_data 检查时间范围）"
+        "3) date_col 不是日期类型（用 describe_dataset 检查）"
+    ),
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "date_col": {"description": "日期列名"},
+        "metrics": {"description": "要比较的指标列，逗号分隔，为空则比较所有数值列"},
+        "period_a": {"description": "时间段 A（基准期），格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"},
+        "period_b": {"description": "时间段 B（对比期），格式同上"},
+        "dimensions": {"description": "可选维度列，逗号分隔，按维度分组对比"},
+    },
+)
 def compare_periods(
     name: str,
     date_col: str = "",
@@ -493,8 +493,8 @@ def compare_periods(
     if not pa or not pb:
         return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
 
-    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
-    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    mask_a = inclusive_date_period_mask(df[date_col], pa[0], pa[1])
+    mask_b = inclusive_date_period_mask(df[date_col], pb[0], pb[1])
     df_a = df[mask_a]
     df_b = df[mask_b]
 
@@ -615,9 +615,17 @@ def compare_periods(
         "n": {"description": "返回记录数"},
         "ascending": {"description": "是否升序（False=从大到小）"},
         "columns": {"description": "返回的列，逗号分隔，为空则返回所有列"},
+        "save_as": {"description": "可选：将选出的 Top N 保存为新的派生分析数据集，用于后续图表或导出"},
     },
 )
-def top_n(name: str, sort_by: str = "", n: int = 10, ascending: bool = False, columns: str = "") -> str:
+def top_n(
+    name: str,
+    sort_by: str = "",
+    n: int = 10,
+    ascending: bool = False,
+    columns: str = "",
+    save_as: str = "",
+) -> str:
     df, err = get_df(name)
     if err:
         return err
@@ -647,6 +655,17 @@ def top_n(name: str, sort_by: str = "", n: int = 10, ascending: bool = False, co
         "n": len(top),
         "records": json.loads(top.to_json(orient="records", date_format="iso", force_ascii=False)),
     }
+    if save_as:
+        derive_result = workspace.derive(
+            name,
+            save_as,
+            top,
+            expression=f"top_n(sort_by={sort_by}; n={n}; ascending={ascending})",
+        )
+        if derive_result.startswith("Error:"):
+            return json.dumps({"error": derive_result}, ensure_ascii=False)
+        result["dataset"] = save_as
+        result["source_dataset"] = name
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -702,8 +721,8 @@ def contribute_decomposition(
     if not pa or not pb:
         return "Error: 无法解析时间段。格式: 'YYYY-MM-DD~YYYY-MM-DD' 或 'last_month'/'this_month'"
 
-    mask_a = (df[date_col] >= pa[0]) & (df[date_col] <= pa[1])
-    mask_b = (df[date_col] >= pb[0]) & (df[date_col] <= pb[1])
+    mask_a = inclusive_date_period_mask(df[date_col], pa[0], pa[1])
+    mask_b = inclusive_date_period_mask(df[date_col], pb[0], pb[1])
     df_a = df[mask_a]
     df_b = df[mask_b]
 

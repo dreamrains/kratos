@@ -57,16 +57,24 @@ _SUBSTANTIVE_TOOLS = {
     "record_analysis_spec",
     "record_analysis_plan",
     "record_evidence_record",
-    "record_insight_record",
     "compare_periods",
     "analyze_time_series",
     "funnel_analysis",
     "correlation_analysis",
     "ab_test",
-    "generate_report",
-    "generate_analysis_brief",
-    "generate_formal_report",
     "run_python",
+    "curve_fitting",
+    "contribute_decomposition",
+    "distribution_analysis",
+    "segmentation_analysis",
+    "cohort_analysis",
+    "causal_analysis",
+    "shap_analysis",
+    "forecast",
+    "classification",
+    "regression_analysis",
+    "attribution_analysis",
+    "what_if_simulation",
 }
 
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
@@ -75,6 +83,35 @@ _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "Continue by creating or applying an AnalysisSpec, running relevant analysis steps, "
     "and recording evidence before giving the final answer.\n"
     "</analysis_quality_guard>"
+)
+
+_WRAP_UP_GUARD_MESSAGE = (
+    "<analysis_wrap_up_guard>\n"
+    "The analysis has already run for many rounds. Conclude now with the evidence "
+    "already computed: state the verified findings with their numbers, the boundaries "
+    "and limitations, and the next action. Start new exploratory tool calls only if "
+    "strictly required to close the answer.\n"
+    "</analysis_wrap_up_guard>"
+)
+
+_FINALIZATION_GUARD_MESSAGE = (
+    "<analysis_finalization_mode>\n"
+    "The turn has already completed substantive analysis. Tool use is now closed for "
+    "this turn. Continue reasoning over the verified results already in the conversation, "
+    "then provide the final answer with numbers, boundaries, limitations, and next action. "
+    "Do not emit tool tags, tool_calls, or requests for more tools, and do not claim facts "
+    "that the available evidence does not support.\n"
+    "</analysis_finalization_mode>"
+)
+
+_FINALIZATION_RECOVERY_MESSAGE = (
+    "<analysis_finalization_recovery>\n"
+    "Your previous response attempted tool-invocation markup after tools were intentionally "
+    "closed. That markup was not executed and will not be shown to the user. Do not emit "
+    "tool tags, tool_calls, or requests for more tools. Continue reasoning from the verified "
+    "results already available, then answer directly with numbers, boundaries, limitations, "
+    "and next action.\n"
+    "</analysis_finalization_recovery>"
 )
 
 
@@ -404,11 +441,13 @@ class AgentLoop:
         session_id: Optional[str] = None,
         object_name: Optional[str] = None,
         project_name: Optional[str] = None,
+        auxiliary_llm_client=None,
     ):
         global _skill_loader, _mcp_manager, _mcp_bridge
 
         cfg = get_config()
         self.client = client or LLMClient()
+        self.auxiliary_llm_client = auxiliary_llm_client
         self.session_id = session_id or uuid.uuid4().hex[:12]
         active_project = project_name if project_name is not None else object_name
         self.context = AgentContext(
@@ -523,6 +562,9 @@ class AgentLoop:
             return
 
         restored = 0
+        from data_agent.migration import read_session_migration_status
+        migration_status = read_session_migration_status(self.session_id)
+        is_read_only_missing_original = migration_status.get("mode") == "read_only_missing_original"
         for name, info in meta.items():
             df = None
 
@@ -549,8 +591,9 @@ class AgentLoop:
                     except Exception:
                         df = None
 
-            # Strategy B: fall back to local dataset backup
-            if df is None:
+            # A migrated session whose original input is gone is intentionally
+            # read-only. Do not present its backup as a re-uploaded source.
+            if df is None and not is_read_only_missing_original:
                 parquet_path = sdir / "data" / f"{name}.parquet"
                 if parquet_path.exists():
                     try:
@@ -825,7 +868,14 @@ class AgentLoop:
                 f"columns: {', '.join(str(c) for c in info['column_names'][:10])}"
             )
         session_ctx = "\n".join(context_parts)
-        intent = plan_turn_intent(user_input, session_ctx)
+        if self.auxiliary_llm_client is None:
+            intent = plan_turn_intent(user_input, session_ctx)
+        else:
+            intent = plan_turn_intent(
+                user_input,
+                session_ctx,
+                llm_client=self.auxiliary_llm_client,
+            )
         controller = AnalysisFlowController(self.session_id, self.context.project_name)
         self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
@@ -846,7 +896,21 @@ class AgentLoop:
             for c in getattr(state, "pending_confirmations", []) or []
             if self._is_actionable_pending_confirmation(c)
         }
-        controller.prepare_turn(state, intent, user_input=user_input, dataset_profile=session_ctx)
+        if self.auxiliary_llm_client is None:
+            controller.prepare_turn(
+                state,
+                intent,
+                user_input=user_input,
+                dataset_profile=session_ctx,
+            )
+        else:
+            controller.prepare_turn(
+                state,
+                intent,
+                user_input=user_input,
+                dataset_profile=session_ctx,
+                llm_client=self.auxiliary_llm_client,
+            )
         try:
             from data_agent.agent.question_need_detector import detect_question_need
 
@@ -970,7 +1034,8 @@ class AgentLoop:
                 "如果没有明确要求，返回空字符串。\n\n"
                 f"用户消息：\n{user_input[:2000]}"
             )
-            resp = self.client.chat(
+            client = self.auxiliary_llm_client or self.client
+            resp = client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 system="你是要求提取专家。只输出提取的要求，不要解释。如无要求输出空。",
             )
@@ -1152,11 +1217,91 @@ class AgentLoop:
 
     def _reset_turn_tracking(self) -> None:
         self._turn_tools_used = []
+        self._turn_successful_substantive_tools = set()
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
+        self._turn_wrap_up_injected = False
+        self._turn_finalization_mode = False
+        self._turn_finalization_recovery_used = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
+        self._turn_publication_packet = None
+        self.context.turn_receipt_ids = []
+
+    def _has_substantive_turn_evidence(self) -> bool:
+        """Whether this turn has executed a computation suitable for synthesis."""
+        return bool(getattr(self, "_turn_successful_substantive_tools", set()))
+
+    def _tools_for_current_round(self):
+        """Offer tools until a sufficiently evidenced turn enters finalization.
+
+        Finalization still leaves the model free to reason and write its own
+        answer. It only closes further tool exploration after substantive
+        analysis, preventing a soft wrap-up reminder from being ignored until
+        an external journey budget is exhausted.
+        """
+        if getattr(self, "_turn_finalization_mode", False):
+            return None
+        return registry.active_definitions() or None
+
+    @staticmethod
+    def _contains_unexecuted_tool_markup(text: str) -> bool:
+        """Recognize tool syntax emitted as ordinary final-answer text.
+
+        Some reasoning models emit DSML/OpenAI-style tool tags even when no
+        tool schema is offered. Those bytes are not executable tool calls and
+        must not be mistaken for a publishable analytical answer.
+        """
+        normalized = str(text or "").lower()
+        markers = (
+            "<｜｜dsml｜｜",
+            "<|dsml|>",
+            "<tool_calls>",
+            "<tool_call>",
+            "\"tool_calls\"",
+        )
+        return any(marker in normalized for marker in markers)
+
+    def _recover_finalization_tool_markup(self) -> bool:
+        """Request one no-tools correction after an unexecuted tool attempt."""
+        if getattr(self, "_turn_finalization_recovery_used", False):
+            return False
+        self._turn_finalization_recovery_used = True
+        self.messages.append({
+            "role": "assistant",
+            "content": "[未执行的最终化工具标记已省略；请基于现有证据直接作答。]",
+        })
+        self.messages.append({"role": "system", "content": _FINALIZATION_RECOVERY_MESSAGE})
+        return True
+
+    def _maybe_inject_wrap_up(self, round_num: int, user_input: str = "") -> None:
+        """Enter finalization after the threshold when evidence is sufficient.
+
+        Observed on the real R07 journey: the model can spend the whole round
+        budget on tool calls without ever attempting a final answer. A soft
+        reminder alone did not reliably conclude the journey. Once the
+        threshold is reached, retain model reasoning but close tool schemas
+        only if this turn has already run substantive analysis. Without that
+        evidence, the existing guardrail remains advisory rather than forcing
+        an unsupported answer.
+        """
+        if getattr(self, "_turn_wrap_up_injected", False):
+            return
+        threshold = get_config().wrap_up_round
+        if not threshold or round_num < threshold:
+            return
+        self._turn_wrap_up_injected = True
+        if self._has_substantive_turn_evidence():
+            self._turn_finalization_mode = True
+            self.messages.append({"role": "system", "content": _FINALIZATION_GUARD_MESSAGE})
+            packet = self._prepare_publication_packet(user_input)
+            if packet and packet.get("status") == "ready":
+                from data_agent.agent.publication_synthesis import publication_packet_prompt
+
+                self.messages.append({"role": "system", "content": publication_packet_prompt(packet)})
+        else:
+            self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
 
     def _tool_content_is_error(self, content: str) -> bool:
         stripped = (content or "").lstrip()
@@ -1167,12 +1312,137 @@ class AgentLoop:
             or lowered.startswith("error")
         )
 
-    def _record_turn_tool_result(self, tool_name: str, tool_msg_content: str) -> None:
+    def _record_turn_tool_result(
+        self,
+        tool_name: str,
+        tool_msg_content: str,
+        tool_args: dict | None = None,
+        tool_call_id: str = "",
+        structured_data: dict | None = None,
+    ) -> str:
         if not hasattr(self, "_turn_tools_used"):
             self._reset_turn_tracking()
         self._turn_tools_used.append(tool_name)
+        if tool_name in _SUBSTANTIVE_TOOLS and not self._tool_content_is_error(tool_msg_content):
+            self._turn_successful_substantive_tools.add(tool_name)
         if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
+        if self._tool_content_is_error(tool_msg_content):
+            return ""
+
+        state = getattr(self.context, "analysis_state", None)
+        add_receipt = getattr(state, "add_tool_receipt", None)
+        if not callable(add_receipt):
+            return ""
+        try:
+            import hashlib
+
+            args = dict(tool_args or {})
+            dataset_refs = [
+                str(args[key])
+                for key in ("name", "data", "source")
+                if isinstance(args.get(key), str) and args[key].strip()
+            ]
+            receipt = add_receipt({
+                "tool_name": tool_name,
+                "tool_call_id": str(tool_call_id or ""),
+                "arguments": args,
+                "dataset_refs": dataset_refs,
+                "result_sha256": "sha256:" + hashlib.sha256(
+                    (tool_msg_content or "").encode("utf-8")
+                ).hexdigest(),
+                "result_preview": (tool_msg_content or "")[:2000],
+                "publication_facts": self._publication_facts_for_tool(structured_data),
+            })
+            receipt_id = str(receipt.get("id") or "")
+            if receipt_id:
+                self.context.turn_receipt_ids.append(receipt_id)
+            turn_state = getattr(self.context, "turn_state", None)
+            receipt_ids = getattr(turn_state, "tool_receipt_ids", None)
+            if receipt_id and isinstance(receipt_ids, list):
+                receipt_ids.append(receipt_id)
+            return receipt_id
+        except Exception as exc:
+            logger.warning(
+                "Tool receipt recording skipped",
+                extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
+            )
+            return ""
+
+    @staticmethod
+    def _publication_facts_for_tool(structured_data: dict | None) -> list[dict[str, str]]:
+        if not isinstance(structured_data, dict):
+            return []
+        try:
+            from data_agent.agent.publication_synthesis import extract_publication_facts
+
+            return extract_publication_facts(structured_data)
+        except Exception:
+            return []
+
+    def _prepare_publication_packet(self, user_input: str) -> dict | None:
+        """Freeze a bounded, receipt-backed hand-off before tools are closed."""
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return None
+        try:
+            from data_agent.agent.publication_synthesis import build_publication_packet
+
+            packet = build_publication_packet(
+                state,
+                user_input=user_input,
+                substantive_tools=_SUBSTANTIVE_TOOLS,
+                receipt_ids=self.context.turn_receipt_ids,
+            )
+            self._turn_publication_packet = packet
+            if packet.get("status") == "ready":
+                add_packet = getattr(state, "add_publication_packet", None)
+                if callable(add_packet):
+                    add_packet(packet)
+            return packet
+        except Exception as exc:
+            logger.warning(
+                "Publication synthesis packet skipped",
+                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
+            )
+            return None
+
+    def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
+        """Attach deterministic evidence to a finalization answer before publication."""
+        packet = getattr(self, "_turn_publication_packet", None)
+        if not isinstance(packet, dict) or packet.get("status") != "ready":
+            return final_text, None
+        try:
+            from data_agent.agent.publication_synthesis import render_verified_appendix, validate_final_narrative
+
+            error = validate_final_narrative(final_text)
+            if error:
+                return None, error
+            return f"{final_text.rstrip()}\n\n---\n\n{render_verified_appendix(packet)}", None
+        except Exception as exc:
+            logger.warning(
+                "Publication synthesis rendering skipped",
+                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
+            )
+            return final_text, None
+
+    def _render_terminal_publication(self, user_input: str, final_text: str) -> tuple[str | None, str | None]:
+        """Publish a receipt-backed appendix for every evidenced terminal answer.
+
+        A model can choose to answer before the soft wrap-up threshold.  Its
+        final response still crosses the same product publication boundary,
+        so collecting the receipt packet only in forced finalization would
+        leave normal short analyses ungrounded.
+        """
+        packet = getattr(self, "_turn_publication_packet", None)
+        if (
+            self._has_substantive_turn_evidence()
+            and (not isinstance(packet, dict) or packet.get("status") != "ready")
+        ):
+            packet = self._prepare_publication_packet(user_input)
+        if isinstance(packet, dict) and packet.get("status") == "ready":
+            return self._render_finalized_publication(final_text)
+        return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
         if not getattr(self, "_turn_loaded_data", False):
@@ -1261,6 +1531,43 @@ class AgentLoop:
         self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
         self._turn_synthesis_policy_injected = True
 
+    def _verify_before_publication(self, user_input: str) -> None:
+        """Refresh deterministic claim verification at the publication boundary.
+
+        Tool rounds may create an EvidenceRecord after the earlier synthesis
+        hook ran.  A final answer must not be published with that fresh record
+        still labelled unverified in the Workbench.
+        """
+        state = getattr(self.context, "analysis_state", None)
+        if state is None or not getattr(state, "evidence_records", None):
+            return
+        try:
+            from data_agent.agent.trust_workflow_runtime import maybe_verify_turn_claims
+
+            maybe_verify_turn_claims(user_input, state)
+        except Exception as exc:
+            logger.warning(
+                "Publication-boundary verification skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+
+    @staticmethod
+    def _budget_truncation_message(response) -> str | None:
+        """Explicit guidance when reasoning exhausted the output budget.
+
+        The client already attempted its bounded budget escalations before the
+        response surfaced here; remaining truncation needs user action, not a
+        silent empty answer.
+        """
+        if response is None or getattr(response, "finish_reason", None) != "length":
+            return None
+        if (getattr(response, "text", "") or "").strip():
+            return None
+        return (
+            "模型推理耗尽了输出预算（已自动提升预算重试仍被截断）。"
+            "请在设置中提高 MAX_TOKENS 或更换模型后重试。"
+        )
+
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         return self._is_analysis_quality_guard_candidate()
 
@@ -1275,7 +1582,10 @@ class AgentLoop:
         tools_used = set(getattr(self, "_turn_tools_used", []))
         if tools_used & _SUBSTANTIVE_TOOLS:
             return False
-        if not tools_used or not tools_used <= _PROFILING_TOOLS:
+        # Any tool use without a substantive analysis tool (including browsing
+        # helpers like list_files that fall outside the profiling set) still
+        # means the turn only profiled data and must not answer yet.
+        if not tools_used:
             return False
         return True
 
@@ -1821,9 +2131,10 @@ class AgentLoop:
     def _stream_llm_round(self, round_num: int):
         """Execute one LLM round using streaming. Yields SSE event dicts.
 
-        Text deltas are yielded in real-time. When the round completes, the
-        final Response is returned via a ``{"type": "_response", ...}`` event
-        so the caller can decide what to do next.
+        The caller buffers text until the round is durably persisted, then
+        decides whether it is safe to publish it.  When the round completes,
+        the final Response is returned via a ``{"type": "_response", ...}``
+        event so the caller can decide what to do next.
         """
         from data_agent.llm.client import StreamTextDelta, StreamComplete
 
@@ -1838,7 +2149,7 @@ class AgentLoop:
         try:
             for ev in self.client.stream_chat_structured(
                 messages=self.messages,
-                tools=registry.active_definitions() or None,
+                tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             ):
                 # Check interrupt between streaming chunks
@@ -1852,12 +2163,23 @@ class AgentLoop:
                 elif isinstance(ev, StreamComplete):
                     response = ev.response
         except Exception as e:
+            if type(e).__name__ == "JourneyStructureError" and str(e) == "round_cap_exceeded":
+                yield {"type": "_round_failure", "code": "round_cap_exceeded"}
+                return
+            if not getattr(self.client, "allow_stream_sync_fallback", True):
+                code = str(e) if type(e).__name__ == "JourneyStructureError" else "provider_request_failed"
+                logger.warning(
+                    "Streaming LLM call failed with sync fallback disabled",
+                    extra={"extra_data": {"error": type(e).__name__, "code": code}},
+                )
+                yield {"type": "_round_failure", "code": code}
+                return
             logger.warning("Streaming LLM call failed, falling back to sync", extra={"extra_data": {"error": str(e)}})
             # Fallback to synchronous call on streaming failure
             try:
                 response = self.client.chat(
                     messages=self.messages,
-                    tools=registry.active_definitions() or None,
+                    tools=self._tools_for_current_round(),
                     system=self._get_system_prompt(),
                 )
                 # Emit any text that wasn't streamed yet
@@ -1866,6 +2188,9 @@ class AgentLoop:
                     yield {"type": "text_delta", "text": new_text, "turn_id": None}
                     streamed_text += new_text
             except Exception as fallback_err:
+                if type(fallback_err).__name__ == "JourneyStructureError" and str(fallback_err) == "round_cap_exceeded":
+                    yield {"type": "_round_failure", "code": "round_cap_exceeded"}
+                    return
                 yield {"type": "_response", "response": None, "streamed_text": streamed_text}
                 return
 
@@ -1925,7 +2250,7 @@ class AgentLoop:
             if scope_error:
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                self._record_turn_tool_result(tc.name, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -1960,7 +2285,7 @@ class AgentLoop:
                 )
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                self._record_turn_tool_result(tc.name, scope_error)
+                self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -1980,7 +2305,13 @@ class AgentLoop:
             elif turn_state is not None:
                 turn_state.record_tool_success()
 
-            self._record_turn_tool_result(tc.name, tool_msg_content)
+            self._record_turn_tool_result(
+                tc.name,
+                tool_msg_content,
+                tc.arguments,
+                tc.id,
+                getattr(tool_result, "data", None),
+            )
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
@@ -2065,7 +2396,7 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
@@ -2074,7 +2405,11 @@ class AgentLoop:
                 yield self._suspended_event(blocked_confirmation)
                 return
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            # A completed final answer must be persisted before any of its
+            # text reaches the browser.  Buffering one LLM round also lets us
+            # discard a premature final response when the quality guard needs
+            # another substantive-tool round.
+            buffer_text_events = True
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2087,10 +2422,13 @@ class AgentLoop:
 
             response = None
             streamed_text = ""
+            round_failure = ""
             for ev in self._stream_llm_round(round_num):
                 if ev["type"] == "_response":
                     response = ev["response"]
                     streamed_text = ev["streamed_text"]
+                elif ev["type"] == "_round_failure":
+                    round_failure = str(ev.get("code") or "")
                 elif ev["type"] == "text_delta":
                     if buffer_text_events:
                         pending_text_events.append(ev)
@@ -2104,8 +2442,31 @@ class AgentLoop:
                 yield {"type": "error", "message": "Turn interrupted by user"}
                 return
 
+            if round_failure:
+                if round_failure == "round_cap_exceeded":
+                    message = f"LLM 轮次已达到上限（{round_failure}）"
+                else:
+                    message = f"LLM 请求失败（{round_failure}）"
+                yield {"type": "error", "message": message}
+                return
+
             if response is None:
                 yield {"type": "error", "message": "LLM 返回为空"}
+                return
+
+            budget_truncation = self._budget_truncation_message(response)
+            if budget_truncation:
+                yield {"type": "error", "message": budget_truncation}
+                return
+
+            if (
+                getattr(self, "_turn_finalization_mode", False)
+                and not response.has_tool_calls
+                and self._contains_unexecuted_tool_markup(response.text)
+            ):
+                if self._recover_finalization_tool_markup():
+                    continue
+                yield {"type": "error", "message": "最终化轮未生成可发布回答（检测到未执行工具标记）"}
                 return
 
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
@@ -2130,6 +2491,13 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                if publication_error:
+                    yield {"type": "error", "message": publication_error}
+                    return
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
+                pending_text_events = [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
@@ -2137,15 +2505,21 @@ class AgentLoop:
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
-                if buffer_text_events:
-                    for ev in pending_text_events:
-                        yield ev
-                # Text was already streamed; just archive and save
+                self._verify_before_publication(user_input)
+                # Persist the final message and its state before the client
+                # can render the final delta or receive turn_end.
                 self._maybe_archive(user_input, final_text)
                 self._auto_save()
+                for ev in pending_text_events:
+                    yield ev
                 return
 
             if buffer_text_events:
+                # This is an intermediate tool-call round rather than the
+                # final answer, but it is still browser-visible text.  Persist
+                # the assistant message before publishing it so refresh/replay
+                # cannot lose text that the user already saw.
+                self._auto_save()
                 for ev in pending_text_events:
                     yield ev
 
@@ -2163,6 +2537,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
+            self._maybe_inject_wrap_up(round_num, user_input)
 
             # Check interrupt after tool calls
             if self._interrupt_event.is_set():
@@ -2233,11 +2608,13 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
-            buffer_text_events = self._is_analysis_quality_guard_candidate()
+            # Keep final-answer publication ordered exactly as in the normal
+            # streaming path: persist first, then expose the answer.
+            buffer_text_events = True
             pending_text_events = []
 
             # Inject paragraph separator between streaming rounds
@@ -2269,6 +2646,11 @@ class AgentLoop:
                 yield {"type": "error", "message": "LLM 返回为空"}
                 return
 
+            budget_truncation = self._budget_truncation_message(response)
+            if budget_truncation:
+                yield {"type": "error", "message": budget_truncation}
+                return
+
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
                 assistant_msg["reasoning_content"] = response.reasoning_content
@@ -2294,11 +2676,11 @@ class AgentLoop:
                 if self._should_continue_for_analysis_quality(resumed_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
-                if buffer_text_events:
-                    for ev in pending_text_events:
-                        yield ev
+                self._verify_before_publication(resumed_input)
                 self._maybe_archive(resumed_input, final_text)
                 self._auto_save()
+                for ev in pending_text_events:
+                    yield ev
                 return
 
             if buffer_text_events:
@@ -2399,7 +2781,7 @@ class AgentLoop:
         if scope_error:
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-            self._record_turn_tool_result(tc.name, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -2431,7 +2813,7 @@ class AgentLoop:
             )
             if turn_state is not None:
                 turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-            self._record_turn_tool_result(tc.name, scope_error)
+            self._record_turn_tool_result(tc.name, scope_error, tc.arguments, tc.id)
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -2449,7 +2831,13 @@ class AgentLoop:
         elif turn_state is not None:
             turn_state.record_tool_success()
 
-        self._record_turn_tool_result(tc.name, tool_msg_content)
+        self._record_turn_tool_result(
+            tc.name,
+            tool_msg_content,
+            tc.arguments,
+            tc.id,
+            getattr(tool_result, "data", None),
+        )
         self._auto_track_task_progress(tc.name, tool_msg_content and not tool_msg_content.startswith('{"error":'))
 
         # Check for stage regression after tool execution
@@ -2477,7 +2865,7 @@ class AgentLoop:
         tool_calls,
         _scope_guard=_protected_scope_guard,
     ) -> list[tuple]:
-        """Execute read-only tool calls in parallel. Returns [(tc, tool_msg_content), ...]."""
+        """Execute read-only tool calls in parallel with structured result facts."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from contextvars import copy_context
 
@@ -2501,7 +2889,7 @@ class AgentLoop:
             try:
                 scope_error = guard_errors.get(tc.id, "")
                 if scope_error:
-                    return (tc, scope_error, None)
+                    return (tc, scope_error, None, None)
                 t0 = time.monotonic()
                 with self.__context_operation("use"):
                     tool_result = registry.execute(tc.name, tc.arguments)
@@ -2513,7 +2901,7 @@ class AgentLoop:
                     )
                     if turn_state is not None:
                         turn_state.record_tool_error(tc.name, tc.arguments, scope_error)
-                    return (tc, scope_error, post_scope)
+                    return (tc, scope_error, post_scope, None)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 tool_msg_content = self._compact_tool_output(tool_result, tc)
 
@@ -2524,12 +2912,12 @@ class AgentLoop:
                 elif turn_state is not None:
                     turn_state.record_tool_success()
 
-                return (tc, tool_msg_content, None)
+                return (tc, tool_msg_content, None, getattr(tool_result, "data", None))
             except Exception as e:
                 error_content = json.dumps({"error": str(e)}, ensure_ascii=False)
                 if turn_state is not None:
                     turn_state.record_tool_error(tc.name, tc.arguments, error_content)
-                return (tc, error_content, None)
+                return (tc, error_content, None, None)
 
         import time
 
@@ -2544,10 +2932,10 @@ class AgentLoop:
                 futures[future] = tc.id
 
             for future in as_completed(futures):
-                tc_obj, content, refresh_error = future.result()
+                tc_obj, content, refresh_error, structured_data = future.result()
                 if refresh_error is not None:
                     self.__context_operation("record_worker_refresh_error", refresh_error)
-                results[tc_obj.id] = (tc_obj, content)
+                results[tc_obj.id] = (tc_obj, content, structured_data)
 
         # Return in original order
         return [results[tc.id] for tc in tool_calls if tc.id in results]
@@ -2577,7 +2965,7 @@ class AgentLoop:
             _microcompact(self.session_id, self.messages)
             if _estimate_tokens(self.messages) > self.token_threshold:
                 self.messages[:] = compact_history(
-                    self.session_id, self.client, self.messages,
+                    self.session_id, self.auxiliary_llm_client or self.client, self.messages,
                     self._compact_state, token_threshold=self.token_threshold,
                 )
 
@@ -2590,9 +2978,18 @@ class AgentLoop:
 
             response = self.client.chat(
                 messages=self.messages,
-                tools=registry.active_definitions() or None,
+                tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             )
+
+            if (
+                getattr(self, "_turn_finalization_mode", False)
+                and not response.has_tool_calls
+                and self._contains_unexecuted_tool_markup(response.text)
+            ):
+                if self._recover_finalization_tool_markup():
+                    continue
+                return FinalResponse(content="最终化轮未生成可发布回答（检测到未执行工具标记）。")
 
             assistant_msg: dict = {"role": "assistant", "content": response.text or ""}
             if response.reasoning_content:
@@ -2616,12 +3013,18 @@ class AgentLoop:
             self.messages.append(assistant_msg)
 
             if not response.has_tool_calls:
+                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                if publication_error:
+                    return FinalResponse(content=publication_error)
+                final_text = published_text or final_text
+                assistant_msg["content"] = final_text
                 if self._should_continue_for_analysis_quality(user_input, final_text):
                     self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
+                self._verify_before_publication(user_input)
                 return FinalResponse(content=final_text)
 
             # Budget-based quality reminder injection
@@ -2655,8 +3058,14 @@ class AgentLoop:
 
                 if can_parallelize:
                     results = self._execute_tools_parallel(tool_calls)
-                    for tc, tool_msg_content in results:
-                        self._record_turn_tool_result(tc.name, tool_msg_content)
+                    for tc, tool_msg_content, structured_data in results:
+                        self._record_turn_tool_result(
+                            tc.name,
+                            tool_msg_content,
+                            tc.arguments,
+                            tc.id,
+                            structured_data,
+                        )
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
@@ -2673,6 +3082,7 @@ class AgentLoop:
 
             self._maybe_replan_after_data_load(user_input)
             self._maybe_inject_synthesis_policy(user_input)
+            self._maybe_inject_wrap_up(round_num, user_input)
 
             # Track token usage for budget enforcement
             turn_state = getattr(self.context, "turn_state", None)

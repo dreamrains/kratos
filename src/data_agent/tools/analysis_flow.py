@@ -126,6 +126,49 @@ def _current_state():
         return None
 
 
+def _current_turn_receipts() -> list[dict]:
+    try:
+        from data_agent.agent.context import get_current_context
+
+        context = get_current_context()
+        state = getattr(context, "analysis_state", None) if context is not None else None
+        receipt_ids = getattr(context, "turn_receipt_ids", None) if context is not None else None
+        # Older callers may populate the execution-state receipts directly;
+        # an empty context list is not evidence that this turn has no
+        # receipts.  Prefer the context chain when present, then use that
+        # equivalent current-turn source as a fallback.
+        if not isinstance(receipt_ids, list) or not receipt_ids:
+            turn_state = getattr(context, "turn_state", None) if context is not None else None
+            receipt_ids = getattr(turn_state, "tool_receipt_ids", None)
+        receipts = getattr(state, "tool_receipts", None)
+        if not isinstance(receipt_ids, list) or not isinstance(receipts, list):
+            return []
+        by_id = {
+            str(item.get("id")): item
+            for item in receipts
+            if isinstance(item, dict) and item.get("id")
+        }
+        return [by_id[receipt_id] for receipt_id in receipt_ids if receipt_id in by_id]
+    except Exception:
+        return []
+
+
+def _tool_names(tool_calls) -> set[str]:
+    if not isinstance(tool_calls, list):
+        return set()
+    names: set[str] = set()
+    for call in tool_calls:
+        if isinstance(call, str) and call.strip():
+            names.add(call.strip())
+        elif isinstance(call, dict):
+            name = call.get("name")
+            if not name and isinstance(call.get("function"), dict):
+                name = call["function"].get("name")
+            if isinstance(name, str) and name.strip():
+                names.add(name.strip())
+    return names
+
+
 def _write_analysis_artifact(kind: str, payload: dict) -> dict:
     from data_agent.config import get_config
     from data_agent.session.history import register_artifact
@@ -341,10 +384,45 @@ def record_evidence_record(record_json: str) -> str:
             }, ensure_ascii=False)
         payload = validation.record
 
+    # Ordinary EvidenceRecords belong to the active plan even when the model
+    # did not know its generated ID.  Without this binding, the verifier
+    # correctly excludes the record as out-of-plan and the UI can never mark
+    # the just-created conclusion as verified.
+    if not is_stage3c0b_evidence and current_plan_id and not payload.get("plan_id"):
+        payload["plan_id"] = current_plan_id
+
     required = ["claim", "dataset", "method", "tool_calls", "result_summary", "limitations", "confidence"]
     missing = [k for k in required if k not in payload]
     if missing:
         return json.dumps({"error": f"EvidenceRecord 缺少字段: {missing}"}, ensure_ascii=False)
+
+    # Bind model-selected tool names to receipts made by this exact execution
+    # turn.  The model cannot promote a tool it did not run into evidence.
+    current_turn_receipts = _current_turn_receipts()
+    if current_turn_receipts:
+        called_names = _tool_names(payload.get("tool_calls"))
+        receipt_names = {
+            str(receipt.get("tool_name"))
+            for receipt in current_turn_receipts
+            if receipt.get("tool_name")
+        }
+        missing_receipts = sorted(called_names - receipt_names)
+        if missing_receipts:
+            return json.dumps({
+                "error": "EvidenceRecord references tools not executed in this turn",
+                "error_type": "unbound_tool_receipt",
+                "missing_tool_receipts": missing_receipts,
+            }, ensure_ascii=False)
+        bound_receipts = [
+            receipt for receipt in current_turn_receipts
+            if str(receipt.get("tool_name")) in called_names
+        ]
+        if not bound_receipts:
+            return json.dumps({
+                "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+                "error_type": "missing_tool_receipt",
+            }, ensure_ascii=False)
+        payload["tool_receipt_ids"] = [str(receipt["id"]) for receipt in bound_receipts]
 
     allowed_confidence = {"high", "medium", "low", "speculative"}
     confidence = str(payload.get("confidence", "")).strip().lower()

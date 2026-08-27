@@ -110,6 +110,18 @@ _DANGEROUS_ATTRS = frozenset({
     '__mro__', '__dict__',
 })
 
+# `run_python` exposes pandas and NumPy for in-memory analysis. Their I/O
+# helpers would otherwise bypass the sandbox's no-files/no-network contract.
+_SANDBOX_IO_ATTRS = frozenset({
+    "read_clipboard", "read_csv", "read_excel", "read_feather", "read_fwf",
+    "read_gbq", "read_hdf", "read_html", "read_json", "read_orc",
+    "read_parquet", "read_pickle", "read_sas", "read_spss", "read_sql",
+    "read_sql_query", "read_sql_table", "read_stata", "read_table", "read_xml",
+    "ExcelFile", "HDFStore", "to_clipboard", "to_csv", "to_excel",
+    "to_feather", "to_gbq", "to_hdf", "to_json", "to_orc", "to_parquet",
+    "to_pickle", "to_sql", "load", "save", "savez", "savez_compressed",
+})
+
 
 def validate_python_code(code: str) -> str | None:
     """AST 级别校验 Python 代码安全性（run_python 使用）。
@@ -140,10 +152,17 @@ def validate_python_code(code: str) -> str | None:
             if isinstance(node.func, ast.Attribute):
                 if node.func.attr in _DANGEROUS_CALLS or node.func.attr in _DANGEROUS_ATTRS:
                     return f"不允许调用: .{node.func.attr}()"
+                if node.func.attr in _SANDBOX_IO_ATTRS:
+                    return f"不允许文件或网络 I/O: .{node.func.attr}()"
 
         # 检查 dunder 属性访问
         if isinstance(node, ast.Attribute) and node.attr.startswith('__') and node.attr.endswith('__'):
             return f"不允许访问: .{node.attr}"
+
+        # Vectorised pandas/NumPy operations are the supported path. Reject
+        # unbounded loops before they can outlive a best-effort timeout.
+        if isinstance(node, ast.While):
+            return "不允许 while 循环；请使用受限的向量化计算或有限 range()"
 
     return None
 
@@ -260,6 +279,24 @@ def parse_period_range(
         parts = period_str.split("~")
         return pd.Timestamp(parts[0].strip()), pd.Timestamp(parts[1].strip())
     return None
+
+
+def inclusive_date_period_mask(
+    values: pd.Series,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.Series:
+    """Return the mask for an inclusive pair of calendar-date boundaries.
+
+    ``parse_period_range`` exposes business periods as dates, not instants.
+    Comparing a timestamp column to its normalized end date with ``<=``
+    silently discards all events later that day.  A half-open next-day bound
+    keeps the public date contract inclusive while retaining timestamp-level
+    precision and is shared by every period-comparison tool.
+    """
+    start_day = pd.Timestamp(start).normalize()
+    next_day = pd.Timestamp(end).normalize() + pd.Timedelta(days=1)
+    return (values >= start_day) & (values < next_day)
 
 
 def analyze_period_structure(

@@ -213,9 +213,7 @@ class EvidenceStore:
         )
 
         if role == "tool" or name:
-            if name == "generate_report":
-                return EvidenceKind.REPORT
-            if name in {"record_evidence_record", "record_insight_record"}:
+            if name == "record_evidence_record":
                 return EvidenceKind.ANALYSIS_RESULT
             return EvidenceKind.TOOL_CALL
         if message.get("tool_calls"):

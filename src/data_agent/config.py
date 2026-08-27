@@ -16,7 +16,7 @@ class AgentConfig(BaseSettings):
     model_id: str = Field(alias="MODEL_ID", default="gpt-4o")
     api_base: Optional[str] = Field(alias="API_BASE", default=None)
     api_key: Optional[str] = Field(alias="API_KEY", default=None)
-    max_tokens: int = Field(alias="MAX_TOKENS", default=8000)
+    max_tokens: Optional[int] = Field(alias="MAX_TOKENS", default=None)
     quality_judge_model: Optional[str] = Field(alias="QUALITY_JUDGE_MODEL", default=None)
 
     # Paths
@@ -27,6 +27,8 @@ class AgentConfig(BaseSettings):
     # Agent
     significance_level: float = Field(alias="SIGNIFICANCE_LEVEL", default=0.05)
     token_threshold: int = Field(alias="TOKEN_THRESHOLD", default=200_000)
+    # Round-driven wrap-up nudge for long tool loops; None disables it.
+    wrap_up_round: Optional[int] = Field(alias="WRAP_UP_ROUND", default=8)
 
     # Logging
     log_level: str = Field(alias="LOG_LEVEL", default="INFO")
@@ -65,9 +67,18 @@ class AgentConfig(BaseSettings):
 
     @field_validator("max_tokens")
     @classmethod
-    def validate_max_tokens(cls, v: int) -> int:
-        if v < 100 or v > 128000:
+    def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
+        # None means the output budget is provider-managed: the request omits
+        # max_tokens entirely, so the effective cap follows the model default.
+        if v is not None and (v < 100 or v > 128000):
             raise ValueError("MAX_TOKENS must be between 100 and 128000")
+        return v
+
+    @field_validator("wrap_up_round")
+    @classmethod
+    def validate_wrap_up_round(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and (v < 1 or v > 100):
+            raise ValueError("WRAP_UP_ROUND must be between 1 and 100 or empty")
         return v
 
     @field_validator("token_threshold")

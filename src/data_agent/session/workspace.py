@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,48 @@ class Workspace:
         self._derived_lineage: dict[str, dict[str, Any]] = {}
         self._transform_log: list[dict[str, Any]] = []
         self._active_project: Optional[str] = None
+
+    @staticmethod
+    def _frame_fingerprint(df: pd.DataFrame) -> str:
+        """Return a value-safe, deterministic identity for a dataframe snapshot."""
+        digest = hashlib.sha256()
+        digest.update(json.dumps([str(col) for col in df.columns], ensure_ascii=False).encode("utf-8"))
+        digest.update(json.dumps([str(dtype) for dtype in df.dtypes], ensure_ascii=False).encode("utf-8"))
+        digest.update(pd.util.hash_pandas_object(df, index=True, categorize=True).values.tobytes())
+        return f"sha256:{digest.hexdigest()}"
+
+    def _set_identity(
+        self,
+        name: str,
+        df: pd.DataFrame,
+        *,
+        role: str,
+        parent_version_ids: list[str] | None = None,
+        source_fingerprint: str = "",
+        expression: str = "",
+    ) -> None:
+        fingerprint = self._frame_fingerprint(df)
+        parents = list(parent_version_ids or [])
+        version_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "fingerprint": fingerprint,
+                    "role": role,
+                    "parents": parents,
+                    "expression": expression,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        self.set_metadata(name, "data_identity", {
+            "version_id": f"dv_{version_digest[:16]}",
+            "role": role,
+            "fingerprint": fingerprint,
+            "source_fingerprint": source_fingerprint or fingerprint,
+            "parent_version_ids": parents,
+            "expression": expression,
+        })
 
     @property
     def active_object(self) -> Optional[str]:
@@ -96,6 +139,7 @@ class Workspace:
 
     def add(self, name: str, df: pd.DataFrame) -> str:
         self._datasets[name] = df.copy()
+        self._set_identity(name, self._datasets[name], role="raw")
         return f"数据集 '{name}' 已加载: {df.shape[0]} 行 x {df.shape[1]} 列"
 
     def set_metadata(self, name: str, key: str, value: Any) -> None:
@@ -130,6 +174,9 @@ class Workspace:
             datasets_meta[name] = {
                 "shape": list(df.shape),
                 "columns": list(df.columns),
+                "data_identity": copy.deepcopy(
+                    self._metadata.get(name, {}).get("data_identity", {})
+                ),
                 "source_path": self._metadata.get(name, {}).get("_source_path", ""),
                 "source_fmt": self._metadata.get(name, {}).get("_source_fmt", ""),
                 "context": self._metadata.get(name, {}).get("context", ""),
@@ -162,17 +209,61 @@ class Workspace:
         return str(path)
 
     def get(self, name: str) -> Optional[pd.DataFrame]:
-        return self._datasets.get(name)
+        df = self._datasets.get(name)
+        return df.copy(deep=True) if df is not None else None
+
+    def get_data_identity(self, name: str) -> dict[str, Any]:
+        """Return the persisted, value-safe identity for a dataset version."""
+        identity = self.get_metadata(name, "data_identity")
+        return dict(identity) if isinstance(identity, dict) else {}
+
+    def next_analysis_name(self, source: str, label: str = "analysis") -> str:
+        """Reserve a distinct logical name for a copy-on-write analysis version."""
+        stem = f"{source}__{label}"
+        candidate = stem
+        index = 2
+        while candidate in self._datasets:
+            candidate = f"{stem}_{index}"
+            index += 1
+        return candidate
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
         """从源数据派生新数据集。"""
+        source_identity = self.get_data_identity(source)
+        if not source_identity:
+            return f"Error: source dataset '{source}' has no registered data identity"
+        if name in self._datasets:
+            return f"Error: derived dataset '{name}' already exists; choose a new analysis dataset name"
         self._datasets[name] = df.copy()
         self._derived_lineage[name] = {
             "source": source,
             "expression": expression,
         }
+        self._set_identity(
+            name,
+            self._datasets[name],
+            role="analysis",
+            parent_version_ids=[str(source_identity["version_id"])],
+            source_fingerprint=str(source_identity["fingerprint"]),
+            expression=expression,
+        )
         self._log_transform(source, "derive", name, {"expression": expression})
         return f"派生数据集 '{name}' 已创建: {df.shape[0]} 行 x {df.shape[1]} 列"
+
+    def derive_multi(self, sources: list[str], name: str, df: pd.DataFrame, expression: str = "") -> str:
+        """Create one analysis version with explicit multi-parent lineage."""
+        parents = [self.get_data_identity(source) for source in sources]
+        if not sources or len(parents) != len(sources) or any(not item for item in parents):
+            return "Error: every multi-source parent must have a registered data identity"
+        if name in self._datasets:
+            return f"Error: derived dataset '{name}' already exists; choose a new analysis dataset name"
+        self._datasets[name] = df.copy()
+        parent_ids = [str(item["version_id"]) for item in parents]
+        self._derived_lineage[name] = {"sources": list(sources), "expression": expression}
+        self._set_identity(name, self._datasets[name], role="analysis", parent_version_ids=parent_ids, source_fingerprint="multi:" + ",".join(str(item["fingerprint"]) for item in parents), expression=expression)
+        for source in sources:
+            self._log_transform(source, "derive_multi", name, {"expression": expression, "sources": list(sources)})
+        return f"多父派生数据集 '{name}' 已创建: {df.shape[0]} 行 x {df.shape[1]} 列"
 
     def log_transform(self, source: str, operation: str, target: str, detail: str = "") -> None:
         """记录变换操作到血缘日志。供 transform_data 等工具调用。"""
@@ -203,6 +294,7 @@ class Workspace:
                 "columns": df.shape[1],
                 "column_names": list(df.columns),
                 "derived_from": lineage.get("source"),
+                "data_identity": self.get_data_identity(name),
             }
             if meta:
                 result[name]["metadata"] = meta
@@ -234,6 +326,7 @@ def _create_workspace_registry(
     mutating_operations = frozenset({
         "add",
         "derive",
+        "derive_multi",
         "remove",
         "set_metadata",
         "log_transform",
@@ -341,6 +434,16 @@ def _create_workspace_registry(
                 safe = {k: v for k, v in meta.items() if k in {"quality", "schema"}}
                 return safe.get(key) if key else safe
             return meta.get(key) if key else meta
+        if operation == "data_identity":
+            name = args[0]
+            if not readable(scope, name) or scope.phase in {"synthesis", "error", "planning"}:
+                return {}
+            return storage.get_data_identity(name)
+        if operation == "next_analysis_name":
+            source, label = args
+            if not readable(scope, source) or scope.phase in {"synthesis", "error", "planning"}:
+                return ""
+            return storage.next_analysis_name(source, label)
         if operation == "planning_schema":
             name = args[0]
             if scope.phase != "planning" or not readable(scope, name):
@@ -367,6 +470,13 @@ def _create_workspace_registry(
             if scope.phase == "execution" and name not in storage._datasets:
                 return "Error: derived_scope_not_registered"
             return write_error(scope, name, True) or storage.derive(source, name, frame, expression)
+        if operation == "derive_multi":
+            sources, name, frame, expression = args
+            if scope.phase == "execution" and name not in storage._datasets:
+                return "Error: derived_scope_not_registered"
+            if any(not readable(scope, source) for source in sources):
+                return "Error: dataset_outside_current_task_scope"
+            return write_error(scope, name, True) or storage.derive_multi(sources, name, frame, expression)
         if operation == "remove":
             name = args[0]
             return write_error(scope, name) or storage.remove(name)
@@ -514,6 +624,12 @@ class WorkspaceProxy:
     def get_metadata(self, name: str, key: str = "") -> Any:
         return self.__operate("metadata", name, key)
 
+    def get_data_identity(self, name: str) -> dict[str, Any]:
+        return self.__operate("data_identity", name)
+
+    def next_analysis_name(self, source: str, label: str = "analysis") -> str:
+        return self.__operate("next_analysis_name", source, label)
+
     def planning_schema(self, name: str) -> list[str]:
         return self.__operate("planning_schema", name)
 
@@ -528,6 +644,9 @@ class WorkspaceProxy:
 
     def derive(self, source: str, name: str, df: pd.DataFrame, expression: str = "") -> str:
         return self.__operate("derive", source, name, df, expression)
+
+    def derive_multi(self, sources: list[str], name: str, df: pd.DataFrame, expression: str = "") -> str:
+        return self.__operate("derive_multi", sources, name, df, expression)
 
     def remove(self, name: str) -> str:
         return self.__operate("remove", name)

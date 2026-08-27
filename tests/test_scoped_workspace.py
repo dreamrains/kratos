@@ -858,7 +858,8 @@ def test_restricted_scope_blocks_every_workspace_mutator_and_persistence(
     assert store.get("new") is None
     assert store.get("derived") is None
     assert store._derived_lineage == {}
-    assert store.get_metadata("orders") == {"quality": {"missing": 0}}
+    assert store.get_metadata("orders")["quality"] == {"missing": 0}
+    assert store.get_data_identity("orders")["role"] == "raw"
     assert store.get_transform_log() == []
     assert store.active_project == "original-project"
     assert not (tmp_path / "workspace_meta.json").exists()
@@ -3265,8 +3266,8 @@ def test_scope_guard_manager_or_resolver_failure_is_closed_and_recovers(
         loop._execute_single_tool(call, [call], 0)
         outputs = [message["content"] for message in loop.messages if message.get("role") == "tool"]
     else:
-        outputs = [content for _tc, content in loop._execute_tools_parallel([call])]
-        outputs += [content for _tc, content in loop._execute_tools_parallel([call])]
+        outputs = [content for _tc, content, _data in loop._execute_tools_parallel([call])]
+        outputs += [content for _tc, content, _data in loop._execute_tools_parallel([call])]
 
     assert invoked == ["bound"]
     assert "workspace_scope_guard_error" in outputs[0]

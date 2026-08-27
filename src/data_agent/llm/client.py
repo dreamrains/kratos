@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
@@ -8,6 +9,10 @@ import litellm
 from litellm import completion
 
 from data_agent.config import get_config
+from data_agent.llm.routing import normalize_model_id
+
+
+logger = logging.getLogger(__name__)
 
 
 class ToolCall:
@@ -20,7 +25,7 @@ class ToolCall:
 
 
 class Response:
-    __slots__ = ("text", "tool_calls", "finish_reason", "reasoning_content")
+    __slots__ = ("text", "tool_calls", "finish_reason", "reasoning_content", "completion_tokens")
 
     def __init__(
         self,
@@ -28,11 +33,13 @@ class Response:
         tool_calls: Optional[list[ToolCall]] = None,
         finish_reason: str = "stop",
         reasoning_content: str = "",
+        completion_tokens: Optional[int] = None,
     ):
         self.text = text
         self.tool_calls = tool_calls or []
         self.finish_reason = finish_reason
         self.reasoning_content = reasoning_content
+        self.completion_tokens = completion_tokens
 
     @property
     def has_tool_calls(self) -> bool:
@@ -89,11 +96,15 @@ def _parse_response(resp: Any) -> Response:
                     args = {"raw": args}
             tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
+    usage = getattr(resp, "usage", None)
+    completion_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
+
     return Response(
         text=text,
         tool_calls=tool_calls,
         finish_reason=choice.finish_reason or "stop",
         reasoning_content=reasoning,
+        completion_tokens=completion_tokens,
     )
 
 
@@ -103,6 +114,13 @@ class LLMClient:
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 10
     _DEFAULT_TIMEOUT = 120  # seconds
+    # Reasoning models can spend the whole completion budget on hidden
+    # reasoning before any visible text (finish_reason=length, empty text).
+    # Retry a bounded ladder of larger budgets instead of failing silently;
+    # 2 escalations => at most 3 requests per logical call.
+    _MAX_BUDGET_ESCALATIONS = 2
+    _ESCALATION_FALLBACK = 8192
+    _MAX_OUTPUT_TOKENS = 128000
 
     def __init__(
         self,
@@ -114,10 +132,10 @@ class LLMClient:
         temperature: Optional[float] = None,
     ):
         cfg = get_config()
-        self.model_id = model_id or cfg.model_id
+        self.model_id = normalize_model_id(model_id or cfg.model_id)
         self.api_base = api_base or cfg.api_base
         self.api_key = api_key or cfg.api_key
-        self.max_tokens = max_tokens or cfg.max_tokens
+        self.max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.temperature = temperature
 
@@ -125,9 +143,12 @@ class LLMClient:
         kwargs: dict[str, Any] = {
             "model": self.model_id,
             "messages": messages,
-            "max_tokens": self.max_tokens,
             "timeout": self.timeout,
         }
+        # Omitted budget: the provider's model default applies and follows
+        # model upgrades without local maintenance.
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
         if self.api_base:
             kwargs["api_base"] = self.api_base
         if self.api_key:
@@ -140,6 +161,33 @@ class LLMClient:
             kwargs["tools"] = _convert_tools(tools)
         return kwargs
 
+    def _next_budget_after_truncation(self, current: Optional[int], response: Response) -> Optional[int]:
+        """Return the next budget rung when reasoning exhausted the output.
+
+        Only the silent-failure shape (finish_reason=length with zero visible
+        text) escalates; a partial answer is surfaced to the caller as-is.
+        Returns None when no higher rung exists (cap reached or not truncated).
+        """
+        if getattr(response, "finish_reason", None) != "length":
+            return None
+        if (getattr(response, "text", "") or "").strip():
+            return None
+        if current is not None:
+            rung = current * 4
+        else:
+            # Provider-managed budget with unknown default: derive the rung
+            # from what the truncated attempt actually consumed.
+            used = response.completion_tokens or self._ESCALATION_FALLBACK
+            rung = used * 4
+        rung = min(rung, self._MAX_OUTPUT_TOKENS)
+        if rung <= (current or 0):
+            return None
+        logger.info(
+            "Escalating output budget after reasoning truncation",
+            extra={"extra_data": {"from": current, "to": rung, "completion_tokens": response.completion_tokens}},
+        )
+        return rung
+
     def chat(
         self,
         messages: list[dict],
@@ -148,7 +196,16 @@ class LLMClient:
     ) -> Response:
         """同步调用 LLM，返回统一 Response。带速率限制重试。"""
         kwargs = self._base_kwargs(messages, tools, system)
+        response = None
+        for _ in range(self._MAX_BUDGET_ESCALATIONS + 1):
+            response = self._chat_with_transport_retries(kwargs)
+            next_budget = self._next_budget_after_truncation(kwargs.get("max_tokens"), response)
+            if next_budget is None:
+                return response
+            kwargs = {**kwargs, "max_tokens": next_budget}
+        return response
 
+    def _chat_with_transport_retries(self, kwargs: dict) -> Response:
         last_error = None
         for attempt in range(self._MAX_RETRIES + 1):
             try:
@@ -172,6 +229,33 @@ class LLMClient:
                     time.sleep(delay)
                 else:
                     raise
+        raise last_error  # unreachable; kept for type completeness
+
+    def chat_once(
+        self,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        system: Optional[str] = None,
+        response_format: Optional[dict[str, Any]] = None,
+        max_tokens: Optional[int] = None,
+    ) -> Response:
+        """Make exactly one synchronous Provider request without retry or fallback.
+
+        This is intentionally separate from ``chat()``.  It is for an
+        externally authorized, count-bounded evaluation batch where a failed
+        request must consume its slot and stop the batch instead of being
+        retried implicitly.  ``max_tokens`` overrides the client-level budget
+        so a frozen escalation ladder can drive each attempt explicitly.
+        """
+        kwargs = self._base_kwargs(messages, tools, system)
+        # LiteLLM may otherwise apply its retry policy independently of this
+        # client.  Gate C counts request attempts, so this path must opt out.
+        kwargs["num_retries"] = 0
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return _parse_response(completion(**kwargs))
 
     def stream_chat_structured(
         self,
@@ -182,13 +266,37 @@ class LLMClient:
         """流式调用 LLM，逐 token yield StreamTextDelta，最后 yield StreamComplete。
 
         支持工具调用：流式阶段累积 tool_call 参数，完成后放入 StreamComplete.response。
+        推理耗尽输出预算（零可见正文 + finish_reason=length）时，透明地按更大
+        预算重开流；已向消费者发布过正文则不再重开，保留真实 finish_reason。
         """
         kwargs = self._base_kwargs(messages, tools, system)
         kwargs["stream"] = True
+        terminal = None
+        for _ in range(self._MAX_BUDGET_ESCALATIONS + 1):
+            published_text = False
+            for event in self._stream_attempt(kwargs):
+                if isinstance(event, StreamTextDelta):
+                    published_text = True
+                    yield event
+                else:
+                    terminal = event
+            if terminal is None:
+                return
+            next_budget = None
+            if not published_text:
+                next_budget = self._next_budget_after_truncation(kwargs.get("max_tokens"), terminal.response)
+            if next_budget is None:
+                yield terminal
+                return
+            kwargs = {**kwargs, "max_tokens": next_budget}
+        yield terminal
 
+    def _stream_attempt(self, kwargs: dict) -> Iterator[StreamEvent]:
+        """Consume one streaming request with transport retries only."""
         # Accumulate full response parts
         full_text = ""
         reasoning_text = ""
+        finish_reason: Optional[str] = None
         # tool_calls accumulation: index -> {id, name, arguments_str}
         tc_accum: dict[int, dict[str, str]] = {}
 
@@ -197,6 +305,8 @@ class LLMClient:
                 for chunk in completion(**kwargs):
                     choice = chunk.choices[0]
                     delta = choice.delta
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
 
                     # Text content
                     if delta.content:
@@ -240,6 +350,7 @@ class LLMClient:
                 response = Response(
                     text=full_text,
                     tool_calls=tool_calls,
+                    finish_reason=finish_reason or "stop",
                     reasoning_content=reasoning_text,
                 )
                 yield StreamComplete(response=response)

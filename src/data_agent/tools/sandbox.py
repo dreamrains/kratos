@@ -6,6 +6,7 @@ import io
 import json
 import re
 import sys
+from hashlib import sha256
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from contextlib import redirect_stdout
 from contextvars import copy_context
@@ -108,6 +109,11 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
     if not code.strip():
         return json.dumps({"error": "代码不能为空"}, ensure_ascii=False)
 
+    try:
+        timeout = max(1, min(int(timeout), 30))
+    except (TypeError, ValueError):
+        return json.dumps({"error": "timeout 必须是 1 到 30 的整数秒"}, ensure_ascii=False)
+
     # AST 级别安全检查（替代字符串匹配，防绕过）
     from data_agent.tools._utils import validate_python_code
     ast_err = validate_python_code(code)
@@ -122,19 +128,34 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
     # 风险评估
     risk = _assess_risk(code)
 
+    pool = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            context = copy_context()
-            future = pool.submit(context.run, _run_code, code, timeout)
-            stdout, result = future.result(timeout=timeout)
+        context = copy_context()
+        future = pool.submit(context.run, _run_code, code, timeout)
+        stdout, result = future.result(timeout=timeout)
     except FuturesTimeout:
-        return json.dumps({"error": f"代码执行超时（{timeout}s）"}, ensure_ascii=False)
+        future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        return json.dumps({
+            "error": f"代码执行超时（{timeout}s）",
+            "error_type": "sandbox_timeout",
+            "timeout_seconds": timeout,
+        }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"error": f"执行失败: {e}"}, ensure_ascii=False)
+    else:
+        pool.shutdown(wait=True)
 
     response = {
         "output": stdout[:20000] if stdout else "",
         "risk_level": risk,
+        "execution_label": "exploratory_sandbox",
+        "replay": {
+            "contract_version": "sandbox_replay.v1",
+            "code_sha256": sha256(code.encode("utf-8")).hexdigest(),
+            "code": code,
+            "timeout_seconds": timeout,
+        },
         "fallback_policy": {
             "role": "supplemental",
             "purpose": purpose,

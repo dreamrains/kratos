@@ -173,6 +173,42 @@ def write_transcript(session_id: str, messages: list[dict]) -> Path:
     return path
 
 
+def _preserved_identity_and_obligations(messages: list[dict]) -> str:
+    """Carry source identity and explicit user obligations across LLM compaction.
+
+    The deterministic appendix is context only, never evidence for a data
+    claim. It prevents a generated summary from becoming the sole carrier for
+    binding identifiers or hard user constraints.
+    """
+    markers = (
+        "dataset", "version_id", "fingerprint", "source digest", "source_digest",
+        "数据集", "版本", "指纹", "来源摘要", "必须", "不得", "不要", "仅", "must ",
+        "must not", "do not", "never ",
+    )
+    kept: list[str] = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            continue
+        for line in content.splitlines():
+            normalized = line.strip()
+            if normalized and any(marker in normalized.lower() for marker in markers):
+                if normalized not in kept:
+                    kept.append(normalized[:500])
+            if len(kept) >= 12:
+                break
+        if len(kept) >= 12:
+            break
+    if not kept:
+        return ""
+    return (
+        "\n\n[Deterministically preserved identity and obligations — context, not evidence]\n"
+        + "\n".join(f"- {line}" for line in kept)
+    )
+
+
 def estimate_tokens(messages: list[dict]) -> int:
     """估算 messages 的 token 数。"""
     return len(json.dumps(messages, default=str, ensure_ascii=False)) // 4
@@ -292,7 +328,7 @@ def compact_history(
         system="你是数据分析对话摘要专家。压缩对话时保留所有数值结论、分析方法和数据引用，去除闲聊和重复内容。用结构化列表输出。",
     )
 
-    summary = resp.text or ""
+    summary = (resp.text or "") + _preserved_identity_and_obligations(early)
 
     if focus:
         summary += f"\n\nFocus to preserve: {focus}"

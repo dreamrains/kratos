@@ -200,29 +200,18 @@ def _predict(
         return "Error: feature_changes 必须是有效的 JSON，如 {\"col1\": 10, \"col2\": -5}"
 
     # 查找已训练的模型
-    from data_agent.tools.ml import _trained_models
+    from data_agent.tools.ml import _trained_models, _trained_model_metadata
 
     model_key = f"{name}_reg_{target_col}"
     model = None
     if model_key in _trained_models:
         model = _trained_models[model_key]
+        metadata = _trained_model_metadata.get(model_key, {})
+        if metadata.get("data_identity") != workspace.get_data_identity(name):
+            return "Error: 已训练模型与当前数据版本不一致；请先重新训练"
         reused = True
     else:
-        # 自动训练
-        from sklearn.ensemble import GradientBoostingRegressor
-
-        feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
-        if not feature_cols:
-            return "Error: 没有可用的数值特征列"
-
-        data = df[feature_cols + [target_col]].dropna()
-        if len(data) < 20:
-            return f"Error: 有效数据 ({len(data)}) 太少，至少需要 20 条"
-
-        model = GradientBoostingRegressor(n_estimators=100, random_state=42)
-        model.fit(data[feature_cols].values, data[target_col].values.astype(float))
-        _trained_models[model_key] = model
-        reused = False
+        return "Error: predict 模式需要当前数据版本的已训练回归模型；不会静默自动训练。"
 
     # 获取特征列
     feature_cols = list(model.feature_names_in_) if hasattr(model, "feature_names_in_") else [

@@ -208,7 +208,7 @@ class TestActionFor:
         assert _action_for("comprehensive_report", "no_data") == "request_data"
 
     def test_comprehensive_report_data_loaded_generate(self):
-        assert _action_for("comprehensive_report", "data_loaded") == "generate_report"
+        assert _action_for("comprehensive_report", "data_loaded") == "synthesize_analysis"
 
     def test_unknown_intent_returns_guide(self):
         assert _action_for("something_else", "no_data") == "guide_analysis"
@@ -440,7 +440,7 @@ class TestComprehensiveReport:
         result = plan_turn_intent(text, DATA_LOADED_CTX)
         assert result.intent_type == "comprehensive_report"
         assert result.data_state == "data_loaded"
-        assert result.recommended_action == "generate_report"
+        assert result.recommended_action == "synthesize_analysis"
         assert result.analysis_stage == "report"
 
     def test_short_report_keyword_chinese(self):
@@ -452,7 +452,7 @@ class TestComprehensiveReport:
     def test_short_report_keyword_data_loaded(self):
         result = plan_turn_intent("报告", DATA_LOADED_CTX)
         assert result.intent_type == "comprehensive_report"
-        assert result.recommended_action == "generate_report"
+        assert result.recommended_action == "synthesize_analysis"
 
     def test_report_with_file_reference_is_pending_load(self):
         result = plan_turn_intent("Create a full report from orders.csv", NO_DATA_CTX)
@@ -721,7 +721,7 @@ class TestLLMFallback:
         mock_llm.return_value = ("comprehensive_report", [])
         result = plan_turn_intent("xyzzy unseen input", DATA_LOADED_CTX)
         assert result.analysis_stage == "report"
-        assert result.recommended_action == "generate_report"
+        assert result.recommended_action == "synthesize_analysis"
 
 
 # ══════════════════════════════════════════════════════════════

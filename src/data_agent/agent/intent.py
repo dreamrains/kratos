@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
+from data_agent.file_formats import SUPPORTED_DATA_EXTENSIONS
+
 IntentType = Literal[
     "simple_response",
     "knowledge_qa",
@@ -37,7 +39,7 @@ RecommendedAction = Literal[
     "load_then_analyze",
     "execute_operation",
     "run_analysis",
-    "generate_report",
+    "synthesize_analysis",
 ]
 
 
@@ -110,7 +112,7 @@ _GUIDANCE_KEYWORDS = (
 
 # ── Legacy compatibility ──────────────────────────────────
 
-_DATA_FILE_EXTENSIONS = (".csv", ".tsv", ".xlsx", ".xls", ".json", ".parquet", ".feather")
+_DATA_FILE_EXTENSIONS = tuple(sorted(SUPPORTED_DATA_EXTENSIONS))
 _HYPOTHETICAL_DATA_PHRASES = (
     "what csv", "which csv", "what files", "which files", "what data",
     "need to prepare", "should i prepare", "should we prepare",
@@ -162,7 +164,12 @@ def infer_execution_readiness(user_input: str, session_context: str = "") -> Exe
     return "missing_data"
 
 
-def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
+def plan_turn_intent(
+    user_input: str,
+    session_context: str = "",
+    *,
+    llm_client=None,
+) -> TurnIntent:
     """Two-layer intent classification: fast rules → LLM fallback."""
     text = (user_input or "").lower().strip()
     data_state = infer_data_state(session_context)
@@ -177,7 +184,7 @@ def plan_turn_intent(user_input: str, session_context: str = "") -> TurnIntent:
 
     # ── Layer 2: LLM semantic classification ──
     # Triggered when fast path returns nothing or returns vague result
-    llm_result = _try_llm_classify(text, session_context)
+    llm_result = _try_llm_classify(text, session_context, client=llm_client)
     if llm_result is not None:
         intent_type, ambiguities = llm_result
         return TurnIntent(
@@ -221,7 +228,7 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
                 "comprehensive_report",
                 "clear", data_state,
                 "report" if data_state == "data_loaded" else "scope",
-                "generate_report" if data_state == "data_loaded" else "request_data",
+                "synthesize_analysis" if data_state == "data_loaded" else "request_data",
                 "报告关键词",
             )
         if text in _CONFIRMATION_KEYWORDS:
@@ -303,7 +310,7 @@ def _make(
     execution_readiness: str | None = None,
 ) -> TurnIntent:
     if execution_readiness is None:
-        if action in ("run_analysis", "generate_report") or data_state == "data_loaded":
+        if action in ("run_analysis", "synthesize_analysis") or data_state == "data_loaded":
             execution_readiness = "ready"
         elif action == "load_then_analyze":
             execution_readiness = "pending_load"
@@ -354,17 +361,17 @@ def _action_for(intent_type: str, data_state: str, readiness: str | None = None)
         return "request_data"
     if intent_type == "comprehensive_report":
         if readiness == "ready":
-            return "generate_report"
+            return "synthesize_analysis"
         if readiness == "pending_load":
             return "load_then_analyze"
         return "request_data"
     return "guide_analysis"
 
 
-def _try_llm_classify(text: str, session_context: str) -> tuple[str, list] | None:
+def _try_llm_classify(text: str, session_context: str, *, client=None) -> tuple[str, list] | None:
     try:
         from data_agent.agent.llm_intent import classify_intent_llm
-        result = classify_intent_llm(text, session_context)
+        result = classify_intent_llm(text, session_context, client=client)
         if result is None:
             return None
         return result["intent_type"], result.get("ambiguities", [])

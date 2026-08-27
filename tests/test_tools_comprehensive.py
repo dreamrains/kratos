@@ -240,7 +240,7 @@ def test_clean_data_dedup():
     workspace.add("dup_test", pd.DataFrame({
         "a": [1, 1, 2], "b": [3, 3, 4]
     }))
-    result = clean_data("dup_test")
+    result = clean_data("dup_test", deduplicate=True)
     data = json.loads(result)
     if data["final_rows"] != 2:
         return f"should remove 1 duplicate, got {data['final_rows']} rows"
@@ -1020,77 +1020,6 @@ test("chart: stacked_bar", test_chart_stacked_bar)
 test("chart: 不支持类型", test_chart_unsupported)
 test("chart: 无数据", test_chart_no_data)
 test("chart: JSON 数据", test_chart_data_json)
-
-
-# ============================================================
-print("\n" + "=" * 60)
-print("八、report 工具")
-print("=" * 60)
-
-
-def test_report_generate_detailed():
-    from data_agent.tools.report import generate_report
-    result = generate_report(
-        title="单元测试报告",
-        insights=json.dumps([
-            {"title": "发现1", "type": "trend", "description": "销量**上升**", "confidence": "high"},
-            {"title": "发现2", "type": "anomaly", "description": "用户*下降*", "confidence": "medium"},
-        ]),
-        summary="测试摘要",
-        style="detailed",
-    )
-    return assert_ok(result, "report_detailed")
-
-
-def test_report_generate_executive():
-    from data_agent.tools.report import generate_report
-    result = generate_report(title="执行摘要", style="executive")
-    return assert_ok(result, "report_executive")
-
-
-def test_report_empty_insights():
-    from data_agent.tools.report import generate_report
-    result = generate_report(title="空报告", insights="[]")
-    return assert_ok(result, "report_empty")
-
-
-def test_report_invalid_json_insights():
-    from data_agent.tools.report import generate_report
-    result = generate_report(title="错误洞察", insights="not json")
-    return assert_ok(result, "report_invalid")
-
-
-def test_report_confidence_parsing():
-    try:
-        from data_agent.tools.report import _parse_confidence
-    except ImportError:
-        return "skip"  # Function removed/renamed
-    for raw, expected in [
-        ("high", "high"), ("高", "high"), ("中 - r²=0.9", "medium"),
-        ("low", "low"), ("很低", "low"), ("", "medium"),
-        ("中高", "medium"), ("非常高", "high"),
-    ]:
-        level, _ = _parse_confidence(raw)
-        if level != expected:
-            return f"'{raw}' should be '{expected}', got '{level}'"
-    return True
-
-
-def test_report_markdown_export():
-    try:
-        from data_agent.tools.report import export_report_markdown
-    except ImportError:
-        return "skip"  # Function removed/renamed
-    result = export_report_markdown(title="MD报告", summary="测试")
-    return assert_ok(result, "md_export")
-
-
-test("report: detailed", test_report_generate_detailed)
-test("report: executive", test_report_generate_executive)
-test("report: 空 insights", test_report_empty_insights)
-test("report: 无效 JSON insights", test_report_invalid_json_insights)
-test("report: 置信度解析", test_report_confidence_parsing)
-test("report: markdown 导出", test_report_markdown_export)
 
 
 # ============================================================

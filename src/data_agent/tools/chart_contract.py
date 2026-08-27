@@ -73,6 +73,7 @@ def infer_semantic_role(column: str, series: pd.Series) -> str:
 
 
 MAX_BAR_CATEGORIES = 40
+MAX_NUMERIC_CATEGORY_CODES = 12
 
 
 def validate_chart_request(
@@ -159,26 +160,38 @@ def validate_chart_request(
         and x_col
         and result.semantic_roles.get(x_col) == "measure"
     ):
-        result.error = (
-            "Bar charts require a categorical or time-bucket x axis; "
-            f"'{x_col}' is a continuous numeric measure."
-        )
-        result.error_code = "invalid_bar_axis"
-        result.recovery_options = [
-            {
-                "chart_type": "scatter",
-                "description": "Use a scatter chart to show the relationship between two numeric measures.",
-            },
-            {
-                "chart_type": "histogram",
-                "description": "Use a histogram to show the distribution of one numeric measure.",
-            },
-            {
-                "chart_type": "bar",
-                "description": "Aggregate or transform the x measure into documented categories before using bars.",
-            },
-        ]
-        return result
+        category_count = int(result.dataframe[x_col].nunique(dropna=True))
+        # Encoded experiment arms and before/after windows are commonly
+        # stored as integers (for example 1 / 2).  When the caller explicitly
+        # selects a small-cardinality x axis, preserving those labels as
+        # categories is safe; it does not invent their business meaning.
+        if category_count <= MAX_NUMERIC_CATEGORY_CODES:
+            result.dataframe[x_col] = result.dataframe[x_col].map(
+                lambda value: "" if pd.isna(value) else str(value)
+            )
+            result.semantic_roles[x_col] = "category"
+            result.transformations.append("low_cardinality_numeric_to_category")
+        else:
+            result.error = (
+                "Bar charts require a categorical or time-bucket x axis; "
+                f"'{x_col}' is a continuous numeric measure."
+            )
+            result.error_code = "invalid_bar_axis"
+            result.recovery_options = [
+                {
+                    "chart_type": "scatter",
+                    "description": "Use a scatter chart to show the relationship between two numeric measures.",
+                },
+                {
+                    "chart_type": "histogram",
+                    "description": "Use a histogram to show the distribution of one numeric measure.",
+                },
+                {
+                    "chart_type": "bar",
+                    "description": "Aggregate or transform the x measure into documented categories before using bars.",
+                },
+            ]
+            return result
 
     histogram_col = y_cols[0] if y_cols else x_col
     if (

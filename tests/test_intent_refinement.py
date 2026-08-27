@@ -43,7 +43,7 @@ def test_blocked_quality_contract_requests_clarification_for_directed_analysis_w
 
 
 def test_blocked_quality_contract_requests_clarification_for_comprehensive_report():
-    original = _intent("comprehensive_report", analysis_stage="report", recommended_action="generate_report")
+    original = _intent("comprehensive_report", analysis_stage="report", recommended_action="synthesize_analysis")
     contracts = [{"id": "duc_orders", "dataset": "orders", "quality": {"status": "blocked"}}]
 
     refined = refine_intent_with_data("make a full report", original, contracts, [])

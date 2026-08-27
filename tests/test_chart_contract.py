@@ -5,6 +5,7 @@ import pandas as pd
 
 from data_agent.config import get_config
 from data_agent.agent.context import AgentContext, use_agent_context
+from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.session.workspace import Workspace
 from data_agent.tools.visualization import create_chart
 from data_agent.tools.registry import registry
@@ -114,7 +115,10 @@ def test_chart_metadata_can_bind_evidence_ids(tmp_path):
         "month": ["2026-03", "2026-04"],
         "revenue": [100, 150],
     }))
-    ctx = AgentContext(session_id="chart_evidence", workspace=ws)
+    state = AnalysisSessionState(session_id="chart_evidence")
+    state.add_evidence_record({"id": "ev_1", "claim": "March to April revenue comparison"})
+    state.add_evidence_record({"id": "ev_2", "claim": "Revenue values are from pay dataset"})
+    ctx = AgentContext(session_id="chart_evidence", workspace=ws, analysis_state=state)
 
     try:
         with use_agent_context(ctx):
@@ -167,7 +171,9 @@ def test_grouped_bar_chart_handles_interval_axis_and_color_grouping(tmp_path):
         "period": ["before", "before", "before", "after", "after", "after"],
         "orders": [12, 8, 0, 9, 7, 3],
     }))
-    ctx = AgentContext(session_id="chart_grouped_bar", workspace=ws)
+    state = AnalysisSessionState(session_id="chart_grouped_bar")
+    state.add_evidence_record({"id": "ev_amount_distribution", "claim": "Distribution by period"})
+    ctx = AgentContext(session_id="chart_grouped_bar", workspace=ws, analysis_state=state)
 
     try:
         with use_agent_context(ctx):

@@ -8,13 +8,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import (
+    REFERENCE_DATA_AVAILABLE,
+    REFERENCE_DATA_DIR,
+    reference_data_path,
+)
+
 import data_agent.config as config_module
 from data_agent.agent.context import AgentContext, reset_current_context, set_current_context
 from data_agent.config import AgentConfig
 from data_agent.session.workspace import Workspace, workspace
 
 
-TEST_DOC_DIR = Path("reference/test_doc")
+TEST_DOC_DIR = REFERENCE_DATA_DIR
 
 
 @pytest.fixture
@@ -39,7 +45,7 @@ def _load_json_tool_result(raw: str) -> dict:
     return json.loads(raw)
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
     """Real game revenue analysis should expose reproducible metric relationships."""
     data_file = TEST_DOC_DIR / "游戏A内购数据.xlsx"
@@ -81,7 +87,7 @@ def test_game_purchase_analysis_outputs_reproducible_metric_quality(audit_env):
     assert "high_correlations" in corr
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_retention_analysis_records_quality_limits_for_descriptive_claims(audit_env):
     """Retention findings should be traceable and avoid unqualified high confidence."""
     data_file = TEST_DOC_DIR / "游戏B留存.xlsx"
@@ -126,11 +132,11 @@ def test_retention_analysis_records_quality_limits_for_descriptive_claims(audit_
     assert "统计" in " ".join(evidence.get("auto_generated_limitations", []))
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit_env):
     """Savings-card analysis should support user-level order/flow joins and repeat metrics."""
-    order_file = TEST_DOC_DIR / "省钱卡订单_20260507.xlsx"
-    flow_file = TEST_DOC_DIR / "省钱卡用户最近流水_20260511.xlsx"
+    order_file = reference_data_path("savings_card_orders")
+    flow_file = reference_data_path("savings_card_user_payments")
     _skip_if_missing(order_file)
     _skip_if_missing(flow_file)
 
@@ -143,7 +149,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     orders = workspace.get("card_orders")
     flow = workspace.get("recent_flow")
     assert orders is not None and flow is not None
-    assert {"user_id", "商品名称", "支付金额", "支付时间", "创建时间"} <= set(orders.columns)
+    assert {"user_id", "商品名称", "售价", "支付时间", "创建时间"} <= set(orders.columns)
     assert {"user_id", "下单金额", "实收金额", "支付时间", "创角时间"} <= set(flow.columns)
 
     card_users = set(orders["user_id"].astype(str))
@@ -155,7 +161,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     repeat_rate = float((user_order_counts >= 2).sum() / user_order_counts.size)
     assert 0 <= repeat_rate <= 1
 
-    total_paid = float(orders["支付金额"].sum())
+    total_paid = float(orders["售价"].sum())
     assert total_paid > 0
 
     readiness = _load_json_tool_result(assess_readiness("card_orders", intent="分析省钱卡订单收入和复购"))
@@ -167,7 +173,7 @@ def test_savings_card_order_flow_analysis_has_joinable_user_level_evidence(audit
     assert readiness["recommendations"]
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_memory_and_retrieval_do_not_pollute_analysis_context_from_ordinary_real_data_session(audit_env):
     """Ordinary analysis sessions should index evidence but not create memory noise."""
     cfg, _ctx = audit_env

@@ -159,6 +159,18 @@ function chatApp() {
             this.isCompact = s.isCompact;
         },
 
+        _syncSessionUrl(sessionId) {
+            const url = new URL(window.location.href);
+            if (sessionId && sessionId !== '_pending_') {
+                url.searchParams.set('session_id', sessionId);
+            } else {
+                url.searchParams.delete('session_id');
+            }
+            if (url.href !== window.location.href) {
+                window.history.replaceState({}, '', url);
+            }
+        },
+
         _confirmationFromPayload(payload) {
             if (!payload) return null;
             return {
@@ -217,6 +229,10 @@ function chatApp() {
                 this.loadModelInfo(),
                 this.loadTasks(),
             ]);
+            const requestedSessionId = new URLSearchParams(window.location.search).get('session_id');
+            if (requestedSessionId && this.sessions.some(s => s.session_id === requestedSessionId)) {
+                await this.switchSession(requestedSessionId);
+            }
             document.addEventListener('click', (e) => {
                 if (this.activePopover && !e.target.closest('[data-popover]')) {
                     this.activePopover = null;
@@ -938,13 +954,18 @@ function chatApp() {
             this.isLoading = false;
             this.tokenPct = 0;
             this.isCompact = false;
+            this._syncSessionUrl(null);
         },
 
         async switchSession(sessionId) {
-            if (sessionId === this.currentSessionId) return;
+            if (sessionId === this.currentSessionId) {
+                this._syncSessionUrl(sessionId);
+                return;
+            }
             // Save current session state (allows background SSE to keep running)
             this._saveCurrentState();
             this.currentSessionId = sessionId;
+            this._syncSessionUrl(sessionId);
             this._restoreState(sessionId);
             this.activeProjectName = '';
             this.lastWorkbenchResult = null;
@@ -1224,44 +1245,8 @@ function chatApp() {
             }
         },
 
-        multifileWorkbench() {
-            return this.trustView?.workbench?.multifile_analysis || {};
-        },
-
-        actionBoard() {
-            // Full empty shape (not {}) so the action-board x-show/x-text/x-for
-            // don't throw before /trust resolves (no session / mid-load).
-            // Mirrors backend _empty_action_board().
-            return this.trustView?.workbench?.action_board || {
-                confirmed: [],
-                uncertain: [],
-                next_steps: [],
-                trust_basis: {
-                    evidence_count: 0,
-                    verified_claim_count: 0,
-                    failed_count: 0,
-                    downgraded_count: 0,
-                    verification_status: 'not_run',
-                    datasets_used: [],
-                },
-            };
-        },
-        fullAnswer()    { return this.trustView?.workbench?.full_answer || ''; },
-
-        workbenchScope() {
-            return this.trustView?.workbench?.details?.scope || {};
-        },
-
-        workbenchConfirmation() {
-            return this.trustView?.workbench?.details?.confirmation || {};
-        },
-
-        multifileDataUnderstanding() {
-            return this.multifileWorkbench().data_understanding || {};
-        },
-
-        multifileRelationships() {
-            return this.multifileWorkbench().relationships || [];
+        verifiedConclusions() {
+            return this.trustView?.workbench?.verified_conclusions || [];
         },
 
         visibleListItems(key, items, defaultLimit = 6) {
@@ -1582,7 +1567,21 @@ function chatApp() {
                     const errData = await response.json().catch(() => ({ error: response.statusText }));
                     throw new Error(errData.error || `HTTP ${response.status}`);
                 }
-                await this._processSSE(response, turn, state, sseSessionId);
+                // A fetch response exposes headers before its SSE body.  Use
+                // the server-issued id as the authoritative migration path;
+                // `turn_start` remains the compatibility path for older
+                // servers, but no longer gates the workbench on event timing.
+                const responseSessionId = response.headers.get('X-Data-Agent-Session-Id');
+                let effectiveSessionId = sseSessionId;
+                if (sseSessionId === '_pending_' && responseSessionId) {
+                    const pendingState = this._sessionStates['_pending_'] || state;
+                    delete this._sessionStates['_pending_'];
+                    this._sessionStates[responseSessionId] = pendingState;
+                    this.currentSessionId = responseSessionId;
+                    this._syncSessionUrl(responseSessionId);
+                    effectiveSessionId = responseSessionId;
+                }
+                await this._processSSE(response, turn, state, effectiveSessionId);
             } catch (e) {
                 turn.isThinking = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
@@ -1600,6 +1599,19 @@ function chatApp() {
                 }
                 await this.loadSessions();
                 await this.loadTasks();
+                // A newly created session starts as `_pending_` and receives
+                // its durable id inside the SSE stream.  Refresh the side
+                // panel after that migration; relying only on the unawaited
+                // turn_end refresh could leave a completed analysis displayed
+                // as “未绑定会话”.
+                const completedSid = this.currentSessionId;
+                if (completedSid && completedSid !== '_pending_') {
+                    await Promise.all([
+                        this.loadAnalysisState(completedSid),
+                        this.loadTrustView(completedSid),
+                        this.loadSessionArtifacts(completedSid),
+                    ]);
+                }
                 requestAnimationFrame(() => {
                     const el = document.getElementById('messages-container');
                     if (el) this._renderMermaidInElement(el);
@@ -2348,6 +2360,7 @@ function chatApp() {
                         this._sessionStates[data.session_id] = oldState || state;
                         if (this.currentSessionId === '_pending_') {
                             this.currentSessionId = data.session_id;
+                            this._syncSessionUrl(data.session_id);
                         }
                         sessionId = data.session_id;
                         migratedSid = sessionId;

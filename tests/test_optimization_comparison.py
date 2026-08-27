@@ -31,35 +31,40 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import (
+    REFERENCE_DATA_AVAILABLE,
+    REFERENCE_DATA_DIR,
+    reference_data_path,
+)
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # === 真实数据文件路径 ===
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+TEST_DATA_DIR = REFERENCE_DATA_DIR
 
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
-HAS_TEST_DATA = TEST_DATA_DIR.exists()
+HAS_REAL_DATA = REFERENCE_DATA_AVAILABLE
+HAS_TEST_DATA = REFERENCE_DATA_AVAILABLE
 
 # 旧会话使用的文件
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
-CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+CARD_PAYMENT = reference_data_path("savings_card_user_payments")
+VOUCHER_DETAIL = reference_data_path("savings_card_vouchers")
+BEFORE_AFTER = reference_data_path("savings_card_before_after")
+CARD_ORDER = reference_data_path("savings_card_orders")
 
 # 备用测试数据
-ECARD_FLOW = TEST_DATA_DIR / "省钱卡用户最近流水_20260511.xlsx"
-ECARD_ORDER = TEST_DATA_DIR / "省钱卡订单_20260507.xlsx"
+ECARD_FLOW = reference_data_path("savings_card_user_payments")
+ECARD_ORDER = reference_data_path("savings_card_orders")
 
 # 旧会话中用户的完整提示词
 ORIGINAL_PROMPT = (
     "请加载并预览以下数据文件：\n\n"
-    "1. `D:\\Project\\Daily\\备用\\20260512测试\\0201到0510购卡用户付费数据.xlsx`\n"
-    "2. `D:\\Project\\Daily\\备用\\20260512测试\\代金券明细订单.xlsx`\n"
-    "3. `D:\\Project\\Daily\\备用\\20260512测试\\购卡前后订单.xlsx`\n"
-    "4. `D:\\Project\\Daily\\备用\\20260512测试\\省钱卡订单.xlsx`\n\n"
+    "1. `省钱卡0201到0510购卡用户付费数据.xlsx`\n"
+    "2. `省钱卡代金券明细订单.xlsx`\n"
+    "3. `省钱卡购卡前后订单.xlsx`\n"
+    "4. `省钱卡订单.xlsx`\n\n"
     "### 分析背景\n\n"
     "- 这是一个游戏平台的省钱卡功能的用户付费及相关数据，省钱卡的功能为购卡以后，每天有一笔订单付费后可以获得返利。\n\n"
     "### 分析目标\n\n"

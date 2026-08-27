@@ -5,8 +5,8 @@ Test data files (from reference/test_doc):
   - 游戏A内购数据.xlsx: 248r x 13c, game in-app purchase metrics (daily aggregate)
   - 游戏A激励视频汇总数据报表.xlsx: 248r x 23c, game rewarded video metrics (daily aggregate)
   - 游戏互推.xlsx: 1985r x 8c, game cross-promotion data (multi-dimension aggregate)
-  - 省钱卡用户最近流水_20260511.xlsx: 13815r x 8c, savings card user transactions (individual)
-  - 省钱卡订单_20260507.xlsx: 71r x 7c, savings card orders (individual)
+  - 省钱卡0201到0510购卡用户付费数据.xlsx: 13757r x 9c, savings card user transactions (individual)
+  - 省钱卡订单.xlsx: 71r x 7c, savings card orders (individual)
 """
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_DIR
+
 # Ensure UTF-8 output on Windows
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
+TEST_DATA_DIR = REFERENCE_DATA_DIR
 
 
 def _data_path(filename: str) -> str:
@@ -255,7 +257,7 @@ class TestPhase2AutoInsight:
     @pytest.mark.parametrize("filename", [
         "游戏Abanner汇总数据.xlsx",
         "游戏互推.xlsx",
-        "省钱卡用户最近流水_20260511.xlsx",
+        "省钱卡0201到0510购卡用户付费数据.xlsx",
     ])
     def test_auto_insight_scan_real_data(self, filename):
         from data_agent.tools.auto_insight import auto_insight_scan, format_auto_insight
@@ -291,7 +293,7 @@ class TestPhase2AutoInsight:
     def test_auto_insight_savings_card_transactions(self):
         """Savings card transaction data should detect ID columns and metrics."""
         from data_agent.tools.auto_insight import auto_insight_scan
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         result = auto_insight_scan(df, "transactions")
 
         semantics = result["field_semantics"]
@@ -312,7 +314,7 @@ class TestPhase2AutoInsight:
         """Large dataset should trigger sampling."""
         from data_agent.tools.auto_insight import auto_insight_scan
         # 13815 rows is under 100K, should use full scan
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         result = auto_insight_scan(df, "large_test")
         assert result["scan_mode"] in ("full", "sampled_10pct", "sampled_1pct")
 
@@ -348,7 +350,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["rows"] > 0
         finally:
             workspace._datasets.pop("cross_filter", None)
-            workspace._datasets.pop("cross_filter_filtered", None)
+            workspace._datasets.pop("cross_filter__filtered", None)
 
     def test_transform_data_group_aggregate_structured(self):
         from data_agent.session.workspace import workspace
@@ -372,7 +374,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["rows"] > 0
         finally:
             workspace._datasets.pop("cross_grp", None)
-            workspace._datasets.pop("cross_grp_grouped", None)
+            workspace._datasets.pop("cross_grp__grouped", None)
 
     def test_transform_data_sort_structured(self):
         from data_agent.session.workspace import workspace
@@ -391,7 +393,7 @@ class TestPhase2ToolParameterUpgrade:
             assert parsed["operation"] == "sort"
         finally:
             workspace._datasets.pop("cross_sort", None)
-            workspace._datasets.pop("cross_sort_sorted", None)
+            workspace._datasets.pop("cross_sort__sorted", None)
 
 
 class TestPhase2ToolDescriptions:
@@ -600,8 +602,8 @@ class TestPhase4MultiDataset:
         from data_agent.tools.data_understand import interpret_dataset
 
         ws = _fresh_workspace()
-        df_orders = _load_excel("省钱卡订单_20260507.xlsx")
-        df_transactions = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df_orders = _load_excel("省钱卡订单.xlsx")
+        df_transactions = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         ws.add("orders", df_orders)
         ws.add("transactions", df_transactions)
 
@@ -710,7 +712,7 @@ class TestPhase4ParallelExecution:
         write_expected = [
             "transform_data", "load_data", "derive_field", "run_python",
             "record_evidence_record", "create_chart", "ask_user_question",
-            "export_data", "generate_report",
+            "export_data",
         ]
 
         for tool in read_only_expected:
@@ -765,7 +767,7 @@ class TestPhase4ParallelExecution:
 
         registry._ensure_discovered()
         ws = _fresh_workspace()
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
         ws.add("savings", df)
 
         with patch("data_agent.agent.loop.AgentLoop._ensure_mcp_initialized"):
@@ -784,7 +786,7 @@ class TestPhase4ParallelExecution:
 
         results = loop._execute_tools_parallel([mock_tc1, mock_tc2])
         assert len(results) == 2
-        for _, content in results:
+        for _, content, _structured_data in results:
             assert "error" not in content.lower()[:30]
 
 
@@ -891,7 +893,7 @@ class TestCrossPhaseIntegration:
         registry._ensure_discovered()
         ws = _fresh_workspace()
         # Use small subset of game data
-        df = _load_excel("省钱卡订单_20260507.xlsx").head(5)
+        df = _load_excel("省钱卡订单.xlsx").head(5)
         ws.add("tiny", df)
 
         ctx = AgentContext(session_id="test_conf_cal")
@@ -924,8 +926,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡用户最近流水_20260511.xlsx",
-            "省钱卡订单_20260507.xlsx",
+            "省钱卡0201到0510购卡用户付费数据.xlsx",
+            "省钱卡订单.xlsx",
         ]
         for f in files:
             df = _load_excel(f)
@@ -943,8 +945,8 @@ class TestCrossPhaseIntegration:
             "游戏A内购数据.xlsx",
             "游戏A激励视频汇总数据报表.xlsx",
             "游戏互推.xlsx",
-            "省钱卡用户最近流水_20260511.xlsx",
-            "省钱卡订单_20260507.xlsx",
+            "省钱卡0201到0510购卡用户付费数据.xlsx",
+            "省钱卡订单.xlsx",
         ]
         for f in files:
             ws = _fresh_workspace()
@@ -1041,7 +1043,7 @@ class TestUnifiedFieldClassification:
         from data_agent.tools.auto_insight import auto_insight_scan
         from data_agent.tools.data_understand import _classify_columns
 
-        df = _load_excel("省钱卡用户最近流水_20260511.xlsx")
+        df = _load_excel("省钱卡0201到0510购卡用户付费数据.xlsx")
 
         insight = auto_insight_scan(df, "savings")
         insight_ids = insight["field_semantics"]["id"]
@@ -1113,7 +1115,7 @@ class TestAutoDerivedReadOnlyTools:
         write_tools = [
             "transform_data", "load_data", "run_python", "create_chart",
             "record_evidence_record", "ask_user_question",
-            "export_data", "generate_report",
+            "export_data",
         ]
         for t in write_tools:
             assert t not in ro, f"{t} should not be read-only"
@@ -1133,33 +1135,41 @@ class TestAutoDerivedReadOnlyTools:
 
     def test_new_tools_auto_classified(self):
         """Tools added without explicit READ_ONLY entry should be auto-classified."""
-        from data_agent.tools.registry import registry, ToolDefinition, get_read_only_tools, _cap
+        from data_agent.tools.registry import registry, get_read_only_tools, _cap
         registry._ensure_discovered()
 
-        # Register a test tool with low risk level
-        @registry.register(
-            name="test_auto_ro",
-            description="test",
-            capability=_cap("test.ro", "test_cat", ["test"], risk_level="low"),
-        )
-        def test_auto_ro():
-            return "ok"
+        try:
+            # Register a test tool with low risk level.
+            @registry.register(
+                name="test_auto_ro",
+                description="test",
+                capability=_cap("test.ro", "test_cat", ["test"], risk_level="low"),
+            )
+            def test_auto_ro():
+                return "ok"
 
-        ro = get_read_only_tools(registry)
-        assert "test_auto_ro" in ro
+            ro = get_read_only_tools(registry)
+            assert "test_auto_ro" in ro
+        finally:
+            registry._tools.pop("test_auto_ro", None)
+            registry._capabilities.pop("test_auto_ro", None)
 
     def test_high_risk_not_read_only(self):
         """Tools with risk_level != 'low' should not be read-only."""
-        from data_agent.tools.registry import registry, ToolDefinition, get_read_only_tools, _cap
+        from data_agent.tools.registry import registry, get_read_only_tools, _cap
         registry._ensure_discovered()
 
-        @registry.register(
-            name="test_high_risk",
-            description="test",
-            capability=_cap("test.high", "test_cat", ["test"], risk_level="high"),
-        )
-        def test_high_risk():
-            return "ok"
+        try:
+            @registry.register(
+                name="test_high_risk",
+                description="test",
+                capability=_cap("test.high", "test_cat", ["test"], risk_level="high"),
+            )
+            def test_high_risk():
+                return "ok"
 
-        ro = get_read_only_tools(registry)
-        assert "test_high_risk" not in ro
+            ro = get_read_only_tools(registry)
+            assert "test_high_risk" not in ro
+        finally:
+            registry._tools.pop("test_high_risk", None)
+            registry._capabilities.pop("test_high_risk", None)

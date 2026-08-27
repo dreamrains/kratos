@@ -1,0 +1,25 @@
+{
+  "schema_version": "route_a_provider_candidates.v1",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "temperature": 0.0,
+    "max_tokens": 2000,
+    "timeout_seconds": 120,
+    "response_format": {"type": "json_object"}
+  },
+  "total_call_budget": 1,
+  "scenarios": [
+    {
+      "id": "R03_dirty_cross_promotion",
+      "call_budget": 1,
+      "tools_allowed": false,
+      "data_ids": ["game_cross_promotion"],
+      "question": "基于冻结的脏数值处理事实，判断分析可用性与后续行动，不能把缺失收入当作零。",
+      "fact_packet": [
+        {"id": "r03_parse", "value": "卖量收入共 1985 行，其中 1926 行可解析，59 个 '-' 保留为缺失。"},
+        {"id": "r03_unit", "value": "收益评估必须按正确组合分析单位进行，并披露转换损失。"},
+        {"id": "r03_limit", "value": "缺失收入不可被静默填充为零，也不能据此输出完整收益排名。"}
+      ]
+    }
+  ]
+}

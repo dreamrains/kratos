@@ -21,12 +21,9 @@ sessions_bp = Blueprint("sessions", __name__)
 
 def _get_model_context_window(model_id: str) -> int | None:
     """Try to get the actual context window (max_input_tokens) for the model."""
-    try:
-        import litellm
-        info = litellm.get_model_info(model_id)
-        return info.get("max_input_tokens") or info.get("max_tokens")
-    except Exception:
-        return None
+    from data_agent.llm.routing import model_context_window
+
+    return model_context_window(model_id)
 
 
 @sessions_bp.get("/sessions")
@@ -323,38 +320,6 @@ code{{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}}
             "Content-Disposition": f"attachment; filename={filename}",
         },
     )
-
-
-@sessions_bp.get("/sessions/<session_id>/report")
-def generate_session_report(session_id: str):
-    """Deprecated brief/formal report endpoint.
-
-    Current-session report needs are handled through chat synthesis and
-    conversation export. Keep the route for a clear transition response.
-    """
-    report_type = request.args.get("type", "brief").lower()
-    fmt = request.args.get("format", "html").lower()
-
-    if report_type in {"conversation", "export"}:
-        from data_agent.agent.context import AgentContext, use_agent_context
-        from data_agent.session.workspace import Workspace
-        from data_agent.tools.report import export_conversation
-
-        ctx = AgentContext(session_id=session_id, workspace=Workspace())
-        with use_agent_context(ctx):
-            payload = export_conversation(format=fmt)
-        return jsonify(json.loads(payload))
-
-    return jsonify({
-        "error": "Brief and formal report artifacts are deprecated",
-        "error_type": "report_artifact_deprecated",
-        "report_type": report_type,
-        "supported_actions": ["chat_synthesis", "export_conversation"],
-        "message": (
-            "Ask the agent to synthesize the current session in chat, or use "
-            "/api/sessions/<session_id>/export?format=markdown|html for a file."
-        ),
-    }), 410
 
 
 def _analysis_state_payload(state) -> dict:

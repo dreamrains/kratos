@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+
 import data_agent.config as config_module
 from data_agent.config import AgentConfig
 from data_agent.knowledge.memory import MemoryStore
@@ -9,7 +11,7 @@ from data_agent.knowledge.retrieval import KnowledgeRetrievalService
 from data_agent.session.history import save_session
 
 
-TEST_DOC_DIR = Path("reference/test_doc")
+TEST_DOC_DIR = REFERENCE_DATA_DIR
 
 
 def _configure(tmp_path: Path, monkeypatch):
@@ -18,7 +20,7 @@ def _configure(tmp_path: Path, monkeypatch):
     return cfg
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_candidate_memory_stays_out_of_prompt_until_confirmed(tmp_path: Path, monkeypatch):
     cfg = _configure(tmp_path, monkeypatch)
     save_session(
@@ -46,12 +48,12 @@ def test_candidate_memory_stays_out_of_prompt_until_confirmed(tmp_path: Path, mo
     assert after.metadata["total_retrieval_chars"] <= 1200
 
 
-@pytest.mark.skipif(not TEST_DOC_DIR.exists(), reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_evidence_requires_explicit_budget_for_real_data_session(tmp_path: Path, monkeypatch):
     cfg = _configure(tmp_path, monkeypatch)
     save_session(
         [
-            {"role": "user", "content": "分析省钱卡订单_20260507.xlsx 的支付金额。"},
+            {"role": "user", "content": "分析省钱卡订单.xlsx 的售价与购买情况。"},
             {"role": "assistant", "content": "订单文件包含支付金额、支付时间和创建时间字段。"},
         ],
         "savings_card_evidence_budget",

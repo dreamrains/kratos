@@ -15,6 +15,20 @@ from data_agent.tools.registry import registry
 
 # 存储trained models
 _trained_models: dict = {}
+# Ephemeral estimator objects remain process-local, but their provenance is
+# explicit and checked before downstream explanations or simulations use them.
+_trained_model_metadata: dict = {}
+
+
+def _record_model(name: str, key: str, target_col: str, feature_cols: list[str], model, kind: str) -> None:
+    _trained_models[key] = model
+    _trained_model_metadata[key] = {
+        "model_key": key,
+        "kind": kind,
+        "target_col": target_col,
+        "feature_cols": list(feature_cols),
+        "data_identity": workspace.get_data_identity(name),
+    }
 
 
 @registry.register(
@@ -57,7 +71,7 @@ def _infer_forecast_date_col(df: pd.DataFrame) -> str:
     return ""
 
 
-def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto") -> str:
+def _legacy_forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto") -> str:
     periods_value, periods_error = _coerce_forecast_periods(periods)
     if periods_error:
         return _forecast_error(periods_error, "invalid_parameter", "periods")
@@ -193,7 +207,7 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
         except ImportError:
             from data_agent.utils.logging import get_logger
             get_logger("tools").warning("Prophet not available, falling back to simple forecast")
-            raw = forecast(name, target_col, date_col, periods, "simple")
+            raw = _legacy_forecast(name, target_col, date_col, periods, "simple")
             try:
                 result = json.loads(raw)
                 result["fallback_used"] = True
@@ -204,7 +218,7 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
         except (AttributeError, Exception) as e:
             from data_agent.utils.logging import get_logger
             get_logger("tools").warning(f"Prophet failed: {e}, falling back to simple forecast")
-            raw = forecast(name, target_col, date_col, periods, "simple")
+            raw = _legacy_forecast(name, target_col, date_col, periods, "simple")
             try:
                 result = json.loads(raw)
                 result["fallback_used"] = True
@@ -214,6 +228,46 @@ def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, m
                 return raw
 
     return f"Error: 不支持的方法 '{method}'。可用: auto, simple, prophet"
+
+
+@registry.register(
+    name="forecast",
+    description="时间序列预测：候选基线经有序留出回测选择，返回区间、窗口和限制。",
+    schema_overrides={
+        "name": {"description": "数据集名称"},
+        "target_col": {"description": "预测目标列"},
+        "date_col": {"description": "日期列；为空时自动推断"},
+        "periods": {"description": "短期预测期数"},
+        "method": {"description": "仅支持 backtest/auto；不再将样本内拟合报告为验证"},
+    },
+)
+def forecast(name: str, target_col: str, date_col: str = "", periods: int = 7, method: str = "auto"):
+    """Existing public forecast entry with Slice 3 backtesting semantics."""
+    periods_value, error = _coerce_forecast_periods(periods)
+    if error:
+        return _forecast_error(error, "invalid_parameter", "periods")
+    if method not in {"auto", "backtest", "simple", "prophet"}:
+        return _forecast_error("method must be auto or backtest", "invalid_parameter", "method")
+    df, lookup_error = get_df(name)
+    if lookup_error:
+        return lookup_error
+    if not date_col:
+        date_col = _infer_forecast_date_col(df)
+    if not date_col:
+        return _forecast_error("date_col is required for a time-series forecast", "missing_date_column", "date_col")
+    from data_agent.tools.forecasting import backtested_forecast
+    result = backtested_forecast(name, target_col, date_col, periods_value)
+    if result.data is None:
+        return json.dumps({"error": result.summary, "error_type": "forecast_failed"}, ensure_ascii=False)
+    payload = dict(result.data)
+    payload["periods"] = periods_value
+    payload["date_col"] = date_col
+    payload["fallback_used"] = False
+    payload["diagnostics"] = {
+        "mae": payload.get("backtest", {}).get("mae"),
+        "backtest_scheme": payload.get("parameters", {}).get("backtest_scheme"),
+    }
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 @registry.register(
@@ -319,7 +373,7 @@ def classification(name: str, target_col: str, features: str = "", method: str =
 
     # 保存模型
     model_key = f"{name}_cls_{target_col}"
-    _trained_models[model_key] = model
+    _record_model(name, model_key, target_col, feature_cols, model, "classification")
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -407,7 +461,7 @@ def regression_analysis(name: str, target_col: str, features: str = "", method: 
         }
 
     model_key = f"{name}_reg_{target_col}"
-    _trained_models[model_key] = model
+    _record_model(name, model_key, target_col, feature_cols, model, "regression")
 
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -421,10 +475,19 @@ def regression_analysis(name: str, target_col: str, features: str = "", method: 
         "features": {"description": "特征列，逗号分隔，为空则自动选择数值列"},
     },
 )
-def attribution_analysis(name: str, target_col: str, features: str = "") -> str:
+def attribution_analysis(name: str, target_col: str, features: str = "", unit_col: str = "", time_col: str = "") -> str:
     df, err = get_df(name)
     if err:
         return err
+
+    from data_agent.tools.factor_analysis import factor_relationships
+    selected_features = [c.strip() for c in features.split(",") if c.strip()] if features else [c for c in df.select_dtypes(include=[np.number]).columns if c != target_col]
+    result = factor_relationships(name, target_col, selected_features, unit_col, time_col)
+    if result.data is None:
+        return json.dumps({"error": result.summary}, ensure_ascii=False)
+    payload = dict(result.data)
+    payload["top_drivers"] = payload.get("estimates") or payload.get("bivariate_associations") or []
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
     if target_col not in df.columns:
         return f"Error: 目标列 '{target_col}' 不存在。可用: {list(df.columns)}"

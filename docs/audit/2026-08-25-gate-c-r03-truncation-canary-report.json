@@ -1,0 +1,54 @@
+{
+  "schema_version": "route_a_provider_preflight.v1",
+  "mode": "executed",
+  "ready": true,
+  "errors": [],
+  "source_digest": "sha256:4ea926eed416ab4ea6e7608df71141c4238b5c2f3bb6fc74711d22bdefa54518",
+  "model_id": "openai/deepseek-v4-flash",
+  "request": {
+    "temperature": 0.0,
+    "max_tokens": 2000,
+    "timeout_seconds": 120,
+    "response_format": {
+      "type": "json_object"
+    }
+  },
+  "total_call_budget": 1,
+  "scenarios": [
+    {
+      "id": "R03_dirty_cross_promotion",
+      "call_budget": 1,
+      "data": [
+        {
+          "id": "game_cross_promotion",
+          "sha256": "063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83"
+        }
+      ],
+      "prompt_sha256": "sha256:980727a4567acc13a8d0227a477f1e2771f3e88a7bae9542f994622e95be4b9c"
+    }
+  ],
+  "status": "passed",
+  "calls_made": 1,
+  "results": [
+    {
+      "id": "R03_dirty_cross_promotion",
+      "status": "passed",
+      "response_summary": {
+        "fact_ids_used": [
+          "r03_parse",
+          "r03_unit",
+          "r03_limit"
+        ],
+        "method_limitations_count": 3,
+        "prohibited_inference_acknowledged": true,
+        "decision_characters": 58,
+        "next_action_characters": 39,
+        "json_envelope": "direct",
+        "response_shape": "direct_object",
+        "response_length_bucket": "257_to_1024",
+        "response_reasoning_length_bucket": "1_to_256",
+        "response_finish_reason": "stop"
+      }
+    }
+  ]
+}

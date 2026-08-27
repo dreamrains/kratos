@@ -7,6 +7,8 @@ import sys
 
 import pandas as pd
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_DIR
+
 from data_agent.agent.analysis_quality_rubric import score_analysis_quality
 from data_agent.agent.relationship_validation import validate_relationship
 
@@ -16,12 +18,7 @@ SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "run_multifile_q
 
 
 def _data_dir() -> Path:
-    worktree_root = Path(__file__).resolve().parents[2]
-    candidates = (
-        worktree_root / "reference" / "test_doc",
-        worktree_root.parents[1] / "reference" / "test_doc",
-    )
-    return next(path for path in candidates if path.is_dir())
+    return REFERENCE_DATA_DIR
 
 
 def _manifest() -> dict:

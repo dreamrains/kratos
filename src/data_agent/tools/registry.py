@@ -35,7 +35,17 @@ class ToolResult:
 
     @staticmethod
     def from_str(s: str) -> "ToolResult":
-        return ToolResult(summary=s)
+        # Most legacy tools return their analytic payload as JSON text.  Keep
+        # that public summary unchanged for existing LLM/CLI consumers while
+        # preserving the object on the shared ToolResult contract for Web,
+        # receipts and publication.  This avoids asking every legacy tool to
+        # grow a parallel return type and prevents result facts being lost at
+        # the registry boundary.
+        try:
+            parsed = json.loads(s)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = None
+        return ToolResult(summary=s, data=parsed if isinstance(parsed, dict) else None)
 
     def to_cli(self) -> str:
         return self.summary
@@ -240,8 +250,7 @@ def _is_read_only(tool_def) -> bool:
         "transform_data", "derive_field", "run_python",
         "ask_user_question", "create_chart",
         "record_data_requirement", "record_analysis_spec", "record_analysis_plan",
-        "record_evidence_record", "record_insight_record",
-        "generate_report", "generate_analysis_brief", "generate_formal_report",
+        "record_evidence_record",
         "export_conversation",
         "clean_data", "apply_type_conversion",
         "load_skill", "update_project_rules",
@@ -271,7 +280,6 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "tool_search",
         "record_data_requirement", "record_analysis_spec", "record_analysis_plan",
         "record_evidence_record",
-        "record_insight_record",
     },
     "eda": {
         "analyze_time_series", "correlation_analysis",
@@ -280,6 +288,7 @@ TOOL_GROUPS: dict[str, set[str]] = {
         "describe_dataset", "preview_data",
         "compare_periods", "top_n",
         "contribute_decomposition", "funnel_analysis",
+        "synthesize_time_series",
         "interpret_dataset",
     },
     "ml": {
@@ -294,9 +303,6 @@ TOOL_GROUPS: dict[str, set[str]] = {
     },
     "report": {
         "export_conversation",
-    },
-    "deprecated_report_artifacts": {
-        "generate_report", "generate_analysis_brief", "generate_formal_report",
     },
     "clean": {
         "suggest_column_types", "apply_type_conversion", "clean_data",
@@ -350,6 +356,7 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "funnel_analysis": _cap("analysis.funnel", "funnel", ["funnel", "conversion"], evidence_fields=["steps", "conversion_rate", "dropoff"]),
     "cohort_analysis": _cap("analysis.cohort", "retention", ["retention", "lifecycle"], evidence_fields=["cohort", "retention_rate"]),
     "correlation_analysis": _cap("analysis.correlation", "relationship", ["drivers", "relationship"], evidence_fields=["correlation", "p_value"]),
+    "synthesize_time_series": _cap("analysis.multi_file_time_synthesis", "multi_file", ["trend", "relationship", "multi_file"], evidence_fields=["source_identities", "coverage", "missing_aligned_dates"]),
     "ab_test": _cap("analysis.experiment", "experiment", ["evaluation", "causal"], evidence_fields=["effect_size", "significance"], risk_level="medium", requires_confirmation=True),
     "causal_analysis": _cap("analysis.causal", "causal", ["causal", "evaluation"], evidence_fields=["effect", "assumptions"], risk_level="high", requires_confirmation=True),
     "attribution_analysis": _cap("analysis.attribution", "attribution", ["attribution", "diagnosis"], evidence_fields=["drivers", "limitations"]),
@@ -362,12 +369,8 @@ DEFAULT_TOOL_CAPABILITIES: dict[str, ToolCapability] = {
     "record_analysis_spec": _cap("artifact.analysis_spec", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "limitations"]),
     "record_analysis_plan": _cap("artifact.analysis_plan", "analysis_artifact", ["planning"], evidence_fields=["method_plan", "visualization_strategy", "statistical_validation_plan"]),
     "record_evidence_record": _cap("artifact.evidence_record", "evidence", ["evidence"], evidence_fields=["claim", "method", "confidence"]),
-    "record_insight_record": _cap("artifact.insight_record", "insight", ["evidence", "report"], evidence_fields=["evidence_ids", "chart_ids", "limitations"]),
     "task_create": _cap("workflow.task_create", "workflow", ["planning", "execution"]),
     "task_update": _cap("workflow.task_update", "workflow", ["execution"]),
-    "generate_report": _cap("report.generate", "report", ["report"], evidence_fields=["evidence_records", "limitations"]),
-    "generate_analysis_brief": _cap("report.brief", "report", ["report", "summary"], evidence_fields=["evidence_records", "limitations"]),
-    "generate_formal_report": _cap("report.formal", "report", ["report"], evidence_fields=["evidence_records", "chart_artifacts", "limitations"]),
     "export_conversation": _cap("report.conversation_export", "report", ["export"], evidence_fields=["conversation"]),
     "create_chart": _cap("visual.chart", "visualization", ["report", "exploration"], evidence_fields=["chart"]),
 }
@@ -843,12 +846,14 @@ def tool_search(keyword: str) -> str:
     if not keyword.strip():
         return json.dumps({"error": "请提供搜索关键词"}, ensure_ascii=False)
 
+    # `tool_search` is the escape hatch for capabilities that were not part of
+    # the initial prompt. Searching a partially discovered registry silently
+    # amputates those capabilities, so discovery belongs to the search contract.
+    registry._ensure_discovered()
+
     kw = keyword.lower().strip()
     matches = []
-    deprecated_tools = TOOL_GROUPS.get("deprecated_report_artifacts", set())
     for tool in registry._tools.values():
-        if tool.name in deprecated_tools:
-            continue
         score = 0
         if kw in tool.name.lower():
             score += 2

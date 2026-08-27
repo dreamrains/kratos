@@ -412,6 +412,8 @@ def select_playbooks(
     intent: TurnIntent,
     state: AnalysisSessionState | None = None,
     dataset_profile: str = "",
+    *,
+    llm_client=None,
 ) -> PlaybookSelection:
     text = (user_input or "").lower()
     has_data = intent.data_state == "data_loaded" or bool(dataset_profile.strip())
@@ -419,12 +421,15 @@ def select_playbooks(
     # Try LLM selection first for non-trivial inputs; fall back to keyword
     llm_supporting: list[str] = []
     primary: str | None = None
+    llm_attempted = False
     if len(text.strip()) >= 8:
+        llm_attempted = True
         try:
             from data_agent.agent.llm_playbook import select_playbook_llm
             llm_result = select_playbook_llm(
                 user_input=text,
                 data_features=dataset_profile,
+                client=llm_client,
             )
             if llm_result and llm_result.get("primary"):
                 primary = llm_result["primary"]
@@ -433,7 +438,13 @@ def select_playbooks(
             pass
 
     if not primary:
-        primary = _choose_primary(text, intent, has_data)
+        primary = _choose_primary(
+            text,
+            intent,
+            has_data,
+            llm_client=llm_client,
+            allow_llm=not (llm_attempted and llm_client is not None),
+        )
 
     # Use LLM supporting if available, otherwise fall back to keyword-based
     supporting = llm_supporting if llm_supporting else _choose_supporting(text, primary)
@@ -457,9 +468,20 @@ def select_playbooks(
     )
 
 
-def choose_playbook(user_input: str, intent: TurnIntent, has_data: bool = False) -> PlaybookSelection:
+def choose_playbook(
+    user_input: str,
+    intent: TurnIntent,
+    has_data: bool = False,
+    *,
+    llm_client=None,
+) -> PlaybookSelection:
     dataset_profile = "- data loaded" if has_data else ""
-    return select_playbooks(user_input, intent, dataset_profile=dataset_profile)
+    return select_playbooks(
+        user_input,
+        intent,
+        dataset_profile=dataset_profile,
+        llm_client=llm_client,
+    )
 
 
 def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSelection) -> None:
@@ -552,7 +574,14 @@ _AMBIGUOUS_RULES: list[tuple[list[str], str]] = [
 ]
 
 
-def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
+def _choose_primary(
+    text: str,
+    intent: TurnIntent,
+    has_data: bool,
+    *,
+    llm_client=None,
+    allow_llm: bool = True,
+) -> str:
     # Layer 1: high-confidence keyword rules → return directly (skip LLM)
     for keywords, playbook_id in _HIGH_CONFIDENCE_RULES:
         if _has_any(text, keywords):
@@ -566,12 +595,13 @@ def _choose_primary(text: str, intent: TurnIntent, has_data: bool) -> str:
             break
 
     # Layer 3: LLM semantic selection for non-trivial inputs
-    if len(text.strip()) >= 8:
+    if allow_llm and len(text.strip()) >= 8:
         try:
             from data_agent.agent.llm_playbook import select_playbook_llm
             llm_result = select_playbook_llm(
                 user_input=text,
                 keyword_result=keyword_tentative or "无",
+                client=llm_client,
             )
             if llm_result and llm_result.get("primary"):
                 return llm_result["primary"]

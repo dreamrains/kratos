@@ -29,6 +29,36 @@ def _loaded_context(columns: str = "date, revenue, channel") -> str:
     return f"- main: 10 rows x 3 cols, columns: {columns}"
 
 
+def test_injected_playbook_client_is_called_once_before_deterministic_fallback():
+    class _InvalidJsonClient:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, system=None):
+            self.calls += 1
+            return type("Response", (), {"text": "not-json"})()
+
+    client = _InvalidJsonClient()
+    intent = TurnIntent(
+        intent_type="directed_analysis",
+        clarity="clear",
+        data_state="data_loaded",
+        analysis_stage="execute",
+        recommended_action="run_analysis",
+        execution_readiness="ready",
+    )
+
+    selection = select_playbooks(
+        "inspect this unusual business dataset",
+        intent,
+        dataset_profile=_loaded_context(),
+        llm_client=client,
+    )
+
+    assert client.calls == 1
+    assert selection.primary_playbook_id == "data_understanding"
+
+
 def test_method_playbooks_are_complete():
     expected = {
         "data_understanding",

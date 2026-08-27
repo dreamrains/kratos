@@ -231,6 +231,27 @@ def _compact_verification_ref(report: dict[str, Any], signature: str, fingerprin
         checks = []
     failed_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "failed")
     downgraded_count = sum(1 for check in checks if isinstance(check, dict) and check.get("status") == "downgraded")
+    passed_evidence_ids = [
+        str(check.get("evidence_id"))
+        for check in checks
+        if isinstance(check, dict)
+        and check.get("status") == "passed"
+        and check.get("evidence_id")
+    ]
+    downgraded_evidence_ids = [
+        str(check.get("evidence_id"))
+        for check in checks
+        if isinstance(check, dict)
+        and check.get("status") == "downgraded"
+        and check.get("evidence_id")
+    ]
+    failed_evidence_ids = [
+        str(check.get("evidence_id"))
+        for check in checks
+        if isinstance(check, dict)
+        and check.get("status") == "failed"
+        and check.get("evidence_id")
+    ]
     return {
         "id": "verify_" + str(report.get("id") or "")[:16],
         "source_report_id": report.get("id"),
@@ -238,6 +259,9 @@ def _compact_verification_ref(report: dict[str, Any], signature: str, fingerprin
         "claim_count": len(checks),
         "failed_count": failed_count,
         "downgraded_count": downgraded_count,
+        "passed_evidence_ids": passed_evidence_ids,
+        "downgraded_evidence_ids": downgraded_evidence_ids,
+        "failed_evidence_ids": failed_evidence_ids,
         "evidence_signature": signature,
         "evidence_fingerprint": fingerprint,
         "route_proposal_ids": list(report.get("route_proposal_ids") or []),

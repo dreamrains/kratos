@@ -6,23 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+
 from data_agent.agent.golden_answer_runner import (
     load_golden_manifest,
     GoldenManifestError,
 )
 
 WORKTREE_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = next(
-    (
-        p
-        for p in (
-            WORKTREE_ROOT / "reference" / "test_doc",
-            WORKTREE_ROOT.parents[1] / "reference" / "test_doc",
-        )
-        if p.is_dir()
-    ),
-    None,
-)
+DATA_DIR = REFERENCE_DATA_DIR
 MANIFEST = WORKTREE_ROOT / "tests" / "real_data" / "golden_answer_manifest.json"
 
 
@@ -65,7 +57,7 @@ def test_load_golden_manifest_rejects_empty_required_files(tmp_path):
         load_golden_manifest(bad)
 
 
-@pytest.mark.skipif(DATA_DIR is None, reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_golden_manifest_files_exist():
     manifest = load_golden_manifest(MANIFEST)
     for scenario in manifest["scenarios"]:
@@ -265,7 +257,7 @@ import subprocess
 import sys
 
 
-@pytest.mark.skipif(DATA_DIR is None, reason="reference/test_doc not found")
+@pytest.mark.skipif(not REFERENCE_DATA_AVAILABLE, reason="canonical reference data is not installed")
 def test_cli_help_exits_zero():
     proc = subprocess.run(
         [sys.executable, "-m", "scripts.run_golden_answer_quality", "--help"],

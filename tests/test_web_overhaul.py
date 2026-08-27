@@ -483,8 +483,6 @@ class TestWorkbenchRedesign:
     def test_report_generation_section(self, html):
         assert "生成报告" not in html
         assert "generateSessionReport(" not in html
-        assert "generate_analysis_brief" not in html
-        assert "generate_formal_report" not in html
 
     def test_conversation_export_section(self, html):
         assert "exportConversation('html')" in html
@@ -644,17 +642,15 @@ class TestConfirmationRuntimeRestore:
 
 
 class TestConfirmationWorkbenchWording:
-    def test_workbench_distinguishes_workflow_notes_from_active_confirmations(self, html, js):
+    def test_workbench_excludes_confirmation_and_workflow_note_projections(self, html, js):
         assert "workflow_notes" in js
-        assert "workbenchConfirmation()" in html
-        assert "workbenchConfirmation()" in js
+        assert "workbenchConfirmation()" not in html
+        assert "workbenchConfirmation()" not in js
         assert "workflow_notes" not in html
 
-    def test_sidebar_uses_assignment_scope_and_nonblocking_relationship_diagnostics(self, html, js):
-        assert "workbenchScope().files" in html
-        assert "multifile-relationships" in html
-        assert "relationship.evidence" in html
-        assert "relationship.uncertainties" in html
+    def test_workbench_excludes_scope_and_relationship_diagnostics(self, html, js):
+        assert "workbenchScope().files" not in html
+        assert "multifile-relationships" not in html
+        assert "relationship.evidence" not in html
+        assert "relationship.uncertainties" not in html
         assert "diagnostic_only" not in html
-        assert "关系待确认" not in html
-        assert "等待确认" not in html

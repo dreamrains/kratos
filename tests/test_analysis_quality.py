@@ -24,20 +24,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scripts.acceptance.real_data_manifest import (
+    REFERENCE_DATA_AVAILABLE,
+    REFERENCE_DATA_DIR,
+    reference_data_path,
+)
+
 if sys.platform == "win32":
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-TEST_DATA_DIR = Path("D:/Project/Daily/data-agent/reference/test_doc")
-REAL_DATA_DIR = Path("D:/Project/Daily/备用/20260512测试")
-HAS_REAL_DATA = REAL_DATA_DIR.exists()
+TEST_DATA_DIR = REFERENCE_DATA_DIR
+HAS_REAL_DATA = REFERENCE_DATA_AVAILABLE
 
-CARD_PAYMENT = REAL_DATA_DIR / "0201到0510购卡用户付费数据.xlsx"
-VOUCHER_DETAIL = REAL_DATA_DIR / "代金券明细订单.xlsx"
-BEFORE_AFTER = REAL_DATA_DIR / "购卡前后订单.xlsx"
-CARD_ORDER = REAL_DATA_DIR / "省钱卡订单.xlsx"
+CARD_PAYMENT = reference_data_path("savings_card_user_payments")
+VOUCHER_DETAIL = reference_data_path("savings_card_vouchers")
+BEFORE_AFTER = reference_data_path("savings_card_before_after")
+CARD_ORDER = reference_data_path("savings_card_orders")
 
 
 @pytest.fixture
@@ -701,6 +706,50 @@ class TestStatisticalTestRecommendation:
         assert rec["recommended_tool"] == "ab_test"
         assert "suggested_args" in rec
         assert "reason" in rec
+
+    def test_registry_executes_compare_periods_not_its_recommendation_helper(self, compare_env):
+        """The LLM tool path must bind the public comparison callable."""
+        from data_agent.tools import discover_tools
+        from data_agent.tools.registry import registry
+
+        discover_tools()
+        result = registry.execute("compare_periods", {
+            "name": "test_compare",
+            "date_col": "日期",
+            "metrics": "金额",
+            "period_a": "2026-03-01~2026-03-30",
+            "period_b": "2026-04-01~2026-04-30",
+        })
+
+        parsed = json.loads(result.summary)
+        assert "error" not in parsed
+        assert "metrics" in parsed
+        assert result.data == parsed
+
+    def test_compare_periods_includes_timestamped_events_on_the_end_date(self, compare_env):
+        """Calendar periods include the full stated end day, not just midnight."""
+        from data_agent.session.workspace import workspace
+        from data_agent.tools.eda import compare_periods
+
+        workspace.add("inclusive_period_end", pd.DataFrame({
+            "日期": pd.to_datetime([
+                "2026-03-01 09:00:00", "2026-03-02 23:59:59",
+                "2026-03-03 08:00:00", "2026-03-04 23:59:59",
+            ]),
+            "金额": [10, 45, 20, 30],
+        }))
+        parsed = json.loads(compare_periods(
+            name="inclusive_period_end",
+            date_col="日期",
+            metrics="金额",
+            period_a="2026-03-01~2026-03-02",
+            period_b="2026-03-03~2026-03-04",
+        ))
+
+        assert parsed["period_a"]["rows"] == 2
+        assert parsed["period_b"]["rows"] == 2
+        assert parsed["metrics"]["金额"]["period_a"] == 55.0
+        assert parsed["metrics"]["金额"]["period_b"] == 50.0
 
     def test_compare_periods_no_recommendation_when_no_diff(self, tmp_path):
         """两组数据无差异时不应推荐统计检验。"""
