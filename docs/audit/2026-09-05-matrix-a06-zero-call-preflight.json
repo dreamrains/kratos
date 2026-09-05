@@ -1,0 +1,40 @@
+{
+  "batch_id": "MATRIX-A06-DIAG",
+  "evidence_layer": "zero_call_read_only_preflight",
+  "recorded_at": "2026-09-05T12:27:40.826216+00:00",
+  "authorization": "not_granted_pending_user",
+  "external_authorization_fields": [
+    "AUTHORIZED_BATCH_SHA256"
+  ],
+  "identity": {
+    "batch_sha256": "sha256:26570ea6cc222ce54184bc00f1cae068f17235716a0fc2820c9eef6030ae1000",
+    "source_digest": "sha256:cadbe4d5c7f97f2d54a99ae3f5046ed8c1f1b5489680ebc01beaec0a692a881b",
+    "launcher_sha256": "sha256:46b0f1d01ff264734df0f4b986ef479c08ed88e8dcf51490661bbfc18da96977",
+    "supervisor_sha256": "sha256:7d295efc8f61f7de0c35e4d64f8984ee040cd4b30dc50c459898b8737879863e",
+    "data_bundle_sha256": "sha256:c5e080e96c89fc257def56956733ef294119e89167f34ea29df22617f7f63912",
+    "prompt_bundle_sha256": "sha256:82b559704004318144136ac80d78116601341f0cd4a035a02abfcf80769bab16",
+    "oracle_bundle_sha256": "sha256:b85bcdf19b9cd68c792afdc506db4ba0780d4d16198a2cd115f944f0a5a7bea0"
+  },
+  "digest_echo": {
+    "batch_id": "MATRIX-A06-DIAG",
+    "authorize_with": "AUTHORIZED_BATCH_SHA256=sha256:26570ea6cc222ce54184bc00f1cae068f17235716a0fc2820c9eef6030ae1000",
+    "cases": [
+      "M01",
+      "M02",
+      "M03",
+      "M04",
+      "M05",
+      "M06"
+    ]
+  },
+  "real_provider_calls": 0,
+  "network_attempts": 0,
+  "network_guard": {
+    "attempts": 0,
+    "events": []
+  },
+  "exit_code": 0,
+  "passed": true,
+  "stderr": "",
+  "execution_root_exists": false
+}
