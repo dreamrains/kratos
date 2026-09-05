@@ -1,0 +1,2121 @@
+{
+ "case": "M02",
+ "batch": "real-provider-browser-matrix-a04-diag",
+ "turns": [
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_01_LDOz2ibRlXbQpE7cQJN88045_detail.json",
+    "offset": 2000,
+    "content": "end\": \"2021-11-03\",\n      \"distinct_dates\": 248\n    }\n  },\n  \"aligned_rows\": 248,\n  \"missing_aligned_dates\": {\n    \"游戏A激励视频汇总数据报表\": 0,\n    \"游戏A内购数据\": 0,\n    \"游戏Abanner汇总数据\": 0\n  },\n  \"limitations\": [\n",
+    "next_offset": null,
+    "total_chars": 3004,
+    "sha256": "0b5f45124744da191767eb06ab1b2b99f1c91c0d530f1cad47d565792c5abc34"
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/1c5e2d4a9d50/analysis_flow/af_fe8c9288cb444a967aa0a13682776872d6031a37.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "89e51a044d",
+    "statistical_detail_status": "complete",
+    "statistical_detail_gaps": [],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_01_LDOz2ibRlXbQpE7cQJN88045_detail.json",
+    "offset": 0,
+    "content": "{\n  \"method_contract\": \"multi_file_time_synthesis.v1\",\n  \"status\": \"supported\",\n  \"date_col\": \"日期\",\n  \"source_datasets\": [\n    \"游戏A激励视频汇总数据报表\",\n    \"游戏A内购数据\",\n    \"游戏Abanner汇总数据\"\n  ],\n  \"source_identi",
+    "next_offset": 2000,
+    "total_chars": 3004,
+    "sha256": "0b5f45124744da191767eb06ab1b2b99f1c91c0d530f1cad47d565792c5abc34"
+   }
+  },
+  {
+   "tool": "analyze_time_series",
+   "structured_result": {
+    "data_points": 248,
+    "date_range": {
+     "start": "2021-03-01T00:00:00",
+     "end": "2021-11-03T00:00:00"
+    },
+    "statistics": {
+     "mean": 271.187,
+     "std": 41.7278,
+     "min": 97.14,
+     "max": 439.94
+    },
+    "trend": {
+     "direction": "down",
+     "slope": -0.1416,
+     "r_squared": 0.059,
+     "p_value": 0.000112,
+     "significant": true
+    },
+    "change_points": [
+     {
+      "index": 140,
+      "date": "2021-07-19T00:00:00",
+      "change_pct": -13.16,
+      "direction": "decrease"
+     },
+     {
+      "index": 169,
+      "date": "2021-08-17T00:00:00",
+      "change_pct": -12.81,
+      "direction": "decrease"
+     },
+     {
+      "index": 139,
+      "date": "2021-07-18T00:00:00",
+      "change_pct": -12.76,
+      "direction": "decrease"
+     },
+     {
+      "index": 141,
+      "date": "2021-07-20T00:00:00",
+      "change_pct": -12.66,
+      "direction": "decrease"
+     },
+     {
+      "index": 167,
+      "date": "2021-08-15T00:00:00",
+      "change_pct": -12.49,
+      "direction": "decrease"
+     }
+    ],
+    "seasonality": {
+     "strongest_period": 1,
+     "autocorrelation": 0.584,
+     "likely_seasonal": true
+    },
+    "suggested_next": [
+     "correlation_analysis 检查哪些指标与目标变量相关",
+     "distribution_analysis 检查目标变量分布特征"
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "error": "EvidenceRecord references tools not executed in this turn",
+    "error_type": "unbound_tool_receipt",
+    "missing_tool_receipts": [
+     "load_data"
+    ]
+   }
+  },
+  {
+   "tool": "describe_dataset",
+   "structured_result": {
+    "dataset": "游戏A_三项收入同周期对比",
+    "shape": {
+     "rows": 248,
+     "columns": 4
+    },
+    "fields": [
+     {
+      "name": "date",
+      "dtype": "datetime64[us]",
+      "missing_pct": 0.0,
+      "unique_values": 248
+     },
+     {
+      "name": "游戏A激励视频汇总数据报表",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 248
+     },
+     {
+      "name": "游戏A内购数据",
+      "dtype": "int64",
+      "missing_pct": 0.0,
+      "unique_values": 214
+     },
+     {
+      "name": "游戏Abanner汇总数据",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 247
+     }
+    ],
+    "field_statistics": [
+     {
+      "name": "date",
+      "dtype": "datetime64[us]",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 248,
+      "datetime_range": {
+       "min": "2021-03-01 00:00:00",
+       "max": "2021-11-03 00:00:00",
+       "span_days": 247
+      }
+     },
+     {
+      "name": "游戏A激励视频汇总数据报表",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 248,
+      "stats": {
+       "mean": 271.187,
+       "std": 41.8122,
+       "min": 97.14,
+       "25%": 246.46,
+       "50%": 268.8,
+       "75%": 294.0925,
+       "max": 439.94
+      }
+     },
+     {
+      "name": "游戏A内购数据",
+      "dtype": "int64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 214,
+      "stats": {
+       "mean": 806.2339,
+       "std": 428.0896,
+       "min": 238.0,
+       "25%": 491.25,
+       "50%": 676.5,
+       "75%": 1062.5,
+       "max": 2228.0
+      }
+     },
+     {
+      "name": "游戏Abanner汇总数据",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 247,
+      "stats": {
+       "mean": 318.5385,
+       "std": 148.3294,
+       "min": 57.48,
+       "25%": 217.995,
+       "50%": 284.095,
+       "75%": 397.4875,
+       "max": 951.25
+      }
+     }
+    ],
+    "observation_window": {
+     "kind": "observed_date_columns",
+     "columns": {
+      "date": {
+       "min": "2021-03-01 00:00:00",
+       "max": "2021-11-03 00:00:00",
+       "non_null_rows": 248,
+       "distinct_values": 248
+      }
+     },
+     "collection_cutoff": "unknown"
+    }
+   }
+  },
+  {
+   "tool": "analyze_time_series",
+   "structured_result": {
+    "data_points": 248,
+    "date_range": {
+     "start": "2021-03-01T00:00:00",
+     "end": "2021-11-03T00:00:00"
+    },
+    "statistics": {
+     "mean": 806.2339,
+     "std": 427.2256,
+     "min": 238.0,
+     "max": 2228.0
+    },
+    "trend": {
+     "direction": "up",
+     "slope": 0.4054,
+     "r_squared": 0.0046,
+     "p_value": 0.286587,
+     "significant": false
+    },
+    "change_points": [
+     {
+      "index": 188,
+      "date": "2021-09-05T00:00:00",
+      "change_pct": 30.44,
+      "direction": "increase"
+     },
+     {
+      "index": 80,
+      "date": "2021-05-20T00:00:00",
+      "change_pct": -29.67,
+      "direction": "decrease"
+     },
+     {
+      "index": 175,
+      "date": "2021-08-23T00:00:00",
+      "change_pct": 29.53,
+      "direction": "increase"
+     },
+     {
+      "index": 130,
+      "date": "2021-07-09T00:00:00",
+      "change_pct": 29.33,
+      "direction": "increase"
+     },
+     {
+      "index": 81,
+      "date": "2021-05-21T00:00:00",
+      "change_pct": -28.83,
+      "direction": "decrease"
+     }
+    ],
+    "seasonality": {
+     "strongest_period": 2,
+     "autocorrelation": 0.2106,
+     "likely_seasonal": false
+    },
+    "suggested_next": [
+     "correlation_analysis 检查哪些指标与目标变量相关",
+     "distribution_analysis 检查目标变量分布特征"
+    ]
+   }
+  },
+  {
+   "tool": "synthesize_time_series",
+   "structured_result": {
+    "method_contract": "multi_file_time_synthesis.v1",
+    "status": "supported",
+    "date_col": "日期",
+    "source_datasets": [
+     "游戏A激励视频汇总数据报表",
+     "游戏A内购数据",
+     "游戏Abanner汇总数据"
+    ],
+    "source_identities": {
+     "游戏A激励视频汇总数据报表": {
+      "version_id": "dv_6d51730dcba1da45",
+      "role": "analysis",
+      "fingerprint": "sha256:bf0f0f6ecbd19794db8299984eb837bd8935d016a81e68ec798bd46c75e52900",
+      "source_fingerprint": "sha256:07d7f7979664c52ec014131323d1f870fda6c9d69d3353d1778b369147061c49",
+      "parent_version_ids": [
+       "dv_a0782611c4d02463"
+      ],
+      "expression": "automatic safe type parsing at load"
+     },
+     "游戏A内购数据": {
+      "version_id": "dv_ae349fd66461bc8d",
+      "role": "analysis",
+      "fingerprint": "sha256:4fadef3d52abc81de9eebf4c0835151ef78d8105bca7e23fbb42e53fbc7200dd",
+      "source_fingerprint": "sha256:b27f70c73b9284c57bbcdee553e53ced518ce68e27bd65ea70d446b60e87f69d",
+      "parent_version_ids": [
+       "dv_2e972ce8fdabae94"
+      ],
+      "expression": "automatic safe type parsing at load"
+     },
+     "游戏Abanner汇总数据": {
+      "version_id": "dv_948a9380952f231c",
+      "role": "analysis",
+      "fingerprint": "sha256:f833159b63ea3f88bbdbae436b1b5ba830c0ecb091a27143e74fbf5a187f6dbe",
+      "source_fingerprint": "sha256:cd4d80c6180399ebb371b0a9e5e01cc6c80ad576dc8476b86d978c3baa3e0ae0",
+      "parent_version_ids": [
+       "dv_241e20b392f91dc8"
+      ],
+      "expression": "automatic safe type parsing at load"
+     }
+    },
+    "coverage": {
+     "游戏A激励视频汇总数据报表": {
+      "metric": "视频广告收入",
+      "rows": 248,
+      "effective_rows": 248,
+      "start": "2021-03-01",
+      "end": "2021-11-03",
+      "distinct_dates": 248
+     },
+     "游戏A内购数据": {
+      "metric": "内购收入",
+      "rows": 248,
+      "effective_rows": 248,
+      "start": "2021-03-01",
+      "end": "2021-11-03",
+      "distinct_dates": 248
+     },
+     "游戏Abanner汇总数据": {
+      "metric": "BN_广告收入",
+      "rows": 248,
+      "effective_rows": 248,
+      "start": "2021-03-01",
+      "end": "2021-11-03",
+      "distinct_dates": 248
+     }
+    },
+    "aligned_rows": 248,
+    "missing_aligned_dates": {
+     "游戏A激励视频汇总数据报表": 0,
+     "游戏A内购数据": 0,
+     "游戏Abanner汇总数据": 0
+    },
+    "limitations": [
+     "此操作仅按明确的共同日期聚合与并列对齐，不推断实体级业务 join 或因果关系。"
+    ],
+    "claim_ceiling": "descriptive",
+    "derived_dataset": "游戏A_三项收入同周期对比",
+    "derived_identity": {
+     "version_id": "dv_1a1819115ab1ed13",
+     "role": "analysis",
+     "fingerprint": "sha256:a0b3c5a14e71e88d6808170ef1a67c898cd9e218f733ea41df3f1b8e3a362446",
+     "source_fingerprint": "multi:sha256:bf0f0f6ecbd19794db8299984eb837bd8935d016a81e68ec798bd46c75e52900,sha256:4fadef3d52abc81de9eebf4c0835151ef78d8105bca7e23fbb42e53fbc7200dd,sha256:f833159b63ea3f88bbdbae436b1b5ba830c0ecb091a",
+     "parent_version_ids": [
+      "dv_6d51730dcba1da45",
+      "dv_ae349fd66461bc8d",
+      "dv_948a9380952f231c"
+     ],
+     "expression": "date-aligned daily sums: {'游戏A激励视频汇总数据报表': '视频广告收入', '游戏A内购数据': '内购收入', '游戏Abanner汇总数据': 'BN_广告收入'}"
+    }
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/1c5e2d4a9d50/analysis_flow/af_11b3f042313e67e7c78dae9b45c63be5ed57d4c7.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "7747878b9c",
+    "statistical_detail_status": "complete",
+    "statistical_detail_gaps": [],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/1c5e2d4a9d50/analysis_flow/af_ae409fef6a4cf20f3120ca40f7eebf059af0dd35.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "d9dc9f42e0",
+    "statistical_detail_status": "missing",
+    "statistical_detail_gaps": [
+     "metrics",
+     "time_scope",
+     "statistical_projection"
+    ],
+    "statistical_projection_gaps": [
+     {
+      "receipt_id": "tr_03c140cb5864",
+      "reason": "unsupported_statistical_method"
+     },
+     {
+      "receipt_id": "tr_3ddb7e66ef26",
+      "reason": "unsupported_statistical_method"
+     },
+     {
+      "receipt_id": "tr_084c19ecb96d",
+      "reason": "unsupported_statistical_method"
+     }
+    ]
+   }
+  },
+  {
+   "tool": "analyze_time_series",
+   "structured_result": {
+    "data_points": 248,
+    "date_range": {
+     "start": "2021-03-01T00:00:00",
+     "end": "2021-11-03T00:00:00"
+    },
+    "statistics": {
+     "mean": 318.5385,
+     "std": 148.03,
+     "min": 57.48,
+     "max": 951.25
+    },
+    "trend": {
+     "direction": "down",
+     "slope": -1.4145,
+     "r_squared": 0.468,
+     "p_value": 0.0,
+     "significant": true
+    },
+    "change_points": [
+     {
+      "index": 52,
+      "date": "2021-04-22T00:00:00",
+      "change_pct": -37.73,
+      "direction": "decrease"
+     },
+     {
+      "index": 50,
+      "date": "2021-04-20T00:00:00",
+      "change_pct": -37.51,
+      "direction": "decrease"
+     },
+     {
+      "index": 51,
+      "date": "2021-04-21T00:00:00",
+      "change_pct": -37.49,
+      "direction": "decrease"
+     },
+     {
+      "index": 49,
+      "date": "2021-04-19T00:00:00",
+      "change_pct": -37.44,
+      "direction": "decrease"
+     },
+     {
+      "index": 53,
+      "date": "2021-04-23T00:00:00",
+      "change_pct": -35.67,
+      "direction": "decrease"
+     }
+    ],
+    "seasonality": {
+     "strongest_period": 1,
+     "autocorrelation": 0.8275,
+     "likely_seasonal": true
+    },
+    "suggested_next": [
+     "correlation_analysis 检查哪些指标与目标变量相关",
+     "distribution_analysis 检查目标变量分布特征"
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/1c5e2d4a9d50/analysis_flow/af_d01a755ca6849a22a996dd17be47770b8bd70ecf.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "750519a7e4",
+    "statistical_detail_status": "missing",
+    "statistical_detail_gaps": [
+     "metrics",
+     "time_scope",
+     "statistical_projection"
+    ],
+    "statistical_projection_gaps": [
+     {
+      "receipt_id": "tr_03c140cb5864",
+      "reason": "unsupported_statistical_method"
+     },
+     {
+      "receipt_id": "tr_3ddb7e66ef26",
+      "reason": "unsupported_statistical_method"
+     },
+     {
+      "receipt_id": "tr_084c19ecb96d",
+      "reason": "unsupported_statistical_method"
+     }
+    ]
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "purpose 'evidence' or 'insight' requires evidence_ids",
+    "error_type": "chart_validation",
+    "error_code": "chart_validation",
+    "validation_warnings": [
+     "missing evidence_ids for evidence-backed chart"
+    ],
+    "recovery_options": []
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "purpose 'evidence' or 'insight' requires evidence_ids",
+    "error_type": "chart_validation",
+    "error_code": "chart_validation",
+    "validation_warnings": [
+     "missing evidence_ids for evidence-backed chart"
+    ],
+    "recovery_options": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "data_profile": "{\n  \"shape\": [\n    248,\n    18\n  ],\n  \"columns\": [\n    \"日期(date)\",\n    \"活跃用户数(number)\",\n    \"新增用户数(number)\",\n    \"BN_广告收入(number)\",\n    \"BN_arpu(number)\",\n    \"BN_eCPM(number)\",\n    \"BN_拉取量(number)\",\n",
+    "data_interpretation": "数据集 '游戏Abanner汇总数据' (248×18)\n行业主题: 广告营销 (置信度: medium)\n粒度: daily_aggregate\n关键指标: BN_拉取量, 加载次数, 展示次数, BN_曝光量, 点击次数\n时间范围: 2021-03-01 ~ 2021-11-03 (247天)\n推荐分析:\n  1. 趋势分析 — 检测指标的时间走向和周期性\n  2. 异常检测 — 识别偏离正常",
+    "interpretation_data": "{\"theme\": \"广告营销\", \"theme_confidence\": \"medium\", \"grain\": \"daily_aggregate\", \"grain_hint\": \"每行代表一天的汇总数据（时间列 '日期'，共 248 个时间点，248 行）。不含用户个体信息，不可做用户画像、用户分群等个体级分析。可做趋势分析、指标对比、周期性检测等聚合级分析。（检测到聚合指标列，确认此为聚合数据",
+    "quality_card": "[data_features]\nDataset: 游戏Abanner汇总数据 | 248 rows x 18 cols\nQuality: 100/100 | 0 warnings, 0 blocks\nColumns: 8 numeric, 0 categorical, 1 date, 9 ID\nTime: daily (2021-03-01 ~ 2021-11-03, 247 days)",
+    "cross_dataset_hints": "Candidate shared columns, not join approval; audit grain, cardinality, coverage and time scope before merging:\n  游戏Abanner汇总数据.活跃用户数 <-> 游戏A激励视频汇总数据报表__raw.活跃用户数 (overlap: 100%)\n  游戏Abanner汇总数据.新增用户数 ",
+    "auto_insight": "数据快速洞察 (248 行 × 18 列)\n数据身份：广告营销行业，日级聚合\n时间范围：2021-03-01 ~ 2021-11-03（247天）\n关键指标：BN_拉取量, 加载次数, 展示次数, BN_曝光量, 点击次数\n数据健康：\n  [INFO] 异常值较多: '新增用户数' (8.5%), 'BN_曝光率' (6.9%)\n值得关注：\n  1. 活跃用户数 整体呈下降趋势（-52.2%），建"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "data_profile": "{\n  \"shape\": [\n    248,\n    13\n  ],\n  \"columns\": [\n    \"日期(date)\",\n    \"活跃用户(number)\",\n    \"新增用户(number)\",\n    \"付费人数(number)\",\n    \"付费次数(number)\",\n    \"内购收入(number)\",\n    \"累计付费人数(number)\",\n    \"付费率(nu",
+    "data_interpretation": "数据集 '游戏A内购数据' (248×13)\n行业主题: 游戏 (置信度: medium)\n粒度: daily_aggregate\n关键指标: 活跃用户, 内购收入, 新增用户, 累计付费人数, 首付金额\n时间范围: 2021-03-01 ~ 2021-11-03 (247天)\n推荐分析:\n  1. 趋势分析 — 检测指标的时间走向和周期性\n  2. 异常检测 — 识别偏离正常范围的数据点\n  3",
+    "interpretation_data": "{\"theme\": \"游戏\", \"theme_confidence\": \"medium\", \"grain\": \"daily_aggregate\", \"grain_hint\": \"每行代表一天的汇总数据（时间列 '日期'，共 248 个时间点，248 行）。不含用户个体信息，不可做用户画像、用户分群等个体级分析。可做趋势分析、指标对比、周期性检测等聚合级分析。（检测到聚合指标列，确认此为聚合数据）\"",
+    "quality_card": "[data_features]\nDataset: 游戏A内购数据 | 248 rows x 13 cols\nQuality: 100/100 | 0 warnings, 0 blocks\nColumns: 9 numeric, 0 categorical, 1 date, 3 ID\nTime: daily (2021-03-01 ~ 2021-11-03, 247 days)",
+    "cross_dataset_hints": "Candidate shared columns, not join approval; audit grain, cardinality, coverage and time scope before merging:\n  游戏A内购数据.日期 <-> 游戏A激励视频汇总数据报表.日期 (overlap: 100%)\n  游戏A内购数据.日期 <-> 游戏A激励视频汇总数据报表__raw.日期 ",
+    "auto_insight": "数据快速洞察 (248 行 × 13 列)\n数据身份：游戏行业，日级聚合\n时间范围：2021-03-01 ~ 2021-11-03（247天）\n关键指标：活跃用户, 内购收入, 新增用户, 累计付费人数, 首付金额\n数据健康：\n  [INFO] 异常值较多: '新增用户' (8.5%), '内购arpu' (6.5%), '首付金额' (8.9%)\n值得关注：\n  1. 活跃用户 整体呈下降趋势（"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "data_profile": "{\n  \"shape\": [\n    248,\n    23\n  ],\n  \"columns\": [\n    \"日期(date)\",\n    \"活跃用户数(number)\",\n    \"新增用户数(number)\",\n    \"视频广告收入(number)\",\n    \"视频arpu(number)\",\n    \"视频eCPM(number)\",\n    \"视频拉取量(number)\",\n    ",
+    "data_interpretation": "数据集 '游戏A激励视频汇总数据报表' (248×23)\n行业主题: 广告营销 (置信度: medium)\n粒度: daily_aggregate\n关键指标: 加载次数, 视频拉取量, 观看次数, 完整观看次数, 活跃用户数\n时间范围: 2021-03-01 ~ 2021-11-03 (247天)\n推荐分析:\n  1. 趋势分析 — 检测指标的时间走向和周期性\n  2. 异常检测 — 识别偏离正常",
+    "interpretation_data": "{\"theme\": \"广告营销\", \"theme_confidence\": \"medium\", \"grain\": \"daily_aggregate\", \"grain_hint\": \"每行代表一天的汇总数据（时间列 '日期'，共 248 个时间点，248 行）。不含用户个体信息，不可做用户画像、用户分群等个体级分析。可做趋势分析、指标对比、周期性检测等聚合级分析。（检测到聚合指标列，确认此为聚合数据",
+    "quality_card": "[data_features]\nDataset: 游戏A激励视频汇总数据报表 | 248 rows x 23 cols\nQuality: 100/100 | 0 warnings, 0 blocks\nColumns: 13 numeric, 0 categorical, 1 date, 9 ID\nTime: daily (2021-03-01 ~ 2021-11-03, 247 days)",
+    "auto_insight": "数据快速洞察 (248 行 × 23 列)\n数据身份：广告营销行业，日级聚合\n时间范围：2021-03-01 ~ 2021-11-03（247天）\n关键指标：加载次数, 视频拉取量, 观看次数, 完整观看次数, 活跃用户数\n数据健康：\n  [INFO] 异常值较多: '新增用户数' (8.5%), '视频arpu' (8.9%), '视频人均曝光' (7.7%)\n值得关注：\n  1. 活跃用户数 "
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "clean_游戏Abanner汇总数据_dec695da",
+    "dataset": "游戏Abanner汇总数据",
+    "decisions": [
+     {
+      "column": "日期",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "datetime64[us]",
+      "action": "datetime",
+      "reason": "检测到日期格式（示例格式: %Y/%m/%d）",
+      "impact": "Enables time-aware analysis"
+     },
+     {
+      "column": "BN_曝光率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     },
+     {
+      "column": "BN_点击率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     }
+    ],
+    "summary": {
+     "safe_auto": 3,
+     "notify_auto": 0,
+     "needs_confirmation": 0,
+     "blocked": 0
+    }
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "duc_游戏Abanner汇总数据_e885c2bf",
+    "dataset": "游戏Abanner汇总数据",
+    "row_count": 248,
+    "column_count": 18,
+    "grain": "daily_aggregate",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "BN_拉取量",
+      "加载次数",
+      "展示次数",
+      "BN_曝光量",
+      "点击次数",
+      "活跃用户数",
+      "BN_点击量",
+      "新增用户数"
+     ],
+     "rate_metrics": [
+      "BN_曝光率",
+      "BN_点击率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "quality": {
+     "status": "ready",
+     "score": 100,
+     "block_issues": [],
+     "warnings": []
+    },
+    "time_range": {
+     "column": "日期",
+     "min": "2021-03-01",
+     "max": "2021-11-03",
+     "span_days": 247
+    },
+    "supported_analyses": [
+     "correlation",
+     "period_compare",
+     "rate_analysis",
+     "trend"
+    ],
+    "unsupported_analyses": [
+     {
+      "type": "dimension_decomposition",
+      "reason": "No dimension column was identified"
+     },
+     {
+      "type": "user_level_retention",
+      "reason": "Data is aggregate grain and missing user or entity id columns"
+     }
+    ],
+    "cleaning_log_ids": [
+     "clean_游戏Abanner汇总数据_dec695da"
+    ],
+    "preview_digest_id": "preview_游戏Abanner汇总数据_7328e0a2",
+    "detail_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a04-diag\\M02\\sessions\\1c5e2d4a9d50\\tool_outputs\\load_游戏Abanner汇总数据_detail.json"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "preview_游戏Abanner汇总数据_7328e0a2",
+    "dataset": "游戏Abanner汇总数据",
+    "row_count": 248,
+    "column_count": 18,
+    "sample_rows_count": 5,
+    "sample_rows": [
+     {
+      "日期": "2021-11-03T00:00:00",
+      "活跃用户数": 6833,
+      "新增用户数": 179,
+      "BN_广告收入": 220.91,
+      "BN_arpu": 0.0323,
+      "BN_eCPM": 2.7896,
+      "BN_拉取量": 140975,
+      "BN_曝光量": 79190,
+      "BN_人均曝光": 11.59,
+      "BN_曝光率": 0.5617,
+      "BN_点击量": 2631,
+      "BN_人均点击": 0.39,
+      "BN_点击率": 0.0332,
+      "BN_点击单价": 0.084,
+      "加载次数": 136177,
+      "展示次数": 135330,
+      "点击次数": 9620,
+      "新用户点击": 18
+     },
+     {
+      "日期": "2021-11-02T00:00:00",
+      "活跃用户数": 6889,
+      "新增用户数": 174,
+      "BN_广告收入": 200.82,
+      "BN_arpu": 0.0292,
+      "BN_eCPM": 2.6145,
+      "BN_拉取量": 142858,
+      "BN_曝光量": 76810,
+      "BN_人均曝光": 11.15,
+      "BN_曝光率": 0.5377000000000001,
+      "BN_点击量": 2670,
+      "BN_人均点击": 0.39,
+      "BN_点击率": 0.0348,
+      "BN_点击单价": 0.0752,
+      "加载次数": 137954,
+      "展示次数": 137062,
+      "点击次数": 9207,
+      "新用户点击": 24
+     },
+     {
+      "日期": "2021-11-01T00:00:00",
+      "活跃用户数": 7060,
+      "新增用户数": 203,
+      "BN_广告收入": 205.57,
+      "BN_arpu": 0.0291,
+      "BN_eCPM": 2.4799,
+      "BN_拉取量": 144279,
+      "BN_曝光量": 82896,
+      "BN_人均曝光": 11.74,
+      "BN_曝光率": 0.5746,
+      "BN_点击量": 2514,
+      "BN_人均点击": 0.36,
+      "BN_点击率": 0.030299999999999997,
+      "BN_点击单价": 0.0818,
+      "加载次数": 139715,
+      "展示次数": 138883,
+      "点击次数": 7929,
+      "新用户点击": 13
+     },
+     {
+      "日期": "2021-10-31T00:00:00",
+      "活跃用户数": 7028,
+      "新增用户数": 251,
+      "BN_广告收入": 116.74,
+      "BN_arpu": 0.0166,
+      "BN_eCPM": 1.8221,
+      "BN_拉取量": 140057,
+      "BN_曝光量": 64070,
+      "BN_人均曝光": 9.12,
+      "BN_曝光率": 0.4575,
+      "BN_点击量": 3267,
+      "BN_人均点击": 0.46,
+      "BN_点击率": 0.051,
+      "BN_点击单价": 0.0357,
+      "加载次数": 135110,
+      "展示次数": 134361,
+      "点击次数": 9401,
+      "新用户点击": 8
+     },
+     {
+      "日期": "2021-10-30T00:00:00",
+      "活跃用户数": 6946,
+      "新增用户数": 248,
+      "BN_广告收入": 114.49,
+      "BN_arpu": 0.0165,
+      "BN_eCPM": 1.7732,
+      "BN_拉取量": 139140,
+      "BN_曝光量": 64566,
+      "BN_人均曝光": 9.3,
+      "BN_曝光率": 0.46399999999999997,
+      "BN_点击量": 2910,
+      "BN_人均点击": 0.42,
+      "BN_点击率": 0.0451,
+      "BN_点击单价": 0.0393,
+      "加载次数": 134160,
+      "展示次数": 133399,
+      "点击次数": 8997,
+      "新用户点击": 11
+     }
+    ],
+    "column_examples": {
+     "日期": [
+      "2021-11-03T00:00:00",
+      "2021-11-02T00:00:00",
+      "2021-11-01T00:00:00"
+     ],
+     "活跃用户数": [
+      6833,
+      6889,
+      7060
+     ],
+     "新增用户数": [
+      179,
+      174,
+      203
+     ],
+     "BN_广告收入": [
+      220.91,
+      200.82,
+      205.57
+     ],
+     "BN_arpu": [
+      0.0323,
+      0.0292,
+      0.0291
+     ],
+     "BN_eCPM": [
+      2.7896,
+      2.6145,
+      2.4799
+     ],
+     "BN_拉取量": [
+      140975,
+      142858,
+      144279
+     ],
+     "BN_曝光量": [
+      79190,
+      76810,
+      82896
+     ],
+     "BN_人均曝光": [
+      11.59,
+      11.15,
+      11.74
+     ],
+     "BN_曝光率": [
+      0.5617,
+      0.5377000000000001,
+      0.5746
+     ],
+     "BN_点击量": [
+      2631,
+      2670,
+      2514
+     ],
+     "BN_人均点击": [
+      0.39,
+      0.39,
+      0.36
+     ],
+     "BN_点击率": [
+      0.0332,
+      0.0348,
+      0.030299999999999997
+     ],
+     "BN_点击单价": [
+      0.084,
+      0.0752,
+      0.0818
+     ],
+     "加载次数": [
+      136177,
+      137954,
+      139715
+     ],
+     "展示次数": [
+      135330,
+      137062,
+      138883
+     ],
+     "点击次数": [
+      9620,
+      9207,
+      7929
+     ],
+     "新用户点击": [
+      18,
+      24,
+      13
+     ]
+    },
+    "notable_patterns": [
+     "日期: 248 distinct values",
+     "日期: unique for every row",
+     "活跃用户数: 242 distinct values",
+     "新增用户数: 181 distinct values",
+     "BN_广告收入: 247 distinct values",
+     "BN_arpu: 173 distinct values",
+     "BN_eCPM: 248 distinct values",
+     "BN_eCPM: unique for every row",
+     "BN_拉取量: 248 distinct values",
+     "BN_拉取量: unique for every row",
+     "BN_曝光量: 248 distinct values",
+     "BN_曝光量: unique for every row"
+    ],
+    "risks": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏Abanner汇总数据_00a7a4c0",
+    "dataset": "游戏Abanner汇总数据",
+    "dataset_contract_id": "duc_游戏Abanner汇总数据_e885c2bf",
+    "direction": "correlation",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "BN_拉取量",
+      "加载次数",
+      "展示次数",
+      "BN_曝光量",
+      "点击次数",
+      "活跃用户数",
+      "BN_点击量",
+      "新增用户数"
+     ],
+     "rate_metrics": [
+      "BN_曝光率",
+      "BN_点击率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "correlation_analysis",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "variables",
+     "correlation_method",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Correlation does not imply causation"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏Abanner汇总数据_bee2eec4",
+    "dataset": "游戏Abanner汇总数据",
+    "dataset_contract_id": "duc_游戏Abanner汇总数据_e885c2bf",
+    "direction": "period_compare",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "BN_拉取量",
+      "加载次数",
+      "展示次数",
+      "BN_曝光量",
+      "点击次数",
+      "活跃用户数",
+      "BN_点击量",
+      "新增用户数"
+     ],
+     "rate_metrics": [
+      "BN_曝光率",
+      "BN_点击率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "compare_periods",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "period_definition",
+     "period_comparability",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Comparison quality depends on period comparability and seasonality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏Abanner汇总数据_a246f9b3",
+    "dataset": "游戏Abanner汇总数据",
+    "dataset_contract_id": "duc_游戏Abanner汇总数据_e885c2bf",
+    "direction": "rate_analysis",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "BN_拉取量",
+      "加载次数",
+      "展示次数",
+      "BN_曝光量",
+      "点击次数",
+      "活跃用户数",
+      "BN_点击量",
+      "新增用户数"
+     ],
+     "rate_metrics": [
+      "BN_曝光率",
+      "BN_点击率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "calculate_metrics",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "rate_definition",
+     "denominator",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Rate interpretation depends on stable numerator and denominator definitions"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏Abanner汇总数据_24449e3a",
+    "dataset": "游戏Abanner汇总数据",
+    "dataset_contract_id": "duc_游戏Abanner汇总数据_e885c2bf",
+    "direction": "trend",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "BN_拉取量",
+      "加载次数",
+      "展示次数",
+      "BN_曝光量",
+      "点击次数",
+      "活跃用户数",
+      "BN_点击量",
+      "新增用户数"
+     ],
+     "rate_metrics": [
+      "BN_曝光率",
+      "BN_点击率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "analyze_time_series",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "time_scope",
+     "sample_size",
+     "trend_statistics",
+     "limitations"
+    ],
+    "limitations": [
+     "Descriptive trend only unless supported by experimental evidence"
+    ],
+    "budget_level": "light"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "clean_游戏A内购数据_9dce74ad",
+    "dataset": "游戏A内购数据",
+    "decisions": [
+     {
+      "column": "日期",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "datetime64[us]",
+      "action": "datetime",
+      "reason": "检测到日期格式（示例格式: %Y/%m/%d）",
+      "impact": "Enables time-aware analysis"
+     },
+     {
+      "column": "付费率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     },
+     {
+      "column": "新增付费率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     }
+    ],
+    "summary": {
+     "safe_auto": 3,
+     "notify_auto": 0,
+     "needs_confirmation": 0,
+     "blocked": 0
+    }
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "duc_游戏A内购数据_73f080ec",
+    "dataset": "游戏A内购数据",
+    "row_count": 248,
+    "column_count": 13,
+    "grain": "daily_aggregate",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "活跃用户",
+      "内购收入",
+      "新增用户",
+      "累计付费人数",
+      "首付金额",
+      "付费次数",
+      "付费人数",
+      "内购arppu"
+     ],
+     "rate_metrics": [
+      "付费率",
+      "新增付费率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "quality": {
+     "status": "ready",
+     "score": 100,
+     "block_issues": [],
+     "warnings": []
+    },
+    "time_range": {
+     "column": "日期",
+     "min": "2021-03-01",
+     "max": "2021-11-03",
+     "span_days": 247
+    },
+    "supported_analyses": [
+     "correlation",
+     "period_compare",
+     "rate_analysis",
+     "trend"
+    ],
+    "unsupported_analyses": [
+     {
+      "type": "dimension_decomposition",
+      "reason": "No dimension column was identified"
+     },
+     {
+      "type": "user_level_retention",
+      "reason": "Data is aggregate grain and missing user or entity id columns"
+     }
+    ],
+    "cleaning_log_ids": [
+     "clean_游戏A内购数据_9dce74ad"
+    ],
+    "preview_digest_id": "preview_游戏A内购数据_50c8cb93",
+    "detail_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a04-diag\\M02\\sessions\\1c5e2d4a9d50\\tool_outputs\\load_游戏A内购数据_detail.json"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "preview_游戏A内购数据_50c8cb93",
+    "dataset": "游戏A内购数据",
+    "row_count": 248,
+    "column_count": 13,
+    "sample_rows_count": 5,
+    "sample_rows": [
+     {
+      "日期": "2021-11-03T00:00:00",
+      "活跃用户": 6833,
+      "新增用户": 179,
+      "付费人数": 49,
+      "付费次数": 90,
+      "内购收入": 1264,
+      "累计付费人数": 39438,
+      "付费率": 0.0072,
+      "新增付费率": 0.005600000000000001,
+      "内购arpu": 0.185,
+      "内购arppu": 25.7959,
+      "首付人数": 4,
+      "首付金额": 21
+     },
+     {
+      "日期": "2021-11-02T00:00:00",
+      "活跃用户": 6889,
+      "新增用户": 174,
+      "付费人数": 51,
+      "付费次数": 63,
+      "内购收入": 437,
+      "累计付费人数": 39434,
+      "付费率": 0.0074,
+      "新增付费率": 0.0,
+      "内购arpu": 0.0634,
+      "内购arppu": 8.5686,
+      "首付人数": 4,
+      "首付金额": 21
+     },
+     {
+      "日期": "2021-11-01T00:00:00",
+      "活跃用户": 7060,
+      "新增用户": 203,
+      "付费人数": 44,
+      "付费次数": 67,
+      "内购收入": 829,
+      "累计付费人数": 39430,
+      "付费率": 0.0062,
+      "新增付费率": 0.0049,
+      "内购arpu": 0.1174,
+      "内购arppu": 18.8409,
+      "首付人数": 3,
+      "首付金额": 12
+     },
+     {
+      "日期": "2021-10-31T00:00:00",
+      "活跃用户": 7028,
+      "新增用户": 251,
+      "付费人数": 53,
+      "付费次数": 70,
+      "内购收入": 462,
+      "累计付费人数": 39427,
+      "付费率": 0.0075,
+      "新增付费率": 0.0,
+      "内购arpu": 0.0657,
+      "内购arppu": 8.717,
+      "首付人数": 1,
+      "首付金额": 6
+     },
+     {
+      "日期": "2021-10-30T00:00:00",
+      "活跃用户": 6946,
+      "新增用户": 248,
+      "付费人数": 47,
+      "付费次数": 68,
+      "内购收入": 447,
+      "累计付费人数": 39426,
+      "付费率": 0.0068000000000000005,
+      "新增付费率": 0.0,
+      "内购arpu": 0.0644,
+      "内购arppu": 9.5106,
+      "首付人数": 0,
+      "首付金额": 0
+     }
+    ],
+    "column_examples": {
+     "日期": [
+      "2021-11-03T00:00:00",
+      "2021-11-02T00:00:00",
+      "2021-11-01T00:00:00"
+     ],
+     "活跃用户": [
+      6833,
+      6889,
+      7060
+     ],
+     "新增用户": [
+      179,
+      174,
+      203
+     ],
+     "付费人数": [
+      49,
+      51,
+      44
+     ],
+     "付费次数": [
+      90,
+      63,
+      67
+     ],
+     "内购收入": [
+      1264,
+      437,
+      829
+     ],
+     "累计付费人数": [
+      39438,
+      39434,
+      39430
+     ],
+     "付费率": [
+      0.0072,
+      0.0074,
+      0.0062
+     ],
+     "新增付费率": [
+      0.005600000000000001,
+      0.0,
+      0.0049
+     ],
+     "内购arpu": [
+      0.185,
+      0.0634,
+      0.1174
+     ],
+     "内购arppu": [
+      25.7959,
+      8.5686,
+      18.8409
+     ],
+     "首付人数": [
+      4,
+      4,
+      3
+     ],
+     "首付金额": [
+      21,
+      21,
+      12
+     ]
+    },
+    "notable_patterns": [
+     "日期: 248 distinct values",
+     "日期: unique for every row",
+     "活跃用户: 242 distinct values",
+     "新增用户: 181 distinct values",
+     "付费人数: 57 distinct values",
+     "付费次数: 81 distinct values",
+     "内购收入: 214 distinct values",
+     "累计付费人数: 222 distinct values",
+     "付费率: 55 distinct values",
+     "新增付费率: 33 distinct values",
+     "内购arpu: 226 distinct values",
+     "内购arppu: 245 distinct values"
+    ],
+    "risks": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A内购数据_c027d007",
+    "dataset": "游戏A内购数据",
+    "dataset_contract_id": "duc_游戏A内购数据_73f080ec",
+    "direction": "correlation",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "活跃用户",
+      "内购收入",
+      "新增用户",
+      "累计付费人数",
+      "首付金额",
+      "付费次数",
+      "付费人数",
+      "内购arppu"
+     ],
+     "rate_metrics": [
+      "付费率",
+      "新增付费率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "correlation_analysis",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "variables",
+     "correlation_method",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Correlation does not imply causation"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A内购数据_47765908",
+    "dataset": "游戏A内购数据",
+    "dataset_contract_id": "duc_游戏A内购数据_73f080ec",
+    "direction": "period_compare",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "活跃用户",
+      "内购收入",
+      "新增用户",
+      "累计付费人数",
+      "首付金额",
+      "付费次数",
+      "付费人数",
+      "内购arppu"
+     ],
+     "rate_metrics": [
+      "付费率",
+      "新增付费率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "compare_periods",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "period_definition",
+     "period_comparability",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Comparison quality depends on period comparability and seasonality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A内购数据_2906f49a",
+    "dataset": "游戏A内购数据",
+    "dataset_contract_id": "duc_游戏A内购数据_73f080ec",
+    "direction": "rate_analysis",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "活跃用户",
+      "内购收入",
+      "新增用户",
+      "累计付费人数",
+      "首付金额",
+      "付费次数",
+      "付费人数",
+      "内购arppu"
+     ],
+     "rate_metrics": [
+      "付费率",
+      "新增付费率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "calculate_metrics",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "rate_definition",
+     "denominator",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Rate interpretation depends on stable numerator and denominator definitions"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A内购数据_e30a3675",
+    "dataset": "游戏A内购数据",
+    "dataset_contract_id": "duc_游戏A内购数据_73f080ec",
+    "direction": "trend",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "活跃用户",
+      "内购收入",
+      "新增用户",
+      "累计付费人数",
+      "首付金额",
+      "付费次数",
+      "付费人数",
+      "内购arppu"
+     ],
+     "rate_metrics": [
+      "付费率",
+      "新增付费率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "analyze_time_series",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "time_scope",
+     "sample_size",
+     "trend_statistics",
+     "limitations"
+    ],
+    "limitations": [
+     "Descriptive trend only unless supported by experimental evidence"
+    ],
+    "budget_level": "light"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "clean_游戏A激励视频汇总数据报表_81066612",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "decisions": [
+     {
+      "column": "日期",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "datetime64[us]",
+      "action": "datetime",
+      "reason": "检测到日期格式（示例格式: %Y/%m/%d）",
+      "impact": "Enables time-aware analysis"
+     },
+     {
+      "column": "视频曝光率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     },
+     {
+      "column": "视频点击率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     },
+     {
+      "column": "完播率",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "float64",
+      "action": "percentage_to_float",
+      "reason": "检测到百分比格式（如 '12.5%'），建议转为小数 0.125",
+      "impact": "Enables rate analysis"
+     }
+    ],
+    "summary": {
+     "safe_auto": 4,
+     "notify_auto": 0,
+     "needs_confirmation": 0,
+     "blocked": 0
+    }
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "duc_游戏A激励视频汇总数据报表_4269e19a",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "row_count": 248,
+    "column_count": 23,
+    "grain": "daily_aggregate",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "加载次数",
+      "视频拉取量",
+      "观看次数",
+      "完整观看次数",
+      "活跃用户数",
+      "视频曝光量",
+      "观看人数",
+      "播完人数"
+     ],
+     "rate_metrics": [
+      "视频曝光率",
+      "视频点击率",
+      "完播率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "quality": {
+     "status": "ready",
+     "score": 100,
+     "block_issues": [],
+     "warnings": []
+    },
+    "time_range": {
+     "column": "日期",
+     "min": "2021-03-01",
+     "max": "2021-11-03",
+     "span_days": 247
+    },
+    "supported_analyses": [
+     "correlation",
+     "period_compare",
+     "rate_analysis",
+     "trend"
+    ],
+    "unsupported_analyses": [
+     {
+      "type": "dimension_decomposition",
+      "reason": "No dimension column was identified"
+     },
+     {
+      "type": "user_level_retention",
+      "reason": "Data is aggregate grain and missing user or entity id columns"
+     }
+    ],
+    "cleaning_log_ids": [
+     "clean_游戏A激励视频汇总数据报表_81066612"
+    ],
+    "preview_digest_id": "preview_游戏A激励视频汇总数据报表_e143b6e8",
+    "detail_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a04-diag\\M02\\sessions\\1c5e2d4a9d50\\tool_outputs\\load_游戏A激励视频汇总数据报表_detail.json"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "preview_游戏A激励视频汇总数据报表_e143b6e8",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "row_count": 248,
+    "column_count": 23,
+    "sample_rows_count": 5,
+    "sample_rows": [
+     {
+      "日期": "2021-11-03T00:00:00",
+      "活跃用户数": 6833,
+      "新增用户数": 179,
+      "视频广告收入": 303.59,
+      "视频arpu": 0.0444,
+      "视频eCPM": 23.8147,
+      "视频拉取量": 38814,
+      "视频曝光量": 12748,
+      "视频人均曝光": 1.87,
+      "视频曝光率": 0.3284,
+      "视频点击量": 252,
+      "视频人均点击": 0.04,
+      "视频点击率": 0.019799999999999998,
+      "视频点击单价": 1.2047,
+      "加载次数": 85251,
+      "观看次数": 22681,
+      "完整观看次数": 19961,
+      "完播率": 0.8801000000000001,
+      "新用户完整观看": 38,
+      "观看人数": 3688,
+      "观看新用户数": 29,
+      "播完人数": 3167,
+      "播完新用户数": 14
+     },
+     {
+      "日期": "2021-11-02T00:00:00",
+      "活跃用户数": 6889,
+      "新增用户数": 174,
+      "视频广告收入": 304.43,
+      "视频arpu": 0.0442,
+      "视频eCPM": 22.8688,
+      "视频拉取量": 39701,
+      "视频曝光量": 13312,
+      "视频人均曝光": 1.93,
+      "视频曝光率": 0.3353,
+      "视频点击量": 230,
+      "视频人均点击": 0.03,
+      "视频点击率": 0.0173,
+      "视频点击单价": 1.3236,
+      "加载次数": 86882,
+      "观看次数": 23317,
+      "完整观看次数": 20779,
+      "完播率": 0.8912,
+      "新用户完整观看": 27,
+      "观看人数": 3666,
+      "观看新用户数": 30,
+      "播完人数": 3189,
+      "播完新用户数": 15
+     },
+     {
+      "日期": "2021-11-01T00:00:00",
+      "活跃用户数": 7060,
+      "新增用户数": 203,
+      "视频广告收入": 371.77,
+      "视频arpu": 0.0527,
+      "视频eCPM": 27.2599,
+      "视频拉取量": 39692,
+      "视频曝光量": 13638,
+      "视频人均曝光": 1.93,
+      "视频曝光率": 0.3436,
+      "视频点击量": 255,
+      "视频人均点击": 0.04,
+      "视频点击率": 0.0187,
+      "视频点击单价": 1.4579,
+      "加载次数": 90025,
+      "观看次数": 22248,
+      "完整观看次数": 19887,
+      "完播率": 0.8939,
+      "新用户完整观看": 56,
+      "观看人数": 3803,
+      "观看新用户数": 30,
+      "播完人数": 3283,
+      "播完新用户数": 19
+     },
+     {
+      "日期": "2021-10-31T00:00:00",
+      "活跃用户数": 7028,
+      "新增用户数": 251,
+      "视频广告收入": 283.05,
+      "视频arpu": 0.0403,
+      "视频eCPM": 20.56,
+      "视频拉取量": 39569,
+      "视频曝光量": 13767,
+      "视频人均曝光": 1.96,
+      "视频曝光率": 0.3479,
+      "视频点击量": 247,
+      "视频人均点击": 0.04,
+      "视频点击率": 0.0179,
+      "视频点击单价": 1.146,
+      "加载次数": 86310,
+      "观看次数": 23327,
+      "完整观看次数": 20805,
+      "完播率": 0.8919,
+      "新用户完整观看": 44,
+      "观看人数": 3763,
+      "观看新用户数": 38,
+      "播完人数": 3263,
+      "播完新用户数": 19
+     },
+     {
+      "日期": "2021-10-30T00:00:00",
+      "活跃用户数": 6946,
+      "新增用户数": 248,
+      "视频广告收入": 288.79,
+      "视频arpu": 0.0416,
+      "视频eCPM": 21.3555,
+      "视频拉取量": 39730,
+      "视频曝光量": 13523,
+      "视频人均曝光": 1.95,
+      "视频曝光率": 0.3404,
+      "视频点击量": 287,
+      "视频人均点击": 0.04,
+      "视频点击率": 0.0212,
+      "视频点击单价": 1.0062,
+      "加载次数": 86463,
+      "观看次数": 23557,
+      "完整观看次数": 20972,
+      "完播率": 0.8903,
+      "新用户完整观看": 44,
+      "观看人数": 3704,
+      "观看新用户数": 34,
+      "播完人数": 3184,
+      "播完新用户数": 19
+     }
+    ],
+    "column_examples": {
+     "日期": [
+      "2021-11-03T00:00:00",
+      "2021-11-02T00:00:00",
+      "2021-11-01T00:00:00"
+     ],
+     "活跃用户数": [
+      6833,
+      6889,
+      7060
+     ],
+     "新增用户数": [
+      179,
+      174,
+      203
+     ],
+     "视频广告收入": [
+      303.59,
+      304.43,
+      371.77
+     ],
+     "视频arpu": [
+      0.0444,
+      0.0442,
+      0.0527
+     ],
+     "视频eCPM": [
+      23.8147,
+      22.8688,
+      27.2599
+     ],
+     "视频拉取量": [
+      38814,
+      39701,
+      39692
+     ],
+     "视频曝光量": [
+      12748,
+      13312,
+      13638
+     ],
+     "视频人均曝光": [
+      1.87,
+      1.93,
+      1.93
+     ],
+     "视频曝光率": [
+      0.3284,
+      0.3353,
+      0.3436
+     ],
+     "视频点击量": [
+      252,
+      230,
+      255
+     ],
+     "视频人均点击": [
+      0.04,
+      0.03,
+      0.04
+     ],
+     "视频点击率": [
+      0.019799999999999998,
+      0.0173,
+      0.0187
+     ],
+     "视频点击单价": [
+      1.2047,
+      1.3236,
+      1.4579
+     ],
+     "加载次数": [
+      85251,
+      86882,
+      90025
+     ],
+     "观看次数": [
+      22681,
+      23317,
+      22248
+     ],
+     "完整观看次数": [
+      19961,
+      20779,
+      19887
+     ],
+     "完播率": [
+      0.8801000000000001,
+      0.8912,
+      0.8939
+     ],
+     "新用户完整观看": [
+      38,
+      27,
+      56
+     ],
+     "观看人数": [
+      3688,
+      3666,
+      3803
+     ],
+     "观看新用户数": [
+      29,
+      30,
+      30
+     ],
+     "播完人数": [
+      3167,
+      3189,
+      3283
+     ],
+     "播完新用户数": [
+      14,
+      15,
+      19
+     ]
+    },
+    "notable_patterns": [
+     "日期: 248 distinct values",
+     "日期: unique for every row",
+     "活跃用户数: 242 distinct values",
+     "新增用户数: 181 distinct values",
+     "视频广告收入: 248 distinct values",
+     "视频广告收入: unique for every row",
+     "视频arpu: 137 distinct values",
+     "视频eCPM: 248 distinct values",
+     "视频eCPM: unique for every row",
+     "视频拉取量: 248 distinct values",
+     "视频拉取量: unique for every row",
+     "视频曝光量: 246 distinct values"
+    ],
+    "risks": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A激励视频汇总数据报表_bc9c1884",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "dataset_contract_id": "duc_游戏A激励视频汇总数据报表_4269e19a",
+    "direction": "correlation",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "加载次数",
+      "视频拉取量",
+      "观看次数",
+      "完整观看次数",
+      "活跃用户数",
+      "视频曝光量",
+      "观看人数",
+      "播完人数"
+     ],
+     "rate_metrics": [
+      "视频曝光率",
+      "视频点击率",
+      "完播率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "correlation_analysis",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "variables",
+     "correlation_method",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Correlation does not imply causation"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A激励视频汇总数据报表_57656b77",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "dataset_contract_id": "duc_游戏A激励视频汇总数据报表_4269e19a",
+    "direction": "period_compare",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "加载次数",
+      "视频拉取量",
+      "观看次数",
+      "完整观看次数",
+      "活跃用户数",
+      "视频曝光量",
+      "观看人数",
+      "播完人数"
+     ],
+     "rate_metrics": [
+      "视频曝光率",
+      "视频点击率",
+      "完播率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "compare_periods",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "period_definition",
+     "period_comparability",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Comparison quality depends on period comparability and seasonality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A激励视频汇总数据报表_9c8a5fe8",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "dataset_contract_id": "duc_游戏A激励视频汇总数据报表_4269e19a",
+    "direction": "rate_analysis",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "加载次数",
+      "视频拉取量",
+      "观看次数",
+      "完整观看次数",
+      "活跃用户数",
+      "视频曝光量",
+      "观看人数",
+      "播完人数"
+     ],
+     "rate_metrics": [
+      "视频曝光率",
+      "视频点击率",
+      "完播率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "calculate_metrics",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "rate_definition",
+     "denominator",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Rate interpretation depends on stable numerator and denominator definitions"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏A激励视频汇总数据报表_33f5e789",
+    "dataset": "游戏A激励视频汇总数据报表",
+    "dataset_contract_id": "duc_游戏A激励视频汇总数据报表_4269e19a",
+    "direction": "trend",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "加载次数",
+      "视频拉取量",
+      "观看次数",
+      "完整观看次数",
+      "活跃用户数",
+      "视频曝光量",
+      "观看人数",
+      "播完人数"
+     ],
+     "rate_metrics": [
+      "视频曝光率",
+      "视频点击率",
+      "完播率"
+     ],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "analyze_time_series",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "time_scope",
+     "sample_size",
+     "trend_statistics",
+     "limitations"
+    ],
+    "limitations": [
+     "Descriptive trend only unless supported by experimental evidence"
+    ],
+    "budget_level": "light"
+   }
+  }
+ ]
+}

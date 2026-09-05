@@ -37,6 +37,1128 @@
     "total_chars": 6217,
     "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
    }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "error": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+    "error_type": "sandbox_violation"
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "Evidence does not bind the chart's current data version and result",
+    "error_type": "chart_validation",
+    "error_code": "chart_evidence_binding_mismatch",
+    "validation_warnings": [
+     "unbound evidence ids: c5c4d27f0a"
+    ],
+    "recovery_options": [
+     {
+      "action": "recompute evidence for the current data version, or use exploratory purpose"
+     }
+    ]
+   }
+  },
+  {
+   "tool": "describe_dataset",
+   "structured_result": {
+    "dataset": "游戏B留存",
+    "shape": {
+     "rows": 62,
+     "columns": 13
+    },
+    "fields": [
+     {
+      "name": "日期",
+      "dtype": "datetime64[us]",
+      "missing_pct": 0.0,
+      "unique_values": 62
+     },
+     {
+      "name": "日活跃",
+      "dtype": "int64",
+      "missing_pct": 0.0,
+      "unique_values": 62
+     },
+     {
+      "name": "日新增",
+      "dtype": "int64",
+      "missing_pct": 0.0,
+      "unique_values": 62
+     },
+     {
+      "name": "1天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 59
+     },
+     {
+      "name": "2天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 57
+     },
+     {
+      "name": "3天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 58
+     },
+     {
+      "name": "4天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 54
+     },
+     {
+      "name": "5天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 56
+     },
+     {
+      "name": "6天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 53
+     },
+     {
+      "name": "7天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 53
+     },
+     {
+      "name": "14天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 49
+     },
+     {
+      "name": "21天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 53
+     },
+     {
+      "name": "30天后",
+      "dtype": "float64",
+      "missing_pct": 0.0,
+      "unique_values": 47
+     }
+    ],
+    "field_statistics": [
+     {
+      "name": "日期",
+      "dtype": "datetime64[us]",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 62,
+      "datetime_range": {
+       "min": "2020-07-01 00:00:00",
+       "max": "2020-08-31 00:00:00",
+       "span_days": 61
+      }
+     },
+     {
+      "name": "日活跃",
+      "dtype": "int64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 62,
+      "stats": {
+       "mean": 94472.8387,
+       "std": 7305.4924,
+       "min": 82965.0,
+       "25%": 89789.25,
+       "50%": 94643.5,
+       "75%": 97203.5,
+       "max": 119964.0
+      }
+     },
+     {
+      "name": "日新增",
+      "dtype": "int64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 62,
+      "stats": {
+       "mean": 22421.8871,
+       "std": 4167.3469,
+       "min": 14872.0,
+       "25%": 18407.75,
+       "50%": 23526.0,
+       "75%": 25139.75,
+       "max": 33329.0
+      }
+     },
+     {
+      "name": "1天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 59,
+      "stats": {
+       "mean": 0.1708,
+       "std": 0.0226,
+       "min": 0.1053,
+       "25%": 0.1562,
+       "50%": 0.1706,
+       "75%": 0.1914,
+       "max": 0.2019
+      }
+     },
+     {
+      "name": "2天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 57,
+      "stats": {
+       "mean": 0.1116,
+       "std": 0.0182,
+       "min": 0.0654,
+       "25%": 0.0968,
+       "50%": 0.1133,
+       "75%": 0.1262,
+       "max": 0.1409
+      }
+     },
+     {
+      "name": "3天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 58,
+      "stats": {
+       "mean": 0.086,
+       "std": 0.0147,
+       "min": 0.048,
+       "25%": 0.0751,
+       "50%": 0.0886,
+       "75%": 0.0984,
+       "max": 0.1052
+      }
+     },
+     {
+      "name": "4天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 54,
+      "stats": {
+       "mean": 0.0715,
+       "std": 0.0124,
+       "min": 0.0389,
+       "25%": 0.0622,
+       "50%": 0.0729,
+       "75%": 0.081,
+       "max": 0.09
+      }
+     },
+     {
+      "name": "5天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 56,
+      "stats": {
+       "mean": 0.0612,
+       "std": 0.0102,
+       "min": 0.0337,
+       "25%": 0.054,
+       "50%": 0.063,
+       "75%": 0.0684,
+       "max": 0.0766
+      }
+     },
+     {
+      "name": "6天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 53,
+      "stats": {
+       "mean": 0.0554,
+       "std": 0.0086,
+       "min": 0.0318,
+       "25%": 0.0507,
+       "50%": 0.0568,
+       "75%": 0.0621,
+       "max": 0.068
+      }
+     },
+     {
+      "name": "7天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 53,
+      "stats": {
+       "mean": 0.051,
+       "std": 0.008,
+       "min": 0.03,
+       "25%": 0.0463,
+       "50%": 0.0529,
+       "75%": 0.057,
+       "max": 0.0621
+      }
+     },
+     {
+      "name": "14天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 49,
+      "stats": {
+       "mean": 0.0299,
+       "std": 0.0058,
+       "min": 0.0183,
+       "25%": 0.0259,
+       "50%": 0.031,
+       "75%": 0.0347,
+       "max": 0.0394
+      }
+     },
+     {
+      "name": "21天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 53,
+      "stats": {
+       "mean": 0.0212,
+       "std": 0.0049,
+       "min": 0.0119,
+       "25%": 0.0168,
+       "50%": 0.022,
+       "75%": 0.0253,
+       "max": 0.0321
+      }
+     },
+     {
+      "name": "30天后",
+      "dtype": "float64",
+      "missing_count": 0,
+      "missing_pct": 0.0,
+      "unique_values": 47,
+      "stats": {
+       "mean": 0.0128,
+       "std": 0.0055,
+       "min": 0.0,
+       "25%": 0.0104,
+       "50%": 0.0132,
+       "75%": 0.0169,
+       "max": 0.0237
+      }
+     }
+    ],
+    "observation_window": {
+     "kind": "observed_date_columns",
+     "columns": {
+      "日期": {
+       "min": "2020-07-01 00:00:00",
+       "max": "2020-08-31 00:00:00",
+       "non_null_rows": 62,
+       "distinct_values": 62
+      }
+     },
+     "collection_cutoff": "unknown"
+    }
+   }
+  },
+  {
+   "tool": "describe_dataset",
+   "structured_result": {
+    "full_output": "{\n  \"dataset\": \"游戏B留存\",\n  \"shape\": {\n    \"rows\": 62,\n    \"columns\": 13\n  },\n  \"fields\": [\n    {\n      \"name\": \"日期\",\n      \"dtype\": \"datetime64[us]\",\n      \"missing_pct\": 0.0,\n      \"unique_values\": 62"
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/f8094f05345c/analysis_flow/af_847e17223aa99dbc7af684e0f5178736faae70f1.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "c5c4d27f0a",
+    "statistical_detail_status": "complete",
+    "statistical_detail_gaps": [],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_mvx9IXj8hukSdouv0g8h5398_detail.json",
+    "offset": 0,
+    "content": "{\n  \"method_contract\": \"analysis_method_result.v1\",\n  \"method\": \"curve_family_comparison\",\n  \"status\": \"supported\",\n  \"reason_code\": \"curve_described\",\n  \"data_identity\": {\n    \"version_id\": \"dv_569de",
+    "next_offset": 2000,
+    "total_chars": 6217,
+    "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_OYZ9zppLQUg7oBUKyU0B3515_detail.json",
+    "offset": 2000,
+    "content": "值': 0.1093, '有效队列数': 62}, {'列': '3天后', '零值数': 0, '零值起': (None, None), '零值集中在尾部': False, '含零均值': 0.086, '剔除零均值': 0.086, '加权均值': 0.0842, '有效队列数': 62}, {'列': '4天后', '零值数': 0, '零值起': (None, None), '零值集中在尾",
+    "next_offset": null,
+    "total_chars": 3555,
+    "sha256": "5a73676c358e8fe336c7149f052c1df74bb21be567d1de2acb8d73892cf69be0"
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "error": "Error: ImportError: Sandbox runtime import is not supported (time); use a native analysis tool or an operation that does not import modules",
+    "error_type": "sandbox_execution_error",
+    "result": "Error: ImportError: Sandbox runtime import is not supported (time); use a native analysis tool or an operation that does not import modules",
+    "local_execution_stopped": true
+   }
+  },
+  {
+   "tool": "curve_fitting",
+   "structured_result": {
+    "method_contract": "analysis_method_result.v1",
+    "method": "curve_family_comparison",
+    "status": "supported",
+    "reason_code": "curve_described",
+    "data_identity": {
+     "version_id": "dv_569deee8081a84f3",
+     "role": "analysis",
+     "fingerprint": "sha256:c025e0c2144ae8825838559907261d1ec12afef9e380e8d746a6a3664a0778cf",
+     "source_fingerprint": "sha256:15b878763f6e36a9d03e090a095d048adb7bb82939decbc3d6fd7d9fdbae6b90",
+     "parent_version_ids": [
+      "dv_83ca2411cc750aca"
+     ],
+     "expression": "automatic safe type parsing at load"
+    },
+    "effective_n": 10,
+    "parameters": {
+     "mode": "wide_series",
+     "zero_values": "exclude"
+    },
+    "claim_ceiling": "descriptive",
+    "limitations": [
+     "拟合只描述当前观测范围，不支持外推或因果解释。",
+     "零值处理是计算口径；排除零值不证明其为未观测。无法据此确定个体行为、优化ROI或选择偏差大小。"
+    ],
+    "zero_value_semantics": "unknown",
+    "points": [
+     {
+      "x": 1.0,
+      "y": 0.1707967741935484,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "1天后"
+     },
+     {
+      "x": 2.0,
+      "y": 0.11161451612903225,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "2天后"
+     },
+     {
+      "x": 3.0,
+      "y": 0.08600483870967741,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "3天后"
+     },
+     {
+      "x": 4.0,
+      "y": 0.07146774193548387,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "4天后"
+     },
+     {
+      "x": 5.0,
+      "y": 0.06120806451612903,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "5天后"
+     },
+     {
+      "x": 6.0,
+      "y": 0.05540967741935484,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "6天后"
+     },
+     {
+      "x": 7.0,
+      "y": 0.05100322580645161,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "7天后"
+     },
+     {
+      "x": 14.0,
+      "y": 0.029901612903225804,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "14天后"
+     },
+     {
+      "x": 21.0,
+      "y": 0.021222580645161287,
+      "n_observed": 62,
+      "n_excluded_zeros": 0,
+      "column": "21天后"
+     },
+     {
+      "x": 30.0,
+      "y": 0.014166071428571427,
+      "n_observed": 56,
+      "n_excluded_zeros": 6,
+      "column": "30天后"
+     }
+    ],
+    "fits": [
+     {
+      "family": "power",
+      "formula": "y = a*x^b",
+      "parameters": {
+       "a": 0.18800129,
+       "b": -0.71667274
+      },
+      "sse": 0.0003489432,
+      "r_squared": 0.98240474,
+      "mean_residual": -0.0008761198,
+      "max_abs_residual": 0.0172045149,
+      "predicted": [
+       0.18800128909450278,
+       0.11439863297338776,
+       0.08555020003987558,
+       0.06961147601281287,
+       0.059323679199133915,
+       0.05205722781103953,
+       0.046612467949262375,
+       0.02836364919940002,
+       0.02121105645933727,
+       0.016426622910580023
+      ]
+     },
+     {
+      "family": "logarithmic",
+      "formula": "y = a + b*ln(x)",
+      "parameters": {
+       "a": 0.14223691,
+       "b": -0.04256539
+      },
+      "sse": 0.0017364209,
+      "r_squared": 0.91244195,
+      "mean_residual": -0.0,
+      "max_abs_residual": 0.0285598653,
+      "predicted": [
+       0.14223690892424173,
+       0.11273282551065825,
+       0.09547404309556284,
+       0.08322874209707476,
+       0.073730548732342,
+       0.06596995968197937,
+       0.059408475132320004,
+       0.029904391718736517,
+       0.012645609303641114,
+       -0.002536400509920378
+      ]
+     },
+     {
+      "family": "exponential",
+      "formula": "y = a*exp(b*x)",
+      "parameters": {
+       "a": 0.10722408,
+       "b": -0.07532563
+      },
+      "sse": 0.0060623374,
+      "r_squared": 0.69431005,
+      "mean_residual": 0.0040574001,
+      "max_abs_residual": 0.0713527171,
+      "predicted": [
+       0.09944405713277515,
+       0.09222853911241204,
+       0.08553656872076916,
+       0.07933015809352895,
+       0.07357407571127207,
+       0.06823564640304873,
+       0.06328456586140366,
+       0.03735108921311087,
+       0.022044930646456726,
+       0.011191471497432562
+      ]
+     }
+    ],
+    "excluded_families": {},
+    "best_family": "power",
+    "chart_data": [
+     {
+      "x": 1.0,
+      "actual": 0.1707967741935484,
+      "power_fit": 0.18800128909450278,
+      "logarithmic_fit": 0.14223690892424173,
+      "exponential_fit": 0.09944405713277515
+     },
+     {
+      "x": 2.0,
+      "actual": 0.11161451612903225,
+      "power_fit": 0.11439863297338776,
+      "logarithmic_fit": 0.11273282551065825,
+      "exponential_fit": 0.09222853911241204
+     },
+     {
+      "x": 3.0,
+      "actual": 0.08600483870967741,
+      "power_fit": 0.08555020003987558,
+      "logarithmic_fit": 0.09547404309556284,
+      "exponential_fit": 0.08553656872076916
+     },
+     {
+      "x": 4.0,
+      "actual": 0.07146774193548387,
+      "power_fit": 0.06961147601281287,
+      "logarithmic_fit": 0.08322874209707476,
+      "exponential_fit": 0.07933015809352895
+     },
+     {
+      "x": 5.0,
+      "actual": 0.06120806451612903,
+      "power_fit": 0.059323679199133915,
+      "logarithmic_fit": 0.073730548732342,
+      "exponential_fit": 0.07357407571127207
+     },
+     {
+      "x": 6.0,
+      "actual": 0.05540967741935484,
+      "power_fit": 0.05205722781103953,
+      "logarithmic_fit": 0.06596995968197937,
+      "exponential_fit": 0.06823564640304873
+     },
+     {
+      "x": 7.0,
+      "actual": 0.05100322580645161,
+      "power_fit": 0.046612467949262375,
+      "logarithmic_fit": 0.059408475132320004,
+      "exponential_fit": 0.06328456586140366
+     },
+     {
+      "x": 14.0,
+      "actual": 0.029901612903225804,
+      "power_fit": 0.02836364919940002,
+      "logarithmic_fit": 0.029904391718736517,
+      "exponential_fit": 0.03735108921311087
+     },
+     {
+      "x": 21.0,
+      "actual": 0.021222580645161287,
+      "power_fit": 0.02121105645933727,
+      "logarithmic_fit": 0.012645609303641114,
+      "exponential_fit": 0.022044930646456726
+     },
+     {
+      "x": 30.0,
+      "actual": 0.014166071428571427,
+      "power_fit": 0.016426622910580023,
+      "logarithmic_fit": -0.002536400509920378,
+      "exponential_fit": 0.011191471497432562
+     }
+    ],
+    "chart_columns": {
+     "x": "x",
+     "actual": "actual",
+     "fitted": "power_fit"
+    }
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "output": "",
+    "risk_level": "high",
+    "execution_label": "exploratory_sandbox",
+    "replay": {
+     "contract_version": "sandbox_replay.v1",
+     "code_sha256": "20b4ae6e108d3fc75406ebb18502815fae4a83442be6b776ecf91f353b74676d",
+     "code": "df = get_dataset('游戏B留存')\nret_cols = ['1天后','2天后','3天后','4天后','5天后','6天后','7天后','14天后','21天后','30天后']\nout = {}\nout['shape'] = list(df.shape)\nout['非连续日期行数'] = int((df['日期'].diff().dt.days.abs().dropna(",
+     "timeout_seconds": 30
+    },
+    "fallback_policy": {
+     "role": "supplemental",
+     "purpose": "检查留存列零值右删失模式并比较均值口径",
+     "purpose_missing": false
+    },
+    "result": "{'shape': [62, 13], '非连续日期行数': 0, '列统计': [{'列': '1天后', '零值数': 0, '零值起': (None, None), '零值集中在尾部': False, '含零均值': 0.1708, '剔除零均值': 0.1708, '加权均值': 0.168, '有效队列数': 62}, {'列': '2天后', '零值数': 0, '零值起': (Non"
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "full_output": "{\n  \"output\": \"\",\n  \"risk_level\": \"high\",\n  \"execution_label\": \"exploratory_sandbox\",\n  \"replay\": {\n    \"contract_version\": \"sandbox_replay.v1\",\n    \"code_sha256\": \"20b4ae6e108d3fc75406ebb18502815fae4"
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_mvx9IXj8hukSdouv0g8h5398_detail.json",
+    "offset": 2000,
+    "content": "   \"n_observed\": 62,\n      \"n_excluded_zeros\": 0,\n      \"column\": \"21天后\"\n    },\n    {\n      \"x\": 30.0,\n      \"y\": 0.014166071428571427,\n      \"n_observed\": 56,\n      \"n_excluded_zeros\": 6,\n      \"colu",
+    "next_offset": 4000,
+    "total_chars": 6217,
+    "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_mvx9IXj8hukSdouv0g8h5398_detail.json",
+    "offset": 4000,
+    "content": ".022044930646456726,\n        0.011191471497432562\n      ]\n    }\n  ],\n  \"excluded_families\": {},\n  \"best_family\": \"power\",\n  \"chart_data\": [\n    {\n      \"x\": 1.0,\n      \"actual\": 0.1707967741935484,\n  ",
+    "next_offset": 6000,
+    "total_chars": 6217,
+    "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_OYZ9zppLQUg7oBUKyU0B3515_detail.json",
+    "offset": 0,
+    "content": "{\n  \"output\": \"\",\n  \"risk_level\": \"high\",\n  \"execution_label\": \"exploratory_sandbox\",\n  \"replay\": {\n    \"contract_version\": \"sandbox_replay.v1\",\n    \"code_sha256\": \"20b4ae6e108d3fc75406ebb18502815fae4",
+    "next_offset": 2000,
+    "total_chars": 3555,
+    "sha256": "5a73676c358e8fe336c7149f052c1df74bb21be567d1de2acb8d73892cf69be0"
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/f8094f05345c/analysis_flow/af_d1bb92057ad0c6e8debdacb3d1583c458159a6be.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "20950bb10d",
+    "statistical_detail_status": "complete",
+    "statistical_detail_gaps": [],
+    "statistical_projection_gaps": [],
+    "calibration_warnings": [
+     "样本量(10)不足30，高置信度不适用"
+    ],
+    "confidence_auto_downgraded": true,
+    "original_confidence": "high"
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/f8094f05345c/analysis_flow/af_e048d0d992cdd14785930bc5f6ffbcb367ed3364.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "f9474c886f",
+    "statistical_detail_status": "complete",
+    "statistical_detail_gaps": [],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "data_profile": "{\n  \"shape\": [\n    62,\n    13\n  ],\n  \"columns\": [\n    \"日期(date)\",\n    \"日活跃(number)\",\n    \"日新增(number)\",\n    \"1天后(number)\",\n    \"2天后(number)\",\n    \"3天后(number)\",\n    \"4天后(number)\",\n    \"5天后(number)\",\n ",
+    "data_interpretation": "数据集 '游戏B留存' (62×13)\n粒度: daily_aggregate\n关键指标: 日活跃, 日新增, 1天后, 2天后, 3天后\n时间范围: 2020-07-01 ~ 2020-08-31 (61天)\n推荐分析:\n  1. 趋势分析 — 检测指标的时间走向和周期性\n  2. 异常检测 — 识别偏离正常范围的数据点\n  3. 趋势预测 — 基于历史数据预测未来趋势",
+    "interpretation_data": "{\"theme\": \"unknown\", \"theme_confidence\": \"low\", \"grain\": \"daily_aggregate\", \"grain_hint\": \"每行代表一天的汇总数据（时间列 '日期'，共 62 个时间点，62 行）。不含用户个体信息，不可做用户画像、用户分群等个体级分析。可做趋势分析、指标对比、周期性检测等聚合级分析。\", \"columns_classifi",
+    "quality_card": "[data_features]\nDataset: 游戏B留存 | 62 rows x 13 cols\nQuality: 100/100 | 0 warnings, 0 blocks\nColumns: 6 numeric, 0 categorical, 1 date, 6 ID\nTime: daily (2020-07-01 ~ 2020-08-31, 61 days)",
+    "auto_insight": "数据快速洞察 (62 行 × 13 列)\n数据粒度：日级聚合\n时间范围：2020-07-01 ~ 2020-08-31（61天）\n关键指标：日活跃, 日新增, 1天后, 2天后, 3天后\n数据健康：\n  [INFO] 数据量较少，复杂分析（预测、建模）可能不可靠\n  [INFO] 异常值较多: '30天后' (9.7%)\n值得关注：\n  1. 2天后 与 3天后 存在高度正相关（r=0.95），可"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "clean_游戏B留存_e87de5de",
+    "dataset": "游戏B留存",
+    "decisions": [
+     {
+      "column": "日期",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "datetime64[us]",
+      "action": "datetime",
+      "reason": "检测到日期格式（示例格式: %Y/%m/%d）",
+      "impact": "Enables time-aware analysis"
+     }
+    ],
+    "summary": {
+     "safe_auto": 1,
+     "notify_auto": 0,
+     "needs_confirmation": 0,
+     "blocked": 0
+    }
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "duc_游戏B留存_cb776e7b",
+    "dataset": "游戏B留存",
+    "row_count": 62,
+    "column_count": 13,
+    "grain": "daily_aggregate",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "日活跃",
+      "日新增",
+      "1天后",
+      "2天后",
+      "3天后",
+      "4天后",
+      "5天后",
+      "6天后"
+     ],
+     "rate_metrics": [],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "quality": {
+     "status": "ready",
+     "score": 100,
+     "block_issues": [],
+     "warnings": []
+    },
+    "time_range": {
+     "column": "日期",
+     "min": "2020-07-01",
+     "max": "2020-08-31",
+     "span_days": 61
+    },
+    "supported_analyses": [
+     "correlation",
+     "period_compare",
+     "trend"
+    ],
+    "unsupported_analyses": [
+     {
+      "type": "dimension_decomposition",
+      "reason": "No dimension column was identified"
+     },
+     {
+      "type": "user_level_retention",
+      "reason": "Data is aggregate grain and missing user or entity id columns"
+     }
+    ],
+    "cleaning_log_ids": [
+     "clean_游戏B留存_e87de5de"
+    ],
+    "preview_digest_id": "preview_游戏B留存_33fbdc2a",
+    "detail_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a05r2-diag\\M01\\sessions\\f8094f05345c\\tool_outputs\\load_游戏B留存_detail.json"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "preview_游戏B留存_33fbdc2a",
+    "dataset": "游戏B留存",
+    "row_count": 62,
+    "column_count": 13,
+    "sample_rows_count": 5,
+    "sample_rows": [
+     {
+      "日期": "2020-08-31T00:00:00",
+      "日活跃": 92249,
+      "日新增": 26931,
+      "1天后": 0.1213,
+      "2天后": 0.0796,
+      "3天后": 0.0599,
+      "4天后": 0.0606,
+      "5天后": 0.0735,
+      "6天后": 0.0625,
+      "7天后": 0.0348,
+      "14天后": 0.022,
+      "21天后": 0.0156,
+      "30天后": 0.0
+     },
+     {
+      "日期": "2020-08-30T00:00:00",
+      "日活跃": 96500,
+      "日新增": 23845,
+      "1天后": 0.1462,
+      "2天后": 0.0654,
+      "3天后": 0.0482,
+      "4天后": 0.04,
+      "5天后": 0.0452,
+      "6天后": 0.0651,
+      "7天后": 0.0554,
+      "14天后": 0.035,
+      "21天后": 0.0273,
+      "30天后": 0.0
+     },
+     {
+      "日期": "2020-08-29T00:00:00",
+      "日活跃": 99108,
+      "日新增": 24917,
+      "1天后": 0.1699,
+      "2天后": 0.0954,
+      "3天后": 0.048,
+      "4天后": 0.0389,
+      "5天后": 0.0337,
+      "6天后": 0.0402,
+      "7天后": 0.0574,
+      "14天后": 0.0394,
+      "21天后": 0.0321,
+      "30天后": 0.0
+     },
+     {
+      "日期": "2020-08-28T00:00:00",
+      "日活跃": 99226,
+      "日新增": 25214,
+      "1天后": 0.17,
+      "2天后": 0.111,
+      "3天后": 0.0811,
+      "4天后": 0.043,
+      "5天后": 0.0345,
+      "6天后": 0.0318,
+      "7天后": 0.034,
+      "14天后": 0.0235,
+      "21天后": 0.0186,
+      "30天后": 0.0
+     },
+     {
+      "日期": "2020-08-27T00:00:00",
+      "日活跃": 98138,
+      "日新增": 24002,
+      "1天后": 0.1796,
+      "2天后": 0.1147,
+      "3天后": 0.0853,
+      "4天后": 0.0686,
+      "5天后": 0.0408,
+      "6天后": 0.033,
+      "7天后": 0.03,
+      "14天后": 0.0212,
+      "21天后": 0.0167,
+      "30天后": 0.0
+     }
+    ],
+    "column_examples": {
+     "日期": [
+      "2020-08-31T00:00:00",
+      "2020-08-30T00:00:00",
+      "2020-08-29T00:00:00"
+     ],
+     "日活跃": [
+      92249,
+      96500,
+      99108
+     ],
+     "日新增": [
+      26931,
+      23845,
+      24917
+     ],
+     "1天后": [
+      0.1213,
+      0.1462,
+      0.1699
+     ],
+     "2天后": [
+      0.0796,
+      0.0654,
+      0.0954
+     ],
+     "3天后": [
+      0.0599,
+      0.0482,
+      0.048
+     ],
+     "4天后": [
+      0.0606,
+      0.04,
+      0.0389
+     ],
+     "5天后": [
+      0.0735,
+      0.0452,
+      0.0337
+     ],
+     "6天后": [
+      0.0625,
+      0.0651,
+      0.0402
+     ],
+     "7天后": [
+      0.0348,
+      0.0554,
+      0.0574
+     ],
+     "14天后": [
+      0.022,
+      0.035,
+      0.0394
+     ],
+     "21天后": [
+      0.0156,
+      0.0273,
+      0.0321
+     ],
+     "30天后": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "notable_patterns": [
+     "日期: 62 distinct values",
+     "日期: unique for every row",
+     "日活跃: 62 distinct values",
+     "日活跃: unique for every row",
+     "日新增: 62 distinct values",
+     "日新增: unique for every row",
+     "1天后: 59 distinct values",
+     "2天后: 57 distinct values",
+     "3天后: 58 distinct values",
+     "4天后: 54 distinct values",
+     "5天后: 56 distinct values",
+     "6天后: 53 distinct values"
+    ],
+    "risks": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏B留存_cb737519",
+    "dataset": "游戏B留存",
+    "dataset_contract_id": "duc_游戏B留存_cb776e7b",
+    "direction": "correlation",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "日活跃",
+      "日新增",
+      "1天后",
+      "2天后",
+      "3天后",
+      "4天后",
+      "5天后",
+      "6天后"
+     ],
+     "rate_metrics": [],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "correlation_analysis",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "variables",
+     "correlation_method",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Correlation does not imply causation"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏B留存_ccd82b90",
+    "dataset": "游戏B留存",
+    "dataset_contract_id": "duc_游戏B留存_cb776e7b",
+    "direction": "period_compare",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "日活跃",
+      "日新增",
+      "1天后",
+      "2天后",
+      "3天后",
+      "4天后",
+      "5天后",
+      "6天后"
+     ],
+     "rate_metrics": [],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "compare_periods",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "period_definition",
+     "period_comparability",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Comparison quality depends on period comparability and seasonality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏B留存_da55e581",
+    "dataset": "游戏B留存",
+    "dataset_contract_id": "duc_游戏B留存_cb776e7b",
+    "direction": "trend",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "日活跃",
+      "日新增",
+      "1天后",
+      "2天后",
+      "3天后",
+      "4天后",
+      "5天后",
+      "6天后"
+     ],
+     "rate_metrics": [],
+     "dimensions": [],
+     "ids": [],
+     "text": [],
+     "unknown": []
+    },
+    "tool_chain": [
+     "analyze_time_series",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "time_scope",
+     "sample_size",
+     "trend_statistics",
+     "limitations"
+    ],
+    "limitations": [
+     "Descriptive trend only unless supported by experimental evidence"
+    ],
+    "budget_level": "light"
+   }
   }
  ]
 }

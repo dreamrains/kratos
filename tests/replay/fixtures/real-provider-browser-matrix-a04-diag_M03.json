@@ -1,0 +1,637 @@
+{
+ "case": "M03",
+ "batch": "real-provider-browser-matrix-a04-diag",
+ "turns": [
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "output": "组合总数: 599\n列: ['流量主游戏', '广告主游戏', '公司', '卖量收入_sum', '卖量收入_count', '卖量收入_size']\n\n有缺失的组合数: 29\n有缺失组合涉及流量主游戏数: 13\n有缺失组合涉及广告主游戏数: 27\n\n缺失组合按公司:\n      组合数  缺失行数\n公司             \n外部游戏   29    59\n\n无缺失组合数: 570\n收入全",
+    "risk_level": "low",
+    "execution_label": "exploratory_sandbox",
+    "replay": {
+     "contract_version": "sandbox_replay.v1",
+     "code_sha256": "8a2bdd15bca30e31677368a789f61af0a92df584cd0d67e0123e689da0ab54b2",
+     "code": "agg = get_dataset(\"互推收入组合汇总\")\nprint(\"组合总数:\", len(agg))\nprint(\"列:\", agg.columns.tolist())\n\n# 计算缺失覆盖\nagg[\"缺失行数\"] = agg[\"卖量收入_size\"] - agg[\"卖量收入_count\"]\nagg[\"缺失率\"] = agg[\"缺失行数\"] / agg[\"卖量收入_size\"]\n\n# 有缺失",
+     "timeout_seconds": 30
+    },
+    "fallback_policy": {
+     "role": "supplemental",
+     "purpose": "计算组合级缺失覆盖与公司级可观测收入对比",
+     "purpose_missing": false
+    },
+    "result": "{'组合总数': 599, '有缺失组合数': 29, '缺失组合涉及流量主数': 13, '收入全部缺失组合数': 10, 'by_company': [{'公司': '内部游戏', '可观测收入': 252188.5, '可观测行数': 1571, '总行数': 1571, '缺失行数': 0, '组合数': 478, '缺失率': 0.0}, {'公司': '外部游戏', '可观测收入': "
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "full_output": "{\n  \"output\": \"组合总数: 599\\n列: ['流量主游戏', '广告主游戏', '公司', '卖量收入_sum', '卖量收入_count', '卖量收入_size']\\n\\n有缺失的组合数: 29\\n有缺失组合涉及流量主游戏数: 13\\n有缺失组合涉及广告主游戏数: 27\\n\\n缺失组合按公司:\\n      组合数  缺失行数\\n公司             \\n外部游戏   "
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "Metrics use divergent scales; choose raw values or explicit normalization.",
+    "error_type": "chart_validation",
+    "error_code": "scale_mode_required",
+    "validation_warnings": [],
+    "recovery_options": [
+     {
+      "scale_mode": "raw",
+      "description": "Keep original values on one shared axis."
+     },
+     {
+      "scale_mode": "normalize",
+      "description": "Normalize each metric to its own maximum of 100."
+     }
+    ]
+   }
+  },
+  {
+   "tool": "transform_data",
+   "structured_result": {
+    "dataset": "公司级收入汇总",
+    "source_dataset": "互推收入组合汇总_缺失行数",
+    "operation": "group_aggregate",
+    "rows": 2,
+    "columns": [
+     "公司",
+     "卖量收入_sum_sum",
+     "缺失行数_sum",
+     "卖量收入_count_sum",
+     "卖量收入_size_sum"
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "error": "EvidenceRecord references tools not executed in this turn",
+    "error_type": "unbound_tool_receipt",
+    "missing_tool_receipts": [
+     "load_data"
+    ]
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "Evidence does not bind the chart's current data version and result",
+    "error_type": "chart_validation",
+    "error_code": "chart_evidence_binding_mismatch",
+    "validation_warnings": [
+     "unbound evidence ids: ee72be0514"
+    ],
+    "recovery_options": [
+     {
+      "action": "recompute evidence for the current data version, or use exploratory purpose"
+     }
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/fc3d7caaefc6/analysis_flow/af_c06d45bfdd7291431f5c5a6df4ca12cfea3bce20.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "ee72be0514",
+    "statistical_detail_status": "missing",
+    "statistical_detail_gaps": [
+     "time_scope"
+    ],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "output": "=== 原始数据 卖量收入 ===\n总行数: 1985\n原始空值(NaN)数量: 0\n非空原始值数量: 1985\n可解析为数值的原始值数量: 1926\n'-' 的数量: 59\n其他特殊字符串: [] 共 0 个\n\n=== 清洗后数据集 卖量收入 ===\n清洗后总行数: 1985\nNaN 数量: 59\n=0 数量: 383\n>0 数量: 1543\n<0 数量: 0\n\n原始数据中 '-' 行数: 59",
+    "risk_level": "low",
+    "execution_label": "exploratory_sandbox",
+    "replay": {
+     "contract_version": "sandbox_replay.v1",
+     "code_sha256": "b9d6b01047d37b94762d7710f30875b5c3d3680399d2cf2f92de68ec57011fe3",
+     "code": "raw = get_dataset(\"游戏互推__raw\")\ndf = get_dataset(\"游戏互推\")\n\nraw_col = raw[\"卖量收入\"]\nprint(\"=== 原始数据 卖量收入 ===\")\nprint(\"总行数:\", len(raw))\nprint(\"原始空值(NaN)数量:\", int(raw_col.isna().sum()))\nprint(\"非空原始值数量:\", int",
+     "timeout_seconds": 30
+    },
+    "fallback_policy": {
+     "role": "supplemental",
+     "purpose": "核对卖量收入列原始值分布（-数量、可解析数量）与清洗后NaN/0的对应关系",
+     "purpose_missing": false
+    },
+    "result": "{'raw_rows': 1985, 'raw_nan': 0, 'dash_count': 59, 'parsable_numeric_count': 1926, 'other_str_count': 0, 'clean_rows': 1985, 'clean_nan': 59, 'clean_zero': 383, 'clean_positive': 1543}"
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "purpose 'evidence' or 'insight' requires evidence_ids",
+    "error_type": "chart_validation",
+    "error_code": "chart_validation",
+    "validation_warnings": [
+     "missing evidence_ids for evidence-backed chart"
+    ],
+    "recovery_options": []
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "output": "原始数据中卖量收入为 0 的记录数: 383\n曝光次数: NaN=0, '-'=0, 0值=18\n有效点击次数: NaN=0, '-'=0, 0值=0\n二次确认次数: NaN=0, '-'=0, 0值=204\n\n日期缺失: 0\n流量主游戏唯一值: 100\n广告主游戏唯一值: 107\n公司唯一值: 2\n公司取值: ['内部游戏', '外部游戏']\n\n'-'缺失按日期分布:\n{'2020/01/16'",
+    "risk_level": "low",
+    "execution_label": "exploratory_sandbox",
+    "replay": {
+     "contract_version": "sandbox_replay.v1",
+     "code_sha256": "9a9c46474e66cfc4bfb67d239d43532ac6a6fa95aa3323bfd33589afcc3223b9",
+     "code": "raw = get_dataset(\"游戏互推__raw\")\n\n# 1) 确认清洗后 383 个 0 是否来自原始数据的真实 0 值\nraw_col = raw[\"卖量收入\"]\nzero_raw = 0\nfor v in raw_col:\n    if v is None or (isinstance(v, float) and pd.isna(v)):\n        continue\n    ",
+     "timeout_seconds": 30
+    },
+    "fallback_policy": {
+     "role": "supplemental",
+     "purpose": "核实0值来源与其他列缺失情况、缺失分布",
+     "purpose_missing": false
+    },
+    "result": "{'zero_raw_count': 383, 'dash_by_date': {'2020/01/16': 22, '2020/01/17': 8, '2020/01/18': 6, '2020/01/19': 23}, 'dash_by_company': {'外部游戏': 59}}"
+   }
+  },
+  {
+   "tool": "run_python",
+   "structured_result": {
+    "error": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+    "error_type": "sandbox_violation"
+   }
+  },
+  {
+   "tool": "transform_data",
+   "structured_result": {
+    "dataset": "互推收入组合汇总",
+    "source_dataset": "游戏互推",
+    "operation": "group_aggregate",
+    "rows": 599,
+    "columns": [
+     "流量主游戏",
+     "广告主游戏",
+     "公司",
+     "卖量收入_sum",
+     "卖量收入_count",
+     "卖量收入_size"
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/fc3d7caaefc6/analysis_flow/af_5151e84d2a2df55106b432119e6e1f50370822fe.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "320d59ca7d",
+    "statistical_detail_status": "missing",
+    "statistical_detail_gaps": [
+     "time_scope"
+    ],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "create_chart",
+   "structured_result": {
+    "error": "purpose 'evidence' or 'insight' requires evidence_ids",
+    "error_type": "chart_validation",
+    "error_code": "chart_validation",
+    "validation_warnings": [
+     "missing evidence_ids for evidence-backed chart"
+    ],
+    "recovery_options": []
+   }
+  },
+  {
+   "tool": "transform_data",
+   "structured_result": {
+    "dataset": "有缺失组合明细",
+    "source_dataset": "互推收入组合汇总_缺失行数",
+    "operation": "filter",
+    "rows": 29,
+    "columns": [
+     "流量主游戏",
+     "广告主游戏",
+     "公司",
+     "卖量收入_sum",
+     "卖量收入_count",
+     "卖量收入_size",
+     "缺失行数"
+    ]
+   }
+  },
+  {
+   "tool": "record_evidence_record",
+   "structured_result": {
+    "saved": "sessions/fc3d7caaefc6/analysis_flow/af_8275d8cf12cd3925e80cc62285b97260c6fc084c.json",
+    "type": "evidence_record",
+    "state_stage": "execute",
+    "evidence_id": "c47f9fc088",
+    "statistical_detail_status": "missing",
+    "statistical_detail_gaps": [
+     "time_scope"
+    ],
+    "statistical_projection_gaps": []
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "data_profile": "{\n  \"shape\": [\n    1985,\n    8\n  ],\n  \"columns\": [\n    \"日期(date)\",\n    {\n      \"name\": \"流量主游戏\",\n      \"type\": \"text\",\n      \"missing%\": 0.0\n    },\n    {\n      \"name\": \"广告主游戏\",\n      \"type\": \"text\",\n  ",
+    "data_interpretation": "数据集 '游戏互推' (1985×8)\n行业主题: 广告营销 (置信度: medium)\n粒度: unknown\n关键指标: 曝光次数, 有效点击次数, 二次确认次数, 卖量收入\n维度: 公司\n时间范围: 2020-01-16 ~ 2020-01-19 (3天)\n推荐分析:\n  1. 趋势分析 — 检测指标的时间走向和周期性\n  2. 维度对比 — 比较不同分组间的差异\n  3. 变动归因 — 拆",
+    "interpretation_data": "{\"theme\": \"广告营销\", \"theme_confidence\": \"medium\", \"grain\": \"unknown\", \"grain_hint\": \"无法确定数据粒度。分析前请确认每行代表什么（用户/订单/日汇总等）。\", \"columns_classified\": {\"id_columns\": [], \"time_columns\": [\"日期\"], \"dimensions\": [",
+    "quality_card": "[data_features]\nDataset: 游戏互推 | 1985 rows x 8 cols\nQuality: 79/100 | 0 warnings, 0 blocks\nColumns: 4 numeric, 3 categorical, 1 date, 0 ID\nTime: daily (2020-01-16 ~ 2020-01-19, 3 days)",
+    "auto_insight": "数据快速洞察 (1,985 行 × 8 列)\n数据身份：广告营销行业，unknown\n时间范围：2020-01-16 ~ 2020-01-19（3天）\n关键指标：曝光次数, 有效点击次数, 二次确认次数, 卖量收入\n维度：公司\n数据健康：\n  [INFO] 列 '卖量收入' 缺失 3.0%\n  [INFO] 异常值较多: '卖量收入' (19.5%), '曝光次数' (20.1%), '有效点击次"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "clean_游戏互推_e52f7e40",
+    "dataset": "游戏互推",
+    "decisions": [
+     {
+      "column": "日期",
+      "decision_type": "safe_auto",
+      "from_dtype": "str",
+      "to_dtype": "datetime64[us]",
+      "action": "datetime",
+      "reason": "检测到日期格式（示例格式: %Y/%m/%d）",
+      "impact": "Enables time-aware analysis"
+     },
+     {
+      "column": "卖量收入",
+      "decision_type": "notify_auto",
+      "from_dtype": "object",
+      "to_dtype": "float64",
+      "action": "numeric",
+      "reason": "字符串形式的数值，建议转为数值类型",
+      "impact": "Enables numeric metric analysis"
+     }
+    ],
+    "summary": {
+     "safe_auto": 1,
+     "notify_auto": 1,
+     "needs_confirmation": 0,
+     "blocked": 0
+    }
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "duc_游戏互推_231013d1",
+    "dataset": "游戏互推",
+    "row_count": 1985,
+    "column_count": 8,
+    "grain": "unknown",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "曝光次数",
+      "有效点击次数",
+      "二次确认次数",
+      "卖量收入"
+     ],
+     "rate_metrics": [],
+     "dimensions": [
+      "公司"
+     ],
+     "ids": [],
+     "text": [
+      "流量主游戏",
+      "广告主游戏"
+     ],
+     "unknown": []
+    },
+    "quality": {
+     "status": "ready",
+     "score": 79,
+     "block_issues": [],
+     "warnings": []
+    },
+    "time_range": {
+     "column": "日期",
+     "min": "2020-01-16",
+     "max": "2020-01-19",
+     "span_days": 3
+    },
+    "supported_analyses": [
+     "correlation",
+     "dimension_decomposition",
+     "period_compare",
+     "trend"
+    ],
+    "unsupported_analyses": [
+     {
+      "type": "user_level_retention",
+      "reason": "Data is missing user or entity id columns"
+     }
+    ],
+    "cleaning_log_ids": [
+     "clean_游戏互推_e52f7e40"
+    ],
+    "preview_digest_id": "preview_游戏互推_8a31ed2b",
+    "detail_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a04-diag\\M03\\sessions\\fc3d7caaefc6\\tool_outputs\\load_游戏互推_detail.json"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "preview_游戏互推_8a31ed2b",
+    "dataset": "游戏互推",
+    "row_count": 1985,
+    "column_count": 8,
+    "sample_rows_count": 5,
+    "sample_rows": [
+     {
+      "日期": "2020-01-19T00:00:00",
+      "流量主游戏": "超级飞侠之荒野大冒险",
+      "广告主游戏": "恐龙岛大冒险",
+      "公司": "内部游戏",
+      "卖量收入": 2081.75,
+      "曝光次数": 1834910,
+      "有效点击次数": 20513,
+      "二次确认次数": 15799
+     },
+     {
+      "日期": "2020-01-19T00:00:00",
+      "流量主游戏": "超级飞侠之荒野大冒险",
+      "广告主游戏": "投篮大作战",
+      "公司": "外部游戏",
+      "卖量收入": 1927.1,
+      "曝光次数": 1827152,
+      "有效点击次数": 25226,
+      "二次确认次数": 20387
+     },
+     {
+      "日期": "2020-01-19T00:00:00",
+      "流量主游戏": "超级飞侠之荒野大冒险",
+      "广告主游戏": "小小刀客",
+      "公司": "内部游戏",
+      "卖量收入": 2640.75,
+      "曝光次数": 1910350,
+      "有效点击次数": 32932,
+      "二次确认次数": 26625
+     },
+     {
+      "日期": "2020-01-19T00:00:00",
+      "流量主游戏": "超级飞侠之荒野大冒险",
+      "广告主游戏": "猪猪侠向前冲",
+      "公司": "内部游戏",
+      "卖量收入": 3280.75,
+      "曝光次数": 2014762,
+      "有效点击次数": 34924,
+      "二次确认次数": 28888
+     },
+     {
+      "日期": "2020-01-19T00:00:00",
+      "流量主游戏": "超级飞侠之荒野大冒险",
+      "广告主游戏": "炫酷进球3D",
+      "公司": "外部游戏",
+      "卖量收入": 2320.9,
+      "曝光次数": 1827141,
+      "有效点击次数": 22845,
+      "二次确认次数": 17106
+     }
+    ],
+    "column_examples": {
+     "日期": [
+      "2020-01-19T00:00:00",
+      "2020-01-19T00:00:00",
+      "2020-01-19T00:00:00"
+     ],
+     "流量主游戏": [
+      "超级飞侠之荒野大冒险",
+      "超级飞侠之荒野大冒险",
+      "超级飞侠之荒野大冒险"
+     ],
+     "广告主游戏": [
+      "恐龙岛大冒险",
+      "投篮大作战",
+      "小小刀客"
+     ],
+     "公司": [
+      "内部游戏",
+      "外部游戏",
+      "内部游戏"
+     ],
+     "卖量收入": [
+      2081.75,
+      1927.1,
+      2640.75
+     ],
+     "曝光次数": [
+      1834910,
+      1827152,
+      1910350
+     ],
+     "有效点击次数": [
+      20513,
+      25226,
+      32932
+     ],
+     "二次确认次数": [
+      15799,
+      20387,
+      26625
+     ]
+    },
+    "notable_patterns": [
+     "日期: 4 distinct values",
+     "流量主游戏: 100 distinct values",
+     "广告主游戏: 107 distinct values",
+     "公司: 2 distinct values",
+     "卖量收入: 713 distinct values",
+     "曝光次数: 1583 distinct values",
+     "有效点击次数: 805 distinct values",
+     "二次确认次数: 716 distinct values"
+    ],
+    "risks": [
+     "卖量收入: 59 missing values (3.0%)"
+    ]
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏互推_6dee3700",
+    "dataset": "游戏互推",
+    "dataset_contract_id": "duc_游戏互推_231013d1",
+    "direction": "correlation",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "曝光次数",
+      "有效点击次数",
+      "二次确认次数",
+      "卖量收入"
+     ],
+     "rate_metrics": [],
+     "dimensions": [
+      "公司"
+     ],
+     "ids": [],
+     "text": [
+      "流量主游戏",
+      "广告主游戏"
+     ],
+     "unknown": []
+    },
+    "tool_chain": [
+     "correlation_analysis",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "variables",
+     "correlation_method",
+     "sample_size",
+     "limitations"
+    ],
+    "limitations": [
+     "Correlation does not imply causation"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏互推_6ff3148c",
+    "dataset": "游戏互推",
+    "dataset_contract_id": "duc_游戏互推_231013d1",
+    "direction": "dimension_decomposition",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "曝光次数",
+      "有效点击次数",
+      "二次确认次数",
+      "卖量收入"
+     ],
+     "rate_metrics": [],
+     "dimensions": [
+      "公司"
+     ],
+     "ids": [],
+     "text": [
+      "流量主游戏",
+      "广告主游戏"
+     ],
+     "unknown": []
+    },
+    "tool_chain": [
+     "contribute_decomposition",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "dimension_scope",
+     "contribution_table",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Contribution is descriptive and does not prove causality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏互推_ac5571d1",
+    "dataset": "游戏互推",
+    "dataset_contract_id": "duc_游戏互推_231013d1",
+    "direction": "period_compare",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "曝光次数",
+      "有效点击次数",
+      "二次确认次数",
+      "卖量收入"
+     ],
+     "rate_metrics": [],
+     "dimensions": [
+      "公司"
+     ],
+     "ids": [],
+     "text": [
+      "流量主游戏",
+      "广告主游戏"
+     ],
+     "unknown": []
+    },
+    "tool_chain": [
+     "compare_periods",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "period_definition",
+     "period_comparability",
+     "metric_delta",
+     "limitations"
+    ],
+    "limitations": [
+     "Comparison quality depends on period comparability and seasonality"
+    ],
+    "budget_level": "standard"
+   }
+  },
+  {
+   "tool": "structured_detail",
+   "structured_result": {
+    "id": "route_游戏互推_4b1a4a5d",
+    "dataset": "游戏互推",
+    "dataset_contract_id": "duc_游戏互推_231013d1",
+    "direction": "trend",
+    "field_roles": {
+     "date": [
+      "日期"
+     ],
+     "metrics": [
+      "曝光次数",
+      "有效点击次数",
+      "二次确认次数",
+      "卖量收入"
+     ],
+     "rate_metrics": [],
+     "dimensions": [
+      "公司"
+     ],
+     "ids": [],
+     "text": [
+      "流量主游戏",
+      "广告主游戏"
+     ],
+     "unknown": []
+    },
+    "tool_chain": [
+     "analyze_time_series",
+     "record_evidence_record"
+    ],
+    "expected_evidence": [
+     "time_scope",
+     "sample_size",
+     "trend_statistics",
+     "limitations"
+    ],
+    "limitations": [
+     "Descriptive trend only unless supported by experimental evidence"
+    ],
+    "budget_level": "light"
+   }
+  }
+ ]
+}
