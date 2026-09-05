@@ -135,7 +135,8 @@ def test_round_cap_failure_is_not_relabelled_as_an_empty_llm_response():
     list(loop._stream_llm_round(1))
     events = list(loop._stream_llm_round(2))
 
-    assert events[-1] == {"type": "_round_failure", "code": "round_cap_exceeded"}
+    assert events[-1]["type"] == "_round_failure"
+    assert events[-1]["code"] == "round_cap_exceeded"
     assert client.calls_made == 1
     assert client.rounds_served == 1
 
@@ -149,7 +150,9 @@ def test_countable_client_failure_never_uses_the_loop_sync_fallback():
 
     events = list(loop._stream_llm_round(1))
 
-    assert events[-1] == {"type": "_round_failure", "code": "provider_request_failed"}
+    assert events[-1]["type"] == "_round_failure"
+    assert events[-1]["code"] == "provider_request_failed"
+    assert "RuntimeError" in events[-1]["detail"]
     assert client.calls_made == 1
     assert len(once.calls) == 1
     assert client.round_receipts == [[{"max_tokens": 2000, "outcome": "error:RuntimeError"}]]

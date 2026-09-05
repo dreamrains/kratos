@@ -430,6 +430,17 @@ _protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
 )
 
 
+def _provider_failure_detail(exc: BaseException, limit: int = 300) -> str:
+    """将异常压缩成单行摘要，供日志与用户可见错误使用。
+
+    litellm 异常常内嵌完整 provider 响应（多行、超长），不能原样进入
+    UI 或 notice；只保留类名 + 首段消息并截断。
+    """
+    text = " ".join(str(exc).split())[:limit]
+    name = type(exc).__name__
+    return f"{name}: {text}" if text else name
+
+
 class AgentLoop:
     """Agent 主循环，管理对话、工具调度和上下文。"""
 
@@ -2277,8 +2288,11 @@ class AgentLoop:
                 code = "acceptance_stopped"
             else:
                 code = str(exc) if type(exc).__name__ == "JourneyStructureError" else "provider_request_failed"
-            logger.warning("Streaming request failed", extra={"extra_data": {"error": type(exc).__name__, "code": code}})
-            yield {"type": "_round_failure", "code": code}
+            detail = _provider_failure_detail(exc)
+            logger.warning("Streaming request failed", extra={"extra_data": {
+                "error": type(exc).__name__, "code": code, "detail": detail,
+            }})
+            yield {"type": "_round_failure", "code": code, "detail": detail}
             return
         finally:
             close_stream(stream)
@@ -2521,12 +2535,14 @@ class AgentLoop:
             response = None
             streamed_text = ""
             round_failure = ""
+            round_failure_detail = ""
             for ev in self._stream_llm_round(round_num):
                 if ev["type"] == "_response":
                     response = ev["response"]
                     streamed_text = ev["streamed_text"]
                 elif ev["type"] == "_round_failure":
                     round_failure = str(ev.get("code") or "")
+                    round_failure_detail = str(ev.get("detail") or "")
                 elif ev["type"] == "text_delta":
                     if buffer_text_events:
                         pending_text_events.append(ev)
@@ -2545,6 +2561,8 @@ class AgentLoop:
                     message = f"LLM 轮次已达到上限（{round_failure}）"
                 else:
                     message = f"LLM 请求失败（{round_failure}）"
+                    if round_failure_detail:
+                        message += f"：{round_failure_detail}"
                 yield {"type": "error", "message": message}
                 return
 
