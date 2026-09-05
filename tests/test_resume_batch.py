@@ -1,0 +1,101 @@
+# tests/test_resume_batch.py
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts.acceptance.resume_batch import derive_resume_batch
+
+
+def _write_minimal_batch(root: Path, tmp: Path):
+    """构造 M01-M03 微缩批次：M01 正常关闭、M02 quota 作废、M03 未跑。"""
+    (root / "scripts/acceptance").mkdir(parents=True)
+    (root / "scripts/acceptance/x.py").write_text("# launcher\n", encoding="utf-8")
+    (root / "tmp").mkdir()
+    source_digest = "sha256:" + "a" * 64
+    case_paths = []
+    for case_id, cap in (("M01", 4), ("M02", 4), ("M03", 4)):
+        candidate = {
+            "schema_version": 1, "candidate_id": f"c_{case_id}", "matrix_case_id": case_id,
+            "source_digest": source_digest, "model": "provider/model", "port": 7100,
+            "data": [], "prompt": f"p-{case_id}", "prompts": [f"p-{case_id}"],
+            "provider_policy": {"call_cap": cap, "analysis_turns": 1},
+            "oracle": {"required_tools": []},
+            "writes": {
+                "workspace_dir": f"tmp/orig/M{case_id[1:]}/workspace",
+                "sessions_dir": f"tmp/orig/M{case_id[1:]}/sessions",
+                "provider_receipt_path": f"tmp/orig/M{case_id[1:]}/provider-calls.json",
+                "report_path": f"docs/audit/orig-{case_id}-report.json",
+                "process_control_dir": f"tmp/orig/M{case_id[1:]}/process-control",
+            },
+        }
+        path = root / "docs/audit" / f"orig-{case_id}-candidate.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(candidate, ensure_ascii=False), encoding="utf-8")
+        case_paths.append({"id": case_id, "path": str(path.relative_to(root)).replace("\\", "/"),
+                           "sha256": _file_hash(path)})
+    batch = {"schema_version": "real_provider_browser_batch.v1", "batch_id": "ORIG",
+             "source_digest": source_digest, "model": "provider/model",
+             "cases": case_paths, "call_cap": 12,
+             "isolation_root": "tmp/orig", "report_path": "docs/audit/orig-report.json",
+             "launcher_path": "scripts/acceptance/x.py", "launcher_sha256": _file_hash(root / "scripts/acceptance/x.py"),
+             "supervisor_path": "scripts/acceptance/x.py", "supervisor_sha256": _file_hash(root / "scripts/acceptance/x.py")}
+    batch_path = root / "docs/audit/orig-batch.json"
+    batch_path.write_text(json.dumps(batch, ensure_ascii=False), encoding="utf-8")
+    ledger = {"schema_version": 2, "batch_sha256": _file_hash(batch_path),
+              "cases": [
+                  {"id": "M01", "status": "closed",
+                   "terminal_failure": {"code": "acceptance_server_closed"}, "real_calls": 2},
+                  {"id": "M02", "status": "closed",
+                   "terminal_failure": {"code": "provider_request_failed", "error_class": "quota_exhausted"},
+                   "real_calls": 1},
+              ], "real_calls": 3, "calls_started_observed": 3, "blocked_attempts": 0}
+    ledger_path = root / "tmp/orig/provider-batch.json"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    return batch_path, ledger_path, source_digest
+
+
+def _file_hash(path: Path) -> str:
+    import hashlib
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_derive_resume_batch_voids_quota_case_and_keeps_completed(tmp_path, monkeypatch):
+    root = tmp_path
+    batch_path, ledger_path, source_digest = _write_minimal_batch(root, tmp_path)
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest", lambda r: source_digest)
+    proposal = derive_resume_batch(root, batch_path, ledger_path,
+                                   new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
+    assert proposal["resumes_from"]["completed_cases"] == ["M01"]
+    assert proposal["resumes_from"]["voided_cases"] == ["M02"]
+    new_batch = json.loads(Path(proposal["batch_path"]).read_text(encoding="utf-8"))
+    assert [c["id"] for c in new_batch["cases"]] == ["M02", "M03"]
+    assert new_batch["resumes_from"]["batch_id"] == "ORIG"
+    assert new_batch["call_cap"] == 8  # 仅 void+未跑场景的 caps
+    for entry in new_batch["cases"]:
+        candidate = json.loads((root / entry["path"]).read_text(encoding="utf-8"))
+        assert "tmp/resume-1/" in candidate["writes"]["workspace_dir"]
+        assert candidate["source_digest"] == source_digest
+
+
+def test_derive_resume_rejects_changed_source(tmp_path, monkeypatch):
+    root = tmp_path
+    batch_path, ledger_path, _ = _write_minimal_batch(root, tmp_path)
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest",
+                        lambda r: "sha256:" + "b" * 64)
+    with pytest.raises(ValueError, match="source digest"):
+        derive_resume_batch(root, batch_path, ledger_path,
+                            new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
+
+
+def test_derive_resume_rejects_open_case(tmp_path, monkeypatch):
+    root = tmp_path
+    batch_path, ledger_path, source_digest = _write_minimal_batch(root, tmp_path)
+    ledger = json.loads(ledger_path.read_text())
+    ledger["cases"].append({"id": "M03", "status": "started"})
+    ledger_path.write_text(json.dumps(ledger))
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest", lambda r: source_digest)
+    with pytest.raises(ValueError, match="closed"):
+        derive_resume_batch(root, batch_path, ledger_path,
+                            new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
