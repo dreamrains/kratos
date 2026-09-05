@@ -371,7 +371,7 @@ def test_rate_limited_gets_one_retry_and_succeeds(tmp_path):
     ])
     guard = _guard_fast_retry(tmp_path, completion)
     response = _call(guard)
-    assert response is completion.calls and len(completion.calls) == 2
+    assert response is not None and len(completion.calls) == 2
     receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
     assert [c["status"] for c in receipt["calls"]] == ["failed", "completed"]
     assert receipt["calls"][1]["retry_of"] == 1
@@ -760,7 +760,7 @@ def _file_hash(path: Path) -> str:
 def test_derive_resume_batch_voids_quota_case_and_keeps_completed(tmp_path, monkeypatch):
     root = tmp_path
     batch_path, ledger_path, source_digest = _write_minimal_batch(root, tmp_path)
-    monkeypatch.setattr("scripts.acceptance.release_source.release_source_digest", lambda r: source_digest)
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest", lambda r: source_digest)
     proposal = derive_resume_batch(root, batch_path, ledger_path,
                                    new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
     assert proposal["resumes_from"]["completed_cases"] == ["M01"]
@@ -778,7 +778,7 @@ def test_derive_resume_batch_voids_quota_case_and_keeps_completed(tmp_path, monk
 def test_derive_resume_rejects_changed_source(tmp_path, monkeypatch):
     root = tmp_path
     batch_path, ledger_path, _ = _write_minimal_batch(root, tmp_path)
-    monkeypatch.setattr("scripts.acceptance.release_source.release_source_digest",
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest",
                         lambda r: "sha256:" + "b" * 64)
     with pytest.raises(ValueError, match="source digest"):
         derive_resume_batch(root, batch_path, ledger_path,
@@ -791,7 +791,7 @@ def test_derive_resume_rejects_open_case(tmp_path, monkeypatch):
     ledger = json.loads(ledger_path.read_text())
     ledger["cases"].append({"id": "M03", "status": "started"})
     ledger_path.write_text(json.dumps(ledger))
-    monkeypatch.setattr("scripts.acceptance.release_source.release_source_digest", lambda r: source_digest)
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest", lambda r: source_digest)
     with pytest.raises(ValueError, match="closed"):
         derive_resume_batch(root, batch_path, ledger_path,
                             new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
@@ -868,6 +868,8 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
                                f"{new_isolation_root}/")
             for key, value in case["writes"].items()
         }
+        case["writes"]["report_path"] = \
+            f"docs/audit/{new_batch_id.lower()}-{case['matrix_case_id'].lower()}-report.json"
         case["candidate_id"] = case["candidate_id"] + "_resume"
         new_name = f"{new_batch_id.lower()}-{case['matrix_case_id'].lower()}-candidate.json"
         new_path = root / "docs/audit" / new_name
@@ -1141,19 +1143,29 @@ pytestmark = pytest.mark.skipif(not FIXTURES, reason="no replay fixtures generat
 
 
 @pytest.mark.parametrize("fixture", FIXTURES, ids=lambda path: path.stem)
-def test_recorded_shapes_bind_without_crashing(fixture):
-    payload = {"claim": "replay"}
-    bind_computed_statistics(payload, [])
-    for turn in json.loads(fixture.read_text(encoding="utf-8"))["turns"]:
-        # 任何真实形状进入绑定路径都不应抛出未受控异常。
-        try:
-            bind_computed_statistics({"claim": "replay", **_string_keys(turn["structured_result"])}, [])
-        except (TypeError, KeyError) as exc:
-            pytest.fail(f"{fixture.stem} turn {turn['tool']}: {exc}")
+def test_recorded_shapes_bind_without_crashing(fixture, monkeypatch):
+    import hashlib
 
+    from data_agent.tools import result_reference
 
-def _string_keys(payload: dict) -> dict:
-    return payload if isinstance(payload, dict) else {}
+    recorded = json.loads(fixture.read_text(encoding="utf-8"))["turns"]
+    lookup, receipts = {}, []
+    for index, turn in enumerate(recorded):
+        receipt_id = f"replay_{index:03d}"
+        digest = hashlib.sha256(json.dumps(
+            turn["structured_result"], ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        lookup[f"tool_outputs/{receipt_id}_detail.json"] = (
+            turn["structured_result"], {"receipt_id": receipt_id})
+        receipts.append({"id": receipt_id, "tool_call_id": receipt_id,
+                         "tool_name": turn["tool"], "arguments": {},
+                         "structured_result_sha256": digest})
+    # bind_computed_statistics 在函数体内 import，patch 模块属性即生效。
+    monkeypatch.setattr(result_reference, "load_result_reference", lambda ref: lookup[ref])
+
+    payload = {"claim": "replay", "metrics": {"reported": 1}}
+    bind_computed_statistics(payload, receipts)
+    assert payload["computed_statistics_sources"], \
+        f"{fixture.stem}: recorded shapes must bind as evidence sources"
 ```
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -1408,12 +1420,11 @@ def test_flow_quota_stops_batch_and_resume_derives(tmp_path, monkeypatch):
     assert failure["error_class"] == "quota_exhausted"
     assert batch_stop_reason([{"id": "M01", "status": "closed", "terminal_failure": failure}]) \
         == "provider_failure_global_fatal:quota_exhausted"
-    # 恢复路径由 test_resume_batch 覆盖；此处断言停批原因码即恢复触发条件。
-    assert "quota_exhausted" in "provider_failure_global_fatal:quota_exhausted"
+    # 恢复派生路径由 tests/test_resume_batch.py 覆盖；此处只验证停批触发条件与原因码。
 
 
 def test_flow_rate_limit_retries_and_journey_continues(tmp_path):
-    completion = _Flaky([_RateLimit(), object()])
+    completion = _Flaky([_RateLimit(), object(), object()])
     guard = _guard(tmp_path, completion)
     guard.completion(model="m", max_tokens=300, stream=False, messages=[])
     receipt = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
