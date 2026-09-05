@@ -24,6 +24,7 @@ if str(ROOT / "src") not in sys.path:
 
 from scripts.acceptance.real_data_manifest import REFERENCE_DATA, validate_reference_data
 from scripts.acceptance.release_source import release_source_digest
+from scripts.acceptance.strict_provider_guard import ProviderFailureLatch
 
 
 JOURNEY_SCHEMA = "route_a_journey_replay.v1"
@@ -412,8 +413,7 @@ class CountableJourneyClient:
         self.main_calls_made = 0
         self.auxiliary_calls_made = 0
         self.rounds_served = 0
-        self._terminated = False
-        self._auxiliary_failure = ""
+        self._failure_latch = ProviderFailureLatch()
         self.structure: list[dict] = []
         self.round_receipts: list[list[dict]] = []
         self.auxiliary_receipts: list[dict] = []
@@ -427,12 +427,11 @@ class CountableJourneyClient:
         # Sticky refusal: the loop's sync fallback re-invokes the client after
         # a streaming failure; a terminated journey must reject again without
         # inflating the round count or consuming another slot.
-        if self._auxiliary_failure:
-            raise JourneyStructureError(self._auxiliary_failure)
-        if self._terminated:
-            raise JourneyStructureError("round_cap_exceeded")
+        terminal_failure = self._failure_latch.failure_code
+        if terminal_failure:
+            raise JourneyStructureError(terminal_failure)
         if self.rounds_served >= self._round_cap:
-            self._terminated = True
+            self._failure_latch.trip("round_cap_exceeded")
             raise JourneyStructureError("round_cap_exceeded")
         self.rounds_served += 1
         self.structure.append({
@@ -460,6 +459,10 @@ class CountableJourneyClient:
                     "outcome": f"error:{type(exc).__name__}",
                 })
                 self.round_receipts.append(attempts)
+                self._failure_latch.trip(
+                    "main_provider_request_failed",
+                    error_type=type(exc).__name__,
+                )
                 if self.on_round is not None:
                     self.on_round()
                 raise
@@ -485,11 +488,12 @@ class CountableJourneyClient:
     def _serve_auxiliary(self, messages, tools, system):
         from scripts.acceptance.route_a_provider_preflight import _content_length_bucket
 
-        if self._auxiliary_failure:
-            raise JourneyStructureError(self._auxiliary_failure)
+        terminal_failure = self._failure_latch.failure_code
+        if terminal_failure:
+            raise JourneyStructureError(terminal_failure)
         if self.auxiliary_calls_made >= self._auxiliary_call_cap:
-            self._auxiliary_failure = "auxiliary_call_cap_exceeded"
-            raise JourneyStructureError(self._auxiliary_failure)
+            self._failure_latch.trip("auxiliary_call_cap_exceeded")
+            raise JourneyStructureError("auxiliary_call_cap_exceeded")
 
         self.calls_made += 1
         self.auxiliary_calls_made += 1
@@ -511,7 +515,10 @@ class CountableJourneyClient:
         except Exception as exc:
             receipt["outcome"] = f"error:{type(exc).__name__}"
             self.auxiliary_receipts.append(receipt)
-            self._auxiliary_failure = "auxiliary_provider_request_failed"
+            self._failure_latch.trip(
+                "auxiliary_provider_request_failed",
+                error_type=type(exc).__name__,
+            )
             if self.on_auxiliary_call is not None:
                 self.on_auxiliary_call()
             raise
