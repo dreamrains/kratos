@@ -26,3 +26,7 @@ src/data_agent/web/static/js/plotly-*.min.js
 # Temp files
 Bn
 B?
+
+# Runtime outputs
+tmp/
+artifacts/
