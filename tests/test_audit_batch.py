@@ -241,3 +241,16 @@ def test_report_file_summary_and_unclosed_case_handling(tmp_path, monkeypatch, c
     out = capsys.readouterr().out
     assert "M01: hard_gate=PASS" in out
     assert "audit_report" in out
+
+
+def test_cli_missing_ledger_exits_with_a_clean_message(tmp_path, monkeypatch, capsys):
+    """A pre-first-case invocation is expected operator behavior, not a
+    traceback: the CLI must say the ledger does not exist yet."""
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(json.dumps(
+        {"batch_id": "AUD-2", "isolation_root": "tmp/run", "cases": []}), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["audit_batch", "--root", str(tmp_path),
+                                     "--batch", str(batch_path)])
+    with pytest.raises(SystemExit, match=r"batch ledger not found at .*no case has closed yet"):
+        audit_module.main()
+    assert capsys.readouterr().out == ""

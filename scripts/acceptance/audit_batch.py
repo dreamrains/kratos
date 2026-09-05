@@ -246,7 +246,13 @@ def main() -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--batch", required=True)
     args = parser.parse_args()
-    report = audit_batch(Path(args.root), Path(args.batch))
+    root = Path(args.root).resolve()
+    batch = json.loads(Path(args.batch).read_text(encoding="utf-8"))
+    ledger_path = _inside(root, batch["isolation_root"]) / "provider-batch.json"
+    if not ledger_path.is_file():
+        # Expected operator question before any case has closed, not a crash.
+        raise SystemExit(f"batch ledger not found at {ledger_path}; no case has closed yet")
+    report = audit_batch(root, Path(args.batch))
     for case in report["cases"]:
         gate = "PASS" if case["hard_gate"]["passed"] else "FAIL"
         print(f"{case['case_id']}: hard_gate={gate} "
