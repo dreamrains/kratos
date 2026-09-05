@@ -233,7 +233,8 @@ class StrictProviderCallGuard:
             self._write_receipt_locked()
             return record
 
-    def _finish(self, record: dict[str, Any], status: str, error: BaseException | None = None) -> None:
+    def _finish(self, record: dict[str, Any], status: str, error: BaseException | None = None,
+                *, trip_latch: bool = True) -> None:
         with self._lock:
             if record["status"] != "started":
                 return
@@ -245,12 +246,20 @@ class StrictProviderCallGuard:
             if status in {"cancelled", "unknown"}:
                 self._latch.trip("provider_request_" + status, ordinal=record["ordinal"])
             if error is not None:
-                record["error_type"] = type(error).__name__
-                self._latch.trip(
-                    "provider_request_failed",
-                    ordinal=record["ordinal"],
-                    error_type=type(error).__name__,
+                from scripts.acceptance.provider_error_taxonomy import (
+                    classify_provider_error, error_evidence,
                 )
+                record["error_type"] = type(error).__name__
+                error_class = classify_provider_error(error)
+                record["error_class"] = error_class
+                record.update(error_evidence(error))
+                if trip_latch:
+                    self._latch.trip(
+                        "provider_request_failed",
+                        ordinal=record["ordinal"],
+                        error_type=type(error).__name__,
+                        error_class=error_class,
+                    )
             self._write_receipt_locked()
 
     def completion(self, **kwargs: Any) -> Any:

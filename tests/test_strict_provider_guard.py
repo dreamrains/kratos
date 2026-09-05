@@ -204,3 +204,35 @@ def test_network_execution_requires_an_explicit_executor_acknowledgement():
         "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1",
         "CODEX_SANDBOX_NETWORK_DISABLED": "1",
     })
+
+
+class _ProviderHttpError(Exception):
+    def __init__(self, message, status_code=None, request_id=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = request_id
+
+
+def test_failed_call_records_error_class_and_evidence(tmp_path):
+    completion = _Completion([_ProviderHttpError("Insufficient Balance", status_code=400, request_id="req-9")])
+    guard = _guard(tmp_path, completion)
+    with pytest.raises(_ProviderHttpError):
+        _call(guard)
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    call = receipt["calls"][0]
+    assert call["status"] == "failed"
+    assert call["error_class"] == "quota_exhausted"
+    assert call["http_status"] == 400
+    assert call["request_id"] == "req-9"
+    assert "Insufficient Balance" in call["error_message"]
+    assert receipt["terminal_failure"]["code"] == "provider_request_failed"
+    assert receipt["terminal_failure"]["error_class"] == "quota_exhausted"
+
+
+def test_failed_call_without_evidence_still_gets_class(tmp_path):
+    completion = _Completion([ValueError("local transport bug")])
+    guard = _guard(tmp_path, completion)
+    with pytest.raises(ValueError):
+        _call(guard)
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    assert receipt["calls"][0]["error_class"] == "unclassified"
