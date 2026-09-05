@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -145,6 +146,8 @@ def _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, 
     monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
     monkeypatch.setenv("DATA_AGENT_API_BASE", "https://example.invalid/v1")
     monkeypatch.setenv("DATA_AGENT_API_KEY", "sk-test")
+    monkeypatch.setattr(run_batch, "_direct_child_interpreter",
+                        lambda: (sys.executable, dict(os.environ)))
     calls = []
 
     def fake_run(command, *, cwd, env):
@@ -169,16 +172,28 @@ def test_probe_failure_launches_no_case_subprocess(tmp_path, monkeypatch, capsys
     assert calls == []
 
 
-def test_authorized_loop_spawns_one_subprocess_per_case(tmp_path, monkeypatch, capsys):
+def test_authorized_loop_spawns_one_supervised_subprocess_per_case(tmp_path, monkeypatch, capsys):
     batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
     monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
         "ok": True, "error_class": None, "global_fatal": False})
     calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0] * 6)
     run_batch.main()
     assert [call["command"][-1] for call in calls] == [f"M{i:02d}" for i in range(1, 7)]
+    supervisor = (tmp_path / "supervisor.py").resolve()
+    for index, call in enumerate(calls):
+        command = call["command"]
+        separator = command.index("--")
+        wrapper, inner = command[:separator], command[separator + 1:]
+        # The case child is spawned THROUGH the frozen supervisor CLI...
+        assert wrapper[:2] == [sys.executable, str(supervisor)]
+        assert wrapper[2:4] == ["--control-dir",
+                                str((tmp_path / f"tmp/run/M{index + 1:02d}/process-control").resolve())]
+        # ...and the supervised command tail is exactly what the supervisor
+        # gate (_require_current_supervisor) demands of the recorded
+        # process-start.json: frozen launcher path + --case + case id.
+        assert inner[:3] == [sys.executable, "-m", "scripts.acceptance.real_provider_browser_batch"]
+        assert inner[-3:] == [str(launcher.resolve()), "--case", command[-1]]
     first = calls[0]
-    assert first["command"][:3] == [sys.executable, "-m", "scripts.acceptance.real_provider_browser_batch"]
-    assert first["command"][-2:] == ["--case", "M01"]
     assert first["cwd"] == tmp_path
     assert first["env"]["AUTHORIZED_BATCH_SHA256"] == batch_digest
     assert first["env"]["DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED"] == "1"
@@ -193,3 +208,72 @@ def test_authorized_loop_stops_at_first_failing_case(tmp_path, monkeypatch, caps
     with pytest.raises(SystemExit, match="M02 failed"):
         run_batch.main()
     assert [call["command"][-1] for call in calls] == ["M01", "M02"]
+
+
+def test_wrapper_spawn_chain_passes_the_frozen_supervisor_gate(tmp_path):
+    """End-to-end proof of the C1 fix's contract, without a real batch.
+
+    Runs the exact wrapper shape run_batch builds (frozen supervisor CLI,
+    --control-dir, --, child command ending in launcher --case <id>) through
+    the REAL supervisor binary and the pid-stable interpreter run_batch
+    resolves.  The stand-in launcher does what run_case does before
+    ledger.begin: prove itself a direct supervised child via
+    require_supervised_child, then stop via stop.request so the supervisor
+    records a graceful process-exit.json for the next case.
+    """
+    from pathlib import Path
+
+    from scripts.acceptance import browser_process
+
+    root = tmp_path
+    launcher = root / "standin-launcher.py"
+    launcher.write_text(
+        "import os, pathlib, sys, time\n"
+        "sys.path.insert(0, os.environ['DATA_AGENT_TEST_STANDIN_ROOT'])\n"
+        "from scripts.acceptance.browser_process import require_supervised_child\n"
+        "stop = pathlib.Path(os.environ['DATA_AGENT_ACCEPTANCE_STOP_PATH'])\n"
+        "start = require_supervised_child(\n"
+        "    stop.parent, expected_pid=os.getpid(), expected_stop_signal=stop,\n"
+        "    expected_command_tail=[str(pathlib.Path(sys.argv[0]).resolve()),\n"
+        "                           '--case', sys.argv[-1]])\n"
+        "assert start['command'][-3:] == [str(pathlib.Path(sys.argv[0]).resolve()),\n"
+        "                                 '--case', sys.argv[-1]]\n"
+        "stop.with_name('stop.request').touch()\n"
+        "while not stop.exists():\n"
+        "    time.sleep(0.01)\n",
+        encoding="utf-8")
+    control = root / "tmp" / "run" / "M01" / "process-control"
+    repo_root = Path(run_batch.__file__).resolve().parents[2]
+    child_interpreter, child_env = run_batch._direct_child_interpreter()
+    result = subprocess.run(
+        [child_interpreter, str(Path(browser_process.__file__).resolve()),
+         "--control-dir", str(control),
+         "--",
+         child_interpreter, str(launcher.resolve()), "--case", "M01"],
+        cwd=root, env={**child_env, "DATA_AGENT_TEST_STANDIN_ROOT": str(repo_root)},
+        timeout=60,
+    )
+    assert result.returncode == 0
+    start = json.loads((control / "process-start.json").read_text(encoding="utf-8"))
+    assert start["command"][-3:] == [str(launcher.resolve()), "--case", "M01"]
+    proof = json.loads((control / "process-exit.json").read_text(encoding="utf-8"))
+    assert proof["graceful_exit"] is True
+    assert proof["exit_code"] == 0
+
+
+def test_direct_child_interpreter_returns_a_pid_stable_child():
+    executable, env = run_batch._direct_child_interpreter()
+    assert run_batch._spawns_direct(executable)
+    if executable == sys.executable:
+        assert env == dict(os.environ)
+    else:
+        # A base-interpreter fallback keeps the venv's frozen dependency set.
+        import sysconfig
+        assert sysconfig.get_paths()["purelib"] in env["PYTHONPATH"]
+
+
+def test_direct_child_interpreter_fails_closed_without_any_direct_python(monkeypatch):
+    monkeypatch.setattr(run_batch, "_spawns_direct", lambda executable: False)
+    monkeypatch.setattr(sys, "_base_executable", "", raising=False)
+    with pytest.raises(SystemExit, match="no direct python interpreter"):
+        run_batch._direct_child_interpreter()
