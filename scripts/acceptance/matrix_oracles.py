@@ -26,9 +26,15 @@ _DOMAIN_CLAIM_PATTERNS = (
 )
 
 # 属性 2：未限定的因果断言（观察性数据不得声称因果）。
+# 每一个因果措辞都要被检查：不能让第一句已限定的表述掩盖后文未限定的断言。
+# 因此按措辞逐个 finditer，限定词判定窗口取该措辞所在的句子（句号/分号/问叹号
+# 分隔），而不是固定长度的前后文——固定长度窗口会把上一句的限定词带入本句，
+# 或在吞掉后文措辞后被整段抑制。
 _CAUSAL_PATTERNS = (
-    re.compile(r".{0,20}(导致|造成了|因此应).{0,20}"),
+    re.compile(r"导致|造成了|因此应"),
 )
+
+_SENTENCE_PATTERN = re.compile(r"[^。！？!?；;\n]+")
 
 _QUALIFIER_MARKERS = ("可能", "或与", "相关而非因果", "关联", "在观测窗口内", "删失", "右删失")
 
@@ -36,15 +42,17 @@ _QUALIFIER_MARKERS = ("可能", "或与", "相关而非因果", "关联", "在�
 def zero_semantics_violations(text: str) -> list[str]:
     violations: list[str] = []
     for pattern in _DOMAIN_CLAIM_PATTERNS:
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
             violations.append(f"domain_claim: {match.group(0)}")
+    sentences = [(match.start(), match.end(), match.group(0))
+                 for match in _SENTENCE_PATTERN.finditer(text)]
     for pattern in _CAUSAL_PATTERNS:
-        match = pattern.search(text)
-        if not match:
-            continue
-        window = match.group(0)
-        if any(marker in window for marker in _QUALIFIER_MARKERS):
-            continue  # 已有限定词/删失说明的表述不属于未限定因果
-        violations.append(f"unqualified_causal: {window}")
+        for match in pattern.finditer(text):
+            window = next(sentence for start, end, sentence in sentences
+                          if start <= match.start() and match.end() <= end)
+            if any(marker in window for marker in _QUALIFIER_MARKERS):
+                continue  # 已有限定词/删失说明的表述不属于未限定因果
+            violation = f"unqualified_causal: {window}"
+            if violation not in violations:  # 同一句中的多个因果措辞只报一次
+                violations.append(violation)
     return violations

@@ -341,13 +341,16 @@ class BatchLedger:
         _write(self.path, self.state)
 
 
-def main(*, root: Path, batch_path: Path, launcher_path: Path):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--case", choices=[f"M{i:02d}" for i in range(1, 7)], required=True)
-    parser.add_argument("--preflight-only", action="store_true")
-    args = parser.parse_args()
+def run_case(root: Path, batch_path: Path, launcher_path: Path, case_id: str,
+             *, preflight_only: bool = False) -> None:
+    """One frozen case, self-contained: preflight, env derivation, execution.
+
+    Split out of ``main`` (which stays the argparse CLI) so a batch runner
+    can loop cases in one process without re-implementing authorization,
+    environment or ledger semantics.
+    """
     batch, cases, checks = preflight(root, batch_path, launcher_path)
-    index = [c["matrix_case_id"] for c in cases].index(args.case)
+    index = [c["matrix_case_id"] for c in cases].index(case_id)
     case = cases[index]
     case_path = root / batch["cases"][index]["path"]
     os.environ.update(
@@ -371,7 +374,7 @@ def main(*, root: Path, batch_path: Path, launcher_path: Path):
     # workspace configuration and fresh case paths. No marker or ledger writes.
     os.environ["DATA_AGENT_PREFLIGHT_ONLY"] = "1"
     run_authorized_browser_server(root=root, candidate_path=case_path, launcher_path=launcher_path)
-    if args.preflight_only:
+    if preflight_only:
         return
     require_network_enabled_execution()
     _require_current_supervisor(root, case, launcher_path)
@@ -389,7 +392,7 @@ def main(*, root: Path, batch_path: Path, launcher_path: Path):
         stop_reason = batch_stop_reason([c for c in ledger.state["cases"] if c.get("status") == "closed"])
         if stop_reason:
             raise ValueError("Provider failure stopped the whole batch: " + stop_reason)
-        ledger.begin(args.case, case["provider_policy"]["call_cap"])
+        ledger.begin(case_id, case["provider_policy"]["call_cap"])
         os.environ.pop("DATA_AGENT_PREFLIGHT_ONLY", None)
         try:
             run_authorized_browser_server(root=root, candidate_path=case_path,
@@ -399,3 +402,11 @@ def main(*, root: Path, batch_path: Path, launcher_path: Path):
             # started marker, blocking the batch instead of resetting counts.
             ledger.finish(root / case["writes"]["provider_receipt_path"],
                           candidate_id=case["candidate_id"], source_digest=checks["SOURCE_DIGEST"])
+
+
+def main(*, root: Path, batch_path: Path, launcher_path: Path):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", choices=[f"M{i:02d}" for i in range(1, 7)], required=True)
+    parser.add_argument("--preflight-only", action="store_true")
+    args = parser.parse_args()
+    run_case(root, batch_path, launcher_path, args.case, preflight_only=args.preflight_only)

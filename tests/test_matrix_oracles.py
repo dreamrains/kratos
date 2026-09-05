@@ -25,6 +25,14 @@ def test_unqualified_causal_claim_is_flagged():
     assert violations and "导致" in violations[0]
 
 
+def test_qualified_first_sentence_does_not_hide_later_unqualified_causal():
+    text = "在观测窗口内，代金券导致提升，相关而非因果。另一组中折扣造成了流失。"
+    violations = zero_semantics_violations(text)
+    assert len(violations) == 1
+    assert violations[0].startswith("unqualified_causal:")
+    assert "造成了" in violations[0]
+
+
 def test_version_and_observer_gaps_declared():
     assert ORACLE_VERSION == "2026-09-05.1"
     assert "within_30s_completion_observation" in OBSERVER_GAP_CHECKS
