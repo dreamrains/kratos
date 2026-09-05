@@ -236,3 +236,59 @@ def test_failed_call_without_evidence_still_gets_class(tmp_path):
         _call(guard)
     receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
     assert receipt["calls"][0]["error_class"] == "unclassified"
+
+
+def _guard_fast_retry(tmp_path, completion, *, call_cap=4):
+    from scripts.acceptance.strict_provider_guard import StrictProviderCallGuard
+    return StrictProviderCallGuard(
+        completion=completion, receipt_path=tmp_path / "provider-calls.json",
+        candidate_id="candidate-test", source_digest="sha256:source", call_cap=call_cap,
+        expected_model="provider/model", allowed_max_tokens={300, 800, 8000},
+        temperature=0.0, timeout_seconds=120, retry_backoff_seconds=0.0,
+    )
+
+
+def test_rate_limited_gets_one_retry_and_succeeds(tmp_path):
+    completion = _Completion([
+        _ProviderHttpError("rate limited", status_code=429),
+        object(),
+    ])
+    guard = _guard_fast_retry(tmp_path, completion)
+    response = _call(guard)
+    assert response is not None and len(completion.calls) == 2
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    assert [c["status"] for c in receipt["calls"]] == ["failed", "completed"]
+    assert receipt["calls"][1]["retry_of"] == 1
+    assert receipt["calls"][0]["error_class"] == "rate_limited"
+    assert receipt["terminal_failure"] is None
+
+
+def test_quota_error_never_retries(tmp_path):
+    completion = _Completion([_ProviderHttpError("Insufficient Balance", status_code=400)])
+    guard = _guard_fast_retry(tmp_path, completion)
+    with pytest.raises(_ProviderHttpError):
+        _call(guard)
+    assert len(completion.calls) == 1
+
+
+def test_second_retryable_failure_trips_latch(tmp_path):
+    # _Completion stores a live iterator; renaming via that iterator would
+    # consume both responses before the guard ever calls the provider.
+    responses = [_ProviderHttpError("timeout A"), _ProviderHttpError("timeout B")]
+    completion = _Completion(responses)
+    for exc in responses:
+        exc.__class__.__name__ = "APITimeoutError"
+    guard = _guard_fast_retry(tmp_path, completion)
+    with pytest.raises(_ProviderHttpError):
+        _call(guard)
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    assert [c["status"] for c in receipt["calls"]] == ["failed", "failed"]
+    assert receipt["terminal_failure"]["error_class"] == "network_transient"
+
+
+def test_retry_respects_call_cap(tmp_path):
+    completion = _Completion([_ProviderHttpError("rate limited", status_code=429), object()])
+    guard = _guard_fast_retry(tmp_path, completion, call_cap=1)
+    with pytest.raises(_ProviderHttpError):
+        _call(guard)
+    assert len(completion.calls) == 1  # cap 耗尽，不重试

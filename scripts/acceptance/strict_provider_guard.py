@@ -86,6 +86,7 @@ class StrictProviderCallGuard:
         allowed_max_tokens: set[int] | list[int] | tuple[int, ...],
         temperature: float,
         timeout_seconds: int,
+        retry_backoff_seconds: float = 20.0,
     ) -> None:
         if int(call_cap) < 1:
             raise ValueError("call_cap must be positive")
@@ -98,6 +99,7 @@ class StrictProviderCallGuard:
         self._allowed_max_tokens = {int(value) for value in allowed_max_tokens}
         self._temperature = float(temperature)
         self._timeout_seconds = int(timeout_seconds)
+        self._retry_backoff_seconds = float(retry_backoff_seconds)
         self._lock = threading.Lock()
         self._latch = ProviderFailureLatch()
         self._records: list[dict[str, Any]] = []
@@ -174,7 +176,7 @@ class StrictProviderCallGuard:
             self._write_receipt_locked()
         raise exception_type(code)
 
-    def _start(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _start(self, kwargs: dict[str, Any], retry_of: int | None = None) -> dict[str, Any]:
         failure = self._latch.snapshot()
         if failure is not None:
             with self._lock:
@@ -229,6 +231,8 @@ class StrictProviderCallGuard:
                 "local_request_stopped": False,
                 "remote_billing": "unknown",
             }
+            if retry_of is not None:
+                record["retry_of"] = int(retry_of)
             self._records.append(record)
             self._write_receipt_locked()
             return record
@@ -263,6 +267,9 @@ class StrictProviderCallGuard:
             self._write_receipt_locked()
 
     def completion(self, **kwargs: Any) -> Any:
+        from scripts.acceptance.provider_error_taxonomy import (
+            RETRYABLE_ERROR_CLASSES, classify_provider_error,
+        )
         guarded_kwargs = dict(kwargs)
         guarded_kwargs["num_retries"] = 0
         guarded_kwargs["temperature"] = self._temperature
@@ -271,12 +278,31 @@ class StrictProviderCallGuard:
         try:
             response = self._completion(**guarded_kwargs)
         except BaseException as exc:
-            self._finish(record, "failed", exc)
-            raise
+            error_class = classify_provider_error(exc)
+            retryable = (
+                error_class in RETRYABLE_ERROR_CLASSES
+                and self.calls_started < self._call_cap
+                and self._latch.snapshot() is None
+            )
+            self._finish(record, "failed", exc, trip_latch=not retryable)
+            if not retryable:
+                raise
+            time.sleep(self._retry_backoff_seconds)
+            retry_record = self._start(guarded_kwargs, retry_of=record["ordinal"])
+            try:
+                response = self._completion(**guarded_kwargs)
+            except BaseException as exc2:
+                self._finish(retry_record, "failed", exc2)
+                raise
+            self._finish(retry_record, "completed")
+            return self._dispatch_response(guarded_kwargs, retry_record, response)
         if not guarded_kwargs.get("stream"):
             self._finish(record, "completed")
-            return response
+        return self._dispatch_response(guarded_kwargs, record, response)
 
+    def _dispatch_response(self, guarded_kwargs: dict[str, Any], record: dict[str, Any], response: Any) -> Any:
+        if not guarded_kwargs.get("stream"):
+            return response
         stream = _CountedStream(self, record, response)
         with self._lock:
             self._streams[record["ordinal"]] = stream
