@@ -4,7 +4,7 @@
   "matrix_case_id": "M01",
   "batch_id": "MATRIX-A06-DIAG",
   "name": "上传绑定与留存闭环",
-  "source_digest": "sha256:cadbe4d5c7f97f2d54a99ae3f5046ed8c1f1b5489680ebc01beaec0a692a881b",
+  "source_digest": "sha256:e4c1256823f838bb86c7d764f576c3f764d0d866ea3f26e8df84f7789fcfb736",
   "model": "openai/deepseek-v4-flash",
   "port": 5801,
   "data": [

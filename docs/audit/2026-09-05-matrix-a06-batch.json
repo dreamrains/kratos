@@ -2,38 +2,38 @@
   "schema_version": "real_provider_browser_batch.v1",
   "batch_id": "MATRIX-A06-DIAG",
   "authorization_state": "frozen_pending_explicit_user_authorization",
-  "source_digest": "sha256:cadbe4d5c7f97f2d54a99ae3f5046ed8c1f1b5489680ebc01beaec0a692a881b",
+  "source_digest": "sha256:e4c1256823f838bb86c7d764f576c3f764d0d866ea3f26e8df84f7789fcfb736",
   "model": "openai/deepseek-v4-flash",
   "cases": [
     {
       "id": "M01",
       "path": "docs/audit/2026-09-05-matrix-a06-m01-candidate.json",
-      "sha256": "sha256:069af9be2f49b844b960fdd178488423efe4d28dd9e4fa838ee6fbb859c07bd4"
+      "sha256": "sha256:afdec585ac744cf3daaa40a55f05c793cb89ccc50b15a9c0f1aa8374f9afedac"
     },
     {
       "id": "M02",
       "path": "docs/audit/2026-09-05-matrix-a06-m02-candidate.json",
-      "sha256": "sha256:22641637ef97b96a4370d32f5f211f6ce946229d97e7cec6fc7409b50a923ace"
+      "sha256": "sha256:76a6689f79a5a9293b313195e43adafa403b216a2586fc778fd442996c2e0ca4"
     },
     {
       "id": "M03",
       "path": "docs/audit/2026-09-05-matrix-a06-m03-candidate.json",
-      "sha256": "sha256:fe22fc5200715c8c26b76d4bd4d66a85ad0574b25c257d09acf1749d03aa5c40"
+      "sha256": "sha256:53034873dbcc095d9cb932cc3780844383aafcc667545c1ac048f78dfb8c364d"
     },
     {
       "id": "M04",
       "path": "docs/audit/2026-09-05-matrix-a06-m04-candidate.json",
-      "sha256": "sha256:cc50fd26e5139a26ac38e099fa9fd2f95413bbb7d8d63255ffe2ce637ddd776c"
+      "sha256": "sha256:6c0ff20a334c7675cd82d275c0da67a021a1a97b08b25bd61027b65d9a75c65e"
     },
     {
       "id": "M05",
       "path": "docs/audit/2026-09-05-matrix-a06-m05-candidate.json",
-      "sha256": "sha256:2be1d521ef42da7f0f365419959914194576429633ec990755be0d95bc1a3d07"
+      "sha256": "sha256:1609d16c4c96d07334d6dee0865356e71f7349af0d7d215ecb37efab01088860"
     },
     {
       "id": "M06",
       "path": "docs/audit/2026-09-05-matrix-a06-m06-candidate.json",
-      "sha256": "sha256:c5ffb32c1526e16eb7965b6637bbd5e441306930ba9eaccf95497916cd2dcd8c"
+      "sha256": "sha256:815a7434f813aa724ce422dc4c14c09ea441ad5e8637670fcb20fbdad1cd781a"
     }
   ],
   "call_cap": 216,
@@ -58,7 +58,7 @@
   "isolation_root": "tmp/real-provider-browser-matrix-a06-diag",
   "report_path": "docs/audit/2026-09-05-matrix-a06-report.json",
   "launcher_path": "scripts/acceptance/real_provider_browser_batch.py",
-  "launcher_sha256": "sha256:46b0f1d01ff264734df0f4b986ef479c08ed88e8dcf51490661bbfc18da96977",
+  "launcher_sha256": "sha256:f765d357c27bd7e1b9c0650d4a1c7643ba37ba2993674f83726c1b150cbbc36e",
   "data_bundle_sha256": "sha256:c5e080e96c89fc257def56956733ef294119e89167f34ea29df22617f7f63912",
   "prompt_bundle_sha256": "sha256:82b559704004318144136ac80d78116601341f0cd4a035a02abfcf80769bab16",
   "oracle_bundle_sha256": "sha256:b85bcdf19b9cd68c792afdc506db4ba0780d4d16198a2cd115f944f0a5a7bea0",
@@ -170,13 +170,13 @@
   },
   "readiness": {
     "offline_tests": {
-      "required": "tmp/a06-preparation-01/junit.xml",
+      "required": "tmp/a06-preparation-01/junit-refreeze.xml",
       "status": "passed_current_source",
-      "passed": 2586,
+      "passed": 2602,
       "skipped": 1,
       "warnings": 8,
       "actual_exit_code": 0,
-      "junit_sha256": "sha256:befecf80b202440df4fb71aec4a3ccda40673a371fe9f9fa56ccefe06e463588"
+      "junit_sha256": "sha256:6caa6bd99b5d86979d0176c703a1046b624c1b3942dfa7e22a6dce8ccd046500"
     },
     "resilience_plan": "docs/superpowers/plans/2026-09-05-matrix-resilience.md",
     "systemic_review": "docs/audit/2026-09-01-matrix-a01-a04-systemic-root-cause-review-02.md",
@@ -185,6 +185,7 @@
     "browser_audit": "tmp/a04-post-repair-browser-01/audit.json",
     "a05r2_execution_outcome": "Authorized and executed 2026-09-05: M01 closed complete with 16 real case calls; M02 closed by provider_request_failed (BadRequestError, 1 real call, 2 locally blocked attempts) and the then-current all-stop rule halted the batch before M03-M06. No unknown consumption, no resume attempt. This motivated the matrix-resilience overhaul: error taxonomy with structured detail, bounded guard retry policy, tiered batch stop, resume batches, versioned oracles, replay library, run_batch orchestration and fault-injection regression.",
     "real_provider_calls_during_freeze": 0,
+    "refreeze_note": "Supersedes the pre-authorization freeze at commit d7ae06a after the final-review fix wave d7ae06a..1cd3227 changed the release source digest. The superseded batch was never authorized and made zero calls; this re-freeze carries the identical content rules.",
     "current_real_provider_acceptance": "not_started_for_a06_not_authorized",
     "known_open_findings": [
       {
