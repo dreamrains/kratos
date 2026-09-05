@@ -39,7 +39,10 @@ class RunStates:
             state = self._active.get(sid) or self._read(sid)
             if state.get("status") in ACTIVE and sid not in self._active:
                 # Snapshot after a server restart must never claim success.
-                return {**state, "status": "unknown", "reason": "runtime_restarted"}
+                # The owning runtime is gone: heal the stale file too, or the
+                # disk keeps claiming "running" forever (the process died
+                # mid-turn) and misleads any file-level reader.
+                return dict(self._write(sid, {**state, "status": "unknown", "reason": "runtime_restarted"}))
             return dict(state)
 
     def begin(self, sid, turn_id):
