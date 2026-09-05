@@ -1,0 +1,30 @@
+{
+ "case": "M01",
+ "batch": "real-provider-browser-matrix-a04-diag",
+ "turns": [
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_4yWnJUXgSa4v4inEN1yP9779_detail.json",
+    "offset": 0,
+    "content": "{\n  \"method_contract\": \"analysis_method_result.v1\",\n  \"method\": \"curve_family_comparison\",\n  \"status\": \"supported\",\n  \"reason_code\": \"curve_described\",\n  \"data_identity\": {\n    \"version_id\": \"dv_569de",
+    "next_offset": 2000,
+    "total_chars": 6217,
+    "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
+   }
+  },
+  {
+   "tool": "read_file",
+   "structured_result": {
+    "schema_version": "file_page.v1",
+    "path": "tool_outputs/call_00_4yWnJUXgSa4v4inEN1yP9779_detail.json",
+    "offset": 2000,
+    "content": "   \"n_observed\": 62,\n      \"n_excluded_zeros\": 0,\n      \"column\": \"21天后\"\n    },\n    {\n      \"x\": 30.0,\n      \"y\": 0.014166071428571427,\n      \"n_observed\": 56,\n      \"n_excluded_zeros\": 6,\n      \"colu",
+    "next_offset": 4000,
+    "total_chars": 6217,
+    "sha256": "cf01291d0121cd15798689852ec1b79689e107d47ad3336571b31901eb996807"
+   }
+  }
+ ]
+}
