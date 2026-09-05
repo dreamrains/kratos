@@ -353,3 +353,10 @@ def test_two_same_then_different_does_not_stop():
         _closed("M03", error_class="unclassified"),
     ]
     assert batch_stop_reason(records) is None
+
+
+def test_global_fatal_set_is_the_shared_taxonomy_definition():
+    from scripts.acceptance.provider_error_taxonomy import GLOBAL_FATAL_CLASSES
+
+    assert batch._GLOBAL_FATAL_CLASSES is GLOBAL_FATAL_CLASSES
+    assert batch._GLOBAL_FATAL_CLASSES == frozenset({"quota_exhausted", "credential_invalid"})

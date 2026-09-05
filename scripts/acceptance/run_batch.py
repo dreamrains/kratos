@@ -73,6 +73,11 @@ def _direct_child_interpreter() -> tuple[str, dict[str, str]]:
 def run_probe(root: Path, *, model: str, api_base: str, api_key: str, receipt_path: Path,
               completion=None, backoff_seconds: float = 5.0) -> dict:
     root = root.resolve()
+    receipt_path = Path(receipt_path)
+    if receipt_path.exists():
+        # Prior probe evidence must never be silently replaced: overwriting
+        # would hide a previous run's consumption behind a fresh receipt.
+        raise FileExistsError(f"probe receipt already exists, refusing to overwrite: {receipt_path}")
     if completion is None:
         os.environ.setdefault("DATA_AGENT_API_BASE", api_base)
         os.environ.setdefault("DATA_AGENT_API_KEY", api_key)
@@ -88,7 +93,10 @@ def run_probe(root: Path, *, model: str, api_base: str, api_key: str, receipt_pa
         guard.completion(model=model, max_tokens=16, stream=False,
                          messages=[{"role": "user", "content": "ping"}], api_base=api_base,
                          api_key=api_key)
-    except BaseException as exc:  # probe failures are data, not crashes
+    except Exception as exc:
+        # Probe failures are data, not crashes.  Only ordinary exceptions are
+        # classified: KeyboardInterrupt / SystemExit must propagate so the
+        # operator can still interrupt an authorized batch.
         error_class = classify_provider_error(exc)
         return {"ok": False, "error_class": error_class,
                 "global_fatal": error_class in GLOBAL_FATAL_CLASSES}

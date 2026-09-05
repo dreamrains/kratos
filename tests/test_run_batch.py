@@ -61,6 +61,28 @@ def test_probe_success_returns_ok(tmp_path, monkeypatch):
     assert saved["calls"][0]["status"] == "completed"
 
 
+def test_probe_lets_keyboard_interrupt_propagate(tmp_path, monkeypatch):
+    receipt = _probe_env(monkeypatch, tmp_path)
+
+    def interrupted(**kwargs):
+        raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        run_probe(tmp_path, model="provider/model", api_base="https://example.invalid/v1",
+                  api_key="sk-test", receipt_path=receipt,
+                  completion=interrupted, backoff_seconds=0.0)
+
+
+def test_probe_refuses_to_silently_overwrite_prior_receipt(tmp_path, monkeypatch):
+    receipt = _probe_env(monkeypatch, tmp_path)
+    receipt.write_text('{"prior": true}', encoding="utf-8")
+    with pytest.raises(FileExistsError, match="probe receipt already exists"):
+        run_probe(tmp_path, model="provider/model", api_base="https://example.invalid/v1",
+                  api_key="sk-test", receipt_path=receipt,
+                  completion=_ProbeCompletion([]), backoff_seconds=0.0)
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {"prior": True}
+
+
 def _frozen_batch(tmp_path, monkeypatch):
     """Task 5 fixture pattern: one fully verifiable six-case batch under tmp_path."""
     from scripts.acceptance.real_provider_browser_server import (

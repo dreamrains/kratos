@@ -20,6 +20,7 @@ from scripts.acceptance.real_provider_browser_server import (
     _canonical_json_hash, _normalized_file_hash, _sha256_bytes,
     run_authorized_browser_server,
 )
+from scripts.acceptance.provider_error_taxonomy import GLOBAL_FATAL_CLASSES as _GLOBAL_FATAL_CLASSES
 from scripts.acceptance.release_source import release_source_digest
 from scripts.acceptance.strict_provider_guard import require_network_enabled_execution
 
@@ -249,7 +250,10 @@ def _locally_terminal(call, receipt):
     return call["status"] in {"completed", "failed"}
 
 
-_GLOBAL_FATAL_CLASSES = frozenset({"quota_exhausted", "credential_invalid"})
+# The single source of truth for global-fatal error classes is
+# provider_error_taxonomy.GLOBAL_FATAL_CLASSES; it is imported above under its
+# module-level alias so resume_batch's import keeps working and the two names
+# can never drift apart.
 
 
 def batch_stop_reason(closed_records: list[dict]) -> str | None:
