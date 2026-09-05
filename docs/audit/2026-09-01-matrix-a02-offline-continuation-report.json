@@ -1,0 +1,219 @@
+{
+  "schema_version": "a02_offline_continuation.v1",
+  "recorded_at": "2026-08-31T16:19:04.255752+00:00",
+  "status": "m06_and_fault_journeys_completed_remaining_gates_open",
+  "previous_report": "docs/audit/2026-08-31-matrix-a02-offline-repair-report.md",
+  "source": {
+    "digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+    "count": 375,
+    "head": "3b271d7cdf7d4bafaafb0ade8d7bba69baf777d6",
+    "staged": [],
+    "changed_since_previous_offline_report": []
+  },
+  "provider_calls": 0,
+  "git_writes": 0,
+  "deployment": false,
+  "source_modified_in_this_continuation": false,
+  "offline_suite": {
+    "junit": "tmp/a02-regression-13/junit.xml",
+    "passed": 2512,
+    "skipped": 1,
+    "warnings": 8,
+    "seconds": 192.47,
+    "observed_exit_code": 0,
+    "rerun_in_this_continuation": false,
+    "source_reverified_unchanged": true
+  },
+  "browser_cases": [
+    {
+      "case": "M01",
+      "run_dir": "tmp/a02-browser-02/M01",
+      "session_id": "31e0c73e788e",
+      "analysis_turns": 1,
+      "normal_scripted_calls": 12,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M01-03.json",
+      "artifact_checks_passed": 23,
+      "datasets_restored": 2,
+      "evidence_records": 1,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    },
+    {
+      "case": "M02",
+      "run_dir": "tmp/a02-browser-02/M02",
+      "session_id": "0520b6b3b197",
+      "analysis_turns": 2,
+      "normal_scripted_calls": 13,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M02-03.json",
+      "artifact_checks_passed": 37,
+      "datasets_restored": 7,
+      "evidence_records": 1,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    },
+    {
+      "case": "M03",
+      "run_dir": "tmp/a02-browser-02/M03",
+      "session_id": "115d7149bb49",
+      "analysis_turns": 1,
+      "normal_scripted_calls": 10,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M03-03.json",
+      "artifact_checks_passed": 29,
+      "datasets_restored": 5,
+      "evidence_records": 1,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    },
+    {
+      "case": "M04",
+      "run_dir": "tmp/a02-browser-02/M04",
+      "session_id": "870a241eac13",
+      "analysis_turns": 1,
+      "normal_scripted_calls": 11,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M04-03.json",
+      "artifact_checks_passed": 26,
+      "datasets_restored": 4,
+      "evidence_records": 1,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    },
+    {
+      "case": "M05",
+      "run_dir": "tmp/a02-browser-02/M05",
+      "session_id": "1df9a24ea419",
+      "analysis_turns": 1,
+      "normal_scripted_calls": 7,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M05-03.json",
+      "artifact_checks_passed": 23,
+      "datasets_restored": 2,
+      "evidence_records": 1,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    },
+    {
+      "case": "M06",
+      "run_dir": "tmp/a02-browser-03/M06",
+      "session_id": "896a00cf5480",
+      "analysis_turns": 3,
+      "normal_scripted_calls": 21,
+      "artifact_audit": "tmp/a02-offline-repair-01/browser-audit-M06-03.json",
+      "artifact_checks_passed": 43,
+      "datasets_restored": 7,
+      "evidence_records": 3,
+      "exports": 4,
+      "normal_refresh_switch_export": "completed",
+      "whole_case_acceptance": "not_claimed"
+    }
+  ],
+  "normal_analysis_turns": 9,
+  "normal_scripted_calls": 74,
+  "scripted_calls_in_selected_evidence": {
+    "completed": 81,
+    "failed": 1,
+    "cancelled": 1
+  },
+  "scripted_calls_total": 83,
+  "fault_journeys": {
+    "failure": {
+      "session_id": "90cdf9719cd6",
+      "run_dir": "tmp/a02-browser-03/M06",
+      "run_state": {
+        "turn_id": "t_33f9a8",
+        "status": "failed",
+        "notice": "**执行失败：** LLM 请求失败（provider_request_failed）",
+        "session_id": "90cdf9719cd6",
+        "updated_at": "2026-08-31T16:08:56.039890+00:00"
+      },
+      "refresh_and_md_export": "passed"
+    },
+    "cancel": {
+      "session_id": "b7a56a6d3696",
+      "run_dir": "tmp/a02-browser-03/cancellation/M05",
+      "run_state": {
+        "turn_id": "t_02ba10",
+        "status": "cancelled",
+        "notice": "**已停止：** 本轮执行已取消，未完成的分析不代表有效结论。",
+        "session_id": "b7a56a6d3696",
+        "updated_at": "2026-08-31T16:14:05.801467+00:00"
+      },
+      "action": "Supported visible-DOM stop button click; server logged POST /api/chat/interrupt 200",
+      "refresh_and_md_export": "passed",
+      "native_confirmation_rendering": "not separately captured"
+    },
+    "historical_cancel_attempt": {
+      "session_id": "16c22b174636",
+      "status": "natural_completion_not_cancel_pass",
+      "preserved": true
+    }
+  },
+  "artifacts": {
+    "checks_passed": 181,
+    "datasets_restored": 27,
+    "evidence_records": 8,
+    "normal_exports": 24,
+    "reconstruction_session_files_unchanged": true
+  },
+  "exit_proof": {
+    "captured_at": "2026-09-01T00:19:01.4122819+08:00",
+    "processes": [
+      {
+        "run_dir": "tmp/a02-browser-03/M06",
+        "pid": 44004,
+        "process_exists": false,
+        "observed_exit_code": 0
+      },
+      {
+        "run_dir": "tmp/a02-browser-03/cancellation/M05",
+        "pid": 38120,
+        "process_exists": false,
+        "observed_exit_code": 0
+      }
+    ],
+    "port_8767_listener_count": 0
+  },
+  "integrity": {
+    "original_a02_files": 518,
+    "original_a02_mismatches": [],
+    "authoritative_files": 22,
+    "authoritative_mismatches": []
+  },
+  "remaining_gates": [
+    {
+      "id": "F10-static",
+      "status": "open",
+      "detail": "M02 original whole-conversation MD still lacks both PNGs and explicitly discloses both. Offline later rendering is not initial-export success."
+    },
+    {
+      "id": "F08-real-shutdown",
+      "status": "open",
+      "detail": "Historical real M05 process hang root cause remains unproven; scripted graceful shutdown and 26-child offline probe do not establish it."
+    },
+    {
+      "id": "F09-semantics",
+      "status": "partial",
+      "detail": "Bounded publication checks are not a general narrative correctness proof; fresh real-model semantic oracle remains required."
+    },
+    {
+      "id": "MD-browser-preview",
+      "status": "blocked_historical",
+      "detail": "No new MD preview claim; prior ERR_BLOCKED_BY_CLIENT retained. New M06 MD files verified on disk."
+    },
+    {
+      "id": "real-provider",
+      "status": "not_authorized",
+      "detail": "A02 ended failed; prior authorization consumed. No continuation or supplementary real calls."
+    }
+  ],
+  "next_steps": [
+    "Keep current source and old evidence unchanged while diagnosing the M02 first static-render failure and historical shutdown gap offline.",
+    "If source changes, invalidate this source-bound proof and rerun the full offline suite and six-case scripted browser matrix.",
+    "Only after remaining prerequisites close, prepare a fresh exact freeze and request new real Provider authorization; do not assume the old model or 216-call budget.",
+    "Git writes, push and deployment remain prohibited."
+  ],
+  "inventory": "docs/audit/2026-09-01-matrix-a02-offline-continuation-inventory.json"
+}

@@ -1,0 +1,776 @@
+{
+  "schema_version": "a02_offline_continuation_inventory.v1",
+  "recorded_at": "2026-08-31T16:19:04.158365+00:00",
+  "source": {
+    "digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+    "count": 375,
+    "head": "3b271d7cdf7d4bafaafb0ade8d7bba69baf777d6",
+    "staged": [],
+    "changed_since_previous_offline_report": []
+  },
+  "previous_implementation_inventory": "docs/audit/2026-08-31-matrix-a02-offline-repair-inventory.json",
+  "original_evidence_integrity": {
+    "original_a02_files": 518,
+    "original_a02_mismatches": [],
+    "authoritative_files": 22,
+    "authoritative_mismatches": []
+  },
+  "files": [
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:58f923f29958b59a74bcd3f9d060d490a3c1a3b6f0ea1dddda7d3f79e12664df"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-dom.txt",
+      "bytes": 1161,
+      "sha256_raw": "sha256:3e2ef734e4d3c54a6e293f29676654a63707d68fa27190f283bce96c7faf341e"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-exported-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:89446c2cba9f90c06c443a018773e4ff83fbbc990279e4c3ffc93601ee0c2580"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-exported-dom.txt",
+      "bytes": 1161,
+      "sha256_raw": "sha256:3e2ef734e4d3c54a6e293f29676654a63707d68fa27190f283bce96c7faf341e"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-exported.png",
+      "bytes": 15362,
+      "sha256_raw": "sha256:b4752d6112e84c141147e37f81b1bee4ea6244806fbded2fd4b973cf3da1af52"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-refreshed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:ef103856bf7cefbb7266e46682cbe26ec9aaa86d008a276e256532d1d91fafff"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-refreshed-dom.txt",
+      "bytes": 1164,
+      "sha256_raw": "sha256:324afc61571b44145e791644dfc5609181e8a199a3058aa9fc55d8950d8752dc"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled-refreshed.png",
+      "bytes": 15367,
+      "sha256_raw": "sha256:1a0f00b6f7480188bc443340d089f15e769493f79991a2230f66c91e852a081d"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/cancelled.png",
+      "bytes": 15362,
+      "sha256_raw": "sha256:b4752d6112e84c141147e37f81b1bee4ea6244806fbded2fd4b973cf3da1af52"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/manifest.json",
+      "bytes": 179,
+      "sha256_raw": "sha256:e9f2b7c12f4cb4faaccbcf1c7cbc93c260ed6817b8bdc30d88de5c32a453aab5"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/scripted-requests.json",
+      "bytes": 456,
+      "sha256_raw": "sha256:8b21e261c67017ea4c316eefa5ecd37644afc50a419cb29984e9d62e32902870"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/server.log",
+      "bytes": 2120,
+      "sha256_raw": "sha256:054707123b1e03652e0d5e1eaaf98674b1ae3aa27f5d25fdf70c4718c40abdcd"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/analysis_state.json",
+      "bytes": 2670,
+      "sha256_raw": "sha256:d5400c7bcea52ab1cd8ea6ff72a51536aded50545a10cc9156694f3e1b155904"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/artifacts.json",
+      "bytes": 239,
+      "sha256_raw": "sha256:63464a6656d488d516c06639938546bbdca2a850ae2f768d241b1184a0e0414f"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/confirmations/snapshot.json",
+      "bytes": 136,
+      "sha256_raw": "sha256:8b05d3c4f07419ec959ab89ac0685c02f5d63a265fcedc13711a97acd0cd61a2"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/conversation.json",
+      "bytes": 271,
+      "sha256_raw": "sha256:fea89fe189dfea29f423f9f84603d944707a8a34b2619732c6f8ef4e3d009881"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/meta.json",
+      "bytes": 236,
+      "sha256_raw": "sha256:8b9c377f805ddb66531e962171544ef53689a9d5fb5eb334f5b4168808ccc777"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/reports/conversation_Assistant_Reply_20260901_001441_082366_3815f4f1.md",
+      "bytes": 150,
+      "sha256_raw": "sha256:2274b3ff1ec553ad15c6059cfa527272867227a412f8f18d0f43f334dd84d735"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/sessions/b7a56a6d3696/run_state.json",
+      "bytes": 223,
+      "sha256_raw": "sha256:7619aff3200054a33042c3fb660c67eb131ba4b777d7486ce6e6b51556a5dab5"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/shutdown.json",
+      "bytes": 151,
+      "sha256_raw": "sha256:2672d431afc154770616673b7bffd3dd316f046e5f7adf60cfb9fad214ad4327"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/workspace/knowledge/knowledge.sqlite3",
+      "bytes": 53248,
+      "sha256_raw": "sha256:381c79c079a1ef9bb1e0385cf707b43eea330836484953f542f3e5e6ca6001df"
+    },
+    {
+      "path": "tmp/a02-browser-03/cancellation/M05/workspace/knowledge/project_rules.md",
+      "bytes": 410,
+      "sha256_raw": "sha256:30635f0d0f60f8a645d3b6b12186d3588a731a8eef91a8d569cb5de913645bb1"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/completed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:60f8f104923c1c2c3faca3edc948249f4a2320b5faf05c3914a2839cc0eafb57"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/completed-dom.txt",
+      "bytes": 12239,
+      "sha256_raw": "sha256:5f4a102cd865b9796a034b815bd01a01eddce62cb706d8d0f26f8868fd4e16f0"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/completed.png",
+      "bytes": 23764,
+      "sha256_raw": "sha256:7466c17c262e1796205a4006ad26930962e56eb928630ad9e9a68cc815fc3138"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/exports-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:20f980cd3f2962dad196795335785b5f0e2ed81295ea46ec4d17f6d47e98920a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/exports-dom.txt",
+      "bytes": 14025,
+      "sha256_raw": "sha256:774931901d18633014a5f1db832e9e242d4dca0599a5c9297741721b33ebfd6e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/exports.png",
+      "bytes": 26135,
+      "sha256_raw": "sha256:11165df2f67addd617b02d7297d787b70313b47658c4179834b86d5093496d62"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-completed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:83fc9ca706f9cc2e406aebd43fa10baaff5d81d310690a80785016ec7e8021e6"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-completed-dom.txt",
+      "bytes": 1454,
+      "sha256_raw": "sha256:057043c62d6c4632ad04014e114da0a424c3156a9e705041b47733a8fde93dee"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-completed.png",
+      "bytes": 16270,
+      "sha256_raw": "sha256:c8a17335c35684900412a7ebc9a600e61eb99a7bf67c0ee0bb4ef064d2615cce"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-exported-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:5c48bc1152c258c0074cb2a9a7d5196113e49d257b11a02b257999ebf361f818"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-exported-dom.txt",
+      "bytes": 1454,
+      "sha256_raw": "sha256:057043c62d6c4632ad04014e114da0a424c3156a9e705041b47733a8fde93dee"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-exported.png",
+      "bytes": 16270,
+      "sha256_raw": "sha256:c8a17335c35684900412a7ebc9a600e61eb99a7bf67c0ee0bb4ef064d2615cce"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-refreshed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:7fe1e6585d01f613566b63c9378e8727c3f72946572102aecd53f0d6d0c44198"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-refreshed-dom.txt",
+      "bytes": 1454,
+      "sha256_raw": "sha256:057043c62d6c4632ad04014e114da0a424c3156a9e705041b47733a8fde93dee"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/failure-refreshed.png",
+      "bytes": 16280,
+      "sha256_raw": "sha256:cda6786dd029f202e4c78110244de0f845e6d54be160f7adab565258b4e510a9"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/manifest.json",
+      "bytes": 179,
+      "sha256_raw": "sha256:1a0ed385ceed1345c386fc97ca1177bae49789b4f5f37a4152339b8b2d4d93ab"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/refreshed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:d9e16612309ce30879b57feda24df68e88ad9d2bfa0acd95731d0cc314c3934e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/refreshed-dom.txt",
+      "bytes": 11992,
+      "sha256_raw": "sha256:b0bec28570d4bbcc3a622fe7e4ffcfef1b72681f27383b9da7d32d48202653c4"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/refreshed.png",
+      "bytes": 22817,
+      "sha256_raw": "sha256:3a1c54000323021064e420aef65a436bc25c210fde9bf82f57e7057c6b6c3c00"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/scripted-requests.json",
+      "bytes": 3646,
+      "sha256_raw": "sha256:91c0192b7f5a575582d1fab07be5eeb2a0ba9c31ad60b60e4fb6e737b13ce1e9"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/server.log",
+      "bytes": 46787,
+      "sha256_raw": "sha256:d7b7abccdf63c46bbb96b430b6eaa3023af9250f14f136e16d5080e6b1bc4c18"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analyses/ana_20260901_000707_1dbc.json",
+      "bytes": 997,
+      "sha256_raw": "sha256:13735b071b19d920f6364b0921c6d457808934605155e736e6ccb13cf79ec094"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analyses/ana_20260901_000727_a877.json",
+      "bytes": 1013,
+      "sha256_raw": "sha256:705c5d0d1cd49d51f3ef62eae50b0ecc6286aa1d60feb0850db8c068f67734e1"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analyses/ana_20260901_000748_46ea.json",
+      "bytes": 1204,
+      "sha256_raw": "sha256:6ef574bf646c889b5c60e5ca88e366b17a938cb25a5922029a6af630fdf04504"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analysis_flow/af_097678f8a693a0a804a020e8be906b248ed61cc9.json",
+      "bytes": 5104,
+      "sha256_raw": "sha256:068cec4b560e7baa05b40cb08c53523f9e59e2fcbd76bffb92174c9fdb5b2f34"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analysis_flow/af_7e3d0f8be5cfa9d33c3d04b2f25d8ce875223ea6.json",
+      "bytes": 3837,
+      "sha256_raw": "sha256:08486e0000d42b96a878f2b8728b1fb4f60725698ecf54116403b562054fd65a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analysis_flow/af_d5f2d1548e9744b1181bd83036535794054c5b00.json",
+      "bytes": 5695,
+      "sha256_raw": "sha256:af065a60be781e552965fad4559214d3b4333162b9138038420a1095d6b200c5"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/analysis_state.json",
+      "bytes": 111576,
+      "sha256_raw": "sha256:35e9dec582611adcfd85c7af6d4a60979400c24dbe653d0cac64c91c352d0436"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/artifacts.json",
+      "bytes": 2195,
+      "sha256_raw": "sha256:9a386faa0144d4d085fe3dd2a61fd4279f4e7c3ca429c7e3b2428053117dd1aa"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/券状态分布（计数单位：券张数）_a5bf6f.html",
+      "bytes": 7838,
+      "sha256_raw": "sha256:c29f339a64cdb5073cdfd8aac7b0996602c604d261d20879a719de3a078e4da6"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/券状态分布（计数单位：券张数）_a5bf6f.json",
+      "bytes": 22161,
+      "sha256_raw": "sha256:7e1bd2295fd75cfadf66a0f9481853845cbf561709e086767f27a9381ff2902a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/券状态分布（计数单位：券张数）_a5bf6f.png",
+      "bytes": 45975,
+      "sha256_raw": "sha256:adfa52564fad6ef711d59d1cbd4145cab5ed4db84878bbdf6643a0d7b30306d5"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/首次观测付费_cohort（右截断）_bf7e1f.html",
+      "bytes": 7841,
+      "sha256_raw": "sha256:26e3bda16e9e5dee089d0a1ac011f81888c6dea312b8c5170bae74144a24e82c"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/首次观测付费_cohort（右截断）_bf7e1f.json",
+      "bytes": 21567,
+      "sha256_raw": "sha256:eab47b0666f75d2cbe54b105d38719800650fafe34239dd47310082e95279f02"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/charts/首次观测付费_cohort（右截断）_bf7e1f.png",
+      "bytes": 49139,
+      "sha256_raw": "sha256:379dcd51945eadb4de995504ad7b3257358c3c6c79745d7ade7d9080f6dc22b5"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/confirmations/snapshot.json",
+      "bytes": 136,
+      "sha256_raw": "sha256:2718b04915f4c72f17fdd11b667b0c05e3065d96f5e6e543ccbcb8b10684345d"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/conversation.json",
+      "bytes": 29809,
+      "sha256_raw": "sha256:3cb6abc16297795b5121e714ce650e1098e53025314160d85218244a99a4bbc6"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/voucher_status_counts.pkl",
+      "bytes": 949,
+      "sha256_raw": "sha256:03861e637768bdcdde1b80e9d60dc081eb700df5580d83739e536c60723b5b5a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡0201到0510购卡用户付费数据.pkl",
+      "bytes": 909292,
+      "sha256_raw": "sha256:eba84823f272544d7237162285603e59d8642497fcf6e6a69948cb4dbe07009a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡0201到0510购卡用户付费数据__raw.pkl",
+      "bytes": 909292,
+      "sha256_raw": "sha256:eba84823f272544d7237162285603e59d8642497fcf6e6a69948cb4dbe07009a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡代金券明细订单.pkl",
+      "bytes": 73669,
+      "sha256_raw": "sha256:2108e0c569f7ab09b4055d03fba4772caff5b1a427eea57c24f788dd2ebf48a8"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡代金券明细订单__raw.pkl",
+      "bytes": 120316,
+      "sha256_raw": "sha256:9932df449354c378253e9b595ce39bf08da5df9a658f54ce4109d6d4acc8e922"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡订单.pkl",
+      "bytes": 4795,
+      "sha256_raw": "sha256:d3a832892acc98d5bf614f3f885ac3ac34b51a1c9f52ed61082b1203c0e8ed91"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/data/省钱卡订单__raw.pkl",
+      "bytes": 4795,
+      "sha256_raw": "sha256:d3a832892acc98d5bf614f3f885ac3ac34b51a1c9f52ed61082b1203c0e8ed91"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/meta.json",
+      "bytes": 1106,
+      "sha256_raw": "sha256:cb8430bfde7dff9b07c2c2b3c3a1720e42b486479ed1cb83624c71ef15eec087"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/reports/conversation_Assistant_Reply_20260901_000814_907122_19fc023d.html",
+      "bytes": 4858518,
+      "sha256_raw": "sha256:18a5280772adc3f4cfb885c4600dcdaab9a4d9dd376a8684daa1c1d95a5a0a4f"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/reports/conversation_Assistant_Reply_20260901_000815_492313_df493778.md",
+      "bytes": 64178,
+      "sha256_raw": "sha256:5463aeb8947511ee63316d0fe48136414b5512ddbc0c68bb551e5b3cac69ea44"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/reports/conversation_Conversation_Export_20260901_000830_292404_bfab793f.html",
+      "bytes": 4873663,
+      "sha256_raw": "sha256:a567ad7f275333265d811e39b1af9fe049ab2a0fce5e7cef4152e3f1ebdebad2"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/reports/conversation_Conversation_Export_20260901_000830_606032_be8bb6e8.md",
+      "bytes": 136130,
+      "sha256_raw": "sha256:9f8922b6fe59fd42970c4ecc1ee832be0fd490365ab197d7c295edb4d6eaeb56"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/run_state.json",
+      "bytes": 140,
+      "sha256_raw": "sha256:63e904331a5c1693939ad092c38e2dc3edcace44574674fe3fa35e08d947045b"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/hypotheses_0201_0510_period_compare.json",
+      "bytes": 4184,
+      "sha256_raw": "sha256:e0217ec89c6c46919f75363abc7864db91fe1389c2bb4bbda68315e704225c79"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/hypotheses_0201_0510_trend.json",
+      "bytes": 4087,
+      "sha256_raw": "sha256:c454112442baf9ba762f06b1d8107c951af84635882c3d38b45984f5faba212f"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/load_省钱卡0201到0510购卡用户付费数据_detail.json",
+      "bytes": 7080,
+      "sha256_raw": "sha256:a4543a71d11ac1403e3321b67278548d78141475e19d24e5f6f60098d280881f"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/load_省钱卡代金券明细订单_detail.json",
+      "bytes": 6184,
+      "sha256_raw": "sha256:2d546a5c20396bfb0ff2079751ca45e28b91234e2e55f6f27e9520ec846cd86b"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/load_省钱卡订单_detail.json",
+      "bytes": 6385,
+      "sha256_raw": "sha256:e87ad0e79926122f160b1909a251a3b5e541a868487dd97229f20bfeb5bfcc76"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_11_detail.json",
+      "bytes": 1238,
+      "sha256_raw": "sha256:a7f77ed94a3691e44241856c79d15b40fb768d8d553d7f8f0615b58266fddab1"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_12_detail.json",
+      "bytes": 310,
+      "sha256_raw": "sha256:b18178030c79e3f042364e369a959676557c5c44a0ca5a05d73c41c67fb9fe13"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_17_detail.json",
+      "bytes": 1097,
+      "sha256_raw": "sha256:efcf51cf5742da6b4d8f5b785e4ad1234a5c3395cc936aee3ac4323288d1681b"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_18_detail.json",
+      "bytes": 310,
+      "sha256_raw": "sha256:3514ec581f64da9e31bb7db385ab53a45b70fba9f13f577ad838f48b18212859"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_19_detail.json",
+      "bytes": 196,
+      "sha256_raw": "sha256:cf495d723a0c4a69d4d139aebbbd23892157ae51fc7a3859dcecc474eb5296ad"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_3_detail.json",
+      "bytes": 75,
+      "sha256_raw": "sha256:65c9fa137f0235ad452aa59e7da50232a82601ca9cc0988892d10a85471cb9d1"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_4_detail.json",
+      "bytes": 949,
+      "sha256_raw": "sha256:e76ec4dbf678ed08e0d2c62627115cc8fb733599a073f41dfb66114ebe7b853e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_5_detail.json",
+      "bytes": 1011,
+      "sha256_raw": "sha256:6adf99721317599a5aff0281560f38e1da26089a0b4e5d770493e3e54bbbee8f"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_6_detail.json",
+      "bytes": 1755,
+      "sha256_raw": "sha256:6414bbec4ce39c789c6307a8b768a8c41e88cae776ddecbbb09c70654c0cd4b4"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/rehearsal_7_detail.json",
+      "bytes": 310,
+      "sha256_raw": "sha256:6a08a444d49759d55117ab27187c17ade8e098b3dd252bc3c445b40377573589"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_cleaning_log_detail.json",
+      "bytes": 1123,
+      "sha256_raw": "sha256:4e45f620429693e0a3c1a47551edd0724c0c3115acba4e8fffb53d478bb0e6f9"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_dataset_contract_detail.json",
+      "bytes": 1453,
+      "sha256_raw": "sha256:e78d41773e3e375c6f8335bebe7e83d2ca4a67b8e3a5d7d79f5bafc910119699"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_preview_digest_detail.json",
+      "bytes": 3431,
+      "sha256_raw": "sha256:52f10efb5e6df5ca562cec2ca8d99b45ffd6dcf049b75066ec1810400c368d15"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_route_cohort_detail.json",
+      "bytes": 930,
+      "sha256_raw": "sha256:35123ad7feeb04956a9d2088904e9b6fc555ca008d3e37da1b76aeb05b4e7629"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_route_correlation_detail.json",
+      "bytes": 935,
+      "sha256_raw": "sha256:cd70d1f29a0127697f0c141c239ef9a415fd2ef6446b7a3276811bff03e70f64"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_route_funnel_detail.json",
+      "bytes": 943,
+      "sha256_raw": "sha256:6295f7e47539f83d8326016a1e4a5007a84ac49dbd3449fadbdb284c6a69443c"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_route_period_compare_detail.json",
+      "bytes": 974,
+      "sha256_raw": "sha256:43f367e3cc2835d5f332284c62c5d24dac5f87ead7b265b1db853e8300038300"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡0201到0510购卡用户付费数据_route_trend_detail.json",
+      "bytes": 952,
+      "sha256_raw": "sha256:9b0b7d761db1388db79b7895f3cd8f3c2e902fa0a2f375c21347e5340b12d8d2"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_cleaning_log_detail.json",
+      "bytes": 1466,
+      "sha256_raw": "sha256:e2c597f769af18c4585f3abdab59df82dd93b5324e7c41740ccb1709f7eaf65f"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_dataset_contract_detail.json",
+      "bytes": 1637,
+      "sha256_raw": "sha256:92335100b1295acfae0be133e397b5023930e2773491fa7e491f96510fb3b48e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_preview_digest_detail.json",
+      "bytes": 5212,
+      "sha256_raw": "sha256:f4c98b9ac7b0e398668a555f71750a7419263105c89d84eb22f17d25db60bccc"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_cohort_detail.json",
+      "bytes": 1066,
+      "sha256_raw": "sha256:2eeb484d3e95e2c091d95f07c7c62f8c43d5f1489bc78895ebca383ca62577f0"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_correlation_detail.json",
+      "bytes": 1071,
+      "sha256_raw": "sha256:a3ac7df17994533d38e954f791609d9dac91bc38a0b0962a56cf55f9e16e012b"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_dimension_decomposition_detail.json",
+      "bytes": 1114,
+      "sha256_raw": "sha256:79f042839985074e6af9b346361f948b8dd658ca555dfa21c688f2903244f521"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_funnel_detail.json",
+      "bytes": 1079,
+      "sha256_raw": "sha256:b4b05dd6879ade83b6e7550a8fca827b4903085d36a4b611325b95a6f7c3826d"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_period_compare_detail.json",
+      "bytes": 1110,
+      "sha256_raw": "sha256:f29e76d58a65a44197b42e724d693cdfd9c1e1361928442fce43baabbd78be24"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡代金券明细订单_route_trend_detail.json",
+      "bytes": 1088,
+      "sha256_raw": "sha256:c5b789228d29319cd9adc9f8aeffa25b7b9c1f12f75544995a12931abb8763b1"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_cleaning_log_detail.json",
+      "bytes": 1348,
+      "sha256_raw": "sha256:7713d960d2e7f1271f5aa356c6cd628189664f6ec70cab901dde015cbbeabd98"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_dataset_contract_detail.json",
+      "bytes": 1158,
+      "sha256_raw": "sha256:5c477ed11fb7fe0454484b82c028b9cb0485159b90ad417eb089a3298db0d525"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_preview_digest_detail.json",
+      "bytes": 2827,
+      "sha256_raw": "sha256:c31eef2e16f3b9d2bba312c570c42598d017c7d10703ac1d16c4b97593a2ce89"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_route_cohort_detail.json",
+      "bytes": 797,
+      "sha256_raw": "sha256:b1128ae77ff93f936b6a9c0e075dc39e1164a266348d9e680434d0ea930eebeb"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_route_dimension_decomposition_detail.json",
+      "bytes": 845,
+      "sha256_raw": "sha256:c46cb82258ec39bc1197f134c019e83ccfedb3e08a2ec0cea7332cba8093bd59"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_route_funnel_detail.json",
+      "bytes": 810,
+      "sha256_raw": "sha256:11034a368063e8167f868b12eb20f4dca0a35e345e455b6e1328f9037e764886"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_route_period_compare_detail.json",
+      "bytes": 841,
+      "sha256_raw": "sha256:75348810cb1f2f5370ee3b785ab27cc61f104df3f7192fb6b6e5eccd34eaa364"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/tool_outputs/trust_省钱卡订单_route_trend_detail.json",
+      "bytes": 819,
+      "sha256_raw": "sha256:f031d2c7563629215a8bb83c77c4246a860f517b89dcdb31261e2fc4df8f7551"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/7df9cbe1260c4d8e95a60174786d2381/upload.json",
+      "bytes": 584,
+      "sha256_raw": "sha256:f88b42afffed45cda077fcd1528f257c0419df13630438234d8583127aed0d93"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/7df9cbe1260c4d8e95a60174786d2381/省钱卡0201到0510购卡用户付费数据.xlsx",
+      "bytes": 843465,
+      "sha256_raw": "sha256:cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/a0daddc0c4e24166b355db5f327d22dc/upload.json",
+      "bytes": 555,
+      "sha256_raw": "sha256:d2a78c334ab275dac4e3ca82a507b08cfac4d2f0df4aaa95186ab06e4fba7d5e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/a0daddc0c4e24166b355db5f327d22dc/省钱卡代金券明细订单.xlsx",
+      "bytes": 89611,
+      "sha256_raw": "sha256:cda47a61c8bbbcd6bcf545c485dbeb1eb877e2f0d2ad244613e7c7199c4a5e90"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/daff30ca65a44453a9fff0cb7261a472/upload.json",
+      "bytes": 525,
+      "sha256_raw": "sha256:c3d98c873bcebb7f8a2d455720461831002b7eb2b9bb7a7aca32abc1e3469eef"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/uploads/daff30ca65a44453a9fff0cb7261a472/省钱卡订单.xlsx",
+      "bytes": 13406,
+      "sha256_raw": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/896a00cf5480/workspace_meta.json",
+      "bytes": 6557,
+      "sha256_raw": "sha256:6ba697a4a8b658eeea19e5c0bcdce487e6e0b5ccdacdd3f99529b3976214e0bb"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/analysis_state.json",
+      "bytes": 2666,
+      "sha256_raw": "sha256:e139cb4e3a46f3deaa1beb7e447576620815c056268180a9ab94b95d4e551bc3"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/artifacts.json",
+      "bytes": 239,
+      "sha256_raw": "sha256:72171a1ff1f2529b07ba482622dde9b632e6aa535674bb7c20f2cee642760f7b"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/confirmations/snapshot.json",
+      "bytes": 136,
+      "sha256_raw": "sha256:08ed07dabfe9aff531ac7de81342f4eaef4ef08fc45b641720d6d8702351f085"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/conversation.json",
+      "bytes": 251,
+      "sha256_raw": "sha256:c4318cd261c43700e219f4956211a2106d2083111dd843d9dc316b24823e3f20"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/meta.json",
+      "bytes": 234,
+      "sha256_raw": "sha256:e99853cb190a685b959079db0422d1158e98ddc66cb953a20a38a2db94708008"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/reports/conversation_Assistant_Reply_20260901_000917_004410_487cde68.md",
+      "bytes": 132,
+      "sha256_raw": "sha256:c46c49879bb818ad97699ff863fc315c7302e22cc9be3f244c92c40caca682f5"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/sessions/90cdf9719cd6/run_state.json",
+      "bytes": 202,
+      "sha256_raw": "sha256:362b8dca1ad62d7563decdb45e78fbe16cd53fad80d1a22dd4ed5f0b38f7bbd4"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/shutdown.json",
+      "bytes": 151,
+      "sha256_raw": "sha256:2672d431afc154770616673b7bffd3dd316f046e5f7adf60cfb9fad214ad4327"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/switched-back-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:409293e2e3675d9e4a6d7fe2f405041b9e158ed9b31626fe17bce81d1d4d274d"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/switched-back-dom.txt",
+      "bytes": 12248,
+      "sha256_raw": "sha256:36952287863cf5620b2c5fa321f77089b6ae20250c947e02e2374f766275184a"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/switched-back.png",
+      "bytes": 24003,
+      "sha256_raw": "sha256:ff7b1de46f085ac296ef50e7468c51c95e6d2f0c8aa81f57263a7fa479ec180c"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn1-completed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:480724ee57f36b7d87ee842e3dd14df8747e450119bd89bb41c68bb0cdbd9f59"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn1-completed-dom.txt",
+      "bytes": 5187,
+      "sha256_raw": "sha256:3be304168dfd47437650ac909b30608b8764e182df2bc6b71eb079435ce70966"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn1-completed.png",
+      "bytes": 36801,
+      "sha256_raw": "sha256:f786d93ee07248b43ae8f7416c784590f9dd72414d42566ff040b299b0d91358"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn2-completed-browser.json",
+      "bytes": 113,
+      "sha256_raw": "sha256:163c0db7432da4a3de68ae60e32460959f9c26dba69ed889b25e7cdb8d7069cd"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn2-completed-dom.txt",
+      "bytes": 9606,
+      "sha256_raw": "sha256:e06832bcfbaf3b553ac633e5109e6b1fd09b418ce86329ee09c7ae241526c920"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/turn2-completed.png",
+      "bytes": 31358,
+      "sha256_raw": "sha256:f5669ee22cf6c1268587d0b70a22844be122a77621ffe1ba826ff68885e93e3e"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/workspace/knowledge/knowledge.sqlite3",
+      "bytes": 69632,
+      "sha256_raw": "sha256:357dc89e50cacd2438f21b5d4442238d8da50582c888be3acbfb954d8f8ec9dc"
+    },
+    {
+      "path": "tmp/a02-browser-03/M06/workspace/knowledge/project_rules.md",
+      "bytes": 410,
+      "sha256_raw": "sha256:30635f0d0f60f8a645d3b6b12186d3588a731a8eef91a8d569cb5de913645bb1"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M01-03.json",
+      "bytes": 11386,
+      "sha256_raw": "sha256:00641eaeee50fd2bcb4167e1628b028f7d48e77fbb5c18674a6898a9c3f14ad1"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M02-03.json",
+      "bytes": 14686,
+      "sha256_raw": "sha256:36214c0743f5cb9fcc766365029f649528842e62b9c9d4e51c16472d84305978"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M03-03.json",
+      "bytes": 14178,
+      "sha256_raw": "sha256:4c526e996ec796be42b85e182609e417e49c15be83b2a189363e147c81d71d1c"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M04-03.json",
+      "bytes": 13507,
+      "sha256_raw": "sha256:3012c4cdd87de43ad5c08c00981d0f5dd7f238ecac3316cf0e5c841825374734"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M05-03.json",
+      "bytes": 7265,
+      "sha256_raw": "sha256:c294aca3f2d8f20186f545b5c6646744a0a7e4933ef779fae9a98b511d84470e"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser-audit-M06-03.json",
+      "bytes": 15147,
+      "sha256_raw": "sha256:d6bbd2ad76ac238d63d60b91a60cc7584ce314d3debf5336b143e3509ee3988f"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser03-cancellation.log",
+      "bytes": 10296,
+      "sha256_raw": "sha256:b4a87b8ac89475f198de77c1edda0e2798b8f1ea2982715edf3342cf5a70459b"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser03-exit-proof.json",
+      "bytes": 416,
+      "sha256_raw": "sha256:5c283151983de1054aeecde59b55092636eb5900946948c6a690a19c5b380faf"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/browser03-M06.log",
+      "bytes": 64959,
+      "sha256_raw": "sha256:43c511293af2acd2b880c685d5483a24db5469608ee1f25bbcabd5ac00ae9bad"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/regression13.log",
+      "bytes": 5409,
+      "sha256_raw": "sha256:17350bd9ee8e1b085d75cd7217b407b6c13021972c37b39536ac21d2cfc7cd92"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/repaired-real-projection-final.json",
+      "bytes": 13213,
+      "sha256_raw": "sha256:7ef60c77113aac73a759c7892a78ad26e7a23665098ccc93af4ac8c407fd1485"
+    },
+    {
+      "path": "tmp/a02-offline-repair-01/validate_browser_artifacts.py",
+      "bytes": 11234,
+      "sha256_raw": "sha256:94db85ceb66955ce2e628fd7bf768591a9aea4dafbb4f8db579bb80c908cfb12"
+    },
+    {
+      "path": "tmp/a02-regression-13/junit.xml",
+      "bytes": 348905,
+      "sha256_raw": "sha256:3973e6d1308a362b98400b571ea7a5f4252c2e2742af308a2ffdaf019c7613a8"
+    }
+  ],
+  "permission": "Evidence inventory only; not a git add or Provider authorization list"
+}

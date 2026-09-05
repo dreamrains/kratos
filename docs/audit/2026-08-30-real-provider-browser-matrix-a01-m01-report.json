@@ -1,0 +1,423 @@
+{
+  "schema_version": "real_provider_browser_case_report.v1",
+  "batch_id": "MATRIX-A01",
+  "case_id": "M01",
+  "status": "failed_then_shared_accounting_stop",
+  "source_digest": "sha256:2daab429dbf8d0d874d1aee6486096d81592f76bdcd99cb82163e8b084247d76",
+  "candidate_sha256": "sha256:40135fdca67021f7628001fcf6ac0787f571f99aab057ff0b4eb1444d9eac666",
+  "evidence_class": "real browser + real Provider + real local tools/persistence; incomplete journey, not passed",
+  "model": "openai/deepseek-v4-flash",
+  "browser_observations": {
+    "session_id": "4eab4ced6121",
+    "pid": 5648,
+    "exec_session_id": 85879,
+    "viewport": [
+      1440,
+      1000
+    ],
+    "static_asset_version": "b4f3a7ba19882fc0",
+    "upload_id": "1e24fbc997a240dabfb36206e6fdaa99",
+    "upload_sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+    "claimed_at": "2026-08-30T05:23:10.270053Z",
+    "loaded_at": "2026-08-30T05:23:10.605504Z",
+    "first_provider_at": "2026-08-30T05:23:10.637013Z",
+    "loaded_shape": [
+      62,
+      13
+    ],
+    "prompt_submissions": 1,
+    "method_confirmation_submissions": 1,
+    "initial_console": [],
+    "root_before": [
+      1000,
+      1000
+    ],
+    "root_while_confirmation": [
+      1000,
+      1000
+    ],
+    "composer_disabled_initial_generation": true,
+    "composer_disabled_confirmation": true,
+    "composer_disabled_resume": true,
+    "friendly_confirmation_live": true,
+    "upload_binding_before_provider": true
+  },
+  "provider": {
+    "calls": 22,
+    "completed": 21,
+    "failed": 0,
+    "unfinished_status": 1,
+    "unknown_terminal_ordinals": [
+      22
+    ],
+    "blocked_attempts": 0,
+    "call_cap": 32,
+    "main_calls": 20,
+    "main_max_tokens": [
+      8000
+    ],
+    "auxiliary_calls": 2,
+    "auxiliary_max_tokens": [
+      300
+    ],
+    "temperature": 0,
+    "timeout_seconds": 120,
+    "num_retries": 0,
+    "policy_enforced_by_frozen_guard": true,
+    "escalations": 0,
+    "model_switches": 0,
+    "stream_sync_fallbacks": 0,
+    "receipt_path": "tmp/real-provider-browser-matrix-a01/M01/provider-calls.json",
+    "receipt_sha256": "sha256:d7edfa9b136d621c9a8a30163e363f7d9bdb6d921841f50b9c853daf6bf2c995",
+    "consumption_interpretation": "22 admitted/started Provider attempts count against the cap, not 21. One stream has no terminal receipt. This is not a claim about provider-side billing or confirmed successful response count."
+  },
+  "timeline": [
+    {
+      "at": "2026-08-30T05:20:09.779005Z",
+      "event": "single-use M01 start marker persisted, pid 5648"
+    },
+    {
+      "at": "2026-08-30T05:23:10.270053Z",
+      "event": "opaque uploaded ticket claimed by 4eab4ced6121"
+    },
+    {
+      "at": "2026-08-30T05:23:10.605504Z",
+      "event": "raw and analysis datasets loaded, original hash matches"
+    },
+    {
+      "at": "2026-08-30T05:23:10.637013Z",
+      "event": "first real auxiliary call begins after upload load"
+    },
+    {
+      "at": "2026-08-30T05:23:16.902584Z",
+      "event": "expected method_confirmation; only confirm_method chosen"
+    },
+    {
+      "at": "2026-08-30T05:23:54.139816Z",
+      "event": "first main streamed call after browser confirmation"
+    },
+    {
+      "at": "2026-08-30T05:25:13Z",
+      "event": "first chart validation failure and evidence missing_tool_receipt failure; reachable analysis/chart steps continued"
+    },
+    {
+      "at": "2026-08-30T05:25:26Z",
+      "event": "first chart created; later second duplicate chart also created"
+    },
+    {
+      "at": "2026-08-30T05:26:48.897553Z",
+      "event": "Provider ordinal22 begins"
+    },
+    {
+      "at": "2026-08-30T05:26:51Z",
+      "event": "browser stop control submitted after persistent evidence-write blocker; no extra prompt or confirmation sent"
+    },
+    {
+      "at": "2026-08-30T05:27:40.294Z",
+      "event": "UI shows Turn interrupted by user, task3/3, no evidence; ordinal22 still started"
+    },
+    {
+      "at": "2026-08-30T05:28:11.663420Z",
+      "event": "server shutdown closes guard; batch finish raises in-flight or unknown Provider consumption; process exits1"
+    }
+  ],
+  "matrix_results": [
+    {
+      "id": "browser_baseline",
+      "status": "passed",
+      "details": "1440x1000 main page, static asset key b4f3a7ba19882fc0 verified against source, console empty"
+    },
+    {
+      "id": "upload_integrity_and_ownership",
+      "status": "passed",
+      "details": "Original SHA and opaque ticket match; loaded 62x13 raw+analysis into the new session before first Provider"
+    },
+    {
+      "id": "normal_generation_composer",
+      "status": "passed",
+      "details": "Disabled during initial generation, confirmation and resumed generation"
+    },
+    {
+      "id": "workbench_session_id",
+      "status": "passed",
+      "details": "Exact session id rather than first user sentence"
+    },
+    {
+      "id": "root_scroll",
+      "status": "passed",
+      "details": "1000 clientHeight / 1000 scrollHeight at recorded baseline, confirmation and stopped state"
+    },
+    {
+      "id": "live_confirmation_projection",
+      "status": "passed",
+      "details": "Friendly confirm_method bubble"
+    },
+    {
+      "id": "file_recovery_question",
+      "status": "passed",
+      "details": "None observed; tool-output file lookup failed but no recovery question was submitted"
+    },
+    {
+      "id": "required_detect_data_quality",
+      "status": "failed",
+      "details": "Not called; describe_dataset and preview_data were used"
+    },
+    {
+      "id": "curve_fitting_tool_numeric_oracle",
+      "status": "passed",
+      "details": "Durable tool detail has a=.18800129, b=-.71667274, R2=.98240474, six excluded zeros"
+    },
+    {
+      "id": "published_chart_numeric_oracle",
+      "status": "failed",
+      "details": "Model could not read advertised tool detail, recomputed means including six D30 zeros and used a=.1917,b=-.7334,R2=.9743; differs from frozen oracle"
+    },
+    {
+      "id": "chart_actual_vs_fit_sequences",
+      "status": "passed",
+      "details": "Real browser standalone artifact DOM has two visible traces and legends power_fit/actual; both visually distinct"
+    },
+    {
+      "id": "chart_duplication",
+      "status": "failed",
+      "details": "Two duplicate-purpose charts generated while trying to satisfy evidence recording"
+    },
+    {
+      "id": "chart_and_tool_contract_errors",
+      "status": "failed",
+      "details": "Unsupported melt; two create_chart validation errors; read_file cannot open advertised detail; run_python import complaints"
+    },
+    {
+      "id": "evidence_recording",
+      "status": "failed",
+      "details": "All eight record_evidence_record calls failed missing_tool_receipt. No verified conclusion was created."
+    },
+    {
+      "id": "completed_answer_and_evidence_projection_timing",
+      "status": "blocked",
+      "details": "Analysis did not complete; stopped at evidence-write blocker. Cannot evaluate immediate/10s/30s completed-answer projection."
+    },
+    {
+      "id": "refresh_recovery",
+      "status": "blocked",
+      "details": "No refresh performed after case stopped; depends on a completed journey"
+    },
+    {
+      "id": "html_export",
+      "status": "blocked",
+      "details": "No export triggered after case stop; zero export/download operations"
+    },
+    {
+      "id": "pre_teardown_console",
+      "status": "passed",
+      "details": "Main and chart warning/error lists empty before server shutdown. Later load-session failure followed shutdown and is not counted as a product failure."
+    },
+    {
+      "id": "provider_terminal_accounting",
+      "status": "failed",
+      "details": "Ordinal22 remains started after browser interrupt and process exit; batch ledger intentionally not patched"
+    },
+    {
+      "id": "safe_process_exit",
+      "status": "passed",
+      "details": "PID5648 confirmed absent after exec exit1; guard receipt terminal_failure acceptance_server_closed"
+    }
+  ],
+  "forensics": {
+    "pid_running": false,
+    "source_digest": "sha256:2daab429dbf8d0d874d1aee6486096d81592f76bdcd99cb82163e8b084247d76",
+    "receipt_sha256": "sha256:d7edfa9b136d621c9a8a30163e363f7d9bdb6d921841f50b9c853daf6bf2c995",
+    "conversation_sha256": "sha256:cb76490b0c0f722e1067f33d8ca604137b8d1b11de8cf40cdd52b21565e14fb2",
+    "guard_counts": {
+      "completed": 21,
+      "started": 1
+    },
+    "blocked_attempts": 0,
+    "tool_counts": {
+      "preview_data": 1,
+      "describe_dataset": 1,
+      "transform_data": 1,
+      "curve_fitting": 1,
+      "run_python": 5,
+      "read_file": 1,
+      "list_files": 2,
+      "create_chart": 4,
+      "record_evidence_record": 8,
+      "get_analysis_summary": 1,
+      "tool_search": 1,
+      "task_list": 1,
+      "analyze_time_series": 1,
+      "task_create": 2,
+      "task_update": 1
+    },
+    "evidence_calls": [
+      {
+        "id": "call_01_V7aVObuArO0sLnDgONo17356",
+        "tool_calls_type": "str",
+        "tool_calls": "curve_fitting, run_python",
+        "confidence": "高"
+      },
+      {
+        "id": "call_00_D85rSaWWaMBPdb8tjaqL9654",
+        "tool_calls_type": "str",
+        "tool_calls": "describe_dataset, preview_data, run_python",
+        "confidence": "高"
+      },
+      {
+        "id": "call_01_DnelYihZaM0QiTfgT1wR9575",
+        "tool_calls_type": "str",
+        "tool_calls": "curve_fitting, run_python, create_chart",
+        "confidence": "高"
+      },
+      {
+        "id": "call_01_UVKkgNbHnxW5Ht8rFOn43322",
+        "tool_calls_type": "str",
+        "tool_calls": "describe_dataset, preview_data, run_python",
+        "confidence": "高"
+      },
+      {
+        "id": "call_02_wWhgJMEeoDQIEbR9Pj8Y1978",
+        "tool_calls_type": "str",
+        "tool_calls": "curve_fitting, run_python, create_chart",
+        "confidence": "高"
+      },
+      {
+        "id": "call_01_XU6y5Ve3BY77z8ohDN5d6758",
+        "tool_calls_type": "str",
+        "tool_calls": "describe_dataset, preview_data, run_python",
+        "confidence": "高"
+      },
+      {
+        "id": "call_01_6ZffVi0KudL44vtLAMjg7363",
+        "tool_calls_type": "str",
+        "tool_calls": "describe_dataset, preview_data, run_python",
+        "confidence": "高"
+      },
+      {
+        "id": "call_01_6CwnqYfDZrarh31DkZmO1353",
+        "tool_calls_type": "str",
+        "tool_calls": "describe_dataset, preview_data, run_python",
+        "confidence": "高"
+      }
+    ],
+    "errors": [
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_00_D85rSaWWaMBPdb8tjaqL9654_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_00_F2aUYqeK5zI6KvB7jSYY6112_detail.json",
+        "error": "invalid chart purpose: 展示实际留存均值与最佳幂律拟合值的对比",
+        "error_type": "chart_validation"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_00_tmsuAvbTbWkiigOkzUWL3759_detail.json",
+        "error": "purpose 'evidence' or 'insight' requires evidence_ids",
+        "error_type": "chart_validation"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_00_UhThCHiZGM3CRem57Tol2846_detail.json",
+        "error": "不支持的 operation: melt",
+        "error_type": null
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_6CwnqYfDZrarh31DkZmO1353_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_6ZffVi0KudL44vtLAMjg7363_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_DnelYihZaM0QiTfgT1wR9575_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_UVKkgNbHnxW5Ht8rFOn43322_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_V7aVObuArO0sLnDgONo17356_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_01_XU6y5Ve3BY77z8ohDN5d6758_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      },
+      {
+        "path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/tool_outputs/call_02_wWhgJMEeoDQIEbR9Pj8Y1978_detail.json",
+        "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
+        "error_type": "missing_tool_receipt"
+      }
+    ],
+    "selected_results": [
+      {
+        "tool": "curve_fitting",
+        "content": "最佳描述曲线: power；有效点 10。 [detail: tool_outputs/call_00_BYDQwAR8SpwKEzCJzTnj4883_detail.json]"
+      },
+      {
+        "tool": "read_file",
+        "content": "Error: File not found: tool_outputs/call_00_BYDQwAR8SpwKEzCJzTnj4883_detail.json"
+      },
+      {
+        "tool": "list_files",
+        "content": "No files found."
+      },
+      {
+        "tool": "list_files",
+        "content": "  tasks\\active_plans.json (43 bytes)\n  tasks\\task_1.json (1535 bytes)"
+      }
+    ]
+  },
+  "browser_final": {
+    "at": "2026-08-30T05:30:38.753Z",
+    "dom": "- complementary:\n  - heading \"观澜\" [level=1]\n  - button \"LLM 配置\":\n  - button \"管理中心\":\n  - button \"新建会话\":\n  - textbox \"搜索会话...\"\n  - generic: 项目\n  - button:\n  - generic: 暂无项目\n  - generic: 会话\n  - generic: 暂无会话\n- main:\n  - button:\n  - generic: 4eab4ced6121\n  - generic \"LLM 负责规划和解释；工具和文件在本地执行。\": 本地执行\n  - button \"压缩上下文\"\n  - button \"回退对话\"\n  - generic: 错误：加载会话失败\n  - button \"关闭\"\n  - button \"任务 3/3\":\n    - generic: 任务\n    - generic: 3/3\n  - button \"编辑并重新发送\"\n  - generic: \"请先检查这份留存数据的质量与字段结构，然后比较幂律、指数和对数留存曲线，给出最佳公式、参数、拟合优度和限制；同时生成一张包含实际留存均值与最佳拟合值两条曲线的对比图，并把关键结论记录为可核查证据。 分析文件: 游戏B留存.xlsx\"\n  - button \"编辑并重新发送\"\n  - generic: confirm_method\n  - paragraph: 用户已确认分析方法。现在开始执行：先检查数据质量与字段结构，再进行曲线族比较。\n  - paragraph:\n    - strong: 第一步：检查数据质量与字段结构\n  - paragraph:\n    - text: 数据结构已明确：62 行（2020-07-01 ~ 2020-08-31），13 列，\n    - strong: 无缺失值\n    - text: ，留存率为小数格式（0.1213 = 12.13%）。留存观测点共 10 个：D1~D7、D14、D21、D30。\n  - paragraph:\n    - strong: 第二步：将宽表转为长表，计算各留存天数的均值曲线\n  - paragraph:\n    - code: melt\n    - text: 操作不受支持。改用\n    - code: curve_fitting\n    - text: 的宽表模式（列名中的数字自动作为 x 轴天数），同时用 Python 计算各天留存率的均值，为对比图准备数据。\n  - paragraph:\n    - text: curve_fitting 初步判定\n    - strong: 幂律曲线最佳\n    - text: 。查看详细拟合结果，并重试计算均值留存（沙盒中 pd/np 已预置，无需 import）：\n  - paragraph: 均值留存曲线已得到（D1=17.1% → D30=1.3%）。现在查找 curve_fitting 的详细结果文件，获取三种曲线的参数与拟合优度：\n  - paragraph:\n    - text: detail 文件不可访问，curve_fitting 仅返回了初步结论。为确保给出\n    - strong: 完整参数、拟合优度与限制\n    - text: ，我直接用 Python 完成三种曲线族的拟合对比（线性化最小二乘 + 原始尺度 R² 评估），同时检查数据中可能存在的 0 值占位问题（数据窗口仅 62 天，30 天后留存对近期日期可能无法真实观测）：\n  - paragraph:\n    - text: 沙盒不允许\n    - code: import\n    - text: 语句（pd/np 已预置）。去掉 import 重试：\n  - paragraph:\n    - text: 三种曲线拟合完成，结果非常清晰：\n    - strong: 幂律 R²=0.974 显著优于指数（0.707）和对数（0.915）\n    - text: ，与 curve_fitting 工具的初步判定交叉一致。现在生成对比图并记录可核查证据：\n  - paragraph: 修正图表 purpose 参数，并重试记录证据（本轮 create_chart 成功后即为证据记录提供工具收据）：\n  - paragraph: 图表已生成。现在记录两条可核查证据（数据质量与结构 + 最佳模型拟合）：\n  - paragraph:\n    - text: record_evidence_record 要求\n    - strong: 同一轮内\n    - text: 有成功的工具调用收据。将图表生成与证据记录并行执行：\n  - paragraph:\n    - text: 并行执行顺序可能影响收据判定。尝试将\n    - strong: 分析类工具\n    - text: （run_python）与证据记录放在同一轮，run_python 计算残差分布作为补充验证：\n  - paragraph: 证据记录持续要求\"本轮工具收据\"，让我检查分析状态与工具机制，寻找正确的记录方式：\n  - paragraph: 查看现有任务状态，确认证据记录是否与任务工作流关联：\n  - paragraph: 尝试用正式分析工具（analyze_time_series 分析日活跃趋势，作为留存数据背景补充）与证据记录并行，验证收据机制：\n  - paragraph: 证据记录机制似乎与任务工作流关联。创建分析任务并尝试并行记录证据：\n  - paragraph: 任务已创建。更新任务为进行中，并再次尝试记录证据：\n  - paragraph:\n    - strong: \"Error:\"\n    - text: Turn interrupted by user\n  - generic: 补充图表\n  - generic: 游戏B留存曲线：实际均值_vs_幂律拟合（y=0.1917·x^-0.7334）\n  - iframe:\n    - toolbar:\n      - button \"Download plot as a PNG\":\n      - button \"Zoom\":\n      - button \"Pan\":\n      - button \"Box Select\":\n      - button \"Lasso Select\":\n      - button \"Zoom in\":\n      - button \"Zoom out\":\n      - button \"Autoscale\":\n      - button \"Reset axes\":\n      - link \"plotly-logomark\":\n        - /url: https://plotly.com/\n        - img \"plotly-logomark\"\n  - generic: 游戏B留存曲线：实际均值_vs_幂律拟合（y=0.1917·x^-0.7334）\n  - iframe:\n    - toolbar:\n      - button \"Download plot as a PNG\":\n      - button \"Zoom\":\n      - button \"Pan\":\n      - button \"Box Select\":\n      - button \"Lasso Select\":\n      - button \"Zoom in\":\n      - button \"Zoom out\":\n      - button \"Autoscale\":\n      - button \"Reset axes\":\n      - link \"plotly-logomark\":\n        - /url: https://plotly.com/\n        - img \"plotly-logomark\"\n  - button \"复制\":\n    - generic: 复制\n  - button \"导出\":\n    - generic: 导出\n  - textbox \"描述你的数据分析任务...\"\n  - button [disabled]:\n- complementary:\n  - paragraph: 分析工作台\n  - paragraph: 会话：4eab4ced6121\n  - generic: discover\n  - button \"Refresh\":\n  - button \"收起工作台\":\n  - button \"当前分析\"\n  - button \"产出与导出\"\n  - heading \"已验证结论\" [level=4]\n  - generic: 暂无已验证结论",
+    "chart": {
+      "legend": [
+        "power_fit",
+        "actual"
+      ],
+      "title": "游戏B留存曲线：实际均值 vs 幂律拟合（y=0.1917·x^-0.7334）",
+      "traces": 2,
+      "viewport": [
+        1440,
+        1000
+      ]
+    }
+  },
+  "browser_evidence_notes": [
+    "Real-browser screenshots emitted in this task for the baseline, analysis/error loop, standalone two-series chart and final 1440x1000 chart; preserved as browser-tool evidence, not substituted by offline screenshots.",
+    "Standalone chart first opened at default1280x720; then revalidated/screenshot at frozen1440x1000. Main journey used1440x1000.",
+    "Final retained DOM was read after shutdown and contains an expected load-session failure from background requests; that message is not a refresh test or a product finding.",
+    "Read-only inspection calls included one selector observation timeout while still generating and one syntax error before a read-only DOM call; neither sent extra Provider requests."
+  ],
+  "conversation_path": "tmp/real-provider-browser-matrix-a01/M01/sessions/4eab4ced6121/conversation.json",
+  "conversation_sha256": "sha256:cb76490b0c0f722e1067f33d8ca604137b8d1b11de8cf40cdd52b21565e14fb2",
+  "teardown": {
+    "exec_exit_code": 1,
+    "pid": 5648,
+    "pid_running": false,
+    "ledger_status": "started retained; reconciliation failed",
+    "ledger_closed_case_total": 0,
+    "note": "provider-batch.json real_calls=0 is the closed-case aggregate only, not actual consumption. Authoritative admitted count is22 in M01/provider-calls.json.",
+    "browser_tabs_closed": true,
+    "viewport_reset": true
+  },
+  "deviations": {
+    "additional_user_prompts": 0,
+    "unexpected_confirmation_answers": 0,
+    "provider_retries": 0,
+    "code_changes": 0,
+    "git_writes": 0,
+    "deployment": false,
+    "original_sessions_deleted": false
+  },
+  "next_case": "blocked_by_shared_accounting_gate"
+}

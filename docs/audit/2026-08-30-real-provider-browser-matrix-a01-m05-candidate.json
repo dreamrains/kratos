@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "candidate_id": "real_provider_browser_matrix_a01_m05",
+  "matrix_case_id": "M05",
+  "batch_id": "MATRIX-A01",
+  "name": "配对前后与因果边界",
+  "source_digest": "sha256:2daab429dbf8d0d874d1aee6486096d81592f76bdcd99cb82163e8b084247d76",
+  "model": "openai/deepseek-v4-flash",
+  "port": 5205,
+  "data": [
+    {
+      "id": "savings_card_before_after",
+      "path": "reference/test_doc/省钱卡购卡前后订单.xlsx",
+      "sha256": "sha256:e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37"
+    }
+  ],
+  "prompt": "请检查这份省钱卡购卡前后订单数据，以user_id为配对分析单位，按“用户类型（1是购卡前30天内，2是购卡后30天内）”划分前后两组，分别汇总每个用户的实收金额，主口径保留原始重复行。比较同时有前后观测用户的后减前金额差，使用配对t检验并报告Wilcoxon敏感性结果，生成前后对比图和可核查证据；披露配对样本、重复行和窗口限制。这是无对照的观察性分析，不得声称购卡造成消费变化。",
+  "prompts": [
+    "请检查这份省钱卡购卡前后订单数据，以user_id为配对分析单位，按“用户类型（1是购卡前30天内，2是购卡后30天内）”划分前后两组，分别汇总每个用户的实收金额，主口径保留原始重复行。比较同时有前后观测用户的后减前金额差，使用配对t检验并报告Wilcoxon敏感性结果，生成前后对比图和可核查证据；披露配对样本、重复行和窗口限制。这是无对照的观察性分析，不得声称购卡造成消费变化。"
+  ],
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "browser_steps": [
+    "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+    "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+    "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+    "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+    "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+    "刷新同一会话一次；核对友好确认、配对结论、图表、证据和任务",
+    "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+  ],
+  "confirmation_policy": {
+    "type": "method_confirmation",
+    "option_value": "confirm_method",
+    "option_label": "按此方法继续",
+    "max_responses_per_analysis_turn": 1,
+    "free_text_allowed": false,
+    "unknown_confirmation_action": "stop_case_generation"
+  },
+  "provider_policy": {
+    "web_journeys": 1,
+    "analysis_turns": 1,
+    "call_cap": 32,
+    "temperature": 0,
+    "timeout_seconds": 120,
+    "initial_max_tokens": 8000,
+    "auxiliary_initial_max_tokens": 300,
+    "auxiliary_max_tokens": [
+      300,
+      800
+    ],
+    "auxiliary_mode": "chat_once_no_escalation",
+    "silent_length_ladder": [
+      8000,
+      32000,
+      128000
+    ],
+    "num_retries": 0,
+    "stream_sync_fallback": false,
+    "model_fallback": false,
+    "supplementary_run": false,
+    "first_provider_failure_case_global_latch": true
+  },
+  "oracle": {
+    "common": {
+      "upload_ticket_opaque": true,
+      "session_owned_before_first_provider": true,
+      "raw_and_analysis_datasets_loaded": true,
+      "file_recovery_question_forbidden": true,
+      "workbench_exact_session_id": true,
+      "composer_disabled_while_generating": true,
+      "root_scroll_height_equals_client_height": true,
+      "console_error_warning_count": 0,
+      "tool_errors_recorded": true,
+      "artifacts_and_exports_session_owned": true,
+      "verified_evidence_visible_after_turn_end": true,
+      "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+    },
+    "required_tools": [
+      "ab_test",
+      "create_chart",
+      "record_evidence_record"
+    ],
+    "paired_users": 61,
+    "method": "paired_ttest",
+    "difference": {
+      "value": -1220.1311,
+      "absolute_tolerance": 0.001
+    },
+    "ttest_p": {
+      "value": 0.0186,
+      "absolute_tolerance": 0.000001
+    },
+    "wilcoxon_p": {
+      "value": 0.027699,
+      "absolute_tolerance": 0.000001
+    },
+    "raw_duplicates_preserved": true,
+    "claim_boundary": "无对照观察性前后比较，不支持因果"
+  },
+  "writes": {
+    "workspace_dir": "tmp/real-provider-browser-matrix-a01/M05/workspace",
+    "sessions_dir": "tmp/real-provider-browser-matrix-a01/M05/sessions",
+    "provider_receipt_path": "tmp/real-provider-browser-matrix-a01/M05/provider-calls.json",
+    "report_path": "docs/audit/2026-08-30-real-provider-browser-matrix-a01-m05-report.json"
+  }
+}

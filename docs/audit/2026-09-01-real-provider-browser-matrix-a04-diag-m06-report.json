@@ -1,0 +1,10 @@
+{
+  "schema_version": "matrix_a04_diagnostic_case_report.v1",
+  "batch_id": "MATRIX-A04-DIAG",
+  "batch_sha256": "sha256:c55c513b43ab60b696e584bfd58722cba6185169a188f8c2b7e7a57bc1fe0e30",
+  "source_digest": "sha256:f7a3149ff9db419897d36570e898770f3276d054bb004833b36ff775a57be2dc",
+  "case_id": "M06",
+  "status": "blocked_not_started",
+  "real_calls": 0,
+  "reason": "M04 freeze mismatch and non-graceful exit triggered the batch-global stop latch"
+}

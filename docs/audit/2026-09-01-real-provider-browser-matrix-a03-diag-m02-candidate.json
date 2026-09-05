@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "candidate_id": "real_provider_browser_matrix_a03_diag_m02",
+  "matrix_case_id": "M02",
+  "batch_id": "MATRIX-A03-DIAG",
+  "name": "三源同周期综合",
+  "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+  "model": "openai/deepseek-v4-flash",
+  "port": 5402,
+  "data": [
+    {
+      "id": "game_a_rewarded_video",
+      "path": "reference/test_doc/游戏A激励视频汇总数据报表.xlsx",
+      "sha256": "sha256:cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7"
+    },
+    {
+      "id": "game_a_in_app_purchase",
+      "path": "reference/test_doc/游戏A内购数据.xlsx",
+      "sha256": "sha256:fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e"
+    },
+    {
+      "id": "game_a_banner",
+      "path": "reference/test_doc/游戏Abanner汇总数据.xlsx",
+      "sha256": "sha256:21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a"
+    }
+  ],
+  "prompt": "请先检查这三份游戏A数据各自的质量与日期覆盖范围。以日期为共同分析单位，分别按日汇总视频广告收入、内购收入和BN_广告收入，再用 synthesize_time_series 合成同周期对比数据；请保留三个来源的版本血缘，生成三项收入的同周期趋势对比图，记录证据并给出描述性综合判断，不要把共变解释为因果。",
+  "prompts": [
+    "请先检查这三份游戏A数据各自的质量与日期覆盖范围。以日期为共同分析单位，分别按日汇总视频广告收入、内购收入和BN_广告收入，再用 synthesize_time_series 合成同周期对比数据；请保留三个来源的版本血缘，生成三项收入的同周期趋势对比图，记录证据并给出描述性综合判断，不要把共变解释为因果。",
+    "基于本会话已完成的三源同周期分析，请概括三项收入的共同变化与差异，区分已经由数据支持的结论和尚需补充验证的问题。只使用现有数据和证据，不重新上传、不进行外部查询，也不作因果归因。"
+  ],
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "browser_steps": [
+    "打开新会话后设置并核对1440×1000视口，核对当前静态资源哈希，记录 DOM、截图和 console 基线",
+    "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+    "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+    "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+    "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+    "第1轮完成后点击新建会话仅切换到空白页，不发送消息；再从侧栏返回本场景原会话",
+    "发送 prompts[1] 一次并按共同步骤观察完成",
+    "若场景未被硬停止，核对实际会话URL，刷新一次，再切到新建空会话且不发送并由侧栏返回；不猜测会话参数，不用刷新制造实时通过。",
+    "若场景未被硬停止，通过UI分别生成一次末轮单回复HTML/MD和一次全会话HTML/MD；已有本格式本范围导出不重复生成。核对正文完整性、图表等级、缺图提示和会话归属。",
+    "记录所有可达检查的passed/failed/blocked，停止本场景进程并核对最终收据和实际退出。结束后仅离线只读核对新进程数据恢复。无退出证明不得进入下一场景。"
+  ],
+  "confirmation_policy": {
+    "type": "method_confirmation",
+    "option_value": "confirm_method",
+    "option_label": "按此方法继续",
+    "max_responses_per_analysis_turn": 1,
+    "free_text_allowed": false,
+    "unknown_confirmation_action": "stop_case_generation"
+  },
+  "provider_policy": {
+    "web_journeys": 1,
+    "analysis_turns": 2,
+    "call_cap": 40,
+    "temperature": 0,
+    "timeout_seconds": 120,
+    "initial_max_tokens": 8000,
+    "auxiliary_initial_max_tokens": 300,
+    "auxiliary_max_tokens": [
+      300,
+      800
+    ],
+    "auxiliary_mode": "chat_once_no_escalation",
+    "silent_length_ladder": [
+      8000
+    ],
+    "num_retries": 0,
+    "stream_sync_fallback": false,
+    "model_fallback": false,
+    "supplementary_run": false,
+    "first_provider_failure_case_global_latch": true,
+    "main_mode": "one_physical_attempt_no_escalation"
+  },
+  "oracle": {
+    "common": {
+      "upload_ticket_opaque": true,
+      "session_owned_before_first_provider": true,
+      "raw_and_analysis_datasets_loaded": true,
+      "file_recovery_question_forbidden": true,
+      "workbench_exact_session_id": true,
+      "composer_disabled_while_generating": true,
+      "root_scroll_height_equals_client_height": true,
+      "console_error_warning_count": 0,
+      "tool_errors_recorded": true,
+      "artifacts_and_exports_session_owned": true,
+      "verified_evidence_visible_after_turn_end": true,
+      "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。",
+      "export_projection": "Public confirmation text; validated persisted chart data embedded in HTML and existing PNG in Markdown; no recomputation; same session ownership. Real numpy/Plotly Express typed arrays must survive reload.",
+      "automatic_upload_context": "Explicit identifier fields must not be suggested as trend/contribution/correlation measures; low-cardinality monetary prices retain numeric role without inventing currency units.",
+      "evidence_authority": "Statistics must come from validated actual result receipts and current session/data identity. Model-reported fields alone cannot make evidence complete.",
+      "evidence_immutability": "Distinct evidence records have distinct durable content; no second-level filename overwrite.",
+      "detail_access": "Long details can be read fully using bounded hash-bound pages, with no recursive truncation.",
+      "reply_identity_export": "Single reply export must match the server-owned persisted reply ID and include all tool-separated text segments.",
+      "chart_grade": "Exploratory charts remain allowed and clearly disclosed. Do not claim formal binding when absent; formal charts require valid result/data identities.",
+      "publication_scope": "Task/tool/run completion is not evidence verification. Check units, denominators, observation windows, statistical method and unknown values across narrative/evidence/charts/exports."
+    },
+    "required_tools": [
+      "synthesize_time_series",
+      "create_chart",
+      "record_evidence_record"
+    ],
+    "source_rows": [
+      248,
+      248,
+      248
+    ],
+    "aligned_rows": 248,
+    "alignment_missing": 0,
+    "parent_versions": 3,
+    "metrics": [
+      "视频广告收入",
+      "内购收入",
+      "BN_广告收入"
+    ],
+    "claim_boundary": "描述性比较、无因果归因",
+    "session_switch_restores_same_datasets": true,
+    "a02_regressions": {
+      "actual_chart_scale": "A first-day=100 claim requires every trace value to equal raw/first*100; max100 normalization is a different operation. Source values and lineage remain unchanged.",
+      "derived_restore": "After process exit, restore all saved derived datasets with identical value fingerprints and parent version IDs."
+    }
+  },
+  "writes": {
+    "workspace_dir": "tmp/real-provider-browser-matrix-a03-diag/M02/workspace",
+    "sessions_dir": "tmp/real-provider-browser-matrix-a03-diag/M02/sessions",
+    "provider_receipt_path": "tmp/real-provider-browser-matrix-a03-diag/M02/provider-calls.json",
+    "report_path": "docs/audit/2026-09-01-real-provider-browser-matrix-a03-diag-m02-report.json"
+  },
+  "authorization_state": "frozen_pending_explicit_user_authorization",
+  "purpose": "diagnostic_issue_collection_not_release_acceptance"
+}

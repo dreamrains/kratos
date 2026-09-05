@@ -1,0 +1,221 @@
+{
+  "schema_version": "matrix_systemic_repair_report.v2",
+  "reported_at": "2026-09-01",
+  "scope": "MATRIX-A01 through MATRIX-A04-DIAG plus the current offline repair and zero-Provider browser regression",
+  "current_source_digest": "sha256:89f9093a53a0120b33ee227687bfe324ef5f11effce1f514e8c0f58e5dc4bb42",
+  "acceptance": {
+    "real_provider_current_source": "not_run_not_authorized",
+    "offline": "passed",
+    "zero_provider_real_browser": "passed",
+    "staging": "not_run",
+    "production": "not_run"
+  },
+  "historical_batches": [
+    {
+      "id": "MATRIX-A01",
+      "result": "stopped_shared_accounting_failure",
+      "cases_attempted": 1,
+      "real_calls_started": 22,
+      "locally_terminal": 21,
+      "unknown": 1,
+      "main_learning": "The stream consumer could end before shared accounting received a terminal state; evidence input and session-detail path contracts also diverged."
+    },
+    {
+      "id": "MATRIX-A02",
+      "result": "completed_with_failed_acceptance",
+      "cases_attempted": 6,
+      "real_calls_started": 142,
+      "locally_terminal": 142,
+      "unknown": 0,
+      "main_learning": "All journeys reached useful real-model behavior, but all six failed because evidence, artifact identity, result addressing, chart semantics, publication identity, tool schema, and process lifecycle were separate contracts."
+    },
+    {
+      "id": "MATRIX-A03-DIAG",
+      "result": "stopped_graceful_exit_not_proven",
+      "cases_attempted": 1,
+      "real_calls_started": 11,
+      "locally_terminal": 11,
+      "unknown": 0,
+      "main_learning": "Closed request receipts did not prove the Web process exited normally; this led to a frozen parent supervisor."
+    },
+    {
+      "id": "MATRIX-A04-DIAG",
+      "result": "stopped_freeze_mismatch_and_non_graceful_exit",
+      "cases_attempted": 4,
+      "provider_cases_completed": 3,
+      "real_calls_started": 40,
+      "locally_terminal": 40,
+      "unknown": 0,
+      "main_learning": "The supervisor worked for M01-M03. Real output still exposed time-scope projection and unsafe narrative publication, while M04 showed that manually repeating derived authorization hashes was an avoidable launch hazard."
+    }
+  ],
+  "historical_totals": {
+    "real_calls_started": 215,
+    "locally_terminal": 214,
+    "historical_unknown": 1,
+    "accepted_batches": 0,
+    "authorization_state": "A01-A04 consumed and closed; no unused capacity is reusable"
+  },
+  "systemic_root_causes": [
+    {
+      "id": "RC1",
+      "title": "The same analysis fact had several incompatible contracts",
+      "detail": "Tool names, typed result payloads, receipt detail references, evidence fields, chart arrays, Workbench state, public reply text, and export bytes were validated independently. A locally correct calculation could therefore fail or be misrepresented in a later surface."
+    },
+    {
+      "id": "RC2",
+      "title": "Publication validation happened after unsafe text had already entered the public projection",
+      "detail": "A04 M01 proved that detecting a semantic violation and failing the run was insufficient when the rejected answer remained visible and exportable."
+    },
+    {
+      "id": "RC3",
+      "title": "Offline fixtures were too idealized",
+      "detail": "Earlier green suites covered selected scripted shapes. Real-model runs produced nested statistical details, analyze_time_series results, numpy-like sandbox text, multiple records in one second, long detail reads, unsupported tool combinations, and multi-segment replies. Those composition cases were absent from the fixtures."
+    },
+    {
+      "id": "RC4",
+      "title": "Completion was represented by unrelated states",
+      "detail": "Request terminal state, analysis turn completion, task counters, evidence completeness, publication eligibility, export identity, and process exit were not one invariant. Treating one as proof of another caused false progress and repeated late failures."
+    },
+    {
+      "id": "RC5",
+      "title": "The operator launch surface duplicated frozen identity",
+      "detail": "The batch digest already committed to source, launcher, supervisor, data, prompts, oracles, and cases, yet every case launch required those hashes to be manually repeated. A04 M04 failed on a missing sha256 prefix before any call."
+    }
+  ],
+  "repair": {
+    "principle": "Keep the existing Route A product and make cross-surface invariants explicit; do not add a parallel runtime or raise Provider budgets.",
+    "changes": [
+      {
+        "area": "evidence projection",
+        "files": [
+          "src/data_agent/tools/evidence_statistics.py",
+          "src/data_agent/tools/analysis_flow.py"
+        ],
+        "behavior": "Project analyze_time_series fields, bind observation windows only to receipt-verified current datasets, preserve native metrics when a supplemental untyped sandbox receipt is present, and prevent model-supplied time_scope_source from bypassing recomputation."
+      },
+      {
+        "area": "publication quarantine",
+        "files": [
+          "src/data_agent/agent/loop.py",
+          "src/data_agent/session/public_messages.py",
+          "src/data_agent/llm/client.py"
+        ],
+        "behavior": "Keep a rejected final answer internal, request one bounded rewrite using existing evidence and no tools, exclude rejected content from UI/export projection, strip the internal marker before Provider-shaped history, and fail closed if the rewrite still violates the contract."
+      },
+      {
+        "area": "authorization entry",
+        "files": [
+          "scripts/acceptance/real_provider_browser_batch.py"
+        ],
+        "behavior": "Require the external batch digest, recompute every committed component, and propagate the verified source and launcher identities internally to the nested case guard. Accept an equivalent bare 64-hex digest, while any supplied legacy derived hash still fails closed on mismatch."
+      },
+      {
+        "area": "real-shape regression",
+        "files": [
+          "tests/test_a04_diagnostic_regressions.py",
+          "tests/test_publication_synthesis.py",
+          "tests/test_real_provider_browser_batch.py"
+        ],
+        "behavior": "Replay A04-shaped result and evidence payloads, cover rejected-publication isolation and one rewrite, and prove the single-digest authorization gate."
+      }
+    ]
+  },
+  "validation": {
+    "focused_contract_tests": {
+      "passed": 54
+    },
+    "cross_module_regression": {
+      "passed": 95,
+      "warnings": 2
+    },
+    "full_offline": {
+      "passed": 2538,
+      "skipped": 1,
+      "warnings": 8,
+      "provider_network": "disabled_and_unmocked_requests_forbidden",
+      "junit": "tmp/a05-freeze-regression-full-02/junit.xml",
+      "sha256": "sha256:862afab18bf8b49735eb6148224ca7833bb9ab8b0328a55987bc3994270654f2"
+    },
+    "read_only_real_evidence_reprojection": {
+      "path": "tmp/a04-offline-root-repair-01/real-evidence-reprojection-02.json",
+      "sha256": "sha256:9260c33435f83b02989f682ed897d0076fa1bc1bfd711691d4b1bd8d01c1294e",
+      "original_sessions_unchanged_by_hash": true,
+      "M02": "4/4 complete; previously 2/4 were missing",
+      "M03": "3/3 complete; previously 3/3 were missing",
+      "M01": "curve-fit evidence becomes complete; unsupported zero-semantics evidence correctly remains missing because no typed metrics support it"
+    },
+    "zero_provider_real_browser": {
+      "path": "tmp/a04-post-repair-browser-01/audit.json",
+      "sha256": "sha256:33ed674acd9c7b97ccb6b0274a80ee99bca0977c2b81609d3df427140b14af08",
+      "cases": "6/6",
+      "checks": "86/86",
+      "scripted_requests_completed": 76,
+      "evidence_records_complete": 9,
+      "chart_html_artifacts": 8,
+      "exports": 24,
+      "real_provider_calls": 0,
+      "graceful_supervised_exits": "6/6",
+      "viewport": "1440x1000 each case",
+      "M03_chart": "15 labels, maximum 18 characters, zero overlapping pairs",
+      "source_qualification": "The six browser journeys ran after all product-runtime repairs. The only later controlled-source change was the acceptance batch identity handoff plus its tests; no product browser/runtime file changed afterward."
+    },
+    "authorization_handoff_regression": {
+      "passed": 21
+    },
+    "pre_authorization_zero_call": {
+      "superseded_A05": {
+        "status": "failed_closed_all_six",
+        "network_attempts": 0,
+        "real_provider_calls": 0,
+        "reason": "Batch-verified source and launcher identities were not propagated to the nested case guard.",
+        "evidence": "docs/audit/2026-09-01-real-provider-browser-matrix-a05-diag-zero-call-preflight.json",
+        "authorization": "never_granted"
+      },
+      "MATRIX-A05R2-DIAG": {
+        "status": "passed_all_six",
+        "network_attempts": 0,
+        "real_provider_calls": 0,
+        "execution_root_exists": false,
+        "evidence": "docs/audit/2026-09-01-real-provider-browser-matrix-a05r2-diag-zero-call-preflight.json",
+        "batch_sha256": "sha256:6654f45a94e7defaab0378078b4ca2aeced189385519bef7e9482e633314d661",
+        "authorization": "not_granted_pending_user"
+      }
+    }
+  },
+  "resolved_or_materially_reduced": [
+    "A04 M02/M03 time-scope evidence projection",
+    "supplemental sandbox output incorrectly downgrading sufficient native evidence",
+    "rejected semantic narrative remaining in the public UI/export projection",
+    "manual repetition of all derived authorization hashes",
+    "A03/A04 process-exit proof for local supervised browser runs",
+    "single batch digest propagation into the nested single-case source and launcher guard"
+  ],
+  "open_risks": [
+    "Current source has no real-Provider result. Offline and scripted browser green cannot establish real-model convergence or six-case acceptance.",
+    "The bounded publication rewrite is proven by tests, but has not yet been exercised against the configured real model.",
+    "A04 M01's unsupported zero-semantics evidence cannot be repaired retroactively and remains correctly non-publishable.",
+    "A01 ordinal 22 remains a historical unknown; this repair does not infer its Provider billing or remote terminal state.",
+    "Arbitrary narrative correctness cannot be proven by a finite allowlist; unsupported claims still require fail-closed publication review.",
+    "A fresh-process restoration of every derived dataset is not claimed by the same-process browser refresh checks.",
+    "A rendered browser preview of Markdown files is not claimed; Markdown bytes and ownership are checked locally."
+  ],
+  "decision": {
+    "offline_root_repair": "ready",
+    "new_real_diagnostic": "MATRIX-A05R2-DIAG_frozen_pending_explicit_authorization",
+    "new_batch_sha256": "sha256:6654f45a94e7defaab0378078b4ca2aeced189385519bef7e9482e633314d661",
+    "real_acceptance": "not_passed",
+    "release_or_deployment": "not_authorized_and_not_supported_by_current_evidence"
+  },
+  "git_boundary": {
+    "head": "3b271d7cdf7d4bafaafb0ade8d7bba69baf777d6",
+    "index": "unchanged_empty_for_this_work",
+    "git_writes": false
+  },
+  "superseded_proposal": {
+    "id": "MATRIX-A05-DIAG",
+    "authorization": "never_granted",
+    "real_provider_calls": 0,
+    "status": "preserved_failed_zero_call_preflight_do_not_use"
+  }
+}

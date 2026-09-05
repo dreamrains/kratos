@@ -1,0 +1,109 @@
+{
+  "schema_version": "real_provider_browser_case_report.v1",
+  "batch_id": "MATRIX-A01",
+  "case_id": "M05",
+  "name": "配对前后与因果边界",
+  "status": "blocked_not_started",
+  "source_digest": "sha256:2daab429dbf8d0d874d1aee6486096d81592f76bdcd99cb82163e8b084247d76",
+  "preflight": "passed_before_M01",
+  "real_provider_calls": 0,
+  "blocked_attempts": 0,
+  "prompt_submissions": 0,
+  "method_confirmation_submissions": 0,
+  "browser_journeys_attempted": 0,
+  "server_started": false,
+  "provider_receipt_created": false,
+  "reason": "M01 streaming interruption left ordinal22 without terminal receipt; frozen shared accounting gate prohibits next case. No retry, latch reset or supplementary run.",
+  "browser_steps": [
+    {
+      "id": 1,
+      "step": "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 2,
+      "step": "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 3,
+      "step": "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 4,
+      "step": "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 5,
+      "step": "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 6,
+      "step": "刷新同一会话一次；核对友好确认、配对结论、图表、证据和任务",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    },
+    {
+      "id": 7,
+      "step": "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景",
+      "status": "blocked",
+      "reason": "shared_accounting_gate"
+    }
+  ],
+  "oracles": [
+    {
+      "id": "common",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "required_tools",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "paired_users",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "method",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "difference",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "ttest_p",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "wilcoxon_p",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "raw_duplicates_preserved",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    },
+    {
+      "id": "claim_boundary",
+      "status": "blocked",
+      "reason": "journey_not_started"
+    }
+  ],
+  "not_a_pass": true
+}

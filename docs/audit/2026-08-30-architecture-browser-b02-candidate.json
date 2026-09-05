@@ -1,0 +1,537 @@
+{
+  "batch_id": "ARCHITECTURE-BROWSER-B02",
+  "evidence_layer": "scripted_transport_real_browser",
+  "source_digest": "sha256:752fa2c8c1b603c6eb76a612654a62edaf8d62a9b2a2327099f071678c49d414",
+  "launcher": "scripts/acceptance/browser_rehearsal_server.py",
+  "launcher_sha256": "fd697b8f04ce503fe6ee318d170d18fd7a404b0b2ab9963c2d018e5a926621f5",
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "cases": [
+    {
+      "case_id": "M01",
+      "data": [
+        {
+          "id": "game_b_retention",
+          "path": "reference/test_doc/游戏B留存.xlsx",
+          "sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+        }
+      ],
+      "prompts": [
+        "请先检查这份留存数据的质量与字段结构，然后比较幂律、指数和对数留存曲线，给出最佳公式、参数、拟合优度和限制；同时生成一张包含实际留存均值与最佳拟合值两条曲线的对比图，并把关键结论记录为可核查证据。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "detect_data_quality",
+          "curve_fitting",
+          "record_evidence_record",
+          "create_chart"
+        ],
+        "rows": 62,
+        "columns": 13,
+        "numeric": {
+          "a": {
+            "value": 0.18800129,
+            "absolute_tolerance": 1e-05
+          },
+          "b": {
+            "value": -0.71667274,
+            "absolute_tolerance": 1e-05
+          },
+          "r_squared": {
+            "value": 0.98240474,
+            "absolute_tolerance": 1e-05
+          },
+          "excluded_zero_points": 6
+        },
+        "chart": "实际均值与最佳拟合值至少两条可见且数值不同的序列；图例角色可识别，不强制英文名称",
+        "claim_boundary": "仅描述观测区间，不支持因果或未观测期外推",
+        "refresh_confirmation_protocol_visible": false,
+        "html_exports": 1
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "刷新同一会话一次；检查确认气泡、回答、图表、证据和任务恢复",
+        "点击工作台产出与导出，再点击 HTML 一次；检查导出文件属于当前会话",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M01",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 1
+    },
+    {
+      "case_id": "M02",
+      "data": [
+        {
+          "id": "game_a_rewarded_video",
+          "path": "reference/test_doc/游戏A激励视频汇总数据报表.xlsx",
+          "sha256": "sha256:cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7"
+        },
+        {
+          "id": "game_a_in_app_purchase",
+          "path": "reference/test_doc/游戏A内购数据.xlsx",
+          "sha256": "sha256:fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e"
+        },
+        {
+          "id": "game_a_banner",
+          "path": "reference/test_doc/游戏Abanner汇总数据.xlsx",
+          "sha256": "sha256:21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a"
+        }
+      ],
+      "prompts": [
+        "请先检查这三份游戏A数据各自的质量与日期覆盖范围。以日期为共同分析单位，分别按日汇总视频广告收入、内购收入和BN_广告收入，再用 synthesize_time_series 合成同周期对比数据；请保留三个来源的版本血缘，生成三项收入的同周期趋势对比图，记录证据并给出描述性综合判断，不要把共变解释为因果。",
+        "基于本会话已完成的三源同周期分析，请概括三项收入的共同变化与差异，区分已经由数据支持的结论和尚需补充验证的问题。只使用现有数据和证据，不重新上传、不进行外部查询，也不作因果归因。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "synthesize_time_series",
+          "create_chart",
+          "record_evidence_record"
+        ],
+        "source_rows": [
+          248,
+          248,
+          248
+        ],
+        "aligned_rows": 248,
+        "alignment_missing": 0,
+        "parent_versions": 3,
+        "metrics": [
+          "视频广告收入",
+          "内购收入",
+          "BN_广告收入"
+        ],
+        "claim_boundary": "描述性比较、无因果归因",
+        "session_switch_restores_same_datasets": true
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "第1轮完成后点击新建会话仅切换到空白页，不发送消息；再从侧栏返回本场景原会话",
+        "发送 prompts[1] 一次并按共同步骤观察完成",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M02",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 0
+    },
+    {
+      "case_id": "M03",
+      "data": [
+        {
+          "id": "game_cross_promotion",
+          "path": "reference/test_doc/游戏互推.xlsx",
+          "sha256": "sha256:063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83"
+        }
+      ],
+      "prompts": [
+        "请检查这份游戏互推数据的质量，重点核对卖量收入的数值解析与缺失。保留原始数据，把 '-' 保留为缺失而不是零，并披露原始行数、可解析行数及转换损失。按流量主游戏、广告主游戏和公司的组合汇总可观测收入及缺失覆盖，给出有明确不完整性标注的收益对比图和证据，不输出伪完整排名，不做因果解释。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "detect_data_quality",
+          "create_chart",
+          "record_evidence_record"
+        ],
+        "rows": 1985,
+        "parseable_income": 1926,
+        "missing_dash_income": 59,
+        "missing_fill_zero_forbidden": true,
+        "raw_version_preserved": true,
+        "analysis_unit": [
+          "流量主游戏",
+          "广告主游戏",
+          "公司"
+        ],
+        "incomplete_ranking_disclosure_required": true
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "刷新同一会话一次；检查回答、图表、证据、任务和缺失口径是否恢复一致",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M03",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 0
+    },
+    {
+      "case_id": "M04",
+      "data": [
+        {
+          "id": "savings_card_orders",
+          "path": "reference/test_doc/省钱卡订单.xlsx",
+          "sha256": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+        }
+      ],
+      "prompts": [
+        "请按支付时间与售价分析这份省钱卡订单数据，使用 compare_periods 比较2026-04-07至2026-04-21和2026-04-22至2026-05-06两个各15个完整自然日窗口的收入、订单数和日均收入；零订单日也必须纳入分母。请提供期间对比图、可核查证据和可发布结论，明确观察窗口与零订单日处理，不解释变化原因、不做因果或窗口外推。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "compare_periods",
+          "create_chart",
+          "record_evidence_record"
+        ],
+        "period_a": {
+          "start": "2026-04-07",
+          "end": "2026-04-21",
+          "days": 15,
+          "orders": 47,
+          "revenue": 1818
+        },
+        "period_b": {
+          "start": "2026-04-22",
+          "end": "2026-05-06",
+          "days": 15,
+          "orders": 24,
+          "revenue": 684
+        },
+        "total_orders": 71,
+        "calendar_days": 30,
+        "zero_order_days": 4,
+        "claim_boundary": "描述性期间差异，不解释原因",
+        "session_exports": [
+          "html",
+          "markdown"
+        ],
+        "single_reply_export": "markdown"
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "点击产出与导出，分别点击 HTML 和 MD 各一次；核对两个会话导出文件",
+        "点击最终回复的导出菜单，选择 Markdown 一次；仅允许浏览器新增一份下载文件，不覆盖任何既有文件。若不能保证新建则此子项记blocked；记录实际绝对路径，不增加分析请求",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M04",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 0
+    },
+    {
+      "case_id": "M05",
+      "data": [
+        {
+          "id": "savings_card_before_after",
+          "path": "reference/test_doc/省钱卡购卡前后订单.xlsx",
+          "sha256": "sha256:e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37"
+        }
+      ],
+      "prompts": [
+        "请检查这份省钱卡购卡前后订单数据，以user_id为配对分析单位，按“用户类型（1是购卡前30天内，2是购卡后30天内）”划分前后两组，分别汇总每个用户的实收金额，主口径保留原始重复行。比较同时有前后观测用户的后减前金额差，使用配对t检验并报告Wilcoxon敏感性结果，生成前后对比图和可核查证据；披露配对样本、重复行和窗口限制。这是无对照的观察性分析，不得声称购卡造成消费变化。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "ab_test",
+          "create_chart",
+          "record_evidence_record"
+        ],
+        "paired_users": 61,
+        "method": "paired_ttest",
+        "difference": {
+          "value": -1220.1311,
+          "absolute_tolerance": 0.001
+        },
+        "ttest_p": {
+          "value": 0.0186,
+          "absolute_tolerance": 1e-06
+        },
+        "wilcoxon_p": {
+          "value": 0.027699,
+          "absolute_tolerance": 1e-06
+        },
+        "raw_duplicates_preserved": true,
+        "claim_boundary": "无对照观察性前后比较，不支持因果"
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "刷新同一会话一次；核对友好确认、配对结论、图表、证据和任务",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M05",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 0
+    },
+    {
+      "case_id": "M06",
+      "data": [
+        {
+          "id": "savings_card_user_payments",
+          "path": "reference/test_doc/省钱卡0201到0510购卡用户付费数据.xlsx",
+          "sha256": "sha256:cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03"
+        },
+        {
+          "id": "savings_card_vouchers",
+          "path": "reference/test_doc/省钱卡代金券明细订单.xlsx",
+          "sha256": "sha256:cda47a61c8bbbcd6bcf545c485dbeb1eb877e2f0d2ad244613e7c7199c4a5e90"
+        },
+        {
+          "id": "savings_card_orders",
+          "path": "reference/test_doc/省钱卡订单.xlsx",
+          "sha256": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+        }
+      ],
+      "prompts": [
+        "请先分别检查这三份省钱卡数据的质量和字段结构。仅审计省钱卡订单与购卡用户付费数据按user_id关联的唯一性、基数、覆盖率、行倍率及时间范围，不物化原始join。若存在many-to-many风险，请明确拒绝原始join并说明需先定义分析单位或分别聚合的安全路径；代金券明细本轮保持独立。记录可核查证据，不做因果解释。",
+        "继续仅使用本会话的购卡用户付费数据，按user_id与支付时间分析首次观测付费月份cohort及月度后续付费活跃，不要把它叫作购卡时间cohort。请报告用户数、数据时间窗口、各月cohort规模与可观察窗口，生成cohort对比图并记录证据；未到观察期的格子标注为未观察，不能把右截断的零值解释为流失或长期价值下降。",
+        "最后仅对本会话的省钱卡代金券明细做独立描述分析：核对状态、领取时间、使用时间、代金券面值(分)和实付字段；区分券张数、去重主用户数与金额口径，按字段明确单位展示券面值并披露实付单位的不确定性。给出使用状态分布图、缺失与口径限制及证据，不与前两表做原始join，不把使用率或消费差异解释为因果。"
+      ],
+      "oracle": {
+        "common": {
+          "upload_ticket_opaque": true,
+          "session_owned_before_first_provider": true,
+          "raw_and_analysis_datasets_loaded": true,
+          "file_recovery_question_forbidden": true,
+          "workbench_exact_session_id": true,
+          "composer_disabled_while_generating": true,
+          "root_scroll_height_equals_client_height": true,
+          "console_error_warning_count": 0,
+          "tool_errors_recorded": true,
+          "artifacts_and_exports_session_owned": true,
+          "verified_evidence_visible_after_turn_end": true,
+          "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。"
+        },
+        "required_tools": [
+          "cohort_analysis",
+          "create_chart",
+          "record_evidence_record"
+        ],
+        "orders_rows": 71,
+        "payments_rows": 13757,
+        "relationship": {
+          "cardinality": "many-to-many",
+          "raw_join_forbidden": true,
+          "left_row_coverage": {
+            "value": 0.98591549,
+            "absolute_tolerance": 1e-05
+          },
+          "right_row_coverage": 1
+        },
+        "payments_users": 62,
+        "payment_window": [
+          "2026-02-01",
+          "2026-05-10"
+        ],
+        "cohort_sizes": {
+          "2026-02": 45,
+          "2026-03": 8,
+          "2026-04": 8,
+          "2026-05": 1
+        },
+        "right_censoring_disclosed": true,
+        "voucher_rows": 1075,
+        "voucher_counts_and_user_counts_separate": true,
+        "voucher_face_value_unit": "分，展示为元需除以100",
+        "voucher_paid_unit": "若文件不能证明单位，必须标明未知，不猜测",
+        "html_exports": 1
+      },
+      "confirmation": {
+        "type": "method_confirmation",
+        "option_value": "confirm_method",
+        "option_label": "按此方法继续",
+        "max_responses_per_analysis_turn": 1,
+        "free_text_allowed": false,
+        "unknown_confirmation_action": "stop_case_generation"
+      },
+      "steps": [
+        "打开本场景端口的新会话，核对静态资源哈希并记录 DOM、截图和console基线",
+        "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+        "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+        "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+        "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+        "按共同步骤依次发送 prompts[1] 与 prompts[2]，各一次，前一轮产生的数据不完整则记录该轮依赖受阻",
+        "第3轮完成后切换到新建空白页且不发送，再返回原会话；检查全部回答、图表、证据、任务",
+        "点击产出与导出，HTML 导出一次并核对本会话归属",
+        "记录每项passed/failed/blocked；停止本场景进程并核对最终收据，再按冻结顺序进入下一场景"
+      ],
+      "run_dir": "tmp/architecture-browser-b02/M06",
+      "provider_calls_allowed": 0,
+      "expected_confirmations": 0
+    }
+  ],
+  "rules": [
+    "No real Provider calls",
+    "No source/input edits during this batch",
+    "Continue reachable checks after ordinary failures",
+    "Stop only the blocked scenario generation; continue independent scenarios after shutdown and accounting proof",
+    "Block missing dependencies explicitly",
+    "Do not use refresh to cure delayed live evidence",
+    "Each business case owns a fresh process and storage directory. Stop process only after all scripted requests have terminal status, then verify process exit before the next case. Forced process exit after request closure is recorded as forced, not graceful.",
+    "All browser exports use the product UI. Single reply export must create a unique UUID-based filename, never overwrite a prior download.",
+    "Analysis/execution status and evidence validity are assessed separately. Workbench displays verified conclusions for the current plan; prior evidence must remain in persisted history and exports."
+  ],
+  "first_party_assets": {
+    "src\\data_agent\\web\\static\\js\\app.js": "sha256:4916c096e4de9b9c490ca65c5a07483700361cd27a8e8cab3a76fe778e0fac6c",
+    "src\\data_agent\\web\\static\\css\\app.css": "sha256:3d2041dde3b384622649335e3ebceec91998b7f4879d23470d0dff450d767792",
+    "src\\data_agent\\web\\templates\\index.html": "sha256:f4099333b234ec8d5664bc49d92ed13464f13e4c9dd6ebd166e3772f71ee01b9"
+  },
+  "offline_gate": {
+    "required": "tmp\\architecture-regression-14\\junit.xml",
+    "status": "passed",
+    "passed": 2446,
+    "skipped": 1,
+    "warnings": 58,
+    "junit_sha256": "dab2964db68594f8646a533bb95de8d90a567358172c1f7aae169ea671404917"
+  },
+  "preflight_reference": "tmp/architecture-regression-14/pytest/test_all_scripted_journeys_use0..5; require all six pass before browser launch",
+  "fault_journeys": [
+    {
+      "session": "separate new session without uploads, independent after all six business cases",
+      "prompt": "REHEARSAL_INTERRUPT",
+      "steps": [
+        "send once",
+        "observe disabled composer",
+        "interrupt once",
+        "wait for cancelled terminal and closed scripted receipt",
+        "reload and inspect durable cancelled status",
+        "Check exactly one cancelled receipt and no later scripted calls for that session"
+      ]
+    },
+    {
+      "session": "separate new session without uploads, independent after all six business cases",
+      "prompt": "REHEARSAL_FAILURE",
+      "steps": [
+        "send once",
+        "observe durable failed terminal",
+        "reload once",
+        "verify same failure notice in conversation",
+        "create HTML conversation export once and verify failure notice"
+      ]
+    }
+  ],
+  "draft_revisions_before_any_browser_launch": [
+    {
+      "source_digest": "sha256:b7236ab80ca3cdb69b6548576d06e30c7175c39edab342a8c5e302594c28b3ec",
+      "offline_gate": "run13 failed only obsolete fixed reply.md source assertion; behavioral unique-name export test passed; no browser launched"
+    }
+  ],
+  "status": "frozen_before_first_browser_launch"
+}

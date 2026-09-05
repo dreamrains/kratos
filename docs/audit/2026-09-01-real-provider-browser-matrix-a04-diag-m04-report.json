@@ -1,0 +1,30 @@
+{
+  "schema_version": "matrix_a04_diagnostic_case_report.v1",
+  "batch_id": "MATRIX-A04-DIAG",
+  "batch_sha256": "sha256:c55c513b43ab60b696e584bfd58722cba6185169a188f8c2b7e7a57bc1fe0e30",
+  "source_digest": "sha256:f7a3149ff9db419897d36570e898770f3276d054bb004833b36ff775a57be2dc",
+  "case_id": "M04",
+  "status": "hard_stopped_before_provider_or_browser",
+  "real_calls": 0,
+  "hard_gate_passed": false,
+  "stop_reason": "BATCH_SHA256 authorization mismatch",
+  "cause": "launch_environment_value_omitted_required_sha256_prefix",
+  "process_exit": {
+    "schema_version": "browser_process_exit.v1",
+    "pid": 20192,
+    "observed_at": "2026-09-01T08:46:56.788167+00:00",
+    "stop_observed_at": null,
+    "elapsed_after_stop_seconds": null,
+    "exit_code": 1,
+    "timeout_reached": false,
+    "forced_termination": false,
+    "process_exited": true,
+    "graceful_exit": false
+  },
+  "evidence": [
+    "tmp/real-provider-browser-matrix-a04-diag/M04/process-control/process-start.json",
+    "tmp/real-provider-browser-matrix-a04-diag/M04/process-control/process.log",
+    "tmp/real-provider-browser-matrix-a04-diag/M04/process-control/process-exit.json"
+  ],
+  "retry_performed": false
+}

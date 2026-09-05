@@ -1,0 +1,1145 @@
+{
+  "schema_version": "real_provider_browser_matrix_case_report.v1",
+  "batch_id": "MATRIX-A02",
+  "case_id": "M06",
+  "name": "关系、cohort与优惠券",
+  "evidence_layer": "real_provider_real_browser",
+  "status": "failed",
+  "execution_status": "completed_with_failed_oracles",
+  "source_digest": "sha256:df10e3d5ee356d9ce79cc9a00535b2ee99882ca28ab85771c3841898962b4b3d",
+  "candidate_path": "docs/audit/2026-08-31-real-provider-browser-matrix-a02-m06-candidate.json",
+  "model": "openai/deepseek-v4-flash",
+  "session_id": "ab52f8c0c893",
+  "analysis_turns_started": 3,
+  "analysis_turns_completed": 3,
+  "method_confirmations": 0,
+  "provider": {
+    "calls_started": 46,
+    "completed": 46,
+    "failed": 0,
+    "cancelled": 0,
+    "unknown": 0,
+    "blocked_attempts": 0,
+    "call_cap": 48,
+    "all_local_requests_stopped": true,
+    "remote_billing": "unknown",
+    "main_stream_calls": 38,
+    "auxiliary_nonstream_calls": 8,
+    "receipt_path": "tmp/real-provider-browser-matrix-a02/M06/provider-calls.json",
+    "receipt_sha256": "sha256:201bf7414dd2aa07c938a72e0a3121dcd8ad756c95964161534b721d1367fe56",
+    "receipt_hash_contract": "UTF-8 bytes after CRLF-to-LF normalization, matching BatchLedger.finish",
+    "raw_file_sha256": "sha256:0b3a3e7049b24b5535dddbe697a3a18bf7e439f3f42954d27b77156cdaa7142a",
+    "guard_terminal": {
+      "code": "acceptance_server_closed",
+      "failed_at": "2026-08-31T06:41:25.193990Z"
+    }
+  },
+  "process": {
+    "pid": 37460,
+    "ledger_closed_at": "2026-08-31T06:41:25.208592+00:00",
+    "pid_absence_verified_before_next_case": true,
+    "exit": "closed_after_ctrl_c_pid_absence_verified",
+    "exec_exit_code": 1
+  },
+  "checks": [
+    {
+      "id": "frozen_prompts_and_confirmation",
+      "status": "passed",
+      "observation": {
+        "analysis_prompts_sent_once": 3,
+        "method_confirmations": 0,
+        "extra_prompts": 0
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/conversation.json"
+      ]
+    },
+    {
+      "id": "upload_integrity_binding_and_loading",
+      "status": "passed",
+      "observation": {
+        "uploads": [
+          {
+            "source": "reference/test_doc/省钱卡0201到0510购卡用户付费数据.xlsx",
+            "sha256": "sha256:cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03",
+            "upload": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/uploads/6b4901cf4c0b4051a72848166e432bf6/省钱卡0201到0510购卡用户付费数据.xlsx",
+            "raw_shape": [
+              13757,
+              9
+            ],
+            "raw_version": "dv_1cf6bfedebe86279",
+            "analysis_version": "dv_7bc1ce8fccf35b03"
+          },
+          {
+            "source": "reference/test_doc/省钱卡代金券明细订单.xlsx",
+            "sha256": "sha256:cda47a61c8bbbcd6bcf545c485dbeb1eb877e2f0d2ad244613e7c7199c4a5e90",
+            "upload": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/uploads/a45b2013234447fd84d16c114c302653/省钱卡代金券明细订单.xlsx",
+            "raw_shape": [
+              1075,
+              11
+            ],
+            "raw_version": "dv_76ce74e0a809cfbf",
+            "analysis_version": "dv_238a96cfc01f175f"
+          },
+          {
+            "source": "reference/test_doc/省钱卡订单.xlsx",
+            "sha256": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3",
+            "upload": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/uploads/6f88d8b628d441ee8b5c86f30ef3ae8c/省钱卡订单.xlsx",
+            "raw_shape": [
+              71,
+              7
+            ],
+            "raw_version": "dv_602e4cf2ba295e43",
+            "analysis_version": "dv_5877810423ce8ca2"
+          }
+        ],
+        "first_provider_started_at": "2026-08-31T06:33:12.036589Z",
+        "evidence_limit": "Browser upload plus session-owned upload hash, raw/analysis snapshots, load order in server log and uploaded context. Log timestamps have second precision; not a millisecond timing claim."
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/uploaded.json",
+        "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/workspace_meta.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/server.log"
+      ]
+    },
+    {
+      "id": "no_file_recovery_question",
+      "status": "passed",
+      "observation": "No file recovery confirmation occurred; M01 only the frozen method confirmation.",
+      "evidence": []
+    },
+    {
+      "id": "root_layout",
+      "status": "passed",
+      "observation": {
+        "sample_count": 24,
+        "bad_samples": [],
+        "dimensions": [
+          1440,
+          1000,
+          1000
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "console_warnings_errors",
+      "status": "passed",
+      "observation": {
+        "sample_count": 25,
+        "nonempty_samples": [],
+        "scope": "Recorded browser observations before service close; not continuous monitoring."
+      },
+      "evidence": []
+    },
+    {
+      "id": "composer_during_generation",
+      "status": "passed",
+      "observation": {
+        "submission_and_confirmation_samples": [
+          "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-submitted.json",
+          "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-submitted.json",
+          "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-submitted.json"
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "workbench_session_id",
+      "status": "passed",
+      "observation": {
+        "session_id": "ab52f8c0c893",
+        "observed": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "verified_evidence_after_turn_end",
+      "status": "failed",
+      "observation": "Completed runs produced no passed evidence; missing statistical fields are durable backend state, so empty verified conclusions are not demonstrated to be an SSE transport delay.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/analysis_state.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe03-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus10-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus30-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe04-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus10-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus30-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe03-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus10-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus30-no-refresh.json"
+      ]
+    },
+    {
+      "id": "completion_sampling",
+      "status": "passed",
+      "observation": {
+        "samples": [
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe03-terminal.json",
+            "at": "2026-08-31T06:34:49.426Z",
+            "turn_id": "t_833fae",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+            "seconds_after_durable_terminal": 0.122,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus10-no-refresh.json",
+            "at": "2026-08-31T06:35:09.142Z",
+            "turn_id": "t_833fae",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+            "seconds_after_durable_terminal": 19.838,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus30-no-refresh.json",
+            "at": "2026-08-31T06:35:19.548Z",
+            "turn_id": "t_833fae",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+            "seconds_after_durable_terminal": 30.244,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe04-terminal.json",
+            "at": "2026-08-31T06:38:00.795Z",
+            "turn_id": "t_d40464",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+            "seconds_after_durable_terminal": 0.457,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus10-no-refresh.json",
+            "at": "2026-08-31T06:38:16.586Z",
+            "turn_id": "t_d40464",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+            "seconds_after_durable_terminal": 16.248,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus30-no-refresh.json",
+            "at": "2026-08-31T06:38:30.661Z",
+            "turn_id": "t_d40464",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+            "seconds_after_durable_terminal": 30.323,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe03-terminal.json",
+            "at": "2026-08-31T06:40:05.511Z",
+            "turn_id": "t_568a3b",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+            "seconds_after_durable_terminal": 6.297,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus10-no-refresh.json",
+            "at": "2026-08-31T06:40:20.657Z",
+            "turn_id": "t_568a3b",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+            "seconds_after_durable_terminal": 21.443,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus30-no-refresh.json",
+            "at": "2026-08-31T06:40:29.322Z",
+            "turn_id": "t_568a3b",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+            "seconds_after_durable_terminal": 30.108,
+            "workbench_empty_verified_conclusions": true
+          }
+        ],
+        "note": "Use actual time deltas. Files named plus10/plus30 are not claims of exact 10.000/30.000-second sampling."
+      },
+      "evidence": []
+    },
+    {
+      "id": "required_tool_presence",
+      "status": "passed",
+      "observation": {
+        "missing": [],
+        "actual": {
+          "quick_profile": 3,
+          "run_python": 18,
+          "read_file": 4,
+          "describe_dataset": 2,
+          "record_evidence_record": 3,
+          "task_list": 1,
+          "cohort_analysis": 1,
+          "write_file": 1,
+          "load_data": 3,
+          "list_files": 1,
+          "create_chart": 5,
+          "preview_data": 1
+        },
+        "note": "M01 automatic quality context/run_python does not count as an explicit detect_data_quality call."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_receipt_hashes",
+      "status": "passed",
+      "observation": {
+        "bindings_checked": 20,
+        "hash_kinds": {
+          "structured_json": 19,
+          "original_text_in_receipt": 1
+        },
+        "invalid": [],
+        "scope": "Structured results use canonical JSON; legacy results use preserved original receipt text. Receipt/hash ownership is separate from statistical completeness."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_artifact_identity",
+      "status": "passed",
+      "observation": {
+        "registered_records": 3,
+        "unique_artifact_paths": 3,
+        "collisions": []
+      },
+      "evidence": []
+    },
+    {
+      "id": "artifact_session_ownership",
+      "status": "passed",
+      "observation": {
+        "registered_artifacts": 7,
+        "all_existing_paths_are_current_session_owned": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "tool_error_collection",
+      "status": "passed",
+      "observation": {
+        "errors": [
+          {
+            "tool_call_id": "call_00_m1l7Muo9GvrL5zwlS7CT5230",
+            "tool": "run_python",
+            "error_type": "sandbox_violation",
+            "message": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_m1l7Muo9GvrL5zwlS7CT5230_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_rB572x6GfAioIewT9Ani1548",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_rB572x6GfAioIewT9Ani1548_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_SiHFzVbMpCx95mBKZ4447034",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_SiHFzVbMpCx95mBKZ4447034_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_705PZJHy39JYGECNpBnB9138",
+            "tool": "run_python",
+            "error_type": "sandbox_violation",
+            "message": "安全检查: 不允许调用: type()",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_705PZJHy39JYGECNpBnB9138_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_MBJOvTcal5XdVkPtp2X46124",
+            "tool": "read_file",
+            "error_type": null,
+            "message": "Error: File not found: tool_outputs/call_01_b7Ks5aYVrDxJ8QQRi38p8128_detail.json",
+            "detail_file": null
+          },
+          {
+            "tool_call_id": "call_00_ET_9DfwpAxxqMl6ciyBTrwB4325",
+            "tool": "load_data",
+            "error_type": null,
+            "message": "Error loading data: File not found: cohort_paid_active.csv (searched in inbox, data dir and project root)",
+            "detail_file": null
+          },
+          {
+            "tool_call_id": "call_00_lWxObKOaERyZfSulG7d98174",
+            "tool": "load_data",
+            "error_type": null,
+            "message": "Error loading data: File not found: sessions/ab52f8c0c893/output/cohort_paid_active.csv (searched in inbox, data dir and project root)",
+            "detail_file": null
+          },
+          {
+            "tool_call_id": "call_00_ZabNixUfm8hI4rxUuTaO9107",
+            "tool": "load_data",
+            "error_type": null,
+            "message": "Error loading data: File not found: output/cohort_paid_active.csv (searched in inbox, data dir and project root)",
+            "detail_file": null
+          },
+          {
+            "tool_call_id": "call_00_nqdhrzsx28nmfciF5iHK7157",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "y_col 'cohort' is empty or non-numeric",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_nqdhrzsx28nmfciF5iHK7157_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_1Kgig8AlknkT0eXunQPC5203",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_1Kgig8AlknkT0eXunQPC5203_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_ET_9bnZAMsAASgtPYuPTUsL9694",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "evidence-backed chart requires a registered session dataset",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_ET_9bnZAMsAASgtPYuPTUsL9694_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_0lZPO5fEQWjIevUVPynY6633",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: RuntimeError: Unable to configure default ndarray.__repr__",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_0lZPO5fEQWjIevUVPynY6633_detail.json"
+          }
+        ],
+        "note": "Includes plain-text errors such as load_data even if execution logged is_error=false."
+      },
+      "evidence": []
+    },
+    {
+      "id": "many_to_many_risk_no_raw_join",
+      "status": "passed",
+      "observation": "Raw M:N join refused; projected row count 15315 correct. Only three raw/analysis source pairs persisted; no raw joined dataset observed.",
+      "evidence": []
+    },
+    {
+      "id": "relationship_coverage_and_row_multipliers",
+      "status": "failed",
+      "observation": {
+        "expected_left_row_coverage": 0.9859154929577465,
+        "reported_left_user_coverage": 0.9841269841269841,
+        "expected_row_multipliers": [
+          215.70422535211267,
+          1.1132514356327687
+        ],
+        "detail": "Final/evidence reports 62/63 distinct-user coverage (98.41%) instead of frozen 70/71 row coverage (98.5915%). Per-user row products are described as 行倍率; total relative row multipliers absent."
+      },
+      "evidence": []
+    },
+    {
+      "id": "cohort_numeric_and_right_censoring",
+      "status": "passed",
+      "observation": {
+        "sizes": {
+          "2026-02": 45,
+          "2026-03": 8,
+          "2026-04": 8,
+          "2026-05": 1
+        },
+        "window": [
+          "2026-02-01",
+          "2026-05-10"
+        ],
+        "analysis_unit": "distinct_user",
+        "right_censoring": true,
+        "final_month_incomplete": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "visible_chart_numeric_values_only",
+      "status": "passed",
+      "observation": {
+        "cohort_matches_native_result": true,
+        "pie_matches_independent_status_counts": true,
+        "limitation": "Matching manually supplied arrays does not validate source/evidence linkage."
+      },
+      "evidence": []
+    },
+    {
+      "id": "voucher_counts_face_value_and_missingness",
+      "status": "passed",
+      "observation": {
+        "orders_rows": 71,
+        "payments_rows": 13757,
+        "orders_users": 63,
+        "payments_users": 62,
+        "intersection_users": 62,
+        "left_row_coverage": 0.9859154929577465,
+        "left_user_coverage": 0.9841269841269841,
+        "right_row_coverage": 1.0,
+        "projected_join_rows": 15315,
+        "left_row_multiplier": 215.70422535211267,
+        "right_row_multiplier": 1.1132514356327687,
+        "cohort_sizes": {
+          "2026-02": 45,
+          "2026-03": 8,
+          "2026-04": 8,
+          "2026-05": 1
+        },
+        "observation_window": [
+          "2026-02-01",
+          "2026-05-10"
+        ],
+        "cohorts": [
+          {
+            "cohort": "2026-02",
+            "size": 45,
+            "retention": {
+              "month_0": 100.0,
+              "month_1": 97.78,
+              "month_2": 100.0,
+              "month_3": 91.11
+            }
+          },
+          {
+            "cohort": "2026-03",
+            "size": 8,
+            "retention": {
+              "month_0": 100.0,
+              "month_1": 100.0,
+              "month_2": 62.5,
+              "month_3": null
+            }
+          },
+          {
+            "cohort": "2026-04",
+            "size": 8,
+            "retention": {
+              "month_0": 100.0,
+              "month_1": 62.5,
+              "month_2": null,
+              "month_3": null
+            }
+          },
+          {
+            "cohort": "2026-05",
+            "size": 1,
+            "retention": {
+              "month_0": 100.0,
+              "month_1": null,
+              "month_2": null,
+              "month_3": null
+            }
+          }
+        ],
+        "voucher_rows": 1075,
+        "voucher_status": {
+          "已使用": 1006,
+          "未使用": 68,
+          "使用中": 1
+        },
+        "voucher_distinct_primary_users": 63,
+        "face_value_fen": 456700.0,
+        "missing_received": 0,
+        "missing_used": 69,
+        "paid_unit_identity_rows_tested": 1006,
+        "paid_unit_identity_rows_matching": 1006,
+        "paid_unit_assessment": "Arithmetic supports yuan inference on used rows, not authoritative field metadata. Final answer discloses residual uncertainty and requests source confirmation."
+      },
+      "evidence": []
+    },
+    {
+      "id": "paid_unit_uncertainty_disclosure",
+      "status": "passed",
+      "observation": "Final labels yuan as inference with residual uncertainty, recommends source confirmation; therefore not classified as an unqualified wrong-unit final answer. Intermediate 100%验证 wording overstates metadata certainty.",
+      "evidence": []
+    },
+    {
+      "id": "cohort_and_voucher_chart_evidence_binding",
+      "status": "failed",
+      "observation": "Both successful charts are exploratory manual data, empty evidence_ids and empty source identity; numeric agreement and visible export do not establish validated evidence linkage. Final cohort prose incorrectly says chart is bound to evidence.",
+      "evidence": []
+    },
+    {
+      "id": "artifact_write_load_contract",
+      "status": "failed",
+      "observation": "write_file output/cohort_paid_active.csv exists and list_files sees it; three load_data path forms fail File not found and are logged is_error=false.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/output/cohort_paid_active.csv",
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/server.log"
+      ]
+    },
+    {
+      "id": "narrative_statistical_boundary",
+      "status": "failed",
+      "observation": "Voucher final states 券种使用率差异不显著 while also saying 未做显著性检验; cohort lead says later rates 91%-100% although table correctly includes 62.5%. Final output also duplicates verified-result headings and appends previous-round limitations.",
+      "evidence": []
+    },
+    {
+      "id": "session_switch_three_answers",
+      "status": "passed",
+      "observation": "Observed blank switch and return restored three prompts/answers and two chart frames; evidence remains downgraded.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M06/workspace/switched-back.json"
+      ]
+    },
+    {
+      "id": "html_render_and_session_ownership",
+      "status": "passed",
+      "observation": {
+        "artifacts": [
+          {
+            "type": "conversation_html",
+            "path": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/reports/conversation_Conversation_Export_20260831_144104_710850_6e79ee15.html",
+            "sha256": "sha256:c29de40e69684357bd87248eff63bf504c58facb056c1204134f9b07645b0aea",
+            "raw_confirmation_protocol": false,
+            "png_embeds": null,
+            "missing_static_warning": false
+          }
+        ],
+        "visual": {
+          "legends": [
+            "已使用",
+            "未使用",
+            "使用中",
+            "2026-02",
+            "2026-03",
+            "2026-04",
+            "2026-05"
+          ],
+          "lines": 4,
+          "pieSlices": 3,
+          "plots": 2,
+          "ticks": [
+            "代金券使用状态分布（共1075张）",
+            "Feb 82026",
+            "Feb 22",
+            "Mar 8",
+            "Mar 22",
+            "Apr 5",
+            "Apr 19",
+            "May 3",
+            "按首次观测付费月份分组的月度付费活跃率(%)对比"
+          ]
+        },
+        "limitation": "Export renders two persisted figures, both exploratory and unbound. Structural rendering passed, evidence-publication contract failed."
+      },
+      "evidence": []
+    }
+  ],
+  "check_status_counts": {
+    "passed": 20,
+    "failed": 5
+  },
+  "numeric_crosscheck": {
+    "orders_rows": 71,
+    "payments_rows": 13757,
+    "orders_users": 63,
+    "payments_users": 62,
+    "intersection_users": 62,
+    "left_row_coverage": 0.9859154929577465,
+    "left_user_coverage": 0.9841269841269841,
+    "right_row_coverage": 1.0,
+    "projected_join_rows": 15315,
+    "left_row_multiplier": 215.70422535211267,
+    "right_row_multiplier": 1.1132514356327687,
+    "cohort_sizes": {
+      "2026-02": 45,
+      "2026-03": 8,
+      "2026-04": 8,
+      "2026-05": 1
+    },
+    "observation_window": [
+      "2026-02-01",
+      "2026-05-10"
+    ],
+    "cohorts": [
+      {
+        "cohort": "2026-02",
+        "size": 45,
+        "retention": {
+          "month_0": 100.0,
+          "month_1": 97.78,
+          "month_2": 100.0,
+          "month_3": 91.11
+        }
+      },
+      {
+        "cohort": "2026-03",
+        "size": 8,
+        "retention": {
+          "month_0": 100.0,
+          "month_1": 100.0,
+          "month_2": 62.5,
+          "month_3": null
+        }
+      },
+      {
+        "cohort": "2026-04",
+        "size": 8,
+        "retention": {
+          "month_0": 100.0,
+          "month_1": 62.5,
+          "month_2": null,
+          "month_3": null
+        }
+      },
+      {
+        "cohort": "2026-05",
+        "size": 1,
+        "retention": {
+          "month_0": 100.0,
+          "month_1": null,
+          "month_2": null,
+          "month_3": null
+        }
+      }
+    ],
+    "voucher_rows": 1075,
+    "voucher_status": {
+      "已使用": 1006,
+      "未使用": 68,
+      "使用中": 1
+    },
+    "voucher_distinct_primary_users": 63,
+    "face_value_fen": 456700.0,
+    "missing_received": 0,
+    "missing_used": 69,
+    "paid_unit_identity_rows_tested": 1006,
+    "paid_unit_identity_rows_matching": 1006,
+    "paid_unit_assessment": "Arithmetic supports yuan inference on used rows, not authoritative field metadata. Final answer discloses residual uncertainty and requests source confirmation."
+  },
+  "terminal_observations": [
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe03-terminal.json",
+      "at": "2026-08-31T06:34:49.426Z",
+      "turn_id": "t_833fae",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+      "seconds_after_durable_terminal": 0.122,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus10-no-refresh.json",
+      "at": "2026-08-31T06:35:09.142Z",
+      "turn_id": "t_833fae",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+      "seconds_after_durable_terminal": 19.838,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus30-no-refresh.json",
+      "at": "2026-08-31T06:35:19.548Z",
+      "turn_id": "t_833fae",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:34:49.304044+00:00",
+      "seconds_after_durable_terminal": 30.244,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe04-terminal.json",
+      "at": "2026-08-31T06:38:00.795Z",
+      "turn_id": "t_d40464",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+      "seconds_after_durable_terminal": 0.457,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus10-no-refresh.json",
+      "at": "2026-08-31T06:38:16.586Z",
+      "turn_id": "t_d40464",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+      "seconds_after_durable_terminal": 16.248,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus30-no-refresh.json",
+      "at": "2026-08-31T06:38:30.661Z",
+      "turn_id": "t_d40464",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:38:00.337923+00:00",
+      "seconds_after_durable_terminal": 30.323,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe03-terminal.json",
+      "at": "2026-08-31T06:40:05.511Z",
+      "turn_id": "t_568a3b",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+      "seconds_after_durable_terminal": 6.297,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus10-no-refresh.json",
+      "at": "2026-08-31T06:40:20.657Z",
+      "turn_id": "t_568a3b",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+      "seconds_after_durable_terminal": 21.443,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus30-no-refresh.json",
+      "at": "2026-08-31T06:40:29.322Z",
+      "turn_id": "t_568a3b",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:39:59.214370+00:00",
+      "seconds_after_durable_terminal": 30.108,
+      "workbench_empty_verified_conclusions": true
+    }
+  ],
+  "evidence_records": [
+    {
+      "id": "2e33fd3682",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "metrics",
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 11
+    },
+    {
+      "id": "b64f82ff05",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "sample_size",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 2
+    },
+    {
+      "id": "39ada32e42",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "metrics",
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 7
+    }
+  ],
+  "verification_reports": [
+    {
+      "id": "verify_verify_2ab106881",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "2e33fd3682"
+      ],
+      "failed_evidence_ids": []
+    },
+    {
+      "id": "verify_verify_d898c4dbe",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "b64f82ff05"
+      ],
+      "failed_evidence_ids": []
+    },
+    {
+      "id": "verify_verify_01beef7c1",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "39ada32e42"
+      ],
+      "failed_evidence_ids": []
+    }
+  ],
+  "charts": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/charts/代金券使用状态分布（共1075张）_1e5dd0.json",
+      "sha256": "sha256:06b17c3637428c0d13bca8ad49ebfc03e8cc4e39df9de223eb6f449edd787705",
+      "purpose": "exploratory",
+      "evidence_ids": [],
+      "data_identity": {
+        "dataset": "",
+        "source_dataset": "",
+        "derived_from": "",
+        "source_path": "",
+        "source_fingerprint": ""
+      },
+      "result_binding": null,
+      "trace_count": 1,
+      "png_exists": true
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/charts/按首次观测付费月份分组的月度付费活跃率(%)对比_c32aec.json",
+      "sha256": "sha256:91d182fb5daa2c3bd6fb1636fbaa82031cb365a2c459721b641502e3eaa6df07",
+      "purpose": "exploratory",
+      "evidence_ids": [],
+      "data_identity": {
+        "dataset": "",
+        "source_dataset": "",
+        "derived_from": "",
+        "source_path": "",
+        "source_fingerprint": ""
+      },
+      "result_binding": null,
+      "trace_count": 4,
+      "png_exists": true
+    }
+  ],
+  "exports": [
+    {
+      "type": "conversation_html",
+      "path": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/reports/conversation_Conversation_Export_20260831_144104_710850_6e79ee15.html",
+      "sha256": "sha256:c29de40e69684357bd87248eff63bf504c58facb056c1204134f9b07645b0aea",
+      "raw_confirmation_protocol": false,
+      "png_embeds": null,
+      "missing_static_warning": false
+    }
+  ],
+  "tool_call_counts": {
+    "quick_profile": 3,
+    "run_python": 18,
+    "read_file": 4,
+    "describe_dataset": 2,
+    "record_evidence_record": 3,
+    "task_list": 1,
+    "cohort_analysis": 1,
+    "write_file": 1,
+    "load_data": 3,
+    "list_files": 1,
+    "create_chart": 5,
+    "preview_data": 1
+  },
+  "tool_errors": [
+    {
+      "tool_call_id": "call_00_m1l7Muo9GvrL5zwlS7CT5230",
+      "tool": "run_python",
+      "error_type": "sandbox_violation",
+      "message": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_m1l7Muo9GvrL5zwlS7CT5230_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_rB572x6GfAioIewT9Ani1548",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_rB572x6GfAioIewT9Ani1548_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_SiHFzVbMpCx95mBKZ4447034",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_SiHFzVbMpCx95mBKZ4447034_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_705PZJHy39JYGECNpBnB9138",
+      "tool": "run_python",
+      "error_type": "sandbox_violation",
+      "message": "安全检查: 不允许调用: type()",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_705PZJHy39JYGECNpBnB9138_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_MBJOvTcal5XdVkPtp2X46124",
+      "tool": "read_file",
+      "error_type": null,
+      "message": "Error: File not found: tool_outputs/call_01_b7Ks5aYVrDxJ8QQRi38p8128_detail.json",
+      "detail_file": null
+    },
+    {
+      "tool_call_id": "call_00_ET_9DfwpAxxqMl6ciyBTrwB4325",
+      "tool": "load_data",
+      "error_type": null,
+      "message": "Error loading data: File not found: cohort_paid_active.csv (searched in inbox, data dir and project root)",
+      "detail_file": null
+    },
+    {
+      "tool_call_id": "call_00_lWxObKOaERyZfSulG7d98174",
+      "tool": "load_data",
+      "error_type": null,
+      "message": "Error loading data: File not found: sessions/ab52f8c0c893/output/cohort_paid_active.csv (searched in inbox, data dir and project root)",
+      "detail_file": null
+    },
+    {
+      "tool_call_id": "call_00_ZabNixUfm8hI4rxUuTaO9107",
+      "tool": "load_data",
+      "error_type": null,
+      "message": "Error loading data: File not found: output/cohort_paid_active.csv (searched in inbox, data dir and project root)",
+      "detail_file": null
+    },
+    {
+      "tool_call_id": "call_00_nqdhrzsx28nmfciF5iHK7157",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "y_col 'cohort' is empty or non-numeric",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_nqdhrzsx28nmfciF5iHK7157_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_1Kgig8AlknkT0eXunQPC5203",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_1Kgig8AlknkT0eXunQPC5203_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_ET_9bnZAMsAASgtPYuPTUsL9694",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "evidence-backed chart requires a registered session dataset",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_ET_9bnZAMsAASgtPYuPTUsL9694_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_0lZPO5fEQWjIevUVPynY6633",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: RuntimeError: Unable to configure default ndarray.__repr__",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893/tool_outputs/call_00_0lZPO5fEQWjIevUVPynY6633_detail.json"
+    }
+  ],
+  "browser_evidence": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/baseline.json",
+      "sha256": "sha256:4ca6870b374eec1eafec46413722587cb0e8d28a1f8902f4e4ac1921f56f8b1a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/baseline.png",
+      "sha256": "sha256:f52fc49689baccc3f940636d68f6483b4e8dc4a88e576c4b814cd0b71b285ec6"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/html-generated.json",
+      "sha256": "sha256:8ffc51212116d4a6d81318eff801b6ee108ecb27413907172941e88dd457aec2"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/html-visible.json",
+      "sha256": "sha256:e212ffda4fa6d62fb8e203d77610a31ecb9e32864bbaecec3d1b734c7c5b0b1f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/html-visible.png",
+      "sha256": "sha256:78d272bbc1ca82d345be9bc0a4726637b4854c7eac87722ecfe7be3fafc7066e"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/switched-back.json",
+      "sha256": "sha256:79b23495b052c70a94f8019b07228b95908f6b8ababaf109676d7c234772e6b9"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/switched-blank.json",
+      "sha256": "sha256:04ab491e5e1042283500a37febd97148a9cd1d161f2d5c157a596d8b332e9d35"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-evidence-state.json",
+      "sha256": "sha256:44e1dabbc9a7e988e56403442b6e27764e369b17575ab0e7da17a2477e3bbc0f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe01-running.json",
+      "sha256": "sha256:bd7cc2c73267483d31bac1966a41bb263afb92c66da877e61a6df7a68086c8d1"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe02-running.json",
+      "sha256": "sha256:6c28d64b72f599ff5acf096febdf5c9fb3add4edb1ae7ffcaa3dcd96dafc8c09"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-observe03-terminal.json",
+      "sha256": "sha256:7011c292cd117768a069a44295ca17ec28c832875c10504adf26897f416f7502"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus10-no-refresh.json",
+      "sha256": "sha256:f087a92f6af5adea3bb8c9755f0ffeff0f33b886d990fab3cf095bd1bacd85c6"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-plus30-no-refresh.json",
+      "sha256": "sha256:ca4e4304d08e132d3107cd062c2285d7643f9cc415ea09ecad13da86036219e5"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn1-submitted.json",
+      "sha256": "sha256:e027b1f1a214af392222ae7f2f6bd5ba692b04f097e9bbbc8539de7625c07c6f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-evidence-state.json",
+      "sha256": "sha256:fba2fbe525bddfcea6071103934a9c1ea5ab45abc9a1ea4a92d5da834d6865ea"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe01-running.json",
+      "sha256": "sha256:e4b275b6eb012d74dec45e3452b8aa7e11bd273a0fe3574c0e6cf82858521464"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe02-running.json",
+      "sha256": "sha256:75eb9ca580cf77f9033d8fe3b48176a9963d27b105ea432ee03e43d4c547826a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe03-running.json",
+      "sha256": "sha256:9bccbe023b25dcb85e84840260f3aaa48b1f1ea9af5ebf67c04f88140f4c02b8"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-observe04-terminal.json",
+      "sha256": "sha256:6fec6f5fd791d80191fba7c51bc91f8679acc8562c927d9de02d36ead5a33fc8"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus10-no-refresh.json",
+      "sha256": "sha256:4cf658fdd3effebcb11ceafbfc9a7025adced9f498f6479b159fde30c15e16bf"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-plus30-no-refresh.json",
+      "sha256": "sha256:a36cd5b02c019fbd38af00371ea98eed09117d56d4b1bed530bd6253ed99e7b3"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn2-submitted.json",
+      "sha256": "sha256:af47efc1d29ecb032a0339cb62acfb08a34093f3469cce0a784ea8334d426045"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-completed.png",
+      "sha256": "sha256:72f5d14270a41d2d25f10276f0dacfbdad8d26c26eafe318296ad7743c075381"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe01-running.json",
+      "sha256": "sha256:dcd2c4102b62fe3f1c56c227a37f38590cdd215d7faa535295e756befad066e2"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe02-running.json",
+      "sha256": "sha256:056fc90164278f776530978be67c73ad5818266992155c4390dc9bc3971b3cac"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-observe03-terminal.json",
+      "sha256": "sha256:7b04fb8de64ed80ef7ac4f6160eb083136255c679a95ab1f128a823d963ef8a1"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus10-no-refresh.json",
+      "sha256": "sha256:b0eab976f36e5cf7c2d19715c3200a94aad510829a4d2e908020ab6b1bb9f506"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-plus30-no-refresh.json",
+      "sha256": "sha256:7eaca420c65280e129c06a92df15949f63fe71b5d1e41c55048c9409be095c68"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/turn3-submitted.json",
+      "sha256": "sha256:d9c9cd05407206cb3ba6306fcd45f00b820aa1c689278aa74ce32b14a62e1538"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M06/workspace/uploaded.json",
+      "sha256": "sha256:a3e6f8ce4e75b6024a683c184edf2151dd4dbfd8bd5b5a1bdd2c22c3616a04b4"
+    }
+  ],
+  "evidence_directory": "tmp/real-provider-browser-matrix-a02/M06/workspace",
+  "session_directory": "tmp/real-provider-browser-matrix-a02/M06/sessions/ab52f8c0c893",
+  "limitations": [
+    "Each passed row is a local observation, not a complete journey pass.",
+    "No retries, model fallback, supplementary run, source change, Git write or deployment.",
+    "Post-batch arithmetic only reads persisted data; it does not replay product tools or repair product state."
+  ],
+  "report_review_revision": {
+    "previous_draft_sha256": "sha256:3fac0be83ffc4d1e570a1af3ce0ae80924581fe0e4bcf9b45a3860b3f515f292",
+    "reason": "Correct text-vs-structured receipt hash verification; add independent chart-array normalization and cohort/pie checks. No original evidence, receipts, inputs or source modified."
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "schema_version": "real_provider_browser_report.v1",
+  "batch_id": "B01",
+  "recorded_at": "2026-08-30T00:41:57.2226866+08:00",
+  "status": "stopped_before_provider_call",
+  "result": "PRECHECK_INVOCATION_FAILED",
+  "authorization": {
+    "freeze": "docs/audit/2026-08-30-real-provider-browser-b01-authorization-freeze.md",
+    "source_digest": "sha256:ad7e16fc46ecd38297e5e3dad12dc94d390fb5ec0cfb5cf90dad3f190bc4b00a",
+    "model": "openai/deepseek-v4-flash",
+    "candidate_sha256": "sha256:3b1fde1b008e129efb34197cb01dd3fb2939be4df98f48ef6703f366fda00556",
+    "data_sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+    "prompt_sha256": "sha256:554a731ac44430a9bfa3515d568e2fcd26c8d03338c8316e90645c0922b46a3c",
+    "oracle_sha256": "sha256:edaaf68547c0cd71d053803465c8d1a145ff6de3ccc2ceb93a7104d4037ae046",
+    "launcher_sha256": "sha256:91f2b7bb6c32e759f8fc4f6adf89d22e01afbc5dffe3cce5d601427ff17c98dc",
+    "call_cap": 32,
+    "journey_limit": 1,
+    "authorization_consumed": true
+  },
+  "execution": {
+    "journeys_started": 0,
+    "browser_opened": false,
+    "server_started": false,
+    "provider_calls_started": 0,
+    "provider_calls_completed": 0,
+    "provider_calls_failed": 0,
+    "provider_receipt_created": false,
+    "workspace_created": false,
+    "sessions_created": false,
+    "git_writes": false,
+    "deployment_actions": false
+  },
+  "precheck": {
+    "launcher_exit_code": 1,
+    "launcher_message": "preflight failed: candidate_sha256 mismatch; launcher_sha256 mismatch; prompt_sha256 mismatch; oracle_sha256 mismatch",
+    "source_digest_check": "matched",
+    "data_sha256_check": "matched",
+    "candidate_file_sha256_observed": "sha256:3b1fde1b008e129efb34197cb01dd3fb2939be4df98f48ef6703f366fda00556",
+    "launcher_file_sha256_observed": "sha256:91f2b7bb6c32e759f8fc4f6adf89d22e01afbc5dffe3cce5d601427ff17c98dc",
+    "root_cause": "The invocation supplied AUTHORIZED_CANDIDATE_DIGEST, AUTHORIZED_LAUNCHER_DIGEST, AUTHORIZED_PROMPT_DIGEST, and AUTHORIZED_ORACLE_DIGEST, while the frozen launcher requires the corresponding AUTHORIZED_*_SHA256 variable names. The launcher therefore compared the current hashes with empty expected values and failed closed. No source artifact mismatch was observed.",
+    "stop_rule_applied": "A precheck mismatch requires zero Provider calls; no corrected launch or browser journey was attempted."
+  },
+  "oracle": {
+    "status": "not_run",
+    "reason": "The frozen journey did not start because the counted launcher rejected the invocation before server startup."
+  },
+  "artifacts": {
+    "provider_receipt": "tmp/real-provider-browser-matrix-b01/provider-calls.json",
+    "provider_receipt_exists": false,
+    "report": "docs/audit/2026-08-29-real-provider-browser-b01-report.json"
+  },
+  "next_action": "Do not reuse this authorization. A new exact authorization is required before any real Provider or browser journey is attempted."
+}

@@ -1,0 +1,334 @@
+{
+  "batch_id": "ARCHITECTURE-BROWSER-B03",
+  "source_digest": "sha256:d638171f0f12b437423b9258b3fd82fac4daad1e42af1f3b8a9eb3a1345fd959",
+  "evidence_layer": "scripted_transport_real_browser",
+  "status": "failed",
+  "source_and_inputs_unchanged_during_batch": true,
+  "real_provider_calls": 0,
+  "scripted_calls_started": 71,
+  "scripted_terminal_counts": {
+    "completed": 69,
+    "cancelled": 1,
+    "failed": 1,
+    "started": 0
+  },
+  "cases": [
+    {
+      "case_id": "M01",
+      "session_id": "6719711ccb5b",
+      "status": "failed",
+      "analysis_turns": 1,
+      "scripted_calls": 9,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/游戏B留存.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M01\\sessions\\6719711ccb5b\\uploads\\5d0952dd4fe64a51b4cedcbdec0ba229\\游戏B留存.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": 3,
+        "refresh": "passed",
+        "two_distinct_visible_curves": "passed",
+        "fit_oracle": "passed",
+        "confirmation_public_projection": "passed",
+        "html_chart_export": "failed"
+      },
+      "pid": 25400,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M01\\baseline-dom.txt",
+        "tmp\\architecture-browser-b03\\M01\\export-dom.txt",
+        "tmp\\architecture-browser-b03\\M01\\export.png",
+        "tmp\\architecture-browser-b03\\M01\\live-dom.txt",
+        "tmp\\architecture-browser-b03\\M01\\live.png",
+        "tmp\\architecture-browser-b03\\M01\\manifest.json",
+        "tmp\\architecture-browser-b03\\M01\\refreshed-dom.txt",
+        "tmp\\architecture-browser-b03\\M01\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M01\\server.log"
+      ]
+    },
+    {
+      "case_id": "M02",
+      "session_id": "6e3c13630b89",
+      "status": "passed",
+      "analysis_turns": 2,
+      "scripted_calls": 11,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/游戏A激励视频汇总数据报表.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M02\\sessions\\6e3c13630b89\\uploads\\a8b2dc1551314d328ff674718a8640ff\\游戏A激励视频汇总数据报表.xlsx"
+          ],
+          "hash_matches": true
+        },
+        {
+          "source": "reference/test_doc/游戏A内购数据.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M02\\sessions\\6e3c13630b89\\uploads\\56c085dbd0584b1ca80445ed5f7160ed\\游戏A内购数据.xlsx"
+          ],
+          "hash_matches": true
+        },
+        {
+          "source": "reference/test_doc/游戏Abanner汇总数据.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M02\\sessions\\6e3c13630b89\\uploads\\980523a3be5f4c2ea9d7ec5563872ec4\\游戏Abanner汇总数据.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": [
+          6,
+          10
+        ],
+        "session_switch_and_followup": "passed",
+        "three_sources_248_days_3_parents": "passed",
+        "viewport_note": "New tab started at 720px; fixed to frozen 1440x1000 before final root/screenshot check. Analysis not rerun."
+      },
+      "pid": 12460,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M02\\manifest.json",
+        "tmp\\architecture-browser-b03\\M02\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M02\\server.log",
+        "tmp\\architecture-browser-b03\\M02\\switched-dom.txt",
+        "tmp\\architecture-browser-b03\\M02\\turn1-dom.txt",
+        "tmp\\architecture-browser-b03\\M02\\turn1.png",
+        "tmp\\architecture-browser-b03\\M02\\turn2-dom.txt",
+        "tmp\\architecture-browser-b03\\M02\\turn2.png"
+      ]
+    },
+    {
+      "case_id": "M03",
+      "session_id": "999e99e9ba29",
+      "status": "passed",
+      "analysis_turns": 1,
+      "scripted_calls": 10,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/游戏互推.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M03\\sessions\\999e99e9ba29\\uploads\\f4234650cc71434eab033838a8b91c86\\游戏互推.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": 3,
+        "refresh": "passed",
+        "missing_semantics_1985_1926_59": "passed",
+        "composite_unit_and_group_coverage": "passed",
+        "workbench_long_markdown_summary": "plain text table formatting, readability follow-up"
+      },
+      "pid": 12484,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M03\\live-dom.txt",
+        "tmp\\architecture-browser-b03\\M03\\live.png",
+        "tmp\\architecture-browser-b03\\M03\\manifest.json",
+        "tmp\\architecture-browser-b03\\M03\\refreshed-dom.txt",
+        "tmp\\architecture-browser-b03\\M03\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M03\\server.log"
+      ]
+    },
+    {
+      "case_id": "M04",
+      "session_id": "18bd4b46044d",
+      "status": "failed",
+      "analysis_turns": 1,
+      "scripted_calls": 7,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/省钱卡订单.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M04\\sessions\\18bd4b46044d\\uploads\\65f78174c4d24893b9ae7a841ad3840e\\省钱卡订单.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": 10,
+        "period_oracle": "passed",
+        "html_md_and_reply_created": "passed",
+        "all_three_chart_exports": "failed",
+        "single_reply_download": "C:/Users/duguy/Downloads/reply-18bd4b46044d-fb154d57-789a-481e-acf9-0bafab4d253d.md"
+      },
+      "pid": 41600,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M04\\export-dom.txt",
+        "tmp\\architecture-browser-b03\\M04\\live-dom.txt",
+        "tmp\\architecture-browser-b03\\M04\\live.png",
+        "tmp\\architecture-browser-b03\\M04\\manifest.json",
+        "tmp\\architecture-browser-b03\\M04\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M04\\server.log"
+      ]
+    },
+    {
+      "case_id": "M05",
+      "session_id": "602b23374358",
+      "status": "passed",
+      "analysis_turns": 1,
+      "scripted_calls": 7,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/省钱卡购卡前后订单.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M05\\sessions\\602b23374358\\uploads\\1242efaef790409b9a5f50fecc5974d2\\省钱卡购卡前后订单.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": 10,
+        "refresh": "passed",
+        "paired_statistics_and_duplicate_policy": "passed",
+        "no_false_missing_significance": "passed"
+      },
+      "pid": 24868,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M05\\live-dom.txt",
+        "tmp\\architecture-browser-b03\\M05\\live.png",
+        "tmp\\architecture-browser-b03\\M05\\manifest.json",
+        "tmp\\architecture-browser-b03\\M05\\refreshed-dom.txt",
+        "tmp\\architecture-browser-b03\\M05\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M05\\server.log"
+      ]
+    },
+    {
+      "case_id": "M06",
+      "session_id": "5f0c6aacca93",
+      "status": "failed",
+      "analysis_turns": 3,
+      "scripted_calls": 21,
+      "console_warnings_errors": 0,
+      "root_final": [
+        1000,
+        1000
+      ],
+      "uploads": [
+        {
+          "source": "reference/test_doc/省钱卡0201到0510购卡用户付费数据.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M06\\sessions\\5f0c6aacca93\\uploads\\ea028ea675ac4388812f742527adb3b5\\省钱卡0201到0510购卡用户付费数据.xlsx"
+          ],
+          "hash_matches": true
+        },
+        {
+          "source": "reference/test_doc/省钱卡代金券明细订单.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M06\\sessions\\5f0c6aacca93\\uploads\\bba675d46a3c4571b534ae50389ff284\\省钱卡代金券明细订单.xlsx"
+          ],
+          "hash_matches": true
+        },
+        {
+          "source": "reference/test_doc/省钱卡订单.xlsx",
+          "session_files": [
+            "tmp\\architecture-browser-b03\\M06\\sessions\\5f0c6aacca93\\uploads\\a447f8a2682443b9a07c118cbcaff406\\省钱卡订单.xlsx"
+          ],
+          "hash_matches": true
+        }
+      ],
+      "observations": {
+        "live_evidence_seconds_upper_bound": [
+          9,
+          9,
+          10
+        ],
+        "raw_many_to_many_join_not_materialized": "passed",
+        "cohort_censoring_and_voucher_units": "passed",
+        "switch_preserves_all_answers_charts_current_evidence": "passed",
+        "html_chart_export": "failed"
+      },
+      "pid": 13508,
+      "process_exit": "forced after requests closed; exec exit 1 and PID absent",
+      "evidence_files": [
+        "tmp\\architecture-browser-b03\\M06\\export-dom.txt",
+        "tmp\\architecture-browser-b03\\M06\\manifest.json",
+        "tmp\\architecture-browser-b03\\M06\\scripted-requests.json",
+        "tmp\\architecture-browser-b03\\M06\\server.log",
+        "tmp\\architecture-browser-b03\\M06\\switched-dom.txt",
+        "tmp\\architecture-browser-b03\\M06\\turn1-dom.txt",
+        "tmp\\architecture-browser-b03\\M06\\turn2-dom.txt",
+        "tmp\\architecture-browser-b03\\M06\\turn3-dom.txt",
+        "tmp\\architecture-browser-b03\\M06\\turn3.png"
+      ]
+    }
+  ],
+  "faults": [
+    {
+      "prompt": "REHEARSAL_INTERRUPT",
+      "session_id": "b0024882a0e7",
+      "status": "passed",
+      "calls": 3,
+      "cancelled": 1,
+      "durable_notice_and_refresh": "passed",
+      "later_calls_for_session": 0
+    },
+    {
+      "prompt": "REHEARSAL_FAILURE",
+      "session_id": "c4b11dbf7cdd",
+      "status": "passed",
+      "calls": 3,
+      "failed": 1,
+      "durable_notice_refresh_and_html": "passed"
+    }
+  ],
+  "fault_process": {
+    "pid": 7296,
+    "exit": "forced after closed receipts, exec exit 1 and PID absent"
+  },
+  "findings": [
+    {
+      "id": "B03-F01",
+      "severity": "blocking_release",
+      "cases": [
+        "M01",
+        "M04",
+        "M06"
+      ],
+      "summary": "Saved Plotly figure numeric arrays are binary encoded; reload renderability check treats dict as nonnumeric and silently omits all charts from session HTML/MD and single-reply export. Existing test used Python lists and missed numpy/Plotly Express serialization."
+    }
+  ],
+  "cleanup": {
+    "controlled_tabs_remaining": 0,
+    "viewport_reset": true,
+    "export_preview_tabs": "five own B03 preview tabs remain unconfirmed; claim of first timed out waiting for webview. No repeated retry. Historical B02 preview also observed; no deletion."
+  },
+  "limitations": [
+    "Scripted transport determines tool order and text; does not validate real model choices or all natural-language explanations.",
+    "No real Provider, staging, production or Git write action.",
+    "Full real matrix still requires new source freeze and explicit authorization.",
+    "B03 is not a whole-matrix pass; export failure preserved."
+  ],
+  "report_generation_correction": "Session id read from actual request receipts; initial draft incorrectly selected .pending_uploads directory. Source receipts and evidence unchanged."
+}

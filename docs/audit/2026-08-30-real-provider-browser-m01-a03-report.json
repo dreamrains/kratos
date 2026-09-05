@@ -1,0 +1,123 @@
+{
+  "schema_version": "real_provider_browser_report.v1",
+  "matrix_case_id": "M01",
+  "authorization_attempt_id": "A03",
+  "recorded_at": "2026-08-30T01:33:08.5835395+08:00",
+  "status": "stopped_on_provider_policy_mismatch",
+  "result": "BLOCKED",
+  "authorization": {
+    "freeze": "docs/audit/2026-08-30-real-provider-browser-m01-a03-authorization-freeze.md",
+    "source_digest": "sha256:e0e71952b4e5ba8ef8c6cb0f9944eaa20f20c471fff5dfcaf1a433b7702882c1",
+    "model": "openai/deepseek-v4-flash",
+    "candidate_sha256": "sha256:4623060fbae28ad05fe427c9fac36c5b1f2f08595ede25e202021d0c7ae9028e",
+    "data_sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+    "prompt_sha256": "sha256:554a731ac44430a9bfa3515d568e2fcd26c8d03338c8316e90645c0922b46a3c",
+    "oracle_sha256": "sha256:edaaf68547c0cd71d053803465c8d1a145ff6de3ccc2ceb93a7104d4037ae046",
+    "launcher_sha256": "sha256:49049da5cd936b6c23b0494f62caa207034f5240418b01339ee77a5b4e8aea94",
+    "call_cap": 32,
+    "journey_limit": 1,
+    "authorization_consumed": true
+  },
+  "execution": {
+    "journeys_started": 1,
+    "browser_opened": true,
+    "viewport": "1440x1000",
+    "session_id": "05f7ccfdd6fc",
+    "upload_id": "07f0542a96e343f685455fb6c7ed359a",
+    "prompt_submissions": 1,
+    "confirmation_responses": 0,
+    "refreshes": 0,
+    "exports": 0,
+    "provider_calls_started": 1,
+    "provider_calls_completed": 1,
+    "provider_calls_failed": 0,
+    "provider_calls_blocked_locally": 2,
+    "server_stopped": true,
+    "viewport_reset": true,
+    "browser_tab_closed": true,
+    "git_writes": false,
+    "deployment_actions": false
+  },
+  "provider_receipt": {
+    "path": "tmp/real-provider-browser-m01-a03/provider-calls.json",
+    "sha256": "sha256:feca8feecada01e9c8ffccef60311709a1bf779c71d7761e2cfa4eb84719ab90",
+    "schema_version": 2,
+    "calls": [
+      {
+        "ordinal": 1,
+        "model": "openai/deepseek-v4-flash",
+        "stream": false,
+        "max_tokens": 300,
+        "status": "completed",
+        "started_at": "2026-08-29T17:31:58.003835Z",
+        "finished_at": "2026-08-29T17:32:02.708600Z"
+      }
+    ],
+    "blocked_attempts": 2,
+    "terminal_failure": {
+      "code": "provider_max_tokens_outside_authorization",
+      "failed_at": "2026-08-29T17:32:02.710172Z",
+      "observed_max_tokens": 1200
+    }
+  },
+  "journey_evidence": {
+    "static_asset_hash": "b4f3a7ba19882fc0",
+    "initial_root_scroll": {
+      "inner_height": 1000,
+      "body_scroll_height": 1000,
+      "document_scroll_height": 1000,
+      "passed": true
+    },
+    "upload_ticket_opaque": true,
+    "upload_metadata_exposed_server_path": false,
+    "upload_size": 16520,
+    "upload_sha256_matched": true,
+    "upload_status": "loaded",
+    "upload_session_id": "05f7ccfdd6fc",
+    "dataset_names": [
+      "游戏B留存__raw",
+      "游戏B留存"
+    ],
+    "dataset_shape": [62, 13],
+    "dataset_loaded_before_first_provider_call": true,
+    "shared_inbox_copy_observed": false,
+    "method_confirmation_persisted": true,
+    "method_confirmation_id": "method_retention_lifecycle_spec_3db8907cda6b",
+    "method_confirmation_status": "pending",
+    "confirmation_task_id": 1,
+    "confirmation_task_status": "pending"
+  },
+  "guard_verdict": {
+    "status": "passed",
+    "first_policy_violation_latched": true,
+    "second_real_provider_call_prevented": true,
+    "real_calls_after_terminal_failure": 0,
+    "detail": "The 1200-token escalation and the next product call were rejected locally. Only the initial authorized 300-token request reached the Provider."
+  },
+  "oracle": {
+    "status": "not_completed",
+    "blocking_reason": "An auxiliary LLMClient attempted an unauthorized 300-to-1200 reasoning-budget escalation before the method confirmation could be answered.",
+    "required_tools_executed": [],
+    "tool_error_events_observed": 0,
+    "final_answer_observed": false,
+    "evidence_records_observed": 0,
+    "chart_artifacts_observed": 0,
+    "comparison_chart_checked": false,
+    "refresh_projection_checked": false,
+    "html_export_checked": false,
+    "browser_console_check": "not_run_after_hard_stop"
+  },
+  "root_cause": {
+    "status": "confirmed",
+    "component": "auxiliary LLM budget policy in the strict Web acceptance path",
+    "description": "The authorized 300-token auxiliary request completed with reasoning truncation and finish_reason=length. The ordinary LLMClient.chat path then applied its product budget ladder and attempted max_tokens=1200. M01-A03 permits auxiliary max_tokens only at 300 or 800 and forbids auxiliary escalation, so StrictProviderCallGuard correctly rejected the 1200-token request before Provider dispatch.",
+    "not_an_upload_binding_failure": true,
+    "required_fix": "Inject a countable one-shot auxiliary client into every Web AgentLoop auxiliary path so auxiliary calls use only the frozen 300/800 budgets and never enter the product reasoning-budget escalation ladder. Preserve the main 8000-to-32000-to-128000 silent-length ladder."
+  },
+  "continuation_assessment": {
+    "decision": "do_not_continue_m01_a03",
+    "severity": "blocking",
+    "reason": "The strict Provider policy was violated and globally latched. Answering the persisted method confirmation would require a new Provider call after the terminal condition and a restarted service, which is outside the consumed A03 authorization.",
+    "authorization_boundary": "M01-A03 is consumed and must not be reused."
+  }
+}

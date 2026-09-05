@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "candidate_id": "upload_binding_real_browser_01",
+  "source_digest": "sha256:97d51421f2481689c48f4ac6036a60b9e783b32a78eb0296a162cdff1dae2c42",
+  "model": "openai/deepseek-v4-flash",
+  "data": {
+    "path": "reference/test_doc/游戏B留存.xlsx",
+    "sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+  },
+  "prompt": "请根据数据为我拟合新用户留存率的公式，比较幂律、指数和对数曲线，并给出参数、拟合优度和适用限制。",
+  "browser_steps": [
+    "从新会话上传冻结的数据文件并确认上传成功",
+    "发送冻结的单条用户提示词",
+    "若且仅若出现方法确认，选择按此方法继续",
+    "等待模型完成真实工具调用和最终回答",
+    "刷新同一会话并检查回答、工作区和错误日志"
+  ],
+  "provider_policy": {
+    "web_journeys": 1,
+    "call_cap": 24,
+    "temperature": 0.0,
+    "timeout_seconds": 120,
+    "initial_max_tokens": 8000,
+    "silent_length_ladder": [8000, 32000, 128000],
+    "num_retries": 0,
+    "stream_sync_fallback": false,
+    "model_fallback": false,
+    "supplementary_run": false
+  },
+  "oracle": {
+    "upload_ticket_is_opaque_and_integrity_bound": true,
+    "attachment_is_session_owned_before_first_model_request": true,
+    "dataset_names_before_first_model_request": [
+      "游戏B留存__raw",
+      "游戏B留存"
+    ],
+    "dataset_shape": [62, 13],
+    "forbidden_file_recovery_question": true,
+    "required_tool": "curve_fitting",
+    "tool_error_events": 0,
+    "final_answer_required": true,
+    "refresh_must_restore_final_answer": true,
+    "browser_error_or_warning_logs": 0,
+    "shared_inbox_copy_forbidden": true
+  },
+  "writes": {
+    "workspace_dir": "tmp/upload-binding-real-browser-provider/workspace",
+    "sessions_dir": "tmp/upload-binding-real-browser-provider/sessions",
+    "provider_receipt_path": "tmp/upload-binding-real-browser-provider/provider-calls.json",
+    "report_path": "docs/audit/2026-08-29-upload-binding-real-browser-provider-report.json"
+  }
+}

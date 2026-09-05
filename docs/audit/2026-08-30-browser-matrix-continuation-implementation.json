@@ -1,0 +1,78 @@
+{
+  "schema_version": "browser_matrix_implementation_audit.v1",
+  "date": "2026-08-30",
+  "source_digest": "sha256:bdff31c360b57aa461f35e64f8c0c479662c6b6d94e4d3132b238e9ba06e8eb7",
+  "status": "implemented_offline_validated_browser_findings_open",
+  "real_provider_calls_this_change": 0,
+  "old_m01_a03_authorization_reused": false,
+  "changes": [
+    "AgentManager accepts an optional per-loop auxiliary client factory, including reconstructed loops; normal runtime defaults are preserved.",
+    "Strict Web acceptance injects OneShotAuxiliaryClient. Auxiliary silent length responses cannot trigger the ordinary 300-to-1200 ladder; the main 8000-to-32000-to-128000 ladder remains unchanged.",
+    "Injected strict auxiliary clients own their transport timeout. Intent/playbook optional eight-second deadlines cannot detach a still-running strict request and allow a concurrent main request.",
+    "BrowserMatrix collects each independent case once, preserves nonblocking oracle failures, marks unavailable dependencies blocked, and stops a case's mutations after terminal errors while allowing independent read-only observations.",
+    "Only shared safety/authorization/accounting gates stop the remaining matrix. The collector does not itself authorize or dispatch Provider requests; a frozen driver must supply guarded clients, aggregate budget checks and verified case teardown."
+  ],
+  "validation": {
+    "targeted": {"passed": 70, "seconds": 10.53},
+    "full_pytest": {"passed": 2390, "skipped": 9, "warnings": 39, "seconds": 455.56},
+    "provider_environment": {"API_BASE": "http://127.0.0.1:9", "GOLDEN_LIVE_SMOKE": "0"},
+    "git_diff_check": "passed",
+    "reference_data_manifest_errors": [],
+    "python": "3.12.10 official portable runtime under tmp, reusing existing .venv packages; existing .venv base executable was absent",
+    "fault_injection_scope": "All six case identifiers are attempted even when every analysis callback raises. This proves collector control flow only, not six analytical/browser/Provider journeys."
+  },
+  "local_browser_rehearsal": {
+    "evidence_class": "current-source real browser, real local tools and persistence, scripted transport; not real Provider",
+    "url": "http://127.0.0.1:5192/",
+    "viewport": [1440, 1000],
+    "session_id": "15a38bd47260",
+    "static_asset_hash": "b4f3a7ba19882fc0",
+    "data_sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+    "dataset_shape": [62, 13],
+    "prompt_submissions": 1,
+    "method_confirmation_submissions": 1,
+    "refreshes": 1,
+    "html_exports": 1,
+    "scripted_transport_calls": 7,
+    "auxiliary_budgets": [300, 300],
+    "main_budgets": [8000, 8000, 8000, 8000, 8000],
+    "auxiliary_fixture_finish_reason": "length with no visible text",
+    "blocked_attempts": 0,
+    "receipt": "tmp/matrix-auxiliary-browser-01/scripted-transport-calls.json",
+    "receipt_sha256": "sha256:be5c78119b9d9270c19806aa59b0fc1cfcbe0487ed1e456151b29f910d8ec32c",
+    "passed_observations": [
+      "Browser upload succeeded; raw and analysis datasets persisted as 62 by 13 in this session.",
+      "Method confirmation resume kept the composer disabled while processing.",
+      "Final text and two visually distinct actual_retention and power_fit curves were displayed.",
+      "Task count reached 1/1; Workbench header displayed exact session id.",
+      "Refresh restored final answer, chart, evidence, task and friendly confirm_method bubble; no raw confirmation_response protocol was visible.",
+      "Root clientHeight and scrollHeight were both 1000 before and after refresh/export.",
+      "HTML export appeared under this session's reports path; browser error/warning log list was empty."
+    ],
+    "failed_observations": [
+      "Immediately after confirmation resume completion, Workbench still showed no verified conclusion despite final text, chart and task completion. Evidence became visible after the scheduled refresh. This is a delayed projection finding, not proof that refresh is the only recovery mechanism."
+    ],
+    "continued_after_failure": ["scheduled refresh", "HTML export", "ownership check", "root-scroll check"],
+    "export_path": "tmp/matrix-auxiliary-browser-01/sessions/15a38bd47260/reports/conversation_Conversation_Export_20260830_124725_729759_08f2845d.html",
+    "automation_issue": "Hidden file-input click did not produce a chooser; after checking no upload occurred, the visible label chooser flow succeeded. No duplicate analysis submission.",
+    "result": "failed_nonblocking_oracle"
+  },
+  "diagnostic_browser_run": {
+    "evidence_class": "scripted local browser with response-only JS logging instrumentation; not unmodified-source acceptance",
+    "session_id": "df22281dc807",
+    "receipt": "tmp/matrix-auxiliary-diagnostic-01/scripted-transport-calls.json",
+    "receipt_sha256": "sha256:19bce024884771c4d22c2a3d134cca7bda31dce0bb89ae9b6e9b53f08039ce00",
+    "observations": [
+      "Client logged resumed turn_end and entry to _refreshCompletedSession at 04:50:56.870Z with matching session ids.",
+      "Server subsequently logged the trust request at 12:51:16 local time, approximately twenty seconds later. Root cause of this scheduling/request delay is not yet established.",
+      "No speculative frontend fix was applied from this observation."
+    ]
+  },
+  "cleanup": {"local_servers_stopped": true, "browser_tabs_closed": true, "viewport_reset": true, "git_writes": false, "deployment": false, "original_sessions_deleted": false},
+  "remaining": [
+    "Complete M02-M06 exact browser scripts, prompts, confirmation choices and oracle fixtures, then their zero-Provider browser rehearsals.",
+    "Integrate the collector with isolated per-case server processes, durable aggregate call accounting and teardown proofs before claiming real batch execution readiness.",
+    "Freeze all six cases together with per-case and aggregate caps and obtain a fresh exact real-Provider authorization; do not reuse M01-A03.",
+    "Keep delayed Workbench projection as a nonblocking failed oracle across remaining scenarios, then diagnose using cross-scenario evidence."
+  ]
+}

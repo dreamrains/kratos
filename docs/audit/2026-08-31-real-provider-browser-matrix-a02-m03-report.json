@@ -1,0 +1,660 @@
+{
+  "schema_version": "real_provider_browser_matrix_case_report.v1",
+  "batch_id": "MATRIX-A02",
+  "case_id": "M03",
+  "name": "脏数值与分析单位",
+  "evidence_layer": "real_provider_real_browser",
+  "status": "failed",
+  "execution_status": "completed_with_failed_oracles",
+  "source_digest": "sha256:df10e3d5ee356d9ce79cc9a00535b2ee99882ca28ab85771c3841898962b4b3d",
+  "candidate_path": "docs/audit/2026-08-31-real-provider-browser-matrix-a02-m03-candidate.json",
+  "model": "openai/deepseek-v4-flash",
+  "session_id": "2642616e9f0f",
+  "analysis_turns_started": 1,
+  "analysis_turns_completed": 1,
+  "method_confirmations": 0,
+  "provider": {
+    "calls_started": 22,
+    "completed": 22,
+    "failed": 0,
+    "cancelled": 0,
+    "unknown": 0,
+    "blocked_attempts": 0,
+    "call_cap": 32,
+    "all_local_requests_stopped": true,
+    "remote_billing": "unknown",
+    "main_stream_calls": 20,
+    "auxiliary_nonstream_calls": 2,
+    "receipt_path": "tmp/real-provider-browser-matrix-a02/M03/provider-calls.json",
+    "receipt_sha256": "sha256:960fc15021b871b76d9011f2ba5f9075107bba750c7c0ead35ea8b6ecc608f7a",
+    "receipt_hash_contract": "UTF-8 bytes after CRLF-to-LF normalization, matching BatchLedger.finish",
+    "raw_file_sha256": "sha256:03cd5341ad50ce9bee5ad39fec70cc1243eecc9aefc3290d6a9e6fb22fdca2ec",
+    "guard_terminal": {
+      "code": "acceptance_server_closed",
+      "failed_at": "2026-08-31T06:16:23.151553Z"
+    }
+  },
+  "process": {
+    "pid": 42952,
+    "ledger_closed_at": "2026-08-31T06:16:23.161332+00:00",
+    "pid_absence_verified_before_next_case": true,
+    "exit": "closed_after_ctrl_c_pid_absence_verified",
+    "exec_exit_code": 1
+  },
+  "checks": [
+    {
+      "id": "frozen_prompts_and_confirmation",
+      "status": "passed",
+      "observation": {
+        "analysis_prompts_sent_once": 1,
+        "method_confirmations": 0,
+        "extra_prompts": 0
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/conversation.json"
+      ]
+    },
+    {
+      "id": "upload_integrity_binding_and_loading",
+      "status": "passed",
+      "observation": {
+        "uploads": [
+          {
+            "source": "reference/test_doc/游戏互推.xlsx",
+            "sha256": "sha256:063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83",
+            "upload": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/uploads/59e42c31469f4a7db44cbe9a84346420/游戏互推.xlsx",
+            "raw_shape": [
+              1985,
+              8
+            ],
+            "raw_version": "dv_f57325ab26c2392b",
+            "analysis_version": "dv_b9ae4d6c1860fe8c"
+          }
+        ],
+        "first_provider_started_at": "2026-08-31T06:11:37.635331Z",
+        "evidence_limit": "Browser upload plus session-owned upload hash, raw/analysis snapshots, load order in server log and uploaded context. Log timestamps have second precision; not a millisecond timing claim."
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/uploaded.json",
+        "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/workspace_meta.json",
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/server.log"
+      ]
+    },
+    {
+      "id": "no_file_recovery_question",
+      "status": "passed",
+      "observation": "No file recovery confirmation occurred; M01 only the frozen method confirmation.",
+      "evidence": []
+    },
+    {
+      "id": "root_layout",
+      "status": "passed",
+      "observation": {
+        "sample_count": 14,
+        "bad_samples": [],
+        "dimensions": [
+          1440,
+          1000,
+          1000
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "console_warnings_errors",
+      "status": "passed",
+      "observation": {
+        "sample_count": 14,
+        "nonempty_samples": [],
+        "scope": "Recorded browser observations before service close; not continuous monitoring."
+      },
+      "evidence": []
+    },
+    {
+      "id": "composer_during_generation",
+      "status": "passed",
+      "observation": {
+        "submission_and_confirmation_samples": [
+          "tmp/real-provider-browser-matrix-a02/M03/workspace/submitted.json"
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "workbench_session_id",
+      "status": "passed",
+      "observation": {
+        "session_id": "2642616e9f0f",
+        "observed": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "verified_evidence_after_turn_end",
+      "status": "failed",
+      "observation": "Completed runs produced no passed evidence; missing statistical fields are durable backend state, so empty verified conclusions are not demonstrated to be an SSE transport delay.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/analysis_state.json",
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/observe08-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/plus10-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/plus30-no-refresh.json"
+      ]
+    },
+    {
+      "id": "completion_sampling",
+      "status": "passed",
+      "observation": {
+        "samples": [
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe08-terminal.json",
+            "at": "2026-08-31T06:15:49.825Z",
+            "turn_id": "t_7428cd",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+            "seconds_after_durable_terminal": 4.289,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus10-no-refresh.json",
+            "at": "2026-08-31T06:16:03.004Z",
+            "turn_id": "t_7428cd",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+            "seconds_after_durable_terminal": 17.468,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus30-no-refresh.json",
+            "at": "2026-08-31T06:16:19.092Z",
+            "turn_id": "t_7428cd",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+            "seconds_after_durable_terminal": 33.556,
+            "workbench_empty_verified_conclusions": true
+          }
+        ],
+        "note": "Use actual time deltas. Files named plus10/plus30 are not claims of exact 10.000/30.000-second sampling."
+      },
+      "evidence": []
+    },
+    {
+      "id": "required_tool_presence",
+      "status": "passed",
+      "observation": {
+        "missing": [],
+        "actual": {
+          "preview_data": 3,
+          "describe_dataset": 2,
+          "task_list": 1,
+          "run_python": 10,
+          "transform_data": 3,
+          "detect_data_quality": 1,
+          "derive_field": 3,
+          "top_n": 3,
+          "record_evidence_record": 3,
+          "create_chart": 2
+        },
+        "note": "M01 automatic quality context/run_python does not count as an explicit detect_data_quality call."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_receipt_hashes",
+      "status": "passed",
+      "observation": {
+        "bindings_checked": 30,
+        "hash_kinds": {
+          "original_text_in_receipt": 7,
+          "structured_json": 23
+        },
+        "invalid": [],
+        "scope": "Structured results use canonical JSON; legacy results use preserved original receipt text. Receipt/hash ownership is separate from statistical completeness."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_artifact_identity",
+      "status": "failed",
+      "observation": {
+        "registered_records": 3,
+        "unique_artifact_paths": 2,
+        "collisions": [
+          {
+            "path": "sessions/2642616e9f0f/analysis_flow/evidence_record_20260831_141451.json",
+            "registrations": 2,
+            "saved_claim": "按流量主游戏×广告主游戏×公司汇总共599个组合：570个(95.2%)收入数据完整、19个部分缺失、10个完全缺失(收入不可观测)；可观测收入合计451,286.73元来自589个组合；59行缺失全部集中在29个外部游戏组合（内部游戏0缺失）",
+            "overwritten_descriptions": [
+              "卖量收入列解析核对：1985行中59个'-'全部转为缺失NaN、0个误转为0；383个0为原始真实零值；1926行可解析、59行不可解析（全部为'-'占位符），转换损失2.97%，无'可解析但转换后丢失'的行"
+            ]
+          }
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "artifact_session_ownership",
+      "status": "passed",
+      "observation": {
+        "registered_artifacts": 5,
+        "all_existing_paths_are_current_session_owned": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "tool_error_collection",
+      "status": "passed",
+      "observation": {
+        "errors": [
+          {
+            "tool_call_id": "call_00_AQRboUHIUezKqaw8fQVW0749",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: NameError: name 'ValueError' is not defined",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_AQRboUHIUezKqaw8fQVW0749_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_cD4Zs7KSMoqTP6Ckgbr54082",
+            "tool": "derive_field",
+            "error_type": null,
+            "message": "Error: 表达式不安全 — 不允许的操作: Call",
+            "detail_file": null
+          },
+          {
+            "tool_call_id": "call_00_AgdtH0TRHsBScmNaZimN0009",
+            "tool": "run_python",
+            "error_type": "sandbox_violation",
+            "message": "安全检查: 不允许调用: type()",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_AgdtH0TRHsBScmNaZimN0009_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_lQkQbUMiW0HLUAmy0YE12723",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_lQkQbUMiW0HLUAmy0YE12723_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_IstSrBrLPa6M0bv3Qq4g6278",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: SyntaxError: invalid syntax. Perhaps you forgot a comma? (<sandbox>, line 6)",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_IstSrBrLPa6M0bv3Qq4g6278_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_07aWMrz9NoaxqcVWaQNk6427",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_07aWMrz9NoaxqcVWaQNk6427_detail.json"
+          }
+        ],
+        "note": "Includes plain-text errors such as load_data even if execution logged is_error=false."
+      },
+      "evidence": []
+    },
+    {
+      "id": "dirty_numbers_raw_preservation_and_group_oracle",
+      "status": "passed",
+      "observation": {
+        "rows": 1985,
+        "parseable": 1926,
+        "missing_dash": 59,
+        "groups": 599,
+        "complete_groups": 570,
+        "partial_groups": 19,
+        "all_missing_groups": 10,
+        "totals": [
+          1985,
+          1926,
+          59
+        ],
+        "top20_sum": 195462.69999999998,
+        "observed_income_sum": 451286.73
+      },
+      "evidence": []
+    },
+    {
+      "id": "top20_observed_income_values",
+      "status": "passed",
+      "observation": "Displayed Top20 values independently match grouped observed income; frozen oracle did not prescribe Top15.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/charts-visible.json"
+      ]
+    },
+    {
+      "id": "displayed_group_coverage",
+      "status": "failed",
+      "observation": "Charts display 20 income groups and 29 missing-rate groups but not total/valid/missing counts for each displayed composite group; no trace customdata/hover count fields. Global counts reconcile, which is insufficient for this frozen row.",
+      "evidence": []
+    },
+    {
+      "id": "incomplete_ranking_and_claim_boundary",
+      "status": "failed",
+      "observation": "Final text correctly discloses incomplete ranking, but also asserts missing income has minimal impact on the total from the small observed income in affected groups; unobserved amounts do not support that bound.",
+      "evidence": []
+    },
+    {
+      "id": "same_session_refresh",
+      "status": "passed",
+      "observation": "Refreshed the observed ?session_id= URL exactly once; original answer, both charts and missing-data explanation restored. Evidence remains downgraded.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M03/workspace/refreshed.json"
+      ]
+    }
+  ],
+  "check_status_counts": {
+    "passed": 15,
+    "failed": 4
+  },
+  "numeric_crosscheck": {
+    "rows": 1985,
+    "parseable": 1926,
+    "missing_dash": 59,
+    "groups": 599,
+    "complete_groups": 570,
+    "partial_groups": 19,
+    "all_missing_groups": 10,
+    "totals": [
+      1985,
+      1926,
+      59
+    ],
+    "top20_sum": 195462.69999999998,
+    "observed_income_sum": 451286.73
+  },
+  "terminal_observations": [
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe08-terminal.json",
+      "at": "2026-08-31T06:15:49.825Z",
+      "turn_id": "t_7428cd",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+      "seconds_after_durable_terminal": 4.289,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus10-no-refresh.json",
+      "at": "2026-08-31T06:16:03.004Z",
+      "turn_id": "t_7428cd",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+      "seconds_after_durable_terminal": 17.468,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus30-no-refresh.json",
+      "at": "2026-08-31T06:16:19.092Z",
+      "turn_id": "t_7428cd",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:15:45.536278+00:00",
+      "seconds_after_durable_terminal": 33.556,
+      "workbench_empty_verified_conclusions": true
+    }
+  ],
+  "evidence_records": [
+    {
+      "id": "026ab906c6",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "metrics",
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 10
+    },
+    {
+      "id": "cdf5135221",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 10
+    },
+    {
+      "id": "1fd470e60b",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 10
+    }
+  ],
+  "verification_reports": [
+    {
+      "id": "verify_verify_43f704c91",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "026ab906c6",
+        "cdf5135221"
+      ],
+      "failed_evidence_ids": []
+    },
+    {
+      "id": "verify_verify_77ecb4a35",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "026ab906c6",
+        "cdf5135221",
+        "1fd470e60b"
+      ],
+      "failed_evidence_ids": []
+    }
+  ],
+  "charts": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/charts/Top20_组合可观测卖量收入（4天合计）—_均为数据完整组合（缺失覆盖率0%）_274dbe.json",
+      "sha256": "sha256:e879647f8f627ce2817f05c7146189f777058e499abedb8664a7e22932ee631e",
+      "purpose": "evidence",
+      "evidence_ids": [
+        "026ab906c6",
+        "cdf5135221"
+      ],
+      "data_identity": {
+        "version_id": "dv_23f787fcc3812801",
+        "role": "analysis",
+        "fingerprint": "sha256:1b2d2f3b245fc966fb795147973ca066e64c15a133667c7774b74dedc99ecd9a",
+        "source_fingerprint": "",
+        "parent_version_ids": [
+          "dv_1148d01587078a53"
+        ],
+        "expression": "filter: {\"condition\": \"卖量收入_sum >= 7038.4\"}",
+        "dataset": "互推组合top20",
+        "source_dataset": "互推组合汇总_缺失覆盖率",
+        "derived_from": "互推组合汇总_缺失覆盖率",
+        "source_path": ""
+      },
+      "result_binding": null,
+      "trace_count": 1,
+      "png_exists": true
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/charts/受缺失影响的29个组合：卖量收入缺失覆盖率（全部为外部游戏，10个组合收入完全不可观测）_60d11f.json",
+      "sha256": "sha256:6dfa7ec3dee36cd5175f1970993fae33d991c6ab698f2bc8ac32c40153eacb63",
+      "purpose": "evidence",
+      "evidence_ids": [
+        "cdf5135221"
+      ],
+      "data_identity": {
+        "version_id": "dv_ee2e4af04fa6ed10",
+        "role": "analysis",
+        "fingerprint": "sha256:14d9727f0c5f416225ea5761afd28e93f13cfbdcb57f5778596da475a89fc90b",
+        "source_fingerprint": "",
+        "parent_version_ids": [
+          "dv_1148d01587078a53"
+        ],
+        "expression": "filter: {\"condition\": \"缺失覆盖率 > 0\"}",
+        "dataset": "互推组合缺失29",
+        "source_dataset": "互推组合汇总_缺失覆盖率",
+        "derived_from": "互推组合汇总_缺失覆盖率",
+        "source_path": ""
+      },
+      "result_binding": null,
+      "trace_count": 1,
+      "png_exists": true
+    }
+  ],
+  "exports": [],
+  "tool_call_counts": {
+    "preview_data": 3,
+    "describe_dataset": 2,
+    "task_list": 1,
+    "run_python": 10,
+    "transform_data": 3,
+    "detect_data_quality": 1,
+    "derive_field": 3,
+    "top_n": 3,
+    "record_evidence_record": 3,
+    "create_chart": 2
+  },
+  "tool_errors": [
+    {
+      "tool_call_id": "call_00_AQRboUHIUezKqaw8fQVW0749",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: NameError: name 'ValueError' is not defined",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_AQRboUHIUezKqaw8fQVW0749_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_cD4Zs7KSMoqTP6Ckgbr54082",
+      "tool": "derive_field",
+      "error_type": null,
+      "message": "Error: 表达式不安全 — 不允许的操作: Call",
+      "detail_file": null
+    },
+    {
+      "tool_call_id": "call_00_AgdtH0TRHsBScmNaZimN0009",
+      "tool": "run_python",
+      "error_type": "sandbox_violation",
+      "message": "安全检查: 不允许调用: type()",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_AgdtH0TRHsBScmNaZimN0009_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_lQkQbUMiW0HLUAmy0YE12723",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_lQkQbUMiW0HLUAmy0YE12723_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_IstSrBrLPa6M0bv3Qq4g6278",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: SyntaxError: invalid syntax. Perhaps you forgot a comma? (<sandbox>, line 6)",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_IstSrBrLPa6M0bv3Qq4g6278_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_07aWMrz9NoaxqcVWaQNk6427",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f/tool_outputs/call_00_07aWMrz9NoaxqcVWaQNk6427_detail.json"
+    }
+  ],
+  "browser_evidence": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/baseline.json",
+      "sha256": "sha256:f559a64387b57b4e7d33b5310251bacb2a30cdd26e70f765caa83da073bd2062"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/baseline.png",
+      "sha256": "sha256:2486bb8ccc4986e4ac55ee01b116199d8b2de78962417b323008aefa4211aa68"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/charts-visible.json",
+      "sha256": "sha256:90be097c827f019bff3210c5a87cfd5e18564eca4885e963443eaedacc961bd0"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/completed.png",
+      "sha256": "sha256:3153a318f682169b7ed19b038134402a1814629baaebdc21a11b420ed4fd0046"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe01-running.json",
+      "sha256": "sha256:1366da88e42fb111b7d659238b5b9eabba60b799fb55f48125a6ffee78f3061f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe02-running.json",
+      "sha256": "sha256:57f72972dd53af8309b6b2b06f0925b7a33461596af04f6d55a1a880589c7bba"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe03-running.json",
+      "sha256": "sha256:469c264952b0df3081521025c45c811cd0697cc192508379c0b8ec0001a2b946"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe04-running.json",
+      "sha256": "sha256:05bc96dab0237bd890d93e19472598a6bdde7136d52e9949a0f6466be1e76f80"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe05-running.json",
+      "sha256": "sha256:871b53b4ac5aada3cc7172d5d4365e5f7a9bd31b7f4c087197a42cf59cbb72e9"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe06-running.json",
+      "sha256": "sha256:448c2ae0c9594156e91314ec313d0aa7a77da5df14c5eecb4f335f414ab5a92b"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe07-running.json",
+      "sha256": "sha256:20b9d7c42aba3b1981841d7fd115b81e5ab90b35ad02be8c83600ad74cbd42d7"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/observe08-terminal.json",
+      "sha256": "sha256:1840da7f2a8252e01c6f7fac35b598e7f914a62a78a34acf1751f8ddaaf9e61e"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus10-no-refresh.json",
+      "sha256": "sha256:33299d903d72010c486c8944f8928b78972f98b85f9230d8206c36358f42e873"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/plus30-no-refresh.json",
+      "sha256": "sha256:765f076172248fa407dc753722cb9e05954ba5300682235000f2b04ed9c9c25c"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/refreshed.json",
+      "sha256": "sha256:4ab0dc0c3e1a6633bc2a68d9c35d760c95931e535e1ff039e7f013c5112c3ed8"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/refreshed.png",
+      "sha256": "sha256:66b7b30437d4c516285fbb115adb78e09c2305f929b0fae93333e288d6a3798f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/submitted.json",
+      "sha256": "sha256:a0a5d9d097b6d62c110e80f4b076bfa0f69a338574e881527d1fc5d4afbe65bb"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M03/workspace/uploaded.json",
+      "sha256": "sha256:ee9b5b4c43428d2d2e60813bd9f5acca0d9f0cbeec36a14da538968cde34357b"
+    }
+  ],
+  "evidence_directory": "tmp/real-provider-browser-matrix-a02/M03/workspace",
+  "session_directory": "tmp/real-provider-browser-matrix-a02/M03/sessions/2642616e9f0f",
+  "limitations": [
+    "Each passed row is a local observation, not a complete journey pass.",
+    "No retries, model fallback, supplementary run, source change, Git write or deployment.",
+    "Post-batch arithmetic only reads persisted data; it does not replay product tools or repair product state."
+  ],
+  "report_review_revision": {
+    "previous_draft_sha256": "sha256:8137a02d4afb58fc5d1ff9f52fbd5d2e45db484e1fef4bf5f3bb25ee0384d917",
+    "reason": "Correct text-vs-structured receipt hash verification; add independent chart-array normalization and cohort/pie checks. No original evidence, receipts, inputs or source modified."
+  }
+}

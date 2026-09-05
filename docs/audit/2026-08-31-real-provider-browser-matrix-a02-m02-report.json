@@ -1,0 +1,734 @@
+{
+  "schema_version": "real_provider_browser_matrix_case_report.v1",
+  "batch_id": "MATRIX-A02",
+  "case_id": "M02",
+  "name": "三源同周期综合",
+  "evidence_layer": "real_provider_real_browser",
+  "status": "failed",
+  "execution_status": "completed_with_failed_oracles",
+  "source_digest": "sha256:df10e3d5ee356d9ce79cc9a00535b2ee99882ca28ab85771c3841898962b4b3d",
+  "candidate_path": "docs/audit/2026-08-31-real-provider-browser-matrix-a02-m02-candidate.json",
+  "model": "openai/deepseek-v4-flash",
+  "session_id": "884ec54644c5",
+  "analysis_turns_started": 2,
+  "analysis_turns_completed": 2,
+  "method_confirmations": 0,
+  "provider": {
+    "calls_started": 12,
+    "completed": 12,
+    "failed": 0,
+    "cancelled": 0,
+    "unknown": 0,
+    "blocked_attempts": 0,
+    "call_cap": 40,
+    "all_local_requests_stopped": true,
+    "remote_billing": "unknown",
+    "main_stream_calls": 10,
+    "auxiliary_nonstream_calls": 2,
+    "receipt_path": "tmp/real-provider-browser-matrix-a02/M02/provider-calls.json",
+    "receipt_sha256": "sha256:acff9d9aa3b51c2e077cc0b4c39e0b964be636bb133bd42f7816ea4a1982a7f4",
+    "receipt_hash_contract": "UTF-8 bytes after CRLF-to-LF normalization, matching BatchLedger.finish",
+    "raw_file_sha256": "sha256:d44075020d3bf2b25d8e84d58854db807399d21b9fa6394ec5fc4008e336fc42",
+    "guard_terminal": {
+      "code": "acceptance_server_closed",
+      "failed_at": "2026-08-31T06:09:34.545066Z"
+    }
+  },
+  "process": {
+    "pid": 41552,
+    "ledger_closed_at": "2026-08-31T06:09:34.547021+00:00",
+    "pid_absence_verified_before_next_case": true,
+    "exit": "closed_after_ctrl_c_pid_absence_verified",
+    "exec_exit_code": 1
+  },
+  "checks": [
+    {
+      "id": "frozen_prompts_and_confirmation",
+      "status": "passed",
+      "observation": {
+        "analysis_prompts_sent_once": 2,
+        "method_confirmations": 0,
+        "extra_prompts": 0
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/conversation.json"
+      ]
+    },
+    {
+      "id": "upload_integrity_binding_and_loading",
+      "status": "passed",
+      "observation": {
+        "uploads": [
+          {
+            "source": "reference/test_doc/游戏A激励视频汇总数据报表.xlsx",
+            "sha256": "sha256:cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7",
+            "upload": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/uploads/0f8f6402b74742ce86d0fd2fed3fb6b4/游戏A激励视频汇总数据报表.xlsx",
+            "raw_shape": [
+              248,
+              23
+            ],
+            "raw_version": "dv_a0782611c4d02463",
+            "analysis_version": "dv_6d51730dcba1da45"
+          },
+          {
+            "source": "reference/test_doc/游戏A内购数据.xlsx",
+            "sha256": "sha256:fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e",
+            "upload": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/uploads/d798baf5fdcf40b088f3a113ea053fe8/游戏A内购数据.xlsx",
+            "raw_shape": [
+              248,
+              13
+            ],
+            "raw_version": "dv_2e972ce8fdabae94",
+            "analysis_version": "dv_ae349fd66461bc8d"
+          },
+          {
+            "source": "reference/test_doc/游戏Abanner汇总数据.xlsx",
+            "sha256": "sha256:21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a",
+            "upload": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/uploads/37a617caed1846a98feb79401b4a96d3/游戏Abanner汇总数据.xlsx",
+            "raw_shape": [
+              248,
+              18
+            ],
+            "raw_version": "dv_241e20b392f91dc8",
+            "analysis_version": "dv_948a9380952f231c"
+          }
+        ],
+        "first_provider_started_at": "2026-08-31T06:05:47.516835Z",
+        "evidence_limit": "Browser upload plus session-owned upload hash, raw/analysis snapshots, load order in server log and uploaded context. Log timestamps have second precision; not a millisecond timing claim."
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/uploaded.json",
+        "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/workspace_meta.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/server.log"
+      ]
+    },
+    {
+      "id": "no_file_recovery_question",
+      "status": "passed",
+      "observation": "No file recovery confirmation occurred; M01 only the frozen method confirmation.",
+      "evidence": []
+    },
+    {
+      "id": "root_layout",
+      "status": "passed",
+      "observation": {
+        "sample_count": 13,
+        "bad_samples": [],
+        "dimensions": [
+          1440,
+          1000,
+          1000
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "console_warnings_errors",
+      "status": "passed",
+      "observation": {
+        "sample_count": 13,
+        "nonempty_samples": [],
+        "scope": "Recorded browser observations before service close; not continuous monitoring."
+      },
+      "evidence": []
+    },
+    {
+      "id": "composer_during_generation",
+      "status": "passed",
+      "observation": {
+        "submission_and_confirmation_samples": [
+          "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-submitted.json",
+          "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-submitted.json"
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "workbench_session_id",
+      "status": "passed",
+      "observation": {
+        "session_id": "884ec54644c5",
+        "observed": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "verified_evidence_after_turn_end",
+      "status": "failed",
+      "observation": "Completed runs produced no passed evidence; missing statistical fields are durable backend state, so empty verified conclusions are not demonstrated to be an SSE transport delay.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/analysis_state.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe04-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-plus30-no-refresh.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-observe01-terminal.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-plus30-no-refresh.json"
+      ]
+    },
+    {
+      "id": "completion_sampling",
+      "status": "passed",
+      "observation": {
+        "samples": [
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe04-terminal.json",
+            "at": "2026-08-31T06:08:04.177Z",
+            "turn_id": "t_a02522",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:07:51.551342+00:00",
+            "seconds_after_durable_terminal": 12.626,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-plus30-no-refresh.json",
+            "at": "2026-08-31T06:08:21.721Z",
+            "turn_id": "t_a02522",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:07:51.551342+00:00",
+            "seconds_after_durable_terminal": 30.17,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-observe01-terminal.json",
+            "at": "2026-08-31T06:09:04.535Z",
+            "turn_id": "t_6b49b1",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:09:04.030153+00:00",
+            "seconds_after_durable_terminal": 0.505,
+            "workbench_empty_verified_conclusions": true
+          },
+          {
+            "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-plus30-no-refresh.json",
+            "at": "2026-08-31T06:09:34.181Z",
+            "turn_id": "t_6b49b1",
+            "durable_status": "completed",
+            "durable_terminal_at": "2026-08-31T06:09:04.030153+00:00",
+            "seconds_after_durable_terminal": 30.151,
+            "workbench_empty_verified_conclusions": true
+          }
+        ],
+        "note": "Use actual time deltas. Files named plus10/plus30 are not claims of exact 10.000/30.000-second sampling."
+      },
+      "evidence": []
+    },
+    {
+      "id": "required_tool_presence",
+      "status": "passed",
+      "observation": {
+        "missing": [],
+        "actual": {
+          "task_list": 1,
+          "synthesize_time_series": 1,
+          "read_file": 1,
+          "task_create": 1,
+          "preview_data": 1,
+          "task_update": 2,
+          "run_python": 1,
+          "create_chart": 4,
+          "record_evidence_record": 3
+        },
+        "note": "M01 automatic quality context/run_python does not count as an explicit detect_data_quality call."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_receipt_hashes",
+      "status": "passed",
+      "observation": {
+        "bindings_checked": 5,
+        "hash_kinds": {
+          "structured_json": 5
+        },
+        "invalid": [],
+        "scope": "Structured results use canonical JSON; legacy results use preserved original receipt text. Receipt/hash ownership is separate from statistical completeness."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_artifact_identity",
+      "status": "failed",
+      "observation": {
+        "registered_records": 3,
+        "unique_artifact_paths": 1,
+        "collisions": [
+          {
+            "path": "sessions/884ec54644c5/analysis_flow/evidence_record_20260831_140655.json",
+            "registrations": 3,
+            "saved_claim": "三项收入同周期相关性很弱：BN_广告收入与视频广告收入 r=0.224（弱正相关），BN_广告收入与内购收入 r=-0.064，视频广告收入与内购收入 r=-0.089，表明三项收入之间无明显共变关系",
+            "overwritten_descriptions": [
+              "三份游戏A数据（banner/激励视频/内购）质量均为100/100（0警告0阻断），日期覆盖完全一致：2021-03-01 ~ 2021-11-03，各248行、248个不重复日期，无缺失日期",
+              "BN_广告收入在整个周期大幅下滑（日均318.5，前28天日均556.1降至末28天182.9，-67.1%），而视频广告收入（日均271.2，前后期+0.1%）与内购收入（日均806.2，前后期-1.3%）基本平稳，三项收入走势并不同步"
+            ]
+          }
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "artifact_session_ownership",
+      "status": "passed",
+      "observation": {
+        "registered_artifacts": 5,
+        "all_existing_paths_are_current_session_owned": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "tool_error_collection",
+      "status": "passed",
+      "observation": {
+        "errors": [
+          {
+            "tool_call_id": "call_00_yfxRdE69btT9US0HbVa66604",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/tool_outputs/call_00_yfxRdE69btT9US0HbVa66604_detail.json"
+          },
+          {
+            "tool_call_id": "call_01_ZMwZjInueOwULvw5dqJn8733",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/tool_outputs/call_01_ZMwZjInueOwULvw5dqJn8733_detail.json"
+          }
+        ],
+        "note": "Includes plain-text errors such as load_data even if execution logged is_error=false."
+      },
+      "evidence": []
+    },
+    {
+      "id": "three_source_alignment_and_lineage",
+      "status": "passed",
+      "observation": {
+        "aligned_rows": 248,
+        "source_rows": [
+          248,
+          248,
+          248
+        ],
+        "alignment_missing": {
+          "游戏Abanner汇总数据": 0,
+          "游戏A激励视频汇总数据报表": 0,
+          "游戏A内购数据": 0
+        },
+        "parent_versions": [
+          "dv_948a9380952f231c",
+          "dv_6d51730dcba1da45",
+          "dv_ae349fd66461bc8d"
+        ],
+        "chart_numeric_crosschecks": [
+          {
+            "source": "游戏A内购数据",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 1142.0,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          },
+          {
+            "source": "游戏Abanner汇总数据",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 424.77,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          },
+          {
+            "source": "游戏A激励视频汇总数据报表",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 312.93,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          }
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "trend_chart_arrays",
+      "status": "passed",
+      "observation": "Both original-value and normalization-labelled charts retain three 248-point series; this row checks series shape/visibility only.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/charts-visible.json"
+      ]
+    },
+    {
+      "id": "original_series_values",
+      "status": "passed",
+      "observation": [
+        {
+          "source": "游戏A内购数据",
+          "original_matches_independent_daily_sum": true,
+          "labelled_normalized_first_point": 1142.0,
+          "normalized_equals_original": true,
+          "matches_claimed_first_day_100": false
+        },
+        {
+          "source": "游戏Abanner汇总数据",
+          "original_matches_independent_daily_sum": true,
+          "labelled_normalized_first_point": 424.77,
+          "normalized_equals_original": true,
+          "matches_claimed_first_day_100": false
+        },
+        {
+          "source": "游戏A激励视频汇总数据报表",
+          "original_matches_independent_daily_sum": true,
+          "labelled_normalized_first_point": 312.93,
+          "normalized_equals_original": true,
+          "matches_claimed_first_day_100": false
+        }
+      ],
+      "evidence": []
+    },
+    {
+      "id": "normalization_semantics",
+      "status": "failed",
+      "observation": {
+        "traces": [
+          {
+            "source": "游戏A内购数据",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 1142.0,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          },
+          {
+            "source": "游戏Abanner汇总数据",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 424.77,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          },
+          {
+            "source": "游戏A激励视频汇总数据报表",
+            "original_matches_independent_daily_sum": true,
+            "labelled_normalized_first_point": 312.93,
+            "normalized_equals_original": true,
+            "matches_claimed_first_day_100": false
+          }
+        ],
+        "detail": "scale_mode=normalize was passed for the line chart, but all arrays equal the original chart. The title says first day=100; normalization is implemented for multi-metric bars only, and line mode silently ignores it."
+      },
+      "evidence": []
+    },
+    {
+      "id": "session_switch_and_followup",
+      "status": "passed",
+      "observation": "Blank session received no prompt; returning restored original three sources/history/charts, then frozen follow-up once. No extra generation.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/switched-back.json",
+        "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-plus30-no-refresh.json"
+      ]
+    },
+    {
+      "id": "descriptive_claim_boundary",
+      "status": "passed",
+      "observation": "No causal attribution observed in completed answers. Weak correlations are descriptive; wording such as 互不联动 remains stronger than the measured weak association.",
+      "evidence": []
+    }
+  ],
+  "check_status_counts": {
+    "passed": 17,
+    "failed": 3
+  },
+  "numeric_crosscheck": {
+    "aligned_rows": 248,
+    "source_rows": [
+      248,
+      248,
+      248
+    ],
+    "alignment_missing": {
+      "游戏Abanner汇总数据": 0,
+      "游戏A激励视频汇总数据报表": 0,
+      "游戏A内购数据": 0
+    },
+    "parent_versions": [
+      "dv_948a9380952f231c",
+      "dv_6d51730dcba1da45",
+      "dv_ae349fd66461bc8d"
+    ],
+    "chart_numeric_crosschecks": [
+      {
+        "source": "游戏A内购数据",
+        "original_matches_independent_daily_sum": true,
+        "labelled_normalized_first_point": 1142.0,
+        "normalized_equals_original": true,
+        "matches_claimed_first_day_100": false
+      },
+      {
+        "source": "游戏Abanner汇总数据",
+        "original_matches_independent_daily_sum": true,
+        "labelled_normalized_first_point": 424.77,
+        "normalized_equals_original": true,
+        "matches_claimed_first_day_100": false
+      },
+      {
+        "source": "游戏A激励视频汇总数据报表",
+        "original_matches_independent_daily_sum": true,
+        "labelled_normalized_first_point": 312.93,
+        "normalized_equals_original": true,
+        "matches_claimed_first_day_100": false
+      }
+    ]
+  },
+  "terminal_observations": [
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe04-terminal.json",
+      "at": "2026-08-31T06:08:04.177Z",
+      "turn_id": "t_a02522",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:07:51.551342+00:00",
+      "seconds_after_durable_terminal": 12.626,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-plus30-no-refresh.json",
+      "at": "2026-08-31T06:08:21.721Z",
+      "turn_id": "t_a02522",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:07:51.551342+00:00",
+      "seconds_after_durable_terminal": 30.17,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-observe01-terminal.json",
+      "at": "2026-08-31T06:09:04.535Z",
+      "turn_id": "t_6b49b1",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:09:04.030153+00:00",
+      "seconds_after_durable_terminal": 0.505,
+      "workbench_empty_verified_conclusions": true
+    },
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-plus30-no-refresh.json",
+      "at": "2026-08-31T06:09:34.181Z",
+      "turn_id": "t_6b49b1",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T06:09:04.030153+00:00",
+      "seconds_after_durable_terminal": 30.151,
+      "workbench_empty_verified_conclusions": true
+    }
+  ],
+  "evidence_records": [
+    {
+      "id": "eb05a07f37",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "calculation_method",
+        "method_detail",
+        "time_scope"
+      ],
+      "required_fields": [
+        "calculation_method",
+        "method_detail",
+        "metrics",
+        "time_scope"
+      ],
+      "result_binding_count": 1
+    },
+    {
+      "id": "3adfa49c38",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 2
+    },
+    {
+      "id": "d572e79918",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 2
+    }
+  ],
+  "verification_reports": [
+    {
+      "id": "verify_verify_d1d80a68c",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "eb05a07f37",
+        "3adfa49c38",
+        "d572e79918"
+      ],
+      "failed_evidence_ids": []
+    }
+  ],
+  "charts": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/charts/游戏A三项收入同周期趋势对比（原始值，2021-03-01_~_2021-11-03）_574091.json",
+      "sha256": "sha256:b0a941d017d483ce7feb9d744238dc299dcfec4e459fd3590611e26ba601d39e",
+      "purpose": "evidence",
+      "evidence_ids": [
+        "eb05a07f37",
+        "3adfa49c38"
+      ],
+      "data_identity": {
+        "version_id": "dv_83d8868d5b4f7794",
+        "role": "analysis",
+        "fingerprint": "sha256:d59164a473837779cdf1ab96981afc613b1c4d98e50dae673377ae9f18e9b81d",
+        "source_fingerprint": "",
+        "parent_version_ids": [
+          "dv_948a9380952f231c",
+          "dv_6d51730dcba1da45",
+          "dv_ae349fd66461bc8d"
+        ],
+        "expression": "date-aligned daily sums: {'游戏Abanner汇总数据': 'BN_广告收入', '游戏A激励视频汇总数据报表': '视频广告收入', '游戏A内购数据': '内购收入'}",
+        "dataset": "游戏A三项收入同周期对比",
+        "source_dataset": "游戏A三项收入同周期对比",
+        "derived_from": null,
+        "source_path": ""
+      },
+      "result_binding": null,
+      "trace_count": 3,
+      "png_exists": false
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/charts/游戏A三项收入同周期趋势形态对比（归一化，各自首日=100）_67ef58.json",
+      "sha256": "sha256:afa539deb18f6155ece56d8cb85d842b0a4abdaf08292b7d6cb185e27e61a347",
+      "purpose": "evidence",
+      "evidence_ids": [
+        "eb05a07f37",
+        "3adfa49c38",
+        "d572e79918"
+      ],
+      "data_identity": {
+        "version_id": "dv_83d8868d5b4f7794",
+        "role": "analysis",
+        "fingerprint": "sha256:d59164a473837779cdf1ab96981afc613b1c4d98e50dae673377ae9f18e9b81d",
+        "source_fingerprint": "",
+        "parent_version_ids": [
+          "dv_948a9380952f231c",
+          "dv_6d51730dcba1da45",
+          "dv_ae349fd66461bc8d"
+        ],
+        "expression": "date-aligned daily sums: {'游戏Abanner汇总数据': 'BN_广告收入', '游戏A激励视频汇总数据报表': '视频广告收入', '游戏A内购数据': '内购收入'}",
+        "dataset": "游戏A三项收入同周期对比",
+        "source_dataset": "游戏A三项收入同周期对比",
+        "derived_from": null,
+        "source_path": ""
+      },
+      "result_binding": null,
+      "trace_count": 3,
+      "png_exists": false
+    }
+  ],
+  "exports": [],
+  "tool_call_counts": {
+    "task_list": 1,
+    "synthesize_time_series": 1,
+    "read_file": 1,
+    "task_create": 1,
+    "preview_data": 1,
+    "task_update": 2,
+    "run_python": 1,
+    "create_chart": 4,
+    "record_evidence_record": 3
+  },
+  "tool_errors": [
+    {
+      "tool_call_id": "call_00_yfxRdE69btT9US0HbVa66604",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/tool_outputs/call_00_yfxRdE69btT9US0HbVa66604_detail.json"
+    },
+    {
+      "tool_call_id": "call_01_ZMwZjInueOwULvw5dqJn8733",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5/tool_outputs/call_01_ZMwZjInueOwULvw5dqJn8733_detail.json"
+    }
+  ],
+  "browser_evidence": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/baseline.json",
+      "sha256": "sha256:423efe568032652a8b689f3b0e045a40de710eb15b5f94235908fa2ff5823fde"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/baseline.png",
+      "sha256": "sha256:72a5b9b5d75bc2d06432de54615673105ecf1ff79ad539fae2c4b34cce1645a3"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/charts-visible.json",
+      "sha256": "sha256:19edc16d454256ee0eae74a1ba711f6f8b06817fe92a2362a2825641450d56b8"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/switched-back.json",
+      "sha256": "sha256:d653f07c80c9b3fd5f5ad4e21bcb744e2da87220bc3bd39e4beeaff5bbf9b27a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/switched-blank.json",
+      "sha256": "sha256:3ba60eafa46f1b9ca53e75e21f90cb9c737de939d0fc39637197df7d2e8cefd2"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-completed.png",
+      "sha256": "sha256:7d478d9e495ee83c6495069b8760e2c1c06e91925761b137f4411cff33838501"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe01-running.json",
+      "sha256": "sha256:d90d587d28f6fd256e29b6d1f05857324f7120293031ed1b5035ac65e90a1cc0"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe02-running.json",
+      "sha256": "sha256:abc40e17d8d772d8c356d94e6ac5141ef57d7fbd22b95fd3355f5443ddcae8eb"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe03-running.json",
+      "sha256": "sha256:50f7301df3ee1d2e19bb0668b67c69718c1e5e4062668e1c7c6eb0c721708fb7"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-observe04-terminal.json",
+      "sha256": "sha256:c8199bc15bc9cd3161b263e905d810133f14395fdf5b8fc1477c36993c9bffc3"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-plus30-no-refresh.json",
+      "sha256": "sha256:ace474b1c3108293f85e447a37d8124b6ee3919cbdbc2f886d3bc8eecd7a9c92"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn1-submitted.json",
+      "sha256": "sha256:6d608e935dfd39f6a05c57757b2511563032562c7396d96b722637cc266d4bb9"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-observe01-terminal.json",
+      "sha256": "sha256:fd27d4fc26af0c79d4ed0aded9dce5fe5ced6f5d2983b7bcae73ef7fe0d6463b"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-plus30-no-refresh.json",
+      "sha256": "sha256:cf572cbd707401b3f74bb225c1da73a2aad9e9d05d4ab5cf16c1246c06fd662d"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/turn2-submitted.json",
+      "sha256": "sha256:c93143f5f0d476c2a19ad08f10a3ecf26128c0189888839af78caa34baef8ff4"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M02/workspace/uploaded.json",
+      "sha256": "sha256:6ab4e99ce88c0948d8f56fde8b0d7ba0de4c15b75158666e05193b62729178b1"
+    }
+  ],
+  "evidence_directory": "tmp/real-provider-browser-matrix-a02/M02/workspace",
+  "session_directory": "tmp/real-provider-browser-matrix-a02/M02/sessions/884ec54644c5",
+  "limitations": [
+    "Each passed row is a local observation, not a complete journey pass.",
+    "No retries, model fallback, supplementary run, source change, Git write or deployment.",
+    "Post-batch arithmetic only reads persisted data; it does not replay product tools or repair product state."
+  ],
+  "report_review_revision": {
+    "previous_draft_sha256": "sha256:41f5c3ee03c248978e0a0a6c7bf4add023ad50924c6c74f74a77302b1e48645d",
+    "reason": "Correct text-vs-structured receipt hash verification; add independent chart-array normalization and cohort/pie checks. No original evidence, receipts, inputs or source modified."
+  }
+}

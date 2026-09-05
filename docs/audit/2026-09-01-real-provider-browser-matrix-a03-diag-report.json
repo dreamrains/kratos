@@ -1,0 +1,186 @@
+{
+  "schema_version": "matrix_a03_diagnostic_report.v1",
+  "batch_id": "MATRIX-A03-DIAG",
+  "closed_at": "2026-08-31T16:45:17.776223+00:00",
+  "status": "stopped_failed_not_acceptance",
+  "authorization": "explicit_user_authorization_consumed_closed_no_resume",
+  "batch_sha256": "sha256:e94ed1ad0559440e0b1ace56d51619b5e32a5a4abb3252c132c2ef09b58c64fe",
+  "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+  "model": "openai/deepseek-v4-flash",
+  "source_unchanged_before_close": true,
+  "preflight": "docs/audit/2026-09-01-real-provider-browser-matrix-a03-diag-authorized-zero-call-preflight.json",
+  "real_calls": 11,
+  "call_cap": 216,
+  "call_status_counts": {
+    "completed": 11
+  },
+  "blocked_attempts": 0,
+  "unknown_or_inflight": 0,
+  "remote_billing": "unknown",
+  "unused_205_slots": "not_transferable_not_reusable",
+  "stop_reason": "graceful_exit_not_proven",
+  "process_exit": {
+    "captured_at": "2026-09-01T00:43:56.3014642+08:00",
+    "target_pid": 44016,
+    "target_and_children": [],
+    "listeners": [],
+    "normal_exit_proven": false,
+    "pty_exit_code": 1,
+    "force_termination_used": false
+  },
+  "cases": [
+    {
+      "id": "M01",
+      "status": "analysis_complete_diagnostic_failed_exit_gate",
+      "session_id": "a2d626a5b7c3",
+      "analysis_turns_completed": 1,
+      "real_calls": 11,
+      "cap": 32,
+      "evidence_statuses": [
+        {
+          "id": "7511f7fa25",
+          "statistical_detail_status": "missing",
+          "statistical_detail_gaps": [
+            "time_scope"
+          ],
+          "artifact_path": "sessions/a2d626a5b7c3/analysis_flow/af_25c7c635e3ecb5bdc6e2da43ee7d23138873662d.json"
+        },
+        {
+          "id": "d7cf45b6b1",
+          "statistical_detail_status": "complete",
+          "statistical_detail_gaps": [],
+          "artifact_path": "sessions/a2d626a5b7c3/analysis_flow/af_41f0405d026736d5a9f0370cf52cd37b6632dfc0.json"
+        }
+      ],
+      "observations": {
+        "upload_before_calls": true,
+        "allowed_confirmation_once": true,
+        "paging_offsets": [
+          0,
+          2000,
+          4000
+        ],
+        "distinct_chart_series": 2,
+        "actual_url_refresh": true,
+        "switch_away_and_back": true,
+        "reply_html_preview": true,
+        "single_reply_md_contains_all_persisted_assistant_segments": true
+      },
+      "exports": [
+        {
+          "path": "tmp/real-provider-browser-matrix-a03-diag/M01/sessions/a2d626a5b7c3/reports/conversation_Assistant_Reply_20260901_003701_761943_5703e263.html",
+          "bytes": 4866660,
+          "is_markdown": false,
+          "chart_png_references": 11,
+          "contains_final_numeric_formula": true
+        },
+        {
+          "path": "tmp/real-provider-browser-matrix-a03-diag/M01/sessions/a2d626a5b7c3/reports/conversation_Assistant_Reply_20260901_003702_307423_29cca852.md",
+          "bytes": 117359,
+          "is_markdown": true,
+          "chart_png_references": 0,
+          "contains_final_numeric_formula": true
+        },
+        {
+          "path": "tmp/real-provider-browser-matrix-a03-diag/M01/sessions/a2d626a5b7c3/reports/conversation_Conversation_Export_20260901_003722_986520_15320a0b.html",
+          "bytes": 4867185,
+          "is_markdown": false,
+          "chart_png_references": 11,
+          "contains_final_numeric_formula": true
+        },
+        {
+          "path": "tmp/real-provider-browser-matrix-a03-diag/M01/sessions/a2d626a5b7c3/reports/conversation_Conversation_Export_20260901_003726_154084_ee63f8d4.md",
+          "bytes": 117830,
+          "is_markdown": true,
+          "chart_png_references": 0,
+          "contains_final_numeric_formula": true
+        }
+      ]
+    },
+    {
+      "id": "M02",
+      "status": "blocked_not_started",
+      "real_calls": 0,
+      "reason": "M01 normal-exit gate not proven"
+    },
+    {
+      "id": "M03",
+      "status": "blocked_not_started",
+      "real_calls": 0,
+      "reason": "M01 normal-exit gate not proven"
+    },
+    {
+      "id": "M04",
+      "status": "blocked_not_started",
+      "real_calls": 0,
+      "reason": "M01 normal-exit gate not proven"
+    },
+    {
+      "id": "M05",
+      "status": "blocked_not_started",
+      "real_calls": 0,
+      "reason": "M01 normal-exit gate not proven"
+    },
+    {
+      "id": "M06",
+      "status": "blocked_not_started",
+      "real_calls": 0,
+      "reason": "M01 normal-exit gate not proven"
+    }
+  ],
+  "findings": [
+    {
+      "id": "A03-F08-exit",
+      "status": "failed_gate",
+      "summary": "Ctrl+C 后终端退出码1；首次确认 PID 消失晚于30秒。无法证明规定时限内正常退出，因此停止整批。",
+      "causality": "未证明悬挂，也未证明生命周期异常；不得把账本 closed 当作进程正常退出证据。",
+      "evidence": [
+        "tmp/a03-diag-preparation-01/final-process-observation.json",
+        "tmp/real-provider-browser-matrix-a03-diag/M01/workspace/shutdown-process-diagnostic.json"
+      ]
+    },
+    {
+      "id": "A03-F01-scope",
+      "status": "open",
+      "summary": "质量证据 7511f7fa25 缺 time_scope；describe_dataset 日期统计和质量问题未完整投影，不能使用模型自报时间替代。"
+    },
+    {
+      "id": "A03-F09-semantics",
+      "status": "open",
+      "summary": "最终正文包含稳定核心用户、游戏类型及优化ROI判断；没有个体或干预证据。把6个零值确定解释为未观测、并称选择偏差轻微也缺依据。拟合正确不支持这些解释。"
+    },
+    {
+      "id": "F10-static",
+      "status": "historic_open_not_reproduced_M01",
+      "summary": "本次M01 PNG存在；历史M02首次PNG失败原因被吞没。不能把本次成功当作历史修复。"
+    },
+    {
+      "id": "P2-title",
+      "status": "open",
+      "summary": "单回复HTML保留重复标题，全文导出保留实际跨工具助手分段。"
+    },
+    {
+      "id": "MD-preview",
+      "status": "not_tested_this_batch",
+      "summary": "本批磁盘MD已核对；未绕过历史浏览器安全阻止，不声称MD浏览器预览通过。"
+    }
+  ],
+  "prior_issue_registers": [
+    "docs/audit/2026-08-31-matrix-a02-handoff.md",
+    "docs/audit/2026-09-01-matrix-a02-offline-continuation-report.md"
+  ],
+  "raw_evidence_manifest": "docs/audit/2026-09-01-real-provider-browser-matrix-a03-diag-original-evidence-hashes.json",
+  "raw_evidence_files": 83,
+  "original_A02_files_unchanged": 518,
+  "browser_cleanup": "controlled M01 tab closed and temporary viewport reset; do not assert all user/automatic tabs closed",
+  "prohibitions_observed": [
+    "no retry",
+    "no fallback",
+    "no additional prompts",
+    "no source edits during batch",
+    "no forced termination",
+    "no Git writes",
+    "no delete or rewrite raw evidence"
+  ],
+  "next": "Only offline repair and zero-Provider regression. Any real calls require fresh freeze and new explicit authorization."
+}

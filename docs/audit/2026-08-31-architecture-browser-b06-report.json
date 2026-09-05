@@ -1,0 +1,107 @@
+{
+  "batch_id": "ARCHITECTURE-BROWSER-B06",
+  "source_digest": "sha256:df10e3d5ee356d9ce79cc9a00535b2ee99882ca28ab85771c3841898962b4b3d",
+  "evidence_layer": "scripted_transport_real_browser",
+  "status": "blocked",
+  "source_and_inputs_unchanged_during_batch": true,
+  "real_provider_calls": 0,
+  "scripted_calls_started": 64,
+  "scripted_terminal_counts": {
+    "completed": 62,
+    "cancelled": 1,
+    "failed": 1
+  },
+  "blocked_attempts": 0,
+  "cases": [
+    {
+      "case_id": "M01",
+      "session_id": "ac90c0cd62f8",
+      "status": "passed",
+      "scripted_calls": 9,
+      "analysis_turns_completed": 1,
+      "blocked_steps": [],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M01",
+      "process_exit": "forced after all receipts completed; exit 1 and PID absent verified before next case"
+    },
+    {
+      "case_id": "M02",
+      "session_id": "01003e47b919",
+      "status": "passed",
+      "scripted_calls": 11,
+      "analysis_turns_completed": 2,
+      "blocked_steps": [],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M02",
+      "process_exit": "forced after all receipts completed; exit 1 and PID absent verified before next case"
+    },
+    {
+      "case_id": "M03",
+      "session_id": "07fe083abdab",
+      "status": "passed",
+      "scripted_calls": 10,
+      "analysis_turns_completed": 1,
+      "blocked_steps": [],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M03",
+      "process_exit": "forced after all receipts completed; exit 1 and PID absent verified before next case"
+    },
+    {
+      "case_id": "M04",
+      "session_id": "eddcae8a12fc",
+      "status": "passed",
+      "scripted_calls": 7,
+      "analysis_turns_completed": 1,
+      "blocked_steps": [],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M04",
+      "process_exit": "forced after all receipts completed; exit 1 and PID absent verified before next case"
+    },
+    {
+      "case_id": "M05",
+      "session_id": "aa7c49974f78",
+      "status": "passed",
+      "scripted_calls": 7,
+      "analysis_turns_completed": 1,
+      "blocked_steps": [],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M05",
+      "process_exit": "forced after all receipts completed; exit 1 and PID absent verified before next case"
+    },
+    {
+      "case_id": "M06",
+      "session_id": "5605f102e012",
+      "status": "blocked",
+      "scripted_calls": 14,
+      "analysis_turns_completed": 2,
+      "blocked_steps": [
+        "third analysis turn",
+        "session switch after third turn",
+        "HTML export after third turn"
+      ],
+      "evidence_directory": "tmp\\architecture-browser-b06\\M06",
+      "process_exit": "PID absent on continuation; exit code unavailable, no restart"
+    }
+  ],
+  "faults": {
+    "status": "passed",
+    "cancelled_session": "c310770b633a",
+    "failed_session": "1e48bcc2597d",
+    "cancel_refresh": "passed",
+    "failure_refresh_html": "passed",
+    "process_pid": 17080,
+    "process_exit": "forced after terminal receipts, exit 1, PID absent"
+  },
+  "findings": [
+    {
+      "id": "B06-F01",
+      "kind": "environment_interruption",
+      "summary": "At 2026-08-31 13:27 continuation, M06 process 18528 was absent, exec session unavailable, browser runtime absent. The 14 recorded scripted calls and two durable turns were complete. Third prompt was never sent. No old scene restart or supplemental generation."
+    }
+  ],
+  "cleanup": {
+    "controlled_tabs_remaining": 0,
+    "viewport_reset": true,
+    "export_preview_tabs": "Previously created window.open previews are not claimed as closed."
+  },
+  "limitations": [
+    "Five complete business journeys, two of three M06 turns, and two independent fault journeys; not a full matrix pass.",
+    "Scripted transport cannot validate real model planning or narrative quality.",
+    "No real Provider, Git write, staging or production. Historical A01 22 starts remain untouched."
+  ]
+}

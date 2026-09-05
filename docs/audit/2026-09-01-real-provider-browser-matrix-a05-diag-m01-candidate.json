@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "candidate_id": "real_provider_browser_matrix_a05_diag_m01",
+  "matrix_case_id": "M01",
+  "batch_id": "MATRIX-A05-DIAG",
+  "name": "上传绑定与留存闭环",
+  "source_digest": "sha256:19246110a086afaa4622db2d0bd01d9555dd9136309118b20abbb034baaa4c86",
+  "model": "openai/deepseek-v4-flash",
+  "port": 5701,
+  "data": [
+    {
+      "id": "game_b_retention",
+      "path": "reference/test_doc/游戏B留存.xlsx",
+      "sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+    }
+  ],
+  "prompt": "请先检查这份留存数据的质量与字段结构，然后比较幂律、指数和对数留存曲线，给出最佳公式、参数、拟合优度和限制；同时生成一张包含实际留存均值与最佳拟合值两条曲线的对比图，并把关键结论记录为可核查证据。",
+  "prompts": [
+    "请先检查这份留存数据的质量与字段结构，然后比较幂律、指数和对数留存曲线，给出最佳公式、参数、拟合优度和限制；同时生成一张包含实际留存均值与最佳拟合值两条曲线的对比图，并把关键结论记录为可核查证据。"
+  ],
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "browser_steps": [
+    "打开新会话后设置并核对1440×1000视口，核对当前静态资源哈希，记录 DOM、截图和 console 基线",
+    "通过页面一次选中本场景全部文件，等待每个附件上传成功；不得手工复制到inbox",
+    "仅发送 prompts[0] 原文一次；页面自身追加的分析文件引用属于正常产品行为",
+    "每个分析回合最多响应一次匹配当前分析的 method_confirmation，且仅选择 value=confirm_method、标签=按此方法继续；其他确认终止本场景生成",
+    "观察直到完成、挂起或场景终止；记录tools、实际调用和本地blocked_attempts；UI及统计oracle失败不停止其他可达检查",
+    "刷新同一会话一次；检查确认气泡、回答、图表、证据和任务恢复",
+    "点击工作台产出与导出，再点击 HTML 一次；检查导出文件属于当前会话",
+    "若场景未被硬停止，核对实际会话URL，刷新一次，再切到新建空会话且不发送并由侧栏返回；不猜测会话参数，不用刷新制造实时通过。",
+    "若场景未被硬停止，通过UI分别生成一次末轮单回复HTML/MD和一次全会话HTML/MD；已有本格式本范围导出不重复生成。核对正文完整性、图表等级、缺图提示和会话归属。",
+    "记录所有可达检查的passed/failed/blocked，停止本场景进程并核对最终收据和实际退出。结束后仅离线只读核对新进程数据恢复。无退出证明不得进入下一场景。"
+  ],
+  "confirmation_policy": {
+    "type": "method_confirmation",
+    "option_value": "confirm_method",
+    "option_label": "按此方法继续",
+    "max_responses_per_analysis_turn": 1,
+    "free_text_allowed": false,
+    "unknown_confirmation_action": "stop_case_generation"
+  },
+  "provider_policy": {
+    "web_journeys": 1,
+    "analysis_turns": 1,
+    "call_cap": 32,
+    "temperature": 0,
+    "timeout_seconds": 120,
+    "initial_max_tokens": 8000,
+    "auxiliary_initial_max_tokens": 300,
+    "auxiliary_max_tokens": [
+      300,
+      800
+    ],
+    "auxiliary_mode": "chat_once_no_escalation",
+    "silent_length_ladder": [
+      8000
+    ],
+    "num_retries": 0,
+    "stream_sync_fallback": false,
+    "model_fallback": false,
+    "supplementary_run": false,
+    "first_provider_failure_case_global_latch": true,
+    "main_mode": "one_physical_attempt_no_escalation"
+  },
+  "oracle": {
+    "common": {
+      "upload_ticket_opaque": true,
+      "session_owned_before_first_provider": true,
+      "raw_and_analysis_datasets_loaded": true,
+      "file_recovery_question_forbidden": true,
+      "workbench_exact_session_id": true,
+      "composer_disabled_while_generating": true,
+      "root_scroll_height_equals_client_height": true,
+      "console_error_warning_count": 0,
+      "tool_errors_recorded": true,
+      "artifacts_and_exports_session_owned": true,
+      "verified_evidence_visible_after_turn_end": true,
+      "completion_observation": "终止事件后检查一次并记录时间；允许在10秒和30秒无刷新重检两次。30秒仍未更新记失败，后续冻结步骤继续；不得用盲目刷新判为实时通过。",
+      "export_projection": "Public confirmation text; validated persisted chart data embedded in HTML and existing PNG in Markdown; no recomputation; same session ownership. Real numpy/Plotly Express typed arrays must survive reload.",
+      "automatic_upload_context": "Explicit identifier fields must not be suggested as trend/contribution/correlation measures; low-cardinality monetary prices retain numeric role without inventing currency units.",
+      "evidence_authority": "Statistics must come from validated actual result receipts and current session/data identity. Model-reported fields alone cannot make evidence complete.",
+      "evidence_immutability": "Distinct evidence records have distinct durable content; no second-level filename overwrite.",
+      "detail_access": "Long details can be read fully using bounded hash-bound pages, with no recursive truncation.",
+      "reply_identity_export": "Single reply export must match the server-owned persisted reply ID and include all tool-separated text segments.",
+      "chart_grade": "Exploratory charts remain allowed and clearly disclosed. Do not claim formal binding when absent; formal charts require valid result/data identities.",
+      "publication_scope": "Task/tool/run completion is not evidence verification. Check units, denominators, observation windows, statistical method and unknown values across narrative/evidence/charts/exports.",
+      "supervised_process": "The current child PID, exact frozen launcher/case command tail, receipt-local stop signal, and timeout at most 30 seconds are proven by the frozen parent supervisor before any batch ledger admission or Provider transport installation.",
+      "process_control_isolation": "Each process-control directory is exactly the provider receipt parent plus /process-control; it is unique to the case and inside the frozen batch isolation root.",
+      "html_export_layout": "Normal report content does not cause document-level horizontal overflow; wide tables use bounded internal horizontal scrolling."
+    },
+    "required_tools": [
+      "detect_data_quality",
+      "curve_fitting",
+      "record_evidence_record",
+      "create_chart"
+    ],
+    "rows": 62,
+    "columns": 13,
+    "numeric": {
+      "a": {
+        "value": 0.18800129,
+        "absolute_tolerance": 1e-05
+      },
+      "b": {
+        "value": -0.71667274,
+        "absolute_tolerance": 1e-05
+      },
+      "r_squared": {
+        "value": 0.98240474,
+        "absolute_tolerance": 1e-05
+      },
+      "excluded_zero_points": 6
+    },
+    "chart": "实际均值与最佳拟合值至少两条可见且数值不同的序列；图例角色可识别，不强制英文名称",
+    "claim_boundary": "仅描述观测区间，不支持因果或未观测期外推",
+    "refresh_confirmation_protocol_visible": false,
+    "html_exports": 1,
+    "a02_regressions": {
+      "narrative_scope": "Do not extrapolate beyond observed D1-D30 or infer individual retention from cohort means."
+    },
+    "a04_regressions": {
+      "zero_value_semantics": "The meaning of zero observations remains unknown unless the frozen data supplies metadata. Do not claim stable core users, game/product genre, natural fluctuation, positive predictive or LTV suitability, ROI, or selection bias as established facts. State uncertainty explicitly."
+    },
+    "a05_regressions": {
+      "publication_quarantine": "Unsupported zero semantics, stable-user, game-genre, LTV, ROI, selection-bias or business interpretations never enter public messages or exports. If the first final is rejected, at most one evidence-only no-tool rewrite may become public; a second violation fails closed.",
+      "canonical_reply_export": "The single-reply HTML and Markdown bind to exactly the accepted public reply."
+    }
+  },
+  "writes": {
+    "workspace_dir": "tmp/real-provider-browser-matrix-a05-diag/M01/workspace",
+    "sessions_dir": "tmp/real-provider-browser-matrix-a05-diag/M01/sessions",
+    "provider_receipt_path": "tmp/real-provider-browser-matrix-a05-diag/M01/provider-calls.json",
+    "report_path": "docs/audit/2026-09-01-real-provider-browser-matrix-a05-diag-m01-report.json",
+    "process_control_dir": "tmp/real-provider-browser-matrix-a05-diag/M01/process-control"
+  },
+  "authorization_state": "frozen_pending_explicit_user_authorization",
+  "purpose": "diagnostic_issue_collection_not_release_acceptance"
+}

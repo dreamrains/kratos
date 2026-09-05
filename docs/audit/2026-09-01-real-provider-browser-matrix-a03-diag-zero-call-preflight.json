@@ -1,0 +1,179 @@
+{
+  "batch_id": "MATRIX-A03-DIAG",
+  "evidence_layer": "zero_call_read_only_preflight",
+  "at": "2026-08-31T16:27:34.783399+00:00",
+  "authorization": "not_granted_pending_user",
+  "identity": {
+    "batch_sha256": "sha256:e94ed1ad0559440e0b1ace56d51619b5e32a5a4abb3252c132c2ef09b58c64fe",
+    "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+    "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+    "data_bundle_sha256": "sha256:c5e080e96c89fc257def56956733ef294119e89167f34ea29df22617f7f63912",
+    "prompt_bundle_sha256": "sha256:82b559704004318144136ac80d78116601341f0cd4a035a02abfcf80769bab16",
+    "oracle_bundle_sha256": "sha256:837d0cc0bd4c10c2df8c46d6a930ded35eba26dadbd09c15451426ba48280c9a"
+  },
+  "real_provider_calls": 0,
+  "cases": [
+    {
+      "case_id": "M01",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:0992df05d3afc60a11f13471e3db4c385c0d90f72655a1daea352d8307eab974",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:554a731ac44430a9bfa3515d568e2fcd26c8d03338c8316e90645c0922b46a3c",
+          "oracle_sha256": "sha256:8d3d918fcfcc11cd9416cd5d30754e6bd4b7cc8b868d8005e4620021c0cbd32b",
+          "data_sha256": {
+            "game_b_retention": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0"
+          }
+        },
+        "call_cap": 32,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    },
+    {
+      "case_id": "M02",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:e7b19f0e111d0dff3eae0b7ffa68efc68c2ca4a5a26cd498fc8df99a11087472",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:a844c2c63b19b631f19f8a96c5dcbf4c76736d543e37a70dce41676b6c91a3e0",
+          "oracle_sha256": "sha256:64a4ad06b8b28818bb5adacce4983ca701f31d87c4cfd5dea7eaf2005593db82",
+          "data_sha256": {
+            "game_a_rewarded_video": "sha256:cd70017a106f6f2a64ff81bab7c75f4b8936745931679fd4782c414db1088ff7",
+            "game_a_in_app_purchase": "sha256:fe1644834de2c3495870ea9780d9a866bf780126368c3128924725647399624e",
+            "game_a_banner": "sha256:21919b8480488a3a24a19b27e75f8bf5ee9c9d36b3003e2f6d823cc154b39a8a"
+          }
+        },
+        "call_cap": 40,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    },
+    {
+      "case_id": "M03",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:10bce855405b228cd95249d78cd6731921eb4eea1c09008a518e1e03af19d82b",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:a67ab6293d23379540a2cc25303645987e78b77e971b31693b0bb78d9d2e7847",
+          "oracle_sha256": "sha256:b1f23d828472a331af2032c7dbc3332b8b0342bd1ed4762c3301fae78869e6b3",
+          "data_sha256": {
+            "game_cross_promotion": "sha256:063f5415f490f90967b48d2e29972b3d2e1b908335aeb4a6420a90fb2eb19f83"
+          }
+        },
+        "call_cap": 32,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    },
+    {
+      "case_id": "M04",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:ccb2a28eade60d862a0b63ddfbd0178b1726223643db3be135896625fc29f55f",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:b26f0b192f09de95786c2fbd525c9d5e28916b9c88dcb58a0a51a1525f3c8c01",
+          "oracle_sha256": "sha256:de7afc11fb718a832df818864df30ee8d1b73f5ec4aa125a3e3bef063d80f4ca",
+          "data_sha256": {
+            "savings_card_orders": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+          }
+        },
+        "call_cap": 32,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    },
+    {
+      "case_id": "M05",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:efd600889934734633425b6fe335b98814a3c34d73a8f12f179b7b552ba6a203",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:bda7fa7d99d76a4fad44865f24394ad41d3ea3447d595deaadc33cedd1aecdd7",
+          "oracle_sha256": "sha256:f82276c59a0672842f34347d89564024f7989e962e4b55a1b78c82555cb7e618",
+          "data_sha256": {
+            "savings_card_before_after": "sha256:e110c7e9e4abe5e21cede1e99a77e8f8a6827ef562a773eea16482808f6dce37"
+          }
+        },
+        "call_cap": 32,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    },
+    {
+      "case_id": "M06",
+      "exit_code": 0,
+      "status": "passed",
+      "preflight": {
+        "ready": true,
+        "checks": {
+          "candidate_sha256": "sha256:8ecf359350fe9f43f074f92d4d8325ac96def08eeb74ac294559c824bf25040b",
+          "launcher_sha256": "sha256:4da176824812b09359c6143352c43623aa7a578072d3405c484ec412ac37f32a",
+          "source_digest": "sha256:6e1cd5827185ff5d0c7c30793f5990a23ac21395d0f2db39ea1ca6525710fc0b",
+          "prompt_sha256": "sha256:2cc8718a3436f84c04903476e4deca047dec64db29ba1b22bd44936550e94c8f",
+          "oracle_sha256": "sha256:659ebd82bb375c461643e9ebf7d1d22e901166a92356795ec31f97b9c2d3e4a6",
+          "data_sha256": {
+            "savings_card_user_payments": "sha256:cb0dab0ad6e0f8b7edf3ba2476bc525371f667a934242d29cf8d891a60e8ab03",
+            "savings_card_vouchers": "sha256:cda47a61c8bbbcd6bcf545c485dbeb1eb877e2f0d2ad244613e7c7199c4a5e90",
+            "savings_card_orders": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3"
+          }
+        },
+        "call_cap": 48,
+        "api_base_present": true,
+        "api_key_present": true
+      },
+      "network_guard": {
+        "attempts": 0,
+        "events": []
+      },
+      "stderr": ""
+    }
+  ],
+  "network_attempts": 0,
+  "execution_root_exists": false
+}

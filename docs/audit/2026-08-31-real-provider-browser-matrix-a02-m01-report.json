@@ -1,0 +1,622 @@
+{
+  "schema_version": "real_provider_browser_matrix_case_report.v1",
+  "batch_id": "MATRIX-A02",
+  "case_id": "M01",
+  "name": "上传绑定与留存闭环",
+  "evidence_layer": "real_provider_real_browser",
+  "status": "failed",
+  "execution_status": "completed_with_failed_oracles",
+  "source_digest": "sha256:df10e3d5ee356d9ce79cc9a00535b2ee99882ca28ab85771c3841898962b4b3d",
+  "candidate_path": "docs/audit/2026-08-31-real-provider-browser-matrix-a02-m01-candidate.json",
+  "model": "openai/deepseek-v4-flash",
+  "session_id": "e0266d9c5bbb",
+  "analysis_turns_started": 1,
+  "analysis_turns_completed": 1,
+  "method_confirmations": 1,
+  "provider": {
+    "calls_started": 18,
+    "completed": 18,
+    "failed": 0,
+    "cancelled": 0,
+    "unknown": 0,
+    "blocked_attempts": 0,
+    "call_cap": 32,
+    "all_local_requests_stopped": true,
+    "remote_billing": "unknown",
+    "main_stream_calls": 16,
+    "auxiliary_nonstream_calls": 2,
+    "receipt_path": "tmp/real-provider-browser-matrix-a02/M01/provider-calls.json",
+    "receipt_sha256": "sha256:7e51353f64aa29c916b968e4de6c344cb561bad8d024ec7ec9d5b830b1ded48e",
+    "receipt_hash_contract": "UTF-8 bytes after CRLF-to-LF normalization, matching BatchLedger.finish",
+    "raw_file_sha256": "sha256:234e8ddf3cb3d04ba074e4f6a491a7d926aeed275e3860bd24744888fd62002c",
+    "guard_terminal": {
+      "code": "acceptance_server_closed",
+      "failed_at": "2026-08-31T06:03:44.422210Z"
+    }
+  },
+  "process": {
+    "pid": 34312,
+    "ledger_closed_at": "2026-08-31T06:03:44.427327+00:00",
+    "pid_absence_verified_before_next_case": true,
+    "exit": "closed_after_ctrl_c_pid_absence_verified",
+    "exec_exit_code": 1
+  },
+  "checks": [
+    {
+      "id": "frozen_prompts_and_confirmation",
+      "status": "passed",
+      "observation": {
+        "analysis_prompts_sent_once": 1,
+        "method_confirmations": 1,
+        "extra_prompts": 0
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/conversation.json"
+      ]
+    },
+    {
+      "id": "upload_integrity_binding_and_loading",
+      "status": "passed",
+      "observation": {
+        "uploads": [
+          {
+            "source": "reference/test_doc/游戏B留存.xlsx",
+            "sha256": "sha256:63f72f645b34f2ca5456871fabd2a2785d2cf14c5a8ae147d344e85d2f5cbbe0",
+            "upload": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/uploads/a5632b2956c64db29cd14d0e79d8d852/游戏B留存.xlsx",
+            "raw_shape": [
+              62,
+              13
+            ],
+            "raw_version": "dv_83ca2411cc750aca",
+            "analysis_version": "dv_569deee8081a84f3"
+          }
+        ],
+        "first_provider_started_at": "2026-08-31T05:55:17.090454Z",
+        "evidence_limit": "Browser upload plus session-owned upload hash, raw/analysis snapshots, load order in server log and uploaded context. Log timestamps have second precision; not a millisecond timing claim."
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/uploaded.json",
+        "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/workspace_meta.json",
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/server.log"
+      ]
+    },
+    {
+      "id": "no_file_recovery_question",
+      "status": "passed",
+      "observation": "No file recovery confirmation occurred; M01 only the frozen method confirmation.",
+      "evidence": []
+    },
+    {
+      "id": "root_layout",
+      "status": "passed",
+      "observation": {
+        "sample_count": 13,
+        "bad_samples": [],
+        "dimensions": [
+          1440,
+          1000,
+          1000
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "console_warnings_errors",
+      "status": "passed",
+      "observation": {
+        "sample_count": 14,
+        "nonempty_samples": [],
+        "scope": "Recorded browser observations before service close; not continuous monitoring."
+      },
+      "evidence": []
+    },
+    {
+      "id": "composer_during_generation",
+      "status": "passed",
+      "observation": {
+        "submission_and_confirmation_samples": [
+          "tmp/real-provider-browser-matrix-a02/M01/workspace/confirmed.json",
+          "tmp/real-provider-browser-matrix-a02/M01/workspace/submitted.json"
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "workbench_session_id",
+      "status": "passed",
+      "observation": {
+        "session_id": "e0266d9c5bbb",
+        "observed": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "verified_evidence_after_turn_end",
+      "status": "failed",
+      "observation": "Completed runs produced no passed evidence; missing statistical fields are durable backend state, so empty verified conclusions are not demonstrated to be an SSE transport delay.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/analysis_state.json",
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/observe05.json"
+      ]
+    },
+    {
+      "id": "immediate_10s_30s_completion_sampling",
+      "status": "blocked",
+      "observation": "First completed browser sample was about 181 seconds after durable completion. The frozen early-latency observations were missed; later visibility does not close this gap.",
+      "evidence": []
+    },
+    {
+      "id": "required_tool_presence",
+      "status": "failed",
+      "observation": {
+        "missing": [
+          "detect_data_quality"
+        ],
+        "actual": {
+          "task_list": 1,
+          "read_file": 5,
+          "run_python": 8,
+          "curve_fitting": 1,
+          "create_chart": 2,
+          "record_evidence_record": 4
+        },
+        "note": "M01 automatic quality context/run_python does not count as an explicit detect_data_quality call."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_receipt_hashes",
+      "status": "passed",
+      "observation": {
+        "bindings_checked": 9,
+        "hash_kinds": {
+          "structured_json": 9
+        },
+        "invalid": [],
+        "scope": "Structured results use canonical JSON; legacy results use preserved original receipt text. Receipt/hash ownership is separate from statistical completeness."
+      },
+      "evidence": []
+    },
+    {
+      "id": "evidence_artifact_identity",
+      "status": "failed",
+      "observation": {
+        "registered_records": 2,
+        "unique_artifact_paths": 1,
+        "collisions": [
+          {
+            "path": "sessions/e0266d9c5bbb/analysis_flow/evidence_record_20260831_135833.json",
+            "registrations": 2,
+            "saved_claim": "在幂律、指数、对数三种曲线族中，幂律曲线 y=0.1880*x^-0.7167 对游戏B留存曲线拟合最优（R2=0.9824，SSE=0.000349），优于对数曲线（R2=0.9124）和指数曲线（R2=0.6943）；留存随天数衰减符合幂律长尾模式",
+            "overwritten_descriptions": [
+              "游戏B留存数据集质量良好且结构完整：62行×13列，0缺失、0重复，时间覆盖2020-07-01~2020-08-31共62个自然日（日粒度聚合）；含日期、日活跃、日新增及1-7/14/21/30天后共10个留存率列（0-1区间），其中30天后列有6个零值（数据未成熟窗口）"
+            ]
+          }
+        ]
+      },
+      "evidence": []
+    },
+    {
+      "id": "artifact_session_ownership",
+      "status": "passed",
+      "observation": {
+        "registered_artifacts": 4,
+        "all_existing_paths_are_current_session_owned": true
+      },
+      "evidence": []
+    },
+    {
+      "id": "tool_error_collection",
+      "status": "passed",
+      "observation": {
+        "errors": [
+          {
+            "tool_call_id": "call_00_vtHRwi2bKGlsdQQsmCIG1080",
+            "tool": "run_python",
+            "error_type": "sandbox_violation",
+            "message": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_vtHRwi2bKGlsdQQsmCIG1080_detail.json"
+          },
+          {
+            "tool_call_id": "call_01_9J1ZH1msoYwBac5dhBBH2948",
+            "tool": "create_chart",
+            "error_type": "chart_validation",
+            "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_9J1ZH1msoYwBac5dhBBH2948_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_H89mXdXcpTEWZ6DvHFhi6655",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_H89mXdXcpTEWZ6DvHFhi6655_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_hftObG1mDwFIvgXirT0T1574",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: RuntimeError: Unable to configure default ndarray.__str__",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_hftObG1mDwFIvgXirT0T1574_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_neskuas3xEmI7SNCPLi69916",
+            "tool": "run_python",
+            "error_type": "sandbox_execution_error",
+            "message": "Error: KeyError: '__import__'",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_neskuas3xEmI7SNCPLi69916_detail.json"
+          },
+          {
+            "tool_call_id": "call_00_cd2fRYo2HzMxCVBUruNs3896",
+            "tool": "record_evidence_record",
+            "error_type": "unbound_tool_receipt",
+            "message": "EvidenceRecord references tools not executed in this turn",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_cd2fRYo2HzMxCVBUruNs3896_detail.json"
+          },
+          {
+            "tool_call_id": "call_01_fXkrwnpWXauuaYbLrMZR0473",
+            "tool": "record_evidence_record",
+            "error_type": null,
+            "message": "record_json 必须是有效 JSON",
+            "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_fXkrwnpWXauuaYbLrMZR0473_detail.json"
+          }
+        ],
+        "note": "Includes plain-text errors such as load_data even if execution logged is_error=false."
+      },
+      "evidence": []
+    },
+    {
+      "id": "retention_fit_and_two_series",
+      "status": "passed",
+      "observation": {
+        "fit": {
+          "a": 0.18800129,
+          "b": -0.71667274
+        },
+        "r_squared": 0.98240474,
+        "excluded_zero_points": 6,
+        "chart_arrays_match_native_result": true,
+        "fit_detail": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_Y79SEsOB4NeVZAdy4JRx5263_detail.json"
+      },
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/chart-visible.json",
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/html-visible.json"
+      ]
+    },
+    {
+      "id": "session_artifact_reading",
+      "status": "passed",
+      "observation": "read_file resolved the fit detail within this session. Long results still underwent recursive compaction and triggered recomputation.",
+      "evidence": []
+    },
+    {
+      "id": "claim_boundary",
+      "status": "failed",
+      "observation": "Final answer included D60 prediction outside observed D1-D30 and unsupported individual-behavior language; correct parameters do not make these claims supported.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/conversation.json"
+      ]
+    },
+    {
+      "id": "same_session_refresh",
+      "status": "blocked",
+      "observation": "Operator navigated to guessed ?session= instead of observed ?session_id=; blank page followed by one sidebar re-selection. Exact frozen refresh was invalid, not a product refresh failure. No replacement refresh or generation.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/operator-notes.json",
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/refreshed.json"
+      ]
+    },
+    {
+      "id": "sidebar_reselection_and_confirmation_projection",
+      "status": "passed",
+      "observation": "Observed re-selection restored original session with friendly confirmation. Does not substitute for the missed same-session refresh.",
+      "evidence": [
+        "tmp/real-provider-browser-matrix-a02/M01/workspace/refresh-session-reselected.json"
+      ]
+    },
+    {
+      "id": "html_export",
+      "status": "passed",
+      "observation": {
+        "artifacts": [
+          {
+            "type": "conversation_html",
+            "path": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/reports/conversation_Conversation_Export_20260831_140326_760376_da28cfb7.html",
+            "sha256": "sha256:0471cd8b767ea3e88897b079f6dafb2dfbd18ce2fa7f62b0defb8d40512ea822",
+            "raw_confirmation_protocol": false,
+            "png_embeds": null,
+            "missing_static_warning": false
+          }
+        ],
+        "browser_visual": {
+          "url": "http://127.0.0.1:5301/api/files/sessions/e0266d9c5bbb/reports/conversation_Conversation_Export_20260831_140326_760376_da28cfb7.html",
+          "console": [],
+          "charts": {
+            "legends": [
+              "power_fit",
+              "actual"
+            ],
+            "lines": 2,
+            "plots": 1
+          }
+        }
+      },
+      "evidence": []
+    }
+  ],
+  "check_status_counts": {
+    "passed": 14,
+    "failed": 4,
+    "blocked": 2
+  },
+  "numeric_crosscheck": {
+    "fit": {
+      "a": 0.18800129,
+      "b": -0.71667274
+    },
+    "r_squared": 0.98240474,
+    "excluded_zero_points": 6,
+    "chart_arrays_match_native_result": true,
+    "fit_detail": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_Y79SEsOB4NeVZAdy4JRx5263_detail.json"
+  },
+  "terminal_observations": [
+    {
+      "file": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe05.json",
+      "at": "2026-08-31T06:02:15.739Z",
+      "turn_id": "t_4efec0",
+      "durable_status": "completed",
+      "durable_terminal_at": "2026-08-31T05:59:14.688773+00:00",
+      "seconds_after_durable_terminal": 181.05,
+      "workbench_empty_verified_conclusions": true
+    }
+  ],
+  "evidence_records": [
+    {
+      "id": "82283dbeb3",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "metrics",
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 4
+    },
+    {
+      "id": "64b4036e65",
+      "statistical_detail_status": "missing",
+      "gaps": [
+        "sample_size",
+        "time_scope",
+        "calculation_method",
+        "method_detail",
+        "significance",
+        "correlation",
+        "confidence_interval"
+      ],
+      "required_fields": null,
+      "result_binding_count": 5
+    }
+  ],
+  "verification_reports": [
+    {
+      "id": "verify_verify_dbdd369ba",
+      "overall_status": "pass_with_downgrades",
+      "passed_evidence_ids": [],
+      "downgraded_evidence_ids": [
+        "82283dbeb3",
+        "64b4036e65"
+      ],
+      "failed_evidence_ids": []
+    }
+  ],
+  "charts": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/charts/游戏B留存曲线：实际均值_vs_幂律拟合（y=0.188·x^-0.717，R²=0.982）_c204c4.json",
+      "sha256": "sha256:9497997779bea89bc5b61b3e3be2066e47385ddb8d661d10c4670fcd3e41f8fd",
+      "purpose": "evidence",
+      "evidence_ids": [
+        "64b4036e65"
+      ],
+      "data_identity": {
+        "version_id": "dv_569deee8081a84f3",
+        "role": "analysis",
+        "fingerprint": "sha256:c025e0c2144ae8825838559907261d1ec12afef9e380e8d746a6a3664a0778cf",
+        "source_fingerprint": "",
+        "parent_version_ids": [
+          "dv_83ca2411cc750aca"
+        ],
+        "expression": "automatic safe type parsing at load",
+        "dataset": "游戏B留存",
+        "source_dataset": "游戏B留存__raw",
+        "derived_from": "游戏B留存__raw",
+        "source_path": "D:\\Project\\Daily\\data-agent\\tmp\\real-provider-browser-matrix-a02\\M01\\sessions\\e0266d9c5bbb\\uploads\\a5632b2956c64db29cd14d0e79d8d852\\游戏B留存.xlsx"
+      },
+      "result_binding": {
+        "receipt_id": "tr_8f728fd84466",
+        "result_ref": "tool_outputs/call_01_Y79SEsOB4NeVZAdy4JRx5263_detail.json",
+        "result_sha256": "sha256:fc35ebed86479df8ed6fbb1f8bae129ab512c9ad8a7446f57124748af09d4864",
+        "data_identities": {
+          "游戏B留存": {
+            "version_id": "dv_569deee8081a84f3",
+            "role": "analysis",
+            "fingerprint": "sha256:c025e0c2144ae8825838559907261d1ec12afef9e380e8d746a6a3664a0778cf",
+            "source_fingerprint": "sha256:15b878763f6e36a9d03e090a095d048adb7bb82939decbc3d6fd7d9fdbae6b90",
+            "parent_version_ids": [
+              "dv_83ca2411cc750aca"
+            ],
+            "expression": "automatic safe type parsing at load"
+          }
+        }
+      },
+      "trace_count": 2,
+      "png_exists": true
+    }
+  ],
+  "exports": [
+    {
+      "type": "conversation_html",
+      "path": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/reports/conversation_Conversation_Export_20260831_140326_760376_da28cfb7.html",
+      "sha256": "sha256:0471cd8b767ea3e88897b079f6dafb2dfbd18ce2fa7f62b0defb8d40512ea822",
+      "raw_confirmation_protocol": false,
+      "png_embeds": null,
+      "missing_static_warning": false
+    }
+  ],
+  "tool_call_counts": {
+    "task_list": 1,
+    "read_file": 5,
+    "run_python": 8,
+    "curve_fitting": 1,
+    "create_chart": 2,
+    "record_evidence_record": 4
+  },
+  "tool_errors": [
+    {
+      "tool_call_id": "call_00_vtHRwi2bKGlsdQQsmCIG1080",
+      "tool": "run_python",
+      "error_type": "sandbox_violation",
+      "message": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_vtHRwi2bKGlsdQQsmCIG1080_detail.json"
+    },
+    {
+      "tool_call_id": "call_01_9J1ZH1msoYwBac5dhBBH2948",
+      "tool": "create_chart",
+      "error_type": "chart_validation",
+      "message": "purpose 'evidence' or 'insight' requires evidence_ids",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_9J1ZH1msoYwBac5dhBBH2948_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_H89mXdXcpTEWZ6DvHFhi6655",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_H89mXdXcpTEWZ6DvHFhi6655_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_hftObG1mDwFIvgXirT0T1574",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: RuntimeError: Unable to configure default ndarray.__str__",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_hftObG1mDwFIvgXirT0T1574_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_neskuas3xEmI7SNCPLi69916",
+      "tool": "run_python",
+      "error_type": "sandbox_execution_error",
+      "message": "Error: KeyError: '__import__'",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_neskuas3xEmI7SNCPLi69916_detail.json"
+    },
+    {
+      "tool_call_id": "call_00_cd2fRYo2HzMxCVBUruNs3896",
+      "tool": "record_evidence_record",
+      "error_type": "unbound_tool_receipt",
+      "message": "EvidenceRecord references tools not executed in this turn",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_00_cd2fRYo2HzMxCVBUruNs3896_detail.json"
+    },
+    {
+      "tool_call_id": "call_01_fXkrwnpWXauuaYbLrMZR0473",
+      "tool": "record_evidence_record",
+      "error_type": null,
+      "message": "record_json 必须是有效 JSON",
+      "detail_file": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb/tool_outputs/call_01_fXkrwnpWXauuaYbLrMZR0473_detail.json"
+    }
+  ],
+  "browser_evidence": [
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/baseline.json",
+      "sha256": "sha256:377d99c71791a69b2dd0bef9d7063b0ac6655f0c7fc6a712584fa6a54fd6d173"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/baseline.png",
+      "sha256": "sha256:72a5b9b5d75bc2d06432de54615673105ecf1ff79ad539fae2c4b34cce1645a3"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/chart-visible.json",
+      "sha256": "sha256:834dc0f9f368c5ce80e43f467b4e3f05adf37cd14da60b15f6373fc3a07d340b"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/chart-visible.png",
+      "sha256": "sha256:335fdbb5b4466095c6214e674b9e7e4f1c127354bf8d92e4f491fd81bbcb1eba"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/completed.png",
+      "sha256": "sha256:0effd05c26afe928eed985f4d6dfe044b9e7f647a10a99513efd48a85d44f476"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/confirmed.json",
+      "sha256": "sha256:f74da028a793d3d718dce71bb273551cc16de965083bf436903fd92c0efca25a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/first-terminal.json",
+      "sha256": "sha256:d1085abb3a4e7f0c68bda0756e1dd4a1bad8117e3766d2e8f945ee356a81b845"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/html-generated.json",
+      "sha256": "sha256:612a3d58955a374bbd56008509d52fd31fd485eea56c02c15dc60a10ebb6c96b"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/html-visible.json",
+      "sha256": "sha256:52c3f52a7cc06c26d58220e0ff89e20f23d76116c5a641c9dafe265f90eb980a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/html-visible.png",
+      "sha256": "sha256:1d3c25306e14aa7a0fbe98ca8dc48af5b5b8e52160bea5e520e2ec1b3bc2f1a6"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe01-running.json",
+      "sha256": "sha256:ca0e1bd3226d62b78edc6fdf688c0e2add69dbfd142be580c408ebc47fa8913a"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe02-running.json",
+      "sha256": "sha256:527b0a51a04c8af98cd0620ce2cb9e754199b42b8fd5963c69c19ea6b431ce8f"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe03-running.json",
+      "sha256": "sha256:336b349fc92a2014c8719d9654d15e63f89aaaf2b484286535e765d24fffe6d4"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe04-running.json",
+      "sha256": "sha256:03ea1c3888f25384bbd64e8b58129a5200bd23e809b02b15cd01c42d218530e9"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/observe05.json",
+      "sha256": "sha256:bb41c581db0237660d91b601c596a69ac7b5b4b0680d889202e5dc826b23f49b"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/operator-notes.json",
+      "sha256": "sha256:3645cc7e49a0d3fe7e69fca9462e4ad666a41dfbfb24552fbaa3b4a3cfaf1a26"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/refresh-session-reselected.json",
+      "sha256": "sha256:592937dec49aaa1cad1686fa483ba6edbecef1944d5aa1ac05a888e15adc8eae"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/refreshed.json",
+      "sha256": "sha256:74fb6bc1fa769b23d2b05d2a97fa514545e225dd7501ebeb01b51a652fe57ad8"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/submitted.json",
+      "sha256": "sha256:c2f6f4870e40280e92708129d21f02cf119aab1b997867707fa7c6c0603dc6d1"
+    },
+    {
+      "path": "tmp/real-provider-browser-matrix-a02/M01/workspace/uploaded.json",
+      "sha256": "sha256:88fff957c56c9758f88be4a76d3b329d5cc6ef9f435710445a682590848f98f0"
+    }
+  ],
+  "evidence_directory": "tmp/real-provider-browser-matrix-a02/M01/workspace",
+  "session_directory": "tmp/real-provider-browser-matrix-a02/M01/sessions/e0266d9c5bbb",
+  "limitations": [
+    "Each passed row is a local observation, not a complete journey pass.",
+    "No retries, model fallback, supplementary run, source change, Git write or deployment.",
+    "Post-batch arithmetic only reads persisted data; it does not replay product tools or repair product state."
+  ],
+  "report_review_revision": {
+    "previous_draft_sha256": "sha256:337f724252d629701dd4d4e160d0463248c952e7603698af43758083b3608899",
+    "reason": "Correct text-vs-structured receipt hash verification; add independent chart-array normalization and cohort/pie checks. No original evidence, receipts, inputs or source modified."
+  }
+}
