@@ -210,6 +210,57 @@ def test_authorized_loop_stops_at_first_failing_case(tmp_path, monkeypatch, caps
     assert [call["command"][-1] for call in calls] == ["M01", "M02"]
 
 
+def _closed_ledger(tmp_path):
+    """A batch ledger with one closed case, as left by a completed M01."""
+    ledger_path = tmp_path / "tmp/run/provider-batch.json"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text(json.dumps({
+        "schema_version": 2, "batch_sha256": "sha256:x",
+        "cases": [{"id": "M01", "status": "closed",
+                   "terminal_failure": {"code": "acceptance_server_closed"}}]}),
+        encoding="utf-8")
+    return ledger_path
+
+
+def test_case_loop_failure_still_audits_without_masking_exit_code(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    _closed_ledger(tmp_path)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    audited = []
+    import scripts.acceptance.audit_batch as audit_module
+    monkeypatch.setattr(audit_module, "audit_batch",
+                        lambda root, path: audited.append((root, path)) or {
+                            "cases": [{"case_id": "M01", "hard_gate": {"passed": True},
+                                       "failed_oracles": [], "observer_gaps": ["x"]}],
+                            "summary": {"cases_closed_audited": 1},
+                            "report_path": "docs/audit/aud.json"})
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0, 1])
+    with pytest.raises(SystemExit, match="M02 failed"):
+        run_batch.main()
+    assert audited == [(tmp_path, batch_path)]
+    out = capsys.readouterr().out
+    assert "audit M01: hard_gate=PASS" in out
+    assert [call["command"][-1] for call in calls] == ["M01", "M02"]
+
+
+def test_audit_failure_is_reported_and_never_masks_the_batch_result(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    _closed_ledger(tmp_path)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+
+    def broken_audit(root, path):
+        raise RuntimeError("synthetic audit failure")
+
+    import scripts.acceptance.audit_batch as audit_module
+    monkeypatch.setattr(audit_module, "audit_batch", broken_audit)
+    _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0, 1])
+    with pytest.raises(SystemExit, match="M02 failed"):
+        run_batch.main()
+    assert '"audit": "failed"' in capsys.readouterr().out
+
+
 def test_wrapper_spawn_chain_passes_the_frozen_supervisor_gate(tmp_path):
     """End-to-end proof of the C1 fix's contract, without a real batch.
 

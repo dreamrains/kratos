@@ -95,6 +95,31 @@ def run_probe(root: Path, *, model: str, api_base: str, api_key: str, receipt_pa
     return {"ok": True, "error_class": None, "global_fatal": False}
 
 
+def _audit_closed_cases_best_effort(root: Path, batch: dict, batch_path: Path) -> None:
+    """Spec S8 auto-audit after the case loop.  Purely best-effort: any
+    failure is reported, never raised, so the case loop's exit code (and
+    Ctrl-C) stays the authoritative batch result."""
+    try:
+        ledger_path = root / batch["isolation_root"] / "provider-batch.json"
+        if not ledger_path.is_file():
+            return
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if not any(record.get("status") == "closed" for record in ledger.get("cases", [])):
+            return
+        from scripts.acceptance.audit_batch import audit_batch
+        report = audit_batch(root, batch_path)
+        for case in report["cases"]:
+            gate = "PASS" if case["hard_gate"]["passed"] else "FAIL"
+            print(f"audit {case['case_id']}: hard_gate={gate} "
+                  f"failed_oracles={len(case['failed_oracles'])} "
+                  f"observer_gaps={len(case['observer_gaps'])}", flush=True)
+        print(json.dumps({"audit_report": report["report_path"],
+                          "summary": report["summary"]}, ensure_ascii=False), flush=True)
+    except Exception as exc:  # reporting only; never masks the batch result
+        print(json.dumps({"audit": "failed", "error": f"{type(exc).__name__}: {exc}"},
+                         ensure_ascii=False), flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".")
@@ -137,25 +162,33 @@ def main() -> None:
     # or the recorded process-start pid would never equal the child's own.
     child_interpreter, child_env = _direct_child_interpreter()
     supervisor_path = _inside(root, batch["supervisor_path"])
-    for case, entry in zip(cases, batch["cases"]):
-        case_id = entry["id"]
-        control_dir = _inside(root, case["writes"]["process_control_dir"])
-        result = subprocess.run(
-            [child_interpreter, str(supervisor_path),
-             "--control-dir", str(control_dir),
-             "--",
-             child_interpreter, "-m", "scripts.acceptance.real_provider_browser_batch",
-             "--root", str(root), "--batch", str(batch_path), "--launcher", str(launcher_path),
-             "--case", case_id],
-            cwd=root,
-            env={**child_env, "AUTHORIZED_BATCH_SHA256": checks["BATCH_SHA256"],
-                 "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1"},
-        )
-        print(json.dumps({"case": case_id, "exit_code": result.returncode}, ensure_ascii=False))
-        if result.returncode != 0:
-            # The batch ledger already records what closed; stop here rather
-            # than spending the remaining frozen case budgets.
-            raise SystemExit(f"case {case_id} failed with exit code {result.returncode}")
+    try:
+        for case, entry in zip(cases, batch["cases"]):
+            case_id = entry["id"]
+            control_dir = _inside(root, case["writes"]["process_control_dir"])
+            result = subprocess.run(
+                [child_interpreter, str(supervisor_path),
+                 "--control-dir", str(control_dir),
+                 "--",
+                 child_interpreter, "-m", "scripts.acceptance.real_provider_browser_batch",
+                 "--root", str(root), "--batch", str(batch_path),
+                 "--launcher", str(launcher_path),
+                 "--case", case_id],
+                cwd=root,
+                env={**child_env, "AUTHORIZED_BATCH_SHA256": checks["BATCH_SHA256"],
+                     "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1"},
+            )
+            print(json.dumps({"case": case_id, "exit_code": result.returncode},
+                             ensure_ascii=False))
+            if result.returncode != 0:
+                # The batch ledger already records what closed; stop here rather
+                # than spending the remaining frozen case budgets.
+                raise SystemExit(
+                    f"case {case_id} failed with exit code {result.returncode}")
+    finally:
+        # Any exit path with at least one closed case still gets the offline
+        # auto-audit; it must never mask the case loop's exit code.
+        _audit_closed_cases_best_effort(root, batch, batch_path)
 
 
 if __name__ == "__main__":
