@@ -292,3 +292,29 @@ def test_retry_respects_call_cap(tmp_path):
     with pytest.raises(_ProviderHttpError):
         _call(guard)
     assert len(completion.calls) == 1  # cap 耗尽，不重试
+
+
+def test_retried_stream_stays_pending_until_transport_ends(tmp_path):
+    def broken_stream():
+        yield {"delta": "partial"}
+        raise TimeoutError("stream failed")
+
+    completion = _Completion([
+        _ProviderHttpError("rate limited", status_code=429),
+        broken_stream(),
+    ])
+    guard = _guard_fast_retry(tmp_path, completion)
+    stream = _call(guard, max_tokens=8000, stream=True)
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    assert [c["status"] for c in receipt["calls"]] == ["failed", "started"]
+    assert receipt["calls"][1]["retry_of"] == 1
+
+    with pytest.raises(TimeoutError, match="stream failed"):
+        list(stream)
+    with pytest.raises(ProviderJourneyHalted, match="provider_request_failed"):
+        _call(guard, max_tokens=300)
+
+    receipt = json.loads((tmp_path / "provider-calls.json").read_text(encoding="utf-8"))
+    assert [c["status"] for c in receipt["calls"]] == ["failed", "failed"]
+    assert receipt["terminal_failure"]["code"] == "provider_request_failed"
+    assert receipt["terminal_failure"]["ordinal"] == 2

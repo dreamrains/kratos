@@ -294,7 +294,8 @@ class StrictProviderCallGuard:
             except BaseException as exc2:
                 self._finish(retry_record, "failed", exc2)
                 raise
-            self._finish(retry_record, "completed")
+            if not guarded_kwargs.get("stream"):
+                self._finish(retry_record, "completed")
             return self._dispatch_response(guarded_kwargs, retry_record, response)
         if not guarded_kwargs.get("stream"):
             self._finish(record, "completed")
