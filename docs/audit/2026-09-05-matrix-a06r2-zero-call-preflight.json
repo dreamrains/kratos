@@ -1,0 +1,41 @@
+{
+  "batch_id": "MATRIX-A06R2-DIAG",
+  "evidence_layer": "zero_call_read_only_preflight",
+  "recorded_at": "2026-09-05T14:34:33.615834+00:00",
+  "authorization": "not_granted_pending_user",
+  "external_authorization_fields": [
+    "AUTHORIZED_BATCH_SHA256"
+  ],
+  "identity": {
+    "batch_sha256": "sha256:6717d4c71f978cc31a2d18fbba44ac6e7191dcc68985e1a468cb4ca6163c75c1",
+    "source_digest": "sha256:add1f02dd530394ee889e9adf68ca9f21aef2a3b10fcdb0b924271306be2589d",
+    "launcher_sha256": "sha256:f765d357c27bd7e1b9c0650d4a1c7643ba37ba2993674f83726c1b150cbbc36e",
+    "supervisor_sha256": "sha256:7d295efc8f61f7de0c35e4d64f8984ee040cd4b30dc50c459898b8737879863e",
+    "data_bundle_sha256": "sha256:c5e080e96c89fc257def56956733ef294119e89167f34ea29df22617f7f63912",
+    "prompt_bundle_sha256": "sha256:82b559704004318144136ac80d78116601341f0cd4a035a02abfcf80769bab16",
+    "oracle_bundle_sha256": "sha256:b85bcdf19b9cd68c792afdc506db4ba0780d4d16198a2cd115f944f0a5a7bea0"
+  },
+  "digest_echo": {
+    "batch_id": "MATRIX-A06R2-DIAG",
+    "authorize_with": "AUTHORIZED_BATCH_SHA256=sha256:6717d4c71f978cc31a2d18fbba44ac6e7191dcc68985e1a468cb4ca6163c75c1",
+    "cases": [
+      "M01",
+      "M02",
+      "M03",
+      "M04",
+      "M05",
+      "M06"
+    ]
+  },
+  "real_provider_calls": 0,
+  "network_attempts": 0,
+  "network_guard": {
+    "attempts": 0,
+    "events": []
+  },
+  "exit_code": 0,
+  "passed": true,
+  "stderr": "",
+  "execution_root_exists": false,
+  "aborted_a06_isolation_root_untouched": true
+}

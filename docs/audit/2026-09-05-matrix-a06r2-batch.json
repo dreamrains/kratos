@@ -1,0 +1,216 @@
+{
+  "schema_version": "real_provider_browser_batch.v1",
+  "batch_id": "MATRIX-A06R2-DIAG",
+  "authorization_state": "frozen_pending_explicit_user_authorization",
+  "source_digest": "sha256:add1f02dd530394ee889e9adf68ca9f21aef2a3b10fcdb0b924271306be2589d",
+  "model": "openai/deepseek-v4-flash",
+  "cases": [
+    {
+      "id": "M01",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m01-candidate.json",
+      "sha256": "sha256:8c53e91e2debf8bf792ef44d744baf7d6fab06a25c100da547296dc83ffd1c6d"
+    },
+    {
+      "id": "M02",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m02-candidate.json",
+      "sha256": "sha256:06412013f1ca94f677b416dee80f279aa0f0036f129740e2b2a7d1fdc2b1bdf1"
+    },
+    {
+      "id": "M03",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m03-candidate.json",
+      "sha256": "sha256:cbf943d2f1012efc124f5202b15c4cb2472cc2599a9ed28387de745f74981784"
+    },
+    {
+      "id": "M04",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m04-candidate.json",
+      "sha256": "sha256:fc12a575f2577fc8c1108f2027609400e7cef9ca51940b58ddf4c5993b313bc5"
+    },
+    {
+      "id": "M05",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m05-candidate.json",
+      "sha256": "sha256:e535360b2ae9bb88da464ee72cf2a38227cfa47d0210e5067b51b59d7ef0288d"
+    },
+    {
+      "id": "M06",
+      "path": "docs/audit/2026-09-05-matrix-a06r2-m06-candidate.json",
+      "sha256": "sha256:34b4f0d360fa45987f2132707da3bae9df2730c0ce84d98b6166d71ceebb5f2a"
+    }
+  ],
+  "call_cap": 216,
+  "per_case_caps": {
+    "M01": 32,
+    "M02": 40,
+    "M03": 32,
+    "M04": 32,
+    "M05": 32,
+    "M06": 48
+  },
+  "analysis_turns_cap": 9,
+  "web_journeys": 6,
+  "case_order": [
+    "M01",
+    "M02",
+    "M03",
+    "M04",
+    "M05",
+    "M06"
+  ],
+  "isolation_root": "tmp/real-provider-browser-matrix-a06r2-diag",
+  "report_path": "docs/audit/2026-09-05-matrix-a06r2-report.json",
+  "launcher_path": "scripts/acceptance/real_provider_browser_batch.py",
+  "launcher_sha256": "sha256:f765d357c27bd7e1b9c0650d4a1c7643ba37ba2993674f83726c1b150cbbc36e",
+  "data_bundle_sha256": "sha256:c5e080e96c89fc257def56956733ef294119e89167f34ea29df22617f7f63912",
+  "prompt_bundle_sha256": "sha256:82b559704004318144136ac80d78116601341f0cd4a035a02abfcf80769bab16",
+  "oracle_bundle_sha256": "sha256:b85bcdf19b9cd68c792afdc506db4ba0780d4d16198a2cd115f944f0a5a7bea0",
+  "hash_contract": {
+    "candidate_and_launcher": "sha256 of UTF-8 file bytes after CRLF-to-LF normalization",
+    "data": "sha256 of original XLSX bytes; bundle is canonical JSON of unique data entries sorted by id",
+    "prompts": "canonical JSON object mapping M01-M06 to each ordered prompts array",
+    "oracles": "canonical JSON object mapping M01-M06 to each oracle object; every oracle carries oracle_version 2026-09-05.1",
+    "canonical_json": "ensure_ascii=False, sort_keys=True, separators=(',',':'), UTF-8",
+    "source": "scripts/acceptance/release_source.py release_source_digest; current Git-filtered tracked and untracked release files; no Git writes"
+  },
+  "execution_contract": {
+    "network": "Only after explicit authorization, approved network-enabled execution path with DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED=1",
+    "preflight": "Before the first real call, rerun all six cases in fresh preflight-only processes with only the exact external AUTHORIZED_BATCH_SHA256, Provider networking disabled, and socket/DNS denied. The candidate recomputes and verifies source, launcher, supervisor, data, prompts, oracles and selected case. Any failure means zero real calls. Repeat whole-input and selected-case preflight before each later case.",
+    "processes": "One fresh OS child per case, sequential only, started through the frozen browser_process supervisor. The receipt-local parent control record, exact child command and normal exit proof are mandatory; a prior PID and finalized receipt must reconcile before the next case.",
+    "call_accounting": "All main and auxiliary requests share each fixed case cap; sum of non-transferable caps is the hard batch cap. Unused capacity is not transferred. Persist started marker before runtime; preserve latch until process exit. Every started call consumes its slot. A cancelled call closes only with local_request_stopped proof; this does not establish remote billing or historical call completion.",
+    "provider_failure": "A Provider transport failure closes that case after at most one bounded guard-level retry per started call, allowed only for rate_limited, network_transient or server_error classification, only while the frozen case cap still admits the retry and the failure latch is untripped (20-second backoff; the retry is a new started call consuming its own slot; litellm num_retries stays 0; any other error class fails the call without retry). quota_exhausted or credential_invalid stops the whole batch immediately; three consecutive cases closed by the same Provider error signature stop the whole batch; any other case failure closes only that case and the remaining frozen cases still run.",
+    "case_stop": [
+      "case Provider transport/timeout/policy/concurrency failure",
+      "case call cap reached",
+      "upload integrity or current-session binding failure without cross-session isolation breach",
+      "unexpected confirmation requiring a new user choice",
+      "file recovery question",
+      "tool or workflow failure preventing subsequent state"
+    ],
+    "nonblocking_oracle": [
+      "single-series chart or legend",
+      "Workbench title",
+      "root scrolling",
+      "composer state",
+      "confirmation projection",
+      "console messages",
+      "delayed evidence projection",
+      "statistical oracle",
+      "refresh recovery",
+      "export content or missing export"
+    ],
+    "case_after_stop": "Only reachable read-only observations of existing state, then mark unavailable dependent steps blocked. Do not submit later prompts, confirmation responses, new exports or other mutations in the stopped case.",
+    "batch_stop": [
+      "source/model/data/prompt/oracle/launcher authorization mismatch",
+      "shared isolation or cross-session data exposure",
+      "unknown consumption, missing/inflight/corrupt receipts or failed accounting",
+      "previous process exit or lock not proven",
+      "batch hard cap reached",
+      "global-fatal Provider failure: quota_exhausted or credential_invalid; and three consecutive cases closed by the same Provider error signature",
+      "data attribution cannot be established",
+      "graceful exit fails, even if later force termination succeeds",
+      "frozen supervisor mismatch or current supervised-child proof failure",
+      "receipt-local process-control isolation mismatch"
+    ],
+    "not_batch_stop": "Known static-export omissions, chart/readability defects and statistical/narrative oracle deviations do not alone stop reachable checks. All hard-stop rules take precedence.",
+    "prohibited": [
+      "re-run failed or consumed cases beyond the frozen per-case retry policy (resumption requires a separately frozen and authorized batch)",
+      "reset latch or remove receipts",
+      "additional prompts",
+      "supplementary journeys",
+      "model or Provider fallback",
+      "stream-to-sync resend",
+      "Git writes",
+      "deployment",
+      "staging",
+      "production",
+      "delete original sessions",
+      "modify frozen source/inputs while batch runs",
+      "unsupervised batch launcher execution",
+      "reuse A01-A05R2 authorization, unused capacity or observed consumption"
+    ],
+    "browser": "Use the real browser at 1440x1000 for uploads, sends, expected confirmations, switches, refreshes and exports; no direct API chat or copied-inbox substitute. Server receipts and read-only local artifacts supplement browser evidence.",
+    "confirmation": "At most one method_confirmation per analysis turn, only confirm_method / 按此方法继续, no free-text answers.",
+    "request_parameters": {
+      "temperature": 0,
+      "timeout_seconds": 120,
+      "num_retries": 0,
+      "main_initial_max_tokens": 8000,
+      "auxiliary_initial_max_tokens": 300,
+      "auxiliary_allowed_max_tokens": [
+        300,
+        800
+      ],
+      "auxiliary_escalation": false,
+      "main_silent_length_ladder": [
+        8000
+      ],
+      "main_escalation_condition": "disabled; fixed output limit, one physical attempt per logical request",
+      "guard_retry_policy": {
+        "max_retry_attempts": 1,
+        "backoff_seconds": 20,
+        "retry_error_classes": [
+          "rate_limited",
+          "network_transient",
+          "server_error"
+        ]
+      }
+    },
+    "completion": "End this diagnostic batch before any further fix. Consolidate findings, then continue offline root repair and zero-Provider browser regression. Any later real call requires a new freeze and authorization.",
+    "diagnostic_exception": "Only if user explicitly approves this proposal, permit known presentation/static-export and semantic failures to remain open while collecting real-model evidence. No evidence is promoted to pass and no safety/accounting/data-isolation checks are waived.",
+    "process_exit": "After closing case admissions and verifying request accounting, write only the receipt-local parent stop request and observe for at most 30 seconds. If still alive, preserve exact PID/command/start-time diagnostics, stop the whole batch, and terminate only the verified owned child if needed for safety. Never call forced termination graceful and never continue to a later case.",
+    "authorization_identity": "The user authorizes the normalized batch candidate SHA256. All derived identities are recomputed from the candidate and fail closed; legacy derived AUTHORIZED_* values are optional but must match if supplied.",
+    "execution_mode": "Authorized execution runs `python -m scripts.acceptance.run_batch --authorized --serve <CASE> --batch <this file> --launcher scripts/acceptance/real_provider_browser_batch.py` one case at a time: each case server blocks until the externally driven browser journey stops the case. The browser journeys are driven externally by the user (Codex computer use), never by the launcher. The frozen M01->M06 order is enforced by the batch ledger and the previous-case graceful-exit proof; no case may start out of order or concurrently."
+  },
+  "allowed_writes": {
+    "case_outputs": "Exactly each case's writes object, including child files in its workspace and sessions.",
+    "batch_ledger": "tmp/real-provider-browser-matrix-a06r2-diag/provider-batch.json",
+    "batch_lock": "tmp/real-provider-browser-matrix-a06r2-diag/batch.lock",
+    "atomic_temporary_receipts": "Adjacent .tmp files required for atomic receipt persistence, only within this isolation root.",
+    "batch_report": "docs/audit/2026-09-05-matrix-a06r2-report.json",
+    "browser_evidence": "DOM/screenshot/console evidence may be retained in the current case workspace or normal browser-tool managed evidence cache.",
+    "single_reply_download": "Each case may create its one single-reply Markdown through UI with a unique new filename. Do not overwrite; block this substep if new-file safety cannot be ensured.",
+    "diagnostics": "Process/thread/child/exit observations under the active case workspace only; no dumps of secrets or unrelated processes."
+  },
+  "readiness": {
+    "offline_tests": {
+      "required": "tmp/a06r2-preparation-01/junit.xml",
+      "status": "passed_current_source",
+      "passed": 2625,
+      "skipped": 1,
+      "warnings": 8,
+      "actual_exit_code": 0,
+      "junit_sha256": "sha256:f6e2462867b38cd0f0f0f79217f3d66930363b04654d9d76256d0ee5fd9f8f09"
+    },
+    "resilience_plan": "docs/superpowers/plans/2026-09-05-matrix-resilience.md",
+    "systemic_review": "docs/audit/2026-09-01-matrix-a01-a04-systemic-root-cause-review-02.md",
+    "systemic_repair_report": "docs/audit/2026-09-01-matrix-a04-post-diagnostic-systemic-repair-report-02.json",
+    "current_six_case_real_browser_result": "6/6 cases and 86/86 checks passed at 1440x1000; 76 scripted requests completed, 9 evidence records complete, 8 chart HTML artifacts, 24 exports, six graceful supervised exits; real Provider calls zero",
+    "browser_audit": "tmp/a04-post-repair-browser-01/audit.json",
+    "a05r2_execution_outcome": "Authorized and executed 2026-09-05: M01 closed complete with 16 real case calls; M02 closed by provider_request_failed (BadRequestError, 1 real call, 2 locally blocked attempts) and the then-current all-stop rule halted the batch before M03-M06. No unknown consumption, no resume attempt. This motivated the matrix-resilience overhaul: error taxonomy with structured detail, bounded guard retry policy, tiered batch stop, resume batches, versioned oracles, replay library, run_batch orchestration and fault-injection regression.",
+    "a06_aborted_launch": "Supersedes the authorized-then-aborted A06 freeze sha256:fae6d5fc949d6de5b385db8490f9badaa10661f71a11d5903c244c08c008887f (commit 6848b16): its single credential probe call was consumed, zero cases started, and the M01 launch was hard-killed without graceful-exit proof after launcher defects (credential env names, child PYTHONPATH for the editable install, stale receipt-local control directory, exclusive probe receipt) were fixed offline in 6adfe545..44c0eed, which also added the single-case --serve execution mode. The aborted isolation root tmp/real-provider-browser-matrix-a06-diag is archived evidence and is not touched by this freeze.",
+    "real_provider_calls_during_freeze": 0,
+    "current_real_provider_acceptance": "a06_probe_only_aborted_zero_case_calls",
+    "known_open_findings": [
+      {
+        "id": "real-provider",
+        "summary": "A06R2 has no real Provider result yet. A05R2 covered M01-M02 (17 calls, stopped); the aborted A06 freeze consumed only its 1 probe call with zero cases. Offline and zero-Provider browser evidence is not acceptance."
+      },
+      {
+        "id": "publication-rewrite",
+        "summary": "The bounded rewrite and rejected-message quarantine are offline-tested but not yet exercised against the configured real model."
+      },
+      {
+        "id": "A01-unknown",
+        "summary": "A01 ordinal 22 remains historically unknown and is not inferred or retried."
+      },
+      {
+        "id": "MD-preview",
+        "summary": "Markdown bytes and ownership are checked; a browser-rendered Markdown preview is not claimed."
+      }
+    ],
+    "authorization_boundary": "A01-A06 authorization is consumed or void (A05R2 executed M01-M02, 17 real case calls, stopped after M02; A06 consumed its 1 probe call, started zero cases and was hard-killed without graceful-exit proof). This A06R2 file is a proposal only and cannot start Provider execution until the user explicitly authorizes this exact batch digest.",
+    "scope": "Six defined diagnostic cases only; no release candidate, staging, production or deployment claim."
+  },
+  "purpose": "diagnostic_issue_collection_not_release_acceptance",
+  "budget_proposal": "Fresh proposal of 216 maximum started case calls plus exactly one new credential probe call (max_tokens=16, own cap-1 receipt, spent before any scenario setup). It does not reuse A01-A06 authorization, unused slots or observed consumption. A05R2 consumed 17 case calls (M01: 16 closed complete; M02: 1 closed by provider_request_failed) and stopped after M02; the authorized-then-aborted A06 freeze consumed exactly its 1 probe call with zero case calls before the launch was hard-killed without graceful-exit proof. All prior calls stay consumed and non-transferable.",
+  "supervisor_path": "scripts/acceptance/browser_process.py",
+  "supervisor_sha256": "sha256:7d295efc8f61f7de0c35e4d64f8984ee040cd4b30dc50c459898b8737879863e"
+}
