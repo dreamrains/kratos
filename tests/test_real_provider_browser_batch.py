@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from scripts.acceptance import real_provider_browser_batch as batch
+from scripts.acceptance.real_provider_browser_batch import batch_stop_reason
 from scripts.acceptance.strict_provider_guard import StrictProviderCallGuard, ProviderJourneyHalted
 
 
@@ -320,3 +321,35 @@ def test_real_execution_supervisor_gate_binds_pid_signal_and_frozen_launcher(tmp
             os.environ.pop("DATA_AGENT_ACCEPTANCE_STOP_PATH", None)
         else:
             os.environ["DATA_AGENT_ACCEPTANCE_STOP_PATH"] = previous
+
+
+def _closed(case_id, code="provider_request_failed", error_class=None, http_status=None):
+    record = {"id": case_id, "status": "closed", "terminal_failure": {"code": code}}
+    if error_class:
+        record["terminal_failure"]["error_class"] = error_class
+    if http_status:
+        record["terminal_failure"]["http_status"] = http_status
+    return record
+
+
+def test_scenario_level_failure_does_not_stop_batch():
+    assert batch_stop_reason([_closed("M01", error_class="content_rejected")]) is None
+
+
+def test_quota_failure_stops_batch():
+    reason = batch_stop_reason([_closed("M01", error_class="quota_exhausted", http_status=400)])
+    assert reason == "provider_failure_global_fatal:quota_exhausted"
+
+
+def test_three_consecutive_same_signature_stops_batch():
+    records = [_closed(f"M0{i}", error_class="content_rejected", http_status=400) for i in (1, 2, 3)]
+    assert batch_stop_reason(records) == "consecutive_same_signature:content_rejected:400"
+
+
+def test_two_same_then_different_does_not_stop():
+    records = [
+        _closed("M01", error_class="content_rejected", http_status=400),
+        _closed("M02", error_class="content_rejected", http_status=400),
+        _closed("M03", error_class="unclassified"),
+    ]
+    assert batch_stop_reason(records) is None

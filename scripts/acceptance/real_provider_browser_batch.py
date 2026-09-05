@@ -232,6 +232,33 @@ def _locally_terminal(call, receipt):
     return call["status"] in {"completed", "failed"}
 
 
+_GLOBAL_FATAL_CLASSES = frozenset({"quota_exhausted", "credential_invalid"})
+
+
+def batch_stop_reason(closed_records: list[dict]) -> str | None:
+    """Batch-wide stop is reserved for global-fatal conditions or a
+    cross-scenario pattern (three consecutive closed cases with the same
+    error signature).  Any other scenario failure must not skip the
+    remaining frozen cases."""
+    consecutive: list[tuple[str, str | None]] = []
+    for record in closed_records:
+        failure = record.get("terminal_failure") or {}
+        if failure.get("code") != "provider_request_failed":
+            consecutive.clear()
+            continue
+        error_class = failure.get("error_class") or "unclassified"
+        if error_class in _GLOBAL_FATAL_CLASSES:
+            return f"provider_failure_global_fatal:{error_class}"
+        signature = (error_class, failure.get("http_status"))
+        if consecutive and consecutive[-1] == signature:
+            consecutive.append(signature)
+        else:
+            consecutive = [signature]
+        if len(consecutive) >= 3:
+            return f"consecutive_same_signature:{signature[0]}:{signature[1]}"
+    return None
+
+
 class BatchLedger:
     """Used only while holding process_lock for the entire case lifetime."""
 
@@ -342,8 +369,9 @@ def main(*, root: Path, batch_path: Path, launcher_path: Path):
             previous_case = cases[[item["matrix_case_id"] for item in cases].index(previous["id"])]
             proof = _inside(root, previous_case["writes"]["process_control_dir"]) / "process-exit.json"
             require_graceful_exit(proof, expected_pid=previous["pid"])
-            if previous.get("terminal_failure", {}).get("code") == "provider_request_failed":
-                raise ValueError("Provider failure stopped the whole batch")
+        stop_reason = batch_stop_reason([c for c in ledger.state["cases"] if c.get("status") == "closed"])
+        if stop_reason:
+            raise ValueError("Provider failure stopped the whole batch: " + stop_reason)
         ledger.begin(args.case, case["provider_policy"]["call_cap"])
         os.environ.pop("DATA_AGENT_PREFLIGHT_ONLY", None)
         try:

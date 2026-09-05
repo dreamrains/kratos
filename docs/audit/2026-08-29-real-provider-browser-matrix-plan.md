@@ -65,3 +65,10 @@
 ## 明确不混入本矩阵的范围
 
 知识/记忆治理、MCP 外部连接、管理后台 CRUD、任务调度、项目绑定和 staging/production 属于不同权限面，应另建 UI/集成矩阵；把它们塞进分析旅程会让失败无法归因，也会扩大授权范围。本矩阵仍保留 Route A 的完整产品面，只把本轮真实 Provider 预算集中在上传与分析核心路径。
+
+## 2026-09-05 修订：分级整批停止与批次恢复（依据 docs/superpowers/specs/2026-09-05-matrix-resilience-design.md）
+
+- 整批停止条件修订为仅限：额度耗尽（quota_exhausted）、凭证失效（credential_invalid）、连续 3 个场景以同签名（ErrorClass + HTTP status）失败。原实现的“任何 provider_request_failed 即停整批”与本文“相同错误签名不成为跳过其余场景的理由”冲突，予以纠正。
+- 场景级 Provider 失败（含 content_rejected、重试后仍瞬态失败）保持场景内熔断，批次继续剩余场景。
+- 对 rate_limited / network_transient / server_error 允许每次逻辑调用一次收据可见、计入上限的退避重试（20 秒），由候选冻结的 retry_policy 声明。
+- 全局错误停批后，源码摘要未变时可机械派生恢复批（resumes_from 原批），被全局错误杀死的场景作废重试一次，已完成场景不重跑；恢复批需用户对新批次摘要重新授权。
