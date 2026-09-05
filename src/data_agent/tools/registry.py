@@ -7,7 +7,8 @@ import time
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, get_type_hints, get_origin, get_args, Union
+from types import UnionType
 
 
 # === ToolResult: structured return value ===
@@ -45,6 +46,9 @@ class ToolResult:
             parsed = json.loads(s)
         except (TypeError, ValueError, json.JSONDecodeError):
             parsed = None
+        if parsed is None and re.match(r"^Error(?:\b|:)", s, re.I):
+            parsed = {"error": s, "error_type": "tool_execution_error"}
+            s = json.dumps(parsed, ensure_ascii=False)
         return ToolResult(summary=s, data=parsed if isinstance(parsed, dict) else None)
 
     def to_cli(self) -> str:
@@ -152,6 +156,8 @@ def _classify_error(error_json: str) -> str:
     try:
         data = json.loads(error_json)
         msg = data.get("error", "").lower()
+        if data.get("error_type") in {"invalid_evidence_arguments", "invalid_confidence"}:
+            return "invalid_parameter"
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -459,18 +465,29 @@ def _build_schema(func: Callable) -> dict:
     sig = inspect.signature(func)
     properties: dict[str, Any] = {}
     required: list[str] = []
+    try:
+        hints = get_type_hints(func)
+    except (NameError, TypeError):
+        hints = {}
 
     for pname, param in sig.parameters.items():
         if pname in ("self", "cls"):
             continue
 
-        annotation = param.annotation
+        annotation = hints.get(pname, param.annotation)
         if annotation is inspect.Parameter.empty:
             json_type = "string"
         else:
-            json_type = _python_type_to_json(annotation)
+            origin = get_origin(annotation)
+            if origin in {Union, UnionType}:
+                json_type = list(dict.fromkeys("null" if part is type(None) else _python_type_to_json(get_origin(part) or part)
+                                                for part in get_args(annotation)))
+            else:
+                json_type = _python_type_to_json(origin or annotation)
 
         prop: dict[str, Any] = {"type": json_type}
+        if annotation is Any:
+            prop = {}
         properties[pname] = prop
 
         if param.default is inspect.Parameter.empty:
@@ -716,6 +733,20 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(summary=json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False))
+
+        # Validate the same contract sent to the model before invoking a tool.
+        # In particular, JSON strings "false"/"20" must not silently become
+        # truthy booleans or fail inside pandas after execution has begun.
+        from jsonschema import Draft7Validator
+        errors = list(Draft7Validator(tool.parameters).iter_errors(params))
+        if errors:
+            if name == "record_evidence_record" and isinstance(params.get("record_json"), dict):
+                from data_agent.tools.evidence_input import validate_input
+                evidence_error = validate_input(params["record_json"])
+                if evidence_error:
+                    return ToolResult.from_str(json.dumps(evidence_error, ensure_ascii=False))
+            return ToolResult.from_str(json.dumps({"error": "Invalid tool arguments; correct the listed fields without recomputing prior results.",
+                "error_type": "invalid_tool_arguments", "details": [{"path": list(e.path), "message": e.message} for e in errors]}, ensure_ascii=False))
 
         # 前置条件检查
         if tool.requires:

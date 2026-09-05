@@ -52,6 +52,7 @@ For data-backed analytical charts, use create_chart or a numeric table rather th
 Mermaid pie and xychart-beta are not allowed for analytical data, counts, money, rates, trends, distributions, comparisons, or funnels.
 If create_chart fails, do not invent a Mermaid fallback chart; explain the failure, fix the chart inputs, or present the verified data table.
 After create_chart succeeds, place the chart next to the relevant conclusion with `[[chart:<exact Chart saved path or exact chart_id>]]`; copy the exact path from the tool result and never guess or rewrite the hash. Charts not referenced inline will appear as supplemental charts.
+When comparing observed data with a fitted or predicted curve, the chart must contain both series. Build explicit observed and fitted columns, then use a line chart with both column names in `y_col`; never label a one-series chart as an observed-vs-fitted comparison.
 """
 
 # ── CONVERSATION 模式：对话层意图（无工具）────────────────

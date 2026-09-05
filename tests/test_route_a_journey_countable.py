@@ -154,6 +154,11 @@ def test_countable_client_failure_never_uses_the_loop_sync_fallback():
     assert len(once.calls) == 1
     assert client.round_receipts == [[{"max_tokens": 2000, "outcome": "error:RuntimeError"}]]
 
+    with pytest.raises(JourneyStructureError, match="main_provider_request_failed"):
+        client.chat([])
+    assert client.calls_made == 1
+    assert len(once.calls) == 1
+
 
 def test_auxiliary_provider_failure_stops_before_the_first_main_round(tmp_path, monkeypatch):
     from data_agent.config import get_config

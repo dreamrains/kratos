@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import base64
+import binascii
 import math
 import re
 
 import numpy as np
 import pandas as pd
+from data_agent.utils.column_semantics import is_identifier_name, is_measure_name
 
 
 IDENTIFIER_TOKENS = {
@@ -52,7 +55,7 @@ def infer_semantic_role(column: str, series: pd.Series) -> str:
     identifier_name = bool(name_tokens & IDENTIFIER_TOKENS) or any(
         marker in name for marker in IDENTIFIER_TEXT_MARKERS
     )
-    if identifier_name and unique_ratio >= 0.7:
+    if is_identifier_name(column) or (identifier_name and not is_measure_name(column) and unique_ratio >= 0.7):
         return "identifier"
     if pd.api.types.is_datetime64_any_dtype(series):
         return "time"
@@ -91,6 +94,12 @@ def validate_chart_request(
         dataframe=df.copy(),
         source_row_count=int(len(df)),
     )
+    if scale_mode not in {"", "raw", "normalize", "index100"} or (
+        scale_mode == "index100" and chart_type != "line"
+    ) or (scale_mode == "normalize" and chart_type not in {"line", "bar"}):
+        result.error = "Unsupported chart/scale combination; normalize=max(abs)=100, index100=first observation=100 (line only)."
+        result.error_code = "unsupported_scale_mode"
+        return result
     referenced = [name for name in [x_col, *y_cols, color_col] if name]
     result.semantic_roles = {
         name: infer_semantic_role(name, result.dataframe[name])
@@ -99,6 +108,14 @@ def validate_chart_request(
     }
 
     for column in y_cols:
+        count_supported = aggregation == "count" and (
+            chart_type in {"bar", "stacked_bar", "pie"}
+            or chart_type == "line" and result.semantic_roles.get(x_col) == "time"
+        )
+        if chart_type in {"bar", "stacked_bar", "line", "box", "pie"} and result.semantic_roles.get(column) == "identifier" and not count_supported:
+            result.error = f"Identifier '{column}' is not a numeric measure; select a measure or explicitly count identifiers."
+            result.error_code = "invalid_identifier_measure"
+            return result
         numeric = pd.to_numeric(result.dataframe[column], errors="coerce")
         finite = numeric.notna() & np.isfinite(numeric)
         if not len(numeric) or float(finite.mean()) < 0.5:
@@ -356,6 +373,23 @@ def _has_divergent_scales(df: pd.DataFrame, y_cols: list[str]) -> bool:
 def _contains_finite_numeric(value) -> bool:
     if value is None:
         return False
+    # Plotly serializes numpy arrays as typed binary payloads. Inspect the
+    # original values after reload, rather than treating that payload as a
+    # nonnumeric dict and dropping a previously valid chart from exports.
+    if isinstance(value, dict) and "bdata" in value:
+        try:
+            dtype = str(value.get("dtype", ""))
+            if dtype not in {"i1", "u1", "i2", "u2", "i4", "u4", "f4", "f8"}:
+                return False
+            array = np.frombuffer(base64.b64decode(value["bdata"], validate=True), dtype=dtype)
+            shape = value.get("shape")
+            if shape is not None:
+                dimensions = tuple(int(part.strip()) for part in str(shape).split(","))
+                if not dimensions or any(part < 0 for part in dimensions) or math.prod(dimensions) != array.size:
+                    return False
+            return bool(np.isfinite(array).any())
+        except (ValueError, TypeError, binascii.Error):
+            return False
     if hasattr(value, "tolist"):
         value = value.tolist()
     if not isinstance(value, (list, tuple)):

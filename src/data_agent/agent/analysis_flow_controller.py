@@ -113,6 +113,10 @@ class AnalysisFlowController:
         spec = state.analysis_spec or {}
         spec_id = spec.get("id", "")
         workflow_id = spec.get("workflow_id", "")
+        pending = next(
+            (c for c in state.pending_confirmations if is_actionable_pending_confirmation(c)),
+            {},
+        )
         existing = [
             t for t in task_manager.list_all()
             if t.get("session_id") == self.session_id
@@ -121,11 +125,10 @@ class AnalysisFlowController:
             and t.get("status") not in ("deleted", "archived", "superseded")
         ]
         if existing:
-            return existing[0]
-        pending = next(
-            (c for c in state.pending_confirmations if is_actionable_pending_confirmation(c)),
-            {},
-        )
+            task = existing[0]
+            pending["related_task_id"] = task["id"]
+            pending["related_spec_id"] = spec_id
+            return task
         policy = spec.get("confirmation_policy") or {}
         project_name = self.project_name or state.project_name or ""
         plan_id = task_manager.get_active_plan_id(self.session_id, project_name)
@@ -146,7 +149,7 @@ class AnalysisFlowController:
                 project_name=project_name,
             )
             plan_version = max([int(t.get("plan_version") or 1) for t in active_tasks], default=1)
-        return task_manager.create(
+        task = task_manager.create(
             subject="Confirm analysis method and metric scope",
             description=pending.get("blocking_reason") or policy.get("blocking_reason") or "Confirmation required before high-risk analysis.",
             session_id=self.session_id,
@@ -164,6 +167,9 @@ class AnalysisFlowController:
             task_kind="confirmation",
             source="system_confirmation",
         )
+        pending["related_task_id"] = task["id"]
+        pending["related_spec_id"] = spec_id
+        return task
 
     def ensure_workflow_tasks(self, state: AnalysisSessionState) -> dict:
         plan = state.analysis_plan or state.analysis_spec or {}

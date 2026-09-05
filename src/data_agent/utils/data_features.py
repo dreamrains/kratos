@@ -7,6 +7,7 @@ import pandas as pd
 
 from data_agent.session.workspace import workspace
 from data_agent.utils.logging import get_logger
+from data_agent.utils.column_semantics import is_identifier_name, is_monetary_name
 
 logger = get_logger("data_features")
 
@@ -199,8 +200,12 @@ def set_cached_features(name: str, card: str) -> None:
 def _classify_column_type(series: pd.Series) -> str:
     """Classify a column as numeric, date, id, or categorical."""
     dtype = series.dtype
+    if is_identifier_name(series.name):
+        return "id"
 
     if pd.api.types.is_numeric_dtype(dtype):
+        if is_monetary_name(series.name):
+            return "numeric"
         if _is_id_like(series):
             return "id"
         return "numeric"

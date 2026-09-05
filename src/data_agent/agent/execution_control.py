@@ -67,6 +67,8 @@ class TurnExecutionState:
     consecutive_errors: int = 0
     repeated_errors: dict[str, int] = field(default_factory=dict)
     seen_calls: dict[str, int] = field(default_factory=dict)
+    successful_calls: set[str] = field(default_factory=set)
+    _last_call_key: str = ""
     tool_errors: list[dict[str, Any]] = field(default_factory=list)
     pending_fallback_resolution: bool = False
     estimated_tokens_used: int = 0
@@ -116,8 +118,6 @@ class TurnExecutionState:
             key = self._error_key(tool_name, args)
             if self.repeated_errors.get(key, 0) >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded(f"Repeated tool error for {tool_name}; do not retry the same call.")
-            if self.consecutive_errors >= self.budget.max_consecutive_errors:
-                raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
             return
 
         # --- Budget checks (non-meta tools) ---
@@ -140,13 +140,12 @@ class TurnExecutionState:
             python_errors = sum(1 for err in self.tool_errors if err.get("tool_name") == "run_python")
             if python_errors >= self.budget.max_repeated_tool_errors:
                 raise BudgetExceeded("Repeated run_python failure; use structured tools or ask the user.")
-        if self.consecutive_errors >= self.budget.max_consecutive_errors:
-            raise BudgetExceeded("Consecutive tool errors reached; summarize recovery path instead of calling more tools.")
 
     def record_tool_call(self, tool_name: str, args: dict[str, Any] | None = None) -> None:
         if tool_name not in _META_TOOLS:
             self.tool_calls += 1
         key = self._error_key(tool_name, args or {})
+        self._last_call_key = key
         self.seen_calls[key] = self.seen_calls.get(key, 0) + 1
         self._call_order.append(tool_name)
         if tool_name == "create_chart":
@@ -154,11 +153,13 @@ class TurnExecutionState:
         if tool_name == "run_python":
             self.fallback_calls += 1
             self.pending_fallback_resolution = True
-        elif tool_name in self._fallback_resolution_tools():
-            self.pending_fallback_resolution = False
 
     def record_tool_success(self) -> None:
         self.consecutive_errors = 0
+        if self._last_call_key:
+            self.successful_calls.add(self._last_call_key)
+        if self._call_order and self._call_order[-1] in self._fallback_resolution_tools():
+            self.pending_fallback_resolution = False
 
     def record_tool_error(self, tool_name: str, args: dict[str, Any] | None, error: str) -> None:
         key = self._error_key(tool_name, args or {})
@@ -177,8 +178,10 @@ class TurnExecutionState:
             return ""
         if self.tool_calls >= (self.budget.max_tool_calls or 0):
             hints.append("Execution budget reached. Stop calling tools and summarize evidence, limits, and next steps.")
-        if self.budget.token_budget and self.estimated_tokens_used >= self.budget.token_budget:
-            hints.append("Token budget reached. Stop calling tools and summarize current findings.")
+        # Context occupancy is not cumulative Provider consumption. Compaction
+        # owns context limits; execution policy does not invent a token spend.
+        if self.consecutive_errors >= self.budget.max_consecutive_errors:
+            hints.append("Several tools failed. Correct reported arguments or record limitations; do not repeat failed calls.")
         if not hints:
             if self.should_restrict_exploration:
                 hints.append("Execution budget is nearly exhausted. Do not start new exploratory tool paths; only record evidence or summarize.")
@@ -203,7 +206,7 @@ class TurnExecutionState:
         }
         if tool_name not in low_value_tools:
             return False
-        return self.seen_calls.get(self._error_key(tool_name, args), 0) > 0
+        return self._error_key(tool_name, args) in self.successful_calls
 
     @staticmethod
     def _fallback_resolution_tools() -> set[str]:

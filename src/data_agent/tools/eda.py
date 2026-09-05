@@ -350,7 +350,7 @@ def segmentation_analysis(name: str, features: str, n_clusters: int = 3) -> str:
     description=(
         "进行留存分析。user_col 必须是唯一用户ID列（如 user_id），"
         "time_col 是事件时间列，event_col 是可选的事件类型列。"
-        "按月计算用户留存率。注意：不适合用非唯一ID列（如渠道名、地区）作为 user_col。"
+        "按首次观测月份分 cohort 计算用户留存率；未到达月份返回 null，末月不完整须披露。注意：不适合用非唯一ID列（如渠道名、地区）作为 user_col。"
     ),
 )
 def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = "") -> str:
@@ -366,6 +366,8 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
     df = df[required + ([event_col] if event_col and event_col in df.columns else [])].copy()
     df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
     df = df.dropna(subset=[user_col, time_col])
+    if df.empty:
+        return json.dumps({"error": "没有可用用户与事件时间"}, ensure_ascii=False)
 
     # 每个用户的首次时间作为 cohort
     df["period"] = df[time_col].dt.to_period("M")
@@ -384,8 +386,15 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
     cohort_sizes = cohort_pivot.iloc[:, 0]
     retention = cohort_pivot.divide(cohort_sizes, axis=0) * 100
 
+    observed_end = df[time_col].max()
+    final_period = observed_end.to_period("M")
     result = {
-        "cohorts": [],
+        "cohorts": [], "analysis_unit": "distinct_user",
+        "cohort_definition": "first_observed_event_month",
+        "observation_window": [str(df[time_col].min().date()), str(observed_end.date())],
+        "right_censoring": True,
+        "final_month_incomplete": observed_end.normalize() < final_period.end_time.normalize(),
+        "limitations": ["首次观测事件不等于首次购卡；未到达月份为 null，不能解释为零留存。", "末月观测可能不完整；本分析不支持因果推断。"],
     }
     for cohort in retention.index:
         row = {
@@ -395,6 +404,9 @@ def cohort_analysis(name: str, user_col: str, time_col: str, event_col: str = ""
         }
         for age in retention.columns:
             val = retention.loc[cohort, age]
+            if cohort + int(age) > final_period:
+                row["retention"][f"month_{age}"] = None
+                continue
             if not pd.isna(val):
                 row["retention"][f"month_{age}"] = round(float(val), 2)
         result["cohorts"].append(row)

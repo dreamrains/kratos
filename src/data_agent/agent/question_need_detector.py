@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import date
+import re
 
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
+from data_agent.agent.request_language import has_affirmative_keyword
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
@@ -349,12 +352,23 @@ def _active_dataset(state: Any) -> str:
 
 
 def _infer_route(text: str, routes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    grouped = bool(re.search(
+        r"按[^。；\n]{1,100}(?:组合|分组|汇总)|\bgroup(?:ed)? by\b|"
+        r"\bby (?:channel|company|product|segment|category)\b", text, re.IGNORECASE,
+    ))
+    if grouped:
+        dimensional = next((r for r in routes if _route_direction(r) == "dimension_decomposition"), None)
+        if dimensional is not None:
+            return dimensional
     for route in routes:
         direction = _route_direction(route)
+        if direction == "period_compare" and grouped and not _has_time_window(text):
+            # Comparing named groups does not imply comparing two periods.
+            continue
         keywords = _ROUTE_KEYWORDS.get(direction, (direction,))
         if any(keyword and keyword.lower() in text for keyword in keywords):
             return route
-    if len(routes) == 1:
+    if len(routes) == 1 and not (grouped and _route_direction(routes[0]) == "period_compare"):
         return routes[0]
     return None
 
@@ -425,7 +439,7 @@ def _route_needs_metric(route: dict[str, Any]) -> bool:
 
 
 def _is_high_risk_request(text: str) -> bool:
-    return any(keyword in text for keyword in _HIGH_RISK_KEYWORDS)
+    return has_affirmative_keyword(text, _HIGH_RISK_KEYWORDS)
 
 
 def _has_confirmed_high_risk_spec(text: str, state: Any) -> bool:
@@ -447,7 +461,20 @@ def _material_request_identity(value: Any) -> str:
 
 
 def _has_time_window(text: str) -> bool:
-    return any(keyword in text for keyword in _WINDOW_KEYWORDS)
+    # Numeric dates carry window semantics even without words such as 月/天.
+    # Require two valid ordered ranges, rather than treating arbitrary numbers
+    # or a single date as a complete period comparison.
+    date_pattern = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2})"
+    ranges = re.findall(date_pattern + r"\s*(?:至|到|~|～|—|–|\bto\b)\s*" + date_pattern, text)
+    valid_ranges = 0
+    for start, end in ranges:
+        try:
+            first = date(*map(int, re.split(r"[-/]", start)))
+            last = date(*map(int, re.split(r"[-/]", end)))
+        except ValueError:
+            continue
+        valid_ranges += first <= last
+    return valid_ranges >= 2 or any(keyword in text for keyword in _WINDOW_KEYWORDS)
 
 
 def _mentions_any(text: str, values: list[str]) -> bool:

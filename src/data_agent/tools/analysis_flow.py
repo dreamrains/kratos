@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from data_agent.tools.evidence_input import EVIDENCE_INPUT_SCHEMA
+
 import json
 from datetime import datetime
 
@@ -21,7 +23,11 @@ _STAT_DETAIL_FIELDS = [
 
 
 def _mark_statistical_detail_status(payload: dict) -> dict:
-    gaps = [field for field in _STAT_DETAIL_FIELDS if payload.get(field) in (None, "", [], {})]
+    fields = payload.get("statistical_detail_required_fields", _STAT_DETAIL_FIELDS)
+    gaps = [field for field in fields if payload.get(field) in (None, "", [], {})]
+    projection_gaps = payload.get("statistical_projection_gaps") or []
+    if any(not isinstance(item, dict) or item.get("blocking", True) for item in projection_gaps):
+        gaps.append("statistical_projection")
     payload["statistical_detail_gaps"] = gaps
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
@@ -39,7 +45,7 @@ def _auto_generate_limitations(payload: dict) -> list[str]:
 
     # Small sample
     sample_size = payload.get("sample_size")
-    if sample_size:
+    if sample_size and payload.get("statistical_inference", True):
         try:
             n = int(str(sample_size).replace(",", "").split()[0])
             if n < 30:
@@ -59,7 +65,7 @@ def _auto_generate_limitations(payload: dict) -> list[str]:
 
     # Missing statistical significance
     significance = str(payload.get("significance", ""))
-    if not significance or significance in ("unknown", ""):
+    if payload.get("statistical_inference", True) and (not significance or significance in ("unknown", "")):
         if not any("统计" in l or "显著" in l for l in limitations):
             auto.append("未报告统计显著性，差异可能由随机波动导致")
 
@@ -179,9 +185,20 @@ def _write_analysis_artifact(kind: str, payload: dict) -> dict:
 
     out_dir = get_config().sessions_resolved / sid / "analysis_flow"
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = out_dir / f"{kind}_{ts}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    import hashlib
+    from data_agent.utils.atomic_files import write_text_atomic
+    content = json.dumps({k: v for k, v in payload.items() if k != "artifact_path"}, ensure_ascii=False, sort_keys=True, indent=2)
+    digest = hashlib.sha256((kind + "\0" + content).encode("utf-8")).hexdigest()
+    # The payload includes the evidence identity; bound the filename for
+    # Windows paths instead of repeating arbitrarily long plan/step IDs.
+    path = out_dir / f"af_{digest[:40]}.json"
+    # Content-addressed revisions preserve prior bodies, including same-ID
+    # evidence updates. Repeating exactly the same write is idempotent.
+    if path.exists():
+        if path.read_text(encoding="utf-8") != content:
+            raise ValueError("Immutable analysis artifact content mismatch")
+    else:
+        write_text_atomic(path, content)
 
     artifact_path = f"sessions/{sid}/analysis_flow/{path.name}"
     register_artifact(sid, artifact_path, kind, payload.get("goal") or payload.get("claim") or kind)
@@ -345,19 +362,39 @@ def record_analysis_plan(plan_json: str) -> str:
         "Save an EvidenceRecord JSON with claim, dataset, method, tool_calls, "
         "result_summary, limitations, confidence, and statistical details such as "
         "metrics, sample_size, calculation_method, significance, correlation, "
-        "effect size, or confidence_interval when available."
+        "effect size, or confidence_interval when available. "
+        "tool_calls MUST be an array, e.g. [\"curve_fitting\"], never a comma-separated string. "
+        "confidence MUST be high, medium, low or speculative (not translated). "
+        "Use the exact tool result and data version; parameter errors require correcting the record, not recomputing."
     ),
+    schema_overrides={"record_json": {
+        "type": ["object", "string"],
+        "description": "Evidence object, or a JSON-encoded object for compatibility. Required: claim/dataset/method/result_summary strings; tool_calls array of tool names; limitations string or string array; confidence enum high/medium/low/speculative.",
+        "properties": EVIDENCE_INPUT_SCHEMA["properties"],
+    }},
 )
-def record_evidence_record(record_json: str) -> str:
+def record_evidence_record(record_json: str | dict) -> str:
     try:
-        payload = json.loads(record_json)
-    except json.JSONDecodeError:
+        payload = json.loads(record_json) if isinstance(record_json, str) else record_json
+    except (json.JSONDecodeError, TypeError):
         return json.dumps({"error": "record_json 必须是有效 JSON"}, ensure_ascii=False)
     if not isinstance(payload, dict):
         return json.dumps({
             "error": "EvidenceRecord must be a JSON object.",
             "error_type": "invalid_evidence",
         }, ensure_ascii=False)
+
+    payload = dict(payload)
+    for derived_key in ("statistical_detail_required_fields", "statistical_inference", "computed_statistics_sources",
+                        "statistical_projection_gaps", "reported_statistical_details", "sample_size_source",
+                        "time_scope_source"):
+        payload.pop(derived_key, None)
+
+    from data_agent.tools.evidence_input import validate_input, EVIDENCE_INPUT_SCHEMA
+    if all(key in payload for key in EVIDENCE_INPUT_SCHEMA["required"]):
+        input_error = validate_input(payload)
+        if input_error:
+            return json.dumps(input_error, ensure_ascii=False)
 
     state = _current_state()
     current_plan_id = ""
@@ -396,9 +433,19 @@ def record_evidence_record(record_json: str) -> str:
     if missing:
         return json.dumps({"error": f"EvidenceRecord 缺少字段: {missing}"}, ensure_ascii=False)
 
+    from data_agent.tools.evidence_input import validate_input
+    input_error = validate_input(payload)
+    if input_error:
+        return json.dumps(input_error, ensure_ascii=False)
+
     # Bind model-selected tool names to receipts made by this exact execution
     # turn.  The model cannot promote a tool it did not run into evidence.
     current_turn_receipts = _current_turn_receipts()
+    from data_agent.agent.context import get_current_context
+    context = get_current_context()
+    if context is not None and getattr(context, "turn_state", None) is not None and not current_turn_receipts:
+        return json.dumps({"error": "EvidenceRecord requires a successful tool receipt in this turn",
+                           "error_type": "missing_tool_receipt"}, ensure_ascii=False)
     if current_turn_receipts:
         called_names = _tool_names(payload.get("tool_calls"))
         receipt_names = {
@@ -417,12 +464,35 @@ def record_evidence_record(record_json: str) -> str:
             receipt for receipt in current_turn_receipts
             if str(receipt.get("tool_name")) in called_names
         ]
+        requested_receipts = payload.get("tool_receipt_ids")
+        if requested_receipts is not None:
+            if not isinstance(requested_receipts, list) or any(not isinstance(i, str) for i in requested_receipts):
+                return json.dumps({"error": "tool_receipt_ids must be an array of receipt IDs", "error_type": "invalid_evidence_arguments"})
+            if set(requested_receipts) - {str(r["id"]) for r in bound_receipts}:
+                return json.dumps({"error": "Receipt IDs do not belong to the named tools in this turn", "error_type": "unbound_tool_receipt"})
+            bound_receipts = [r for r in bound_receipts if str(r["id"]) in requested_receipts]
         if not bound_receipts:
             return json.dumps({
                 "error": "EvidenceRecord requires at least one successful tool receipt in this turn",
                 "error_type": "missing_tool_receipt",
             }, ensure_ascii=False)
+        from data_agent.session.workspace import workspace
+        for receipt in bound_receipts:
+            for name, identity in receipt.get("data_identities", {}).items():
+                if workspace.get_data_identity(name) != identity:
+                    return json.dumps({"error": "Tool result belongs to an earlier data version", "error_type": "stale_data_binding", "dataset": name})
         payload["tool_receipt_ids"] = [str(receipt["id"]) for receipt in bound_receipts]
+        payload["result_bindings"] = [
+            {"receipt_id": receipt["id"], "tool_call_id": receipt.get("tool_call_id", ""),
+             "result_sha256": receipt.get("structured_result_sha256") or receipt.get("result_sha256", ""),
+             "data_identities": receipt.get("data_identities", {})}
+            for receipt in bound_receipts
+        ]
+        from data_agent.tools.evidence_statistics import bind_computed_statistics
+        try:
+            bind_computed_statistics(payload, bound_receipts)
+        except (ValueError, OSError, KeyError) as exc:
+            return json.dumps({"error": f"Bound result cannot be verified: {exc}", "error_type": "invalid_result_binding"}, ensure_ascii=False)
 
     allowed_confidence = {"high", "medium", "low", "speculative"}
     confidence = str(payload.get("confidence", "")).strip().lower()
@@ -478,9 +548,10 @@ def record_evidence_record(record_json: str) -> str:
             payload = state.upsert_evidence_record(payload)
         else:
             payload = state.add_evidence_record(payload)
-        state.save()
-
     result = _write_analysis_artifact("evidence_record", payload)
+    if state is not None:
+        payload["artifact_path"] = result.get("saved", "")
+        state.save()
     result.pop("payload", None)
     if state is not None:
         result["state_stage"] = state.stage
@@ -500,6 +571,7 @@ def record_evidence_record(record_json: str) -> str:
     if not is_stage3c0b_evidence:
         result["statistical_detail_status"] = payload.get("statistical_detail_status")
         result["statistical_detail_gaps"] = payload.get("statistical_detail_gaps", [])
+        result["statistical_projection_gaps"] = payload.get("statistical_projection_gaps", [])
     if auto_lim:
         result["auto_generated_limitations"] = auto_lim
     if calibration_warnings:

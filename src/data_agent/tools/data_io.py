@@ -15,11 +15,31 @@ from data_agent.file_formats import DATA_EXTENSION_TO_FORMAT
 
 def _resolve_source(source: str) -> Path:
     cfg = get_config()
+    from data_agent.session.artifact_paths import ARTIFACT_DIRS, resolve_reference
+    from data_agent.tools.visualization import current_session_id
+    sid = current_session_id() or ""
+    normalized = source.replace("\\", "/")
+    parts = normalized.split("/")
+    if ".." in parts:
+        raise ValueError("Path traversal is not allowed")
+    if parts[0] == "sessions" or (sid and parts[0] in ARTIFACT_DIRS):
+        resolved = resolve_reference(source, project=cfg.project_resolved,
+                                     sessions=cfg.sessions_resolved, session_id=sid)
+        if not resolved.is_file():
+            raise FileNotFoundError(f"File not found: {source}")
+        return resolved
 
     p = Path(source)
     if p.is_absolute():
         # 绝对路径：阻止明显的系统目录穿越，但允许项目相关路径
         resolved = p.resolve()
+        if resolved.is_relative_to(cfg.sessions_resolved.resolve()):
+            own = (cfg.sessions_resolved / sid).resolve() if sid else None
+            if own is None or not resolved.is_relative_to(own):
+                raise ValueError("Artifact belongs to another session")
+            relative = resolved.relative_to(own)
+            if not relative.parts or relative.parts[0] not in ARTIFACT_DIRS | {"uploads"}:
+                raise ValueError("Not a readable session data source")
         # 阻止敏感系统路径；用户显式传入的桌面/文档数据文件允许读取。
         resolved_str = str(resolved)
         resolved_norm = resolved_str.replace("\\", "/").lower()
@@ -50,9 +70,42 @@ def _resolve_source(source: str) -> Path:
             if candidate.exists():
                 return candidate
 
+    # Web uploads are claimed into a session-owned directory before the model
+    # turn. Keep filename-based load_data recovery available without exposing
+    # another session's attachments or relying on the shared inbox.
+    try:
+        from data_agent.agent.context import get_current_context
+
+        context = get_current_context()
+        filename = Path(source).name
+        if context is not None and filename == source:
+            upload_root = cfg.sessions_resolved / context.session_id / "uploads"
+            matches = [
+                directory / filename
+                for directory in upload_root.iterdir()
+                if directory.is_dir() and (directory / filename).is_file()
+            ] if upload_root.is_dir() else []
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise FileNotFoundError(
+                    f"Ambiguous session upload filename: {source}; use the loaded dataset name instead"
+                )
+    except FileNotFoundError:
+        raise
+    except (OSError, ValueError):
+        pass
+
     # 搜索 inbox、data_dir、project 根
+    if sid and Path(source).name == source:
+        output = cfg.sessions_resolved / sid / "output" / source
+        if output.is_file():
+            return resolve_reference(f"output/{source}", project=cfg.project_resolved,
+                                     sessions=cfg.sessions_resolved, session_id=sid)
     for base in (cfg.inbox_dir, cfg.data_dir, cfg.project_resolved):
         candidate = base / source
+        if candidate.resolve().is_relative_to(cfg.sessions_resolved.resolve()):
+            raise ValueError("Use a current-session data or artifact reference")
         if candidate.exists():
             return candidate
     raise FileNotFoundError(f"File not found: {source} (searched in inbox, data dir and project root)")
@@ -506,15 +559,19 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             if existing:
                 from data_agent.utils.data_features import detect_cross_dataset_relationships
                 other_dfs = {}
+                source_fingerprint = workspace.get_data_identity(dataset_name).get("source_fingerprint")
                 for other_name in existing:
+                    if source_fingerprint and workspace.get_data_identity(other_name).get("source_fingerprint") == source_fingerprint:
+                        continue
                     other_df = workspace.get(other_name)
                     if other_df is not None:
                         other_dfs[other_name] = other_df
                 if other_dfs:
                     relationships = detect_cross_dataset_relationships({dataset_name: df, **other_dfs})
+                    relationships = [r for r in relationships if dataset_name in (r["left"], r["right"])]
                     if relationships:
                         rel_lines = [f"  {r['left']}.{r['column']} <-> {r['right']}.{r['column']} (overlap: {r['overlap_pct']:.0%})" for r in relationships[:5]]
-                        rel_text = "Possible join keys:\n" + "\n".join(rel_lines)
+                        rel_text = "Candidate shared columns, not join approval; audit grain, cardinality, coverage and time scope before merging:\n" + "\n".join(rel_lines)
                         detail_sections["cross_dataset_hints"] = rel_text
                         summary_parts.append(f"[cross_hints] {len(relationships)} relationships found [/cross_hints]")
         except Exception:
@@ -667,7 +724,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
 
         return "\n".join(summary_parts)
     except Exception as e:
-        return f"Error loading data: {e}"
+        return json.dumps({"error": f"Error loading data: {e}",
+                           "error_type": "file_not_found" if isinstance(e, FileNotFoundError) else "data_load_error"}, ensure_ascii=False)
 
 
 @registry.register(

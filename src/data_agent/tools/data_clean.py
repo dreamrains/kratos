@@ -11,6 +11,7 @@ import pandas as pd
 
 from data_agent.session.workspace import workspace
 from data_agent.tools.registry import registry
+from data_agent.utils.column_semantics import is_identifier_name, is_monetary_name
 
 
 # ── 识别模式 ──────────────────────────────────────────────
@@ -163,6 +164,10 @@ def infer_column_type(series: pd.Series) -> dict:
         result["reason"] = "全为空值"
         return result
 
+    if is_identifier_name(col_name):
+        result["reason"] = "标识字段保留原值；重复标识不等于数值指标，是否唯一须另行审计"
+        return result
+
     # 1) 字符串 / object 列
     if pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series):
         # 百分比
@@ -214,6 +219,9 @@ def infer_column_type(series: pd.Series) -> dict:
     # 2) 数值列：检测是否实际为日期或类别
     if pd.api.types.is_numeric_dtype(series):
         nunique = series.nunique()
+        if is_monetary_name(col_name):
+            result["reason"] = "金额字段保留数值类型；取值少不代表类别编码，币种与单位仍须核对"
+            return result
         # 整数且看起来像日期（20250101）
         if _is_integer_like(values) and _looks_like_date_int(values):
             result["suggested_type"] = "date_int_to_datetime"

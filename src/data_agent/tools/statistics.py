@@ -18,7 +18,7 @@ from data_agent.tools.registry import registry
     description=(
         "进行 A/B 测试统计检验。比较两组之间的指标差异。"
         "auto 模式自动判断正态性并选择检验方法，附加 Levene 方差齐性检验。"
-        "同一 analysis_unit 同时出现在两组时自动改用配对比较。"
+        "同一 unit_col 同时出现在两组时按 unit_aggregation 聚合后配对比较，同时返回配对t检验、Wilcoxon双侧检验和差值置信区间；不需要在run_python手算。"
     ),
     schema_overrides={
         "name": {"description": "数据集名称"},
@@ -78,7 +78,7 @@ def ab_test(
                 degrees = n_pairs - 1
                 critical = float(sp_stats.t.ppf(0.975, degrees))
                 mean_difference = float(np.mean(differences))
-                t_stat, p_value = sp_stats.ttest_rel(before, after)
+                t_stat, p_value = sp_stats.ttest_rel(after, before)
                 wilcoxon_p = None if np.all(differences == 0) else float(sp_stats.wilcoxon(before, after).pvalue)
                 result = {
                     "group_col": group_col,
@@ -101,8 +101,8 @@ def ab_test(
                         "cohens_dz": round(mean_difference / sd_difference, 4) if sd_difference else None,
                         "confidence_interval_95": [round(mean_difference - critical * standard_error, 4), round(mean_difference + critical * standard_error, 4)],
                     },
-                    "test": {"statistic": round(float(t_stat), 4), "p_value": round(float(p_value), 6), "significant": bool(p_value < 0.05)},
-                    "wilcoxon_signed_rank": {"p_value": round(wilcoxon_p, 6) if wilcoxon_p is not None else None},
+                    "test": {"statistic": round(float(t_stat), 4), "p_value": round(float(p_value), 6), "significant": bool(p_value < 0.05), "difference_direction": "second_minus_first"},
+                    "wilcoxon_signed_rank": {"p_value": round(wilcoxon_p, 6) if wilcoxon_p is not None else None, "alternative": "two-sided", "zero_method": "wilcox", "method": "auto"},
                     "limitations": [
                         "配对比较控制了单位间固定差异，但不识别处理或购卡的因果效应。",
                         f"同一单位同组多行按 {unit_aggregation} 聚合；差值按第二组减第一组报告。",

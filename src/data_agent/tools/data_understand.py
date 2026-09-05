@@ -14,6 +14,19 @@ from data_agent.tools._utils import get_df, persist_detail, validate_pandas_expr
 from data_agent.tools.registry import registry
 
 
+def _observed_date_scope(df: pd.DataFrame) -> dict:
+    """Report typed date-column coverage, never an inferred data collection cutoff."""
+    columns = {}
+    for column in df.columns:
+        values = df[column]
+        if pd.api.types.is_datetime64_any_dtype(values) and values.notna().any():
+            columns[str(column)] = {"min": str(values.min()), "max": str(values.max()),
+                                    "non_null_rows": int(values.notna().sum()),
+                                    "distinct_values": int(values.nunique())}
+    return {"kind": "observed_date_columns", "columns": columns,
+            "collection_cutoff": "unknown"} if columns else {}
+
+
 @registry.register(
     name="describe_dataset",
     description="描述数据集的结构概览：字段名、类型、缺失率、基本统计。详细统计量自动持久化。",
@@ -82,6 +95,8 @@ def describe_dataset(name: str) -> str:
         "dataset": name,
         "shape": {"rows": rows, "columns": cols},
         "fields": summary_fields,
+        "field_statistics": detail_fields,
+        "observation_window": _observed_date_scope(df),
     }
 
     return json.dumps(summary, ensure_ascii=False, indent=2)
@@ -148,6 +163,8 @@ def detect_data_quality(name: str) -> str:
 
     return json.dumps({
         "dataset": name,
+        "rows": rows,
+        "observation_window": _observed_date_scope(df),
         "total_issues": len(issues),
         "issues": issues,
     }, ensure_ascii=False, indent=2)
@@ -169,7 +186,7 @@ def preview_data(name: str, n: int = 10) -> str:
 
 @registry.register(
     name="derive_field",
-    description="从已有字段派生新列。expression 为 pandas 表达式，如 'revenue / users'。",
+    description="从已有字段派生新列。expression 仅支持列引用、算术、比较、布尔运算，如 'revenue / users'；不支持函数调用、np.select/np.where 或 import。复杂条件请用受限 run_python 分析或已有 transform_data 操作。",
 )
 def derive_field(name: str, field_name: str, expression: str) -> str:
     df, err = get_df(name)
@@ -706,6 +723,7 @@ _ANALYSIS_STRATEGY: list[dict] = [
 
 def _classify_columns(df: pd.DataFrame) -> dict:
     """将 DataFrame 的列分类为 id/time/dimension/metric 等角色。"""
+    from data_agent.utils.column_semantics import is_identifier_name, is_monetary_name
     rows = len(df)
     id_cols = []
     time_cols = []
@@ -715,15 +733,13 @@ def _classify_columns(df: pd.DataFrame) -> dict:
     other_numeric = []
     other_text = []
 
-    id_patterns = ["id", "uid", "user_id", "order_id", "device_id", "uuid", "openid"]
-
     for col in df.columns:
         nunique = df[col].nunique()
         missing_pct = df[col].isnull().sum() / rows * 100 if rows > 0 else 0
         col_lower = col.lower().replace(" ", "").replace("_", "")
 
         # ID 列
-        if any(p in col_lower for p in id_patterns) and nunique >= rows * 0.8:
+        if is_identifier_name(col):
             id_cols.append({"column": col, "unique_count": nunique})
             continue
 
@@ -755,7 +771,7 @@ def _classify_columns(df: pd.DataFrame) -> dict:
 
         # 数值列
         if pd.api.types.is_numeric_dtype(df[col]):
-            if nunique > 2:
+            if nunique > 2 or is_monetary_name(col):
                 key_metrics.append({"column": col, "is_rate": False, "unique_count": nunique})
             else:
                 other_numeric.append(col)
@@ -985,12 +1001,16 @@ def interpret_dataset(name: str) -> str:
         if existing:
             from data_agent.utils.data_features import detect_cross_dataset_relationships
             other_dfs = {}
+            source_fingerprint = workspace.get_data_identity(name).get("source_fingerprint")
             for other_name in existing:
+                if source_fingerprint and workspace.get_data_identity(other_name).get("source_fingerprint") == source_fingerprint:
+                    continue
                 other_df = workspace.get(other_name)
                 if other_df is not None:
                     other_dfs[other_name] = other_df
             if other_dfs:
                 relationships = detect_cross_dataset_relationships({name: df, **other_dfs})
+                relationships = [rel for rel in relationships if name in (rel["left"], rel["right"])]
                 for rel in relationships[:5]:
                     if rel["left"] == name:
                         other_name = rel["right"]
@@ -1011,7 +1031,7 @@ def interpret_dataset(name: str) -> str:
                 "direction": f"关联分析: {name} × {hint['other_dataset']}",
                 "tools": ["transform_data(merge)", "correlation_analysis", "compare_periods"],
                 "priority": max(s["priority"] for s in suggested) + 1 if suggested else 4,
-                "reason": f"共享列 {hint['shared_columns'][:3]}，可通过 merge 合并后做跨数据集分析",
+                "reason": f"共享列 {hint['shared_columns'][:3]} 仅为候选线索；先审计分析单位、键基数、覆盖与时间范围，不能据此批准原始 merge。",
             })
 
     # 构建结果

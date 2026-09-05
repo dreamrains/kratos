@@ -33,6 +33,23 @@ def test_numeric_amount_is_a_measure():
     assert infer_semantic_role("revenue", pd.Series([10.5, 12.0])) == "measure"
 
 
+def test_explicit_identifier_count_applies_even_to_unique_chart_groups(tmp_path):
+    rows = [{"group":"a", "user_id":1001}, {"group":"b", "user_id":1002}]
+    result, chart_dir = _create_chart_in_session(
+        tmp_path, "identifier_count", chart_type="bar", data_json=json.dumps(rows),
+        x_col="group", y_col="user_id", aggregation="count", title="Users per group",
+    )
+    assert "Chart saved:" in result
+    metadata = json.loads(next(chart_dir.glob("*.json")).read_text(encoding="utf8"))
+    values = metadata["figure"]["data"][0]["y"]
+    if isinstance(values, dict):
+        import base64
+        import numpy as np
+        values = np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"]).tolist()
+    assert values == [1, 1]
+    assert "aggregation:count" in metadata["transformations"]
+
+
 def test_parseable_dates_are_time():
     assert infer_semantic_role(
         "paid_at",
