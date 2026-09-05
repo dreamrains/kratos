@@ -194,3 +194,46 @@ def test_plain_batch_still_requires_all_six_cases_in_preflight(tmp_path, monkeyp
     environment = {"AUTHORIZED_BATCH_SHA256": _file_hash(batch_path)}
     with pytest.raises(ValueError, match="M01-M06"):
         preflight(root, batch_path, root / "scripts/acceptance/x.py", environment)
+
+
+def test_resume_of_resume_accumulates_completed_cases_across_the_chain(tmp_path, monkeypatch):
+    """Chained resume dead end: R2 must carry ORIG's completed cases too.
+
+    ORIG: M01 completed, M02 quota-voided, M03-M06 never run.  R1 re-attempts
+    M02 (now completed) and M03 hits quota again (voided), M04-M06 never run.
+    Without accumulating the chain, R2's completed_cases would be ["M02"]
+    only, and preflight's omitted != completed would reject R2 forever.
+    """
+    root = tmp_path
+    batch_path, ledger_path, source_digest = _write_minimal_batch(root, tmp_path)
+    monkeypatch.setattr("scripts.acceptance.resume_batch.release_source_digest",
+                        lambda r: source_digest)
+    monkeypatch.setattr(batch_module, "release_source_digest", lambda r: source_digest)
+    r1 = derive_resume_batch(root, batch_path, ledger_path,
+                             new_batch_id="RESUME-1", new_isolation_root="tmp/resume-1")
+    assert r1["resumes_from"]["completed_cases"] == ["M01"]
+
+    r1_ledger_path = root / "tmp/resume-1/provider-batch.json"
+    r1_ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    r1_ledger_path.write_text(json.dumps({
+        "schema_version": 2, "batch_sha256": r1["batch_sha256"],
+        "cases": [
+            {"id": "M02", "status": "closed",
+             "terminal_failure": {"code": "acceptance_server_closed"}, "real_calls": 3},
+            {"id": "M03", "status": "closed",
+             "terminal_failure": {"code": "provider_request_failed",
+                                  "error_class": "quota_exhausted"}, "real_calls": 1},
+        ], "real_calls": 4}), encoding="utf-8")
+    r2 = derive_resume_batch(root, Path(r1["batch_path"]), r1_ledger_path,
+                             new_batch_id="RESUME-2", new_isolation_root="tmp/resume-2")
+    assert r2["resumes_from"]["completed_cases"] == ["M01", "M02"]
+    assert r2["resumes_from"]["voided_cases"] == ["M03"]
+    assert r2["resumes_from"]["batch_id"] == "RESUME-1"
+
+    # End-to-end: R2 passes its own zero-call preflight with a single token.
+    derived, cases, checks = preflight(root, Path(r2["batch_path"]),
+                                       root / "scripts/acceptance/x.py",
+                                       environment={"AUTHORIZED_BATCH_SHA256": r2["batch_sha256"]})
+    assert derived["batch_id"] == "RESUME-2"
+    assert [c["matrix_case_id"] for c in cases] == ["M03", "M04", "M05", "M06"]
+    assert checks["BATCH_SHA256"] == r2["batch_sha256"]

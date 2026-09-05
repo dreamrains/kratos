@@ -56,6 +56,13 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
         error_class = (record.get("terminal_failure") or {}).get("error_class")
         (voided if error_class in _GLOBAL_FATAL_CLASSES else completed).append(entry)
 
+    # A resume of a resume must accumulate the WHOLE chain's completed cases:
+    # preflight proves omitted ids == resumes_from.completed_cases against the
+    # full M01-M06 matrix, so dropping cases completed in earlier batches
+    # would make the derived batch forever fail its own zero-call preflight.
+    # Voided cases stay specific to this batch: each resume re-attempts them.
+    prior_completed = list((batch.get("resumes_from") or {}).get("completed_cases") or [])
+
     reloaded, new_entries, new_caps = [], [], 0
     for entry in voided + remaining:
         case = json.loads(_inside(root, entry["path"]).read_text(encoding="utf-8"))
@@ -100,7 +107,7 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
         "oracle_bundle_sha256": _canonical_json_hash(
             {c["matrix_case_id"]: c["oracle"] for c in reloaded}),
         "resumes_from": {"batch_id": batch["batch_id"], "batch_sha256": original_hash,
-                         "completed_cases": [e["id"] for e in completed],
+                         "completed_cases": prior_completed + [e["id"] for e in completed],
                          "voided_cases": [e["id"] for e in voided]},
     })
     new_batch_path = root / "docs/audit" / f"{new_batch_id.lower()}-batch.json"
