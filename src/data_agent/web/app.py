@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from flask import Flask
@@ -9,6 +10,17 @@ from flask import Flask
 from data_agent.web.agent_manager import AgentManager
 
 MAX_UPLOAD_MB = 200
+
+
+def _first_party_asset_version(static_dir: Path) -> str:
+    """Return a content-bound cache key for first-party Web assets."""
+
+    digest = hashlib.sha256()
+    for relative in ("css/app.css", "js/app.js"):
+        path = static_dir / relative
+        digest.update(relative.encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def create_app() -> Flask:
@@ -26,6 +38,9 @@ def create_app() -> Flask:
     from data_agent.config import get_config
     cfg = get_config()
     app.jinja_env.globals["config"] = cfg
+    app.jinja_env.globals["asset_version"] = _first_party_asset_version(
+        web_dir / "static"
+    )
 
     from data_agent.web.blueprints.pages import pages_bp
     from data_agent.web.blueprints.chat import chat_bp

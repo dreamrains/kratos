@@ -27,11 +27,44 @@ def _token_usage(loop) -> dict | None:
     return {"used": used, "threshold": context_window, "pct": min(round(used / max(context_window, 1) * 100), 100)}
 
 
-def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
+def _feed_events(eq: EventQueue, loop, turn_id: str, gen, runs=None):
     """Drain a stream_turn/resume generator into the EventQueue (runs in background thread)."""
     def _pct_payload():
         tu = _token_usage(loop)
         return tu if tu else {}
+
+    status = "completed"
+    errors = []
+
+    def finish(terminal_status):
+        from data_agent.llm.request_policy import close_stream
+        close_stream(gen)
+        notice = ""
+        if terminal_status == "failed":
+            notice = "**执行失败：** " + "；".join(errors or ["本轮分析未完成。"])
+        elif terminal_status == "cancelled":
+            notice = "**已停止：** 本轮执行已取消，未完成的分析不代表有效结论。"
+        if notice:
+            # One canonical message feeds live UI, history and exports. Keep
+            # lifecycle metadata out of provider-specific message schemas.
+            messages = loop.messages
+            if not messages or messages[-1].get("content") != notice:
+                messages.append({"role": "assistant", "content": notice})
+        loop._auto_save()
+        from data_agent.session.public_messages import assistant_replies
+        from data_agent.session.history import load_session
+        snapshot = load_session(loop.session_id) or {}
+        replies = assistant_replies(snapshot.get("messages", []), loop.session_id)
+        saved_messages = snapshot.get("messages", [])
+        last_user = max((i for i, msg in enumerate(saved_messages) if msg.get("role") == "user"), default=-1)
+        has_current_reply = any(msg.get("role") == "assistant" for msg in saved_messages[last_user + 1:])
+        reply = replies[-1] if replies and has_current_reply else {}
+        state = runs.finish(loop.session_id, turn_id, terminal_status, notice=notice) if runs is not None else {}
+        eq.put(SSEEvent("turn_end", {
+            "session_id": loop.session_id, "turn_id": turn_id,
+            "reply_id": reply.get("reply_id"), "reply_content": reply.get("content"),
+            "status": terminal_status, "run_state": state, "execution_notice": notice, **_pct_payload(),
+        }))
 
     try:
         for event in gen:
@@ -74,38 +107,35 @@ def _feed_events(eq: EventQueue, loop, turn_id: str, gen):
                     "related_task_id": event.get("related_task_id"),
                     "related_spec_id": event.get("related_spec_id"),
                 }))
-                eq.put(SSEEvent("turn_end", {
-                    "session_id": loop.session_id,
-                    "turn_id": turn_id,
-                    "status": "suspended",
-                    **_pct_payload(),
-                }))
+                finish("suspended")
                 return
             elif etype == "error":
+                status = "failed"
+                errors.append(str(event["message"]))
                 eq.put(SSEEvent("error", {"message": event["message"]}))
-        # Make turn_end a durable publication boundary.  The loop normally
-        # saves its final response itself; this second idempotent save covers
-        # every terminal generator path before the browser can mark complete.
-        loop._auto_save()
-        eq.put(SSEEvent("turn_end", {
-            "session_id": loop.session_id,
-            "turn_id": turn_id,
-            "status": "completed",
-            **_pct_payload(),
-        }))
-    except Exception as e:
+        if getattr(loop, "_interrupt_event", None) is not None and loop._interrupt_event.is_set():
+            status = "cancelled"
+        finish(status)
+    except Exception as exc:
+        eq.put(SSEEvent("error", {"message": str(exc)}))
+        errors.append(str(exc))
         try:
-            loop._auto_save()
+            finish("failed")
         except Exception:
-            pass
-        eq.put(SSEEvent("error", {"message": str(e)}))
-        eq.put(SSEEvent("turn_end", {
-            "session_id": loop.session_id,
-            "turn_id": turn_id,
-            "status": "error",
-        }))
+            # Persistence/teardown failure is not proof of a durable terminal.
+            notice = "执行状态无法完整保存，请勿将本轮视为分析完成。"
+            if runs is not None:
+                runs.finish(loop.session_id, turn_id, "unknown", reason=type(exc).__name__, notice=notice)
+            eq.put(SSEEvent("turn_end", {
+                "session_id": loop.session_id, "turn_id": turn_id, "status": "unknown",
+                "execution_notice": notice,
+            }))
     finally:
-        eq.close()
+        from data_agent.llm.request_policy import close_stream
+        try:
+            close_stream(gen)
+        finally:
+            eq.close()
 
 
 def _sse_response(eq: EventQueue) -> Response:
@@ -114,7 +144,8 @@ def _sse_response(eq: EventQueue) -> Response:
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
+            # Connection framing belongs to the WSGI server. A hop-by-hop
+            # keep-alive header here can conflict with its terminating frame.
             "X-Accel-Buffering": "no",
         },
     )
@@ -127,6 +158,7 @@ def chat():
     message = data.get("message", "")
     session_id = data.get("session_id")
     model_id = data.get("model_id")
+    upload_references = data.get("uploads", [])
 
     manager = current_app.config["agent_manager"]
     agent_loop = manager.get_or_create(session_id=session_id, model_id=model_id)
@@ -134,6 +166,35 @@ def chat():
     turn_id = f"t_{uuid.uuid4().hex[:6]}"
     eq = EventQueue()
     sid = agent_loop.session_id
+    from data_agent.web.run_state import SessionBusy
+    runs = getattr(manager, "runs", None)
+    try:
+        if runs is not None:
+            runs.begin(sid, turn_id)
+        clear = getattr(agent_loop, "clear_interrupt", None)
+        if callable(clear):
+            clear()
+        agent_loop._web_interrupt_prepared = True
+    except SessionBusy as exc:
+        return jsonify({"error": str(exc), "session_id": sid}), 409
+
+    try:
+        from data_agent.web.blueprints.uploads import (
+            UploadBindingError,
+            UploadIngestionError,
+            bind_uploads_to_session,
+            ingest_bound_uploads,
+        )
+
+        bound_uploads = bind_uploads_to_session(sid, upload_references)
+        upload_turn_context = ingest_bound_uploads(agent_loop, bound_uploads)
+    except (UploadBindingError, UploadIngestionError) as exc:
+        if runs is not None:
+            runs.finish(sid, turn_id, "failed", reason="upload_rejected")
+        response = jsonify({"error": str(exc), "session_id": sid})
+        response.status_code = 422
+        response.headers["X-Data-Agent-Session-Id"] = sid
+        return response
 
     def run_in_thread():
         eq.put(SSEEvent("turn_start", {
@@ -141,7 +202,12 @@ def chat():
             "turn_id": turn_id,
             **(_token_usage(agent_loop) or {}),
         }))
-        _feed_events(eq, agent_loop, turn_id, agent_loop.stream_turn(message))
+        stream = (
+            agent_loop.stream_turn(message, turn_context=upload_turn_context)
+            if upload_turn_context
+            else agent_loop.stream_turn(message)
+        )
+        _feed_events(eq, agent_loop, turn_id, stream, runs=runs)
 
     t = threading.Thread(target=run_in_thread, daemon=True)
     t.start()
@@ -187,6 +253,16 @@ def resume_chat():
     turn_id = f"t_{uuid.uuid4().hex[:6]}"
     eq = EventQueue()
     sid = agent_loop.session_id
+    from data_agent.web.run_state import SessionBusy
+    runs = getattr(manager, "runs", None)
+    try:
+        if runs is not None:
+            runs.begin(sid, turn_id)
+        clear = getattr(agent_loop, "clear_interrupt", None)
+        if callable(clear):
+            clear()
+    except SessionBusy as exc:
+        return jsonify({"error": str(exc), "session_id": sid}), 409
 
     def run_in_thread():
         eq.put(SSEEvent("turn_start", {
@@ -200,7 +276,7 @@ def resume_chat():
                          user_response,
                          expected_version=expected_version,
                          idempotency_key=idempotency_key,
-                     ))
+                     ), runs=runs)
 
     t = threading.Thread(target=run_in_thread, daemon=True)
     t.start()
@@ -218,8 +294,10 @@ def interrupt_chat():
     if not agent_loop:
         return jsonify({"error": f"Session {session_id} not found"}), 404
 
+    runs = getattr(manager, "runs", None)
+    state = runs.cancelling(session_id) if runs is not None else {}
     agent_loop.request_interrupt()
-    return jsonify({"status": "interrupt_requested"})
+    return jsonify({"status": "cancelling", "run_state": state})
 
 
 @chat_bp.get("/models")
