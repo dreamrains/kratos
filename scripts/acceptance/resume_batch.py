@@ -31,6 +31,10 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
     root = root.resolve()
     batch = json.loads(Path(batch_path).read_text(encoding="utf-8"))
     ledger = json.loads(Path(ledger_path).read_text(encoding="utf-8"))
+    if new_batch_id.lower() == str(batch["batch_id"]).lower():
+        raise ValueError("resume batch id must differ from the original batch id")
+    if new_isolation_root == batch["isolation_root"]:
+        raise ValueError("resume batch must use a fresh isolation root")
     if release_source_digest(root) != batch["source_digest"]:
         raise ValueError("source digest changed; a resume batch is not allowed")
     closed = {}
@@ -52,10 +56,9 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
         error_class = (record.get("terminal_failure") or {}).get("error_class")
         (voided if error_class in _GLOBAL_FATAL_CLASSES else completed).append(entry)
 
-    new_entries, new_caps = [], 0
+    reloaded, new_entries, new_caps = [], [], 0
     for entry in voided + remaining:
         case = json.loads(_inside(root, entry["path"]).read_text(encoding="utf-8"))
-        suffix = case["matrix_case_id"][1:]
         case["writes"] = {
             key: value.replace(f"tmp/{batch['isolation_root'].split('/', 1)[-1]}/",
                                f"{new_isolation_root}/")
@@ -71,6 +74,18 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
                             "path": str(new_path.relative_to(root)).replace("\\", "/"),
                             "sha256": _normalized_file_hash(new_path)})
         new_caps += int(case["provider_policy"]["call_cap"])
+        reloaded.append(case)
+
+    # Bundle identities must describe the re-emitted subset, not the original
+    # whole matrix: preflight recomputes them over the batch's own cases, so
+    # copying the original frozen values would never verify.  Mirror
+    # preflight's canonical forms exactly (shared-data union with consistency,
+    # per-case prompts and oracles keyed by matrix case id).
+    data = {}
+    for case in reloaded:
+        for item in case["data"]:
+            if data.setdefault(item["id"], item) != item:
+                raise ValueError("inconsistent shared data definition")
 
     new_batch = dict(batch)
     new_batch.update({
@@ -78,6 +93,12 @@ def derive_resume_batch(root: Path, batch_path: Path, ledger_path: Path, *,
         "cases": new_entries,
         "call_cap": new_caps,
         "isolation_root": new_isolation_root,
+        "report_path": f"docs/audit/{new_batch_id.lower()}-report.json",
+        "data_bundle_sha256": _canonical_json_hash([data[key] for key in sorted(data)]),
+        "prompt_bundle_sha256": _canonical_json_hash(
+            {c["matrix_case_id"]: c["prompts"] for c in reloaded}),
+        "oracle_bundle_sha256": _canonical_json_hash(
+            {c["matrix_case_id"]: c["oracle"] for c in reloaded}),
         "resumes_from": {"batch_id": batch["batch_id"], "batch_sha256": original_hash,
                          "completed_cases": [e["id"] for e in completed],
                          "voided_cases": [e["id"] for e in voided]},

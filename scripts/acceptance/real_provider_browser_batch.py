@@ -120,8 +120,25 @@ def preflight(root: Path, batch_path: Path, launcher_path: Path, environment=Non
         if not case["prompts"] or case["prompt"] != case["prompts"][0] or len(case["prompts"]) != policy["analysis_turns"]:
             raise ValueError("case prompt/turn envelope mismatch")
         cases.append(case)
-    if [c["matrix_case_id"] for c in cases] != ["M01", "M02", "M03", "M04", "M05", "M06"]:
-        raise ValueError("matrix must contain M01-M06 exactly once in order")
+    full_matrix = ["M01", "M02", "M03", "M04", "M05", "M06"]
+    case_ids = [c["matrix_case_id"] for c in cases]
+    resumes_from = batch.get("resumes_from")
+    if resumes_from is None:
+        if case_ids != full_matrix:
+            raise ValueError("matrix must contain M01-M06 exactly once in order")
+    else:
+        # A resume batch re-attempts only the voided and never-run cases of a
+        # global-fatal stop; completed cases are never re-run.  Accept an
+        # in-order subsequence of the full matrix whose omitted ids are
+        # exactly the completed cases recorded in resumes_from.
+        rank = {case_id: index for index, case_id in enumerate(full_matrix)}
+        order = [rank.get(case_id) for case_id in case_ids]
+        omitted = set(full_matrix) - set(case_ids)
+        completed = set(resumes_from.get("completed_cases") or [])
+        if (not case_ids or None in order or sorted(order) != order
+                or len(set(order)) != len(order) or omitted != completed):
+            raise ValueError("resume matrix must be an in-order M01-M06 subsequence "
+                             "omitting exactly the completed cases")
     caps = [c["provider_policy"]["call_cap"] for c in cases]
     if any(type(cap) is not int or cap < 1 for cap in caps) or sum(caps) > batch["call_cap"]:
         raise ValueError("case caps exceed the non-transferable batch envelope")
