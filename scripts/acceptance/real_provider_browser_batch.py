@@ -110,6 +110,13 @@ def preflight(root: Path, batch_path: Path, launcher_path: Path, environment=Non
             "supplementary_run": False, "web_journeys": 1,
         }.items()):
             raise ValueError("case request policy outside strict batch contract")
+        retry_policy = policy.get("retry_policy")
+        if retry_policy != {
+            "max_retry_attempts": 1,
+            "backoff_seconds": 20,
+            "retry_error_classes": ["rate_limited", "network_transient", "server_error"],
+        }:
+            raise ValueError("case request policy outside strict batch contract: retry policy")
         if not case["prompts"] or case["prompt"] != case["prompts"][0] or len(case["prompts"]) != policy["analysis_turns"]:
             raise ValueError("case prompt/turn envelope mismatch")
         cases.append(case)

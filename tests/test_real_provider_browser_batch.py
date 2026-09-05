@@ -120,7 +120,14 @@ def test_receipt_identity_mismatch_is_not_treated_as_zero_calls(tmp_path):
         ledger.finish(tmp_path / "wrong-case.json", candidate_id="M01", source_digest="sha256:source")
 
 
-def _frozen_fixture(tmp_path, monkeypatch):
+FROZEN_RETRY_POLICY = {
+    "max_retry_attempts": 1,
+    "backoff_seconds": 20,
+    "retry_error_classes": ["rate_limited", "network_transient", "server_error"],
+}
+
+
+def _frozen_batch_factory(tmp_path, monkeypatch):
     from scripts.acceptance.real_provider_browser_server import _normalized_file_hash as digest, _canonical_json_hash as canonical
     data = tmp_path / "data.bin"
     data.write_bytes(b"data")
@@ -130,40 +137,56 @@ def _frozen_fixture(tmp_path, monkeypatch):
     supervisor = tmp_path / "supervisor.py"
     supervisor.write_text("# supervisor", encoding="utf-8")
     monkeypatch.setattr(batch, "release_source_digest", lambda _: "source")
-    cases, entries = [], []
+    cases = []
     for i in range(1, 7):
         cid = f"M{i:02d}"
-        case = {
+        cases.append({
             "matrix_case_id": cid, "source_digest": "source", "model": "model", "data": [data_item],
             "prompt": "analyze", "prompts": ["analyze"], "oracle": {"test": True},
             "provider_policy": {
                 "temperature": 0, "timeout_seconds": 120, "initial_max_tokens": 8000,
                 "auxiliary_initial_max_tokens": 300, "auxiliary_max_tokens": [300, 800],
                 "silent_length_ladder": [8000], "num_retries": 0,
+                "retry_policy": json.loads(json.dumps(FROZEN_RETRY_POLICY)),
                 "stream_sync_fallback": False, "model_fallback": False,
                 "supplementary_run": False, "web_journeys": 1, "analysis_turns": 1, "call_cap": 2,
             },
             "writes": {"workspace_dir": f"tmp/run/{cid}/workspace", "sessions_dir": f"tmp/run/{cid}/sessions",
                        "process_control_dir": f"tmp/run/{cid}/process-control",
                        "provider_receipt_path": f"tmp/run/{cid}/calls.json", "report_path": f"docs/audit/{cid}.json"},
-        }
-        path = tmp_path / f"{cid}.json"
-        path.write_text(json.dumps(case), encoding="utf-8")
-        entries.append({"id": cid, "path": path.name, "sha256": digest(path)})
-        cases.append(case)
+        })
     frozen = {
         "schema_version": "real_provider_browser_batch.v1", "source_digest": "source", "model": "model",
-        "cases": entries, "call_cap": 12, "isolation_root": "tmp/run", "report_path": "docs/audit/batch.json",
+        "call_cap": 12, "isolation_root": "tmp/run", "report_path": "docs/audit/batch.json",
         "supervisor_path": supervisor.name,
         "supervisor_sha256": digest(supervisor),
         "launcher_sha256": digest(launcher), "data_bundle_sha256": canonical([data_item]),
         "prompt_bundle_sha256": canonical({c["matrix_case_id"]: c["prompts"] for c in cases}),
         "oracle_bundle_sha256": canonical({c["matrix_case_id"]: c["oracle"] for c in cases}),
     }
-    path = tmp_path / "batch-candidate.json"
-    path.write_text(json.dumps(frozen), encoding="utf-8")
-    env = {"AUTHORIZED_BATCH_SHA256": digest(path), "AUTHORIZED_SOURCE_DIGEST": "source"}
+    batch_path, env = _rewrite_case_files(frozen, cases, tmp_path)
+    return frozen, cases, batch_path, launcher, env
+
+
+def _rewrite_case_files(frozen, cases, tmp_path):
+    """Rewrite mutated case candidates plus the batch manifest so that every
+    digest, envelope and authorization check still passes preflight."""
+    from scripts.acceptance.real_provider_browser_server import _normalized_file_hash as digest
+    entries = []
+    for case in cases:
+        path = tmp_path / f"{case['matrix_case_id']}.json"
+        path.write_text(json.dumps(case), encoding="utf-8")
+        entries.append({"id": case["matrix_case_id"], "path": path.name, "sha256": digest(path)})
+    frozen["cases"] = entries
+    batch_path = tmp_path / "batch-candidate.json"
+    batch_path.write_text(json.dumps(frozen), encoding="utf-8")
+    env = {"AUTHORIZED_BATCH_SHA256": digest(batch_path), "AUTHORIZED_SOURCE_DIGEST": "source"}
     env.update({"AUTHORIZED_" + key.upper(): value for key, value in frozen.items() if key.endswith("sha256")})
+    return batch_path, env
+
+
+def _frozen_fixture(tmp_path, monkeypatch):
+    _, _, path, launcher, env = _frozen_batch_factory(tmp_path, monkeypatch)
     return path, launcher, env
 
 
@@ -248,6 +271,23 @@ def test_no_implicit_authorization_from_candidate_values(tmp_path, monkeypatch):
     path, launcher, env = _frozen_fixture(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="authorization mismatch"):
         batch.preflight(tmp_path, path, launcher, {})
+
+
+def test_preflight_requires_retry_policy_contract(tmp_path, monkeypatch):
+    frozen, cases, batch_path, launcher, _ = _frozen_batch_factory(tmp_path, monkeypatch)
+    for case in cases:
+        case["provider_policy"].pop("retry_policy", None)
+    _, env = _rewrite_case_files(frozen, cases, tmp_path)
+    with pytest.raises(ValueError, match="retry policy"):
+        batch.preflight(tmp_path, batch_path, launcher, env)
+
+
+def test_preflight_rejects_widened_retry_classes(tmp_path, monkeypatch):
+    frozen, cases, batch_path, launcher, _ = _frozen_batch_factory(tmp_path, monkeypatch)
+    cases[0]["provider_policy"]["retry_policy"]["retry_error_classes"].append("quota_exhausted")
+    _, env = _rewrite_case_files(frozen, cases, tmp_path)
+    with pytest.raises(ValueError, match="retry policy"):
+        batch.preflight(tmp_path, batch_path, launcher, env)
 
 
 def test_real_execution_supervisor_gate_binds_pid_signal_and_frozen_launcher(tmp_path):

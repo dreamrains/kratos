@@ -153,6 +153,7 @@ def run_authorized_browser_server(
         allowed_max_tokens=allowed_max_tokens,
         temperature=float(policy["temperature"]),
         timeout_seconds=int(policy["timeout_seconds"]),
+        retry_backoff_seconds=float(policy.get("retry_policy", {}).get("backoff_seconds", 20)),
     )
     guard.persist_receipt()
     # Factories inject the guard explicitly. Also protect the default transport
