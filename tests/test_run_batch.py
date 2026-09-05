@@ -106,6 +106,7 @@ def _frozen_batch(tmp_path, monkeypatch):
         cid = f"M{i:02d}"
         cases.append({
             "matrix_case_id": cid, "source_digest": "source", "model": "model",
+            "port": 5800 + i,
             "data": [data_item], "prompt": "analyze", "prompts": ["analyze"],
             "oracle": {"test": True},
             "provider_policy": {
@@ -337,12 +338,17 @@ def test_wrapper_spawn_chain_passes_the_frozen_supervisor_gate(tmp_path):
 def test_direct_child_interpreter_returns_a_pid_stable_child():
     executable, env = run_batch._direct_child_interpreter()
     assert run_batch._spawns_direct(executable)
-    if executable == sys.executable:
-        assert env == dict(os.environ)
-    else:
-        # A base-interpreter fallback keeps the venv's frozen dependency set.
-        import sysconfig
-        assert sysconfig.get_paths()["purelib"] in env["PYTHONPATH"]
+    # The child import path is explicit no matter which interpreter won:
+    # repo root, its src/ tree, and the venv's frozen dependency set.  A
+    # base-interpreter fallback cannot rely on editable-install .pth files
+    # because PYTHONPATH entries never process them.
+    import sysconfig
+
+    parts = env["PYTHONPATH"].split(os.pathsep)
+    repo_root = run_batch._repo_root()
+    assert str(repo_root) in parts
+    assert str(repo_root / "src") in parts
+    assert sysconfig.get_paths()["purelib"] in parts
 
 
 def test_direct_child_interpreter_fails_closed_without_any_direct_python(monkeypatch):
@@ -350,3 +356,349 @@ def test_direct_child_interpreter_fails_closed_without_any_direct_python(monkeyp
     monkeypatch.setattr(sys, "_base_executable", "", raising=False)
     with pytest.raises(SystemExit, match="no direct python interpreter"):
         run_batch._direct_child_interpreter()
+
+
+def test_child_pythonpath_orders_root_src_site_packages_before_existing():
+    """Fix B regression: the case child env's PYTHONPATH must carry the
+    repo root, src/ and the venv purelib ahead of any pre-existing entries,
+    deduplicated, so an editable install resolves under any interpreter."""
+    import sysconfig
+
+    repo_root = run_batch._repo_root()
+    site_packages = sysconfig.get_paths()["purelib"]
+    existing = os.pathsep.join(["C:/already/here", site_packages])
+    joined = run_batch._child_pythonpath(repo_root, site_packages, existing)
+    parts = joined.split(os.pathsep)
+    assert parts.index(str(repo_root)) < parts.index(str(repo_root / "src"))
+    assert parts.index(str(repo_root / "src")) < parts.index(site_packages)
+    assert parts[-1] == "C:/already/here"  # pre-existing entries kept after
+    assert parts.count(site_packages) == 1  # and deduplicated
+
+
+class _StubConfig:
+    def __init__(self, api_base=None, api_key=None):
+        self.api_base, self.api_key = api_base, api_key
+
+
+def test_credentials_env_precedence_and_sources(tmp_path):
+    # Legacy DATA_AGENT_* names stay hard overrides for old invocations.
+    api_base, api_key, sources = run_batch._resolve_api_credentials(
+        {"DATA_AGENT_API_BASE": "https://legacy.invalid/v1",
+         "DATA_AGENT_API_KEY": "sk-legacy",
+         "API_BASE": "https://project.invalid/v1", "API_KEY": "sk-project"},
+        repo_root=tmp_path)
+    assert (api_base, api_key) == ("https://legacy.invalid/v1", "sk-legacy")
+    assert sources == {"api_base": "DATA_AGENT_API_BASE", "api_key": "DATA_AGENT_API_KEY"}
+    # The project's real env names work without any legacy alias.
+    api_base, api_key, sources = run_batch._resolve_api_credentials(
+        {"API_BASE": "https://project.invalid/v1", "API_KEY": "sk-project"},
+        repo_root=tmp_path)
+    assert (api_base, api_key) == ("https://project.invalid/v1", "sk-project")
+    assert sources == {"api_base": "API_BASE", "api_key": "API_KEY"}
+
+
+def test_credentials_fall_back_to_the_config_layer(tmp_path, monkeypatch):
+    monkeypatch.setattr("data_agent.config.get_config",
+                        lambda: _StubConfig("https://config.invalid/v1", "sk-config"))
+    api_base, api_key, sources = run_batch._resolve_api_credentials({}, repo_root=tmp_path)
+    assert (api_base, api_key) == ("https://config.invalid/v1", "sk-config")
+    assert sources == {"api_base": "config", "api_key": "config"}
+
+
+def test_credentials_fall_back_to_repo_env_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("data_agent.config.get_config", lambda: _StubConfig())
+    (tmp_path / ".env").write_text(
+        "# comment\nAPI_BASE=https://dotenv.invalid/v1\nOTHER=noise\nAPI_KEY=sk-dotenv\n",
+        encoding="utf-8")
+    api_base, api_key, sources = run_batch._resolve_api_credentials({}, repo_root=tmp_path)
+    assert (api_base, api_key) == ("https://dotenv.invalid/v1", "sk-dotenv")
+    assert sources == {"api_base": "repo .env", "api_key": "repo .env"}
+
+
+def test_credentials_missing_everywhere_fail_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr("data_agent.config.get_config", lambda: _StubConfig())
+    assert run_batch._resolve_api_credentials({}, repo_root=tmp_path)[:2] == (None, None)
+
+
+def test_main_fails_closed_when_credentials_are_unavailable(tmp_path, monkeypatch):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
+    for name in ("DATA_AGENT_API_BASE", "DATA_AGENT_API_KEY", "API_BASE", "API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(run_batch, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr("data_agent.config.get_config", lambda: _StubConfig())
+
+    def no_probe(*args, **kwargs):
+        raise AssertionError("probe must not run without credentials")
+
+    monkeypatch.setattr(run_batch, "run_probe", no_probe)
+    monkeypatch.setattr(sys, "argv", [
+        "run_batch", "--root", str(tmp_path), "--batch", str(batch_path),
+        "--launcher", str(launcher), "--authorized",
+    ])
+    with pytest.raises(SystemExit, match="credential"):
+        run_batch.main()
+
+
+def _probe_receipt(tmp_path, calls, terminal_failure=None):
+    path = tmp_path / "tmp" / "run" / "probe-receipt.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"schema_version": 3, "candidate_id": "batch_probe", "source_digest": "probe",
+         "call_cap": 1, "calls": calls, "blocked_attempts": 0,
+         "terminal_failure": terminal_failure}, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _probe_call(status="completed", error_class=None):
+    call = {"ordinal": 1, "model": "provider/model", "stream": False, "max_tokens": 16,
+            "status": status, "started_at": "t0", "local_request_stopped": status != "started"}
+    if error_class:
+        call["error_class"] = error_class
+    return call
+
+
+def test_resume_probe_accepts_consumed_successful_receipt(tmp_path):
+    receipt = _probe_receipt(tmp_path, [_probe_call()])
+    result = run_batch._resume_prior_probe(receipt)
+    assert result["ok"] is True
+    assert result["error_class"] is None
+    assert result["global_fatal"] is False
+    assert result["calls"] == 1
+
+
+def test_resume_probe_aborts_on_failed_receipt(tmp_path):
+    receipt = _probe_receipt(
+        tmp_path, [_probe_call("failed", "quota_exhausted")],
+        terminal_failure={"code": "provider_request_failed", "error_class": "quota_exhausted"})
+    result = run_batch._resume_prior_probe(receipt)
+    assert result["ok"] is False
+    assert result["error_class"] == "quota_exhausted"
+    assert result["global_fatal"] is True
+
+
+def test_resume_probe_fails_closed_on_incomplete_receipt(tmp_path):
+    for calls in ([], [_probe_call("started")], [_probe_call("unknown")]):
+        receipt = _probe_receipt(tmp_path, calls)
+        result = run_batch._resume_prior_probe(receipt)
+        assert result["ok"] is False
+        assert result["error_class"] == "probe_receipt_incomplete"
+        assert result["global_fatal"] is True
+
+
+def test_authorized_relaunch_resumes_consumed_probe_without_a_new_call(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    _probe_receipt(tmp_path, [_probe_call()])  # the prior launch consumed it
+
+    def no_probe(*args, **kwargs):
+        raise AssertionError("consumed probe receipt must not trigger a new Provider call")
+
+    monkeypatch.setattr(run_batch, "run_probe", no_probe)
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0] * 6)
+    run_batch.main()
+    assert len(calls) == 6
+    assert '"probe": "already consumed"' in capsys.readouterr().out
+
+
+def _leftover_control(tmp_path, pid=12345):
+    control = tmp_path / "tmp" / "run" / "M01" / "process-control"
+    control.mkdir(parents=True)
+    (control / "process-start.json").write_text(json.dumps(
+        {"schema_version": "browser_process_start.v1", "pid": pid,
+         "supervisor_pid": 999, "command": ["x"], "started_at": "t",
+         "stop_request_path": str(control / "stop.request"),
+         "stop_signal_path": str(control / "stop.signal"),
+         "stop_timeout_seconds": 30}, ensure_ascii=False), encoding="utf-8")
+    return control
+
+
+def _archive(control, tmp_path, pid_running=lambda pid: False):
+    return run_batch._archive_leftover_control_dir(
+        control, case_id="M01",
+        ledger_path=tmp_path / "tmp" / "run" / "provider-batch.json",
+        receipt_path=tmp_path / "tmp" / "run" / "M01" / "calls.json",
+        pid_running=pid_running)
+
+
+def test_crashed_control_dir_archives_when_case_never_started(tmp_path):
+    control = _leftover_control(tmp_path)
+    archive = _archive(control, tmp_path)
+    assert not control.exists()
+    assert archive.parent == control.parent
+    assert archive.name.startswith("process-control.archived-")
+    assert archive.name.endswith("-crash-retry")
+    assert archive.is_dir()
+
+
+def test_crashed_control_dir_refuses_when_a_ledger_entry_exists(tmp_path):
+    control = _leftover_control(tmp_path)
+    ledger = tmp_path / "tmp" / "run" / "provider-batch.json"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(json.dumps({"cases": [{"id": "M01", "status": "closed"}]}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="ledger"):
+        _archive(control, tmp_path)
+    assert control.exists()
+
+
+def test_crashed_control_dir_refuses_while_recorded_pid_is_running(tmp_path):
+    control = _leftover_control(tmp_path)
+    with pytest.raises(SystemExit, match="still running"):
+        _archive(control, tmp_path, pid_running=lambda pid: True)
+    assert control.exists()
+
+
+def test_crashed_control_dir_refuses_when_a_provider_receipt_exists(tmp_path):
+    control = _leftover_control(tmp_path)
+    receipt = tmp_path / "tmp" / "run" / "M01" / "calls.json"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text("{}", encoding="utf-8")
+    with pytest.raises(SystemExit, match="receipt"):
+        _archive(control, tmp_path)
+    assert control.exists()
+
+
+def test_crashed_control_dir_fails_closed_on_unreadable_start_record(tmp_path):
+    control = _leftover_control(tmp_path)
+    (control / "process-start.json").write_text("{broken", encoding="utf-8")
+    with pytest.raises(SystemExit, match="handle"):
+        _archive(control, tmp_path)
+    assert control.exists()
+
+
+def test_authorized_loop_archives_crashed_control_dir_before_spawning(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    control = _leftover_control(tmp_path)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    monkeypatch.setattr(run_batch, "_pid_running", lambda pid: False)
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0] * 6)
+    run_batch.main()
+    assert not control.exists()
+    assert '"archived_control_dir"' in capsys.readouterr().out
+    assert [call["command"][-1] for call in calls] == [f"M{i:02d}" for i in range(1, 7)]
+
+
+def _serve_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, case_id, results=(0,)):
+    """Authorized --serve CLI wiring with a counting subprocess.run stub."""
+    monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
+    monkeypatch.setenv("DATA_AGENT_API_BASE", "https://example.invalid/v1")
+    monkeypatch.setenv("DATA_AGENT_API_KEY", "sk-test")
+    monkeypatch.setattr(run_batch, "_direct_child_interpreter",
+                        lambda: (sys.executable, dict(os.environ)))
+    calls = []
+
+    def fake_run(command, *, cwd, env):
+        calls.append({"command": list(command), "cwd": cwd, "env": dict(env)})
+        return subprocess.CompletedProcess(command, results[len(calls) - 1])
+
+    monkeypatch.setattr(run_batch.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", [
+        "run_batch", "--root", str(tmp_path), "--batch", str(batch_path),
+        "--launcher", str(launcher), "--authorized", "--serve", case_id,
+    ])
+    return calls
+
+
+def test_serve_mode_spawns_exactly_one_supervised_child_for_the_named_case(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    calls = _serve_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, "M03")
+    run_batch.main()
+    assert len(calls) == 1  # never auto-continues to other frozen cases
+    command = calls[0]["command"]
+    separator = command.index("--")
+    wrapper, inner = command[:separator], command[separator + 1:]
+    supervisor = (tmp_path / "supervisor.py").resolve()
+    assert wrapper[:2] == [sys.executable, str(supervisor)]
+    assert wrapper[2:4] == ["--control-dir",
+                            str((tmp_path / "tmp/run/M03/process-control").resolve())]
+    assert inner[:3] == [sys.executable, "-m", "scripts.acceptance.real_provider_browser_batch"]
+    assert inner[-3:] == [str(launcher.resolve()), "--case", "M03"]
+    assert calls[0]["cwd"] == tmp_path
+    assert calls[0]["env"]["AUTHORIZED_BATCH_SHA256"] == batch_digest
+    assert calls[0]["env"]["DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED"] == "1"
+    out = capsys.readouterr().out
+    assert '"case": "M03"' in out and '"exit_code": 0' in out
+
+
+def test_serve_mode_prints_url_control_dir_and_receipt_json(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    _serve_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, "M01")
+    run_batch.main()
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()
+             if line.startswith("{")]
+    serve_lines = [item for item in lines if isinstance(item, dict) and "serve" in item]
+    assert len(serve_lines) == 1
+    line = serve_lines[0]
+    assert line["serve"] == "M01"
+    assert line["web_url"] == "http://127.0.0.1:5801"
+    assert line["control_dir"] == str((tmp_path / "tmp/run/M01/process-control").resolve())
+    assert line["receipt_path"] == str((tmp_path / "tmp/run/M01/calls.json").resolve())
+    exits = [item for item in lines if isinstance(item, dict) and "process_exit" in item]
+    assert len(exits) == 1  # exit record summary printed after the child exits
+
+
+def test_serve_mode_resumes_consumed_probe_without_a_new_call(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    _probe_receipt(tmp_path, [_probe_call()])  # the prior launch consumed it
+
+    def no_probe(*args, **kwargs):
+        raise AssertionError("consumed probe receipt must not trigger a new Provider call")
+
+    monkeypatch.setattr(run_batch, "run_probe", no_probe)
+    calls = _serve_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, "M02")
+    run_batch.main()
+    assert len(calls) == 1
+    assert '"probe": "already consumed"' in capsys.readouterr().out
+
+
+def test_serve_mode_fails_closed_without_an_authorized_digest(tmp_path, monkeypatch):
+    batch_path, launcher, _ = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", "sha256:" + "0" * 64)
+    monkeypatch.setenv("DATA_AGENT_API_BASE", "https://example.invalid/v1")
+    monkeypatch.setenv("DATA_AGENT_API_KEY", "sk-test")
+    spawned = []
+    monkeypatch.setattr(run_batch.subprocess, "run",
+                        lambda *args, **kwargs: spawned.append((args, kwargs))
+                        or subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(sys, "argv", [
+        "run_batch", "--root", str(tmp_path), "--batch", str(batch_path),
+        "--launcher", str(launcher), "--authorized", "--serve", "M01",
+    ])
+    with pytest.raises(ValueError, match="authorization mismatch"):
+        run_batch.main()
+    assert spawned == []
+
+
+def test_serve_mode_requires_the_authorization_step_first(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
+    spawned = []
+    monkeypatch.setattr(run_batch.subprocess, "run",
+                        lambda *args, **kwargs: spawned.append((args, kwargs))
+                        or subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(sys, "argv", [
+        "run_batch", "--root", str(tmp_path), "--batch", str(batch_path),
+        "--launcher", str(launcher), "--serve", "M01",
+    ])
+    run_batch.main()
+    assert spawned == []
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["authorize_with"] == "AUTHORIZED_BATCH_SHA256=" + batch_digest
+
+
+def test_serve_mode_archives_leftover_control_dir_for_the_served_case(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    control = _leftover_control(tmp_path)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    monkeypatch.setattr(run_batch, "_pid_running", lambda pid: False)
+    calls = _serve_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, "M01")
+    run_batch.main()
+    assert not control.exists()
+    out = capsys.readouterr().out
+    assert '"archived_control_dir"' in out
+    assert len(calls) == 1 and calls[0]["command"][-1] == "M01"
