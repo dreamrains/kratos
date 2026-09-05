@@ -410,3 +410,18 @@ def main(*, root: Path, batch_path: Path, launcher_path: Path):
     parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()
     run_case(root, batch_path, launcher_path, args.case, preflight_only=args.preflight_only)
+
+
+if __name__ == "__main__":
+    # One-case OS-process entry: ``python -m scripts.acceptance.real_provider_browser_batch``.
+    # The batch runner spawns one of these per frozen case; each child runs its
+    # own preflight and derives every authorized value from the batch digest.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--batch", required=True)
+    parser.add_argument("--launcher", required=True)
+    parser.add_argument("--case", choices=[f"M{i:02d}" for i in range(1, 7)], required=True)
+    parser.add_argument("--preflight-only", action="store_true")
+    _args = parser.parse_args()
+    run_case(Path(_args.root).resolve(), Path(_args.batch), Path(_args.launcher),
+             _args.case, preflight_only=_args.preflight_only)

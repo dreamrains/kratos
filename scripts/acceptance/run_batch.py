@@ -12,9 +12,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 from scripts.acceptance.provider_error_taxonomy import GLOBAL_FATAL_CLASSES, classify_provider_error
-from scripts.acceptance.real_provider_browser_batch import preflight, run_case
+from scripts.acceptance.real_provider_browser_batch import preflight
 from scripts.acceptance.strict_provider_guard import StrictProviderCallGuard
 
 
@@ -51,7 +53,8 @@ def main() -> None:
     parser.add_argument("--authorized", action="store_true")
     args = parser.parse_args()
     root = Path(args.root).resolve()
-    batch, cases, checks = preflight(root, Path(args.batch), Path(args.launcher))
+    batch_path, launcher_path = Path(args.batch).resolve(), Path(args.launcher).resolve()
+    batch, cases, checks = preflight(root, batch_path, launcher_path)
     if not args.authorized:
         print(json.dumps({
             "batch_id": batch["batch_id"],
@@ -65,8 +68,26 @@ def main() -> None:
     print(json.dumps({"probe": probe}, ensure_ascii=False))
     if not probe["ok"]:
         raise SystemExit("probe failed: " + str(probe["error_class"]))
+    # One fresh OS process per frozen case, exactly like the launcher flow:
+    # in-process iteration is impossible because the supervisor gate, the
+    # previous-case exit proof and the ledger's pid-liveness check all assume
+    # each case is a new process.  The child re-runs its own preflight and
+    # derives every per-case value from the same authorized batch digest.
     for entry in batch["cases"]:
-        run_case(root, Path(args.batch), Path(args.launcher), entry["id"])
+        case_id = entry["id"]
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.acceptance.real_provider_browser_batch",
+             "--root", str(root), "--batch", str(batch_path), "--launcher", str(launcher_path),
+             "--case", case_id],
+            cwd=root,
+            env={**os.environ, "AUTHORIZED_BATCH_SHA256": checks["BATCH_SHA256"],
+                 "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1"},
+        )
+        print(json.dumps({"case": case_id, "exit_code": result.returncode}, ensure_ascii=False))
+        if result.returncode != 0:
+            # The batch ledger already records what closed; stop here rather
+            # than spending the remaining frozen case budgets.
+            raise SystemExit(f"case {case_id} failed with exit code {result.returncode}")
 
 
 if __name__ == "__main__":

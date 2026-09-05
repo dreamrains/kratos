@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+
+import pytest
 
 from scripts.acceptance import real_provider_browser_batch as browser_batch
 from scripts.acceptance import run_batch
@@ -120,8 +123,9 @@ def _frozen_batch(tmp_path, monkeypatch):
 def test_main_without_authorized_prints_digest_and_launches_nothing(tmp_path, monkeypatch, capsys):
     batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
     monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
-    launched = []
-    monkeypatch.setattr(run_batch, "run_case", lambda *args, **kwargs: launched.append((args, kwargs)))
+    spawned = []
+    monkeypatch.setattr(run_batch.subprocess, "run",
+                        lambda *args, **kwargs: spawned.append((args, kwargs)) or subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(sys, "argv", [
         "run_batch", "--root", str(tmp_path), "--batch", str(batch_path), "--launcher", str(launcher),
     ])
@@ -130,4 +134,62 @@ def test_main_without_authorized_prints_digest_and_launches_nothing(tmp_path, mo
     assert summary["batch_id"] == "B001"
     assert summary["authorize_with"] == "AUTHORIZED_BATCH_SHA256=" + batch_digest
     assert summary["cases"] == [f"M{i:02d}" for i in range(1, 7)]
-    assert launched == []
+    assert spawned == []
+
+
+def _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results):
+    """Authorized CLI wiring with a counting subprocess.run stub.
+
+    ``results[i]`` is the return code served to the i-th spawned case.
+    """
+    monkeypatch.setenv("AUTHORIZED_BATCH_SHA256", batch_digest)
+    monkeypatch.setenv("DATA_AGENT_API_BASE", "https://example.invalid/v1")
+    monkeypatch.setenv("DATA_AGENT_API_KEY", "sk-test")
+    calls = []
+
+    def fake_run(command, *, cwd, env):
+        calls.append({"command": list(command), "cwd": cwd, "env": dict(env)})
+        return subprocess.CompletedProcess(command, results[len(calls) - 1])
+
+    monkeypatch.setattr(run_batch.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", [
+        "run_batch", "--root", str(tmp_path), "--batch", str(batch_path),
+        "--launcher", str(launcher), "--authorized",
+    ])
+    return calls
+
+
+def test_probe_failure_launches_no_case_subprocess(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": False, "error_class": "quota_exhausted", "global_fatal": True})
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[])
+    with pytest.raises(SystemExit, match="probe failed"):
+        run_batch.main()
+    assert calls == []
+
+
+def test_authorized_loop_spawns_one_subprocess_per_case(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0] * 6)
+    run_batch.main()
+    assert [call["command"][-1] for call in calls] == [f"M{i:02d}" for i in range(1, 7)]
+    first = calls[0]
+    assert first["command"][:3] == [sys.executable, "-m", "scripts.acceptance.real_provider_browser_batch"]
+    assert first["command"][-2:] == ["--case", "M01"]
+    assert first["cwd"] == tmp_path
+    assert first["env"]["AUTHORIZED_BATCH_SHA256"] == batch_digest
+    assert first["env"]["DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED"] == "1"
+    assert '"case": "M01"' in capsys.readouterr().out
+
+
+def test_authorized_loop_stops_at_first_failing_case(tmp_path, monkeypatch, capsys):
+    batch_path, launcher, batch_digest = _frozen_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_batch, "run_probe", lambda *args, **kwargs: {
+        "ok": True, "error_class": None, "global_fatal": False})
+    calls = _authorized_argv(tmp_path, monkeypatch, batch_path, launcher, batch_digest, results=[0, 1])
+    with pytest.raises(SystemExit, match="M02 failed"):
+        run_batch.main()
+    assert [call["command"][-1] for call in calls] == ["M01", "M02"]
