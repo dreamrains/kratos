@@ -79,10 +79,18 @@ def hydrate_hypothesis_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _measurement_direction(measurement: dict[str, Any]) -> str:
-    """Deterministic direction from structured measurement fields."""
+    """Deterministic direction from structured measurement fields.
+
+    Non-finite deltas (NaN/inf) carry no comparable direction and count as
+    unknown, so no relation can be decided from them.
+    """
+    import math
+
     for key in ("delta", "change", "total_change", "pct_change"):
         value = measurement.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if not math.isfinite(value):
+                return "unknown"
             if value > 0:
                 return "increased"
             if value < 0:
@@ -110,34 +118,45 @@ def _validate_relation(
     entry: dict[str, Any],
     hypothesis: dict[str, Any],
     record: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str]:
     """Host-side gate for a model-proposed evidence relation.
 
-    A relation only counts when the referenced metric exists in this
-    evidence, the claimed direction matches the measured direction, and the
-    claim type is decidable from this evidence's method: a descriptive
-    direction never upgrades a causal alternative, and baseline-variation
-    claims need a significance statistic.
+    The relation label is only a proposal. The host decides from the
+    hypothesis's frozen decision rule and this evidence: the metric must be
+    one of the hypothesis's target metrics, the claimed direction must match
+    the measured direction, the claim type must be decidable from this
+    evidence's method, and for a directional ("changed") predicate the label
+    must equal what the measurement implies. A rejected proposal returns
+    (None, reason) and is retained as an undetermined candidate.
     """
     metric = _text(entry.get("metric"))
     observed = _text(entry.get("observed")).lower()
     if not metric or observed not in _OBSERVED_DIRECTIONS:
-        return None
+        return None, "invalid_relation_shape"
+    rule = hypothesis.get("decision_rule") if isinstance(hypothesis.get("decision_rule"), dict) else {}
+    target_metrics = {
+        _text(item) for item in (rule.get("metrics") or []) if _text(item)
+    }
+    if target_metrics and metric not in target_metrics:
+        # Another metric's movement can never decide this hypothesis.
+        return None, "metric_not_target"
     measurements = [
         measurement
         for measurement in (record.get("measurements") or [])
         if isinstance(measurement, dict) and _text(measurement.get("metric")) == metric
     ]
     if not measurements:
-        return None
+        return None, "metric_missing_in_evidence"
     computed = _measurement_direction(measurements[0])
-    if computed == "unknown" or computed != observed:
-        return None
+    if computed == "unknown":
+        return None, "direction_unknown"
+    if computed != observed:
+        return None, "direction_mismatch"
     claim_type = _text(hypothesis.get("claim_type")) or "descriptive"
     if claim_type == "causal":
         method = _text(record.get("method")).lower()
         if method not in _CAUSAL_METHODS:
-            return None
+            return None, "causal_claim_requires_causal_method"
     elif claim_type == "statistical":
         measurement = measurements[0]
         has_statistic = any(
@@ -145,14 +164,21 @@ def _validate_relation(
             for key in ("p_value", "z_score")
         ) or bool(_text(measurement.get("significance")))
         if not has_statistic:
-            return None
+            return None, "baseline_claim_requires_significance"
+    predicate = _text(rule.get("predicate"))
+    if predicate == "changed":
+        # A changed/trend claim: any non-flat comparable delta supports it,
+        # only a flat delta refutes it. The model's label must agree.
+        implied = "supports" if computed in {"increased", "decreased"} else "refutes"
+        if str(entry.get("relation")) != implied:
+            return None, f"relation_predicate_mismatch:changed_implies_{implied}"
     return {
         "evidence_id": _text(record.get("id")),
         "relation": str(entry.get("relation")),
         "metric": metric,
         "observed": observed,
         "basis": f"measurement {metric} delta direction = {observed}",
-    }
+    }, ""
 
 
 def update_hypotheses_from_evidence(
@@ -195,18 +221,30 @@ def update_hypotheses_from_evidence(
             if evidence_id
         ]
         relations = []
+        candidates = []
         for record in scoped:
             for proposal in _relation_proposals(record):
                 if _text(proposal.get("hypothesis_id")) != _text(item.get("id")):
                     continue
-                validated = _validate_relation(proposal, item, record)
+                validated, reason = _validate_relation(proposal, item, record)
                 if validated is not None:
                     relations.append(validated)
+                else:
+                    # A well-formed but rejected proposal stays visible as an
+                    # undetermined candidate with its rejection reason.
+                    candidates.append({
+                        "evidence_id": _text(record.get("id")),
+                        "relation": str(proposal.get("relation") or ""),
+                        "metric": _text(proposal.get("metric")),
+                        "observed": _text(proposal.get("observed")),
+                        "reason": reason,
+                    })
         supporting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "supports"]
         conflicting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "refutes"]
 
         previous_status = _text(item.get("status"))
         item["related_evidence_ids"] = related_ids
+        item["relation_candidates"] = candidates
         item["evidence_relations"] = relations
         # Recomputed from scratch: ids from a previous run never survive on
         # their own.
@@ -424,6 +462,36 @@ def _unsupported_hypothesis(
     )
 
 
+def _decision_rule(
+    claim: str,
+    claim_type: str,
+    tags: list[str],
+    requirements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Frozen, host-computable decision inputs for this hypothesis.
+
+    ``metrics`` are the target metrics this hypothesis is about: a relation
+    on any other metric can never change its state. ``predicate`` states the
+    directional claim where applicable ("changed"): the relation label must
+    match what the measured direction implies, so a model-proposed label
+    alone cannot decide the hypothesis.
+    """
+    metrics = [
+        _text(requirement.get("field"))
+        for requirement in requirements
+        if isinstance(requirement, dict)
+        and requirement.get("kind") in {"metric", "rate_metric"}
+        and requirement.get("required") is True
+        and _text(requirement.get("field"))
+    ]
+    predicate = ""
+    if claim_type == "descriptive" and tags and tags[0] == "primary":
+        claim_lower = claim.lower()
+        if "changed" in claim_lower or "trend" in claim_lower:
+            predicate = "changed"
+    return {"metrics": metrics, "predicate": predicate}
+
+
 def _hypothesis(
     set_id: str,
     index: int,
@@ -436,13 +504,15 @@ def _hypothesis(
     limitations: list[str],
     tags: list[str],
 ) -> dict[str, Any]:
+    claim_type = _TAG_CLAIM_TYPES.get(tags[0], "descriptive") if tags else "descriptive"
     return {
         "id": f"{set_id}_h{index}",
         "dataset": dataset,
         "route": route,
         "claim": claim,
         "status": status,
-        "claim_type": _TAG_CLAIM_TYPES.get(tags[0], "descriptive") if tags else "descriptive",
+        "claim_type": claim_type,
+        "decision_rule": _decision_rule(claim, claim_type, tags, requirements),
         "verification_level": _verification_level(requirements, field_roles),
         "evidence_requirements": requirements,
         "related_evidence_ids": [],

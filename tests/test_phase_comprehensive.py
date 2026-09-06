@@ -487,11 +487,26 @@ class TestPhase3ConfidenceCalibration:
     """Phase 3.3: Confidence calibration in evidence records."""
 
     def test_high_confidence_small_sample_downgraded(self):
+        """P7/R3 拆分：推断类主张的小样本仍降级。"""
         from data_agent.tools.analysis_flow import _calibrate_confidence
-        payload = {"confidence": "high", "sample_size": 10, "limitations": "some"}
+        payload = {
+            "confidence": "high", "sample_size": 10, "limitations": "some",
+            "method": "ab_test",
+        }
         warnings = _calibrate_confidence(payload)
         assert len(warnings) > 0
         assert "不足" in warnings[0] or "30" in warnings[0]
+
+    def test_high_confidence_small_sample_descriptive_not_downgraded(self):
+        """P7/R3 拆分：记录内描述性汇总不因 n<30 机械降级（C01）。"""
+        from data_agent.tools.analysis_flow import _calibrate_confidence
+        payload = {
+            "confidence": "high", "sample_size": 10, "limitations": "some",
+            "method": "descriptive_sum",
+            "claim": "当前 10 条订单记录合计 100。",
+        }
+        warnings = _calibrate_confidence(payload)
+        assert not any("不足30" in w for w in warnings)
 
     def test_high_confidence_non_significant_downgraded(self):
         from data_agent.tools.analysis_flow import _calibrate_confidence
@@ -523,9 +538,9 @@ class TestPhase3ConfidenceCalibration:
         token = set_current_context(ctx)
         try:
             record = json.dumps({
-                "claim": "Test claim",
+                "claim": "两组转化率差异显著",
                 "dataset": "test",
-                "method": "test",
+                "method": "ab_test",
                 "tool_calls": [],
                 "result_summary": "summary",
                 "limitations": "some",
@@ -536,6 +551,22 @@ class TestPhase3ConfidenceCalibration:
             parsed = json.loads(result.to_cli())
             assert parsed.get("confidence_auto_downgraded") is True
             assert parsed.get("original_confidence") == "high"
+
+            descriptive = json.dumps({
+                "claim": "当前 5 条记录合计 42。",
+                "dataset": "test",
+                "method": "descriptive_sum",
+                "tool_calls": [],
+                "result_summary": "sum(amount)=42 over 5 rows",
+                "limitations": "some",
+                "confidence": "high",
+                "sample_size": 5,
+            })
+            descriptive_result = json.loads(
+                registry.execute("record_evidence_record", {"record_json": descriptive}).to_cli()
+            )
+            # C01：记录内精确加总不因 n<30 自动降级
+            assert descriptive_result.get("confidence_auto_downgraded") is not True
         finally:
             reset_current_context(token)
 
@@ -900,7 +931,8 @@ class TestCrossPhaseIntegration:
         ctx.analysis_state = AnalysisSessionState(session_id="test_conf_cal")
         token = set_current_context(ctx)
         try:
-            record = json.dumps({
+            # P7/R3 拆分：未限定范围的“最受欢迎”是总体推断，小样本仍降级
+            unscoped = json.dumps({
                 "claim": "省钱卡月卡是最受欢迎的商品",
                 "dataset": "tiny",
                 "method": "频率统计",
@@ -910,10 +942,26 @@ class TestCrossPhaseIntegration:
                 "confidence": "high",
                 "sample_size": 5,
             })
-            result = registry.execute("record_evidence_record", {"record_json": record})
-            parsed = json.loads(result.to_cli())
-            # Should auto-downgrade due to small sample
+            parsed = json.loads(
+                registry.execute("record_evidence_record", {"record_json": unscoped}).to_cli()
+            )
             assert parsed.get("confidence_auto_downgraded") is True
+
+            # 记录内限定的同类断言是描述性事实：不降级，但保留总体边界提示
+            scoped = json.dumps({
+                "claim": "在这5条记录内，月卡出现3次、占比60%，是这批记录中次数最多的商品",
+                "dataset": "tiny",
+                "method": "频率统计",
+                "tool_calls": [{"name": "preview_data"}],
+                "result_summary": "月卡出现3次，占比60%",
+                "limitations": "样本量极小",
+                "confidence": "high",
+                "sample_size": 5,
+            })
+            scoped_parsed = json.loads(
+                registry.execute("record_evidence_record", {"record_json": scoped}).to_cli()
+            )
+            assert scoped_parsed.get("confidence_auto_downgraded") is not True
         finally:
             reset_current_context(token)
 

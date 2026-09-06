@@ -38,15 +38,29 @@ _INFERENTIAL_METHOD_MARKERS = (
     "显著性", "检验", "forecast", "预测模型", "arima", "wilcoxon", "z检验",
 )
 _INFERENTIAL_STAT_FIELDS = ("significance", "p_value", "confidence_interval", "correlation", "effect_size")
+# An unscoped popularity superlative ("最受欢迎的商品") asserts a population
+# property; scoping wording ("这5条记录内") keeps it a record-level fact.
+_POPULATION_SUPERLATIVES = ("最受欢迎", "最热门", "最畅销", "最流行", "最主流", "大家最爱")
+_RECORD_SCOPE_MARKERS = (
+    "记录内", "样本内", "当前数据", "本表", "已读", "条记录", "这批", "本次导入",
+    "当前筛选", "当前加载", "records", "rows",
+)
+
+
+def _unscoped_population_superlative(claim: str) -> bool:
+    text = str(claim or "")
+    if not any(marker in text for marker in _POPULATION_SUPERLATIVES):
+        return False
+    return not any(marker in text for marker in _RECORD_SCOPE_MARKERS)
 
 
 def _infer_statistical_inference(payload: dict) -> bool:
     """Host-side classification: does this record make an inferential claim?
 
-    Presence of executed test statistics, an inferential method, or
-    significance wording in the claim itself marks the record inferential; a
-    plain descriptive total stays descriptive even when the model never said
-    either way.
+    Presence of executed test statistics, an inferential method, significance
+    wording in the claim itself, or an unscoped population superlative marks
+    the record inferential; a plain descriptive total stays descriptive even
+    when the model never said either way.
     """
     for field in _INFERENTIAL_STAT_FIELDS:
         value = payload.get(field)
@@ -58,7 +72,9 @@ def _infer_statistical_inference(payload: dict) -> bool:
     if any(marker in method for marker in _INFERENTIAL_METHOD_MARKERS):
         return True
     claim = str(payload.get("claim", "")).lower()
-    return any(word in claim for word in ("显著", "significant", "p值", "p-value", "置信区间"))
+    if any(word in claim for word in ("显著", "significant", "p值", "p-value", "置信区间")):
+        return True
+    return _unscoped_population_superlative(claim)
 
 
 def _effective_statistical_inference(payload: dict) -> bool:
@@ -130,13 +146,17 @@ def _auto_generate_limitations(payload: dict) -> list[str]:
         except (ValueError, TypeError):
             pass
 
-    # A descriptive record that words its claim about the whole population
-    # still cannot generalize; keep the scope boundary explicit.
-    if not inferential:
-        claim_text = str(payload.get("claim", ""))
-        if any(marker in claim_text for marker in ("总体", "全部", "所有", "整体市场", "全量", "整体用户")):
-            if not any("总体" in l or "外推" in l for l in limitations):
-                auto.append("记录内描述性结果不能外推到总体；如需总体结论需抽样依据或全量数据")
+    # A record that words its claim about the whole population — explicitly
+    # or via an unscoped superlative — still cannot generalize; keep the
+    # scope boundary explicit.
+    claim_text = str(payload.get("claim", ""))
+    claims_population = any(
+        marker in claim_text
+        for marker in ("总体", "全部", "所有", "整体市场", "全量", "整体用户")
+    ) or _unscoped_population_superlative(claim_text)
+    if claims_population:
+        if not any("总体" in l or "外推" in l for l in limitations):
+            auto.append("记录内描述性结果不能外推到总体；如需总体结论需抽样依据或全量数据")
 
     # Short observation period, judged from a structured window length
     window_days = _observation_window_days(str(payload.get("time_scope", "")))

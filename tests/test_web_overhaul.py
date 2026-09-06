@@ -161,15 +161,38 @@ class TestSessionSorting:
         assert resp.status_code == 200
         assert isinstance(resp.get_json(), list)
 
-    def test_sessions_sorted_by_saved_at_desc(self, sessions):
+    def test_sessions_sorted_by_saved_at_desc(self, client, sessions):
+        """P7/R3：不再因隔离目录空而跳过；用两个合成会话验证排序。"""
         if len(sessions) <= 1:
-            pytest.skip("Need >1 session to verify sorting")
+            sessions = self._seed_two_sessions(client)
         dates = [s.get("saved_at", "") for s in sessions]
         for i in range(len(dates) - 1):
             if dates[i] and dates[i + 1]:
                 assert dates[i] >= dates[i + 1], (
                     f"Sessions not sorted: {dates[i]} should >= {dates[i+1]}"
                 )
+
+    @staticmethod
+    def _seed_two_sessions(client):
+        import json as _json
+
+        from data_agent.config import get_config
+        from data_agent.session.history import save_session
+
+        messages = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好，请上传数据。"},
+        ]
+        for session_id, saved_at in (
+            ("web_overhaul_sort_newer", "2026-09-06 21:00:00"),
+            ("web_overhaul_sort_older", "2026-09-06 20:00:00"),
+        ):
+            save_session(messages, session_id)
+            meta_path = get_config().sessions_resolved / session_id / "meta.json"
+            meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["saved_at"] = saved_at
+            meta_path.write_text(_json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        return client.get("/api/sessions").get_json()
 
 
 class TestTaskListUpdate:
@@ -243,8 +266,18 @@ class TestRewindUI:
         assert "showRewindDialog()" in html
 
     def test_rewind_info_endpoint_exists(self, client, sessions):
+        """P7/R3：不再因隔离目录空而跳过；准备合成会话验证端点。"""
         if not sessions:
-            pytest.skip("Need a session")
+            from data_agent.session.history import save_session
+
+            save_session(
+                [
+                    {"role": "user", "content": "分析数据"},
+                    {"role": "assistant", "content": "结论：收入下降。"},
+                ],
+                "web_overhaul_rewind_probe",
+            )
+            sessions = client.get("/api/sessions").get_json()
         sid = sessions[0]["session_id"]
         resp = client.get(f"/api/sessions/{sid}/rewind-info")
         assert resp.status_code == 200

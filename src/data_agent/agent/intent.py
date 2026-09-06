@@ -61,7 +61,16 @@ class TurnIntent:
 
 # ── Keyword sets for fast path ────────────────────────────
 
-_CHAT_KEYWORDS = ("你好", "hello", "hi", "谢谢", "感谢", "thanks", "thank you")
+_CHAT_KEYWORDS = (
+    "你好", "hello", "hi", "谢谢", "感谢", "thanks", "thank you",
+    # Whole-phrase politeness: stripping bare "谢谢" from "谢谢你的分析"
+    # would leave a noun phrase that hijacks the main task, so the full
+    # polite templates are stripped as units. A real task still survives:
+    # "谢谢，请继续分析收入趋势" strips to a non-empty imperative.
+    "谢谢你的分析", "谢谢您的分析", "感谢你的分析", "感谢您的分析",
+    "谢谢你的帮助", "谢谢您的帮助", "感谢你的帮助", "谢谢你的解释",
+    "辛苦了", "麻烦你了", "多谢了",
+)
 _CONFIRMATION_KEYWORDS = (
     "好的", "明白", "明白了", "了解", "了解了", "知道了", "收到", "ok", "okay",
     "继续", "是的", "对", "没错", "没问题", "可以", "同意", "理解",
@@ -360,7 +369,9 @@ _PUNCT_PATTERN = re.compile(r"[\s，。！!？?~,.;；：:、]+")
 def _is_pure_chat(text: str) -> bool:
     """True only when the input is entirely greeting/thanks/confirmation filler."""
     remainder = text
-    for keyword in (*_CHAT_KEYWORDS, *_CONFIRMATION_KEYWORDS):
+    # Longest first: stripping "谢谢" before "谢谢你的分析" would leave a
+    # noun phrase that looks like an analysis request.
+    for keyword in sorted((*_CHAT_KEYWORDS, *_CONFIRMATION_KEYWORDS), key=len, reverse=True):
         if keyword:
             remainder = remainder.replace(keyword, " ")
     remainder = _PUNCT_PATTERN.sub("", remainder)

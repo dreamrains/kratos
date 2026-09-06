@@ -344,3 +344,51 @@ Provider：未启动真实 Provider；离线入口强制 dummy loopback、网络
 后续顺序：先修 P3 来源绑定与 P5 目标谓词（不把最大上界机械改成最小上界，不靠提示词自律）；修纯礼貌语路由并按描述/推断拆分旧校准用例；新目录重跑新增反例、相关回归及完整 tests；全部必测通过后恢复 B01—B06。详细修复要求、通过标准和重现命令见 P7 执行报告 §7—§8。
 
 本轮新增：P7 执行报告、JSON 收据、`tests/test_value_preservation_p7_boundaries.py`；更新：总计划当前状态、本交接链文档及本节记录。未修改产品源码或既有测试断言；RED 保留，未标 xfail。本节只证明 P7 已开始并被验收门阻断，**不证明已修复**。
+
+
+---
+
+## P7-R：Codex 复核阻断的修复（R1/R2/R3，2026-09-07）
+
+阶段 / 状态：**R1/R2/R3 修复完成，离线全量复跑通过**。本节接在上方 Codex P7 复核记录之后，不改写其内容；B01—B06 浏览器验收仍归 Codex 按交接说明执行。
+
+### R1：发布范围按来源绑定（修复 P7-F01）
+
+- `publication_contract` 新增 `source_dataset`（从工具参数 name/data/dataset/source 提取）；`build_publication_packet` 的每个 `publication_scope` 条目携带 `receipt_id` 与 `source_dataset` 绑定身份。
+- `_extrapolation_issues` 重写为按主张绑定：`_bind_claim_source` 取子句唯一提及的来源（`source_dataset` 名出现在子句中且恰有一个来源命中）；绑定时只按该来源的观测上界判定；未提及或多来源同名命中视为未绑定——未绑定的越界数值主张只能在被**所有**来源观测到时发布，否则以 `unbound_time_point_claim`（缺少来源绑定）进入既有一次受预算修订。不采用 min/max 一刀切。
+- 边界说明、补数行动、条件动作、纯提及的放行逻辑不变（来源无关）。
+
+### R2：假设目标谓词与指标判定（修复 P7-F02）
+
+- 假设模板新增 `decision_rule`（`_decision_rule`）：`metrics`＝该假设的目标指标集（必填 metric/rate_metric 字段）；`predicate`＝"changed"（period_compare/trend 的主假设主张“发生变化/趋势”），由模板主张文本确定性推导。
+- `_validate_relation` 改为返回 `(validated, reason)`：新增目标指标门（`metric_not_target`——其他指标的运动不能判定本假设）与谓词一致性门（`relation_predicate_mismatch`——changed 谓词下非零可比 delta 蕴含 supports、零 delta 蕴含 refutes，模型标签必须一致）；方向门保留且 `_measurement_direction` 拒绝非有限 delta（NaN/inf → unknown）。
+- `update_hypotheses_from_evidence` 将被拒的合法格式提议保留为 `relation_candidates`（含 evidence_id/relation/metric/observed/reason），不强制改写为反向结论。
+- 模型提交 schema（`competing_hypotheses` 逐项校验）与运行时刷新/发布边界刷新路径不变。
+
+### R3：常规回归缺口关闭
+
+- `tests/test_multifile_regressions.py`×3：精确字典断言对齐新投影契约（verified_total/pending_findings 空态），保留“确认信息不进投影、空态无已验证结论”语义并新增 `"confirm" not in` 断言。
+- 纯礼貌语路由：`_CHAT_KEYWORDS` 增加整句礼貌模板（“谢谢你的分析”等 11 条）；`_is_pure_chat` 改为**按长度降序**剥离（短词“谢谢”先消费会残留“你的分析”劫持主任务——“谢谢你的分析”整句剥离后为空 → simple_response；“谢谢，请继续分析收入趋势”剥离后仍有任务 → 分析路由）。
+- 校准旧测试拆分：`test_high_confidence_small_sample_downgraded` 明示推断方法（ab_test）保留降级断言＋新增描述性加总不降级负例；`test_record_evidence_auto_downgrades` 改为推断性主张（显著性措辞＋ab_test）＋同测试内描述性不降级对照；真实数据“最受欢迎商品”拆为未限定（总体推断→降级）与“在这5条记录内”（描述性→不降级）两支。
+- 宿主侧配套：`analysis_flow` 新增 `_unscoped_population_superlative`（未限定范围的“最受欢迎/最热门”类最优断言视为总体推断；含“记录内/样本内/这批”等限定词则保持描述性）；总体边界自动限制同时覆盖显式总体措辞与未限定最优断言。
+- `tests/test_web_overhaul.py`×2：不再跳过——排序测试种子两个合成会话并把旧会话 `saved_at` 显式改早以真实检验倒序；rewind-info 测试种子一个合成会话后断言 200。
+
+### 验证结果（全部新 run-dir）
+
+- Codex oracle（`tests/test_value_preservation_p7_boundaries.py` 原 9 例）＋R1/R2 补充反例（新增 10 例：交换顺序×2、未指明来源、混合边界预测、同名不同范围、NaN/inf delta、候选保留原因×3、因果证据不足）：`tmp/vp-p7r-boundaries-final` → **19 passed / 0 failed**。
+- 原失败模块＋关联面（multifile_regressions、phase_comprehensive、web_overhaul、boundaries、publication、hypotheses、verification、intent）：`tmp/vp-p7r-r3-check2` → **446 passed / 0 failed**（原 2 个跳过项实际运行）。
+- 完整离线回归：`tmp/vp-p7r-full-offline` → **2509 tests / 0 failures / 0 errors / 1 skipped**（JUnit sha256 前缀 `d7a495bbfe19752c`；唯一跳过为按离线边界禁用的真实 Provider live smoke）。对照修复前：2478/7/3＋边界 5/4。
+
+### 剩余边界（不变）
+
+- B01—B06（L3 浏览器）与 U05—U08 仍 `blocked_not_started`，归 Codex 按交接说明执行；修复后的发布边界与假设判定应作为 B02/B03/B04 的重点核对项。
+- P8 未启动，无新授权。
+- 本轮改动仍未提交（同 P1—P6，提交等待授权）。
+
+本轮修改文件：`src/data_agent/agent/publication_synthesis.py`、`src/data_agent/agent/hypotheses.py`、`src/data_agent/agent/intent.py`、`src/data_agent/tools/analysis_flow.py`；`tests/test_publication_synthesis.py`（N06 夹具带来源身份＋B 存在时 A 仍拒绝的反例）、`tests/test_value_preservation_p7_boundaries.py`（补充反例）、`tests/test_multifile_regressions.py`、`tests/test_phase_comprehensive.py`、`tests/test_web_overhaul.py`。
+
+---
+
+## 提交记录
+
+- 2026-09-07：P0—P6 与 P7-R 的全部改动（产品源码、测试、文档）经用户授权提交至分支 `vp-analysis-value`；A06 矩阵未跟踪产物与 tmp/ 运行收据不纳入。此后用户已授予持续性提交授权（推送/部署仍需单独授权）。

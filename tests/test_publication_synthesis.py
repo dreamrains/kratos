@@ -312,7 +312,10 @@ def _receipt_with_args(tool_name, receipt_id, data, args=None):
 
 def _retention_packet(extra_receipts=(), substantive=None):
     state = AnalysisSessionState(session_id="n_series_packet")
-    state.add_tool_receipt(_receipt_with_args("curve_fitting", "tr_ret", _retention_curve_data()))
+    # P7-F01/R1：曲线来源必须携带 dataset 身份，主张按来源绑定范围检查。
+    state.add_tool_receipt(_receipt_with_args(
+        "curve_fitting", "tr_ret", _retention_curve_data(), args={"name": "渠道 A"},
+    ))
     for receipt in extra_receipts:
         state.add_tool_receipt(receipt)
     return build_publication_packet(
@@ -372,9 +375,23 @@ class TestNSeriesPublication:
 
     def test_n06_other_source_with_valid_d30_not_blocked(self):
         packet = _retention_packet(extra_receipts=[
-            _receipt_with_args("curve_fitting", "tr_wide", _retention_curve_data(max_day=30)),
+            _receipt_with_args(
+                "curve_fitting", "tr_wide", _retention_curve_data(max_day=30),
+                args={"name": "渠道 B"},
+            ),
         ])
         assert validate_final_narrative("渠道 B 的 D30 留存为 8%。", packet) is None
+
+    def test_n06_a_extrapolation_still_blocked_when_b_present(self):
+        packet = _retention_packet(extra_receipts=[
+            _receipt_with_args(
+                "curve_fitting", "tr_wide", _retention_curve_data(max_day=30),
+                args={"name": "渠道 B"},
+            ),
+        ])
+        # B 的观测不能授权 A 的外推（P7-F01 反例）
+        error = validate_final_narrative("渠道 A 的 D30 留存预计为 5%。", packet)
+        assert error is not None
 
     def test_n06_a_scope_still_blocks_when_b_absent(self):
         packet = _retention_packet()

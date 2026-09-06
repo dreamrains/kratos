@@ -45,6 +45,15 @@ def _inference_subjects(args: dict) -> list[str] | None:
     return subjects or None
 
 
+def _source_dataset(args: dict) -> str:
+    """Dataset identity of the tool execution, for per-claim source binding."""
+    for key in ("name", "data", "dataset", "source", "save_as", "other_name"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.split())
+    return ""
+
+
 def _inference_performed(tool: str, data: dict) -> bool:
     """Did this exact tool execution produce a statistical inference?"""
     if tool == "ab_test":
@@ -62,6 +71,7 @@ def publication_contract(tool: str, result: dict | None, args: dict | None = Non
     """Carry calculation scope separately from selected, abbreviated facts."""
     data = result if isinstance(result, dict) else {}
     contract = {"schema_version": "publication_scope.v1", "tool": tool,
+                "source_dataset": _source_dataset(args if isinstance(args, dict) else {}),
                 "inference_performed": _inference_performed(tool, data),
                 "analysis_unit": data.get("analysis_unit", "not_reported"),
                 "unit_status": data.get("unit_status", "not_confirmed"),
@@ -387,7 +397,21 @@ def build_publication_packet(
         "evidence": evidence,
         "omitted_refs": omitted_refs,
         "coverage": coverage_rows + missing_rows,
-        "publication_scope": [receipt["publication_contract"] for receipt in eligible if receipt.get("publication_contract")],
+        "publication_scope": [
+            {
+                **receipt["publication_contract"],
+                "receipt_id": str(receipt.get("id") or ""),
+                # Binding for per-claim source checks: a curve range belongs to
+                # this dataset/receipt, never to every source in the turn.
+                "source_dataset": str(
+                    (receipt.get("publication_contract") or {}).get("source_dataset")
+                    or (receipt.get("dataset_refs") or [""])[0]
+                    or ""
+                ),
+            }
+            for receipt in eligible
+            if receipt.get("publication_contract")
+        ],
         "limitations": _collect_limitations(sources, evidence),
     }
 
@@ -491,6 +515,23 @@ def _curve_interpretation_issues(text: str, scopes: list[dict]) -> list[dict[str
     return []
 
 
+def _bind_claim_source(clause: str, curve_scopes: list[dict]) -> dict | None:
+    """The single source this claim names, or None when ambiguous.
+
+    A clause that mentions exactly one source's dataset binds to it. No
+    mention, or mentions of several sources, leaves the claim unbound — an
+    unbound claim may only use a point every source observed.
+    """
+    named: list[dict] = []
+    for scope in curve_scopes:
+        name = str(scope.get("source_dataset") or "").strip()
+        if name and name in clause:
+            named.append(scope)
+    if len(named) == 1:
+        return named[0]
+    return None
+
+
 def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
     curve_scopes = [
         scope for scope in scopes
@@ -500,13 +541,9 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
     ]
     if not curve_scopes:
         return []
-    # Multi-source: a point observed by ANY source is a legal fact for that
-    # source; only points beyond every observed range are unsupported here.
-    upper = max(float(scope["observed_x_range"][1]) for scope in curve_scopes)
     for clause in _split_claims(text):
         for match in _TIME_POINT.finditer(clause):
-            if float(match.group(1)) <= upper:
-                continue
+            value = float(match.group(1))
             prefix = clause[:match.start()]
             suffix = clause[match.start():]
             asserts_value = bool(_ASSERTS_VALUE.search(suffix))
@@ -519,10 +556,33 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
                 # Conditional actions and bare mentions without a value or a
                 # prediction verb are not extrapolated claims.
                 continue
+
+            # Source-bound range check: one source's observation never
+            # authorizes another source's out-of-range point.
+            bound = _bind_claim_source(clause, curve_scopes)
+            if bound is not None:
+                if value <= float(bound["observed_x_range"][1]):
+                    continue
+                return [{
+                    "code": "extrapolated_time_point",
+                    "span": clause.strip()[:80],
+                    "reason": (
+                        "正文包含该来源观测区间外的时间点数值或预测；"
+                        "该来源的拟合只支持其观测范围，不能发布外推。"
+                    ),
+                }]
+            # Unbound claim: only publishable when every source observed the
+            # point; otherwise it lacks a source binding and goes through the
+            # bounded revision instead of riding the widest range.
+            if all(value <= float(scope["observed_x_range"][1]) for scope in curve_scopes):
+                continue
             return [{
-                "code": "extrapolated_time_point",
+                "code": "unbound_time_point_claim",
                 "span": clause.strip()[:80],
-                "reason": "正文包含观测区间外的时间点数值或预测；当前拟合只支持观测范围，不能发布外推。",
+                "reason": (
+                    "时间点数值主张未绑定到具体来源，且不是所有来源都观测到该点，不能发布外推；"
+                    "请指明来源，或仅发布已观察来源的数值与边界。"
+                ),
             }]
     return []
 
