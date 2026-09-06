@@ -397,23 +397,29 @@ Provider：未启动真实 Provider；离线入口强制 dummy loopback、网络
 
 ## L3 执行记录（Codex，2026-09-07）
 
-阶段 / 状态：**running**。本节只记录当前源码的本地真实浏览器演练；不把已观察到的单场景结果外推为 P7 通过，也不改变 P8 未授权、未启动的结论。
+阶段 / 状态：**failed**。B01—B06 已在本地真实浏览器完成；B03、B04 与 B06 未满足交接中的必过断言。因此不形成 P7 本地候选，也不改变 P8 未授权、未启动的结论。
 
 ### 隔离与运行身份
 
-- 当前源码：`b06bf2c047984c752bc5e7f0073b4ce23137dbb0`（`vp-analysis-value`）；运行器为 `scripts/testing/run_p7_browser_rehearsal.py`。它通过普通 Flask Web、SSE、`AgentLoop`、真实工具、会话持久化和页面刷新执行；仅模型响应为脚本化。
-- 当前有效收据：`tmp/p7-browser-rehearsal-05`，会话 `a40afed3b233`。环境设置 loopback `API_BASE`、禁用网络/MCP/skill 自动发现，并将主模型与 `llm_intent`、`llm_playbook`、`quality_judge` 的懒加载客户端全部替换为同一脚本化客户端。
-- Provider 账本：`runtime.jsonl` 的 `forbidden_provider_transport=0`。此前运行器仅拦截主客户端，三个辅助模块仍会尝试构造默认客户端；该发现不计入验收，修复后才开始本节的有效 B01。
+- 源码基线：`c30720d7f9cd4ae70470a6100b87e38a258ece4b`（`vp-analysis-value`）；运行器为 `scripts/testing/run_p7_browser_rehearsal.py`。它经普通 Flask Web、SSE、`AgentLoop`、真实工具、会话持久化、Workbench 投影、页面刷新与导出执行；仅模型响应为脚本化。
+- 所有有效 run-dir 使用 loopback `API_BASE`、禁用网络/MCP/skill 自动发现，并将主模型与 `llm_intent`、`llm_playbook`、`quality_judge` 的懒加载客户端统一替换为脚本化客户端。每份有效 `runtime.jsonl` 的 `forbidden_provider_transport=0`；没有真实 Provider 调用。
+- 运行器为浏览器覆盖补充了 B03 六来源夹具、B04 结构化支持/反证夹具、B05 两种表达切换和 B06 工具/预算场景。未替换 `validate_final_narrative`、持久化、Workbench 投影或 SSE 消费链。
 
 ### 当前场景矩阵
 
 | 场景 | 状态 | 已有可核验事实 | 尚缺通过条件 |
 |---|---|---|---|
-| B01 | running | 浏览器输入中文建议请求后可见“12 条订单金额合计为 120”、条件建议、停止条件和范围限制；刷新后原文可恢复。状态文件含 `load_data`、`transform_data`、`record_evidence_record` 三个真实收据，以及 1 条证据、1 份验证报告、1 组假设。 | Workbench UI 与正文一致性的浏览器断言、导出核对、截图和逐项 assertion 收据。 |
-| B02 | passed | 有效收据 `tmp/p7-browser-rehearsal-07`、会话 `e908e8895ba5`：页面发布 D7=10%、不能预测 D30 与补数建议；越界候选只留作带 `publication_rejected=true` 的内部修订上下文，页面不可见。2 个 curve 收据、2 个 publication packet，`forbidden_provider_transport=0`。浏览器触发回复导出；会话 Markdown 导出不含越界候选，含两条合规边界回复。 | 无。 |
-| B03 | not_started | 早期脚本在页面触发 6 次加载和 6 次聚合，且 early tool output 已真实落盘后压缩；同样不计入。 | 当前零调用运行器下核对 6 个发布包来源、第四组配对事实、omitted refs、展开和导出。 |
-| B04 | not_started | 无。 | 完成 supported → contested → stale、待验证区折叠和刷新断言。 |
-| B05 | not_started | 早期页面曾显示业务/分析师/管理层三种表达；同样不计入。 | 当前零调用运行器下重跑三轮事实/范围/限制/证据等级不变断言。 |
-| B06 | not_started | 无。 | 按工具/保存/修订/预算/确认五类故障分别取真实生命周期收据。 |
+| B01 | passed | `tmp/p7-browser-rehearsal-08`、会话 `61190a2fd893`：页面和 Workbench 的已验证结论均为当前 12 条订单金额合计 120；正文保留条件建议、停止条件和“不能外推”限制。刷新后内容仍在；浏览器回复 Markdown 导出保留同一安全正文。状态含 1 条证据、1 份验证报告、1 个假设集，Provider 账本为 0。 | 无。 |
+| B02 | passed | `tmp/p7-browser-rehearsal-07`、会话 `e908e8895ba5`：页面发布 D7=10%、不能预测 D30 与补数建议；越界候选只留作带 `publication_rejected=true` 的内部修订上下文，页面不可见。2 个 curve 收据、2 个 publication packet，浏览器触发回复导出；会话 Markdown 导出不含越界候选。 | 无。 |
+| B03 | failed | `tmp/p7-browser-rehearsal-10`、会话 `d0f73be7450d`：12 条工具收据覆盖六个来源，发布包的 `publication_scope` 有六个 source dataset，`omitted_refs=0`，早期压缩输出可在内容寻址文件恢复。 | 浏览器“产出物”显示“暂无产出物”，会话 Markdown 导出仅含对话，不含六来源、收据或 `omitted_refs`；因此“展开/导出完整”失败。 |
+| B04 | failed | `tmp/p7-browser-rehearsal-15`、会话 `0e8eb079bd2e`：浏览器先显示结构化支持，再显示反证；持久化假设从 `supported` 转为 `contested`，并保留 supports/refutes 证据。 | 当前 UI 没有“清空证据但保留假设”的生命周期操作；现有 reset 会同时删除证据与 hypothesis set，不能获得要求的 `stale` 状态或刷新收据。 |
+| B05 | passed | `tmp/p7-browser-rehearsal-10`、会话 `5a9b99cc0b78` 与 `tmp/p7-browser-rehearsal-11`、会话 `51ed1cf6d685`：业务、分析师、管理层表达分别变化，120、12 条、范围与不可外推限制保持一致；“大白话”当轮生效，下一轮技术表达恢复 `f_sales_total`、`group_aggregate` 与 `amount_sum=120`。刷新后连续对话仍在。 | 无。 |
+| B06 | failed | 新的独立运行 `tmp/p7-browser-rehearsal-19`（旧 B06 额度中断结果作废）：工具失败会话 `d4e29d2fa1ca` 页面明确提示未找到数据集且未发布计算结论，状态没有 publication packet；Provider 账本为 0。 | 预算会话 `b96b85e8c94a` 真实执行了 206 次非元工具调用、产生 206 条真实收据，未产生 `budget_exceeded` 收据且未阻止调用。页面的“已触及预算”来自脚本化最终文本，不能视为守卫生效。保存失败、发布修订失败、pending confirmation 尚未获得同一 B06 生命周期收据；预算断言失败时不应补作通过。 |
 
-继续条件：已满足。P7-R 离线门通过，B01 的有效零调用基线也已建立；下一步应从 B02 开始，逐场景在新的隔离 run-dir 记录完整 browser assertion。P8 仍需要 B01—B06 全部通过、冻结与用户的新的真实 Provider 授权，当前不得启动。
+### 后续修复范围
+
+1. B03：让“产出物”与 Markdown 导出保留可展开的发布包来源、收据引用及 `omitted_refs`，并补浏览器回归。
+2. B04：提供证据失效而假设保留的真实生命周期操作，使 `stale` 可在页面、刷新和持久化中验证。
+3. B06：修复同一轮 `TurnExecutionState` 的工具预算守卫，先用浏览器验证真实 `budget_exceeded` 和无后续工具执行，再分别补保存失败、发布修订失败与 pending confirmation 收据。
+
+P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider 授权，当前不得启动。

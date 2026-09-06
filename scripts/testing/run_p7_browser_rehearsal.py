@@ -60,11 +60,24 @@ def _write_fixtures(run_dir: Path) -> None:
         ["day", "retention"],
         [[day, value] for day, value in enumerate((0.55, 0.42, 0.31, 0.24, 0.18, 0.13, 0.10), 1)],
     )
+    _write_csv(
+        inbox / "F-HYP.csv",
+        ["date", "amount"],
+        [["2026-09-01", 10], ["2026-09-02", 20]],
+    )
+    _write_csv(
+        inbox / "F-HYP-FLAT.csv",
+        ["date", "amount"],
+        [["2026-09-01", 10], ["2026-09-02", 10]],
+    )
     for number in range(1, 7):
         _write_csv(
             inbox / f"F-SRC{number}.csv",
-            ["source", "amount"],
-            [[f"source_{number}", number * 10], [f"source_{number}", number * 10]],
+            ["source", "date", "amount"],
+            [
+                [f"source_{number}", "2026-09-01", number * 10],
+                [f"source_{number}", "2026-09-02", number * 11],
+            ],
         )
 
 
@@ -104,6 +117,64 @@ class ScriptedClient:
             if message.get("role") == "user":
                 return str(message.get("content") or "")
         return ""
+
+    @staticmethod
+    def _current_hypothesis() -> tuple[str, str, str]:
+        """Read the persisted production hypothesis artifact for B04 relations."""
+        from data_agent.agent.context import get_current_context
+
+        state = get_current_context().analysis_state
+        plan_id = str((state.analysis_plan or {}).get("id") or "")
+        contract_id = next(
+            (str(item.get("id") or "") for item in state.dataset_contracts if str(item.get("dataset") or "") == "hyp"),
+            "",
+        )
+        for ref in state.hypothesis_sets:
+            if str(ref.get("dataset") or "") != "hyp":
+                continue
+            payload = json.loads(Path(str(ref["artifact_path"])).read_text(encoding="utf-8"))
+            hypotheses = payload.get("hypotheses") or []
+            if hypotheses:
+                return str(hypotheses[0]["id"]), plan_id, contract_id
+        raise RuntimeError("B04 requires a persisted hypothesis set for dataset hyp")
+
+    @classmethod
+    def _hypothesis_evidence(cls, relation: str, observed: str, delta: int) -> dict[str, Any]:
+        hypothesis_id, plan_id, contract_id = cls._current_hypothesis()
+        return {
+            "plan_id": plan_id,
+            "step_id": "period_compare_amount",
+            "claim_key": f"b04_{relation}_{observed}",
+            "claim": "amount changed between the compared periods in hyp.",
+            "dataset": "hyp",
+            "dataset_contract_id": contract_id,
+            "method": "compare_periods",
+            "tool_calls": ["compare_periods"],
+            "result_summary": f"amount delta={delta} in the compared periods.",
+            "limitations": ["descriptive comparison only"],
+            "confidence": "medium",
+            "sample_size": 2,
+            "evidence_requirement": "amount",
+            "measurements": [{
+                "metric": "amount",
+                "definition": "amount aggregated per period",
+                "value": max(abs(delta), 1),
+                "unit": "currency",
+                "grain": "period",
+                "population_scope": "all records",
+                "time_scope": "2026-09",
+                "method": "compare_periods",
+                "denominator": "period days",
+                "limitations": ["descriptive comparison only"],
+                "delta": delta,
+            }],
+            "competing_hypotheses": [{
+                "hypothesis_id": hypothesis_id,
+                "relation": relation,
+                "metric": "amount",
+                "observed": observed,
+            }],
+        }
 
     @staticmethod
     def _response(text: str = "", calls: list[tuple[str, dict]] | None = None):
@@ -176,14 +247,19 @@ class ScriptedClient:
                 for number in range(1, 7):
                     name = f"src_{number}"
                     calls.append(("load_data", {"source": f"F-SRC{number}.csv", "name": name}))
+                return self._response(calls=calls)
+            if step == 1:
+                calls = []
+                for number in range(1, 7):
+                    name = f"src_{number}"
                     calls.append((
-                        "transform_data",
+                        "compare_periods",
                         {
                             "name": name,
-                            "operation": "group_aggregate",
-                            "group_by": ["source"],
-                            "aggregations": [{"column": "amount", "functions": ["sum", "count"]}],
-                            "save_as": f"{name}_total",
+                            "date_col": "date",
+                            "metrics": "amount",
+                            "period_a": "2026-09-01~2026-09-01",
+                            "period_b": "2026-09-02~2026-09-02",
                         },
                     ))
                 return self._response(calls=calls)
@@ -191,12 +267,75 @@ class ScriptedClient:
                 "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
             )
 
+        if marker == "B04":
+            compare = {
+                "name": "hyp", "date_col": "date", "metrics": "amount",
+                "period_a": "2026-09-01~2026-09-01", "period_b": "2026-09-02~2026-09-02",
+            }
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-HYP.csv", "name": "hyp"})])
+            if step == 1:
+                return self._response(calls=[("compare_periods", compare)])
+            if step == 2:
+                return self._response(calls=[("record_evidence_record", {"record_json": {
+                    "claim": "amount changed between the compared periods in hyp.",
+                    "dataset": "hyp",
+                    "method": "compare_periods",
+                    "tool_calls": ["compare_periods"],
+                    "result_summary": "amount increased from 10 to 20 in the compared periods.",
+                    "limitations": "descriptive comparison only",
+                    "confidence": "medium",
+                }})])
+            if step == 3:
+                return self._response("已创建竞争假设，当前仍待结构化证据区分。")
+            if step == 4:
+                return self._response(calls=[("compare_periods", compare)])
+            if step == 5:
+                return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("supports", "increased", 10)})])
+            if step == 6:
+                return self._response("结构化支持证据已记录。")
+            if step == 7:
+                return self._response(calls=[("load_data", {"source": "F-HYP-FLAT.csv", "name": "hyp"})])
+            if step == 8:
+                return self._response(calls=[("compare_periods", compare)])
+            if step == 9:
+                return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("refutes", "flat", 0)})])
+            return self._response("结构化反证已记录；竞争解释保持未决。")
+
         if marker == "B05-BUSINESS":
             return self._response("面向业务：当前 12 条订单金额合计为 120。下周若低于 120，先检查渠道投放；该结论仅覆盖当前记录，不能外推总体。")
         if marker == "B05-ANALYST":
             return self._response("面向分析师：f_sales_total 经 group_aggregate 得到 amount_sum=120、amount_count=12；范围为当前 12 条订单，不能外推总体。")
         if marker == "B05-MANAGER":
             return self._response("面向管理层：当前样本的订单金额为 120（12 条）。下周低于 120 时复核投放；该结果仅适用于当前样本，不能外推总体。")
+        if marker == "B05-PLAIN":
+            return self._response("大白话：这 12 笔订单一共是 120。下周低于 120 就先查投放；这只说明眼前这批记录，不能代表全部订单。")
+        if marker == "B05-TECH":
+            return self._response("分析表达：f_sales_total 经 group_aggregate 得到 amount_sum=120、amount_count=12；该描述性结果仅覆盖当前 12 条订单，不能外推总体。")
+        if marker == "B06-TOOL":
+            if step == 0:
+                return self._response(calls=[("transform_data", {
+                    "name": "missing_dataset", "operation": "group_aggregate",
+                    "group_by": ["channel"], "aggregations": [{"column": "amount", "functions": ["sum"]}],
+                    "save_as": "never_created",
+                })])
+            return self._response("工具未能找到所需数据集，未发布计算结论；请先加载可用数据后再分析。")
+        if marker == "B06-BUDGET":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "budget_sales"})])
+            if step == 1:
+                calls = []
+                # This scenario is classified as a comprehensive report, whose
+                # production budget profile permits 200 non-meta tool calls.
+                # Send one more than the remaining allowance so AgentLoop itself
+                # must raise BudgetExceeded; do not simulate that outcome here.
+                for number in range(1, 206):
+                    calls.append(("transform_data", {
+                        "name": "budget_sales", "operation": "group_aggregate", "group_by": ["channel"],
+                        "aggregations": [{"column": "amount", "functions": ["sum"]}], "save_as": f"budget_{number}",
+                    }))
+                return self._response(calls=calls)
+            return self._response("已触及工具调用预算，停止继续调用并保留当前可验证状态。")
         return self._response("演练脚本未识别当前场景标记。")
 
     def stream_chat_structured(self, messages, tools=None, system=None):
@@ -210,7 +349,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|05-BUSINESS|05-ANALYST|05-MANAGER))】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-BUDGET))】",
                 str(message.get("content") or ""),
             )
             if found:
