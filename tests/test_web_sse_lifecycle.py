@@ -182,7 +182,7 @@ async function chunkedSSEPreservesEventStateAndFlushesEOF() {
   const app = makeApp();
   app.loadTrustView = async () => {};
   const state = app._emptySessionState();
-  const turn = { role: 'assistant', content: '', isThinking: true, toolCalls: [], artifacts: [] };
+  const turn = { role: 'assistant', content: '', isThinking: true, isResponding: true, toolCalls: [], artifacts: [] };
   const eventTypes = [];
   const originalHandleEvent = app._handleEvent.bind(app);
   app.currentSessionId = 'session-a';
@@ -206,6 +206,7 @@ async function chunkedSSEPreservesEventStateAndFlushesEOF() {
   assert.deepStrictEqual(eventTypes, ['turn_start', 'text_delta', 'turn_end']);
   assert.strictEqual(turn.content, '分块完成');
   assert.strictEqual(turn.isThinking, false);
+  assert.strictEqual(turn.isResponding, false);
 }
 
 async function switchingSessionDoesNotProjectBackgroundCompletion() {

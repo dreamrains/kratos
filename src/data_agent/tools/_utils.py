@@ -89,6 +89,14 @@ def validate_pandas_expr(expr: str) -> str | None:
     return None
 
 
+# run_python 沙盒中允许导入的纯计算模块。白名单之外一律拒绝，避免
+# “不是危险模块”被误解为“可以导入任意模块”。
+_SANDBOX_SAFE_IMPORTS = frozenset({
+    'pandas', 'numpy', 'datetime', 'calendar', 'math', 'statistics',
+    'decimal', 'fractions',
+})
+
+
 # run_python 沙盒中禁止导入的模块
 _DANGEROUS_IMPORTS = frozenset({
     'os', 'sys', 'subprocess', 'shutil', 'socket', 'http',
@@ -138,11 +146,12 @@ def validate_python_code(code: str) -> str | None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 module = alias.name.split('.')[0]
-                if module in _DANGEROUS_IMPORTS:
-                    return f"不允许导入: {alias.name}"
+                if module in _DANGEROUS_IMPORTS or module not in _SANDBOX_SAFE_IMPORTS:
+                    return f"不允许导入: {alias.name}；可用模块: {', '.join(sorted(_SANDBOX_SAFE_IMPORTS))}"
         elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split('.')[0] in _DANGEROUS_IMPORTS:
-                return f"不允许导入: {node.module}"
+            module = node.module.split('.')[0] if node.module else ''
+            if node.level or module in _DANGEROUS_IMPORTS or module not in _SANDBOX_SAFE_IMPORTS:
+                return f"不允许导入: {node.module or 'relative import'}；可用模块: {', '.join(sorted(_SANDBOX_SAFE_IMPORTS))}"
 
         # 检查函数调用
         if isinstance(node, ast.Call):

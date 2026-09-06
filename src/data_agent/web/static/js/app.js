@@ -209,12 +209,14 @@ function chatApp() {
                     artifacts: [],
                     confirmation: null,
                     isThinking: false,
+                    isResponding: false,
                     thinkingText: '',
                     _copied: false,
                 };
                 state.turns.push(turn);
             }
             turn.isThinking = false;
+            turn.isResponding = false;
             turn.confirmation = confirmation;
         },
 
@@ -290,7 +292,7 @@ function chatApp() {
         get taskProgress() {
             const active = this.activeTasks;
             const done = active.filter(t => t.status === 'completed').length;
-            return `已完成 ${done}/${active.length}（不代表分析通过）`;
+            return `任务进度 ${done}/${active.length}`;
         },
 
         get analysisSummary() {
@@ -1580,7 +1582,7 @@ function chatApp() {
             state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) + 1 });
             state.turns.push({
                 role: 'assistant', content: '', toolCalls: [], artifacts: [],
-                confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
+                confirmation: null, isThinking: true, isResponding: true, thinkingText: '思考中...', _copied: false,
             });
             const turn = state.turns[state.turns.length - 1];
 
@@ -1632,6 +1634,7 @@ function chatApp() {
                 completedSessionId = await this._processSSE(response, turn, state, effectiveSessionId) || effectiveSessionId;
             } catch (e) {
                 turn.isThinking = false;
+                if (!['running', 'cancelling'].includes(state.runStatus)) turn.isResponding = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 this.connectionError = e.message;
             } finally {
@@ -1812,7 +1815,7 @@ function chatApp() {
                 });
                 state.turns.push({
                     role: 'assistant', content: '', toolCalls: [], artifacts: [],
-                    confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
+                    confirmation: null, isThinking: true, isResponding: true, thinkingText: '恢复中...', _copied: false,
                 });
                 newTurn = state.turns[state.turns.length - 1];
                 this.turns = [...state.turns];
@@ -1822,6 +1825,7 @@ function chatApp() {
                 const last = state.turns[state.turns.length - 1];
                 if (last) {
                     last.isThinking = false;
+                    if (!['running', 'cancelling'].includes(state.runStatus)) last.isResponding = false;
                     last.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 }
                 if (this.currentSessionId === sseSessionId) {
@@ -1933,6 +1937,8 @@ function chatApp() {
             if (run.turn_id) state.runId = run.turn_id;
             state.runStatus = run.status || 'idle';
             state.isLoading = ['running', 'cancelling'].includes(state.runStatus);
+            const activeTurn = state.turns[state.turns.length - 1];
+            if (activeTurn?.role === 'assistant') activeTurn.isResponding = state.isLoading;
             const notice = run.notice || ({
                 failed: '**执行失败：** 本轮分析未完成。',
                 cancelled: '**已停止：** 本轮执行已取消，未完成的分析不代表有效结论。',
@@ -1946,7 +1952,7 @@ function chatApp() {
             if (!notice) return;
             let turn = state.turns[state.turns.length - 1];
             if (!turn || turn.role !== 'assistant') {
-                turn = {role: 'assistant', content: '', toolCalls: [], artifacts: [], confirmation: null, isThinking: false};
+                turn = {role: 'assistant', content: '', toolCalls: [], artifacts: [], confirmation: null, isThinking: false, isResponding: false};
                 state.turns.push(turn);
             }
             if (!turn.content.includes(notice)) {
@@ -2585,6 +2591,7 @@ function chatApp() {
 
             switch (type) {
                 case 'turn_start':
+                    turn.isResponding = true;
                     state.runId = data.turn_id || null;
                     if (data.session_id && sessionId === '_pending_') {
                         // Migrate _pending_ state to real session ID
@@ -2607,6 +2614,7 @@ function chatApp() {
                     }
                     break;
                 case 'llm_call_start':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = this._thinkingStates[0];
                     this._startThinkingCycle(turn);
@@ -2617,6 +2625,7 @@ function chatApp() {
                     }
                     break;
                 case 'text_delta':
+                    turn.isResponding = true;
                     turn.isThinking = false;
                     turn.content = (turn.content || '') + data.text;
                     if (isCurrentSession) {
@@ -2624,6 +2633,7 @@ function chatApp() {
                     }
                     break;
                 case 'tool_call':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = `正在执行 ${data.name}...`;
                     state.activeSteps.push({
@@ -2633,6 +2643,7 @@ function chatApp() {
                     });
                     break;
                 case 'tool_result':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = '处理结果中...';
                     const step = state.activeSteps.find(s => s.tool_call_id === data.tool_call_id);
@@ -2658,6 +2669,7 @@ function chatApp() {
                     break;
                 case 'suspended':
                     turn.isThinking = false;
+                    turn.isResponding = false;
                     turn.confirmation = this._confirmationFromPayload({
                         confirmation_id: data.confirmation_id || data.suspension_id,
                         version: data.version || 1,
@@ -2678,6 +2690,7 @@ function chatApp() {
                     break;
                 case 'turn_end':
                     turn.isThinking = false;
+                    turn.isResponding = false;
                     if (data.reply_id && typeof data.reply_content === 'string') {
                         turn.replyId = data.reply_id;
                         turn.content = data.reply_content;
@@ -2762,7 +2775,7 @@ function chatApp() {
                             role: 'assistant', content: newContent,
                             replyId: msg.reply_id || null,
                             toolCalls: [], artifacts: [], confirmation: null,
-                            isThinking: false, _copied: false,
+                            isThinking: false, isResponding: false, _copied: false,
                         };
                     }
                 } else if (msg.role === 'tool' && currentAssistant) {

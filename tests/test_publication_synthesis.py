@@ -128,7 +128,7 @@ def test_structured_result_preview_does_not_duplicate_raw_json_into_publication(
     assert '"dates"' not in rendered
 
 
-def test_loop_persists_packet_and_publishes_verified_appendix_after_finalization(monkeypatch):
+def test_loop_persists_packet_without_exposing_receipts_after_finalization(monkeypatch):
     from data_agent.config import get_config
 
     monkeypatch.setattr(get_config(), "wrap_up_round", 1)
@@ -147,8 +147,8 @@ def test_loop_persists_packet_and_publishes_verified_appendix_after_finalization
 
     published, error = loop._render_finalized_publication("结论：曲线拟合良好，但仅限当前观测范围。")
     assert error is None
-    assert "### 本轮计算收据" in published
-    assert "0.98240474" in published
+    assert published == "结论：曲线拟合良好，但仅限当前观测范围。"
+    assert "本轮计算收据" not in published
 
 
 def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
@@ -166,8 +166,8 @@ def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
     )
 
     assert error is None
-    assert "### 本轮计算收据" in published
-    assert "1818" in published
+    assert published == "模型说明：结果是描述性的，不构成因果结论。"
+    assert "本轮计算收据" not in published
     assert loop.context.analysis_state.publication_packets[-1]["status"] == "ready"
 
 
@@ -200,7 +200,7 @@ def test_packet_uses_only_current_turn_receipts_and_state_roundtrip_preserves_it
     assert restored.publication_packets[-1]["id"] == packet["id"]
 
 
-def test_streaming_finalization_persists_and_publishes_the_verified_appendix():
+def test_streaming_finalization_persists_without_exposing_the_verified_appendix():
     from data_agent.llm.client import Response
 
     loop = AgentLoop(client=None, session_id="publication_stream")
@@ -233,9 +233,9 @@ def test_streaming_finalization_persists_and_publishes_the_verified_appendix():
     events = list(loop.stream_turn("拟合留存曲线"))
     published = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
 
-    assert "### 本轮计算收据" in published
-    assert "0.98240474" in published
-    assert "0.98240474" in loop.messages[-1]["content"]
+    assert published == "曲线在已观察区间内拟合良好。"
+    assert "本轮计算收据" not in published
+    assert loop.messages[-1]["content"] == published
 
 
 def test_streaming_publication_rewrites_once_and_never_projects_rejected_narrative():

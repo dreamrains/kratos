@@ -6,6 +6,12 @@ import io
 import json
 import re
 import sys
+import calendar as calendar_module
+import datetime as datetime_module
+import math
+import statistics
+from decimal import Decimal
+from fractions import Fraction
 from hashlib import sha256
 from contextlib import redirect_stdout
 import multiprocessing
@@ -29,10 +35,33 @@ def _get_dataset(name: str) -> pd.DataFrame | None:
 
 def _build_safe_globals(dataset_snapshot=None) -> dict:
     """构建受限的全局命名空间。"""
-    def blocked_import(name, *args, **kwargs):
-        raise ImportError(f"Sandbox runtime import is not supported ({name}); use a native analysis tool or an operation that does not import modules")
+    safe_modules = {
+        "pandas": pd,
+        "numpy": np,
+        "datetime": datetime_module,
+        "calendar": calendar_module,
+        "math": math,
+        "statistics": statistics,
+        "decimal": sys.modules[Decimal.__module__],
+        "fractions": sys.modules[Fraction.__module__],
+    }
+
+    def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+        module_name = str(name or "").split(".", 1)[0]
+        if level or name != module_name or module_name not in safe_modules:
+            available = ", ".join(sorted(safe_modules))
+            raise ImportError(
+                f"Sandbox import is limited to: {available}; "
+                "use a native analysis tool for other modules"
+            )
+        module = safe_modules[module_name]
+        for item in fromlist or ():
+            if item != "*" and not hasattr(module, item):
+                raise ImportError(f"cannot import name '{item}' from '{module_name}'")
+        return module
+
     safe_builtins = {
-        "__import__": blocked_import,
+        "__import__": safe_import,
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
         "enumerate": enumerate, "filter": filter, "float": float, "int": int,
         "isinstance": isinstance, "len": len, "list": list, "map": map,
@@ -52,6 +81,16 @@ def _build_safe_globals(dataset_snapshot=None) -> dict:
         "__builtins__": safe_builtins,
         "pd": pd,
         "np": np,
+        "datetime": datetime_module.datetime,
+        "date": datetime_module.date,
+        "time": datetime_module.time,
+        "timedelta": datetime_module.timedelta,
+        "timezone": datetime_module.timezone,
+        "calendar": calendar_module,
+        "math": math,
+        "statistics": statistics,
+        "Decimal": Decimal,
+        "Fraction": Fraction,
         "get_dataset": _get_dataset if dataset_snapshot is None else snapshot_dataset,
     }
 
@@ -138,7 +177,8 @@ def _assess_risk(code: str) -> str:
     description=(
         "在受限沙盒中执行自定义 Python 分析代码。"
         "可用: pd (pandas), np (numpy), get_dataset(name) 获取工作区数据集。"
-        "不可用: open, os, subprocess, __import__, exec, eval；不要写 import pandas/numpy，直接使用已提供的 pd/np。"
+        "也可直接使用 datetime/date/time/timedelta/timezone、calendar、math、statistics、Decimal、Fraction。"
+        "允许显式导入 pandas、numpy、datetime、calendar、math、statistics、decimal、fractions；其他 import 以及 open、os、subprocess、exec、eval 不可用。"
         "代码执行超时 30 秒。返回 stdout 和最后一个表达式的值。"
         "多语句请将结果赋给 result 字典（转换 np 标量为 int/float）；只有 print 的混合正文不会自动成为统计证据。"
         "配对用户前后比较优先用 ab_test(unit_col='user_id',unit_aggregation='sum'或'mean')，原生提供配对t及Wilcoxon；不要在沙盒手算p值。"
@@ -164,15 +204,6 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
             "error_type": "sandbox_violation",
             "alternatives": ["describe_dataset", "preview_data", "list_data", "transform_data"],
         }, ensure_ascii=False)
-    import ast
-    try:
-        has_import = any(isinstance(node, (ast.Import, ast.ImportFrom)) for node in ast.walk(ast.parse(code)))
-    except SyntaxError:
-        has_import = False
-    if has_import:
-        return json.dumps({"error": "当前沙盒不提供 import；请直接使用已提供的 pd、np、get_dataset。",
-                           "error_type": "sandbox_violation"}, ensure_ascii=False)
-
     # 风险评估
     risk = _assess_risk(code)
 
@@ -199,8 +230,17 @@ def run_python(code: str, timeout: int = 30, purpose: str = "") -> str:
         return json.dumps({"error": f"执行失败: {e}"}, ensure_ascii=False)
 
     if result.startswith("Error:"):
-        return json.dumps({"error": result, "error_type": "sandbox_execution_error", "result": result,
-                           "local_execution_stopped": True}, ensure_ascii=False)
+        return json.dumps({
+            "error": result,
+            "error_type": "sandbox_execution_error",
+            "result": result,
+            "local_execution_stopped": True,
+            "recovery_hint": "修正代码后可重试；pd/np 与常用时间、数学模块已预置，也支持白名单 import。",
+            "available_modules": [
+                "pandas", "numpy", "datetime", "calendar", "math",
+                "statistics", "decimal", "fractions",
+            ],
+        }, ensure_ascii=False)
 
     response = {
         "output": stdout[:20000] if stdout else "",

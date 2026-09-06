@@ -58,3 +58,19 @@ def test_detail_is_truncated_for_noisy_provider_errors():
     failure = list(loop._stream_llm_round(1))[-1]
 
     assert len(failure["detail"]) <= 320
+
+
+def test_detail_redacts_provider_credentials(monkeypatch):
+    from data_agent.agent import loop as loop_module
+
+    class _Config:
+        api_key = "configured-secret-key"
+
+    monkeypatch.setattr(loop_module, "get_config", lambda: _Config())
+    detail = loop_module._provider_failure_detail(RuntimeError(
+        "Authorization: Bearer configured-secret-key; api_key=sk-testsecret123456",
+    ))
+
+    assert "configured-secret-key" not in detail
+    assert "sk-testsecret123456" not in detail
+    assert "[REDACTED]" in detail

@@ -374,6 +374,16 @@ class TestThinkingAnimation:
     def test_chinese_fallback_text(self, html):
         assert "思考中" in html
 
+    def test_streamed_reply_keeps_a_visible_response_status(self, html, js):
+        assert 'turn.isResponding && turn.content' in html
+        assert '正在响应…' in html
+        assert 'turn.isResponding = false' in js
+
+
+def test_task_progress_uses_neutral_copy(js):
+    assert "任务进度 ${done}/${active.length}" in js
+    assert "不代表分析通过" not in js
+
 
 class TestSessionIndicator:
     """3.2 Session processing indicator in sidebar."""

@@ -171,6 +171,7 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         "Classify every material statement as direct evidence, inferential evidence, or suggestive context. "
         "Do not represent inferential or suggestive context as proof. "
         "For a recommendation explicitly requested by the user, provide a conditional, reversible recommendation when the available evidence supports it; lack of causal proof alone is not a reason to erase every recommendation. "
+        "Use concise Markdown structure when it improves scanning: a conclusion first, then short sections, bullets, or a compact table for repeated comparisons. Do not dump raw JSON or mechanically repeat the same five headings for every finding. "
         "State competing explanations and the distinguishing evidence needed whenever a causal or driver conclusion remains unresolved."
         "</answer_discipline>"
         "<bounded_evidence_replenishment>"
@@ -206,6 +207,18 @@ def _apply_verification_status(policy: SynthesisPolicy, status: str) -> Synthesi
         return policy
 
     required_moves = _append_unique(policy.required_moves, "limitation")
+    if status == "pass_with_downgrades":
+        reason = (
+            f"{policy.reason} Verification status is pass_with_downgrades; disclose the downgrade "
+            "and keep any requested recommendation conditional and reversible."
+        )
+        return replace(
+            policy,
+            business_translation="cautious",
+            required_moves=required_moves,
+            reason=reason,
+        )
+
     suppressed_moves = _append_unique(policy.suppressed_moves, "decision_recommendation")
     reason = f"{policy.reason} Verification status is {status}; decision recommendations are suppressed."
     return replace(

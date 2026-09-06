@@ -12,7 +12,7 @@ from data_agent.agent.execution_control import (
     ToolExecutionBudget,
     TurnExecutionState,
 )
-from data_agent.agent.intent import TurnIntent, plan_turn_intent
+from data_agent.agent.intent import TurnIntent
 from data_agent.llm.client import Response, ToolCall
 from data_agent.agent.loop import AgentLoop
 from data_agent.session.task_manager import task_manager
@@ -146,12 +146,25 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
     task_manager._next_id_val = 0
     try:
         state = AnalysisSessionState(session_id="gate_savings", project_name=None)
-        intent = plan_turn_intent("evaluate whether the savings card is worth long-term operation", _loaded_context())
-        intent.intent_type = "directed_analysis"
-        intent.data_state = "data_loaded"
+        intent = TurnIntent(
+            intent_type="directed_analysis",
+            clarity="clear",
+            data_state="data_loaded",
+            analysis_stage="execute",
+            recommended_action="run_analysis",
+            execution_readiness="ready",
+            reason="offline high-risk confirmation fixture",
+            ambiguities=[],
+        )
 
         controller = AnalysisFlowController("gate_savings")
-        controller.prepare_turn(state, intent, user_input="evaluate whether the savings card is worth long-term operation", dataset_profile=_loaded_context())
+        controller.prepare_turn(
+            state,
+            intent,
+            user_input="evaluate whether the savings card is worth long-term operation",
+            dataset_profile=_loaded_context(),
+            llm_client=_OfflineNullClient(),
+        )
 
         assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
         assert controller.is_capability_blocked_by_confirmation(state, "data.profile") is False
@@ -175,6 +188,11 @@ def test_confirmation_gate_ignores_tools_without_capability_metadata():
     controller = AnalysisFlowController("gate_unknown_tool")
 
     assert controller.is_tool_blocked_by_confirmation(state, "list_files") is False
+
+
+class _OfflineNullClient:
+    def chat(self, messages, tools=None, system=None):
+        return Response(text="")
 
 
 class _OneToolClient:
@@ -803,7 +821,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     with use_agent_context(ctx):
         result = loop.run_turn("analyze retention formula")
 
-    assert result.startswith("final answer\n\n---\n\n### 本轮计算收据")
+    assert result == "final answer"
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]

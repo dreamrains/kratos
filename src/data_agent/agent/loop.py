@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 import weakref
@@ -436,7 +437,21 @@ def _provider_failure_detail(exc: BaseException, limit: int = 300) -> str:
     litellm 异常常内嵌完整 provider 响应（多行、超长），不能原样进入
     UI 或 notice；只保留类名 + 首段消息并截断。
     """
-    text = " ".join(str(exc).split())[:limit]
+    text = " ".join(str(exc).split())
+    try:
+        configured_key = str(get_config().api_key or "")
+    except Exception:
+        configured_key = ""
+    if configured_key:
+        text = text.replace(configured_key, "[REDACTED]")
+    text = re.sub(
+        r"(?i)((?:authorization|api[_-]?key|access[_-]?token|secret|password)"
+        r"\s*[:=]\s*[\"']?(?:bearer\s+)?)[^\s,;\"'}]+",
+        r"\1[REDACTED]",
+        text,
+    )
+    text = re.sub(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", text)
+    text = text[:limit]
     name = type(exc).__name__
     return f"{name}: {text}" if text else name
 
@@ -1489,17 +1504,17 @@ class AgentLoop:
             return None
 
     def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
-        """Attach deterministic evidence to a finalization answer before publication."""
+        """Validate the answer against persisted evidence without leaking audit records."""
         packet = getattr(self, "_turn_publication_packet", None)
         if not isinstance(packet, dict) or packet.get("status") != "ready":
             return final_text, None
         try:
-            from data_agent.agent.publication_synthesis import render_verified_appendix, validate_final_narrative
+            from data_agent.agent.publication_synthesis import validate_final_narrative
 
             error = validate_final_narrative(final_text, packet)
             if error:
                 return None, error
-            return f"{final_text.rstrip()}\n\n---\n\n{render_verified_appendix(packet)}", None
+            return final_text.rstrip(), None
         except Exception as exc:
             logger.warning(
                 "Publication synthesis rendering skipped",
