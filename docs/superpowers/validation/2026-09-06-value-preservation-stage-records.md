@@ -410,7 +410,7 @@ Provider：未启动真实 Provider；离线入口强制 dummy loopback、网络
 | 场景 | 状态 | 已有可核验事实 | 尚缺通过条件 |
 |---|---|---|---|
 | B01 | running | 浏览器输入中文建议请求后可见“12 条订单金额合计为 120”、条件建议、停止条件和范围限制；刷新后原文可恢复。状态文件含 `load_data`、`transform_data`、`record_evidence_record` 三个真实收据，以及 1 条证据、1 份验证报告、1 组假设。 | Workbench UI 与正文一致性的浏览器断言、导出核对、截图和逐项 assertion 收据。 |
-| B02 | not_started | 早期脚本曾观察到边界句发布和 D30 候选被拦截，但当时辅助客户端零调用前置条件不成立，故不计入。 | 在当前零调用运行器下重跑完整正负路径、刷新和截图。 |
+| B02 | passed | 有效收据 `tmp/p7-browser-rehearsal-07`、会话 `e908e8895ba5`：页面发布 D7=10%、不能预测 D30 与补数建议；越界候选只留作带 `publication_rejected=true` 的内部修订上下文，页面不可见。2 个 curve 收据、2 个 publication packet，`forbidden_provider_transport=0`。浏览器触发回复导出；会话 Markdown 导出不含越界候选，含两条合规边界回复。 | 无。 |
 | B03 | not_started | 早期脚本在页面触发 6 次加载和 6 次聚合，且 early tool output 已真实落盘后压缩；同样不计入。 | 当前零调用运行器下核对 6 个发布包来源、第四组配对事实、omitted refs、展开和导出。 |
 | B04 | not_started | 无。 | 完成 supported → contested → stale、待验证区折叠和刷新断言。 |
 | B05 | not_started | 早期页面曾显示业务/分析师/管理层三种表达；同样不计入。 | 当前零调用运行器下重跑三轮事实/范围/限制/证据等级不变断言。 |
