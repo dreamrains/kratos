@@ -441,6 +441,8 @@ class AgentContext:
     turn_state: object | None = None
     turn_receipt_ids: list[str] = field(default_factory=list)
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
+    audience: str = "general"  # "general" | "business" | "analyst" | "manager" (per-turn)
+    detected_proficiency: str = ""  # cached auto-detection; user_proficiency stays "auto"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
     turn_intent: object | None = None
 
@@ -489,6 +491,8 @@ def _create_agent_context_type(
         turn_state: object | None = None,
         turn_receipt_ids: list[str] | None = None,
         user_proficiency: str = "auto",
+        audience: str = "general",
+        detected_proficiency: str = "",
         user_quality_requirements: str = "",
         turn_intent: object | None = None,
     ) -> None:
@@ -502,6 +506,8 @@ def _create_agent_context_type(
         object.__setattr__(self, "turn_receipt_ids", [] if turn_receipt_ids is None else list(turn_receipt_ids))
         object.__setattr__(self, "turn_intent", turn_intent)
         object.__setattr__(self, "user_proficiency", user_proficiency)
+        object.__setattr__(self, "audience", audience)
+        object.__setattr__(self, "detected_proficiency", detected_proficiency)
         object.__setattr__(self, "user_quality_requirements", user_quality_requirements)
         bind_scope(self)
         scope_operation(self, "mark_identity_ready")

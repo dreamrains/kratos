@@ -104,7 +104,10 @@ def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch
 
     assert "<persisted-output>" in output
     assert len(output) < 3000
-    assert (tmp_path / "sessions" / "large_output" / "tool_outputs" / "tc_big.txt").exists()
+    # P4/E07: 持久化文件名带内容摘要，同 id 不同内容不得复用旧文件
+    stored = list((tmp_path / "sessions" / "large_output" / "tool_outputs").glob("tc_big__*.txt"))
+    assert stored
+    assert stored[0].read_text(encoding="utf-8") == "x" * 20000
 
 
 def test_run_python_success_requires_resolution_before_more_exploration():

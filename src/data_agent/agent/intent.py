@@ -11,6 +11,7 @@ Two-layer architecture:
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
@@ -107,6 +108,25 @@ _ANALYSIS_KEYWORDS = (
 _GUIDANCE_KEYWORDS = (
     "不知道如何分析", "帮我看看", "看看这份数据", "分析一下",
     "有什么可以分析", "帮我分析", "看看数据",
+)
+# Explicit execution imperatives: when one of these appears together with a
+# consultation keyword, the executable request is the main task and the
+# consultation ("并给出分析建议") becomes an output requirement.
+_EXECUTION_REQUEST_MARKERS = (
+    "请分析", "请帮我分析", "帮我分析", "麻烦分析", "麻烦帮我分析",
+    "请直接分析", "直接分析", "开始分析", "来分析一下", "分析并", "并分析",
+    "请计算", "帮我计算", "请预测", "帮我预测", "请对比", "帮我对比",
+    "请执行分析", "跑一下分析",
+    "please analyze", "help me analyze", "analyze and", "and analyze",
+    "please calculate", "please compute", "please predict", "please compare",
+    "run the analysis", "start the analysis",
+)
+# Leading consultation questions keep the consultation branch even when an
+# execution imperative appears later: the main task is then genuinely mixed.
+_CONSULT_QUESTION_PREFIXES = (
+    "怎么", "如何", "应该怎么", "应该如何", "怎样", "该怎样", "该不该", "要不要",
+    "是否应该", "哪种方法", "什么方法",
+    "how to", "how should", "which method", "what method",
 )
 
 
@@ -217,7 +237,14 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
 
     Returns None when no rule matches confidently. Returns a TurnIntent with
     clarity="clear" for confident matches, or clarity="vague" for partial matches.
+
+    The fast path only accepts inputs whose main task is unambiguous: pure
+    greetings, negation-free keyword hits, or compound requests whose main
+    task is still identifiable. Negated keywords never trigger their branch,
+    and contradictory or double-negated input defers to the semantic layer.
     """
+    from data_agent.agent.request_language import keyword_group_state
+
     # ── Ultra-short input (< 3 chars) ──
     if len(text) < 3:
         # Check operation/report keywords before falling through to conversation
@@ -235,16 +262,19 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
             return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "短输入确认语")
         return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "短输入或确认语")
 
-    # ── Greetings and thanks (< 15 chars to avoid false positives) ──
-    if any(k in text for k in _CHAT_KEYWORDS) and len(text) < 15:
+    # ── Pure greeting / thanks: the whole input is conversational filler ──
+    # A greeting followed by a real request must not swallow the main task,
+    # so only conversation-only input takes this branch.
+    if _is_pure_chat(text):
         return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "问候或致谢")
 
     # ── Confirmations ──
     if text in _CONFIRMATION_KEYWORDS:
         return _make("simple_response", "clear", data_state, "follow_up", "answer_directly", "确认语")
 
-    # ── Report request (high priority, check early) ──
-    if any(k in text for k in _REPORT_KEYWORDS):
+    # ── Report request (high priority, negation-aware) ──
+    report_state = keyword_group_state(text, _REPORT_KEYWORDS)
+    if report_state == "affirmative":
         return _make(
             "comprehensive_report",
             "clear", data_state,
@@ -252,14 +282,30 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
             _action_for("comprehensive_report", data_state, readiness),
             "用户请求报告或全面分析",
         )
+    if report_state == "ambiguous":
+        # Double negation around a report request is contradictory; the
+        # semantic layer decides instead of a forced confident label.
+        return None
 
     # ── Knowledge QA (starts with question prefix) ──
     if any(text.startswith(p) for p in _KNOWLEDGE_QA_PREFIXES):
         return _make("knowledge_qa", "clear", data_state, "follow_up", "answer_directly", "知识问答")
 
-    # ── Analysis consultation ──
-    if any(k in text for k in _ANALYSIS_CONSULT_KEYWORDS):
-        return _make("analysis_consultation", "clear", data_state, "follow_up", "answer_directly", "分析咨询或方法讨论")
+    # ── Analysis consultation vs. execution (compound inputs) ──
+    consult_state = keyword_group_state(text, _ANALYSIS_CONSULT_KEYWORDS)
+    has_execution_marker = any(marker in text for marker in _EXECUTION_REQUEST_MARKERS)
+    if consult_state == "ambiguous":
+        return None
+    if consult_state == "affirmative":
+        if not has_execution_marker:
+            return _make("analysis_consultation", "clear", data_state, "follow_up", "answer_directly", "分析咨询或方法讨论")
+        if text.startswith(_CONSULT_QUESTION_PREFIXES):
+            # A leading method question plus an execution imperative leaves
+            # the main task genuinely unclear; defer to the semantic layer.
+            return None
+        # Execution imperative with a consultative tail: the main task stays
+        # executable and the consultation becomes an output requirement.
+        # Fall through to the analysis branches below.
 
     # ── Result followup ──
     if any(k in text for k in _RESULT_FOLLOWUP_KEYWORDS):
@@ -270,7 +316,11 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
         return _make("data_requirement", "clear", data_state, "scope", "request_data", "用户询问分析所需数据")
 
     # ── Pure data operation (only when no analysis keywords present) ──
-    if any(k in text for k in _OPERATION_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
+    operation_state = keyword_group_state(text, _OPERATION_KEYWORDS)
+    analysis_state = keyword_group_state(text, _ANALYSIS_KEYWORDS)
+    if analysis_state == "ambiguous":
+        return None
+    if operation_state == "affirmative" and analysis_state != "affirmative":
         if len(text) < 4:
             return _make(
                 "data_operation", "vague", data_state, "execute", "execute_operation",
@@ -280,7 +330,7 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
         return _make("data_operation", "clear", data_state, "execute", "execute_operation", "用户请求明确的数据操作")
 
     # ── Guidance: vague "分析一下" without specific direction ──
-    if any(k in text for k in _GUIDANCE_KEYWORDS) and not any(k in text for k in _ANALYSIS_KEYWORDS):
+    if any(k in text for k in _GUIDANCE_KEYWORDS) and analysis_state != "affirmative":
         return _make(
             "intent_negotiation" if data_state == "data_loaded" else "data_requirement",
             "clear", data_state,
@@ -290,7 +340,7 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
         )
 
     # ── Analysis keywords with specific direction ──
-    if any(k in text for k in _ANALYSIS_KEYWORDS):
+    if analysis_state == "affirmative":
         return _make(
             "directed_analysis",
             "clear", data_state,
@@ -301,6 +351,21 @@ def _try_fast_path(text: str, data_state: DataState, readiness: ExecutionReadine
 
     # ── No confident rule match → return None to trigger LLM ──
     return None
+
+
+_CHAT_FILLER_PARTICLES = ("呀", "啊", "呢", "吧", "啦", "哦", "哈", "嘿", "嗯", "哟", "呦", "诶")
+_PUNCT_PATTERN = re.compile(r"[\s，。！!？?~,.;；：:、]+")
+
+
+def _is_pure_chat(text: str) -> bool:
+    """True only when the input is entirely greeting/thanks/confirmation filler."""
+    remainder = text
+    for keyword in (*_CHAT_KEYWORDS, *_CONFIRMATION_KEYWORDS):
+        if keyword:
+            remainder = remainder.replace(keyword, " ")
+    remainder = _PUNCT_PATTERN.sub("", remainder)
+    remainder = "".join(ch for ch in remainder if ch not in _CHAT_FILLER_PARTICLES)
+    return remainder == ""
 
 
 def _make(

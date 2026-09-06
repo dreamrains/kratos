@@ -11,6 +11,14 @@ from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.config import get_config
 
 
+# Relation vocabulary for model-proposed, host-validated evidence relations.
+_RELATION_TYPES = ("supports", "refutes")
+_OBSERVED_DIRECTIONS = ("increased", "decreased", "flat")
+_CAUSAL_METHODS = {"causal", "ab_test", "experiment", "did", "difference_in_differences"}
+_TAG_CLAIM_TYPES = {"primary": "descriptive", "alternative": "causal", "baseline": "statistical"}
+_DECIDED_STATUSES = {"supported", "refuted", "contested"}
+
+
 def build_hypothesis_set(user_input: str, entry_decision: Any, state: Any) -> dict[str, Any]:
     """Build a deterministic hypothesis set from entry routing and trust state."""
     decision = entry_decision if isinstance(entry_decision, dict) else {}
@@ -19,10 +27,16 @@ def build_hypothesis_set(user_input: str, entry_decision: Any, state: Any) -> di
     route = _text(decision.get("route"))
     if not route and _text(decision.get("decision")) == "request_data":
         route = "user_level_retention"
+    plan_id = _current_plan_id(state)
     contract = _contract_for_dataset(contracts, dataset)
     field_roles = _field_roles(contract)
     limitations = _text_list(decision.get("limitations"))
     set_id = f"hypotheses_{_slug(dataset or 'dataset')}_{_slug(route or 'analysis')}"
+    if plan_id:
+        # Hypothesis identity is plan-scoped: a new analysis plan on the same
+        # dataset/route must start from fresh statuses instead of inheriting
+        # the previous plan's conclusions.
+        set_id = f"{set_id}_{_slug(plan_id)}"
 
     if _text(decision.get("decision")) == "request_data" or route == "user_level_retention":
         hypotheses = [_unsupported_hypothesis(set_id, dataset, route, limitations, field_roles)]
@@ -34,6 +48,7 @@ def build_hypothesis_set(user_input: str, entry_decision: Any, state: Any) -> di
         "user_input": _text(user_input),
         "dataset": dataset,
         "route": route,
+        "plan_id": plan_id,
         "hypotheses": hypotheses,
     }
     payload["status_summary"] = _status_summary(hypotheses)
@@ -51,6 +66,7 @@ def persist_hypothesis_set(session_id: str, hypothesis_set: dict[str, Any]) -> d
         "id": hypothesis_set_id,
         "dataset": _text(hypothesis_set.get("dataset")),
         "route": _text(hypothesis_set.get("route")),
+        "plan_id": _text(hypothesis_set.get("plan_id")),
         "count": len(hypotheses),
         "status_summary": _status_summary(hypotheses),
         "artifact_path": str(path),
@@ -62,39 +78,215 @@ def hydrate_hypothesis_refs(refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return hydrate_refs(refs)
 
 
+def _measurement_direction(measurement: dict[str, Any]) -> str:
+    """Deterministic direction from structured measurement fields."""
+    for key in ("delta", "change", "total_change", "pct_change"):
+        value = measurement.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if value > 0:
+                return "increased"
+            if value < 0:
+                return "decreased"
+            return "flat"
+    direction = measurement.get("direction")
+    if isinstance(direction, str) and direction.strip().lower() in _OBSERVED_DIRECTIONS:
+        return direction.strip().lower()
+    return "unknown"
+
+
+def _relation_proposals(record: dict[str, Any]) -> list[dict[str, Any]]:
+    proposals = []
+    for entry in record.get("competing_hypotheses") or []:
+        if (
+            isinstance(entry, dict)
+            and str(entry.get("hypothesis_id") or "") .strip()
+            and entry.get("relation") in _RELATION_TYPES
+        ):
+            proposals.append(entry)
+    return proposals
+
+
+def _validate_relation(
+    entry: dict[str, Any],
+    hypothesis: dict[str, Any],
+    record: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Host-side gate for a model-proposed evidence relation.
+
+    A relation only counts when the referenced metric exists in this
+    evidence, the claimed direction matches the measured direction, and the
+    claim type is decidable from this evidence's method: a descriptive
+    direction never upgrades a causal alternative, and baseline-variation
+    claims need a significance statistic.
+    """
+    metric = _text(entry.get("metric"))
+    observed = _text(entry.get("observed")).lower()
+    if not metric or observed not in _OBSERVED_DIRECTIONS:
+        return None
+    measurements = [
+        measurement
+        for measurement in (record.get("measurements") or [])
+        if isinstance(measurement, dict) and _text(measurement.get("metric")) == metric
+    ]
+    if not measurements:
+        return None
+    computed = _measurement_direction(measurements[0])
+    if computed == "unknown" or computed != observed:
+        return None
+    claim_type = _text(hypothesis.get("claim_type")) or "descriptive"
+    if claim_type == "causal":
+        method = _text(record.get("method")).lower()
+        if method not in _CAUSAL_METHODS:
+            return None
+    elif claim_type == "statistical":
+        measurement = measurements[0]
+        has_statistic = any(
+            isinstance(measurement.get(key), (int, float))
+            for key in ("p_value", "z_score")
+        ) or bool(_text(measurement.get("significance")))
+        if not has_statistic:
+            return None
+    return {
+        "evidence_id": _text(record.get("id")),
+        "relation": str(entry.get("relation")),
+        "metric": metric,
+        "observed": observed,
+        "basis": f"measurement {metric} delta direction = {observed}",
+    }
+
+
 def update_hypotheses_from_evidence(
     hypothesis_set: dict[str, Any],
     evidence_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Update hypothesis statuses from deterministic evidence text overlap."""
+    """Recompute hypothesis relations from the current evidence snapshot.
+
+    Text overlap only marks a candidate association (``related_evidence_ids``).
+    A hypothesis changes state only through structured, host-validated
+    relations: metric present, measured direction matching the proposal, and
+    the claim type decidable from this evidence's method. Supporting and
+    conflicting ids are recomputed on every call; a previously decided
+    hypothesis whose relations all disappear becomes ``stale`` instead of
+    silently reverting.
+    """
     updated = dict(hypothesis_set)
-    evidence = [item for item in evidence_records if isinstance(item, dict)]
+    set_plan = _text(hypothesis_set.get("plan_id"))
+    set_dataset = _text(hypothesis_set.get("dataset"))
+    scoped = [
+        record
+        for record in evidence_records
+        if isinstance(record, dict)
+        and _evidence_in_scope(record, set_plan, set_dataset)
+    ]
     hypotheses: list[dict[str, Any]] = []
     for hypothesis in _list_items(hypothesis_set.get("hypotheses")):
         item = dict(hypothesis)
-        supporting_ids = list(item.get("supporting_evidence_ids") or [])
         if item.get("status") == "unsupported_by_data":
             hypotheses.append(item)
             continue
 
-        matches = [
-            _text(record.get("id"))
-            for record in evidence
-            if _evidence_supports_claim(item.get("claim"), record)
+        related_ids = [
+            evidence_id
+            for evidence_id in (
+                _text(record.get("id"))
+                for record in scoped
+                if _evidence_relates_to_claim(item.get("claim"), record)
+            )
+            if evidence_id
         ]
-        for evidence_id in matches:
-            if evidence_id and evidence_id not in supporting_ids:
-                supporting_ids.append(evidence_id)
+        relations = []
+        for record in scoped:
+            for proposal in _relation_proposals(record):
+                if _text(proposal.get("hypothesis_id")) != _text(item.get("id")):
+                    continue
+                validated = _validate_relation(proposal, item, record)
+                if validated is not None:
+                    relations.append(validated)
+        supporting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "supports"]
+        conflicting_ids = [relation["evidence_id"] for relation in relations if relation["relation"] == "refutes"]
+
+        previous_status = _text(item.get("status"))
+        item["related_evidence_ids"] = related_ids
+        item["evidence_relations"] = relations
+        # Recomputed from scratch: ids from a previous run never survive on
+        # their own.
         item["supporting_evidence_ids"] = supporting_ids
-        if supporting_ids:
+        item["conflicting_evidence_ids"] = conflicting_ids
+        if supporting_ids and conflicting_ids:
+            item["status"] = "contested"
+        elif supporting_ids:
             item["status"] = "supported"
-        elif item.get("verification_level") in {"verifiable", "partially_verifiable"}:
+        elif conflicting_ids:
+            item["status"] = "refuted"
+        elif related_ids or relations or item.get("verification_level") in {"verifiable", "partially_verifiable"}:
             item["status"] = "inconclusive"
+        else:
+            item["status"] = "proposed"
+        if (
+            previous_status in _DECIDED_STATUSES
+            and not supporting_ids
+            and not conflicting_ids
+            and not related_ids
+        ):
+            # 依赖证据全部失效：保留历史语义，标记失效而不是退回候选。
+            item["status"] = "stale"
         hypotheses.append(item)
 
     updated["hypotheses"] = hypotheses
     updated["status_summary"] = _status_summary(hypotheses)
     return updated
+
+
+_STATUS_LABELS = {
+    "supported": "已获结构化证据支持",
+    "refuted": "被结构化证据反驳",
+    "contested": "支持与反证冲突未决",
+    "inconclusive": "未决",
+    "proposed": "候选",
+    "stale": "失效（依赖证据不再存在）",
+    "unsupported_by_data": "当前数据不能检验",
+}
+
+
+def hypotheses_prompt_brief(state: Any, hydrated: list[dict[str, Any]] | None = None) -> str:
+    """Bounded competing-hypothesis brief for answer synthesis.
+
+    Each hypothesis carries its current status, its structured evidence, and
+    for undecided explanations the distinguishing evidence still required.
+    No entry may claim an exclusion that the statuses do not support.
+    """
+    if hydrated is None:
+        hydrated = hydrate_hypothesis_refs(_list_attr(state, "hypothesis_sets"))
+    lines: list[str] = []
+    for hypothesis_set in hydrated[:2]:
+        heading = _text(hypothesis_set.get("id")) or "hypotheses"
+        lines.append(f"- 假设集 {heading}（{_text(hypothesis_set.get('dataset'))}/{_text(hypothesis_set.get('route'))}）：")
+        for hypothesis in _list_items(hypothesis_set.get("hypotheses"))[:4]:
+            status = _text(hypothesis.get("status")) or "proposed"
+            label = _STATUS_LABELS.get(status, status)
+            claim = _text(hypothesis.get("claim"))[:120]
+            detail = ""
+            if status in {"supported", "contested"}:
+                ids = ", ".join(_text_list(hypothesis.get("supporting_evidence_ids"))[:3])
+                detail = f"；支持证据: {ids or '-'}"
+            if status in {"refuted", "contested"}:
+                ids = ", ".join(_text_list(hypothesis.get("conflicting_evidence_ids"))[:3])
+                detail += f"；反证: {ids or '-'}"
+            if status in {"inconclusive", "proposed", "unsupported_by_data"}:
+                required_fields = [
+                    _text(requirement.get("field"))
+                    for requirement in _list_items(hypothesis.get("evidence_requirements"))
+                    if _text(requirement.get("field"))
+                ][:3]
+                required = ", ".join(required_fields)
+                detail = f"；未决，需区分性证据：{required or '按假设要求补齐字段/方法'}"
+            lines.append(f"  - [{label}|{status}] {claim}{detail}")
+    if not lines:
+        return ""
+    lines.append(
+        "  未决的解释必须如实标注并说明所需区分性证据；不得虚构排除结论。"
+    )
+    return "<competing_hypotheses>\n" + "\n".join(lines) + "\n</competing_hypotheses>"
 
 
 def _route_templates(
@@ -250,8 +442,11 @@ def _hypothesis(
         "route": route,
         "claim": claim,
         "status": status,
+        "claim_type": _TAG_CLAIM_TYPES.get(tags[0], "descriptive") if tags else "descriptive",
         "verification_level": _verification_level(requirements, field_roles),
         "evidence_requirements": requirements,
+        "related_evidence_ids": [],
+        "evidence_relations": [],
         "supporting_evidence_ids": [],
         "conflicting_evidence_ids": [],
         "limitations": limitations,
@@ -295,7 +490,32 @@ def _artifact_path(session_id: str, hypothesis_set_id: str) -> Path:
     return get_config().sessions_resolved / session_id / "tool_outputs" / f"{hypothesis_set_id}.json"
 
 
-def _evidence_supports_claim(claim: Any, evidence: dict[str, Any]) -> bool:
+def _current_plan_id(state: Any) -> str:
+    for attr_name in ("analysis_plan", "analysis_spec"):
+        plan = getattr(state, attr_name, None)
+        if isinstance(plan, dict):
+            plan_id = _text(plan.get("id"))
+            if plan_id:
+                return plan_id
+    return ""
+
+
+def _evidence_in_scope(record: dict[str, Any], set_plan: str, set_dataset: str) -> bool:
+    """Evidence must belong to this hypothesis set's plan and dataset.
+
+    Records from another plan or dataset stay untouched by this set, even when
+    their text matches a hypothesis claim verbatim.
+    """
+    if set_plan and _text(record.get("plan_id")) != set_plan:
+        return False
+    evidence_dataset = _text(record.get("dataset"))
+    if set_dataset and evidence_dataset and evidence_dataset != set_dataset:
+        return False
+    return True
+
+
+def _evidence_relates_to_claim(claim: Any, evidence: dict[str, Any]) -> bool:
+    """Candidate association signal only; never a support verdict."""
     claim_text = _text(claim).lower()
     evidence_text = " ".join([
         _text(evidence.get("claim")),

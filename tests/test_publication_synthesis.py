@@ -4,6 +4,7 @@ from data_agent.agent.publication_synthesis import (
     build_publication_packet,
     extract_publication_facts,
     render_verified_appendix,
+    validate_final_narrative,
 )
 
 
@@ -281,3 +282,329 @@ def test_streaming_publication_rewrites_once_and_never_projects_rejected_narrati
     assert "这6个零值" not in "\n".join(reply["content"] for reply in public)
     assert "零值含义未知" in published
     assert sum(message.get("publication_rejected") is True for message in loop.messages) == 1
+
+
+# ── P3 (D02): claim-scoped publication checks (N01–N09, N11) ──
+
+
+def _retention_curve_data(max_day: int = 7) -> dict:
+    return {
+        "method": "curve_family_comparison",
+        "status": "supported",
+        "points": [{"x": day, "y": round(0.5 * day ** -0.4, 4)} for day in range(1, max_day + 1)],
+        "fits": [{"family": "power", "parameters": {"a": 0.5, "b": -0.4}, "r_squared": 0.97}],
+        "limitations": ["拟合只描述观测区间。"],
+    }
+
+
+def _receipt_with_args(tool_name, receipt_id, data, args=None):
+    from data_agent.agent.publication_synthesis import publication_contract
+
+    return {
+        "id": receipt_id,
+        "tool_name": tool_name,
+        "result_sha256": "sha256:test",
+        "result_preview": f"{tool_name} completed",
+        "publication_facts": extract_publication_facts(data),
+        "publication_contract": publication_contract(tool_name, data, args=args),
+    }
+
+
+def _retention_packet(extra_receipts=(), substantive=None):
+    state = AnalysisSessionState(session_id="n_series_packet")
+    state.add_tool_receipt(_receipt_with_args("curve_fitting", "tr_ret", _retention_curve_data()))
+    for receipt in extra_receipts:
+        state.add_tool_receipt(receipt)
+    return build_publication_packet(
+        state,
+        user_input="留存分析",
+        substantive_tools=substantive or {"curve_fitting", "ab_test", "causal_analysis"},
+    )
+
+
+def _ab_test_data() -> dict:
+    return {
+        "metric": "revenue",
+        "test": {"statistic": 2.4, "p_value": 0.02, "significant": True},
+        "limitations": [],
+    }
+
+
+def _causal_data() -> dict:
+    return {
+        "method": "DID",
+        "effect": 12.3,
+        "p_value": 0.03,
+        "limitations": [],
+    }
+
+
+class TestNSeriesPublication:
+
+    def test_n01_boundary_statement_with_d30_publishes(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "D7 留存为 10%。当前不能预测 D30，需补充数据。", packet,
+        ) is None
+
+    def test_n02_collection_plan_with_day30_publishes(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "D7 留存为 10%。建议继续收集至第30天再验证。", packet,
+        ) is None
+
+    def test_n03_unsupported_d30_prediction_rejected(self):
+        packet = _retention_packet()
+        error = validate_final_narrative("D30 留存预计为 5%。", packet)
+        assert error is not None
+        assert "外推" in error
+
+    def test_n04_negation_does_not_cover_assertion_in_same_sentence(self):
+        packet = _retention_packet()
+        error = validate_final_narrative("不能预测 D30，但 D30 大约是 5%。", packet)
+        assert error is not None
+
+    def test_n05_conditional_action_publishes(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "如果 D30 达到预先阈值，则继续试点。", packet,
+        ) is None
+
+    def test_n06_other_source_with_valid_d30_not_blocked(self):
+        packet = _retention_packet(extra_receipts=[
+            _receipt_with_args("curve_fitting", "tr_wide", _retention_curve_data(max_day=30)),
+        ])
+        assert validate_final_narrative("渠道 B 的 D30 留存为 8%。", packet) is None
+
+    def test_n06_a_scope_still_blocks_when_b_absent(self):
+        packet = _retention_packet()
+        error = validate_final_narrative("渠道 B 的 D30 留存为 8%。", packet)
+        assert error is not None
+
+    def test_n07_significance_claim_without_any_test_rejected(self):
+        packet = _retention_packet()
+        error = validate_final_narrative("两组转化率差异不显著。", packet)
+        assert error is not None
+        assert "检验" in error
+
+    def test_n08_unrelated_significance_claim_not_backed_globally(self):
+        packet = _retention_packet(extra_receipts=[
+            _receipt_with_args(
+                "ab_test", "tr_ab", _ab_test_data(),
+                args={"metric": "revenue", "group_a": "control", "group_b": "treatment"},
+            ),
+        ])
+        # 检验只做在 revenue 上；“新用户留存差异不显著”不得搭全局便车
+        error = validate_final_narrative("新用户的留存差异不显著。", packet)
+        assert error is not None
+        assert "关联" in error or "绑定" in error
+
+    def test_n08_bound_significance_claim_publishes(self):
+        packet = _retention_packet(extra_receipts=[
+            _receipt_with_args(
+                "ab_test", "tr_ab", _ab_test_data(),
+                args={"metric": "revenue", "group_a": "control", "group_b": "treatment"},
+            ),
+        ])
+        assert validate_final_narrative("treatment 组的 revenue 差异不显著时不应加价。", packet) is None
+
+    def test_n09_causal_tool_metadata_counts_as_executed_inference(self):
+        packet = _retention_packet(extra_receipts=[
+            _receipt_with_args(
+                "causal_analysis", "tr_causal", _causal_data(),
+                args={"treatment_col": "campaign", "outcome_col": "revenue"},
+            ),
+        ])
+        assert validate_final_narrative("campaign 对 revenue 的差异不显著。", packet) is None
+
+    def test_n11_issues_carry_position_and_stable_code(self):
+        from data_agent.agent.publication_synthesis import validate_final_narrative_issues
+
+        packet = _retention_packet()
+        text = "D7 为 10%。D30 大约是 5%。"
+        issues = validate_final_narrative_issues(text, packet)
+
+        assert issues
+        assert issues[0]["code"]
+        assert issues[0]["span"]
+        assert "5%" in issues[0]["span"]
+        error = validate_final_narrative(text, packet)
+        assert error is not None
+        assert issues[0]["span"][:6] in error
+
+
+# ── P4 (D03): evidence coverage and recoverable packet selection (E01–E05, E09–E10) ──
+
+
+def _six_question_receipts() -> list[dict]:
+    topics = [
+        ("tr_q1", "A渠道趋势上升", {"trend": "rising", "metric": "revenue_a"}),
+        ("tr_q2", "B渠道对比完成", {"compare": "a_vs_b", "delta": 12}),
+        ("tr_q3", "用户分布偏态", {"distribution": "long_tail", "bins": 9}),
+        ("tr_q4", "漏斗步骤流失", {"funnel": "checkout", "drop_off": 0.4}),
+        ("tr_q5", "留存曲线拟合", {"retention": "power", "d7": 0.1}),
+        ("tr_q6", "相关性矩阵计算", {"correlation": "weak", "pairs": 3}),
+    ]
+    receipts = []
+    for receipt_id, preview, data in topics:
+        receipts.append({
+            "id": receipt_id,
+            "tool_name": "run_python",
+            "result_sha256": f"sha256:{receipt_id}",
+            "result_preview": preview,
+            "publication_facts": extract_publication_facts(data),
+        })
+    return receipts
+
+
+def _packet_state(receipts, evidence=None):
+    state = AnalysisSessionState(session_id="e_series_packet")
+    for receipt in receipts:
+        state.add_tool_receipt(receipt)
+    for record in evidence or []:
+        state.add_evidence_record(record)
+    return state
+
+
+class TestESeriesPacket:
+
+    def test_e01_all_primary_subquestion_sources_kept(self):
+        receipts = _six_question_receipts()
+        question = (
+            "分析A渠道趋势、B渠道对比、用户分布、漏斗、留存曲线、相关性"
+        )
+        packet = build_publication_packet(
+            _packet_state(receipts),
+            user_input=question,
+            substantive_tools={"run_python"},
+        )
+
+        source_ids = {source["receipt_id"] for source in packet["sources"]}
+        # 六个主问题来源不得因“最近四条”静默丢失：要么入选，要么有显式缺口记录
+        tracked = source_ids | {
+            item.get("receipt_id") for item in packet.get("omitted_refs", [])
+        }
+        assert {f"tr_q{i}" for i in range(1, 7)} <= tracked
+        # 问题全部覆盖时不应产生缺口——六个来源全部入选且各带事实
+        assert source_ids == {f"tr_q{i}" for i in range(1, 7)}
+        assert all(source["facts"] for source in packet["sources"])
+
+    def test_e02_current_evidence_not_sliced_before_filter(self):
+        receipts = _six_question_receipts()
+        evidence = [
+            {"id": "ev_current", "claim": "A 渠道趋势上升", "tool_receipt_ids": ["tr_q1"], "limitations": []},
+            {"id": "ev_other_1", "claim": "B 渠道对比完成", "tool_receipt_ids": ["tr_q9"], "limitations": []},
+            {"id": "ev_other_2", "claim": "分布偏态", "tool_receipt_ids": ["tr_q10"], "limitations": []},
+            {"id": "ev_other_3", "claim": "漏斗流失", "tool_receipt_ids": ["tr_q11"], "limitations": []},
+            {"id": "ev_other_4", "claim": "留存拟合", "tool_receipt_ids": ["tr_q12"], "limitations": []},
+        ]
+        packet = build_publication_packet(
+            _packet_state(receipts[:1], evidence),
+            user_input="分析A渠道趋势",
+            substantive_tools={"run_python"},
+            receipt_ids={"tr_q1"},
+        )
+
+        evidence_ids = [item["evidence_id"] for item in packet["evidence"]]
+        assert "ev_current" in evidence_ids
+
+    def test_e03_fourth_group_value_enters_facts_with_its_name(self):
+        data = {
+            "metric": "amount",
+            "groups": [
+                {"channel": "A", "amount": 1},
+                {"channel": "B", "amount": 2},
+                {"channel": "C", "amount": 3},
+                {"channel": "D", "amount": 999},
+            ],
+        }
+        packet = build_publication_packet(
+            _packet_state([{
+                "id": "tr_groups",
+                "tool_name": "run_python",
+                "result_sha256": "sha256:g",
+                "result_preview": "channel group amounts",
+                "publication_facts": extract_publication_facts(data),
+            }]),
+            user_input="各渠道金额最高的是谁",
+            substantive_tools={"run_python"},
+        )
+
+        facts = packet["sources"][0]["facts"]
+        values = {fact["value"] for fact in facts}
+        paths = {fact["path"] for fact in facts}
+        assert "999" in values, "第四组数值必须进入候选事实"
+        assert "D" in values
+        assert any("groups[3]" in path for path in paths), "组名与数值必须成对保留"
+
+    def test_e04_comparison_fields_kept_as_a_group(self):
+        data = {
+            "metric": "revenue",
+            "period_a": {"value": 1818, "day_count": 15},
+            "period_b": {"value": 684, "day_count": 15},
+        }
+        facts = extract_publication_facts(data, max_facts=3)
+
+        paths = {fact["path"] for fact in facts}
+        # 比较所需的字段组合成组保留：一个期间若保留数值则必须同时保留分母天数，
+        # 不允许预算压力把组拆成互不关联的数字。
+        for period in ("period_a", "period_b"):
+            value_in = f"{period}.value" in paths
+            days_in = f"{period}.day_count" in paths
+            assert value_in == days_in, f"{period} 的字段组被拆散: {sorted(paths)}"
+        assert len(paths) <= 3
+
+    def test_e05_budget_omissions_are_recorded_with_references(self):
+        receipts = _six_question_receipts() + [
+            {
+                "id": f"tr_extra_{i}",
+                "tool_name": "run_python",
+                "result_sha256": f"sha256:x{i}",
+                "result_preview": f"background calc {i}",
+                "publication_facts": extract_publication_facts({"value": i}),
+            }
+            for i in range(10)
+        ]
+        packet = build_publication_packet(
+            _packet_state(receipts),
+            user_input="分析A渠道趋势",
+            substantive_tools={"run_python"},
+        )
+
+        omitted = packet.get("omitted_refs", [])
+        assert omitted, "超出预算的来源必须有省略记录"
+        assert all(item.get("receipt_id") and item.get("reason") for item in omitted)
+        total_facts = sum(len(source["facts"]) for source in packet["sources"])
+        assert total_facts <= 8 * 10
+
+    def test_e09_packet_identity_changes_when_evidence_content_changes(self):
+        receipts = _six_question_receipts()[:2]
+        evidence = [
+            {"id": "ev_1", "claim": "A 渠道趋势上升 12%", "tool_receipt_ids": ["tr_q1"], "limitations": []},
+        ]
+        state = _packet_state(receipts, evidence)
+        packet_a = build_publication_packet(
+            state, user_input="分析A渠道趋势", substantive_tools={"run_python"},
+        )
+
+        state.evidence_records[0]["claim"] = "A 渠道趋势上升 15%"
+        packet_b = build_publication_packet(
+            state, user_input="分析A渠道趋势", substantive_tools={"run_python"},
+        )
+
+        assert packet_a["id"] != packet_b["id"], "相同 id 不同内容的证据不得复用旧发布包"
+        assert any("15%" in item["claim"] for item in packet_b["evidence"])
+
+    def test_e10_uncovered_question_terms_become_explicit_gaps(self):
+        receipts = _six_question_receipts()[:1]
+        packet = build_publication_packet(
+            _packet_state(receipts),
+            user_input="分析A渠道趋势、漏斗、留存曲线",
+            substantive_tools={"run_python"},
+        )
+
+        coverage = packet.get("coverage", [])
+        covered_terms = {item.get("term") for item in coverage if item.get("status") == "covered"}
+        gap_terms = {item.get("term") for item in coverage if item.get("status") == "missing"}
+        assert gap_terms, "无来源覆盖的子问题必须成为显式缺口而不是静默缺失"
+        assert covered_terms & {"趋势"} or any("趋势" in str(t) for t in covered_terms)

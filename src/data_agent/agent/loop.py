@@ -746,7 +746,12 @@ class AgentLoop:
         return ""
 
     def _build_system_prompt(self) -> str:
-        from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
+        from data_agent.agent.prompts import (
+            _classify_task,
+            build_system_prompt,
+            detect_audience,
+            resolve_proficiency,
+        )
         from data_agent.session.workspace import workspace
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
@@ -761,11 +766,17 @@ class AgentLoop:
                 user_input = content if isinstance(content, str) else str(content)
                 break
 
-        # Detect user proficiency level
-        proficiency = self.context.user_proficiency
-        if proficiency == "auto":
-            proficiency = detect_user_proficiency(user_input, self.messages)
-            self.context.user_proficiency = proficiency
+        # Proficiency: "auto" re-detects every turn without being written
+        # back, so a later plain-language request is honored (P6/D07).
+        proficiency = resolve_proficiency(
+            self.context.user_proficiency, user_input, self.messages,
+        )
+        if self.context.user_proficiency == "auto":
+            self.context.detected_proficiency = proficiency
+        # Audience is per-turn from explicit self-identification; it never
+        # changes facts, evidence thresholds, or permissions.
+        audience = detect_audience(user_input)
+        self.context.audience = audience
 
         # 判断任务级别
         datasets = workspace.list_datasets()
@@ -873,6 +884,7 @@ class AgentLoop:
                 user_input=user_input,
                 proficiency=proficiency,
                 user_requirements=self.context.user_quality_requirements,
+                audience=audience,
             )
 
         return build_system_prompt(
@@ -886,6 +898,7 @@ class AgentLoop:
             user_input=user_input,
             proficiency=proficiency,
             user_requirements=self.context.user_quality_requirements,
+            audience=audience,
         )
 
     def _get_system_prompt(self) -> str:
@@ -1448,7 +1461,7 @@ class AgentLoop:
                 ).hexdigest(),
                 "result_preview": (tool_msg_content or "")[:2000],
                 "publication_facts": self._publication_facts_for_tool(structured_data),
-                "publication_contract": publication_contract(tool_name, structured_data),
+                "publication_contract": publication_contract(tool_name, structured_data, args=args),
             })
             receipt_id = str(receipt.get("id") or "")
             if receipt_id:
@@ -1624,7 +1637,20 @@ class AgentLoop:
             user_requirements=self.context.user_quality_requirements,
             proficiency=self.context.user_proficiency,
         )
-        self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
+        instruction = build_synthesis_instruction(policy)
+        try:
+            from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+
+            hydrated = hydrate_hypothesis_refs(list(getattr(state, "hypothesis_sets", []) or []))
+            brief = hypotheses_prompt_brief(state, hydrated=hydrated)
+            if brief:
+                instruction = f"{instruction}\n{brief}"
+        except Exception as exc:
+            logger.warning(
+                "Hypothesis brief injection skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+        self._turn_synthesis_policy_instruction = instruction
         self._turn_synthesis_policy_injected = True
 
     def _verify_before_publication(self, user_input: str) -> None:
@@ -1646,6 +1672,19 @@ class AgentLoop:
                 "Publication-boundary verification skipped",
                 extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
             )
+        # Hypothesis states are refreshed on the same evidence snapshot as
+        # verification, so a final answer never ships with stale verdicts.
+        intent = getattr(self, "_last_turn_intent", None)
+        if intent is not None:
+            try:
+                from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+
+                maybe_create_hypothesis_set(user_input, intent, state)
+            except Exception as exc:
+                logger.warning(
+                    "Publication-boundary hypothesis refresh skipped",
+                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+                )
 
     @staticmethod
     def _budget_truncation_message(response) -> str | None:

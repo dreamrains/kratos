@@ -362,3 +362,59 @@ class TestRecordEvidenceRecord:
             }
             result = json.loads(record_evidence_record(json.dumps(evidence)))
         assert "error" not in result
+
+
+class TestCompetingHypothesesSchema:
+
+    def _record(self, competing) -> str:
+        import json as _json
+
+        from data_agent.tools.analysis_flow import record_evidence_record
+
+        ctx = _make_ctx()
+        with use_agent_context(ctx):
+            return record_evidence_record(_json.dumps({
+            "claim": "结构化关系校验",
+            "dataset": "sales",
+            "method": "period compare",
+            "tool_calls": ["compare_periods"],
+            "result_summary": "revenue delta computed",
+            "limitations": [],
+            "confidence": "medium",
+            "competing_hypotheses": competing,
+        }, ensure_ascii=False))
+
+    def test_structured_relation_requires_complete_fields(self):
+        result = json.loads(self._record([{
+            "hypothesis_id": "hyps_sales_period_compare_h1",
+            "relation": "supports",
+            "observed": "increased",
+        }]))
+
+        assert "error" in result
+        assert result.get("error_type") == "invalid_competing_hypotheses"
+
+    def test_structured_relation_rejects_unknown_direction(self):
+        result = json.loads(self._record([{
+            "hypothesis_id": "hyps_sales_period_compare_h1",
+            "relation": "supports",
+            "metric": "revenue",
+            "observed": "exploded",
+        }]))
+
+        assert "error" in result
+
+    def test_structured_relation_valid_entry_passes(self):
+        result = json.loads(self._record([{
+            "hypothesis_id": "hyps_sales_period_compare_h1",
+            "relation": "supports",
+            "metric": "revenue",
+            "observed": "increased",
+        }]))
+
+        assert "error" not in result
+
+    def test_legacy_freeform_entry_still_accepted_as_unvalidated(self):
+        result = json.loads(self._record([{"hypothesis": "seasonality", "excluded": True}]))
+
+        assert "error" not in result

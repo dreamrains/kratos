@@ -1278,6 +1278,20 @@ function chatApp() {
             return this.trustView?.workbench?.verified_conclusions || [];
         },
 
+        verifiedTotal() {
+            return Number(this.trustView?.workbench?.verified_total || 0);
+        },
+
+        pendingFindings() {
+            const list = this.trustView?.workbench?.pending_findings;
+            return Array.isArray(list) ? list : [];
+        },
+
+        canCollapseList(key, defaultLimit = 6) {
+            const current = Number(this.expandedListCounts[key] || defaultLimit);
+            return current > defaultLimit;
+        },
+
         visibleListItems(key, items, defaultLimit = 6) {
             const list = Array.isArray(items) ? items : [];
             const visible = Number(this.expandedListCounts[key] || defaultLimit);

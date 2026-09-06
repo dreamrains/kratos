@@ -77,7 +77,7 @@ def test_multifile_context_does_not_expand_the_minimal_workbench_projection():
 
     view = build_workbench_view(_state_with_multifile_context())
 
-    assert set(view) == {"verified_conclusions"}
+    assert {"verified_conclusions", "verified_total", "pending_findings"} <= set(view)
     rendered = json.dumps(view, ensure_ascii=False)
     assert "relationships" not in rendered
     assert "artifact_path" not in rendered
@@ -88,7 +88,7 @@ def test_trust_view_embeds_multifile_workbench_read_model():
 
     view = build_trust_view(_state_with_multifile_context())
 
-    assert view["workbench"] == {"verified_conclusions": [
+    assert view["workbench"]["verified_conclusions"] == [
         {
             "id": "ev_gmv",
             "claim": "GMV increased in the final two days.",
@@ -96,7 +96,9 @@ def test_trust_view_embeds_multifile_workbench_read_model():
             "confidence": "medium",
             "dataset": "",
         }
-    ]}
+    ]
+    assert view["workbench"]["verified_total"] == 1
+    assert view["workbench"]["pending_findings"] == []
 
 
 def test_trust_view_exposes_only_workbench_and_bounded_validation_details():
@@ -105,7 +107,7 @@ def test_trust_view_exposes_only_workbench_and_bounded_validation_details():
     view = build_trust_view(_state_with_multifile_context())
 
     assert set(view) == {"status", "session_id", "updated_at", "workbench"}
-    assert set(view["workbench"]) == {"verified_conclusions"}
+    assert {"verified_conclusions", "verified_total", "pending_findings"} <= set(view["workbench"])
     rendered = json.dumps(view, ensure_ascii=False)
     assert "artifact_path" not in rendered
     assert "evidence_signature" not in rendered

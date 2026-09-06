@@ -27,19 +27,53 @@ _FACT_PATH_HINTS = (
 _TOOL_MARKUP = ("<｜｜dsml｜｜", "<|dsml|>", "<tool_calls>", "<tool_call>", '"tool_calls"')
 
 
-def publication_contract(tool: str, result: dict | None) -> dict:
+def _inference_subjects(args: dict) -> list[str] | None:
+    """Metric/group names the executed test actually covered, from tool args."""
+    keys = (
+        "metric", "metric_col", "value_col", "outcome_col", "treatment_col",
+        "group_a", "group_b", "group_col", "column", "columns", "x", "y",
+        "target_col", "group1", "group2",
+    )
+    subjects: list[str] = []
+    for key in keys:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            subjects.append(value.strip())
+        elif isinstance(value, list):
+            subjects.extend(str(item).strip() for item in value if isinstance(item, str) and item.strip())
+    subjects = sorted(set(subjects))
+    return subjects or None
+
+
+def _inference_performed(tool: str, data: dict) -> bool:
+    """Did this exact tool execution produce a statistical inference?"""
+    if tool == "ab_test":
+        test = data.get("test")
+        p_value = test.get("p_value") if isinstance(test, dict) else None
+        return isinstance(p_value, (float, int)) and 0 <= p_value <= 1
+    if tool == "causal_analysis":
+        return isinstance(data.get("p_value"), (float, int))
+    if tool in {"regression_analysis", "forecast", "classification"}:
+        return isinstance(data.get("p_value"), (float, int))
+    return False
+
+
+def publication_contract(tool: str, result: dict | None, args: dict | None = None) -> dict:
     """Carry calculation scope separately from selected, abbreviated facts."""
     data = result if isinstance(result, dict) else {}
-    test = data.get("test") or {}
-    p_value = test.get("p_value") if isinstance(test, dict) else None
     contract = {"schema_version": "publication_scope.v1", "tool": tool,
-                "inference_performed": tool == "ab_test" and isinstance(p_value, (float, int)) and 0 <= p_value <= 1,
+                "inference_performed": _inference_performed(tool, data),
                 "analysis_unit": data.get("analysis_unit", "not_reported"),
                 "unit_status": data.get("unit_status", "not_confirmed"),
                 "claim_ceiling": data.get("claim_ceiling", "not_reported"),
                 "limitations": data.get("limitations") or [],
                 "observation_window": data.get("observation_window") or data.get("coverage") or {},
                 "denominators": {key: data[key] for key in ("source_rows", "complete_case_rows", "paired_sample_size", "excluded_unpaired_units", "aligned_rows", "combined") if key in data}}
+    subjects = _inference_subjects(args if isinstance(args, dict) else {})
+    if contract["inference_performed"]:
+        # Only claims about these executed-test subjects may borrow the test's
+        # significance; other metrics in the same turn are still untested.
+        contract["inference_subjects"] = subjects or []
     if tool == "curve_fitting":
         contract["zero_value_semantics"] = data.get("zero_value_semantics", "unknown")
         points = [point["x"] for point in data.get("points", []) if isinstance(point, dict) and isinstance(point.get("x"), (int, float))]
@@ -69,6 +103,9 @@ def _safe_scalar(value: Any) -> str | None:
     return None
 
 
+_LIST_ITEM_CAP = 100
+
+
 def _walk_facts(value: Any, path: str = "", depth: int = 0) -> Iterable[tuple[str, str]]:
     if depth > 5:
         return
@@ -82,41 +119,88 @@ def _walk_facts(value: Any, path: str = "", depth: int = 0) -> Iterable[tuple[st
             child_path = f"{path}.{key_text}" if path else key_text
             yield from _walk_facts(item, child_path, depth + 1)
     elif isinstance(value, (list, tuple)):
-        # A method result can contain full rows/points.  The publication brief
-        # needs representative computed facts, not a second copy of raw data.
-        for index, item in enumerate(value[:3]):
+        # A method result can contain full rows/points.  Traversal covers the
+        # complete candidate set (bounded) so a later group never disappears
+        # before scoring; the fact budget decides how much is displayed.
+        for index, item in enumerate(value[:_LIST_ITEM_CAP]):
             yield from _walk_facts(item, f"{path}[{index}]", depth + 1)
 
 
+def _fact_score(path: str, value: str) -> int:
+    lower_path = path.lower()
+    score = sum(4 for hint in _FACT_PATH_HINTS if hint in lower_path)
+    # A period comparison's union scope is necessary to interpret the two
+    # window totals.  Keep it ahead of per-window calendar trivia when the
+    # bounded fact budget is full.
+    if re.fullmatch(r"combined\.(?:row_count|day_count)", lower_path):
+        score += 12
+    if re.search(r"(?:^|[.\]])(?:a|b|k|n)$", lower_path):
+        score += 2
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", value, flags=re.I):
+        score += 1
+    return score
+
+
+def _group_key(path: str) -> str:
+    """Parent path: facts sharing it form one interpretable group (E04)."""
+    bracket = path.rfind("]")
+    if bracket != -1:
+        return path[:bracket + 1]
+    if "." in path:
+        return path.rsplit(".", 1)[0]
+    return ""
+
+
 def extract_publication_facts(data: Any, *, max_facts: int = _MAX_FACTS_PER_SOURCE) -> list[dict[str, str]]:
-    """Extract bounded, displayable facts from a structured ToolResult payload."""
+    """Extract bounded, displayable facts from a structured ToolResult payload.
+
+    Selection keeps interpretable field groups whole: a period's value stays
+    with its denominator, a group's name stays with its number.  Budget
+    pressure drops whole groups instead of splitting pairs.
+    """
     candidates: list[tuple[int, str, str]] = []
     for path, value in _walk_facts(data):
         if path.startswith("chart_data") or ".predicted[" in path:
             continue
-        lower_path = path.lower()
-        score = sum(4 for hint in _FACT_PATH_HINTS if hint in lower_path)
-        # A period comparison's union scope is necessary to interpret the two
-        # window totals.  Keep it ahead of per-window calendar trivia when the
-        # bounded fact budget is full.
-        if re.fullmatch(r"combined\.(?:row_count|day_count)", lower_path):
-            score += 12
-        if re.search(r"(?:^|[.\]])(?:a|b|k|n)$", lower_path):
-            score += 2
-        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", value, flags=re.I):
-            score += 1
-        candidates.append((score, path, value))
+        candidates.append((_fact_score(path, value), path, value))
     candidates.sort(key=lambda item: (-item[0], item[1]))
+
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    group_order: list[str] = []
     seen: set[tuple[str, str]] = set()
-    facts: list[dict[str, str]] = []
-    for _, path, value in candidates:
+    for score, path, value in candidates:
         key = (path, value)
         if key in seen:
             continue
         seen.add(key)
-        facts.append({"path": path, "value": value})
+        group = _group_key(path)
+        if group not in grouped:
+            grouped[group] = []
+            group_order.append(group)
+        grouped[group].append((path, value))
+
+    group_scores = {
+        group: max(_fact_score(path, value) for path, value in members)
+        for group, members in grouped.items()
+    }
+    ordered_groups = sorted(group_order, key=lambda group: (-group_scores[group], group))
+
+    facts: list[dict[str, str]] = []
+    for group in ordered_groups:
         if len(facts) >= max_facts:
             break
+        members = grouped[group]
+        if len(members) > max_facts:
+            # A single oversized group still has to fit the budget.
+            members = members[:max_facts]
+        if len(facts) + len(members) > max_facts:
+            continue  # keep the group whole; try smaller groups first
+        facts.extend({"path": path, "value": value} for path, value in members)
+    if not facts and ordered_groups:
+        # Degenerate budget: return the top-scoring single fact rather than
+        # nothing, so the packet never loses a source entirely.
+        top = grouped[ordered_groups[0]][0]
+        facts.append({"path": top[0], "value": top[1]})
     return facts
 
 
@@ -132,6 +216,63 @@ def _receipt_summary(receipt: dict[str, Any]) -> str:
         tool = str(receipt.get("tool_name") or "工具")
         return f"{tool} 已执行；以下字段来自其结构化计算结果。"
     return preview or "已执行，详见收据。"
+
+
+_SOURCE_CAP = 8
+_TOTAL_FACT_BUDGET = _SOURCE_CAP * _MAX_FACTS_PER_SOURCE
+_QUESTION_STOP_TERMS = {"分析", "怎么", "什么", "如何", "一下", "请", "帮忙", "看看"}
+
+
+def _question_terms(user_input: str) -> set[str]:
+    """Deterministic question terms: ASCII tokens plus CJK bigrams."""
+    text = str(user_input or "").lower()
+    tokens = {token for token in re.findall(r"[a-z0-9_]{3,}", text)}
+    bigrams: set[str] = set()
+    for run in re.findall(r"[一-鿿]+", text):
+        bigrams.update(run[i:i + 2] for i in range(len(run) - 1))
+    return (tokens | bigrams) - _QUESTION_STOP_TERMS
+
+
+def _receipt_search_text(receipt: dict[str, Any]) -> str:
+    parts = [str(receipt.get("tool_name") or ""), str(receipt.get("result_preview") or "")]
+    facts = receipt.get("publication_facts")
+    if isinstance(facts, list):
+        for item in facts:
+            if isinstance(item, dict):
+                parts.append(str(item.get("path") or ""))
+                parts.append(str(item.get("value") or ""))
+    return " ".join(parts).lower()
+
+
+def _select_sources(
+    eligible: list[dict[str, Any]],
+    user_input: str,
+) -> tuple[list[int], list[int], dict[int, set[str]]]:
+    """Pick question-relevant sources first, then fill by recency.
+
+    Returns (selected indices in chronological order, omitted indices, term
+    coverage per index).  Every source matching the question is kept up to
+    the source cap so primary sub-questions are not silently dropped for
+    being "older than the last four receipts" (E01).
+    """
+    terms = _question_terms(user_input)
+    coverage: dict[int, set[str]] = {}
+    for index, receipt in enumerate(eligible):
+        text = _receipt_search_text(receipt)
+        coverage[index] = {term for term in terms if term and term in text}
+    scored_order = sorted(
+        range(len(eligible)),
+        key=lambda index: (-len(coverage[index]), -index),
+    )
+    selected = [index for index in scored_order if coverage[index]][:_SOURCE_CAP]
+    if len(selected) < _MAX_SOURCES:
+        for index in scored_order:
+            if index not in selected:
+                selected.append(index)
+            if len(selected) >= _MAX_SOURCES:
+                break
+    omitted = [index for index in range(len(eligible)) if index not in selected]
+    return sorted(selected), omitted, coverage
 
 
 def build_publication_packet(
@@ -152,9 +293,16 @@ def build_publication_packet(
         and (receipt_ids is None or str(receipt.get("id") or "") in allowed_receipts)
         and _receipt_is_successful(receipt)
     ]
-    selected = eligible[-_MAX_SOURCES:]
+    selected_indices, omitted_indices, coverage = _select_sources(eligible, user_input)
+
+    # Per-source fact budget adapts to how many sources the question needs:
+    # more covered sub-questions means more sources with leaner facts each,
+    # within the same overall budget (E01/E05).
+    per_source_facts = max(4, _TOTAL_FACT_BUDGET // max(1, len(selected_indices)))
+
     sources: list[dict[str, Any]] = []
-    for receipt in selected:
+    for index in selected_indices:
+        receipt = eligible[index]
         facts = receipt.get("publication_facts")
         if not isinstance(facts, list):
             facts = []
@@ -165,12 +313,16 @@ def build_publication_packet(
             "summary": _receipt_summary(receipt),
             "facts": [
                 {"path": str(item.get("path") or ""), "value": str(item.get("value") or "")}
-                for item in facts[:_MAX_FACTS_PER_SOURCE]
+                for item in facts[:per_source_facts]
                 if isinstance(item, dict) and item.get("path") and item.get("value") not in (None, "")
             ],
         })
+
+    # Evidence is filtered by the current turn's receipts BEFORE any bound is
+    # applied, so a current-turn record is never sliced away by newer records
+    # from other plans (E02).
     evidence = []
-    for record in list(getattr(state, "evidence_records", []) or [])[-4:]:
+    for record in getattr(state, "evidence_records", []) or []:
         if not isinstance(record, dict):
             continue
         if receipt_ids is not None and not (set(record.get("tool_receipt_ids") or []) & allowed_receipts):
@@ -181,8 +333,48 @@ def build_publication_packet(
             "limitations": record.get("limitations") or [],
             "statistical_detail_status": record.get("statistical_detail_status", "unknown"),
         })
+
+    omitted_refs = [
+        {
+            "receipt_id": str(eligible[index].get("id") or ""),
+            "reason": "来源数量超过本轮事实预算；该结果保留在收据中，可按 receipt_id 恢复。",
+            "result_sha256": str(eligible[index].get("result_sha256") or ""),
+        }
+        for index in omitted_indices
+    ]
+
+    terms = _question_terms(user_input)
+    covered_terms: set[str] = set()
+    for index in selected_indices:
+        covered_terms |= coverage.get(index, set())
+    coverage_rows = [
+        {"term": term, "status": "covered", "receipt_id": next(
+            str(eligible[index].get("id") or "")
+            for index in selected_indices
+            if term in coverage.get(index, set())
+        )}
+        for term in sorted(covered_terms)
+    ]
+    missing_rows = [
+        {"term": term, "status": "missing", "reason": "本轮没有来源覆盖该子问题；需补充计算或明确缺口。"}
+        for term in sorted(terms - covered_terms)
+    ]
+
     seed = json.dumps(
-        {"question": user_input, "receipts": [source["receipt_id"] for source in sources]},
+        {
+            "question": user_input,
+            "receipts": [
+                {
+                    "id": source["receipt_id"],
+                    "result_sha256": source["result_sha256"],
+                }
+                for source in sources
+            ],
+            "evidence": [
+                {"id": item["evidence_id"], "claim": item["claim"]}
+                for item in evidence
+            ],
+        },
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -193,6 +385,8 @@ def build_publication_packet(
         "question": " ".join((user_input or "").split())[:1000],
         "sources": sources,
         "evidence": evidence,
+        "omitted_refs": omitted_refs,
+        "coverage": coverage_rows + missing_rows,
         "publication_scope": [receipt["publication_contract"] for receipt in eligible if receipt.get("publication_contract")],
         "limitations": _collect_limitations(sources, evidence),
     }
@@ -242,47 +436,155 @@ def render_verified_appendix(packet: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def validate_final_narrative(text: str, packet: dict | None = None) -> str | None:
-    """Return a stable publication error instead of publishing malformed finalization text."""
-    if not str(text or "").strip():
-        return "最终化轮未生成可发布回答。"
-    lowered = str(text).lower()
-    if any(marker in lowered for marker in _TOOL_MARKUP):
-        return "最终化轮包含未执行的工具标记。"
-    scopes = (packet or {}).get("publication_scope") or []
-    if any(scope.get("tool") == "curve_fitting" for scope in scopes):
-        for clause in re.split(r"[。；;\n]", text):
-            claim = re.search(
-                r"(?:ROI|投入产出比)\s*(?:最高|更高|递减)|(?:最高|更高).*ROI|"
-                r"(?:选择偏差|缺失影响)(?:为|是|存在)?(?:轻微|很小|可忽略)|(?:轻微|很小|可忽略)(?:cohort\s*)?(?:选择偏差|缺失影响)|"
-                r"(?:零值|0\s*值|这些零值).{0,20}(?:是|为|代表|表示|说明|源于).{0,12}(?:未观测|缺失|未记录|未上报)|"
-                r"(?:未观测|缺失).{0,12}(?:而非|不是).{0,8}(?:真实零|真实的?\s*0)|"
-                r"稳定(?:的)?核心用户(?:盘)?|核心用户(?:盘)?(?:稳定|稳固)|"
-                r"(?:典型|属于|呈现).{0,16}(?:社交|长线).{0,8}(?:游戏|产品)|"
-                r"(?:游戏|产品)(?:类型|品类).{0,10}(?:社交|长线)|"
-                r"(?:异常值|离群值|数据波动).{0,20}(?:是|为|属于|反映).{0,10}(?:自然波动|正常波动)|"
-                r"(?:适合|可用于|可以用于|足以用于|能够用于).{0,24}(?:留存预估|留存预测|LTV|生命周期价值)",
-                clause,
+_CLAUSE_SPLIT = re.compile(r"[。；;\n]|但是|但|不过|然而")
+_TIME_POINT = re.compile(r"(?:(?<![A-Za-z0-9])D|第)(\d+(?:\.\d+)?)(?:天|日)?", re.I)
+# A numeric assertion anchored on the out-of-range point (为/是/约/达到 + number).
+_ASSERTS_VALUE = re.compile(
+    r"(?:为|是|约|大约|左右|达到|超过了?|降至|升至|预计为|预估为)\s*[-+]?[0-9]", re.I,
+)
+_BOUNDARY_BEFORE = re.compile(r"不能|无法|不可|未知|尚无|尚不能|没有依据|不支持|难以|无法准确")
+_PREDICTION_VERB = re.compile(r"预计|预估|预测|推算|大概会|可能会|将达|会达|forecast|project", re.I)
+_COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
+
+
+def _split_claims(text: str) -> list[str]:
+    """Split a narrative into independently checkable claims.
+
+    Sentence punctuation and contrastive conjunctions both start a new claim:
+    a leading negation must not cover an assertion introduced by 但是/但.
+    """
+    parts = [part for part in _CLAUSE_SPLIT.split(str(text or "")) if part.strip()]
+    return parts
+
+
+def _curve_interpretation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    if not any(scope.get("tool") == "curve_fitting" for scope in scopes):
+        return []
+    for clause in _split_claims(text):
+        claim = re.search(
+            r"(?:ROI|投入产出比)\s*(?:最高|更高|递减)|(?:最高|更高).*ROI|"
+            r"(?:选择偏差|缺失影响)(?:为|是|存在)?(?:轻微|很小|可忽略)|(?:轻微|很小|可忽略)(?:cohort\s*)?(?:选择偏差|缺失影响)|"
+            r"(?:零值|0\s*值|这些零值).{0,20}(?:是|为|代表|表示|说明|源于).{0,12}(?:未观测|缺失|未记录|未上报)|"
+            r"(?:未观测|缺失).{0,12}(?:而非|不是).{0,8}(?:真实零|真实的?\s*0)|"
+            r"稳定(?:的)?核心用户(?:盘)?|核心用户(?:盘)?(?:稳定|稳固)|"
+            r"(?:典型|属于|呈现).{0,16}(?:社交|长线).{0,8}(?:游戏|产品)|"
+            r"(?:游戏|产品)(?:类型|品类).{0,10}(?:社交|长线)|"
+            r"(?:异常值|离群值|数据波动).{0,20}(?:是|为|属于|反映).{0,10}(?:自然波动|正常波动)|"
+            r"(?:适合|可用于|可以用于|足以用于|能够用于).{0,24}(?:留存预估|留存预测|LTV|生命周期价值)",
+            clause,
+            re.I,
+        )
+        if claim:
+            window = clause[max(0, claim.start() - 28):min(len(clause), claim.end() + 18)]
+            qualified = re.search(
+                r"不能|不得|不可|无法|未知|未证明|未验证|尚不|尚无|不支持|"
+                r"需要.{0,10}(?:验证|数据|证据)|cannot|not established|unknown|unverified",
+                window,
                 re.I,
             )
-            if claim:
-                window = clause[max(0, claim.start() - 28):min(len(clause), claim.end() + 18)]
-                qualified = re.search(
-                    r"不能|不得|不可|无法|未知|未证明|未验证|尚不|尚无|不支持|"
-                    r"需要.{0,10}(?:验证|数据|证据)|cannot|not established|unknown|unverified",
-                    window,
-                    re.I,
-                )
-                if not qualified:
-                    return "描述性拟合不能确定零值含义、用户/产品类型、异常成因、预测适用性、优化ROI或选择偏差大小；请保留观测结果并明确该解释未经验证。"
-    if scopes and not any(scope.get("inference_performed") for scope in scopes):
-        for clause in re.split(r"[。；;\n]", text):
-            claim = re.search(r"差异(?:并)?不显著|差异无统计显著性|not statistically significant|no statistically significant difference", clause, re.I)
-            if claim and not re.search(r"不能|不得|不可|无法|未检验|未做.*检验|不能声称|cannot|do not claim", clause[:claim.start()], re.I):
-                return "正文声称差异不显著，但本轮没有已执行的统计检验；请保留描述性结果并明确未检验。"
-    for scope in scopes:
-        if scope.get("extrapolation_allowed") is False:
-            upper = scope["observed_x_range"][1]
-            if any(float(value) > upper for value in re.findall(r"(?:(?<![A-Za-z0-9])D|第)(\d+(?:\.\d+)?)(?:天|日)?", text, re.I)):
-                return "正文包含观测区间外的时间点；当前拟合只支持观测范围，不能发布外推。"
-    return None
+            if not qualified:
+                return [{
+                    "code": "unverified_curve_interpretation",
+                    "span": clause.strip()[:80],
+                    "reason": "描述性拟合不能确定零值含义、用户/产品类型、异常成因、预测适用性、优化ROI或选择偏差大小；请保留观测结果并明确该解释未经验证。",
+                }]
+    return []
+
+
+def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    curve_scopes = [
+        scope for scope in scopes
+        if scope.get("extrapolation_allowed") is False
+        and isinstance(scope.get("observed_x_range"), list)
+        and len(scope["observed_x_range"]) == 2
+    ]
+    if not curve_scopes:
+        return []
+    # Multi-source: a point observed by ANY source is a legal fact for that
+    # source; only points beyond every observed range are unsupported here.
+    upper = max(float(scope["observed_x_range"][1]) for scope in curve_scopes)
+    for clause in _split_claims(text):
+        for match in _TIME_POINT.finditer(clause):
+            if float(match.group(1)) <= upper:
+                continue
+            prefix = clause[:match.start()]
+            suffix = clause[match.start():]
+            asserts_value = bool(_ASSERTS_VALUE.search(suffix))
+            predicts = bool(_PREDICTION_VERB.search(clause))
+            if _BOUNDARY_BEFORE.search(prefix[-30:]) and not asserts_value:
+                continue  # explicit boundary statement, not an extrapolated claim
+            if _COLLECTION_ACTION.search(prefix[-30:]):
+                continue  # future data-collection action, not a published value
+            if not asserts_value and not predicts:
+                # Conditional actions and bare mentions without a value or a
+                # prediction verb are not extrapolated claims.
+                continue
+            return [{
+                "code": "extrapolated_time_point",
+                "span": clause.strip()[:80],
+                "reason": "正文包含观测区间外的时间点数值或预测；当前拟合只支持观测范围，不能发布外推。",
+            }]
+    return []
+
+
+def _significance_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    inference_scopes = [scope for scope in scopes if scope.get("inference_performed")]
+    for clause in _split_claims(text):
+        claim = re.search(
+            r"差异(?:并)?不显著|差异无统计显著性|not statistically significant|no statistically significant difference",
+            clause,
+            re.I,
+        )
+        if not claim:
+            continue
+        if re.search(
+            r"不能|不得|不可|无法|未检验|未做.*检验|不能声称|cannot|do not claim",
+            clause[:claim.start()],
+            re.I,
+        ):
+            continue
+        if not inference_scopes:
+            return [{
+                "code": "significance_without_test",
+                "span": clause.strip()[:80],
+                "reason": "正文声称差异不显著，但本轮没有已执行的统计检验；请保留描述性结果并明确未检验。",
+            }]
+        subjects = sorted({
+            str(subject)
+            for scope in inference_scopes
+            for subject in (scope.get("inference_subjects") or [])
+            if str(subject)
+        })
+        if subjects and not any(subject in clause for subject in subjects):
+            return [{
+                "code": "significance_unbound",
+                "span": clause.strip()[:80],
+                "reason": "“差异不显著”未关联本轮已执行检验的对象；请把该结论绑定到具体已检验的指标或分组，或改为未检验表述。",
+            }]
+    return []
+
+
+def validate_final_narrative_issues(text: str, packet: dict | None = None) -> list[dict[str, str]]:
+    """Locate concrete publication violations with a stable code and span."""
+    text_value = str(text or "")
+    if not text_value.strip():
+        return [{"code": "empty_final", "span": "", "reason": "最终化轮未生成可发布回答。"}]
+    if any(marker in text_value.lower() for marker in _TOOL_MARKUP):
+        return [{"code": "unexecuted_tool_markup", "span": "", "reason": "最终化轮包含未执行的工具标记。"}]
+    scopes = (packet or {}).get("publication_scope") or []
+    issues: list[dict[str, str]] = []
+    issues.extend(_curve_interpretation_issues(text_value, scopes))
+    issues.extend(_extrapolation_issues(text_value, scopes))
+    issues.extend(_significance_issues(text_value, scopes))
+    return issues
+
+
+def validate_final_narrative(text: str, packet: dict | None = None) -> str | None:
+    """Return a stable publication error instead of publishing malformed finalization text."""
+    issues = validate_final_narrative_issues(text, packet)
+    if not issues:
+        return None
+    first = issues[0]
+    if first["span"]:
+        return f'{first["reason"]}（违规位置：“{first["span"]}”）'
+    return first["reason"]

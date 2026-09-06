@@ -492,11 +492,223 @@ def test_runtime_refreshes_existing_hypothesis_set_from_evidence(tmp_path):
         refreshed = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
         refreshed_hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
 
+        # Contract update (P1 / D08 / H04): refreshing with matching evidence
+        # text yields a candidate relation, not "supported". The original
+        # requirement promoted the hypothesis via token overlap; the confirmed
+        # principle keeps it undetermined pending a structured relation.
         assert first is not None
         assert refreshed is not None
         assert len(state.hypothesis_sets) == 1
-        assert refreshed_hydrated[0]["hypotheses"][0]["status"] == "supported"
-        assert refreshed_hydrated[0]["hypotheses"][0]["supporting_evidence_ids"] == ["ev_support"]
-        assert refreshed_hydrated[0]["status_summary"]["supported"] == 1
+        hypothesis = refreshed_hydrated[0]["hypotheses"][0]
+        assert hypothesis["status"] == "inconclusive"
+        assert hypothesis["related_evidence_ids"] == ["ev_support"]
+        assert hypothesis["supporting_evidence_ids"] == []
+        assert refreshed_hydrated[0]["status_summary"].get("supported") is None
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+# ── P1 (D08 / H10): plan-scoped hypothesis identity ──
+
+
+def test_runtime_h10_new_plan_creates_fresh_set_and_keeps_old_as_history(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_plan_isolation", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{"dataset": "sales", "direction": "trend"}]
+        state.analysis_plan = {"id": "plan_a", "goal": "Trend under plan A"}
+        state.evidence_records = [{
+            "id": "ev_plan_a",
+            "plan_id": "plan_a",
+            "claim": "revenue has a directional trend over time in sales.",
+            "dataset": "sales",
+        }]
+
+        first = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+        assert first is not None
+        assert first["plan_id"] == "plan_a"
+
+        # A new analysis plan on the same dataset/route must not reuse the old
+        # set's statuses: identity is plan-scoped, the old ref stays as history.
+        state.analysis_plan = {"id": "plan_b", "goal": "Trend under plan B"}
+        second = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+
+        assert second is not None
+        assert second["plan_id"] == "plan_b"
+        assert second["id"] != first["id"]
+        assert {ref["id"] for ref in state.hypothesis_sets} == {first["id"], second["id"]}
+
+        hydrated = {item["id"]: item for item in hydrate_hypothesis_refs(state.hypothesis_sets)}
+        fresh = hydrated[second["id"]]
+        for hypothesis in fresh["hypotheses"]:
+            assert hypothesis["status"] in {"proposed", "inconclusive"}
+            assert hypothesis["supporting_evidence_ids"] == []
+        # plan_a evidence must not even appear as related to the plan_b set.
+        for hypothesis in fresh["hypotheses"]:
+            assert "ev_plan_a" not in hypothesis.get("related_evidence_ids", [])
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_runtime_h10_same_plan_refresh_reuses_existing_set(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = AnalysisSessionState(session_id="runtime_hyp_same_plan", data_state="data_loaded")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{"dataset": "sales", "direction": "trend"}]
+        state.analysis_plan = {"id": "plan_a", "goal": "Trend under plan A"}
+
+        first = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+        second = maybe_create_hypothesis_set("show revenue trend", _intent("directed_analysis"), state)
+
+        assert first is not None
+        assert second is None
+        assert len(state.hypothesis_sets) == 1
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+# ── P5 (D09 / H11): runtime refresh of hypothesis state ──
+
+
+def _relation_state(state_session: str) -> AnalysisSessionState:
+    state = AnalysisSessionState(session_id=state_session, data_state="data_loaded")
+    state.dataset_contracts = [{
+        "dataset": "sales",
+        "quality": {"status": "ready"},
+        "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+    }]
+    state.route_proposals = [{
+        "dataset": "sales",
+        "direction": "trend",
+        "evidence_requirements": ["date", "metric"],
+    }]
+    return state
+
+
+def _structured_evidence(evidence_id, hypothesis_id, relation, observed, delta, claim):
+    return {
+        "id": evidence_id,
+        "claim": claim,
+        "result_summary": claim,
+        "dataset": "sales",
+        "method": "trend analysis",
+        "measurements": [{
+            "metric": "revenue",
+            "definition": "revenue aggregated per period",
+            "value": max(abs(delta), 1),
+            "unit": "currency",
+            "grain": "period",
+            "population_scope": "all records",
+            "time_scope": "2026-08",
+            "method": "period compare",
+            "denominator": "period days",
+            "limitations": [],
+            "delta": delta,
+        }],
+        "competing_hypotheses": [{
+            "hypothesis_id": hypothesis_id,
+            "relation": relation,
+            "metric": "revenue",
+            "observed": observed,
+        }],
+    }
+
+
+def test_h11_new_evidence_changes_hypothesis_state_on_refresh(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = _relation_state("runtime_h11")
+        first = maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        assert first is not None
+        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+        primary_id = hydrated[0]["hypotheses"][0]["id"]
+
+        state.evidence_records = [
+            _structured_evidence(
+                "ev_h11_up", primary_id, "supports", "increased", 112,
+                "Revenue increased between the compared periods.",
+            ),
+        ]
+        refreshed = maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        assert refreshed is not None
+        after_support = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert after_support["hypotheses"][0]["status"] == "supported"
+
+        # 新的反证证据进入后，状态按最新快照重算为 contested，旧状态不粘滞
+        state.evidence_records.append(
+            _structured_evidence(
+                "ev_h11_flat", primary_id, "refutes", "flat", 0,
+                "Revenue was flat in the matched window.",
+            ),
+        )
+        maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        after_conflict = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert after_conflict["hypotheses"][0]["status"] == "contested"
+        assert len(state.hypothesis_sets) == 1
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_h11_supported_hypothesis_becomes_stale_when_its_evidence_disappears(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = _relation_state("runtime_h11_stale")
+        first = maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+        primary_id = hydrated[0]["hypotheses"][0]["id"]
+        state.evidence_records = [
+            _structured_evidence(
+                "ev_stale", primary_id, "supports", "increased", 112,
+                "Revenue increased between the compared periods.",
+            ),
+        ]
+        maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        supported = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert supported["hypotheses"][0]["status"] == "supported"
+
+        # 依赖证据消失：已判定的假设转为 stale（历史保留），不退回 proposed 静默丢失
+        state.evidence_records = []
+        maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        after = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert after["hypotheses"][0]["status"] == "stale"
+        assert after["hypotheses"][0]["supporting_evidence_ids"] == []
     finally:
         cfg.sessions_dir = old_sessions

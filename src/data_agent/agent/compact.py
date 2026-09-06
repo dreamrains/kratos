@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ logger = get_logger("compact")
 PERSIST_THRESHOLD = 15_000   # 超过此字符数的工具输出持久化到磁盘
 PREVIEW_CHARS = 2_000        # 持久化后保留的预览字符数
 KEEP_RECENT = 8              # 微压缩时保留最近 N 个工具结果
+
+_COMPACTED_MARKER = "[Compacted:"
 
 
 @dataclass
@@ -45,15 +48,21 @@ def _session_transcripts_dir(session_id: str) -> Path:
     return d
 
 
+def _content_addressed_path(out_dir: Path, tool_call_id: str, content: str) -> Path:
+    safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
+    return out_dir / f"{safe_id}__{digest}.txt"
+
+
 def persist_large_output(session_id: str, tool_call_id: str, content: str) -> str:
     """大工具输出持久化到磁盘，返回预览标记。"""
     if len(content) <= PERSIST_THRESHOLD:
         return content
 
     out_dir = _session_tool_outputs_dir(session_id)
-    safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
-    stored_path = out_dir / f"{safe_id}.txt"
-
+    # Content-addressed storage: the same tool id with different content gets
+    # its own file instead of silently reusing the previous body.
+    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
     if not stored_path.exists():
         stored_path.write_text(content, encoding="utf-8")
 
@@ -135,8 +144,29 @@ def _extract_compact_preview(content: str, max_chars: int = 400) -> str:
     return preview
 
 
+def _persist_micro_output(session_id: str, tool_call_id: str, content: str) -> Path | None:
+    """Persist any compacted tool output before lossy replacement.
+
+    Content-addressed: the same tool id with different content stores a new
+    file rather than silently reusing the previous body. A failed or
+    unverifiable write returns None and the caller must keep the original
+    message content — no reliable copy, no compaction.
+    """
+    out_dir = _session_tool_outputs_dir(session_id)
+    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
+    try:
+        if not stored_path.exists():
+            stored_path.write_text(content, encoding="utf-8")
+        if stored_path.read_text(encoding="utf-8") != content:
+            stored_path.unlink(missing_ok=True)
+            return None
+        return stored_path
+    except OSError:
+        return None
+
+
 def micro_compact(session_id: str, messages: list[dict]) -> None:
-    """微压缩：旧工具结果先持久化，再替换为结论摘要。保留最近 KEEP_RECENT 个。"""
+    """微压缩：旧工具结果先可靠持久化，再替换为带引用的结论摘要。保留最近 KEEP_RECENT 个。"""
     tool_blocks = _collect_tool_result_blocks(messages)
     if len(tool_blocks) <= KEEP_RECENT:
         return
@@ -145,22 +175,20 @@ def micro_compact(session_id: str, messages: list[dict]) -> None:
         content = msg.get("content", "")
         if not isinstance(content, str) or len(content) <= 120:
             continue
+        if content.startswith(_COMPACTED_MARKER):
+            # 已压缩消息的完整原文已落盘；二次压缩不得把旧摘要当原文，
+            # 也不得覆盖已存储的完整结果。
+            continue
 
-        # 先持久化完整内容
         tool_call_id = msg.get("tool_call_id", f"legacy_{id(msg)}")
-        persisted = persist_large_output(session_id, tool_call_id, content)
-
-        safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
-
-        # 如果内容确实被持久化（超出阈值），替换为结论摘要
-        if persisted != content:
-            preview = _extract_compact_preview(content)
-            msg["content"] = (
-                f"[Compacted: {safe_id}.txt]\n{preview}"
-            )
-        else:
-            # 内容不大但超 120 字符，用智能截断
-            msg["content"] = _extract_compact_preview(content, max_chars=200)
+        stored = _persist_micro_output(session_id, tool_call_id, content)
+        if stored is None:
+            # 持久化失败：不进行有损替换
+            continue
+        preview = _extract_compact_preview(content)
+        msg["content"] = (
+            f"[Compacted: {stored.name}]\n{preview}"
+        )
 
 
 def write_transcript(session_id: str, messages: list[dict]) -> Path:

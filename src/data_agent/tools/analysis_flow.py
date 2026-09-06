@@ -32,20 +32,93 @@ def _mark_statistical_detail_status(payload: dict) -> dict:
     payload["statistical_detail_status"] = "complete" if not gaps else "missing"
     return payload
 
+_INFERENTIAL_METHOD_MARKERS = (
+    "ab_test", "causal", "did", "difference_in_differences", "t检验", "t-test",
+    "chi", "卡方", "anova", "回归", "regression", "相关分析", "correlation",
+    "显著性", "检验", "forecast", "预测模型", "arima", "wilcoxon", "z检验",
+)
+_INFERENTIAL_STAT_FIELDS = ("significance", "p_value", "confidence_interval", "correlation", "effect_size")
+
+
+def _infer_statistical_inference(payload: dict) -> bool:
+    """Host-side classification: does this record make an inferential claim?
+
+    Presence of executed test statistics, an inferential method, or
+    significance wording in the claim itself marks the record inferential; a
+    plain descriptive total stays descriptive even when the model never said
+    either way.
+    """
+    for field in _INFERENTIAL_STAT_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, (int, float)):
+            return True
+        if isinstance(value, str) and value.strip() and value.strip().lower() not in {"unknown", "n/a", "na"}:
+            return True
+    method = str(payload.get("method", "")).lower()
+    if any(marker in method for marker in _INFERENTIAL_METHOD_MARKERS):
+        return True
+    claim = str(payload.get("claim", "")).lower()
+    return any(word in claim for word in ("显著", "significant", "p值", "p-value", "置信区间"))
+
+
+def _effective_statistical_inference(payload: dict) -> bool:
+    value = payload.get("statistical_inference")
+    if isinstance(value, bool):
+        return value
+    return _infer_statistical_inference(payload)
+
+
+def _observation_window_days(time_scope: str) -> float | None:
+    """Structured window length in days, or None when unparseable.
+
+    An unparseable window must not produce a fabricated adequacy/shortness
+    claim; the caller skips the auto-limitation instead.
+    """
+    import re as _re
+
+    text = str(time_scope or "").strip()
+    if not text:
+        return None
+    match = _re.search(r"(\d+(?:\.\d+)?)\s*(?:个?月|months?)", text, _re.I)
+    if match:
+        return float(match.group(1)) * 30
+    match = _re.search(r"(\d+(?:\.\d+)?)\s*(?:天|日|days?)", text, _re.I)
+    if match:
+        return float(match.group(1))
+    match = _re.search(r"(\d+(?:\.\d+)?)\s*周", text)
+    if match:
+        return float(match.group(1)) * 7
+    match = _re.search(r"(\d+(?:\.\d+)?)\s*年", text)
+    if match:
+        return float(match.group(1)) * 365
+    dates = _re.findall(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", text)
+    if len(dates) >= 2:
+        try:
+            from datetime import date as _date
+
+            parsed = [_date(int(y), int(m), int(d)) for y, m, d in dates[:2]]
+            return abs((parsed[1] - parsed[0]).days)
+        except ValueError:
+            return None
+    return None
+
+
 def _auto_generate_limitations(payload: dict) -> list[str]:
     """Auto-generate common limitations based on analysis context."""
     auto = []
     method = str(payload.get("method", "")).lower()
     limitations = payload.get("limitations", [])
+    inferential = _effective_statistical_inference(payload)
 
     # Before/after comparison without control group
     if any(kw in method for kw in ["before_after", "前后对比", "period_compare", "compare_periods"]):
         if not any("对照" in l for l in limitations):
             auto.append("无对照组/随机化，结论为描述性关联而非因果关系")
 
-    # Small sample
+    # Small sample limits statistical power only for inferential claims; an
+    # exact descriptive total over the records at hand is not weakened by n<30.
     sample_size = payload.get("sample_size")
-    if sample_size and payload.get("statistical_inference", True):
+    if sample_size and inferential:
         try:
             n = int(str(sample_size).replace(",", "").split()[0])
             if n < 30:
@@ -57,15 +130,23 @@ def _auto_generate_limitations(payload: dict) -> list[str]:
         except (ValueError, TypeError):
             pass
 
-    # Short observation period
-    time_scope = str(payload.get("time_scope", ""))
-    if time_scope and "天" in time_scope and "月" not in time_scope:
+    # A descriptive record that words its claim about the whole population
+    # still cannot generalize; keep the scope boundary explicit.
+    if not inferential:
+        claim_text = str(payload.get("claim", ""))
+        if any(marker in claim_text for marker in ("总体", "全部", "所有", "整体市场", "全量", "整体用户")):
+            if not any("总体" in l or "外推" in l for l in limitations):
+                auto.append("记录内描述性结果不能外推到总体；如需总体结论需抽样依据或全量数据")
+
+    # Short observation period, judged from a structured window length
+    window_days = _observation_window_days(str(payload.get("time_scope", "")))
+    if window_days is not None and window_days < 60:
         if not any("时间" in l or "观察" in l for l in limitations):
             auto.append("观察期较短，可能受短期波动影响")
 
     # Missing statistical significance
     significance = str(payload.get("significance", ""))
-    if payload.get("statistical_inference", True) and (not significance or significance in ("unknown", "")):
+    if inferential and (not significance or significance in ("unknown", "")):
         if not any("统计" in l or "显著" in l for l in limitations):
             auto.append("未报告统计显著性，差异可能由随机波动导致")
 
@@ -77,16 +158,19 @@ def _calibrate_confidence(payload: dict) -> list[str]:
 
     Returns list of warning strings if confidence should be downgraded.
     Only calibrates when confidence is "high" — lower levels are kept as-is.
+    Sample-size calibration applies to inferential claims only: a verified
+    descriptive total is not downgraded merely for n<30.
     """
     confidence = payload.get("confidence", "")
     if confidence != "high":
         return []
 
     warnings: list[str] = []
+    inferential = _effective_statistical_inference(payload)
 
     # Check sample size
     sample_size = payload.get("sample_size")
-    if sample_size is not None:
+    if sample_size is not None and inferential:
         try:
             n = int(str(sample_size).replace(",", "").split()[0])
             if n < 30:
@@ -389,6 +473,10 @@ def record_evidence_record(record_json: str | dict) -> str:
                         "statistical_projection_gaps", "reported_statistical_details", "sample_size_source",
                         "time_scope_source"):
         payload.pop(derived_key, None)
+    # The model never self-declares this flag: the host classifies claim type
+    # from executed statistics and method so descriptive totals are not hit by
+    # inferential-sample rules (C01) and inferential records keep them (C08).
+    payload["statistical_inference"] = _infer_statistical_inference(payload)
 
     from data_agent.tools.evidence_input import validate_input, EVIDENCE_INPUT_SCHEMA
     if all(key in payload for key in EVIDENCE_INPUT_SCHEMA["required"]):
@@ -522,6 +610,26 @@ def record_evidence_record(record_json: str | dict) -> str:
                 "error": "competing_hypotheses must be a list of dicts",
                 "error_type": "invalid_competing_hypotheses",
             }, ensure_ascii=False)
+        # Structured relation entries are validated on submission (P5):
+        # hypothesis_id + relation(supports/refutes) + metric + observed
+        # direction. Legacy free-form dicts stay accepted as unvalidated
+        # annotations that can never change hypothesis state.
+        for entry in hypotheses:
+            if isinstance(entry, dict) and ("relation" in entry or "hypothesis_id" in entry):
+                valid = (
+                    isinstance(entry.get("hypothesis_id"), str) and entry["hypothesis_id"].strip()
+                    and entry.get("relation") in {"supports", "refutes"}
+                    and isinstance(entry.get("metric"), str) and entry["metric"].strip()
+                    and entry.get("observed") in {"increased", "decreased", "flat"}
+                )
+                if not valid:
+                    return json.dumps({
+                        "error": (
+                            "competing_hypotheses 结构化关系必须包含 hypothesis_id、"
+                            "relation(supports/refutes)、metric、observed(increased/decreased/flat)"
+                        ),
+                        "error_type": "invalid_competing_hypotheses",
+                    }, ensure_ascii=False)
         payload["competing_hypotheses"] = hypotheses
 
     _valid_insight_types = {"trend", "anomaly", "contribution", "driver", "evaluation"}

@@ -33,7 +33,9 @@ def test_workbench_endpoint_returns_bounded_empty_contract(tmp_path):
         payload = create_app().test_client().get("/api/sessions/missing_session/trust").get_json()
         assert payload["status"] == "empty"
         assert payload["session_id"] == "missing_session"
-        assert payload["workbench"] == {"verified_conclusions": []}
+        assert payload["workbench"]["verified_conclusions"] == []
+        assert payload["workbench"]["verified_total"] == 0
+        assert payload["workbench"]["pending_findings"] == []
     finally:
         _restore_state(cfg, *previous)
 
@@ -74,7 +76,9 @@ def test_workbench_endpoint_does_not_project_scope_or_relationship_diagnostics(t
         from data_agent.web.app import create_app
         _write_state(tmp_path, "scope_contract", {"session_id": "scope_contract", "data_state": "data_loaded", "file_relationships": [{"relationship_id": "rel_orders_flow"}], "data_pool": [{"dataset": "orders"}]})
         payload = create_app().test_client().get("/api/sessions/scope_contract/trust").get_json()
-        assert payload["workbench"] == {"verified_conclusions": []}
-        assert set(payload["workbench"]) == {"verified_conclusions"}
+        assert payload["workbench"]["verified_conclusions"] == []
+        assert payload["workbench"]["verified_total"] == 0
+        assert payload["workbench"]["pending_findings"] == []
+        assert set(payload["workbench"]) == {"verified_conclusions", "verified_total", "pending_findings"}
     finally:
         _restore_state(cfg, *previous)

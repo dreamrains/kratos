@@ -6,6 +6,7 @@ from typing import Any
 
 from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
+from data_agent.agent.intent_refinement import _requests_user_level_retention
 from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
 
 
@@ -34,13 +35,16 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
     raw_routes = hydrate_refs(_list_attr(state, "route_proposals"))
     active_dataset = _active_dataset(state)
     scoped_contracts = _filter_by_dataset(contracts, active_dataset)
+    # Route selection shares the host's data scope: mentioning another
+    # dataset's name in the request text never widens the active scope.
+    raw_routes = _filter_by_dataset(raw_routes, active_dataset)
     capability_model = _route_capabilities(state)
     if capability_model is None:
         routes = raw_routes
         exploratory_routes: list[dict[str, Any]] = []
     else:
-        capability_routes = capability_model["executable"]
-        exploratory_routes = capability_model["exploratory"]
+        capability_routes = _filter_by_dataset(capability_model["executable"], active_dataset)
+        exploratory_routes = _filter_by_dataset(capability_model["exploratory"], active_dataset)
         if (
             not capability_routes
             and not exploratory_routes
@@ -63,7 +67,7 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
         )
 
     unsupported_retention = _unsupported_retention(scoped_contracts)
-    if _mentions_retention(user_input) and unsupported_retention:
+    if _requests_user_level_retention(user_input) and unsupported_retention:
         return _decision(
             "request_data",
             dataset=active_dataset,
@@ -246,8 +250,9 @@ def _unsupported_reasons(items: list[dict[str, Any]]) -> list[str]:
 
 
 def _mentions_retention(user_input: str) -> bool:
-    text = (user_input or "").lower()
-    return any(keyword in text for keyword in _RETENTION_KEYWORDS)
+    # Retained for callers that need coarse retention wording detection; the
+    # entry gate itself uses the user-grain aware predicate.
+    return _requests_user_level_retention(user_input)
 
 
 def _infer_requested_route(user_input: str, routes: list[dict[str, Any]]) -> dict[str, Any] | None:

@@ -44,6 +44,6 @@ def test_trust_endpoint_returns_only_verified_conclusions(tmp_path, monkeypatch)
     assert resp.status_code == 200
     data = resp.get_json()
     workbench = data["workbench"]
-    assert set(workbench) == {"verified_conclusions"}
+    assert {"verified_conclusions", "verified_total", "pending_findings"} <= set(workbench)
     assert workbench["verified_conclusions"] == []
     assert seeded_answer not in json.dumps(workbench, ensure_ascii=False)
