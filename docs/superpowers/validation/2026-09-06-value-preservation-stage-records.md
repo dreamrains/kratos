@@ -392,3 +392,28 @@ Provider：未启动真实 Provider；离线入口强制 dummy loopback、网络
 ## 提交记录
 
 - 2026-09-07：P0—P6 与 P7-R 的全部改动（产品源码、测试、文档）经用户授权提交至分支 `vp-analysis-value`；A06 矩阵未跟踪产物与 tmp/ 运行收据不纳入。此后用户已授予持续性提交授权（推送/部署仍需单独授权）。
+
+---
+
+## L3 执行记录（Codex，2026-09-07）
+
+阶段 / 状态：**running**。本节只记录当前源码的本地真实浏览器演练；不把已观察到的单场景结果外推为 P7 通过，也不改变 P8 未授权、未启动的结论。
+
+### 隔离与运行身份
+
+- 当前源码：`b06bf2c047984c752bc5e7f0073b4ce23137dbb0`（`vp-analysis-value`）；运行器为 `scripts/testing/run_p7_browser_rehearsal.py`。它通过普通 Flask Web、SSE、`AgentLoop`、真实工具、会话持久化和页面刷新执行；仅模型响应为脚本化。
+- 当前有效收据：`tmp/p7-browser-rehearsal-05`，会话 `a40afed3b233`。环境设置 loopback `API_BASE`、禁用网络/MCP/skill 自动发现，并将主模型与 `llm_intent`、`llm_playbook`、`quality_judge` 的懒加载客户端全部替换为同一脚本化客户端。
+- Provider 账本：`runtime.jsonl` 的 `forbidden_provider_transport=0`。此前运行器仅拦截主客户端，三个辅助模块仍会尝试构造默认客户端；该发现不计入验收，修复后才开始本节的有效 B01。
+
+### 当前场景矩阵
+
+| 场景 | 状态 | 已有可核验事实 | 尚缺通过条件 |
+|---|---|---|---|
+| B01 | running | 浏览器输入中文建议请求后可见“12 条订单金额合计为 120”、条件建议、停止条件和范围限制；刷新后原文可恢复。状态文件含 `load_data`、`transform_data`、`record_evidence_record` 三个真实收据，以及 1 条证据、1 份验证报告、1 组假设。 | Workbench UI 与正文一致性的浏览器断言、导出核对、截图和逐项 assertion 收据。 |
+| B02 | not_started | 早期脚本曾观察到边界句发布和 D30 候选被拦截，但当时辅助客户端零调用前置条件不成立，故不计入。 | 在当前零调用运行器下重跑完整正负路径、刷新和截图。 |
+| B03 | not_started | 早期脚本在页面触发 6 次加载和 6 次聚合，且 early tool output 已真实落盘后压缩；同样不计入。 | 当前零调用运行器下核对 6 个发布包来源、第四组配对事实、omitted refs、展开和导出。 |
+| B04 | not_started | 无。 | 完成 supported → contested → stale、待验证区折叠和刷新断言。 |
+| B05 | not_started | 早期页面曾显示业务/分析师/管理层三种表达；同样不计入。 | 当前零调用运行器下重跑三轮事实/范围/限制/证据等级不变断言。 |
+| B06 | not_started | 无。 | 按工具/保存/修订/预算/确认五类故障分别取真实生命周期收据。 |
+
+继续条件：已满足。P7-R 离线门通过，B01 的有效零调用基线也已建立；下一步应从 B02 开始，逐场景在新的隔离 run-dir 记录完整 browser assertion。P8 仍需要 B01—B06 全部通过、冻结与用户的新的真实 Provider 授权，当前不得启动。
