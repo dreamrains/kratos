@@ -186,3 +186,31 @@ def test_u04_stale_fingerprint_hides_verified_and_upgrades_nowhere():
     pending_ids = {item["id"] for item in workbench["pending_findings"]}
     assert "hyps_orders_trend_h1" not in pending_ids
     assert all(item["status"] in {"proposed", "inconclusive", "contested"} for item in workbench["pending_findings"])
+
+
+def test_u02_stale_hypothesis_shows_as_expired_history_not_verified():
+    state = _multi_verified_state(count=1)
+    state.hypothesis_sets = [{
+        "id": "hyps_orders_trend",
+        "dataset": "orders",
+        "route": "trend",
+        "count": 1,
+        "hypotheses": [{
+            "id": "hyps_orders_trend_h1",
+            "claim": "收入呈上升趋势",
+            "status": "stale",
+            "claim_type": "descriptive",
+            "related_evidence_ids": [],
+            "supporting_evidence_ids": [],
+            "conflicting_evidence_ids": [],
+            "evidence_requirements": [{"kind": "metric", "field": "revenue", "required": True}],
+        }],
+    }]
+
+    workbench = build_trust_view(state)["workbench"]
+
+    # stale 不进入已验证区；在待验证区以“失效”历史性质展示（P7-L3/B04）
+    assert workbench["verified_conclusions"]
+    pending = {item["id"]: item for item in workbench["pending_findings"]}
+    assert "hyps_orders_trend_h1" in pending
+    assert "失效" in pending["hyps_orders_trend_h1"]["status_label"]

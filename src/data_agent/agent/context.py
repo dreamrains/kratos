@@ -468,6 +468,16 @@ class AgentContext:
         self.executed_tools.clear()
         self.turn_state = None
 
+    def reset_tool_groups(self) -> None:
+        """Reset only tool-group routing, preserving the turn budget.
+
+        ``registry.reset_groups`` runs while a turn's execution budget is
+        already armed; wiping ``turn_state`` here silently disabled every
+        budget guard (P7-L3/B06).  Use the narrower reset for routing.
+        """
+        self.active_tool_groups = {"core"}
+        self.executed_tools.clear()
+
 def _create_agent_context_type(
     cls,
     identity_operation,

@@ -82,6 +82,66 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
         return None
 
 
+def _workspace_data_identities() -> dict[str, dict]:
+    """Current dataset identities from the active workspace, or {} offline."""
+    try:
+        from data_agent.session.workspace import workspace as workspace_obj
+
+        identities: dict[str, dict] = {}
+        for name in (workspace_obj.list_datasets() or {}):
+            identity = workspace_obj.get_data_identity(name)
+            if isinstance(identity, dict) and identity.get("fingerprint"):
+                identities[str(name)] = identity
+        return identities
+    except Exception:
+        return {}
+
+
+def _split_evidence_by_data_freshness(
+    records: list[dict[str, Any]],
+    current_identities: dict[str, dict],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split evidence into (fresh, exclusions) by dataset version.
+
+    Only a positive fingerprint mismatch on a dataset that currently exists
+    excludes a record; absent datasets, missing bindings, or identity-free
+    records stay fresh (cannot judge → stay conservative). Excluded records
+    are not deleted — they stop backing hypotheses and the exclusion is
+    recorded with both fingerprints for audit (P7-L3/B04).
+    """
+    fresh: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    for record in records:
+        stale: dict[str, Any] | None = None
+        bindings = record.get("result_bindings") if isinstance(record, dict) else None
+        if isinstance(bindings, list):
+            for binding in bindings:
+                if not isinstance(binding, dict) or stale:
+                    break
+                for name, bound in (binding.get("data_identities") or {}).items():
+                    current = current_identities.get(str(name))
+                    if current is None:
+                        continue
+                    bound_fingerprint = str((bound or {}).get("fingerprint") or "")
+                    current_fingerprint = str(current.get("fingerprint") or "")
+                    if bound_fingerprint and bound_fingerprint != current_fingerprint:
+                        stale = {
+                            "dataset": str(name),
+                            "bound_fingerprint": bound_fingerprint,
+                            "current_fingerprint": current_fingerprint,
+                        }
+                        break
+        if stale is not None:
+            exclusions.append({
+                "evidence_id": str(record.get("id") or ""),
+                "reason": "data_version_changed",
+                **stale,
+            })
+        else:
+            fresh.append(record)
+    return fresh, exclusions
+
+
 def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any) -> dict[str, Any] | None:
     """Create one compact hypothesis set for a runnable analysis route."""
 
@@ -99,6 +159,12 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             return None
 
         evidence_records = _list_attr(state, "evidence_records")
+        # Data-version gate (P7-L3/B04): evidence bound to an older version of
+        # a still-loaded dataset stops backing hypotheses; decided hypotheses
+        # then transition to stale instead of keeping their verdict.
+        fresh_evidence, exclusions = _split_evidence_by_data_freshness(
+            evidence_records, _workspace_data_identities(),
+        )
         hypothesis_set = build_hypothesis_set(user_input, decision, state)
         dataset = str(hypothesis_set.get("dataset") or "")
         route = str(hypothesis_set.get("route") or "")
@@ -118,11 +184,13 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             # An undecided set with no evidence stays as-is (dedupe); a
             # decided set must be recomputed even when its evidence is gone,
             # so it can become stale instead of silently keeping its verdict.
-            if not evidence_records and not decided:
+            if not fresh_evidence and not decided:
                 return None
-            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], evidence_records)
-        elif evidence_records:
-            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, evidence_records)
+            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], fresh_evidence)
+        elif fresh_evidence:
+            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, fresh_evidence)
+        if exclusions:
+            hypothesis_set["evidence_exclusions"] = exclusions
 
         ref = persist_hypothesis_set(str(getattr(state, "session_id", "")), hypothesis_set)
         if existing_ref and existing_ref.get("created_at"):

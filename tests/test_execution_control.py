@@ -223,7 +223,10 @@ class _EvidenceThenFinalClient:
             "confidence": "high",
         }
         self.system_prompts = []
+        # P7-L3/B06 契约更新：预算/收据门修复后，turn_state 在整轮存活，
+        # 证据必须绑定本轮真实工具收据——先执行 run_python 再记录证据。
         self._calls = [
+            Response(tool_calls=[ToolCall("tc0", "run_python", {"code": "result = 1 + 1", "purpose": "compute constant"})]),
             Response(tool_calls=[ToolCall("tc1", "record_evidence_record", {"record_json": json.dumps(evidence)})]),
             Response(text="final answer"),
         ]
@@ -1065,3 +1068,102 @@ def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monke
     assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
     assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
     assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()
+
+
+# ── P7-L3/B06: the turn budget must stay armed through real loop paths ──
+
+
+def test_prepare_analysis_turn_keeps_execution_budget_armed(tmp_path, monkeypatch):
+    """registry.reset_groups 不得清掉 turn_state（B06 根因回归）。"""
+    from data_agent.agent.loop import AgentLoop
+
+    loop = AgentLoop(client=None, session_id="budget_armed")
+    loop._reset_turn_tracking()
+    loop.auxiliary_llm_client = None
+
+    loop._prepare_analysis_turn("分析销售趋势")
+
+    turn_state = loop.context.turn_state
+    assert turn_state is not None, "activate_tool_groups 不得把刚装配的预算状态清成 None"
+    assert turn_state.budget.max_tool_calls and turn_state.budget.max_tool_calls > 0
+    # 分组激活本身不受影响
+    assert loop.context.active_tool_groups
+
+
+def test_streaming_loop_enforces_tool_budget_and_stops_execution(tmp_path, monkeypatch):
+    """超过预算的真实工具调用必须被阻止：budget_exceeded 消息＋有限收据＋错误事件。"""
+    import csv
+    import os
+
+    inbox = tmp_path / "ws" / "inbox"
+    inbox.mkdir(parents=True)
+    fixture = inbox / "F-SALES.csv"
+    with fixture.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["date", "channel", "amount", "order_id"])
+        for index in range(12):
+            writer.writerow([f"2026-09-{index + 1:02d}", "A", 10, index + 1])
+
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path / "ws"))
+    monkeypatch.setenv("SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("API_BASE", "http://127.0.0.1:9")
+    monkeypatch.setenv("MCP_ENABLED", "false")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "false")
+
+    from data_agent import config as config_module
+    from data_agent.config import AgentConfig
+
+    monkeypatch.setattr(config_module, "_config", AgentConfig(
+        WORKSPACE_DIR=tmp_path / "ws",
+        SESSIONS_DIR=tmp_path / "sessions",
+    ))
+
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.llm.client import Response, ToolCall, StreamComplete
+
+    responses = [
+        Response(tool_calls=[ToolCall(
+            id="r1-0", name="load_data",
+            arguments={"source": "F-SALES.csv", "name": "budget_sales"},
+        )]),
+        Response(tool_calls=[
+            ToolCall(
+                id=f"r2-{number}", name="transform_data",
+                arguments={
+                    "name": "budget_sales", "operation": "group_aggregate",
+                    "group_by": ["channel"],
+                    "aggregations": [{"column": "amount", "functions": ["sum"]}],
+                    "save_as": f"budget_{number}",
+                },
+            )
+            for number in range(1, 206)
+        ]),
+        Response(text="done"),
+    ]
+    cursor = {"index": 0}
+
+    class ScriptedClient:
+        def stream_chat_structured(self, messages, tools=None, system=None):
+            index = cursor["index"]
+            cursor["index"] += 1
+            yield StreamComplete(response=responses[min(index, len(responses) - 1)])
+
+    loop = AgentLoop(client=ScriptedClient(), session_id="budget_stream")
+    events = list(loop.stream_turn("【B06-BUDGET】请执行大量分析以触发预算边界"))
+
+    error_events = [event for event in events if event.get("type") == "error"]
+    assert any("budget" in str(event.get("message", "")).lower() for event in error_events), (
+        "超过预算必须产生真实 budget_exceeded 错误事件，而不是仅靠模型文本声称触界"
+    )
+    receipts = loop.context.analysis_state.tool_receipts
+    budget_messages = [
+        message for message in loop.messages
+        if message.get("role") == "tool"
+        and "budget_exceeded" in str(message.get("content", ""))
+    ]
+    assert budget_messages, "被阻止的调用必须留下 budget_exceeded 工具消息"
+    executed = [r for r in receipts if r.get("tool_name") == "transform_data"]
+    max_calls = loop.context.turn_state.budget.max_tool_calls
+    assert len(executed) <= max_calls + 1, (
+        f"实际执行 {len(executed)} 次非元工具调用，超出预算 {max_calls}"
+    )

@@ -239,8 +239,8 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P4 | passed（2026-09-06） | E01—E10 全绿；覆盖词项的跨语言绑定留待 L4 |
 | P5 | passed（P7 复核修复后，2026-09-07） | P7-F02 已修：目标指标门＋谓词一致性门＋非有限值拒绝＋候选保留原因；oracle 与补充反例全绿 |
 | P6 | passed（2026-09-06，L2） | A01—A08、U01—U04 全绿；U05—U08 归 Codex L3 |
-| P7 | 离线部分 passed（2026-09-07）；B01—B06 blocked_not_started | 完整离线复跑 2509/0/1（tmp/vp-p7r-full-offline）；边界 19/0；两个原跳过项已实跑。浏览器矩阵待 Codex 执行 |
-| P8 | blocked_not_started / authorization_required | B01—B06 未执行，且没有本专项真实 Provider 授权 |
+| P7 | 离线部分 passed（L3 修复后复验，2026-09-07）；B01/B02/B05 passed，B03/B04/B06 待 Codex 复验 | Codex L3 首轮发现 B03/B04/B06 阻断，已全部修复（阶段记录 L3-R 节）：B06 预算守卫根因（reset_groups 清 turn_state）、B03 产出物/导出收据、B04 版本失效→stale 生命周期。B01—B06 复验归 Codex |
+| P8 | blocked_not_started / authorization_required | B03/B04/B06 浏览器复验未完成，且没有本专项真实 Provider 授权 |
 
 ## 8. 风险、停止规则与回退
 

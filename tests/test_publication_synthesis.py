@@ -625,3 +625,98 @@ class TestESeriesPacket:
         gap_terms = {item.get("term") for item in coverage if item.get("status") == "missing"}
         assert gap_terms, "无来源覆盖的子问题必须成为显式缺口而不是静默缺失"
         assert covered_terms & {"趋势"} or any("趋势" in str(t) for t in covered_terms)
+
+
+# ── P7-L3/B03: publication receipt renderer (sources/omissions/pending) ──
+
+
+def test_b03_render_publication_receipt_markdown_covers_sources_omissions_pending():
+    from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+
+    state = _packet_state(
+        _six_question_receipts(),
+        evidence=[{
+            "id": "ev_b03", "claim": "A 渠道趋势上升",
+            "tool_receipt_ids": ["tr_q1"], "limitations": [],
+        }],
+    )
+    packet = build_publication_packet(
+        state, user_input="分析A渠道趋势", substantive_tools={"run_python"},
+    )
+    pending = [{
+        "id": "hyps_orders_trend_h2",
+        "claim": "收入变化由订单量驱动",
+        "status": "inconclusive",
+        "status_label": "未决（证据不足或不可判定）",
+        "basis": "ev_b03",
+        "gap": "orders",
+        "next_step": "补齐区分性证据：orders",
+    }]
+
+    rendered = render_publication_receipt_markdown(packet, pending_findings=pending, verified_total=3)
+
+    assert "计算来源与省略说明" in rendered
+    assert "tr_q1" in rendered  # 收据引用
+    assert "已验证结论：3 条" in rendered
+    assert "待验证发现" in rendered
+    assert "未决（证据不足或不可判定）" in rendered
+    assert "补齐区分性证据：orders" in rendered
+    # 不导出内部字段与 rejected 候选
+    assert "artifact_path" not in rendered
+    assert "publication_rejected" not in rendered
+    assert "tool_receipt_ids" not in rendered
+
+
+def test_b03_render_includes_omitted_refs_and_coverage_gaps():
+    from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+
+    receipts = _six_question_receipts() + [{
+        "id": "tr_extra_99",
+        "tool_name": "run_python",
+        "result_sha256": "sha256:x99",
+        "result_preview": "background calc 99",
+        "publication_facts": extract_publication_facts({"value": 99}),
+    }]
+    packet = build_publication_packet(
+        _packet_state(receipts),
+        user_input="分析A渠道趋势、漏斗、留存曲线、相关性、异常检测",
+        substantive_tools={"run_python"},
+    )
+
+    rendered = render_publication_receipt_markdown(packet)
+
+    assert "tr_extra_99" in rendered
+    assert any("省略" in line for line in rendered.splitlines())
+    # “异常检测”没有任何来源覆盖，必须成为显式缺口行
+    assert any("未覆盖子问题" in line and "异常" in line for line in rendered.splitlines())
+
+
+def test_b03_publication_packet_registers_receipt_artifact(tmp_path):
+    from data_agent.config import get_config
+    from data_agent.session.history import list_artifacts
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        loop = AgentLoop(client=None, session_id="b03_artifact")
+        loop._reset_turn_tracking()
+        loop._record_turn_tool_result(
+            "run_python",
+            '{"value": 120}',
+            structured_data={"amount_sum": 120, "amount_count": 12},
+        )
+
+        packet = loop._prepare_publication_packet("分析订单合计")
+
+        assert packet and packet["status"] == "ready"
+        artifacts = list_artifacts("b03_artifact")
+        receipts = [a for a in artifacts if a.get("type") == "publication_receipt"]
+        assert receipts, "发布包 ready 时必须注册可打开的产出物收据"
+        content = (cfg.sessions_dir / "b03_artifact" / receipts[0]["path"].split("sessions/b03_artifact/")[-1]).read_text(encoding="utf-8")
+        assert "计算来源与省略说明" in content
+        # 同一 packet 重复准备不重复注册
+        loop._prepare_publication_packet("分析订单合计")
+        assert len([a for a in list_artifacts("b03_artifact") if a.get("type") == "publication_receipt"]) == 1
+    finally:
+        cfg.sessions_dir = old_sessions

@@ -712,3 +712,92 @@ def test_h11_supported_hypothesis_becomes_stale_when_its_evidence_disappears(tmp
         assert after["hypotheses"][0]["supporting_evidence_ids"] == []
     finally:
         cfg.sessions_dir = old_sessions
+
+
+# ── P7-L3/B04: data-version change invalidates evidence, hypotheses go stale ──
+
+
+def _binding_evidence(evidence_id, hypothesis_id, fingerprint, delta=10, dataset="sales"):
+    return {
+        "id": evidence_id,
+        "claim": "Revenue shows a rising trend over time.",
+        "result_summary": "revenue rising",
+        "dataset": dataset,
+        "method": "trend analysis",
+        "measurements": [{"metric": "revenue", "delta": delta, "value": 100 + delta}],
+        "competing_hypotheses": [{
+            "hypothesis_id": hypothesis_id, "relation": "supports",
+            "metric": "revenue", "observed": "increased" if delta else "flat",
+        }],
+        "result_bindings": [{
+            "receipt_id": "tr_v1", "tool_call_id": "", "result_sha256": "",
+            "data_identities": {dataset: {"fingerprint": fingerprint}},
+        }],
+    }
+
+
+def test_b04_freshness_gate_is_pure_and_conservative():
+    from data_agent.agent.trust_workflow_runtime import _split_evidence_by_data_freshness
+
+    mismatch = _binding_evidence("ev_mismatch", "h1", "fp_v1")
+    # 绑定到当前工作区不存在的数据集：无法判定 → 保守保留
+    absent_dataset = _binding_evidence("ev_absent", "h1", "fp_x", dataset="archive")
+    current = {
+        "sales": {"fingerprint": "fp_v2"},
+        "orders": {"fingerprint": "fp_o"},
+    }
+
+    fresh, exclusions = _split_evidence_by_data_freshness(
+        [mismatch, absent_dataset], current,
+    )
+
+    assert [record["id"] for record in fresh] == ["ev_absent"], "仅版本确实变化的证据被排除"
+    assert exclusions == [{
+        "evidence_id": "ev_mismatch",
+        "reason": "data_version_changed",
+        "dataset": "sales",
+        "bound_fingerprint": "fp_v1",
+        "current_fingerprint": "fp_v2",
+    }]
+
+
+def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        state = _relation_state("runtime_b04")
+        first = maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        assert first is not None
+        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+        primary_id = hydrated[0]["hypotheses"][0]["id"]
+
+        state.evidence_records = [_binding_evidence("ev_b04_v1", primary_id, "fp_v1")]
+        maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        before = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert before["hypotheses"][0]["status"] == "supported"
+
+        # 数据集同名重载（指纹变化）：旧证据不再为假设背书，已判定假设转 stale
+        monkeypatch.setattr(
+            runtime, "_workspace_data_identities",
+            lambda: {"sales": {"fingerprint": "fp_v2"}},
+        )
+        refreshed = maybe_create_hypothesis_set(
+            "show revenue trend", _intent("directed_analysis"), state,
+        )
+        assert refreshed is not None
+        after = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+        assert after["hypotheses"][0]["status"] == "stale"
+        assert after["hypotheses"][0]["supporting_evidence_ids"] == []
+        assert after.get("evidence_exclusions") and after["evidence_exclusions"][0]["reason"] == "data_version_changed"
+        # 假设集保留（历史），证据记录本身不删除
+        assert len(state.hypothesis_sets) == 1
+        assert state.evidence_records
+    finally:
+        cfg.sessions_dir = old_sessions

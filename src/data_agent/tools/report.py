@@ -291,6 +291,35 @@ def export_assistant_reply(session_id: str, content: str = "", format: str = "ma
         [{"role": "assistant", "content": reply["content"]}], True, reply["chart_paths"]))
 
 
+def _publication_appendix(session_id: str) -> str:
+    """Published sources, omissions, and pending labels for exports (P7-L3/B03).
+
+    Kept at reference level; rejected candidates and raw evidence JSON are
+    never exported. Any state failure degrades to no appendix rather than
+    failing the export.
+    """
+    try:
+        from data_agent.agent.analysis_state import load_analysis_state
+        from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+        from data_agent.agent.workbench_view import build_workbench_view
+
+        state = load_analysis_state(session_id)
+        packets = [
+            packet for packet in (getattr(state, "publication_packets", None) or [])
+            if isinstance(packet, dict) and packet.get("status") == "ready"
+        ]
+        if not packets:
+            return ""
+        workbench = build_workbench_view(state)
+        return render_publication_receipt_markdown(
+            packets[-1],
+            pending_findings=workbench.get("pending_findings"),
+            verified_total=workbench.get("verified_total"),
+        )
+    except Exception:
+        return ""
+
+
 def _export_public_messages(session_id, title, format, messages, include_charts=True, chart_paths=None):
     blocks: list[str] = []
     for message in messages:
@@ -306,6 +335,10 @@ def _export_public_messages(session_id, title, format, messages, include_charts=
         return _json_result(
             {"error": "No conversation messages to export", "error_type": "empty_conversation"}
         )
+
+    appendix = _publication_appendix(session_id)
+    if appendix:
+        blocks.append(appendix)
 
     markdown = (
         f"# {title}\n\n_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_\n\n"

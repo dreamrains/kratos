@@ -8,7 +8,7 @@ from typing import Any
 _CONFIDENCE_ORDER = {"high": 0, "medium": 1}
 _VERIFIED_LIMIT = 6
 _PENDING_LIMIT = 6
-_PENDING_STATUSES = {"proposed", "inconclusive", "contested"}
+_PENDING_STATUSES = {"proposed", "inconclusive", "contested", "stale"}
 
 
 def build_workbench_view(state: Any) -> dict[str, Any]:
@@ -94,6 +94,7 @@ def _status_label(status: str) -> str:
         "proposed": "待验证（候选解释）",
         "inconclusive": "未决（证据不足或不可判定）",
         "contested": "未决（支持与反证冲突）",
+        "stale": "失效（依赖证据已过期，历史结论）",
     }.get(status, status)
 
 

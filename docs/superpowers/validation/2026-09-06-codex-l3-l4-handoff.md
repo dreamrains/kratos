@@ -2,7 +2,9 @@
 
 日期：2026-09-06｜来源：分析价值保留专项（P0—P6 已完成，L0—L2 全绿）
 
-> **P7 修复更新（2026-09-07）**：P7 执行报告中的两项阻断（P7-F01 多来源范围误放行、P7-F02 假设谓词/指标误判）与其余 7 项回归失败、2 项空会话跳过已全部修复：完整离线复跑 **2509 tests / 0 failed / 1 skipped**（tmp/vp-p7r-full-offline），边界测试 **19/0**（含 Codex 原 9 例 oracle 全绿）。修复明细见 [阶段记录 P7-R 节](2026-09-06-value-preservation-stage-records.md)。**B01—B06 现已解除安全阻断，可按下文场景执行**；执行时重点核对 B02/B03（来源绑定发布边界）与 B04（假设谓词判定）。
+> **L3 修复更新（2026-09-07）**：Codex 首轮浏览器演练 B01/B02/B05 passed；B03/B04/B06 的阻断已全部修复（[阶段记录 L3-R 节](2026-09-06-value-preservation-stage-records.md)）：**B06 预算守卫根因**（`registry.reset_groups` 连带清 `turn_state`，守卫在 loop 上从未生效——现预算状态整轮存活并有真实 budget_exceeded 回归）、**B03 产出物与导出**（packet ready 时注册 `publication_receipt` 产出物；导出追加来源/收据/omitted_refs/待验证附录）、**B04 版本失效生命周期**（同名数据集内容变更 → 旧证据按指纹排除 → 已判定假设转 `stale` 并以待验证区"失效"历史项展示）。**请按下文场景复验 B03/B04/B06**（B06 需真实 budget_exceeded 收据；保存失败/发布修订失败/pending confirmation 仍需同域收据），B01/B02/B05 已通过无需重跑。
+>
+> **P7 修复更新（2026-09-07）**：P7 执行报告中的两项阻断（P7-F01 多来源范围误放行、P7-F02 假设谓词/指标误判）与其余 7 项回归失败、2 项空会话跳过已全部修复：完整离线复跑 **2509 tests / 0 failed / 1 skipped**（tmp/vp-p7r-full-offline），边界测试 **19/0**（含 Codex 原 9 例 oracle 全绿）。修复明细见 [阶段记录 P7-R 节](2026-09-06-value-preservation-stage-records.md)。执行时重点核对 B02/B03（来源绑定发布边界）与 B04（假设谓词判定）。
 >
 > **P7 后续复核更新（2026-09-06，历史记录）**：上方“全绿”为交接时的历史子集状态。当时完整离线为 2478 passed / 7 failed / 3 skipped；新增独立安全反例为 5 passed / 4 failed。已复现多来源范围误放行和假设目标谓词/指标误判，按总计划 §8 停止依赖验收，B01—B06 全部 `blocked_not_started`，P8 也未启动。详见 [P7 执行报告](2026-09-06-vp-p7-execution-report.md)；下文第 3 节中标注“P7 补充阻断”的两条已由 P7-R 修复（来源绑定与谓词/指标门），其余为待执行要求。
 

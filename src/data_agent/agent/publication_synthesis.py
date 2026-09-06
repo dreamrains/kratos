@@ -445,6 +445,58 @@ def publication_packet_prompt(packet: dict[str, Any]) -> str:
     )
 
 
+def render_publication_receipt_markdown(
+    packet: dict[str, Any],
+    *,
+    pending_findings: list[dict[str, Any]] | None = None,
+    verified_total: int | None = None,
+) -> str:
+    """User-facing publication receipt: sources, omissions, gaps, pending labels.
+
+    Keeps the export/artifact surface at the reference level — receipt ids,
+    dataset bindings, omission reasons, and pending status wording — and
+    never includes rejected candidates, internal paths, or raw evidence JSON.
+    """
+    lines = [
+        "### 计算来源与省略说明",
+        "工具已执行不等于结论已验证；统计证据与发布状态以工作台当前验证为准。",
+    ]
+    dataset_by_receipt = {
+        str(scope.get("receipt_id")): str(scope.get("source_dataset") or "")
+        for scope in (packet.get("publication_scope") or [])
+        if isinstance(scope, dict)
+    }
+    for source in packet.get("sources") or []:
+        receipt_id = str(source.get("receipt_id") or "")
+        dataset = dataset_by_receipt.get(receipt_id, "")
+        dataset_note = f"，数据集 `{dataset}`" if dataset else ""
+        fact_count = len(source.get("facts") or [])
+        lines.append(
+            f"- `{source.get('tool_name')}`（收据 `{receipt_id}`{dataset_note}）：{fact_count} 项已发布事实"
+        )
+    for ref in packet.get("omitted_refs") or []:
+        lines.append(
+            f"- 省略来源：收据 `{ref.get('receipt_id')}`——{ref.get('reason')}"
+        )
+    for row in packet.get("coverage") or []:
+        if row.get("status") == "missing":
+            lines.append(f"- 未覆盖子问题：{row.get('term')}——{row.get('reason')}")
+    if verified_total is not None:
+        lines.append(f"- 已验证结论：{verified_total} 条（见工作台当前验证）")
+    if pending_findings:
+        lines.append("")
+        lines.append("### 待验证发现")
+        for item in pending_findings:
+            lines.append(f"- [{item.get('status_label') or item.get('status')}] {item.get('claim')}")
+            gap = str(item.get("gap") or "").strip()
+            if gap:
+                lines.append(f"  - 尚缺证据：{gap}")
+            next_step = str(item.get("next_step") or "").strip()
+            if next_step:
+                lines.append(f"  - 下一步：{next_step}")
+    return "\n".join(lines)
+
+
 def render_verified_appendix(packet: dict[str, Any]) -> str:
     """Render deterministic source facts beside the model's explanatory prose."""
     lines = ["### 本轮计算收据", "工具已执行不等于结论已验证；统计证据与发布状态以工作台当前验证为准。"]

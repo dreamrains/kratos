@@ -1508,6 +1508,7 @@ class AgentLoop:
                 add_packet = getattr(state, "add_publication_packet", None)
                 if callable(add_packet):
                     add_packet(packet)
+                self._register_publication_receipt_artifact(packet, state)
             return packet
         except Exception as exc:
             logger.warning(
@@ -1515,6 +1516,46 @@ class AgentLoop:
                 extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
             )
             return None
+
+    def _register_publication_receipt_artifact(self, packet: dict, state: Any) -> None:
+        """Persist an openable receipt artifact for the published packet (B03).
+
+        The browser artifacts panel and exports must show which sources,
+        receipts, and omissions back the published answer. One artifact per
+        packet id; re-preparing the same packet does not duplicate it.
+        """
+        receipted = getattr(self, "_publication_receipt_packet_ids", None)
+        if receipted is None:
+            receipted = set()
+            self._publication_receipt_packet_ids = receipted
+        packet_id = str(packet.get("id") or "")
+        if not packet_id or packet_id in receipted:
+            return
+        try:
+            from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+            from data_agent.agent.workbench_view import build_workbench_view
+            from data_agent.tools.report import _write_report_artifact
+
+            workbench = build_workbench_view(state)
+            content = render_publication_receipt_markdown(
+                packet,
+                pending_findings=workbench.get("pending_findings"),
+                verified_total=workbench.get("verified_total"),
+            )
+            _write_report_artifact(
+                self.session_id,
+                f"计算来源说明 {packet_id}",
+                content,
+                "md",
+                "publication_receipt",
+                "publication",
+            )
+            receipted.add(packet_id)
+        except Exception as exc:
+            logger.warning(
+                "Publication receipt artifact skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
 
     def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
         """Validate the answer against persisted evidence without leaking audit records."""
@@ -2472,6 +2513,7 @@ class AgentLoop:
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
+            regression_msg = None
             if self.context.analysis_state is not None:
                 fc = getattr(self, '_flow_controller', None)
                 if fc is not None:

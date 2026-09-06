@@ -423,3 +423,41 @@ Provider：未启动真实 Provider；离线入口强制 dummy loopback、网络
 3. B06：修复同一轮 `TurnExecutionState` 的工具预算守卫，先用浏览器验证真实 `budget_exceeded` 和无后续工具执行，再分别补保存失败、发布修订失败与 pending confirmation 收据。
 
 P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider 授权，当前不得启动。
+
+
+---
+
+## L3-R：Codex 浏览器演练阻断的修复（B03/B04/B06，2026-09-07）
+
+阶段 / 状态：**修复完成，离线全量复跑通过**。接在上方 L3 执行记录之后，不改写其内容；B01—B06 浏览器复验仍归 Codex。
+
+### B06：单轮工具预算守卫失效（产品缺陷，根因修复）
+
+- 根因：`_prepare_analysis_turn` 先装配 `TurnExecutionState`，末行调用 `AnalysisFlowController.activate_tool_groups` → `registry.reset_groups()` → `ctx.reset_turn_state()` 把刚装配的预算状态清成 None。**整个 loop 路径上预算守卫与证据收据门从未生效**（`if turn_state is not None` 静默跳过）；Codex 的预算会话 206 次非元调用全部执行、无 budget_exceeded 即为此所致，此前所有"预算通过"类证据都不可信。
+- 修复：`AgentContext` 新增 `reset_tool_groups()`（仅清分组路由）；`registry.reset_groups` 改用窄接口，不再连带清 `turn_state`；预算状态整轮存活。
+- 连带修复：流式 `_process_tool_calls` 中 `_flow_controller` 缺失时 `regression_msg` 未绑定的潜在 UnboundLocalError（初始化为 None）。
+- 契约更新：`test_loop_injects_synthesis_policy_before_final_answer` 的 stub 此前依赖"守卫已死"路径（无收据也接受证据）；修复后 stub 先真实执行 `run_python` 再记录证据。
+- 新增回归：`test_prepare_analysis_turn_keeps_execution_budget_armed`（预算状态在 prepare 后存活）＋`test_streaming_loop_enforces_tool_budget_and_stops_execution`（205 次脚本化调用被真实 budget_exceeded 阻止：错误事件＋budget_exceeded 工具消息＋执行数 ≤ 上限）。
+
+### B03：产出物面板与导出保留发布包来源
+
+- `publication_synthesis.render_publication_receipt_markdown`：引用级收据渲染——每来源（工具＋收据 id＋source_dataset＋事实数）、omitted_refs（省略原因）、coverage 缺口行、已验证总数、待验证发现（状态文字＋尚缺＋下一步）；不含 rejected 候选、内部路径或原始证据 JSON。
+- `loop._prepare_publication_packet`：packet ready 时把渲染结果写为 `publication_receipt` 类型产出物（每 packet id 一次，重复准备不重复注册）——浏览器"产出物"面板有可打开的收据文件。
+- `report._publication_appendix`：会话 Markdown/HTML 导出追加同一收据附录（状态读取失败降级为无附录，不影响导出）。
+
+### B04：数据版本变化 → 证据失效 → 假设 stale 的生命周期
+
+- `trust_workflow_runtime` 新增 `_workspace_data_identities`（当前工作区数据身份）与 `_split_evidence_by_data_freshness`（纯函数：result_bindings 指纹与当前仍加载数据集**确实不一致**才排除；数据集不在当前工作区/无绑定 → 保守保留）。排除不删除证据记录，`evidence_exclusions`（含两侧指纹）随假设集持久化供审计。
+- `maybe_create_hypothesis_set` 刷新时使用新鲜证据：版本变化后已判定假设按既有 P5 语义转 `stale`，假设集保留为历史。
+- 工作台 `pending_findings` 增加 `stale` 状态（标签"失效（依赖证据已过期，历史结论）"），不进入已验证区。
+
+### 验证（新 run-dir，Provider 禁用）
+
+- B06/B03/B04 定向：`tmp/vp-l3-b04-green2` 94 passed、`tmp/vp-l3-b03-green5` 39 passed、`tmp/vp-l3-b06-regression` 424 passed。
+- 完整离线回归（tmp/vp-l3-r-full-offline，JUnit sha256 前缀 `69e0f9d2b4a87c4e`）：**2518 tests / 0 failures / 0 errors / 1 skipped**（唯一跳过为按离线边界禁用的真实 Provider live smoke）。
+
+### 浏览器复验要求（Codex）
+
+- B06：重跑预算场景，断言真实 `budget_exceeded` 收据/错误事件与后续调用被阻止（脚本化"已触及预算"文本不算）；补保存失败、发布修订失败、pending confirmation 的同域收据。
+- B03：产出物面板出现 `publication_receipt` 条目且可打开；Markdown 导出含来源/收据引用/omitted_refs/待验证标签。
+- B04：以"同名数据集内容变更重载"驱动——支持 → 反证/版本变化 → 刷新后 `stale` 且以"失效"历史性质出现在待验证区。
