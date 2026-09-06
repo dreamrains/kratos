@@ -1,6 +1,7 @@
 import json
 
 import pandas as pd
+import pytest
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.context import AgentContext, use_agent_context
@@ -70,6 +71,37 @@ def test_run_python_result_marks_fallback_policy_and_purpose():
     assert result["result"] == "2"
     assert result["fallback_policy"]["role"] == "supplemental"
     assert result["fallback_policy"]["purpose"] == "quick unsupported calculation check"
+
+
+def test_run_python_accepts_safe_pandas_numpy_imports():
+    result = json.loads(run_python(
+        "import pandas as pd\nimport numpy as np\nresult = float(pd.Series(np.array([1, 2, 3])).mean())"
+    ))
+
+    assert result["result"] == "2.0"
+
+
+def test_run_python_exposes_safe_datetime_helpers():
+    result = json.loads(run_python(
+        "from datetime import datetime, timedelta, timezone\n"
+        "result = (datetime(2026, 9, 6, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()"
+    ))
+
+    assert result["result"] == "2026-09-07T00:00:00+00:00"
+
+
+def test_run_python_rejects_imports_outside_the_allowlist():
+    result = json.loads(run_python("import pathlib\nresult = pathlib.Path('.')"))
+
+    assert result["error_type"] == "sandbox_violation"
+    assert "可用模块" in result["error"]
+
+
+def test_sandbox_runtime_rejects_submodule_import_with_recovery_guidance():
+    from data_agent.tools.sandbox import _build_safe_globals
+
+    with pytest.raises(ImportError, match="native analysis tool"):
+        _build_safe_globals({})["__builtins__"]["__import__"]("numpy._core._methods")
 
 
 def test_task_create_inherits_current_analysis_spec(tmp_path):

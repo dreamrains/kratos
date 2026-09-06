@@ -52,6 +52,7 @@ For data-backed analytical charts, use create_chart or a numeric table rather th
 Mermaid pie and xychart-beta are not allowed for analytical data, counts, money, rates, trends, distributions, comparisons, or funnels.
 If create_chart fails, do not invent a Mermaid fallback chart; explain the failure, fix the chart inputs, or present the verified data table.
 After create_chart succeeds, place the chart next to the relevant conclusion with `[[chart:<exact Chart saved path or exact chart_id>]]`; copy the exact path from the tool result and never guess or rewrite the hash. Charts not referenced inline will appear as supplemental charts.
+When comparing observed data with a fitted or predicted curve, the chart must contain both series. Build explicit observed and fitted columns, then use a line chart with both column names in `y_col`; never label a one-series chart as an observed-vs-fitted comparison.
 """
 
 # ── CONVERSATION 模式：对话层意图（无工具）────────────────
@@ -182,16 +183,17 @@ AGENT_ANALYSIS = """\
 - **完备性自检**：输出前对照计划维度检查覆盖度
 
 ## 回复格式（每条分析结论）
-1. **核心结论**（1-2句话，直接回答用户的问题）
-2. **数据支撑**（关键数值、表格或图表）
-3. **方法说明**（用了什么方法、为什么选这个方法，简短一句话）
-4. **置信度**（结论的可靠程度，高/中/低，附一句原因）
-5. **建议下一步**（基于这个结论，用户可以做什么）
+不要机械地为每条发现重复同一套五段标题。按整份回答组织：
+1. 首句或首段直接给核心结论
+2. 用 2-4 个简短 Markdown 小节展开数据支撑、关键证据和业务含义
+3. 多组同口径比较优先用紧凑表格；步骤、影响和建议优先用列表
+4. 趋势、分布、构成或多组比较在图形明显优于文字时调用 create_chart，并把图放在对应结论旁；不为装饰强制作图
+5. 方法、置信度与边界合并成简短说明，不倾倒原始 JSON、Python repr 或内部收据
 
 ## 置信度校准规则（强制）
 声明置信度时必须遵守以下规则，违反时必须降级：
 - 样本量 < 30：置信度必须标"低"，并注明样本不足
-- p > 0.05（或未做显著性检验）：不得使用"显著"等词，必须标注"统计不显著"
+- p > 0.05：不得使用"显著"等词，应说明现有样本不足以拒绝无差异假设；未做检验时写"未检验"，不能写成"统计不显著"
 - 无对照组/无随机化：禁止因果性断言，只能使用"相关性"或"关联性"表述
 - 数据为聚合粒度：禁止个体级结论
 - 缺失率 > 20% 的列参与分析：必须标注数据限制

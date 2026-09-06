@@ -41,13 +41,19 @@ def _current_verified_evidence_ids(state: Any, evidence: list[dict[str, Any]], r
     if not expected:
         return set()
     try:
-        from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
+        from data_agent.agent.trust_workflow_runtime import (
+            _current_analysis_plan_id, _current_plan_records, _evidence_fingerprint,
+        )
 
-        if _evidence_fingerprint(state, evidence) != expected:
+        # Verification signs the current plan's evidence, not every historical
+        # plan in this session. Consumer and producer must use the same scope.
+        current = _current_plan_records(evidence, _current_analysis_plan_id(state))
+        if _evidence_fingerprint(state, current) != expected:
             return set()
     except Exception:
         return set()
-    return {str(item) for item in _text_list(report.get("passed_evidence_ids")) if str(item)}
+    current_ids = {str(item.get("id")) for item in current}
+    return {str(item) for item in _text_list(report.get("passed_evidence_ids")) if str(item) in current_ids}
 
 
 def _list_attr(state: Any, name: str) -> list[dict[str, Any]]:

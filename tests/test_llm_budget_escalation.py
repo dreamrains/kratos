@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from data_agent.llm import client as client_module
 from data_agent.llm.client import LLMClient, Response
+from data_agent.llm.request_policy import RequestPolicy
 
 
 def _litellm_response(text: str, finish: str, completion_tokens: int | None = None):
@@ -17,7 +18,8 @@ def _litellm_response(text: str, finish: str, completion_tokens: int | None = No
 
 
 def _client(max_tokens=None):
-    return LLMClient(model_id="test/model", max_tokens=max_tokens, temperature=0.0)
+    return LLMClient(model_id="test/model", max_tokens=max_tokens, temperature=0.0,
+                     request_policy=RequestPolicy(max_attempts=3, output_token_limits=(8000, 32000)))
 
 
 def test_chat_escalates_budget_when_reasoning_exhausts_the_output():
@@ -79,7 +81,7 @@ def test_chat_returns_partial_text_truncation_without_escalation():
     assert response.finish_reason == "length"
 
 
-def test_chat_first_rung_comes_from_usage_when_budget_is_omitted(monkeypatch):
+def test_explicit_policy_supplies_the_rung_when_budget_is_omitted(monkeypatch):
     monkeypatch.delenv("MAX_TOKENS", raising=False)
     from data_agent.config import AgentConfig
 
@@ -94,7 +96,7 @@ def test_chat_first_rung_comes_from_usage_when_budget_is_omitted(monkeypatch):
 
     with patch.object(client_module, "completion", scripted):
         with patch.object(client_module, "get_config", lambda: cfg):
-            response = client_module.LLMClient(model_id="test/model").chat([{"role": "user", "content": "q"}])
+            response = client_module.LLMClient(model_id="test/model", request_policy=RequestPolicy(max_attempts=2, output_token_limits=(16000,))).chat([{"role": "user", "content": "q"}])
     assert calls == [None, 16000]
     assert response.text == "ok"
 
@@ -130,7 +132,7 @@ def test_stream_propagates_the_real_finish_reason():
     assert complete.response.finish_reason == "length"
 
 
-def test_stream_restarts_transparently_when_reasoning_exhausts_the_output():
+def test_stream_restarts_only_with_an_explicit_output_policy():
     calls: list = []
 
     def scripted(**kwargs):

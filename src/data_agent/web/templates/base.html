@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="h-full">
+<html lang="zh-CN" class="h-full overflow-hidden">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -43,7 +43,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/highlight/github-dark-11.min.css') }}?v={{ vendor_version }}">
     <script src="{{ url_for('static', filename='vendor/highlight/highlight-11.min.js') }}?v={{ vendor_version }}"></script>
     <script src="{{ url_for('static', filename='js/plotly-3.5.0.min.js') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ asset_version }}">
     <script>
         if (typeof mermaid !== 'undefined') {
             mermaid.initialize({
@@ -59,8 +59,8 @@
         }
     </script>
 </head>
-<body class="h-full bg-stone-50 text-stone-800 dark:bg-stone-950 dark:text-stone-200 font-sans antialiased">
+<body class="h-full overflow-hidden bg-stone-50 text-stone-800 dark:bg-stone-950 dark:text-stone-200 font-sans antialiased">
     {% block body %}{% endblock %}
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ asset_version }}"></script>
 </body>
 </html>

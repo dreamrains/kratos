@@ -795,5 +795,6 @@ def _infer_dimensions(text: str) -> list[str]:
 
 
 def _has_any(text: str, needles: list[str]) -> bool:
-    return any(needle.lower() in text for needle in needles)
+    from data_agent.agent.request_language import has_affirmative_keyword
+    return has_affirmative_keyword(text, needles)
 

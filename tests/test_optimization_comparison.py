@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     REFERENCE_DATA_AVAILABLE,
     REFERENCE_DATA_DIR,
     reference_data_path,
@@ -573,7 +573,9 @@ class TestWorkspaceDataLoss:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        restored = workspace.get("test_data")
+        from data_agent.agent.context import use_agent_context
+        with use_agent_context(loop.context):
+            restored = loop.context.workspace.get("test_data")
         assert restored is not None, "workspace 恢复后数据应存在"
         assert restored.shape[0] == 3
 

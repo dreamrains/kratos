@@ -33,7 +33,7 @@
 - 删除 `generate_report`、`generate_analysis_brief`、`generate_formal_report` 的 registry、prompt、实现、旧 `/api/sessions/<id>/report` 路由和专属测试；不保留别名或兼容入口。
 - 保留主对话完整合成和 `export_conversation` HTML/Markdown 产出；旧 `/report` 路由契约为 404。
 - 删除 `record_insight_record` 在 registry、prompt、execution control、evidence 等处的死引用，不新造替代工具。
-- `tests/acceptance/tool_surface_manifest.json` 固定 73 项工具面；全局测试动态注册工具现在会清理自身状态，避免测试顺序污染正式清单。
+- 当时的验收工具清单已随旧矩阵退役；当前工具注册完整性由默认离线 pytest 中的确定性测试覆盖。
 
 ### 1.4 依赖和格式声明
 
@@ -44,7 +44,7 @@
 
 ### 1.5 故障索引
 
-- `tests/acceptance/failure_acceptance_index.json` 精确覆盖 F01–F33，记录每项目标切片、当前测试责任和 Slice 0 状态。
+- 当时的故障验收索引已随旧矩阵退役；未来验收体系的重建边界见 `docs/testing/retired-browser-provider-matrix.md`。
 - Slice 0 只将 F26（工具死引用/报告漂移）、F27（虚假格式依赖声明）、F28（真实数据路径漂移）置为 `contract_guard`。
 - F01–F25、F29–F33 仍为后续切片的 `characterized` 项；完整回归通过不等于这些事故已解决。
 

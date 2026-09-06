@@ -108,6 +108,14 @@ def test_chart_metadata_records_exploratory_purpose_by_default(tmp_path):
         cfg.sessions_dir = old_sessions
 
 
+def _bind_chart_fixture(state, ws, dataset):
+    receipt = state.add_tool_receipt({"id": "chart_fixture", "result_sha256": "sha256:chart-fixture",
+                                      "data_identities": {dataset: ws.get_data_identity(dataset)}})
+    for record in state.evidence_records:
+        record["result_bindings"] = [{"receipt_id": receipt["id"], "result_sha256": receipt["result_sha256"],
+                                      "data_identities": receipt["data_identities"]}]
+
+
 def test_chart_metadata_can_bind_evidence_ids(tmp_path):
     cfg, old_sessions = _use_tmp_sessions(tmp_path)
     ws = Workspace()
@@ -118,6 +126,7 @@ def test_chart_metadata_can_bind_evidence_ids(tmp_path):
     state = AnalysisSessionState(session_id="chart_evidence")
     state.add_evidence_record({"id": "ev_1", "claim": "March to April revenue comparison"})
     state.add_evidence_record({"id": "ev_2", "claim": "Revenue values are from pay dataset"})
+    _bind_chart_fixture(state, ws, "pay")
     ctx = AgentContext(session_id="chart_evidence", workspace=ws, analysis_state=state)
 
     try:
@@ -173,6 +182,7 @@ def test_grouped_bar_chart_handles_interval_axis_and_color_grouping(tmp_path):
     }))
     state = AnalysisSessionState(session_id="chart_grouped_bar")
     state.add_evidence_record({"id": "ev_amount_distribution", "claim": "Distribution by period"})
+    _bind_chart_fixture(state, ws, "dist")
     ctx = AgentContext(session_id="chart_grouped_bar", workspace=ws, analysis_state=state)
 
     try:
@@ -456,6 +466,54 @@ def test_scatter_rejects_non_numeric_axes(tmp_path):
         assert result["error_type"] == "chart_validation"
         assert "scatter" in result["error"].lower()
         assert "numeric" in result["error"].lower()
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_observed_vs_fitted_title_rejects_single_series(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ctx = AgentContext(session_id="chart_single_series_comparison", workspace=Workspace())
+
+    try:
+        with use_agent_context(ctx):
+            result = json.loads(create_chart(
+                "line",
+                data_json='[{"day":1,"actual":0.20},{"day":2,"actual":0.12}]',
+                x_col="day",
+                y_col="actual",
+                title="实际留存 vs 幂律拟合",
+            ))
+
+        assert result["error_type"] == "chart_validation"
+        assert result["error_code"] == "comparison_requires_multiple_series"
+        assert not (tmp_path / "sessions" / "chart_single_series_comparison" / "charts").exists()
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
+def test_scatter_observed_vs_fitted_supports_multiple_y_series(tmp_path):
+    cfg, old_sessions = _use_tmp_sessions(tmp_path)
+    ctx = AgentContext(session_id="chart_scatter_comparison", workspace=Workspace())
+
+    try:
+        with use_agent_context(ctx):
+            result = create_chart(
+                "scatter",
+                data_json=(
+                    '[{"day":1,"actual":0.20,"power_fit":0.19},'
+                    '{"day":2,"actual":0.12,"power_fit":0.11}]'
+                ),
+                x_col="day",
+                y_col="actual,power_fit",
+                title="Actual retention vs fitted curve",
+            )
+
+        assert "Chart saved:" in result
+        html_path = next((tmp_path / "sessions" / "chart_scatter_comparison" / "charts").glob("*.html"))
+        html = html_path.read_text(encoding="utf-8")
+        assert '"name":"actual"' in html
+        assert '"name":"power_fit"' in html
+        assert html.count('"mode":"lines+markers"') == 2
     finally:
         cfg.sessions_dir = old_sessions
 

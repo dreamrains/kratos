@@ -294,7 +294,8 @@ def _generate_observations(df: pd.DataFrame, scan_mode: str) -> list[str]:
     if rows < 5:
         return observations
 
-    numeric_cols = list(df.select_dtypes(include=[np.number]).columns)
+    from data_agent.utils.column_semantics import is_identifier_name
+    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if not is_identifier_name(c)]
     date_cols = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
 
     # 观察1：时间趋势（需要时间列 + 数值列）
@@ -328,7 +329,10 @@ def _find_dimension_cols(df: pd.DataFrame) -> list[str]:
     """找到适合做维度拆解的列。"""
     rows = len(df)
     result = []
+    from data_agent.utils.column_semantics import is_identifier_name
     for col in df.columns:
+        if is_identifier_name(col):
+            continue
         if pd.api.types.is_numeric_dtype(df[col]):
             continue
         nunique = df[col].nunique()

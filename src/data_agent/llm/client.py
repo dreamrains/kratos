@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
+
+from data_agent.llm.request_policy import RequestPolicy, ONE_SHOT, close_stream
 
 import litellm
 from litellm import completion
@@ -109,28 +112,18 @@ def _parse_response(resp: Any) -> Response:
 
 
 class LLMClient:
-    """统一的 LLM 客户端，基于 LiteLLM 兼容多种模型后端。"""
+    """One injectable request boundary for sync, streaming and auxiliary work."""
 
-    _MAX_RETRIES = 3
-    _RETRY_BASE_DELAY = 10
-    _DEFAULT_TIMEOUT = 120  # seconds
-    # Reasoning models can spend the whole completion budget on hidden
-    # reasoning before any visible text (finish_reason=length, empty text).
-    # Retry a bounded ladder of larger budgets instead of failing silently;
-    # 2 escalations => at most 3 requests per logical call.
-    _MAX_BUDGET_ESCALATIONS = 2
-    _ESCALATION_FALLBACK = 8192
-    _MAX_OUTPUT_TOKENS = 128000
+    _MAX_RETRIES = 3  # Compatibility constant; per-instance policy is authoritative.
+    _DEFAULT_TIMEOUT = 120
+    allow_stream_sync_fallback = False
+    manages_request_timeout = True
+    _RETRYABLE = (litellm.RateLimitError, litellm.APIConnectionError,
+                  litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError)
 
-    def __init__(
-        self,
-        model_id: Optional[str] = None,
-        api_base: Optional[str] = None,
-        api_key: Optional[str] = None,
-        max_tokens: Optional[int] = None,
-        timeout: Optional[int] = None,
-        temperature: Optional[float] = None,
-    ):
+    def __init__(self, model_id=None, api_base=None, api_key=None, max_tokens=None,
+                 timeout=None, temperature=None, *, transport: Callable | None = None,
+                 request_policy: RequestPolicy | None = None):
         cfg = get_config()
         self.model_id = normalize_model_id(model_id or cfg.model_id)
         self.api_base = api_base or cfg.api_base
@@ -138,15 +131,46 @@ class LLMClient:
         self.max_tokens = max_tokens if max_tokens is not None else cfg.max_tokens
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.temperature = temperature
+        self.transport = transport
+        self.request_policy = request_policy or RequestPolicy()
+        self._cancelled = threading.Event()
+        self._stream_lock = threading.Lock()
+        self._active_stream = None
 
-    def _base_kwargs(self, messages, tools=None, system=None) -> dict:
-        kwargs: dict[str, Any] = {
-            "model": self.model_id,
-            "messages": messages,
-            "timeout": self.timeout,
-        }
-        # Omitted budget: the provider's model default applies and follows
-        # model upgrades without local maintenance.
+    def cancel(self):
+        self._cancelled.set()
+        with self._stream_lock:
+            stream = self._active_stream
+        if stream is not None:
+            try:
+                close_stream(stream)
+            except Exception:
+                # A Python iterator may currently be executing; the reader
+                # still owns teardown, bounded by the transport timeout.
+                logger.info("Cancellation requested; awaiting stream reader exit")
+
+    def reset_cancellation(self):
+        self._cancelled.clear()
+
+    def for_purpose(self, *, max_tokens=None, timeout=None, request_policy=None):
+        return LLMClient(model_id=self.model_id, api_base=self.api_base, api_key=self.api_key,
+                         max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+                         timeout=timeout or self.timeout, temperature=self.temperature,
+                         transport=self.transport, request_policy=request_policy or ONE_SHOT)
+
+    def _request(self, kwargs):
+        # Disable nested SDK retries: every physical attempt traverses this seam.
+        if self._cancelled.is_set():
+            raise RuntimeError("LLM request cancelled before admission")
+        return (self.transport or completion)(**{**kwargs, "num_retries": 0})
+
+    def _base_kwargs(self, messages, tools=None, system=None):
+        # Persistence/UI identity is local metadata, not a Provider field.
+        messages = [
+            {k: v for k, v in message.items() if k not in {"reply_id", "publication_rejected"}}
+            for message in messages
+        ]
+        kwargs = {"model": self.model_id, "messages": messages, "timeout": self.timeout}
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
         if self.api_base:
@@ -156,241 +180,143 @@ class LLMClient:
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
         if system:
-            kwargs["messages"] = [{"role": "system", "content": system}] + list(kwargs["messages"])
+            kwargs["messages"] = [{"role": "system", "content": system}] + list(messages)
         if tools:
             kwargs["tools"] = _convert_tools(tools)
         return kwargs
 
-    def _next_budget_after_truncation(self, current: Optional[int], response: Response) -> Optional[int]:
-        """Return the next budget rung when reasoning exhausted the output.
+    def _pause(self, attempt):
+        if self._cancelled.wait(self.request_policy.retry_delay_seconds * (2 ** attempt)):
+            raise RuntimeError("LLM request cancelled during retry delay")
 
-        Only the silent-failure shape (finish_reason=length with zero visible
-        text) escalates; a partial answer is surfaced to the caller as-is.
-        Returns None when no higher rung exists (cap reached or not truncated).
-        """
-        if getattr(response, "finish_reason", None) != "length":
-            return None
-        if (getattr(response, "text", "") or "").strip():
-            return None
-        if current is not None:
-            rung = current * 4
-        else:
-            # Provider-managed budget with unknown default: derive the rung
-            # from what the truncated attempt actually consumed.
-            used = response.completion_tokens or self._ESCALATION_FALLBACK
-            rung = used * 4
-        rung = min(rung, self._MAX_OUTPUT_TOKENS)
-        if rung <= (current or 0):
-            return None
-        logger.info(
-            "Escalating output budget after reasoning truncation",
-            extra={"extra_data": {"from": current, "to": rung, "completion_tokens": response.completion_tokens}},
-        )
-        return rung
+    @staticmethod
+    def _silent_truncation(response):
+        return (response.finish_reason == "length" and not response.text.strip()
+                and not response.tool_calls)
 
-    def chat(
-        self,
-        messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        system: Optional[str] = None,
-    ) -> Response:
-        """同步调用 LLM，返回统一 Response。带速率限制重试。"""
+    def chat(self, messages, tools=None, system=None):
         kwargs = self._base_kwargs(messages, tools, system)
-        response = None
-        for _ in range(self._MAX_BUDGET_ESCALATIONS + 1):
-            response = self._chat_with_transport_retries(kwargs)
-            next_budget = self._next_budget_after_truncation(kwargs.get("max_tokens"), response)
-            if next_budget is None:
-                return response
-            kwargs = {**kwargs, "max_tokens": next_budget}
-        return response
-
-    def _chat_with_transport_retries(self, kwargs: dict) -> Response:
-        last_error = None
-        for attempt in range(self._MAX_RETRIES + 1):
+        limits = iter(self.request_policy.output_token_limits)
+        for attempt in range(self.request_policy.max_attempts):
             try:
-                resp = completion(**kwargs)
-                return _parse_response(resp)
-            except litellm.RateLimitError as e:
-                last_error = e
-                if attempt < self._MAX_RETRIES:
-                    import time
-                    delay = self._RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"\n[yellow]⚠ 速率限制，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
-                    time.sleep(delay)
-                else:
+                response = _parse_response(self._request(kwargs))
+            except self._RETRYABLE:
+                if attempt + 1 == self.request_policy.max_attempts:
                     raise
-            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError) as e:
-                last_error = e
-                if attempt < self._MAX_RETRIES:
-                    import time
-                    delay = self._RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"\n[yellow]⚠ 服务暂时不可用，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
-                    time.sleep(delay)
-                else:
-                    raise
-        raise last_error  # unreachable; kept for type completeness
+                self._pause(attempt)
+                continue
+            limit = next(limits, None) if self._silent_truncation(response) else None
+            if limit is None or attempt + 1 == self.request_policy.max_attempts:
+                return response
+            kwargs = {**kwargs, "max_tokens": limit}
 
-    def chat_once(
-        self,
-        messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        system: Optional[str] = None,
-        response_format: Optional[dict[str, Any]] = None,
-        max_tokens: Optional[int] = None,
-    ) -> Response:
-        """Make exactly one synchronous Provider request without retry or fallback.
-
-        This is intentionally separate from ``chat()``.  It is for an
-        externally authorized, count-bounded evaluation batch where a failed
-        request must consume its slot and stop the batch instead of being
-        retried implicitly.  ``max_tokens`` overrides the client-level budget
-        so a frozen escalation ladder can drive each attempt explicitly.
-        """
+    def chat_once(self, messages, tools=None, system=None, response_format=None, max_tokens=None):
         kwargs = self._base_kwargs(messages, tools, system)
-        # LiteLLM may otherwise apply its retry policy independently of this
-        # client.  Gate C counts request attempts, so this path must opt out.
-        kwargs["num_retries"] = 0
         if response_format is not None:
             kwargs["response_format"] = response_format
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        return _parse_response(completion(**kwargs))
+        return _parse_response(self._request(kwargs))
 
-    def stream_chat_structured(
-        self,
-        messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        system: Optional[str] = None,
-    ) -> Iterator[StreamEvent]:
-        """流式调用 LLM，逐 token yield StreamTextDelta，最后 yield StreamComplete。
-
-        支持工具调用：流式阶段累积 tool_call 参数，完成后放入 StreamComplete.response。
-        推理耗尽输出预算（零可见正文 + finish_reason=length）时，透明地按更大
-        预算重开流；已向消费者发布过正文则不再重开，保留真实 finish_reason。
-        """
-        kwargs = self._base_kwargs(messages, tools, system)
-        kwargs["stream"] = True
-        terminal = None
-        for _ in range(self._MAX_BUDGET_ESCALATIONS + 1):
-            published_text = False
-            for event in self._stream_attempt(kwargs):
-                if isinstance(event, StreamTextDelta):
-                    published_text = True
-                    yield event
-                else:
-                    terminal = event
+    def stream_chat_structured(self, messages, tools=None, system=None):
+        kwargs = {**self._base_kwargs(messages, tools, system), "stream": True}
+        limits = iter(self.request_policy.output_token_limits)
+        for attempt in range(self.request_policy.max_attempts):
+            published = False
+            terminal = None
+            stream = self._stream_attempt(kwargs)
+            try:
+                for event in stream:
+                    if isinstance(event, StreamTextDelta):
+                        published = True
+                        yield event
+                    else:
+                        terminal = event
+            except self._RETRYABLE:
+                # Replaying a partial stream can duplicate visible text or tool
+                # arguments. Recover only before any provider delta was received.
+                if published or self._received_delta or attempt + 1 == self.request_policy.max_attempts:
+                    raise
+                self._pause(attempt)
+                continue
+            finally:
+                close_stream(stream)
             if terminal is None:
-                return
-            next_budget = None
-            if not published_text:
-                next_budget = self._next_budget_after_truncation(kwargs.get("max_tokens"), terminal.response)
-            if next_budget is None:
+                raise RuntimeError("Provider stream ended without a terminal response")
+            limit = next(limits, None) if not published and self._silent_truncation(terminal.response) else None
+            if limit is None or attempt + 1 == self.request_policy.max_attempts:
                 yield terminal
                 return
-            kwargs = {**kwargs, "max_tokens": next_budget}
-        yield terminal
+            kwargs = {**kwargs, "max_tokens": limit}
 
-    def _stream_attempt(self, kwargs: dict) -> Iterator[StreamEvent]:
-        """Consume one streaming request with transport retries only."""
-        # Accumulate full response parts
-        full_text = ""
-        reasoning_text = ""
-        finish_reason: Optional[str] = None
-        # tool_calls accumulation: index -> {id, name, arguments_str}
-        tc_accum: dict[int, dict[str, str]] = {}
-
-        for attempt in range(self._MAX_RETRIES + 1):
-            try:
-                for chunk in completion(**kwargs):
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-
-                    # Text content
-                    if delta.content:
-                        text = _sanitize(delta.content)
-                        full_text += text
-                        yield StreamTextDelta(text=text)
-
-                    # Reasoning content (for models that support it)
-                    if getattr(delta, "reasoning_content", None):
-                        reasoning_text += _sanitize(delta.reasoning_content)
-
-                    # Tool call deltas
-                    if delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index if hasattr(tc_delta, "index") and tc_delta.index is not None else 0
-                            if idx not in tc_accum:
-                                tc_accum[idx] = {"id": "", "name": "", "arguments": ""}
-                            if tc_delta.id:
-                                tc_accum[idx]["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    tc_accum[idx]["name"] = tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    tc_accum[idx]["arguments"] += tc_delta.function.arguments
-
-                # Streaming complete — build final Response
-                tool_calls = []
-                for idx in sorted(tc_accum.keys()):
-                    entry = tc_accum[idx]
-                    args_str = _sanitize(entry["arguments"])
-                    try:
-                        args = json.loads(args_str) if args_str else {}
-                    except json.JSONDecodeError:
-                        args = {"raw": args_str}
-                    tool_calls.append(ToolCall(
-                        id=entry["id"],
-                        name=entry["name"],
-                        arguments=args,
-                    ))
-
-                response = Response(
-                    text=full_text,
-                    tool_calls=tool_calls,
-                    finish_reason=finish_reason or "stop",
-                    reasoning_content=reasoning_text,
-                )
-                yield StreamComplete(response=response)
+    def _stream_attempt(self, kwargs):
+        full_text, reasoning = "", ""
+        finish_reason, completion_tokens = None, None
+        tc_accum = {}
+        self._received_delta = False
+        stream = self._request(kwargs)
+        with self._stream_lock:
+            self._active_stream = stream
+        try:
+            if self._cancelled.is_set():
                 return
+            for chunk in stream:
+                if self._cancelled.is_set():
+                    return
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    completion_tokens = getattr(usage, "completion_tokens", completion_tokens)
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                if delta.content:
+                    self._received_delta = True
+                    text = _sanitize(delta.content)
+                    full_text += text
+                    yield StreamTextDelta(text=text)
+                if getattr(delta, "reasoning_content", None):
+                    self._received_delta = True
+                    reasoning += _sanitize(delta.reasoning_content)
+                if delta.tool_calls:
+                    self._received_delta = True
+                    for item in delta.tool_calls:
+                        index = getattr(item, "index", None) or 0
+                        entry = tc_accum.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                        if item.id:
+                            entry["id"] = item.id
+                        if item.function:
+                            if item.function.name:
+                                entry["name"] = item.function.name
+                            if item.function.arguments:
+                                entry["arguments"] += item.function.arguments
+        finally:
+            try:
+                close_stream(stream)
+            finally:
+                with self._stream_lock:
+                    self._active_stream = None
+        calls = []
+        for index in sorted(tc_accum):
+            entry = tc_accum[index]
+            raw = _sanitize(entry["arguments"])
+            try:
+                arguments = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                arguments = {"raw": raw}
+            calls.append(ToolCall(entry["id"], entry["name"], arguments))
+        if finish_reason is None:
+            raise RuntimeError("Provider stream ended without finish_reason")
+        yield StreamComplete(Response(text=full_text, tool_calls=calls, finish_reason=finish_reason,
+                                      reasoning_content=reasoning, completion_tokens=completion_tokens))
 
-            except litellm.RateLimitError:
-                if attempt < self._MAX_RETRIES:
-                    import time
-                    delay = self._RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"\n[yellow]⚠ 流式速率限制，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
-                    time.sleep(delay)
-                    # Reset accumulators for retry
-                    full_text = ""
-                    reasoning_text = ""
-                    tc_accum.clear()
-                else:
-                    raise
-            except (litellm.APIConnectionError, litellm.ServiceUnavailableError, litellm.Timeout, litellm.InternalServerError):
-                if attempt < self._MAX_RETRIES:
-                    import time
-                    delay = self._RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"\n[yellow]⚠ 流式服务不可用，{delay}s 后重试 ({attempt + 1}/{self._MAX_RETRIES})...[/yellow]")
-                    time.sleep(delay)
-                    full_text = ""
-                    reasoning_text = ""
-                    tc_accum.clear()
-                else:
-                    raise
-
-    def stream_chat(
-        self,
-        messages: list[dict],
-        tools: Optional[list[dict]] = None,
-        system: Optional[str] = None,
-    ) -> Iterator[str]:
-        """流式调用 LLM，yield 文本片段。"""
-        kwargs = self._base_kwargs(messages, tools, system)
-        kwargs["stream"] = True
-
-        for chunk in completion(**kwargs):
-            delta = chunk.choices[0].delta
-            if delta.content:
-                yield delta.content
+    def stream_chat(self, messages, tools=None, system=None):
+        stream = self.stream_chat_structured(messages, tools, system)
+        try:
+            for event in stream:
+                if isinstance(event, StreamTextDelta):
+                    yield event.text
+        finally:
+            close_stream(stream)

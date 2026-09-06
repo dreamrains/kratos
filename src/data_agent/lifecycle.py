@@ -21,8 +21,8 @@ class AgentLifecycle:
         """有序启动所有子系统。
 
         启动顺序:
-        1. 验证配置
-        2. 初始化日志
+        1. 验证配置并初始化日志
+        2. 回显当前进程实际生效的 LLM 配置
         3. 自动发现并注册原生工具
         4. 发现技能
         5. 启动 MCP 并注册 MCP 工具
@@ -34,14 +34,20 @@ class AgentLifecycle:
 
         # 1. 配置验证（Pydantic 自动验证）
         cfg = get_config()
-        logger.info("Configuration loaded", extra={"extra_data": {
-            "model": cfg.model_id,
-            "project": str(cfg.project_resolved),
-        }})
 
-        # 2. 初始化日志
+        # 初始化日志必须先于第一条 INFO：默认 handler 会丢弃 INFO，
+        # 配置回显曾在日志配置前发出而永远不可见
         from data_agent.utils.logging import setup_logging
         setup_logging(level=cfg.log_level, log_file=cfg.log_file_resolved)
+
+        # 2. 回显进程内生效配置：配置在首次读取后缓存，修改 .env 不会
+        # 热生效；控制台展示 model/api_base 便于发现“改了 .env 没重启”
+        logger.info("Configuration loaded", extra={"extra_data": {
+            "model": cfg.model_id,
+            "api_base": cfg.api_base or "(provider default)",
+            "api_key": "set" if cfg.api_key else "unset",
+            "project": str(cfg.project_resolved),
+        }})
 
         # 3. 自动发现并注册原生工具
         from data_agent.tools import discover_tools

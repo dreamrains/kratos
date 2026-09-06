@@ -30,12 +30,15 @@ def _period_data():
 
 
 def _receipt(tool_name, receipt_id, data):
+    from data_agent.agent.publication_synthesis import publication_contract
+
     return {
         "id": receipt_id,
         "tool_name": tool_name,
         "result_sha256": "sha256:test",
         "result_preview": f"{tool_name} completed",
         "publication_facts": extract_publication_facts(data),
+        "publication_contract": publication_contract(tool_name, data),
     }
 
 
@@ -125,7 +128,7 @@ def test_structured_result_preview_does_not_duplicate_raw_json_into_publication(
     assert '"dates"' not in rendered
 
 
-def test_loop_persists_packet_and_publishes_verified_appendix_after_finalization(monkeypatch):
+def test_loop_persists_packet_without_exposing_receipts_after_finalization(monkeypatch):
     from data_agent.config import get_config
 
     monkeypatch.setattr(get_config(), "wrap_up_round", 1)
@@ -138,14 +141,14 @@ def test_loop_persists_packet_and_publishes_verified_appendix_after_finalization
     )
     loop._maybe_inject_wrap_up(1, "拟合留存曲线")
 
-    assert loop._turn_finalization_mode is True
+    assert loop._turn_finalization_mode is False
     assert loop._turn_publication_packet["status"] == "ready"
     assert loop.context.analysis_state.publication_packets[-1]["id"] == loop._turn_publication_packet["id"]
 
     published, error = loop._render_finalized_publication("结论：曲线拟合良好，但仅限当前观测范围。")
     assert error is None
-    assert "### 已验证计算结果" in published
-    assert "0.98240474" in published
+    assert published == "结论：曲线拟合良好，但仅限当前观测范围。"
+    assert "本轮计算收据" not in published
 
 
 def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
@@ -163,8 +166,8 @@ def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
     )
 
     assert error is None
-    assert "### 已验证计算结果" in published
-    assert "1818" in published
+    assert published == "模型说明：结果是描述性的，不构成因果结论。"
+    assert "本轮计算收据" not in published
     assert loop.context.analysis_state.publication_packets[-1]["status"] == "ready"
 
 
@@ -197,7 +200,7 @@ def test_packet_uses_only_current_turn_receipts_and_state_roundtrip_preserves_it
     assert restored.publication_packets[-1]["id"] == packet["id"]
 
 
-def test_streaming_finalization_persists_and_publishes_the_verified_appendix():
+def test_streaming_finalization_persists_without_exposing_the_verified_appendix():
     from data_agent.llm.client import Response
 
     loop = AgentLoop(client=None, session_id="publication_stream")
@@ -230,6 +233,51 @@ def test_streaming_finalization_persists_and_publishes_the_verified_appendix():
     events = list(loop.stream_turn("拟合留存曲线"))
     published = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
 
-    assert "### 已验证计算结果" in published
-    assert "0.98240474" in published
-    assert "0.98240474" in loop.messages[-1]["content"]
+    assert published == "曲线在已观察区间内拟合良好。"
+    assert "本轮计算收据" not in published
+    assert loop.messages[-1]["content"] == published
+
+
+def test_streaming_publication_rewrites_once_and_never_projects_rejected_narrative():
+    from data_agent.llm.client import Response
+    from data_agent.session.public_messages import assistant_replies
+
+    loop = AgentLoop(client=None, session_id="publication_repair")
+    loop.context.analysis_state.add_tool_receipt(_receipt("curve_fitting", "tr_repair", _curve_data()))
+    original_reset = loop._reset_turn_tracking
+
+    def reset_with_packet():
+        original_reset()
+        loop._turn_finalization_mode = True
+        loop._turn_publication_packet = build_publication_packet(
+            loop.context.analysis_state,
+            user_input="解释留存曲线",
+            substantive_tools={"curve_fitting"},
+        )
+
+    loop._reset_turn_tracking = reset_with_packet
+    loop._prepare_analysis_turn = lambda _user_input: None
+    loop._ensure_mcp_initialized = lambda: None
+    loop._should_continue_for_analysis_quality = lambda *_args: False
+    loop._verify_before_publication = lambda *_args: None
+    loop._maybe_archive = lambda *_args: None
+    loop._auto_save = lambda: None
+    answers = iter([
+        "这6个零值均为未观测值而非真实零，可用于LTV预测。",
+        "零值含义未知；当前拟合只描述已观察区间，不支持LTV预测。",
+    ])
+
+    def direct_final(_round_num):
+        text = next(answers)
+        yield {"type": "text_delta", "text": text, "turn_id": None}
+        yield {"type": "_response", "response": Response(text=text), "streamed_text": text}
+
+    loop._stream_llm_round = direct_final
+    events = list(loop.stream_turn("解释留存曲线"))
+    published = "".join(str(event.get("text") or "") for event in events if event.get("type") == "text_delta")
+    public = assistant_replies(loop.messages, loop.session_id)
+
+    assert "这6个零值" not in published
+    assert "这6个零值" not in "\n".join(reply["content"] for reply in public)
+    assert "零值含义未知" in published
+    assert sum(message.get("publication_rejected") is True for message in loop.messages) == 1

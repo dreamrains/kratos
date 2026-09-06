@@ -14,6 +14,12 @@ REMOVED_LEGACY_RUNNERS = {
     "test_web_gui.py",
     "test_web_workbench_replacement.py",
 }
+NON_TEST_SUPPORT_MODULES = {
+    "tests/__init__.py",
+    "tests/conftest.py",
+    "tests/support/__init__.py",
+    "tests/support/real_data_manifest.py",
+}
 
 
 def test_test_tree_has_no_silent_collection_exclusions() -> None:
@@ -31,8 +37,24 @@ def test_every_python_test_asset_is_pytest_discoverable() -> None:
         path.relative_to(ROOT).as_posix()
         for path in TESTS.rglob("*.py")
         if not path.name.startswith("test_")
+        and path.relative_to(ROOT).as_posix() not in NON_TEST_SUPPORT_MODULES
     ]
     assert undiscoverable == []
+
+
+def test_retired_acceptance_harness_does_not_return() -> None:
+    for directory in (ROOT / "scripts" / "acceptance", TESTS / "acceptance"):
+        assert not directory.exists() or not any(directory.rglob("*"))
+
+
+def test_normal_tests_do_not_import_acceptance_helpers() -> None:
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in TESTS.rglob("*.py")
+        if path.resolve() != Path(__file__).resolve()
+        and "scripts.acceptance" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
 
 
 def test_test_modules_do_not_embed_repo_specific_absolute_paths_or_exit() -> None:

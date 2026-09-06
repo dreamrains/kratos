@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from scripts.acceptance.real_data_manifest import REFERENCE_DATA_DIR
+from tests.support.real_data_manifest import REFERENCE_DATA_DIR
 
 # Ensure UTF-8 output on Windows
 if sys.platform == "win32":

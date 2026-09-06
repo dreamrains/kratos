@@ -274,8 +274,8 @@ def extract_memory_candidates(session_id: str = "") -> dict:
         "type": "object",
         "properties": {
             "needs_review": {
-                "type": "boolean",
-                "description": "When true, only return candidates marked as needing review.",
+                "type": ["boolean", "string"],
+                "description": "When true, only return candidates marked as needing review. Legacy strings true/false/1/0 are also accepted.",
             }
         },
     },

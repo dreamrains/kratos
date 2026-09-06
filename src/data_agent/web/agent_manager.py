@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 from data_agent.utils.logging import get_logger
 
@@ -18,15 +18,24 @@ class AgentManager:
     Thread-safe via internal lock.
     """
 
-    def __init__(self):
+    def __init__(self, *, auxiliary_client_factory: Callable[[], object] | None = None,
+                 client_factory: Callable[..., object] | None = None):
         self._loops: dict[str, "AgentLoop"] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._auxiliary_client_factory = auxiliary_client_factory
+        self._client_factory = client_factory
+        from data_agent.web.run_state import RunStates
+        self.runs = RunStates()
 
     def get_or_create(
         self,
         session_id: Optional[str] = None,
         model_id: Optional[str] = None,
     ):
+        with self._lock:
+            return self._create_locked(session_id, model_id)
+
+    def _create_locked(self, session_id=None, model_id=None):
         """Get existing or create new AgentLoop for a session.
 
         When creating a new AgentLoop for a session_id that already exists
@@ -42,11 +51,16 @@ class AgentManager:
         sid = session_id or uuid.uuid4().hex[:12]
 
         client = None
-        if model_id:
+        if self._client_factory is not None:
+            client = self._client_factory(model_id=model_id)
+        elif model_id:
             from data_agent.llm.client import LLMClient
             client = LLMClient(model_id=model_id)
 
-        loop = AgentLoop(client=client, session_id=sid)
+        loop_options = {}
+        if self._auxiliary_client_factory is not None:
+            loop_options["auxiliary_llm_client"] = self._auxiliary_client_factory()
+        loop = AgentLoop(client=client, session_id=sid, **loop_options)
 
         # Auto-restore session that exists on disk but was lost from memory
         if sid and not loop.messages:

@@ -11,6 +11,10 @@ from data_agent.tools._utils import validate_pandas_expr
 from data_agent.tools.registry import registry
 
 
+def _sum_preserving_missing(series):
+    return series.sum(min_count=1)
+
+
 @registry.register(
     name="transform_data",
     description=(
@@ -33,7 +37,7 @@ from data_agent.tools.registry import registry
             "name": {"type": "string", "description": "数据集名称"},
             "operation": {
                 "type": "string",
-                "description": "操作类型",
+                "description": "操作类型；宽转长使用 operation=pivot 并填写 melt_id_vars/melt_value_vars；melt 不是独立 operation。",
                 "enum": ["filter", "select", "rename", "sort", "group_aggregate", "resample", "pivot", "merge"],
             },
             "save_as": {"type": "string", "description": "保存为新数据集名称，为空则自动生成"},
@@ -74,8 +78,8 @@ from data_agent.tools.registry import registry
                         "column": {"type": "string", "description": "聚合目标列"},
                         "functions": {
                             "type": "array",
-                            "items": {"type": "string", "enum": ["sum", "mean", "count", "min", "max", "median", "std"]},
-                            "description": "聚合函数列表",
+                            "items": {"type": "string", "enum": ["sum", "mean", "count", "size", "min", "max", "median", "std"]},
+                            "description": "count 是非缺失记录数；size 是总记录数，两者之差为缺失数；sum 的全缺失分组保留缺失而非零。",
                         },
                     },
                     "required": ["column", "functions"],
@@ -281,11 +285,16 @@ def transform_data(
                         agg_dict[col] = funcs
                     else:
                         agg_dict[col] = funcs
-                result = df.groupby(group_by).agg(agg_dict).reset_index()
+                for col, funcs in agg_dict.items():
+                    if isinstance(funcs, str):
+                        agg_dict[col] = _sum_preserving_missing if funcs == "sum" else funcs
+                    elif isinstance(funcs, list):
+                        agg_dict[col] = [_sum_preserving_missing if f == "sum" else f for f in funcs]
+                result = df.groupby(group_by, dropna=False).agg(agg_dict).reset_index()
                 # 扁平化多级列名
                 if isinstance(result.columns, pd.MultiIndex):
                     result.columns = [
-                        f"{col}_{func}" if func else col
+                        f"{col}_{'sum' if func == '_sum_preserving_missing' else func}" if func else col
                         for col, func in result.columns
                     ]
             else:
@@ -293,9 +302,9 @@ def transform_data(
                 agg_func = p.get("agg_func", "count")
                 agg_col = p.get("agg_col", "")
                 if agg_func in ("count", "size"):
-                    result = df.groupby(group_by).size().reset_index(name="count")
+                    result = df.groupby(group_by, dropna=False).size().reset_index(name="count")
                 elif agg_func == "sum":
-                    result = df.groupby(group_by)[agg_col].sum().reset_index()
+                    result = df.groupby(group_by, dropna=False)[agg_col].sum(min_count=1).reset_index()
                 elif agg_func == "mean":
                     result = df.groupby(group_by)[agg_col].mean().reset_index()
                 elif agg_func == "min":
@@ -351,7 +360,9 @@ def transform_data(
             result = df.sort_values(by=by, ascending=ascending)
 
         else:
-            return json.dumps({"error": f"不支持的 operation: {operation}"}, ensure_ascii=False)
+            return json.dumps({"error": f"不支持的 operation: {operation}", "error_type": "invalid_parameter",
+                               "allowed": ["filter", "select", "rename", "sort", "group_aggregate", "resample", "pivot", "merge"],
+                               "hint": "宽转长请使用 operation=pivot、melt_id_vars 和 melt_value_vars，无需重新加载数据。"}, ensure_ascii=False)
 
     except Exception as e:
         return json.dumps({"error": f"变换失败: {e}"}, ensure_ascii=False)

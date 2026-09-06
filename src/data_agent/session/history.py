@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -12,6 +13,7 @@ from typing import Any, Optional
 from data_agent.config import get_config
 
 logger = logging.getLogger(__name__)
+_artifact_manifest_lock = threading.RLock()
 
 
 def _sessions_dir() -> Path:
@@ -23,6 +25,8 @@ def _now_str() -> str:
 
 
 def _session_dir(session_id: str) -> Path:
+    if not session_id or session_id in {".", ".."} or any(c in session_id for c in "/\\:"):
+        raise ValueError("Invalid session id")
     d = _sessions_dir() / session_id
     d.mkdir(parents=True, exist_ok=True)
     for sub in ("analyses", "charts", "reports"):
@@ -179,6 +183,8 @@ def save_session(
     (sdir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # conversation.json
+    from data_agent.session.public_messages import assign_reply_ids
+    assign_reply_ids(messages)
     conv = _serialize_messages(messages)
     (sdir / "conversation.json").write_text(
         json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -463,6 +469,11 @@ def list_branches(session_id: str) -> list[dict]:
 
 def register_artifact(session_id: str, path: str, artifact_type: str, description: str = "") -> str:
     """将输出物注册到会话的 artifact 清单。"""
+    with _artifact_manifest_lock:
+        return _register_artifact_locked(session_id, path, artifact_type, description)
+
+
+def _register_artifact_locked(session_id: str, path: str, artifact_type: str, description: str) -> str:
     sdir = _session_dir(session_id)
     manifest_path = sdir / "artifacts.json"
 
@@ -477,10 +488,12 @@ def register_artifact(session_id: str, path: str, artifact_type: str, descriptio
         "description": description,
         "registered_at": _now_str(),
     }
+    if any(item.get("path") == path and item.get("type") == artifact_type
+           and item.get("description") == description for item in manifest):
+        return path
     manifest.append(entry)
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    from data_agent.utils.atomic_files import write_text_atomic
+    write_text_atomic(manifest_path, json.dumps(manifest, ensure_ascii=False, indent=2))
     return path
 
 

@@ -12,7 +12,7 @@ from data_agent.agent.execution_control import (
     ToolExecutionBudget,
     TurnExecutionState,
 )
-from data_agent.agent.intent import TurnIntent, plan_turn_intent
+from data_agent.agent.intent import TurnIntent
 from data_agent.llm.client import Response, ToolCall
 from data_agent.agent.loop import AgentLoop
 from data_agent.session.task_manager import task_manager
@@ -32,6 +32,7 @@ def test_budget_soft_and_hard_thresholds():
     state.record_tool_call("run_python", {})
     # record_evidence_record is meta, does NOT count toward tool_calls, but resolves fallback
     state.record_tool_call("record_evidence_record", {})
+    state.record_tool_success()
 
     assert state.tool_calls == 3  # list_data + describe_dataset + run_python
     assert state.pending_fallback_resolution is False
@@ -145,12 +146,25 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
     task_manager._next_id_val = 0
     try:
         state = AnalysisSessionState(session_id="gate_savings", project_name=None)
-        intent = plan_turn_intent("evaluate whether the savings card is worth long-term operation", _loaded_context())
-        intent.intent_type = "directed_analysis"
-        intent.data_state = "data_loaded"
+        intent = TurnIntent(
+            intent_type="directed_analysis",
+            clarity="clear",
+            data_state="data_loaded",
+            analysis_stage="execute",
+            recommended_action="run_analysis",
+            execution_readiness="ready",
+            reason="offline high-risk confirmation fixture",
+            ambiguities=[],
+        )
 
         controller = AnalysisFlowController("gate_savings")
-        controller.prepare_turn(state, intent, user_input="evaluate whether the savings card is worth long-term operation", dataset_profile=_loaded_context())
+        controller.prepare_turn(
+            state,
+            intent,
+            user_input="evaluate whether the savings card is worth long-term operation",
+            dataset_profile=_loaded_context(),
+            llm_client=_OfflineNullClient(),
+        )
 
         assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
         assert controller.is_capability_blocked_by_confirmation(state, "data.profile") is False
@@ -174,6 +188,11 @@ def test_confirmation_gate_ignores_tools_without_capability_metadata():
     controller = AnalysisFlowController("gate_unknown_tool")
 
     assert controller.is_tool_blocked_by_confirmation(state, "list_files") is False
+
+
+class _OfflineNullClient:
+    def chat(self, messages, tools=None, system=None):
+        return Response(text="")
 
 
 class _OneToolClient:
@@ -552,6 +571,81 @@ def test_auto_suspend_falls_back_to_unsuspended_preexisting_confirmation():
     assert result.confirmation_id == result.suspension_id
 
 
+def test_confirmation_task_links_pending_and_resolution_updates_live_state(tmp_path, monkeypatch):
+    import data_agent.agent.analysis_flow_controller as flow_module
+    import data_agent.session.task_manager as task_module
+    from data_agent.agent.loop import SuspendedForConfirmation
+    from data_agent.session.task_manager import TaskManager
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    monkeypatch.setattr(flow_module, "task_manager", manager)
+    monkeypatch.setattr(task_module, "task_manager", manager)
+
+    session_id = "linked_method_confirmation"
+    spec_id = "spec_linked_method"
+    pending_id = "method_linked_method"
+    ctx = AgentContext(session_id=session_id, workspace=Workspace())
+    state = AnalysisSessionState(
+        session_id=session_id,
+        data_state="data_loaded",
+        analysis_spec={
+            "id": spec_id,
+            "goal": "Fit retention curve",
+            "playbook_id": "retention_lifecycle",
+            "confirmation_policy": {"requires_confirmation": True},
+        },
+    )
+    state.pending_confirmations = [{
+        "id": pending_id,
+        "status": "pending",
+        "question": "Confirm the retention method?",
+        "options": [{"label": "Confirm", "value": "confirm_method"}],
+        "confirmation_type": "method_confirmation",
+        "blocking_reason": "Method choice changes the analysis",
+        "state_updates": json.dumps({
+            "stage": "plan",
+            "method_confirmation": {
+                "playbook_id": "retention_lifecycle",
+                "analysis_spec_id": spec_id,
+            },
+        }),
+    }]
+    ctx.analysis_state = state
+
+    controller = flow_module.AnalysisFlowController(session_id)
+    task = controller.ensure_confirmation_task(state)
+
+    assert task is not None
+    assert state.pending_confirmations[0]["related_task_id"] == task["id"]
+    assert state.pending_confirmations[0]["related_spec_id"] == spec_id
+
+    loop = AgentLoop(client=None, session_id=session_id)
+    loop.context = ctx
+    suspension = SuspendedForConfirmation(
+        suspension_id="auto_runtime_identity",
+        confirmation_id="auto_runtime_identity",
+        question="Confirm the retention method?",
+        options=[{"label": "Confirm", "value": "confirm_method"}],
+        context="",
+        snapshot={"messages": []},
+        state_updates=state.pending_confirmations[0]["state_updates"],
+        confirmation_type="method_confirmation",
+        related_task_id=task["id"],
+        related_spec_id=spec_id,
+    )
+
+    loop._resolve_confirmation(suspension, "confirm_method")
+
+    assert state.pending_confirmations[0]["status"] == "resolved"
+    assert state.analysis_spec["method_confirmation"]["status"] == "approved"
+    assert manager.get(task["id"])["status"] == "completed"
+    assert manager.get(task["id"])["confirmation_ids"] == [
+        pending_id,
+        "auto_runtime_identity",
+    ]
+    assert manager.get(task["id"])["completed_by"] == "confirmation"
+
+
 def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
@@ -617,7 +711,10 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
     assert "suspension_id" not in state.pending_confirmations[0]
 
 
-def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(monkeypatch):
+def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(tmp_path, monkeypatch):
+    from data_agent.config import get_config
+
+    monkeypatch.setattr(get_config(), "sessions_dir", tmp_path / "sessions")
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -724,7 +821,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     with use_agent_context(ctx):
         result = loop.run_turn("analyze retention formula")
 
-    assert result.startswith("final answer\n\n---\n\n### 已验证计算结果")
+    assert result == "final answer"
     assert any("<synthesis_policy" in prompt for prompt in client.system_prompts[1:])
 
     final_prompt = client.system_prompts[-1]

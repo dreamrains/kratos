@@ -74,8 +74,27 @@ def get_session(session_id: str):
         action_registry=build_action_registry(),
     )
     data.update(confirmation_session_state(service, session_id))
+    runs = getattr(current_app.config["agent_manager"], "runs", None)
+    data["run_state"] = runs.snapshot(session_id) if runs is not None else {}
+    from data_agent.session.public_messages import public_messages
+    data["messages"] = public_messages(data.get("messages", []), session_id)
 
     return jsonify(data)
+
+
+@sessions_bp.post("/sessions/<session_id>/export-reply")
+def export_reply(session_id: str):
+    """Export only a persisted assistant reply and its own validated charts."""
+    from data_agent.tools.report import export_assistant_reply
+    body = request.get_json(force=True)
+    result = export_assistant_reply(session_id, body.get("content"), body.get("format", "markdown"), reply_id=body.get("reply_id", ""))
+    return jsonify(result), (400 if result.get("error") else 200)
+
+
+@sessions_bp.get("/sessions/<session_id>/run-state")
+def get_run_state(session_id):
+    runs = getattr(current_app.config["agent_manager"], "runs", None)
+    return jsonify(runs.snapshot(session_id) if runs is not None else {})
 
 
 @sessions_bp.delete("/sessions/<session_id>")

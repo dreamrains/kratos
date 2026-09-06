@@ -255,17 +255,18 @@ def test_ltv_regression_requires_assumptions_and_caution():
     assert "next_step" in policy.required_moves
 
 
-def test_pass_with_downgrades_verification_suppresses_decision_recommendations():
+def test_pass_with_downgrades_keeps_requested_reversible_recommendations():
     policy = _policy(
         intent=_intent(),
         state=_state_with_verification("pass_with_downgrades"),
         user_input="forecast LTV and give me decision recommendations",
     )
 
-    assert "decision_recommendation" in policy.suppressed_moves
+    assert "decision_recommendation" not in policy.suppressed_moves
     assert "limitation" in policy.required_moves
     assert policy.business_translation == "cautious"
     assert "pass_with_downgrades" in policy.reason
+    assert "conditional and reversible" in policy.reason
 
 
 def test_failed_verification_suppresses_decision_recommendations():
@@ -315,7 +316,7 @@ def test_terse_policy_with_downgraded_verification_applies_verification_limits()
     )
 
     assert policy.answer_mode == "direct"
-    assert "decision_recommendation" in policy.suppressed_moves
+    assert "decision_recommendation" not in policy.suppressed_moves
     assert "limitation" in policy.required_moves
     assert policy.business_translation == "cautious"
     assert "pass_with_downgrades" in policy.reason

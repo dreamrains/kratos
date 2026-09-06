@@ -9,7 +9,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SMOKE = ROOT / "scripts" / "acceptance" / "offline_tool_surface_smoke.py"
+SMOKE = ROOT / "scripts" / "testing" / "offline_tool_surface_smoke.py"
 
 
 def test_offline_tool_surface_smoke() -> None:

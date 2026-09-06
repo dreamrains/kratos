@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     REFERENCE_DATA_AVAILABLE,
     REFERENCE_DATA_DIR,
     reference_data_path,

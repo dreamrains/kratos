@@ -74,7 +74,7 @@ def test_wrap_up_nudge_injects_once_after_the_threshold_round(monkeypatch):
     assert loop._turn_finalization_mode is False
 
 
-def test_wrap_up_closes_tools_only_after_substantive_analysis(monkeypatch):
+def test_round_count_keeps_tools_available_even_after_one_success(monkeypatch):
     from data_agent.config import get_config
     from data_agent.llm.client import Response, StreamComplete
 
@@ -85,9 +85,9 @@ def test_wrap_up_closes_tools_only_after_substantive_analysis(monkeypatch):
     loop._turn_successful_substantive_tools = {"curve_fitting"}
     loop._maybe_inject_wrap_up(round_num=2)
 
-    assert loop._turn_finalization_mode is True
-    assert _finalization_count(loop) == 1
-    assert loop._tools_for_current_round() is None
+    assert loop._turn_finalization_mode is False
+    assert _finalization_count(loop) == 0
+    assert loop._tools_for_current_round() is not None
 
     class CaptureClient:
         def __init__(self):
@@ -100,7 +100,7 @@ def test_wrap_up_closes_tools_only_after_substantive_analysis(monkeypatch):
     client = CaptureClient()
     loop.client = client
     list(loop._stream_llm_round(3))
-    assert client.tools_seen == [None]
+    assert client.tools_seen[0] is not None
 
 
 def test_failed_substantive_tool_does_not_unlock_finalization(monkeypatch):

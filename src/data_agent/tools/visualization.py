@@ -1,9 +1,12 @@
 """L5: 可视化工具。"""
 
 from __future__ import annotations
+import re
+import numpy as np
 
 import json
 import uuid
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -24,29 +27,49 @@ def _save_chart(fig: go.Figure, title: str = "chart", metadata: dict | None = No
     """保存图表到当前会话的 output 目录，同时导出 PNG 静态图片用于 PDF 嵌入。"""
     from data_agent.session.history import session_charts_dir, register_artifact
 
+    if metadata is not None:
+        exploratory = metadata.get("purpose") == "exploratory"
+        metadata["publication_level"] = "exploratory" if exploratory else "result_bound"
+        fig.add_annotation(text="探索图：未绑定正式证据" if exploratory else "计算绑定图：结论验证状态见工作台",
+                           xref="paper", yref="paper", x=0, y=1.12, showarrow=False,
+                           font={"size": 11, "color": "#92400e"})
+
     session_id = current_session_id()
     if session_id:
         output_dir = session_charts_dir(session_id)
         chart_id = f"{title.replace(' ', '_')}_{uuid.uuid4().hex[:6]}"
         path = output_dir / f"{chart_id}.html"
         fig.write_html(str(path), include_plotlyjs='/static/js/plotly-3.5.0.min.js')
-        if metadata is not None:
-            meta = dict(metadata)
-            meta["chart_id"] = chart_id
-            meta["filename"] = path.name
-            (output_dir / f"{chart_id}.json").write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+        meta = dict(metadata or {})
+        meta.update(chart_id=chart_id, filename=path.name, figure=json.loads(fig.to_json()))
         # 导出 PNG 静态图片（用于 PDF 嵌入）
+        started = time.monotonic()
+        static_image = {"status": "failed", "attempts": 1}
         try:
             png_path = output_dir / f"{chart_id}.png"
-            fig.update_layout(width=800, height=450)
-            png_path.write_bytes(fig.to_image(format="png", scale=1.5))
-        except Exception:
-            pass  # PNG 导出失败不影响主流程
+            # Use the same canonical Plotly JSON as HTML/exports. Native
+            # pandas Timestamp objects otherwise reach Kaleido's serializer.
+            static_fig = go.Figure(meta["figure"])
+            static_fig.update_layout(width=800, height=450)
+            png_bytes = static_fig.to_image(format="png", scale=1.5)
+            if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("Renderer did not return a PNG image")
+            with png_path.open("xb") as output:
+                output.write(png_bytes)
+            static_image.update(status="completed", filename=png_path.name, bytes=len(png_bytes))
+        except Exception as exc:
+            # Preserve the first failure; HTML remains usable. No hidden retry
+            # or later export may silently replace this attempt's result.
+            static_image.update(exception_type=type(exc).__name__, message=str(exc)[:2000])
+        static_image["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        meta["static_image"] = static_image
+        (output_dir / f"{chart_id}.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         artifact_path = f"sessions/{session_id}/charts/{chart_id}.html"
         register_artifact(session_id, artifact_path, "chart", title)
-        return f"Chart saved: {artifact_path}"
+        warning = "\nWarning: 静态图不可用，首次失败已记录；HTML 可用。" if static_image["status"] == "failed" else ""
+        return f"Chart saved: {artifact_path}{warning}"
     else:
         cfg = get_config()
         output_dir = cfg.project_resolved / "charts"
@@ -144,6 +167,69 @@ def _plotly_axis_values(series: pd.Series) -> list:
     ]
 
 
+def _combined_label_tick_text(value: object, *, max_chars: int = 30) -> tuple[str, bool]:
+    """Return a compact display label without changing the axis identity.
+
+    ``label_columns`` stores a reversible JSON array on the plotting copy. A
+    full array is useful in hover/export metadata but quickly becomes
+    unreadable as an x-axis tick. Tick text is presentation only: Plotly keeps
+    the original value in ``tickvals`` and every trace's x data.
+    """
+    raw = str(value)
+    display = raw
+    try:
+        decoded = json.loads(raw)
+        if isinstance(decoded, list):
+            display = " · ".join("∅" if item is None else str(item) for item in decoded)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    display = " ".join(display.split())
+    if len(display) <= max_chars:
+        return display, False
+    head = max_chars // 2
+    tail = max_chars - head - 1
+    return f"{display[:head]}…{display[-tail:]}", True
+
+
+def _apply_combined_label_axis(fig: go.Figure, values: pd.Series, metadata: dict | None) -> None:
+    """Make a combined categorical axis legible while retaining full labels."""
+    tickvals: list[object] = []
+    seen: set[str] = set()
+    for value in _plotly_axis_values(values):
+        key = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            tickvals.append(value)
+    category_count = len(tickvals)
+    if category_count >= 12:
+        max_chars, tickangle, bottom_margin, tick_size = 18, -90, 175, 10
+    elif category_count >= 8:
+        max_chars, tickangle, bottom_margin, tick_size = 24, -55, 125, 11
+    else:
+        max_chars, tickangle, bottom_margin, tick_size = 30, -35, 110, 12
+    rendered = [_combined_label_tick_text(value, max_chars=max_chars) for value in tickvals]
+    ticktext = [item[0] for item in rendered]
+    truncated_count = sum(1 for _, truncated in rendered if truncated)
+    fig.update_xaxes(
+        type="category",
+        tickmode="array",
+        tickvals=tickvals,
+        ticktext=ticktext,
+        tickangle=tickangle if any(len(text) > 12 for text in ticktext) else 0,
+        tickfont={"size": tick_size},
+        automargin=True,
+    )
+    fig.update_layout(margin={"b": bottom_margin if tickvals else 80})
+    if metadata is not None:
+        metadata["axis_label_presentation"] = {
+            "source": "label_columns",
+            "identity_preserved_in_tickvals": True,
+            "max_tick_characters": max_chars,
+            "category_count": category_count,
+            "truncated_count": truncated_count,
+        }
+
+
 def _parsed_evidence_ids(evidence_ids: str) -> list[str]:
     return [item.strip() for item in (evidence_ids or "").split(",") if item.strip()]
 
@@ -178,6 +264,34 @@ def _first_present(row: dict, keys: tuple[str, ...]):
         if value not in (None, ""):
             return value
     return None
+
+
+def _unbound_chart_evidence(evidence_ids, dataset, result_binding):
+    """Require the chart data version to appear in each evidence's receipts."""
+    from data_agent.agent.context import get_current_context
+    state = get_current_context().analysis_state
+    records = {r.get("id"): r for r in state.evidence_records}
+    receipts = {r.get("id"): r for r in state.tool_receipts}
+    identity = workspace.get_data_identity(dataset)
+    unbound = []
+    for eid in evidence_ids:
+        matched = False
+        for binding in records[eid].get("result_bindings", []):
+            receipt = receipts.get(binding.get("receipt_id"), {})
+            expected_hash = receipt.get("structured_result_sha256") or receipt.get("result_sha256")
+            if not expected_hash or binding.get("result_sha256") != expected_hash:
+                continue
+            if not identity or receipt.get("data_identities", {}).get(dataset) != identity:
+                continue
+            if binding.get("data_identities") != receipt.get("data_identities"):
+                continue
+            if result_binding and receipt.get("id") != result_binding.get("receipt_id"):
+                continue
+            matched = True
+            break
+        if not matched:
+            unbound.append(eid)
+    return unbound
 
 
 def _funnel_step_is_amount(step: str) -> bool:
@@ -279,6 +393,13 @@ def _metric_names_claim_rate(y_cols: list[str]) -> bool:
     return any(_title_claims_rate(col) for col in y_cols)
 
 
+def _title_claims_series_comparison(title: str) -> bool:
+    title_l = (title or "").lower()
+    has_observed = any(term in title_l for term in ("actual", "observed", "实际", "观测"))
+    has_fitted = any(term in title_l for term in ("fit", "fitted", "predicted", "拟合", "预测"))
+    return has_observed and has_fitted
+
+
 def _refresh_chart_metadata(metadata: dict | None, df: pd.DataFrame, x_col: str, y_cols: list[str], aggregation: str = "") -> None:
     if metadata is None:
         return
@@ -310,7 +431,7 @@ def _prepare_chart_dataframe(
         plot_df = df.copy()
         plot_df[x_col] = day_values.dt.strftime("%Y-%m-%d")
         group_cols = [x_col] + ([color_col] if color_col else [])
-        if parsed.notna().any() and plot_df.duplicated(subset=group_cols).any():
+        if parsed.notna().any() and (aggregation or plot_df.duplicated(subset=group_cols).any()):
             plot_df = (
                 plot_df.groupby(group_cols, sort=False, dropna=False)[y_cols]
                 .agg(aggregation)
@@ -331,7 +452,7 @@ def _prepare_chart_dataframe(
 
     if chart_type in {"bar", "stacked_bar"}:
         group_cols = [x_col] + ([color_col] if color_col else [])
-        if not df.duplicated(subset=group_cols).any():
+        if not aggregation and not df.duplicated(subset=group_cols).any():
             return df
         plot_df = (
             df.groupby(group_cols, sort=False, dropna=False)[y_cols]
@@ -377,6 +498,20 @@ def _validate_chart_spec(
 
     if color_col and color_col not in df.columns:
         return None, _chart_error(f"color_col '{color_col}' not found", [f"missing color_col: {color_col}"])
+
+    declared_series = len(y_cols)
+    if color_col and color_col in df.columns:
+        declared_series *= int(df[color_col].nunique(dropna=True))
+    if _title_claims_series_comparison(title) and declared_series < 2:
+        return None, _chart_error(
+            "comparison chart requires at least two plotted series",
+            ["title claims a comparison but only one series was provided"],
+            error_code="comparison_requires_multiple_series",
+            recovery_options=[{
+                "chart_type": "line",
+                "description": "Provide separate observed and fitted columns in y_col, separated by a comma.",
+            }],
+        )
 
     if chart_type == "scatter" and x_col and y_cols:
         bad_axes = [col for col in [x_col, y_cols[0]] if not _is_numeric_column(df, col)]
@@ -463,11 +598,15 @@ def _validate_chart_spec(
         "data": {"description": "数据集名称"},
         "title": {"description": "图表标题"},
         "x_col": {"description": "X 轴列名"},
+        "label_columns": {"description": "组合分析单位的列名，英文逗号分隔。与 x_col 二选一；在绘图副本中生成可逆的组合标签，保留注册数据集血缘。"},
         "y_col": {"description": "Y 轴列名，逗号分隔支持多列"},
         "color_col": {"description": "颜色分组列"},
         "data_json": {"description": "JSON 格式数据（funnel 必须用此参数）"},
         "aggregation": {"description": "重复分组的聚合方式", "enum": ["", "sum", "mean", "median", "count"]},
-        "scale_mode": {"description": "多指标尺度处理", "enum": ["", "raw", "normalize"]},
+        "scale_mode": {"description": "raw=原值；normalize=每序列绝对值最大值为100(折线/柱图)；index100=每序列首个观测值为100(仅折线，首值不可为0/缺失)。", "enum": ["", "raw", "normalize", "index100"]},
+        "purpose": {"description": "exploratory 为探索图；evidence/insight 须引用当前会话证据及注册数据集", "enum": ["exploratory", "evidence", "insight"]},
+        "evidence_ids": {"description": "当前会话 evidence_id，多个 ID 使用英文逗号分隔；不是工具名。"},
+        "result_ref": {"description": "工具返回的 tool_outputs/..._detail.json 引用。直接绘制其 chart_data，与计算结果共享版本。curve_fitting 使用 x_col=x、y_col=actual,power_fit（或工具返回的最佳族）。"},
     },
 )
 def create_chart(
@@ -482,13 +621,28 @@ def create_chart(
     evidence_ids: str = "",
     aggregation: str = "",
     scale_mode: str = "",
+    result_ref: str = "",
+    label_columns: str = "",
 ) -> str:
     fig = go.Figure()
+    if scale_mode != "index100" and re.search(r"(?:首日|首个|第一|first|base).*?100", title, re.I):
+        return _chart_error("Title claims first observation=100; select scale_mode=index100.", [],
+                            error_code="scale_label_mismatch", recovery_options=[{"scale_mode": "index100"}])
 
     # 获取数据
     df = None
     data_name = data
-    if data and data in workspace.list_datasets():
+    result_binding = None
+    if result_ref:
+        from data_agent.tools.result_reference import load_result_reference
+        try:
+            result_payload, result_binding = load_result_reference(result_ref)
+            df = pd.DataFrame(result_payload["chart_data"])
+            identities = result_binding.get("data_identities", {})
+            data_name = next(iter(identities), "")
+        except (ValueError, KeyError, OSError) as exc:
+            return _chart_error("Invalid result_ref", [str(exc)])
+    elif data and data in workspace.list_datasets():
         df = workspace.get(data)
     elif data_json:
         try:
@@ -512,11 +666,24 @@ def create_chart(
     if df is None:
         return "Error: 没有可用数据。请先加载数据或提供 data_json。"
 
+    labels = [c.strip() for c in label_columns.split(",") if c.strip()]
+    if labels:
+        if x_col or len(labels) < 2 or len(set(labels)) != len(labels) or any(c not in df.columns for c in labels):
+            return _chart_error("Invalid label_columns", ["Use at least two distinct existing columns and omit x_col."])
+        df = df.copy()
+        x_col = "组合分析单位"
+        while x_col in df.columns:
+            x_col += "_"
+        df[x_col] = df[labels].apply(lambda row: json.dumps(
+            [None if pd.isna(value) else str(value) for value in row], ensure_ascii=False), axis=1)
+
     try:
         metadata, validation_error = _validate_chart_spec(df, chart_type, data_name, title, x_col, y_col, color_col)
         if validation_error:
             return validation_error
         if metadata is not None:
+            if labels:
+                metadata["label_columns"] = labels
             allowed_purposes = {"exploratory", "evidence", "insight"}
             normalized_purpose = (purpose or "exploratory").strip().lower()
             if normalized_purpose not in allowed_purposes:
@@ -534,12 +701,15 @@ def create_chart(
             source_dataset = parent_dataset or data_name
             source_meta = workspace.get_metadata(source_dataset) if source_dataset else {}
             metadata["data_identity"] = {
+                **workspace.get_data_identity(data_name),
                 "dataset": data_name,
                 "source_dataset": source_dataset,
                 "derived_from": parent_dataset,
                 "source_path": source_meta.get("_source_path", ""),
-                "source_fingerprint": source_meta.get("source_fingerprint", ""),
+                "source_fingerprint": source_meta.get("source_fingerprint") or workspace.get_data_identity(data_name).get("source_fingerprint", ""),
             }
+            if result_binding is not None:
+                metadata["result_binding"] = result_binding
             if normalized_purpose in {"evidence", "insight"} and not metadata["evidence_ids"]:
                 return _chart_error(
                     "purpose 'evidence' or 'insight' requires evidence_ids",
@@ -556,6 +726,14 @@ def create_chart(
                     return _chart_error(
                         "evidence_ids do not resolve in the active session",
                         [f"unknown evidence ids: {', '.join(unresolved_ids)}"],
+                    )
+                unbound_ids = _unbound_chart_evidence(metadata["evidence_ids"], data_name, result_binding)
+                if unbound_ids:
+                    return _chart_error(
+                        "Evidence does not bind the chart's current data version and result",
+                        [f"unbound evidence ids: {', '.join(unbound_ids)}"],
+                        error_code="chart_evidence_binding_mismatch",
+                        recovery_options=[{"action": "recompute evidence for the current data version, or use exploratory purpose"}],
                     )
 
         y_cols_for_plot = [c.strip() for c in y_col.split(",") if c.strip()]
@@ -599,10 +777,31 @@ def create_chart(
         if metadata is not None:
             metadata["plotted_row_count"] = int(len(df))
 
+        if scale_mode == "index100" and x_col:
+            df = df.sort_values(x_col, kind="stable").copy()
+        raw_df = df.copy()
+        if scale_mode in {"normalize", "index100"}:
+            df = df.copy()
+            for col in y_cols_for_plot:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype(float)
+            groups = df.groupby(color_col, sort=False, dropna=False).groups.values() if color_col else [df.index]
+            for indices in groups:
+                for col in y_cols_for_plot:
+                    values = pd.to_numeric(df.loc[indices, col], errors="coerce")
+                    denominator = values.iloc[0] if scale_mode == "index100" else values.abs().max()
+                    if pd.isna(denominator) or not np.isfinite(denominator) or denominator == 0:
+                        return _chart_error("Scale denominator must be finite and nonzero; use raw or revise the scope explicitly.", [], error_code="invalid_scale_denominator")
+                    df.loc[indices, col] = values / denominator * 100
+            if metadata is not None:
+                metadata["scale_mode"] = scale_mode
+                transformation = f"scale:{scale_mode}"
+                if transformation not in metadata.setdefault("transformations", []):
+                    metadata["transformations"].append(transformation)
+
         if chart_type == "line":
             if x_col and y_col:
                 y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
-                axis_groups = _detect_axis_groups(df, y_cols)
+                axis_groups = [y_cols] if scale_mode in {"normalize", "index100"} else _detect_axis_groups(df, y_cols)
                 use_multi_axis = len(axis_groups) > 1
 
                 for axis_idx, group in enumerate(axis_groups):
@@ -643,10 +842,9 @@ def create_chart(
                 if len(y_cols) > 1:
                     normalize = scale_mode == "normalize"
                     for col in y_cols:
-                        values = pd.to_numeric(df[col], errors="coerce")
+                        values = pd.to_numeric(raw_df[col], errors="coerce")
                         if normalize:
-                            max_abs = values.abs().max()
-                            plotted = values / max_abs * 100 if max_abs else values
+                            plotted = df[col]
                             fig.add_trace(go.Bar(
                                 x=_plotly_axis_values(df[x_col]),
                                 y=plotted,
@@ -695,18 +893,22 @@ def create_chart(
 
         elif chart_type == "scatter":
             if x_col and y_col:
-                if color_col:
-                    for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
+                y_cols = [c.strip() for c in y_col.split(",") if c.strip()]
+                mode = "lines+markers" if len(y_cols) > 1 and _title_claims_series_comparison(title) else "markers"
+                for col in y_cols:
+                    if color_col:
+                        for cat, group_df in df.groupby(color_col, sort=False, dropna=False):
+                            trace_name = str(cat) if len(y_cols) == 1 else f"{cat} - {col}"
+                            fig.add_trace(go.Scatter(
+                                x=group_df[x_col],
+                                y=group_df[col],
+                                mode=mode,
+                                name=trace_name,
+                            ))
+                    else:
                         fig.add_trace(go.Scatter(
-                            x=group_df[x_col],
-                            y=group_df[y_col],
-                            mode="markers",
-                            name=str(cat),
+                            x=df[x_col], y=df[col], mode=mode, name=col,
                         ))
-                else:
-                    fig.add_trace(go.Scatter(
-                        x=df[x_col], y=df[y_col], mode="markers",
-                    ))
             else:
                 numeric_cols = df.select_dtypes(include="number").columns
                 if len(numeric_cols) >= 2:
@@ -774,7 +976,7 @@ def create_chart(
         elif chart_type == "pie":
             if x_col and y_col:
                 pie_df = df[[x_col, y_col]].copy()
-                if pie_df.duplicated(subset=[x_col]).any():
+                if aggregation or pie_df.duplicated(subset=[x_col]).any():
                     pie_df = (
                         pie_df.groupby(x_col, sort=False, dropna=False)[y_col]
                         .agg(aggregation)
@@ -811,7 +1013,11 @@ def create_chart(
                 }],
             )
 
+        if labels and x_col in df.columns:
+            _apply_combined_label_axis(fig, df[x_col], metadata)
         fig.update_layout(title=title, template="plotly_white")
+        if scale_mode in {"normalize", "index100"}:
+            fig.update_yaxes(title_text="Index (first observation=100)" if scale_mode == "index100" else "Normalized value (max absolute=100)")
         if "identifier_to_category" in contract.transformations:
             fig.update_xaxes(type="category")
         path = _save_chart(fig, title, metadata)

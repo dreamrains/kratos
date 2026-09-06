@@ -379,6 +379,26 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
     border-color: #292524;
     background: rgba(12, 10, 9, 0.24);
 }
+.workbench-conclusion-details {
+    min-width: 0;
+    color: #78716c;
+    font-size: 0.625rem;
+    line-height: 1.45;
+}
+.workbench-conclusion-details summary {
+    cursor: pointer;
+    color: #0f766e;
+    user-select: none;
+}
+.workbench-conclusion-summary {
+    max-height: 8rem;
+    margin-top: 0.25rem;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+.dark .workbench-conclusion-details { color: #a8a29e; }
+.dark .workbench-conclusion-details summary { color: #5eead4; }
 .trust-help-btn {
     display: inline-flex;
     align-items: center;

@@ -50,10 +50,11 @@ def test_current_panel_has_no_removed_workbench_surfaces_and_keeps_output_export
         assert removed not in js
 
 
-def test_workbench_scope_label_distinguishes_session_from_project_binding():
+def test_workbench_scope_label_uses_exact_session_id_without_summary_or_project_substitution():
     client = create_app().test_client()
     html = client.get("/").get_data(as_text=True)
 
-    assert "项目：" in html
     assert "会话：" in html
-    assert "currentSessionId" in html
+    assert "('会话：' + currentSessionId)" in html
+    assert "('会话：' + (sessionTitle || currentSessionId))" not in html
+    assert "activeProjectName ? ('项目：'" not in html

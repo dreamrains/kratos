@@ -165,7 +165,9 @@ class Workspace:
         sdir = _session_dir(session_id)
         meta_path = sdir / "workspace_meta.json"
 
-        datasets_meta = {}
+        # Saving one execution scope must not erase snapshots of other
+        # datasets already persisted by this same session.
+        datasets_meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
         names = self._datasets if dataset_names is None else dataset_names
         for name in names:
             if name not in self._datasets:
@@ -182,9 +184,8 @@ class Workspace:
                 "context": self._metadata.get(name, {}).get("context", ""),
             }
 
-        meta_path.write_text(
-            json.dumps(datasets_meta, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        from data_agent.utils.atomic_files import write_text_atomic
+        write_text_atomic(meta_path, json.dumps(datasets_meta, ensure_ascii=False, indent=2))
         logger.info("Workspace meta saved", extra={"extra_data": {"session_id": session_id, "datasets": list(datasets_meta)}})
 
     def persist_dataset(self, session_id: str, name: str) -> str | None:
@@ -201,7 +202,7 @@ class Workspace:
         data_dir.mkdir(exist_ok=True)
         path = data_dir / f"{name}.parquet"
         try:
-            df.to_parquet(path, index=False)
+            df.to_parquet(path, index=True)
         except ImportError:
             path = data_dir / f"{name}.pkl"
             df.to_pickle(path)

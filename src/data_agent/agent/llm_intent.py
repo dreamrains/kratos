@@ -151,12 +151,11 @@ def classify_intent_llm(
     messages = [{"role": "user", "content": prompt}]
 
     try:
-        response = _call_with_timeout(
-            client.chat,
-            (messages,),
-            {"system": "你是一个JSON输出器，只返回JSON，不要其他内容。"},
-            8,  # 8s timeout for semantic classification
-        )
+        kwargs = {"system": "你是一个JSON输出器，只返回JSON，不要其他内容。"}
+        if getattr(client, "manages_request_timeout", False) is True:
+            response = client.chat(messages, **kwargs)
+        else:
+            response = _call_with_timeout(client.chat, (messages,), kwargs, 8)
     except (_TimeoutException, Exception):
         return None
 

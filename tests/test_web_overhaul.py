@@ -374,6 +374,16 @@ class TestThinkingAnimation:
     def test_chinese_fallback_text(self, html):
         assert "思考中" in html
 
+    def test_streamed_reply_keeps_a_visible_response_status(self, html, js):
+        assert 'turn.isResponding && turn.content' in html
+        assert '正在响应…' in html
+        assert 'turn.isResponding = false' in js
+
+
+def test_task_progress_uses_neutral_copy(js):
+    assert "任务进度 ${done}/${active.length}" in js
+    assert "不代表分析通过" not in js
+
 
 class TestSessionIndicator:
     """3.2 Session processing indicator in sidebar."""
@@ -405,14 +415,9 @@ class TestExportReply:
     def test_export_single_reply_method(self, js):
         assert "exportSingleReply" in js
 
-    def test_html_export_with_blob(self, js):
-        assert "text/html" in js
-        assert "URL.createObjectURL" in js
-
-    def test_markdown_export_downloads_md_file(self, js):
-        assert "text/markdown" in js
-        assert "reply.md" in js
-        assert "已复制 Markdown 到剪贴板" not in js
+    # Export contents, formats and unique downloads are exercised by the
+    # behavioral SSE contract and test_export_projection_roundtrip, rather
+    # than requiring frontend-owned MIME literals or a particular Blob form.
 
     def test_export_popover_html(self, html):
         assert "exportSingleReply(turns[parseInt(activePopover.slice(7))], 'html')" in html

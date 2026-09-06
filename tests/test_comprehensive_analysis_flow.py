@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     REFERENCE_DATA_AVAILABLE,
     REFERENCE_DATA_DIR,
     reference_data_path,
@@ -867,7 +867,16 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        restored = workspace.get("restore_a")
+        # Legacy metadata without an identity may reload the original file.
+        # Identity-bearing sessions must restore their exact saved snapshot.
+        meta_path = sdir / "workspace_meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["restore_a"].pop("data_identity", None)
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        loop._restore_workspace()
+        from data_agent.agent.context import use_agent_context
+        with use_agent_context(loop.context):
+            restored = loop.context.workspace.get("restore_a")
         assert restored is not None
         assert restored.shape[0] == 40
 
@@ -897,7 +906,9 @@ class TestSessionPersistence:
         loop._get_system_prompt = lambda: ""
         loop._restore_workspace()
 
-        restored = workspace.get("restore_b")
+        from data_agent.agent.context import use_agent_context
+        with use_agent_context(loop.context):
+            restored = loop.context.workspace.get("restore_b")
         assert restored is not None
         assert restored.shape[0] == 25
 

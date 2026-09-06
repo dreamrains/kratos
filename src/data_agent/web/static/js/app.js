@@ -79,6 +79,7 @@ function chatApp() {
         trustView: null,
         trustLoading: false,
         trustError: '',
+        _trustRequestGeneration: 0,
         expandedFullAnswer: false,
 
         // Bind-to-project modal
@@ -208,12 +209,14 @@ function chatApp() {
                     artifacts: [],
                     confirmation: null,
                     isThinking: false,
+                    isResponding: false,
                     thinkingText: '',
                     _copied: false,
                 };
                 state.turns.push(turn);
             }
             turn.isThinking = false;
+            turn.isResponding = false;
             turn.confirmation = confirmation;
         },
 
@@ -289,7 +292,7 @@ function chatApp() {
         get taskProgress() {
             const active = this.activeTasks;
             const done = active.filter(t => t.status === 'completed').length;
-            return `${done}/${active.length}`;
+            return `任务进度 ${done}/${active.length}`;
         },
 
         get analysisSummary() {
@@ -943,6 +946,7 @@ function chatApp() {
             if (this.isLoading && !confirm('任务正在运行，确认新建会话？')) return;
             this._saveCurrentState();
             this.currentSessionId = null;
+            this._trustRequestGeneration += 1;
             this.activeProjectName = '';
             this.analysisState = null;
             this.trustView = null;
@@ -965,6 +969,10 @@ function chatApp() {
             // Save current session state (allows background SSE to keep running)
             this._saveCurrentState();
             this.currentSessionId = sessionId;
+            this._trustRequestGeneration += 1;
+            this.trustView = null;
+            this.trustLoading = false;
+            this.trustError = '';
             this._syncSessionUrl(sessionId);
             this._restoreState(sessionId);
             this.activeProjectName = '';
@@ -1002,6 +1010,8 @@ function chatApp() {
             try {
                 const confirmationRes = await fetch(`/api/sessions/${sessionId}`);
                 const data = await confirmationRes.json();
+                this._applyRunState(sessionId, state, data.run_state || {});
+                if (state.isLoading) this._watchRunState(sessionId, state);
                 const activeConfirmation = this._confirmationFromPayload(data.active_confirmation);
                 this._restoreActiveConfirmation(state, activeConfirmation);
                 this.turns = state.turns;
@@ -1023,6 +1033,7 @@ function chatApp() {
             delete this._sessionStates[sessionId];
             if (this.currentSessionId === sessionId) {
                 this.currentSessionId = null;
+                this._trustRequestGeneration += 1;
                 this.turns = [];
                 this.isLoading = false;
                 this.tokenPct = 0;
@@ -1177,12 +1188,16 @@ function chatApp() {
                 this.sessionArtifacts = [];
                 return;
             }
+            if (sessionId !== this.currentSessionId) return;
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/artifacts-list`);
-                this.sessionArtifacts = res.ok ? await res.json() : [];
-                if (sessionId === this.currentSessionId) this.turns = [...this.turns];
+                const artifacts = res.ok ? await res.json() : [];
+                if (sessionId === this.currentSessionId) {
+                    this.sessionArtifacts = artifacts;
+                    this.turns = [...this.turns];
+                }
             } catch {
-                this.sessionArtifacts = [];
+                if (sessionId === this.currentSessionId) this.sessionArtifacts = [];
             }
         },
 
@@ -1206,43 +1221,57 @@ function chatApp() {
                 this.analysisState = null;
                 return;
             }
+            if (sessionId !== this.currentSessionId) return;
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/analysis`);
-                this.analysisState = res.ok ? await res.json() : null;
+                const analysisState = res.ok ? await res.json() : null;
+                if (sessionId === this.currentSessionId) this.analysisState = analysisState;
             } catch {
-                this.analysisState = null;
+                if (sessionId === this.currentSessionId) this.analysisState = null;
             }
         },
 
         async loadTrustView(sessionId = this.currentSessionId) {
             if (!sessionId || sessionId === '_pending_') {
+                this._trustRequestGeneration += 1;
                 this.trustView = null;
                 this.trustLoading = false;
                 this.trustError = '';
                 return;
             }
             if (sessionId !== this.currentSessionId) return;
-            this.trustView = null;
+            const requestGeneration = ++this._trustRequestGeneration;
             this.trustLoading = true;
             this.trustError = '';
             try {
                 const res = await fetch(`/api/sessions/${sessionId}/trust`);
                 if (!res.ok) throw new Error('Trust inspector load failed');
                 const data = await res.json();
-                if (sessionId === this.currentSessionId) {
+                if (requestGeneration === this._trustRequestGeneration && sessionId === this.currentSessionId) {
                     this.trustView = data;
                     this.trustError = '';
                 }
             } catch {
-                if (sessionId === this.currentSessionId) {
+                if (requestGeneration === this._trustRequestGeneration && sessionId === this.currentSessionId) {
                     this.trustView = null;
                     this.trustError = 'Trust status unavailable';
                 }
             } finally {
-                if (sessionId === this.currentSessionId) {
+                if (requestGeneration === this._trustRequestGeneration && sessionId === this.currentSessionId) {
                     this.trustLoading = false;
                 }
             }
+        },
+
+        async _refreshCompletedSession(sessionId) {
+            if (!sessionId || sessionId === '_pending_') return false;
+            const updates = [this.loadSessions()];
+            if (sessionId === this.currentSessionId) {
+                updates.push(this.loadTrustView(sessionId), this.loadAnalysisState(sessionId),
+                    this.loadSessionArtifacts(sessionId), this.loadTasks());
+            }
+            await Promise.all(updates);
+            return sessionId === this.currentSessionId;
         },
 
         verifiedConclusions() {
@@ -1519,14 +1548,17 @@ function chatApp() {
 
         async sendMessage() {
             let text = this.inputText.trim();
-            if ((!text && !this.uploadedFiles.length) || this.isLoading) return;
+            if ((!text && !this.uploadedFiles.length) || this.isLoading || this.isUploading) return;
+            const attachedUploads = this.uploadedFiles.map(file => ({
+                upload_id: file.upload_id,
+                filename: file.filename,
+            }));
             // Auto-attach file references if files were uploaded
-            if (this.uploadedFiles.length) {
-                const fileRefs = this.uploadedFiles.map(f => `分析文件: ${f}`).join('\n');
+            if (attachedUploads.length) {
+                const fileRefs = attachedUploads.map(file => `分析文件: ${file.filename}`).join('\n');
                 text = text ? `${text}\n${fileRefs}` : fileRefs;
             }
             this.inputText = '';
-            this.uploadedFiles = [];
             this.connectionError = '';
 
             // Ensure we have a session
@@ -1538,11 +1570,19 @@ function chatApp() {
             this._saveCurrentState();
             const state = this._getSessionState(this.currentSessionId);
             state._interrupted = false;
+            state.runStatus = 'running';
+            state.runId = null;
+            state.runGeneration = (state.runGeneration || 0) + 1;
+            state.isLoading = true;
+            const runGeneration = state.runGeneration;
+            this._trustRequestGeneration += 1;
+            this.trustView = null;
+            this.trustError = '';
 
             state.turns.push({ role: 'user', content: text, roundIndex: this._countUserTurns(state.turns) + 1 });
             state.turns.push({
                 role: 'assistant', content: '', toolCalls: [], artifacts: [],
-                confirmation: null, isThinking: true, thinkingText: '思考中...', _copied: false,
+                confirmation: null, isThinking: true, isResponding: true, thinkingText: '思考中...', _copied: false,
             });
             const turn = state.turns[state.turns.length - 1];
 
@@ -1553,20 +1593,18 @@ function chatApp() {
 
             // Capture session ID for this SSE connection
             const sseSessionId = this.currentSessionId;
+            let completedSessionId = sseSessionId;
 
             try {
                 const body = { message: text };
                 if (sseSessionId && sseSessionId !== '_pending_') body.session_id = sseSessionId;
                 if (this.modelName) body.model_id = this.modelName;
+                if (attachedUploads.length) body.uploads = attachedUploads;
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                 });
-                if (!response.ok) {
-                    const errData = await response.json().catch(() => ({ error: response.statusText }));
-                    throw new Error(errData.error || `HTTP ${response.status}`);
-                }
                 // A fetch response exposes headers before its SSE body.  Use
                 // the server-issued id as the authoritative migration path;
                 // `turn_start` remains the compatibility path for older
@@ -1577,39 +1615,43 @@ function chatApp() {
                     const pendingState = this._sessionStates['_pending_'] || state;
                     delete this._sessionStates['_pending_'];
                     this._sessionStates[responseSessionId] = pendingState;
-                    this.currentSessionId = responseSessionId;
-                    this._syncSessionUrl(responseSessionId);
+                    if (this.currentSessionId === '_pending_') {
+                        this.currentSessionId = responseSessionId;
+                        this._syncSessionUrl(responseSessionId);
+                    }
                     effectiveSessionId = responseSessionId;
                 }
-                await this._processSSE(response, turn, state, effectiveSessionId);
+                if (!response.ok) {
+                    const errData = await response.json().catch(() => ({ error: response.statusText }));
+                    state.runStatus = response.status === 409 ? 'running' : 'failed';
+                    if (response.status === 409) this._watchRunState(effectiveSessionId, state);
+                    throw new Error(errData.error || `HTTP ${response.status}`);
+                }
+                if (attachedUploads.length) {
+                    const acceptedIds = new Set(attachedUploads.map(file => file.upload_id));
+                    this.uploadedFiles = this.uploadedFiles.filter(file => !acceptedIds.has(file.upload_id));
+                }
+                completedSessionId = await this._processSSE(response, turn, state, effectiveSessionId) || effectiveSessionId;
             } catch (e) {
                 turn.isThinking = false;
+                if (!['running', 'cancelling'].includes(state.runStatus)) turn.isResponding = false;
                 turn.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 this.connectionError = e.message;
             } finally {
-                if (!state._interrupted) {
+                if (state.runGeneration !== runGeneration) return;
+                if (!['running', 'cancelling'].includes(state.runStatus)) {
                     state.isLoading = false;
-                    // this.currentSessionId may have migrated from _pending_ to real ID
-                    const activeSid = this.currentSessionId;
-                    const stillOnSession = activeSid && activeSid !== '_pending_';
-                    if (stillOnSession) {
+                    if (this.currentSessionId === completedSessionId) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
                     }
                 }
                 await this.loadSessions();
                 await this.loadTasks();
-                // A newly created session starts as `_pending_` and receives
-                // its durable id inside the SSE stream.  Refresh the side
-                // panel after that migration; relying only on the unawaited
-                // turn_end refresh could leave a completed analysis displayed
-                // as “未绑定会话”.
-                const completedSid = this.currentSessionId;
-                if (completedSid && completedSid !== '_pending_') {
+                if (completedSessionId === this.currentSessionId) {
                     await Promise.all([
-                        this.loadAnalysisState(completedSid),
-                        this.loadTrustView(completedSid),
-                        this.loadSessionArtifacts(completedSid),
+                        this.loadAnalysisState(completedSessionId),
+                        this.loadSessionArtifacts(completedSessionId),
                     ]);
                 }
                 requestAnimationFrame(() => {
@@ -1716,8 +1758,19 @@ function chatApp() {
                 turn.confirmation._error = '';
             }
             state._interrupted = false;
+            state.runStatus = 'running';
+            state.runId = null;
+            state.runGeneration = (state.runGeneration || 0) + 1;
+            state.isLoading = true;
+            const runGeneration = state.runGeneration;
+            this._trustRequestGeneration += 1;
+            this.trustView = null;
+            this.trustError = '';
+            this.isLoading = true;
+            this.turns = [...state.turns];
             let newTurn = null;
             const sseSessionId = this.currentSessionId;
+            let completedSessionId = sseSessionId;
 
             try {
                 const response = await fetch('/api/chat/resume', {
@@ -1739,10 +1792,22 @@ function chatApp() {
                         turn.confirmation._error = errData.error || 'Confirmation failed. Please retry.';
                     }
                     state._resuming = false;
+                    state.runStatus = response.status === 409 ? 'running' : 'failed';
+                    if (response.status === 409) this._watchRunState(sseSessionId, state);
                     this.turns = [...state.turns];
                     return;
                 }
-                if (turn) turn.confirmation = null;
+                if (turn) {
+                    const isConfirmationOnlyPlaceholder = !turn.content
+                        && (turn.toolCalls || []).length === 0
+                        && (turn.artifacts || []).length === 0;
+                    if (isConfirmationOnlyPlaceholder) {
+                        const turnIndex = state.turns.indexOf(turn);
+                        if (turnIndex >= 0) state.turns.splice(turnIndex, 1);
+                    } else {
+                        turn.confirmation = null;
+                    }
+                }
                 state.turns.push({
                     role: 'user', content: userResponse,
                     roundIndex: this._countUserTurns(state.turns) + 1,
@@ -1750,24 +1815,26 @@ function chatApp() {
                 });
                 state.turns.push({
                     role: 'assistant', content: '', toolCalls: [], artifacts: [],
-                    confirmation: null, isThinking: true, thinkingText: '恢复中...', _copied: false,
+                    confirmation: null, isThinking: true, isResponding: true, thinkingText: '恢复中...', _copied: false,
                 });
                 newTurn = state.turns[state.turns.length - 1];
                 this.turns = [...state.turns];
                 this._scrollToBottom();
-                await this._processSSE(response, newTurn, state, sseSessionId);
+                completedSessionId = await this._processSSE(response, newTurn, state, sseSessionId) || sseSessionId;
             } catch (e) {
                 const last = state.turns[state.turns.length - 1];
                 if (last) {
                     last.isThinking = false;
+                    if (!['running', 'cancelling'].includes(state.runStatus)) last.isResponding = false;
                     last.content += `\n\n**Connection error:** ${e.message}`; // i18n: Connection error
                 }
                 if (this.currentSessionId === sseSessionId) {
                     this.connectionError = e.message;
                 }
             } finally {
+                if (state.runGeneration !== runGeneration) return;
                 state._resuming = false;
-                if (!state._interrupted) {
+                if (!['running', 'cancelling'].includes(state.runStatus)) {
                     state.isLoading = false;
                     if (this.currentSessionId === sseSessionId) {
                         this.isLoading = false;
@@ -1776,6 +1843,12 @@ function chatApp() {
                 }
                 await this.loadSessions();
                 await this.loadTasks();
+                if (completedSessionId === this.currentSessionId) {
+                    await Promise.all([
+                        this.loadAnalysisState(completedSessionId),
+                        this.loadSessionArtifacts(completedSessionId),
+                    ]);
+                }
                 if (this.currentSessionId === sseSessionId) {
                     requestAnimationFrame(() => {
                         const el = document.getElementById('messages-container');
@@ -1839,24 +1912,91 @@ function chatApp() {
             if (!this.currentSessionId) return;
             if (!confirm('停止当前对话？此操作无法撤销。')) return;
             const state = this._getSessionState(this.currentSessionId);
+            const sid = this.currentSessionId;
             state._interrupted = true;
+            state.runStatus = 'cancelling';
+            state.isLoading = true;
+            this.isLoading = true;
             const turn = state.turns[state.turns.length - 1];
-            if (turn && turn.role === 'assistant') {
-                turn.isThinking = false;
-                if (!turn.content) turn.content = '*已停止。*';
-                // Clear confirmation dialog if present
-                if (turn.confirmation) turn.confirmation = null;
-            }
-            state.isLoading = false;
-            this.isLoading = false;
-            this.turns = [...state.turns];
+            if (turn) { turn.isThinking = true; turn.thinkingText = '正在停止，请等待后台请求退出…'; }
             try {
-                await fetch('/api/chat/interrupt', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: this.currentSessionId }),
+                const response = await fetch('/api/chat/interrupt', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sid }),
                 });
-            } catch {}
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                this._watchRunState(sid, state);
+            } catch (error) {
+                this.connectionError = `停止请求未确认：${error.message}`;
+                this._watchRunState(sid, state);
+            }
+        },
+
+        _applyRunState(sid, state, run) {
+            if (state.runId && run.turn_id && state.runId !== run.turn_id) return;
+            if (run.turn_id) state.runId = run.turn_id;
+            state.runStatus = run.status || 'idle';
+            state.isLoading = ['running', 'cancelling'].includes(state.runStatus);
+            const activeTurn = state.turns[state.turns.length - 1];
+            if (activeTurn?.role === 'assistant') activeTurn.isResponding = state.isLoading;
+            const notice = run.notice || ({
+                failed: '**执行失败：** 本轮分析未完成。',
+                cancelled: '**已停止：** 本轮执行已取消，未完成的分析不代表有效结论。',
+                unknown: '执行终态尚未确认，请勿将本轮视为分析完成。',
+            }[state.runStatus] || '');
+            this._appendExecutionNotice(state, notice);
+            if (this.currentSessionId === sid) this.isLoading = state.isLoading;
+        },
+
+        _appendExecutionNotice(state, notice) {
+            if (!notice) return;
+            let turn = state.turns[state.turns.length - 1];
+            if (!turn || turn.role !== 'assistant') {
+                turn = {role: 'assistant', content: '', toolCalls: [], artifacts: [], confirmation: null, isThinking: false, isResponding: false};
+                state.turns.push(turn);
+            }
+            if (!turn.content.includes(notice)) {
+                turn.content = turn.content.trim() ? turn.content + '\n\n' + notice : notice;
+            }
+            turn.executionStatus = state.runStatus;
+        },
+
+        _watchRunState(sid, state) {
+            if (!sid || sid === '_pending_' || state._runWatcher) return;
+            // Poll only an acknowledged active/uncertain run. This restores
+            // lifecycle after disconnect; it never reloads to hide a failed check.
+            state._runWatcher = true;
+            const generation = state.runGeneration || 0;
+            const poll = async () => {
+                try {
+                    const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/run-state`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const run = await res.json();
+                    if ((state.runGeneration || 0) !== generation) { state._runWatcher = false; return; }
+                    this._applyRunState(sid, state, run);
+                    if (!state.isLoading) {
+                        state._runWatcher = false;
+                        if (this.currentSessionId === sid) {
+                            const snapshot = await fetch(`/api/sessions/${encodeURIComponent(sid)}`);
+                            if (!snapshot.ok) throw new Error(`HTTP ${snapshot.status}`);
+                            const data = await snapshot.json();
+                            if (this.currentSessionId === sid && data.messages) {
+                                state.turns = this._reconstructTurns(data.messages);
+                                this._applyRunState(sid, state, data.run_state || run);
+                                this._restoreActiveConfirmation(state, this._confirmationFromPayload(data.active_confirmation));
+                                this.turns = [...state.turns];
+                            }
+                            await this._refreshCompletedSession(sid);
+                            await Promise.all([this.loadTasks(), this.loadAnalysisState(sid), this.loadSessionArtifacts(sid)]);
+                        }
+                        return;
+                    }
+                } catch (error) {
+                    if (this.currentSessionId === sid) this.connectionError = `执行状态暂不可用：${error.message}`;
+                }
+                setTimeout(poll, 1000);
+            };
+            void poll();
         },
 
         async uploadFile(event) {
@@ -1870,7 +2010,12 @@ function chatApp() {
                 const res = await fetch('/api/upload', { method: 'POST', body: formData });
                 const data = await res.json();
                 if (res.ok && data.filename) {
-                    this.uploadedFiles.push(data.filename);
+                    this.uploadedFiles.push({
+                        upload_id: data.upload_id,
+                        filename: data.filename,
+                        size: data.size,
+                        sha256: data.sha256,
+                    });
                     return data.filename;
                 } else {
                     throw new Error(data.error || 'Upload failed');
@@ -1882,6 +2027,25 @@ function chatApp() {
                 alert(failures.map(f => f.reason.message).join('\n'));
             }
             event.target.value = '';
+        },
+
+        async removeUploadedFile(index) {
+            const removed = this.uploadedFiles[index];
+            if (!removed?.upload_id) return;
+            try {
+                const response = await fetch(`/api/upload/${encodeURIComponent(removed.upload_id)}`, {
+                    method: 'DELETE',
+                });
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({ error: response.statusText }));
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                this.uploadedFiles = this.uploadedFiles.filter(
+                    file => file.upload_id !== removed.upload_id,
+                );
+            } catch (error) {
+                this.connectionError = `移除附件失败：${error.message}`;
+            }
         },
 
         _escapeHtml(value) {
@@ -2250,17 +2414,26 @@ function chatApp() {
 
         async exportSingleReply(turn, format = 'markdown') {
             if (!turn.content) return;
-            if (format === 'html') {
-                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:2em auto;padding:0 1em;line-height:1.7;color:#333;}pre{background:#f5f5f5;padding:1em;border-radius:6px;overflow-x:auto;}code{font-family:Menlo,Consolas,monospace;font-size:0.85em;}</style></head><body>${this.renderMarkdown(turn.content, turn)}</body></html>`;
-                const blob = new Blob([html], { type: 'text/html' });
+            const sid = this.currentSessionId;
+            const filename = `reply-${sid || 'conversation'}-${crypto.randomUUID()}`;
+            try {
+                const response = await fetch(`/api/sessions/${sid}/export-reply`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({reply_id: turn.replyId || '', content: turn.content, format}),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.artifact_path?.startsWith(`sessions/${sid}/reports/`))
+                    throw new Error(result.error || '回复导出未生成');
+                const artifact = await fetch(this.artifactUrl(result.artifact_path));
+                if (!artifact.ok) throw new Error('回复导出文件读取失败');
+                const blob = await artifact.blob();
                 const url = URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.href = url; a.download = 'reply.html'; a.click();
+                const a = document.createElement('a'); a.href = url;
+                a.download = filename + (format === 'html' ? '.html' : '.md'); a.click();
                 URL.revokeObjectURL(url);
-            } else {
-                const blob = new Blob([turn.content], { type: 'text/markdown' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a'); a.href = url; a.download = 'reply.md'; a.click();
-                URL.revokeObjectURL(url);
+                await this.loadSessionArtifacts(sid);
+            } catch (error) {
+                this.showToast(`导出失败：${error.message}`);
             }
         },
 
@@ -2313,37 +2486,102 @@ function chatApp() {
             let buffer = '';
             // Track the effective sessionId — updated when turn_start migrates _pending_
             let effectiveSid = sessionId;
+            let eventType = '';
+            let eventDataLines = [];
+            let terminalReceived = false;
+            const runGeneration = state.runGeneration;
+            let completionProjection = null;
+
+            const dispatchEvent = async () => {
+                if (eventType && eventDataLines.length) {
+                    const dispatchedType = eventType;
+                    const eventData = eventDataLines.join('\n');
+                    try {
+                        if (state.runGeneration !== runGeneration) {
+                            eventType = '';
+                            eventDataLines = [];
+                            return;
+                        }
+                        const updated = this._handleEvent(eventType, JSON.parse(eventData), turn, state, effectiveSid);
+                        if (updated) effectiveSid = updated;
+                        if (dispatchedType === 'turn_end' && !terminalReceived) {
+                            terminalReceived = true;
+                            if (effectiveSid === this.currentSessionId) this.connectionError = '';
+                            // Durable turn_end, not socket EOF, publishes the
+                            // session. Start projection without blocking stream
+                            // draining; never cancel the reader to force EOF.
+                            completionProjection = this._refreshCompletedSession(effectiveSid)
+                                .catch(e => {
+                                    if (effectiveSid === this.currentSessionId && state.runGeneration === runGeneration)
+                                        this.connectionError = `执行已结束，但页面同步失败：${e.message}`;
+                                });
+                        }
+                    } catch (e) {
+                        console.error('SSE event error:', eventType, e?.stack || e);
+                    }
+                }
+                eventType = '';
+                eventDataLines = [];
+            };
+
+            const processLine = async (rawLine) => {
+                const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+                if (line === '') {
+                    await dispatchEvent();
+                    return;
+                }
+                if (line.startsWith(':')) return;
+                const separator = line.indexOf(':');
+                const field = separator === -1 ? line : line.slice(0, separator);
+                let value = separator === -1 ? '' : line.slice(separator + 1);
+                if (value.startsWith(' ')) value = value.slice(1);
+                if (field === 'event') eventType = value.trim();
+                else if (field === 'data') eventDataLines.push(value);
+            };
+
             while (true) {
                 let result;
                 try { result = await reader.read(); } catch {
+                    reader.releaseLock?.();
+                    if (terminalReceived || state.runGeneration !== runGeneration) {
+                        await completionProjection;
+                        return effectiveSid;
+                    }
                     turn.isThinking = false;
                     if (!turn.content) turn.content = '**连接已断开。**';
-                    this.connectionError = '连接已断开';
-                    return;
+                    this.connectionError = '连接已断开，正在核对后台执行状态';
+                    this._watchRunState(effectiveSid, state);
+                    return effectiveSid;
                 }
                 const { done, value } = result;
-                if (done) break;
+                if (done) {
+                    buffer += decoder.decode();
+                    if (buffer) {
+                        for (const line of buffer.split('\n')) await processLine(line);
+                        buffer = '';
+                    }
+                    // A clean EOF is also a terminal event boundary.  This
+                    // preserves a final event even when no trailing blank line
+                    // is present and flushes any pending multi-byte decoder data.
+                    await dispatchEvent();
+                    break;
+                }
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                let eventType = '', eventData = '';
-                for (const line of lines) {
-                    if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-                    else if (line.startsWith('data: ')) eventData = line.slice(6);
-                    else if (line === '' && eventType && eventData) {
-                        try {
-                            const updated = this._handleEvent(eventType, JSON.parse(eventData), turn, state, effectiveSid);
-                            if (updated) effectiveSid = updated;
-                        } catch (e) { console.error('SSE event error:', eventType, e); }
-                        eventType = ''; eventData = '';
-                    }
-                }
+                for (const line of lines) await processLine(line);
             }
+            reader.releaseLock?.();
+            if (state.runGeneration !== runGeneration) return effectiveSid;
             turn.isThinking = false;
-            state.isLoading = false;
-            if (this.currentSessionId === effectiveSid) this.isLoading = false;
             this._stopThinkingCycle();
-            this.connectionError = '';
+            if (terminalReceived) {
+                await completionProjection;
+            } else {
+                this.connectionError = '连接结束但未收到执行终态，正在核对后台状态';
+                this._watchRunState(effectiveSid, state);
+            }
+            return effectiveSid;
         },
 
         _handleEvent(type, data, turn, state, sessionId) {
@@ -2353,6 +2591,8 @@ function chatApp() {
 
             switch (type) {
                 case 'turn_start':
+                    turn.isResponding = true;
+                    state.runId = data.turn_id || null;
                     if (data.session_id && sessionId === '_pending_') {
                         // Migrate _pending_ state to real session ID
                         const oldState = this._sessionStates['_pending_'];
@@ -2374,6 +2614,7 @@ function chatApp() {
                     }
                     break;
                 case 'llm_call_start':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = this._thinkingStates[0];
                     this._startThinkingCycle(turn);
@@ -2384,6 +2625,7 @@ function chatApp() {
                     }
                     break;
                 case 'text_delta':
+                    turn.isResponding = true;
                     turn.isThinking = false;
                     turn.content = (turn.content || '') + data.text;
                     if (isCurrentSession) {
@@ -2391,6 +2633,7 @@ function chatApp() {
                     }
                     break;
                 case 'tool_call':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = `正在执行 ${data.name}...`;
                     state.activeSteps.push({
@@ -2400,6 +2643,7 @@ function chatApp() {
                     });
                     break;
                 case 'tool_result':
+                    turn.isResponding = true;
                     turn.isThinking = true;
                     turn.thinkingText = '处理结果中...';
                     const step = state.activeSteps.find(s => s.tool_call_id === data.tool_call_id);
@@ -2425,6 +2669,7 @@ function chatApp() {
                     break;
                 case 'suspended':
                     turn.isThinking = false;
+                    turn.isResponding = false;
                     turn.confirmation = this._confirmationFromPayload({
                         confirmation_id: data.confirmation_id || data.suspension_id,
                         version: data.version || 1,
@@ -2445,12 +2690,20 @@ function chatApp() {
                     break;
                 case 'turn_end':
                     turn.isThinking = false;
+                    turn.isResponding = false;
+                    if (data.reply_id && typeof data.reply_content === 'string') {
+                        turn.replyId = data.reply_id;
+                        turn.content = data.reply_content;
+                    }
+                    state.runStatus = data.status || 'unknown';
+                    turn.executionStatus = state.runStatus;
+                    this._appendExecutionNotice(state, data.execution_notice || '');
                     state.isLoading = false;
+                    state._resuming = false;
                     this._debouncedLoadTasks();
                     if (isCurrentSession) {
                         this.isLoading = false;
                         this.turns = [...state.turns];
-                        this.loadTrustView();
                         this._scrollToBottom();
                         requestAnimationFrame(() => {
                             const el = document.getElementById('messages-container');
@@ -2465,7 +2718,7 @@ function chatApp() {
                     break;
                 case 'error':
                     turn.isThinking = false;
-                    turn.content += `\n\n**Error:** ${data.message}`; // i18n: Error
+                    turn.executionError = data.message;
                     if (isCurrentSession) {
                         this.turns = [...state.turns];
                     }
@@ -2480,6 +2733,18 @@ function chatApp() {
             return turns.filter(t => t.role === 'user').length;
         },
 
+        _persistedConfirmationAnswer(content) {
+            const value = String(content || '');
+            if (!value.trimStart().startsWith('<confirmation_response ')
+                || !value.trimEnd().endsWith('</confirmation_response>')) return null;
+            const answerMarker = '\nUser answered:';
+            const answerStart = value.lastIndexOf(answerMarker);
+            const closingStart = value.lastIndexOf('\n</confirmation_response>');
+            if (answerStart < 0 || closingStart <= answerStart) return null;
+            const answer = value.slice(answerStart + answerMarker.length, closingStart).trim();
+            return answer || '已确认';
+        },
+
         _reconstructTurns(messages) {
             const turns = [];
             let currentAssistant = null;
@@ -2488,7 +2753,14 @@ function chatApp() {
                 if (msg.role === 'user') {
                     if (currentAssistant) { turns.push(currentAssistant); currentAssistant = null; }
                     roundIndex++;
-                    turns.push({ role: 'user', content: msg.content || '', roundIndex });
+                    const confirmationAnswer = msg.is_confirmation_response
+                        ? (msg.content || '已确认') : this._persistedConfirmationAnswer(msg.content);
+                    turns.push({
+                        role: 'user',
+                        content: confirmationAnswer === null ? (msg.content || '') : confirmationAnswer,
+                        roundIndex,
+                        isConfirmationResponse: confirmationAnswer !== null,
+                    });
                 } else if (msg.role === 'assistant') {
                     const newContent = msg.content || '';
                     if (currentAssistant) {
@@ -2501,8 +2773,9 @@ function chatApp() {
                     } else {
                         currentAssistant = {
                             role: 'assistant', content: newContent,
+                            replyId: msg.reply_id || null,
                             toolCalls: [], artifacts: [], confirmation: null,
-                            isThinking: false, _copied: false,
+                            isThinking: false, isResponding: false, _copied: false,
                         };
                     }
                 } else if (msg.role === 'tool' && currentAssistant) {

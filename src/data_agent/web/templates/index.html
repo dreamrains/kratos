@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
 {% block body %}
-<div class="flex h-full" x-data="chatApp()" x-init="init()">
+<div class="flex h-full min-h-0 overflow-hidden" x-data="chatApp()" x-init="init()">
 
     <!-- Sidebar -->
-    <aside class="w-72 sidebar-panel border-r border-stone-200 dark:border-stone-800 flex flex-col shrink-0 transition-all duration-200"
-           :class="{ 'w-0 overflow-hidden border-r-0': sidebarCollapsed }">
+    <aside class="w-72 min-h-0 overflow-hidden sidebar-panel border-r border-stone-200 dark:border-stone-800 flex flex-col shrink-0 transition-all duration-200"
+           :class="{ 'w-0 border-r-0': sidebarCollapsed }">
 
         <!-- Header -->
         <div class="p-4 border-b border-stone-200 dark:border-stone-800">
@@ -32,7 +32,7 @@
             </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto">
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
 
             <!-- Section: Projects -->
             <div class="border-b border-stone-100 dark:border-stone-800">
@@ -130,7 +130,7 @@
     </aside>
 
     <!-- Main Area -->
-    <main class="flex-1 flex flex-col min-w-0 bg-stone-50 dark:bg-stone-950">
+    <main class="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-stone-50 dark:bg-stone-950">
 
         <!-- Top Bar -->
         <header class="h-11 border-b border-stone-200 dark:border-stone-800 flex items-center px-4 shrink-0 top-bar z-10">
@@ -219,7 +219,7 @@
         </div>
 
         <!-- Messages + Input (merged) -->
-        <div class="flex-1 overflow-y-auto" id="messages-container">
+        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain" id="messages-container">
             <div class="max-w-3xl mx-auto px-4 pt-6 pb-4">
 
                 <!-- Empty State -->
@@ -265,6 +265,15 @@
 
                                 <!-- Final markdown content (revealed after turn_end) -->
                                 <div x-show="turn.content" class="prose prose-sm dark:prose-invert max-w-none leading-7" x-html="renderMarkdown(turn.content, turn)"></div>
+                                <!-- Persistent active-response status after streamed text becomes visible -->
+                                <div x-show="turn.isResponding && turn.content" role="status" aria-live="polite"
+                                     class="inline-flex items-center gap-2 rounded-full border border-brand-100 dark:border-brand-900/60 bg-brand-50/70 dark:bg-brand-950/30 px-2.5 py-1 text-xs text-brand-600 dark:text-brand-300">
+                                    <span class="relative flex h-2 w-2">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-60"></span>
+                                        <span class="relative inline-flex rounded-full h-2 w-2 bg-brand-500"></span>
+                                    </span>
+                                    <span x-text="turn.isThinking ? (turn.thinkingText || '处理中…') : '正在响应…'"></span>
+                                </div>
                                 <template x-if="supplementalArtifacts(turn).length > 0">
                                     <div class="space-y-2">
                                         <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">补充图表</div>
@@ -471,23 +480,23 @@
                                 <input type="file" multiple class="hidden" accept=".csv,.tsv,.xlsx,.json,.jsonl" @change="uploadFile($event)">
                             </label>
                             <!-- Pause button -->
-                            <button x-show="isLoading || hasActiveConfirmation" @click="interruptTurn()"
+                            <button x-show="isLoading || hasActiveConfirmation" @click="interruptTurn()" aria-label="停止生成"
                                     class="composer-icon-btn bg-red-500 text-white hover:bg-red-600 transition-colors shadow-sm">
                                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                             </button>
                             <!-- Send button -->
-                            <button x-show="!isLoading && !hasActiveConfirmation" @click="sendMessage()" :disabled="!inputText.trim() && !uploadedFiles.length"
+                            <button x-show="!isLoading && !hasActiveConfirmation" @click="sendMessage()" aria-label="发送消息" :disabled="isUploading || (!inputText.trim() && !uploadedFiles.length)"
                                     class="composer-icon-btn send-btn text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/></svg>
                             </button>
                         </div>
                     </div>
                     <div x-show="uploadedFiles.length > 0" x-transition class="mt-1.5 text-xs flex flex-wrap items-center gap-1.5 px-1">
-                        <template x-for="(fname, fi) in uploadedFiles" :key="fi">
+                        <template x-for="(file, fi) in uploadedFiles" :key="file.upload_id">
                             <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300 border border-brand-100 dark:border-brand-800/30">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                <span x-text="fname" class="max-w-[140px] truncate"></span>
-                                <button @click="uploadedFiles.splice(fi, 1)" class="ml-0.5 text-brand-400 hover:text-brand-600 dark:hover:text-brand-200">
+                                <span x-text="file.filename" class="max-w-[140px] truncate"></span>
+                                <button @click="removeUploadedFile(fi)" class="ml-0.5 text-brand-400 hover:text-brand-600 dark:hover:text-brand-200">
                                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
                             </span>
@@ -502,13 +511,14 @@
     </main>
 
     <!-- Workbench Panel -->
-    <aside class="hidden xl:flex shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col transition-all duration-200"
+    <aside class="hidden xl:flex min-h-0 overflow-hidden shrink-0 border-l border-stone-200 dark:border-stone-800 workbench-panel flex-col transition-all duration-200"
            :class="trustInspectorCollapsed ? 'w-14' : 'w-[22rem]'">
-        <div class="h-11 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
-            <div x-show="!trustInspectorCollapsed" x-transition.opacity>
+        <div class="h-11 min-w-0 border-b border-stone-200 dark:border-stone-800 px-3 flex items-center justify-between">
+            <div x-show="!trustInspectorCollapsed" x-transition.opacity class="min-w-0 flex-1">
                 <p class="text-sm font-medium text-stone-800 dark:text-stone-200">分析工作台</p>
-                <p class="text-[10px] text-stone-400"
-                   x-text="activeProjectName ? ('项目：' + activeProjectName) : ((currentSessionId && currentSessionId !== '_pending_') ? ('会话：' + (sessionTitle || currentSessionId)) : '未绑定会话')"></p>
+                <p class="text-[10px] text-stone-400 truncate"
+                   :title="(currentSessionId && currentSessionId !== '_pending_') ? currentSessionId : ''"
+                   x-text="(currentSessionId && currentSessionId !== '_pending_') ? ('会话：' + currentSessionId) : '未绑定会话'"></p>
             </div>
             <div class="flex items-center gap-2">
                 <!-- Compact analysis stage indicator -->
@@ -545,7 +555,10 @@
                 <template x-for="conclusion in verifiedConclusions()" :key="conclusion.id">
                   <div class="workbench-item">
                     <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="conclusion.claim"></div>
-                    <div x-show="conclusion.summary" class="text-[10px] text-stone-500 dark:text-stone-400 mt-1" x-text="conclusion.summary"></div>
+                    <details x-show="conclusion.summary" class="workbench-conclusion-details mt-1">
+                      <summary>查看计算详情</summary>
+                      <div class="workbench-conclusion-summary" x-text="conclusion.summary"></div>
+                    </details>
                   </div>
                 </template>
                 <div x-show="!verifiedConclusions().length" class="text-xs text-stone-400 mt-1">暂无已验证结论</div>

@@ -16,7 +16,7 @@ from data_agent.config import get_config
 from data_agent.session.workspace import Workspace
 from data_agent.tools.analysis_flow import record_evidence_record
 from data_agent.tools.visualization import create_chart
-from scripts.acceptance.real_data_manifest import reference_data_path
+from tests.support.real_data_manifest import reference_data_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +94,11 @@ def test_r07_evidence_chart_keeps_dataset_and_parent_identity(tmp_path):
                 daily,
                 expression="group_by=支付时间:day; aggregates=orders:count,revenue:sum; calendar=complete",
             )
+            identity = context.workspace.get_data_identity("d03_daily_revenue")
+            state.add_tool_receipt({"id": "r07_chart", "result_sha256": "sha256:fixture",
+                                    "data_identities": {"d03_daily_revenue": identity}})
+            state.evidence_records[0]["result_bindings"] = [{"receipt_id": "r07_chart", "result_sha256": "sha256:fixture",
+                                                            "data_identities": {"d03_daily_revenue": identity}}]
             result = create_chart(
                 chart_type="line",
                 data="d03_daily_revenue",
@@ -110,13 +115,17 @@ def test_r07_evidence_chart_keeps_dataset_and_parent_identity(tmp_path):
         metadata = json.loads(metadata_paths[0].read_text(encoding="utf-8"))
         assert metadata["purpose"] == "evidence"
         assert metadata["evidence_ids"] == ["ev_r07_daily_revenue"]
-        assert metadata["data_identity"] == {
+        assert {key: metadata["data_identity"][key] for key in (
+            "dataset", "source_dataset", "derived_from", "source_path", "source_fingerprint",
+        )} == {
             "dataset": "d03_daily_revenue",
             "source_dataset": "d03_orders",
             "derived_from": "d03_orders",
             "source_path": str(source_path),
             "source_fingerprint": "sha256:9475ab522503a735a49cd82346d655d9a38040e951a52c08b6b621f98323d4d3",
         }
+        assert metadata["data_identity"]["version_id"] == context.workspace.get_data_identity("d03_daily_revenue")["version_id"]
+        assert metadata["data_identity"]["parent_version_ids"] == [context.workspace.get_data_identity("d03_orders")["version_id"]]
         assert metadata["plotted_row_count"] == 30
     finally:
         cfg.sessions_dir = old_sessions
@@ -184,6 +193,7 @@ def test_r07_evidence_chart_and_confirmed_conclusion_share_one_verified_record(t
                 "arguments": {"dataset": "d03_orders"},
                 "dataset_refs": ["d03_orders", "d03_daily_revenue"],
                 "result_sha256": "sha256:r07-oracle-daily-aggregation",
+                "data_identities": {name: context.workspace.get_data_identity(name) for name in ["d03_orders", "d03_daily_revenue"]},
                 "result_preview": "30 calendar days; zero-order days retained",
             })
             context.turn_state.tool_receipt_ids.append(receipt["id"])
