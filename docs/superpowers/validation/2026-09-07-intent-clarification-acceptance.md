@@ -43,6 +43,8 @@
 | Q10 | 模型主动 ask：真实未决分母 | 和自动候选采用同一判定；有效暂停、答案应用准确 | E2，confirmation_runtime |
 | Q11 | 一次多问题：已有答案+方法审批+真实窗口缺口 | 前两项复用/降级，只询问真实缺口；每项答案归属明确 | E2，interaction / runtime |
 | Q12 | 模型伪造 safe_default、dataset_ref 或“所有操作受阻” | 不信任自报字段；越界拒绝，真实缺口不得因此自动放行 | E1/E2，policy / runtime / scope |
+| Q13 | D1—D7 留存数据；请求“解释 D7，并判断能否预测 D30；若不能说明缺失证据” | 直接发布 D7 的数据内描述和 D30 的证据边界；不得因 `forecast`、`D30` 或方法名产生确认 | E1/E2，method_playbooks / question_need_detector / analysis_entry |
+| Q14 | 已明确“提出并检验至少两种竞争性假设”的数据分析请求 | 自动选择满足请求的内部路线；不得把 `trend`、`period_compare` 等技术路线选择交给用户；未决解释仍按证据状态输出 | E1/E2，method_playbooks / analysis_entry / loop |
 
 ## 4. 复用与恢复 R
 
