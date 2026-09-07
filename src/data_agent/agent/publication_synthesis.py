@@ -15,7 +15,6 @@ from typing import Any, Iterable
 
 
 SCHEMA_VERSION = "publication_synthesis.v1"
-_MAX_SOURCES = 4
 _MAX_FACTS_PER_SOURCE = 10
 _FACT_PATH_HINTS = (
     "value", "change", "delta", "sum", "mean", "total", "absolute",
@@ -231,6 +230,10 @@ def _receipt_summary(receipt: dict[str, Any]) -> str:
 _SOURCE_CAP = 8
 _TOTAL_FACT_BUDGET = _SOURCE_CAP * _MAX_FACTS_PER_SOURCE
 _QUESTION_STOP_TERMS = {"分析", "怎么", "什么", "如何", "一下", "请", "帮忙", "看看"}
+_EXHAUSTIVE_SOURCE_REQUEST = re.compile(
+    r"(?:所有|全部|全量|完整|逐一|每个|各个).{0,8}(?:来源|数据源|渠道|分组)"
+    r"|(?:来源|数据源|渠道|分组).{0,8}(?:所有|全部|全量|完整|逐一)"
+)
 
 
 def _question_terms(user_input: str) -> set[str]:
@@ -254,6 +257,11 @@ def _receipt_search_text(receipt: dict[str, Any]) -> str:
     return " ".join(parts).lower()
 
 
+def _requires_all_sources(user_input: str) -> bool:
+    """Whether the user explicitly asks to retain every source in the output."""
+    return bool(_EXHAUSTIVE_SOURCE_REQUEST.search(str(user_input or "")))
+
+
 def _select_sources(
     eligible: list[dict[str, Any]],
     user_input: str,
@@ -270,16 +278,21 @@ def _select_sources(
     for index, receipt in enumerate(eligible):
         text = _receipt_search_text(receipt)
         coverage[index] = {term for term in terms if term and term in text}
+    if _requires_all_sources(user_input):
+        # An explicit completeness request is a publication requirement, not a
+        # hint for ranking.  Keeping only receipt ids would make an early
+        # source recoverable internally but absent from the user-facing result.
+        return list(range(len(eligible))), [], coverage
     scored_order = sorted(
         range(len(eligible)),
         key=lambda index: (-len(coverage[index]), -index),
     )
     selected = [index for index in scored_order if coverage[index]][:_SOURCE_CAP]
-    if len(selected) < _MAX_SOURCES:
+    if len(selected) < _SOURCE_CAP:
         for index in scored_order:
             if index not in selected:
                 selected.append(index)
-            if len(selected) >= _MAX_SOURCES:
+            if len(selected) >= _SOURCE_CAP:
                 break
     omitted = [index for index in range(len(eligible)) if index not in selected]
     return sorted(selected), omitted, coverage
@@ -470,10 +483,21 @@ def render_publication_receipt_markdown(
         receipt_id = str(source.get("receipt_id") or "")
         dataset = dataset_by_receipt.get(receipt_id, "")
         dataset_note = f"，数据集 `{dataset}`" if dataset else ""
-        fact_count = len(source.get("facts") or [])
+        facts = source.get("facts") or []
+        fact_count = len(facts)
         lines.append(
             f"- `{source.get('tool_name')}`（收据 `{receipt_id}`{dataset_note}）：{fact_count} 项已发布事实"
         )
+        # These facts have already been bounded and selected for publication in
+        # the packet. Rendering them makes an explicit all-sources request
+        # complete in the export without exposing raw tool payloads.
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            path = str(fact.get("path") or "").strip()
+            value = str(fact.get("value") or "").strip()
+            if path and value:
+                lines.append(f"  - `{path}`: {value}")
     for ref in packet.get("omitted_refs") or []:
         lines.append(
             f"- 省略来源：收据 `{ref.get('receipt_id')}`——{ref.get('reason')}"

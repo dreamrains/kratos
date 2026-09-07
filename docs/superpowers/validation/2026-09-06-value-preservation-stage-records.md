@@ -537,3 +537,26 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - B01、B02、B05 已补齐当前提交的本地浏览器、刷新和 Markdown 导出证据。
 - B03 是内容保留链路的产品缺陷，而不是演练夹具或浏览器读取误差；在它修复并以相同场景复验前，B01—B06 不能记录为全量通过，P8 仍不可进入。
 - B04、B06 的浏览器证据来自 L3-R2 中与本提交相同的产品实现；本提交相对其运行时的产品差异仅为工具表面清单和验收文档。它们仍是本地、Provider 禁用的证据，不能推导为真实 Provider、部署或生产验收。
+
+---
+
+## L3-R4：B03 全来源发布与导出修复（Codex，2026-09-07）
+
+阶段 / 状态：**passed（本地、Provider 禁用）**。本节替代 L3-R3 中 B03 的 failed 结论；其余场景的历史证据边界保持不变。
+
+### 根因与修复
+
+- 根因：`_select_sources` 已有 `_SOURCE_CAP = 8`，但在词项无命中时仍错误使用历史 `_MAX_SOURCES = 4` 回填。B03 的“六个来源/保留全部来源”是中文集合要求，而各 `compare_periods` 收据是结构化/英文指标，词法匹配未命中；因此最近四条入包、前两条仅以 `omitted_refs` 留存。
+- 修复：普通回填统一采用 `_SOURCE_CAP`；用户明确要求“所有/全部/全量/完整/逐一/每个/各个”来源、数据源、渠道或分组时，全部本轮成功来源进入发布包，不以内部收据引用替代公开内容。
+- 导出修复：`publication_receipt` 与 Conversation Export 逐来源渲染已选且已受预算约束的事实（字段和值），仍不渲染原始工具 JSON、内部路径或被拒绝候选。
+
+### 回归与浏览器复验
+
+- 新回归 `test_b03_explicit_all_sources_request_retains_every_source_with_facts` 覆盖中文“保留全部来源”、六来源入包、无 `omitted_refs` 与导出事实逐项可见；发布/导出定向回归 **39 passed / 1 warning**。
+- 完整离线回归：`scripts/testing/run_regression.py full-offline`，目录 `tmp/test-runs/20260907T072828Z-915f062e`，**2519 passed / 1 skipped / 0 failures / 0 errors**。唯一跳过为禁用的真实 Provider smoke。
+- 浏览器：`tmp/p7-browser-rehearsal-28`，会话 `5e96deb9a279`。真实 Flask/SSE/AgentLoop、工具、持久化、Workbench、Markdown 导出与刷新路径执行完成；12 条收据、6 个发布来源、0 个 `omitted_refs`。`src_1…src_6` 各有 10 项已发布事实，导出的两个 Markdown 文件均包含六个数据集、金额前后值（10→11 至 60→66）和六个 `combined.row_count=2`。刷新后会话和 Conversation Export 仍在；`forbidden_provider_transport=0`。
+
+### 当前门槛
+
+- B03 的“全部六个来源进入发布包、第四组及之后数值保留、导出完整”本地验收通过。
+- 本轮没有真实 Provider、部署或生产调用。进入 P8 前仍须冻结待验源码、重新计算身份，并获得用户对该次真实 Provider 执行的明确新授权；历史授权不得复用。

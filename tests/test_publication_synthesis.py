@@ -3,6 +3,7 @@ from data_agent.agent.loop import AgentLoop
 from data_agent.agent.publication_synthesis import (
     build_publication_packet,
     extract_publication_facts,
+    render_publication_receipt_markdown,
     render_verified_appendix,
     validate_final_narrative,
 )
@@ -484,6 +485,24 @@ def _packet_state(receipts, evidence=None):
 
 
 class TestESeriesPacket:
+
+    def test_b03_explicit_all_sources_request_retains_every_source_with_facts(self):
+        receipts = _six_question_receipts()
+        packet = build_publication_packet(
+            _packet_state(receipts),
+            user_input="汇总六个来源的金额变化，并保留全部来源",
+            substantive_tools={"run_python"},
+        )
+
+        assert {source["receipt_id"] for source in packet["sources"]} == {
+            f"tr_q{i}" for i in range(1, 7)
+        }
+        assert not packet["omitted_refs"]
+        assert all(source["facts"] for source in packet["sources"])
+        rendered = render_publication_receipt_markdown(packet)
+        for source in packet["sources"]:
+            for fact in source["facts"]:
+                assert f"`{fact['path']}`: {fact['value']}" in rendered
 
     def test_e01_all_primary_subquestion_sources_kept(self):
         receipts = _six_question_receipts()
