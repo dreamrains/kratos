@@ -518,3 +518,22 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 
 - 有效 run 的 `runtime.jsonl` 没有 `forbidden_provider_transport` 事件；`API_BASE` 为 loopback，Provider 网络、MCP 和自动 skill 发现均禁用。脚本化模型只替换模型传输，未替换 Web、SSE、AgentLoop、工具、持久化、发布或确认实现。
 - 本节以当前源码完成 B04 与 B06；B01、B02、B03、B05 的浏览器通过证据属于此前源码基线，不能与本提交拼接为单一 digest 的 B01—B06 全量验收。若需要以本提交进入 P8，须在冻结源码上重跑这四个场景，并重新计算身份后取得用户对真实 Provider 的明确新授权。不得复用任何历史 Provider 授权。
+
+---
+
+## L3-R3：B01/B02/B03/B05 当前提交浏览器复验（Codex，2026-09-07）
+
+阶段 / 状态：**B01、B02、B05 passed；B03 failed（本地、Provider 禁用）**。本节在 `156f0b46064f0b41a2939ef625015005bd9bd71b` 上执行；运行目录为 `tmp/p7-browser-rehearsal-26`。脚本化模型仅代替模型传输，真实 Flask Web、SSE、AgentLoop、工具、确认、持久化、Workbench 和导出均在验收路径内；`runtime.jsonl` 的 `forbidden_provider_transport` 计数为 0。
+
+| 场景 | 状态 | 当前浏览器与持久化事实 |
+|---|---|---|
+| B01 | passed | 会话 `73a985ea91e3`。页面发布“当前 12 条订单金额合计为 120”，且同时给出可验证行动阈值和“不能外推总体”的限制；刷新后会话仍完整存在。3 条工具收据、1 个发布包，并由浏览器生成计算来源收据与 Conversation Export。 |
+| B02 | passed | 会话 `43fedbfeedf8`。页面先进入真实 method confirmation；选择“仅做描述性探索”后恢复，发布“D7 留存为 10%，当前不能预测 D30，建议继续收集至 30 天”。刷新后会话、2 条收据、1 个发布包和两份 Markdown 产出均保留。 |
+| B03 | failed | 会话 `9a76617ea035`。六个来源都真实执行并持久化（12 条工具收据，`src_1…src_6` 数据版本均存在），页面也可打开 `publication_receipt` 和 Conversation Export；但发布包只展开 `src_3…src_6`。`src_1`、`src_2` 被写入 `omitted_refs`，导出仅保留其 receipt id 和“可恢复”说明，未保留金额或记录数。原因是来源选择只按问题文本与英文/结构化 receipt 文本的字面匹配排序；本场景的中文“六个来源/保留全部”没有命中各来源，随后回退到最近四条。该行为不满足“保留全部来源”的验收目标，不能用可恢复的内部收据替代公开产出中的来源内容。 |
+| B05 | passed | 会话 `0c16b12e658a`。同一会话先建立受限的订单结论，随后业务、分析师、管理层、大白话和技术表达分别按受众改变表达；分析师/技术回答保留 `f_sales_total`、`group_aggregate`、`amount_sum=120`、`amount_count=12`，大白话不泄露技术措辞，切回技术表达后恢复。刷新后全部五段回答仍在，浏览器生成 Conversation Export。 |
+
+### 验收判断与后续门槛
+
+- B01、B02、B05 已补齐当前提交的本地浏览器、刷新和 Markdown 导出证据。
+- B03 是内容保留链路的产品缺陷，而不是演练夹具或浏览器读取误差；在它修复并以相同场景复验前，B01—B06 不能记录为全量通过，P8 仍不可进入。
+- B04、B06 的浏览器证据来自 L3-R2 中与本提交相同的产品实现；本提交相对其运行时的产品差异仅为工具表面清单和验收文档。它们仍是本地、Provider 禁用的证据，不能推导为真实 Provider、部署或生产验收。
