@@ -1,0 +1,170 @@
+"""Serve one isolated, auditable P08 real-Provider matrix batch.
+
+The browser drives M01-M06 through the normal Web UI.  This launcher only
+creates fresh fixtures, freezes non-secret batch identity, and records each
+physical Provider admission.  It deliberately has no retry, resume, or
+scenario-selection feature.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import threading
+import time
+from typing import Any
+
+
+DEFAULT_CALL_CAP = 120
+
+
+def _sha256(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_csv(path: Path, columns: list[str], rows: list[list[Any]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(columns)
+        writer.writerows(rows)
+
+
+def _write_fixtures(fixtures: Path) -> None:
+    _write_csv(
+        fixtures / "M01-sales.csv",
+        ["order_id", "date", "channel", "amount"],
+        [[f"O{i:02d}", f"2026-09-{i:02d}", "all", 10] for i in range(1, 13)],
+    )
+    _write_csv(
+        fixtures / "M02-retention.csv",
+        ["day", "retention"],
+        [[day, value] for day, value in enumerate((0.55, 0.42, 0.31, 0.24, 0.18, 0.13, 0.10), 1)],
+    )
+    for number in range(1, 7):
+        _write_csv(
+            fixtures / f"M03-source-{number}.csv",
+            ["source", "date", "amount"],
+            [[f"source_{number}", "2026-09-01", number * 10], [f"source_{number}", "2026-09-02", number * 11]],
+        )
+    _write_csv(fixtures / "M04-hyp-v1.csv", ["date", "amount"], [["2026-09-01", 10], ["2026-09-02", 20], ["2026-09-03", 20]])
+    _write_csv(fixtures / "M04-hyp-v2.csv", ["date", "amount"], [["2026-09-01", 10], ["2026-09-02", 10], ["2026-09-03", 10]])
+
+
+def _git_head(root: Path) -> str:
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+
+def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
+    tmp_root = (root / "tmp").resolve()
+    if not run_dir.is_relative_to(tmp_root) or run_dir.exists():
+        raise SystemExit("run directory must be a fresh path inside repository tmp")
+    fixtures = run_dir / "fixtures"
+    workspace = run_dir / "workspace"
+    sessions = run_dir / "sessions"
+    fixtures.mkdir(parents=True)
+    workspace.mkdir()
+    sessions.mkdir()
+    _write_fixtures(fixtures)
+
+    os.environ.update({
+        "WORKSPACE_DIR": str(workspace),
+        "SESSIONS_DIR": str(sessions),
+        "MCP_ENABLED": "false",
+        "SKILL_AUTO_DISCOVER": "false",
+        "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1",
+    })
+    from data_agent.config import get_config
+    cfg = get_config()
+    if not cfg.api_base or not cfg.api_key:
+        raise SystemExit("real Provider configuration is incomplete")
+    manifest = {
+        "schema_version": "p08.real_matrix.v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_commit": _git_head(root),
+        "model": cfg.model_id,
+        "provider_endpoint": cfg.api_base,
+        "call_cap": call_cap,
+        "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
+        "fixtures": {path.name: _sha256(path) for path in sorted(fixtures.glob("*.csv"))},
+        "workspace_dir": str(workspace.relative_to(root)),
+        "sessions_dir": str(sessions.relative_to(root)),
+        "provider_ledger": str((run_dir / "provider-calls.jsonl").relative_to(root)),
+    }
+    (run_dir / "freeze.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+class ProviderLedger:
+    def __init__(self, path: Path, cap: int) -> None:
+        self.path, self.cap, self.count = path, cap, 0
+        self._lock = threading.Lock()
+
+    def _write(self, event: str, **payload: Any) -> None:
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"at": time.time(), "event": event, **payload}, ensure_ascii=False) + "\n")
+
+    def wrap(self, completion):
+        def audited_completion(*args, **kwargs):
+            with self._lock:
+                if self.count >= self.cap:
+                    self._write("denied", reason="call_cap_reached", cap=self.cap)
+                    raise RuntimeError("P08 Provider call cap reached")
+                self.count += 1
+                call_number = self.count
+                self._write("started", call_number=call_number, model=str(kwargs.get("model") or ""), stream=bool(kwargs.get("stream")))
+            try:
+                result = completion(*args, **kwargs)
+            except Exception as exc:
+                with self._lock:
+                    self._write("failed", call_number=call_number, error_type=type(exc).__name__)
+                raise
+            with self._lock:
+                self._write("dispatched", call_number=call_number)
+            return result
+        return audited_completion
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--call-cap", type=int, default=DEFAULT_CALL_CAP)
+    parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--authorized", action="store_true")
+    args = parser.parse_args()
+    if args.call_cap <= 0:
+        raise SystemExit("call cap must be positive")
+    root = Path(__file__).resolve().parents[2]
+    run_dir = args.run_dir.resolve()
+    manifest = _prepare(root, run_dir, args.call_cap)
+    print(json.dumps({"preflight": "passed", **manifest}, ensure_ascii=False))
+    if args.preflight:
+        return
+    if not args.authorized:
+        raise SystemExit("real Provider serving requires --authorized")
+
+    import data_agent.llm.client as client_module
+    ledger = ProviderLedger(run_dir / "provider-calls.jsonl", args.call_cap)
+    client_module.completion = ledger.wrap(client_module.completion)
+    from data_agent.web.app import create_app
+    app = create_app()
+
+    @app.get("/p08-freeze")
+    def p08_freeze():
+        return app.response_class((run_dir / "freeze.json").read_text(encoding="utf-8"), mimetype="application/json")
+
+    @app.get("/p08-ledger")
+    def p08_ledger():
+        path = run_dir / "provider-calls.jsonl"
+        return app.response_class(path.read_text(encoding="utf-8") if path.exists() else "", mimetype="application/x-ndjson")
+
+    app.run(host="127.0.0.1", port=args.port, debug=False, use_reloader=False, threaded=True)
+
+
+if __name__ == "__main__":
+    main()
