@@ -461,3 +461,20 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - B06：重跑预算场景，断言真实 `budget_exceeded` 收据/错误事件与后续调用被阻止（脚本化"已触及预算"文本不算）；补保存失败、发布修订失败、pending confirmation 的同域收据。
 - B03：产出物面板出现 `publication_receipt` 条目且可打开；Markdown 导出含来源/收据引用/omitted_refs/待验证标签。
 - B04：以"同名数据集内容变更重载"驱动——支持 → 反证/版本变化 → 刷新后 `stale` 且以"失效"历史性质出现在待验证区。
+
+---
+
+## L3-R 浏览器复验（Codex，2026-09-07）
+
+阶段 / 状态：**failed**。本节为 `7b9916e` 的新源码浏览器结果；此前各 run-dir 的通过结果不被用于替代本节中被修改链路的复验。
+
+- 运行身份：`tmp/p7-browser-rehearsal-20`（B03）与 `tmp/p7-browser-rehearsal-22`（B04/B06）；普通 Flask Web、SSE、`AgentLoop`、真实工具、持久化、Workbench 和导出均在路径内，只有模型回答脚本化。所有 run 的 `runtime.jsonl` 均为 `forbidden_provider_transport=0`。
+- 离线定向回归（本轮复跑）：`tests/test_execution_control.py`、`test_export_conversation.py`、`test_publication_synthesis.py`、`test_slice6_workbench_minimal.py`、`test_trust_workflow_runtime.py` → **101 passed**（唯一 warning 为 `.pytest_cache` 无写权限）。
+
+| 场景 | 状态 | 浏览器与持久化事实 |
+|---|---|---|
+| B03 | passed | 会话 `33fd4eb42c5d`：产出物面板出现并可打开 `publication_receipt`（“计算来源说明”）；12 条收据、六个 `src_1…src_6` 来源、`omitted_refs=0`。浏览器触发的 Markdown 导出含“计算来源与省略说明”和全部六来源。 |
+| B04 | failed | 会话 `fd2963b2c1f1`：同一计划内完成 supports → refutes，状态为 `contested`；再刷新仍非 `stale`。根因不是 freshness 判定函数，而是实际 `load_data` 明确拒绝已有名称的数据集（`数据集 'hyp' 已存在`），页面/API 没有替换当前版本的操作；三条证据的 data identity 指纹保持相同。离线测试以注入的当前身份覆盖了判定函数，未证明真实“同名重载”可达。 |
+| B06 | failed | 工具失败会话 `d1d913b405b8` 保持“未发布计算结论”，无 verified/publication packet。预算会话 `fcd22e7b40c7` 在页面显示真实 `Tool call budget reached`；131 条收据（130 次 transform），含 75 条 `budget_exceeded` 工具消息，后续工具被阻止。保存失败、发布修订失败与 pending confirmation 没有新的同源码浏览器收据，不能把 B06 记为通过。 |
+
+后续最小修复：为当前会话提供受审计的数据集版本替换/重载操作（保留旧版本身份、让已绑定证据可被 freshness gate 比对），并扩展 B06 演练为真实保存失败、发布修订失败和 pending confirmation 三条收据路径。P8 仍不可进入。
