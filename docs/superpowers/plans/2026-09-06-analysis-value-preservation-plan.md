@@ -1,6 +1,6 @@
 # 分析价值保留与能力完整性：实施总计划
 
-版本：v0.2｜日期：2026-09-06｜状态：**P7 已执行离线回归，failed；关键安全反例阻断本地浏览器验收**。
+版本：v0.3｜日期：2026-09-07｜状态：**P7 本地验证已完成；P08 全矩阵真实验证方案已形成，等待本次独立 Provider 授权**。
 
 用户已接受产品原则：允许发布明确标注的待验证解释和有证据支持的条件性建议，继续严格区分已验证结论。最初“先不要修复”的要求用于规划交付；用户现已明确说明 P0—P6 已推进，并要求“从 P7 阶段继续开始”。当前执行以该后续指令为准。P7 发现的问题、原始证据和恢复条件见 [P7 执行报告](../validation/2026-09-06-vp-p7-execution-report.md)；真实 Provider、提交、推送、部署仍不自动获得授权。
 
@@ -11,6 +11,7 @@
 | 本文件 | 背景、目标、范围、阶段、依赖、交付与执行边界 |
 | [技术设计](D:/Project/Daily/data-agent/docs/superpowers/specs/2026-09-06-analysis-value-preservation-design.md) | 模块职责、判定流程、数据契约、兼容策略和设计取舍 |
 | [验收矩阵](D:/Project/Daily/data-agent/docs/superpowers/validation/2026-09-06-analysis-value-preservation-acceptance.md) | 可复现用例、通过标准、指标、证据等级与验收记录 |
+| [P08 全矩阵验证方案](D:/Project/Daily/data-agent/docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md) | 真实浏览器与真实 Provider 的完整批次、问题收集、停止规则和修复优先级 |
 | [诊断报告](D:/Project/Daily/data-agent/docs/audit/2026-09-06-analysis-value-and-capability-diagnosis.md) | D01—D10 的源码依据、反例与限制 |
 | [规划基线快照](D:/Project/Daily/data-agent/docs/audit/2026-09-06-analysis-value-planning-baseline.json) | 当前 HEAD、受控文件清单、字节哈希和既有改动 |
 
@@ -223,7 +224,7 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 
 **进入条件**：P7 完成，冻结源码、输入、模型、endpoint、oracle、预算、报表路径、停止规则，并获得新的明确 Provider 授权。
 
-任务：在相同冻结场景下比较主问题覆盖、有效内容保留、无依据主张、假设区分与身份适配。对照若需要再次调用旧基线模型，同样计入授权预算；禁止把历史随机输出当作等条件因果对照。
+任务：在相同冻结场景下比较主问题覆盖、有效内容保留、无依据主张、假设区分与身份适配。执行采用 [P08 全矩阵验证方案](../validation/2026-09-07-p08-full-matrix-validation-plan.md)：除系统性全局异常外，M01—M06 必须在同一批次全部完成；问题统一收集后按核心流程优先级修复。此前历史 A06 的单场景调用、恢复和容量继承方案不再适用。
 
 **退出门槛**：验收矩阵的真实模型标准通过，所有调用闭合且归属明确；最终报告明确当前证据是否达到本地候选、真实模型验证或部署级别。未获授权标 `blocked_not_started`，不得用离线绿灯替代。
 
@@ -239,8 +240,8 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P4 | passed（2026-09-06） | E01—E10 全绿；覆盖词项的跨语言绑定留待 L4 |
 | P5 | passed（P7 复核修复后，2026-09-07） | P7-F02 已修：目标指标门＋谓词一致性门＋非有限值拒绝＋候选保留原因；oracle 与补充反例全绿 |
 | P6 | passed（2026-09-06，L2） | A01—A08、U01—U04 全绿；U05—U08 归 Codex L3 |
-| P7 | 离线部分 passed（L3 修复后复验，2026-09-07）；B01/B02/B05 passed，B03/B04/B06 待 Codex 复验 | Codex L3 首轮发现 B03/B04/B06 阻断，已全部修复（阶段记录 L3-R 节）：B06 预算守卫根因（reset_groups 清 turn_state）、B03 产出物/导出收据、B04 版本失效→stale 生命周期。B01—B06 复验归 Codex |
-| P8 | blocked_not_started / authorization_required | B03/B04/B06 浏览器复验未完成，且没有本专项真实 Provider 授权 |
+| P7 | passed（本地、Provider 禁用） | 完整离线回归 `2519 passed / 1 skipped`；B01—B06 均已完成本地真实浏览器验证。详细收据与 B03 修复见阶段记录 L3-R2 至 L3-R4。 |
+| P8 | planned / authorization_required | P08 全矩阵方案已冻结为文档；尚未执行真实浏览器或真实 Provider 调用，等待本次独立授权。 |
 
 ## 8. 风险、停止规则与回退
 
