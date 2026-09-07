@@ -134,12 +134,14 @@ def test_metric_ambiguity_returns_ask_user_question_gate():
     assert decision["confirmation_gate"]["confirmation_type"] == "metric_scope"
 
 
-def test_high_risk_analysis_returns_ask_user_question_gate():
+def test_p08_predictive_request_not_gated_by_method_confirmation():
+    """P08-01 契约更新：原断言预测请求返回 method_confirmation 门；
+    新原则下不再出现方法类确认门（其余澄清类型不受影响）。"""
     decision = decide_analysis_entry("predict revenue next month", _intent(), _state())
 
-    assert decision["decision"] == "clarify_intent"
-    assert decision["required_user_action"] == "ask_user_question"
-    assert decision["confirmation_gate"]["confirmation_type"] == "method_confirmation"
+    gate_type = (decision.get("confirmation_gate") or {}).get("confirmation_type", "")
+    assert gate_type != "method_confirmation"
+    assert decision["required_user_action"] != "ask_user_question" or gate_type != "method_confirmation"
 
 
 def test_entry_decision_uses_active_dataset_for_vague_multi_dataset_routes():

@@ -142,7 +142,9 @@ def test_repeated_tool_error_is_blocked_after_two_failures():
         raise AssertionError("expected repeated forecast error to be blocked")
 
 
-def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
+def test_p08_causal_capability_not_blocked_and_no_confirmation_task(tmp_path):
+    """P08-01/Q07 契约更新：原断言因果类能力被方法门封锁并创建确认任务；
+    新原则下能力名称不是确认理由，也不创建通用审批任务。"""
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -169,12 +171,16 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
             llm_client=_OfflineNullClient(),
         )
 
-        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is False
         assert controller.is_capability_blocked_by_confirmation(state, "data.profile") is False
+        assert not state.pending_confirmations
 
         tasks = task_manager.list_for_scope(session_id="gate_savings")
-        assert any(t.get("node_type") == "confirmation" for t in tasks)
-        assert any(t.get("confirmation_policy", {}).get("requires_confirmation") for t in tasks)
+        assert not any(
+            t.get("node_type") == "confirmation"
+            and t.get("confirmation_policy", {}).get("requires_confirmation")
+            for t in tasks
+        )
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
@@ -238,7 +244,9 @@ class _EvidenceThenFinalClient:
         return self._calls.pop(0)
 
 
-def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypatch):
+def test_p08_static_method_pending_does_not_block_tool(tmp_path, monkeypatch):
+    """P08-01 契约更新：原断言静态方法确认 pending 阻塞工具调用；
+    新原则下 prepare_turn 会退役纯方法 pending，工具照常执行。"""
     monkeypatch.setattr(
         AnalysisFlowController,
         "prepare_turn",
@@ -260,7 +268,11 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
         "confirmation_policy": {"requires_confirmation": True, "confirmation_type": "method_confirmation"},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
     }
-    state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation"}]
+    state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation", "source": "method_playbook"}]
+    # 先退役（prepare_turn 被屏蔽时手工触发同一入口的退役语义）
+    from data_agent.agent.confirmation_policy import retire_method_approval_confirmations
+
+    retire_method_approval_confirmations(state)
     ctx.analysis_state = state
     loop = AgentLoop(client=_OneToolClient("causal_analysis", {"name": "main", "target_col": "revenue"}), session_id="loop_gate")
     loop.context = ctx
@@ -268,10 +280,46 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
     try:
         with use_agent_context(ctx):
             result = loop.run_turn("run causal analysis")
-        assert "confirmation" in result.lower() or "确认" in result
         tool_messages = [m for m in loop.messages if m.get("role") == "tool"]
-        assert any("confirmation_required" in m.get("content", "") for m in tool_messages)
-        assert not any("effect estimate" in m.get("content", "").lower() for m in tool_messages)
+        assert tool_messages
+        assert not any("confirmation_required" in m.get("content", "") for m in tool_messages)
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
+def test_p08_semantic_pending_with_affected_operations_still_blocks_tool(tmp_path, monkeypatch):
+    """P08-01 反向保护：affected_operations 覆盖能力的语义确认仍阻塞依赖分支。"""
+    monkeypatch.setattr(
+        AnalysisFlowController,
+        "prepare_turn",
+        lambda self, state, intent, user_input, dataset_profile: None,
+    )
+    monkeypatch.setattr(
+        "data_agent.agent.question_need_detector.detect_question_need",
+        lambda user_input, intent, state: {"status": "no_question"},
+    )
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+    try:
+        workspace_obj = Workspace()
+        ctx = AgentContext(session_id="loop_semantic_gate", workspace=workspace_obj)
+        state = AnalysisSessionState(session_id="loop_semantic_gate")
+        state.pending_confirmations = [{
+            "id": "semantic_gate",
+            "status": "pending",
+            "confirmation_type": "time_window",
+            "question": "请确认对比时间窗口",
+            "options": [],
+            "state_updates": "{}",
+            "affected_operations": ["analysis.causal"],
+        }]
+        ctx.analysis_state = state
+        controller = AnalysisFlowController("loop_semantic_gate")
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.forecast") is False
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
@@ -717,7 +765,7 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
     assert "suspension_id" not in state.pending_confirmations[0]
 
 
-def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(tmp_path, monkeypatch):
+def test_p08_structured_loop_no_longer_suspends_on_playbook_method_selection(tmp_path, monkeypatch):
     from data_agent.config import get_config
 
     monkeypatch.setattr(get_config(), "sessions_dir", tmp_path / "sessions")
@@ -734,29 +782,37 @@ def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(tm
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr("data_agent.agent.llm_playbook.select_playbook_llm", lambda **kwargs: None)
 
-    class FailingClient:
+    class AnsweringClient:
+        def __init__(self):
+            self.called = False
+
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            self.called = True
+            return Response(text="预测结论：示例答复。")
 
     ctx = AgentContext(session_id="playbook_pending_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="playbook_pending_gate", data_state="data_loaded")
     state.active_scope["active_dataset"] = "main"
     state.active_scope["active_mode"] = "data_loaded"
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="playbook_pending_gate")
+    client = AnsweringClient()
+    loop = AgentLoop(client=client, session_id="playbook_pending_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("forecast revenue and ROI next month")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    # P08-01 契约更新：方法模板不再创建 pending，因此不再悬挂；
+    # 预测请求直接进入正常应答（无通用方法审批）。
+    from data_agent.agent.loop import FinalResponse, SuspendedForConfirmation
 
-    assert isinstance(result, SuspendedForConfirmation)
-    assert result.confirmation_type == "method_confirmation"
-    pending = [item for item in state.pending_confirmations if item.get("status") == "pending"]
-    assert len(pending) == 1
-    assert "suspension_id" not in pending[0]
-    assert result.confirmation_id == result.suspension_id
+    assert isinstance(result, FinalResponse)
+    assert not isinstance(result, SuspendedForConfirmation)
+    assert client.called
+    assert not [
+        item for item in state.pending_confirmations
+        if item.get("confirmation_type") == "method_confirmation"
+    ]
 
 
 def test_stream_loop_auto_suspends_for_required_question(monkeypatch):

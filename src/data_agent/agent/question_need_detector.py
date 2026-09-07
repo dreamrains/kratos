@@ -7,7 +7,6 @@ from datetime import date
 import re
 
 from data_agent.agent.multi_file_scope import build_material_ambiguity_groups
-from data_agent.agent.request_language import has_affirmative_keyword
 
 
 BLOCKED_SURFACES_ALL = ["direct_recommendation", "analysis_execution", "report_generation"]
@@ -17,24 +16,6 @@ MAX_SCOPE_CANDIDATE_SAMPLE = 5
 MAX_SCOPE_ORDINAL_TEXT_LENGTH = 120
 
 _CONSULTING_INTENTS = {"simple_response", "knowledge_qa", "analysis_consultation", "result_followup"}
-_HIGH_RISK_KEYWORDS = (
-    "predict",
-    "forecast",
-    "causal",
-    "causality",
-    "effect",
-    "experiment",
-    "ab test",
-    "a/b",
-    "uplift",
-    "roi",
-    "simulate",
-    "预测",
-    "因果",
-    "实验",
-    "效果",
-    "归因",
-)
 _PERIOD_KEYWORDS = ("compare", "comparison", "period", "环比", "同比", "对比", "比较", "前后")
 _WINDOW_KEYWORDS = (
     "today",
@@ -87,7 +68,7 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
     text = (user_input or "").lower()
     routes = _scoped_routes(state)
 
-    if _is_vague_route_request(intent) and len(routes) > 1:
+    if _is_vague_route_request(intent) and len(routes) > 1 and not explicit_task_reason(text):
         return _hard_gate(
             "route_selection",
             "Multiple data-supported analysis routes are available and the user goal is vague.",
@@ -109,19 +90,6 @@ def detect_question_need(user_input: str, intent: Any, state: Any) -> dict[str, 
                 risk_fields=risk_fields,
                 affected_routes=[_route_direction(route)],
             )
-
-    if _is_high_risk_request(text) and not _has_confirmed_high_risk_spec(text, state):
-        return _hard_gate(
-            "method_confirmation",
-            "High-risk analysis requires method, assumption, and evidence confirmation.",
-            "这类分析可能影响决策结论。请先确认分析目标、方法假设和可接受的证据标准。",
-            options=[
-                {"label": "先确认方法与假设", "value": "confirm_method", "description": "适合预测、因果、实验或 ROI 判断。"},
-                {"label": "仅做描述性探索", "value": "descriptive_only", "description": "不输出因果或预测性结论。"},
-            ],
-            blocking_surfaces=BLOCKED_SURFACES_EXECUTION,
-            affected_routes=[_route_direction(route)] if route else [],
-        )
 
     if route and _route_direction(route) == "period_compare" and not _has_time_window(text):
         return _hard_gate(
@@ -324,6 +292,36 @@ def _intent_type(intent: Any) -> str:
     return _text(getattr(intent, "intent_type", ""))
 
 
+# P08-03: 明确任务动词合取规则。只有"任务动词＋假设/解释对象"或显式
+# 枚举子任务才视为明确任务；单纯出现"假设"等词不算。
+_HYPOTHESIS_OBJECT_MARKERS = ("竞争性假设", "竞争假设", "替代解释", "至少两种解释", "多个解释")
+_HYPOTHESIS_TASK_VERBS = ("提出", "检验", "验证", "比较", "列出", "评估", "分析")
+_EXPLICIT_HYPOTHESIS_PHRASES = ("提出并检验", "提出假设", "检验假设", "验证假设", "假设检验", "比较解释")
+_ENUMERATION_MARKERS = ("分别分析", "分别计算", "分别对比", "逐项分析", "逐个分析")
+
+
+def explicit_task_reason(user_input: str) -> str:
+    """Return a non-empty reason when the request is an explicit analysis task.
+
+    An explicit task makes internal route choice the system's own decision:
+    competing-hypothesis requests, hypothesis testing verbs, or enumerated
+    sub-tasks ("分别分析 A、B、C") must not be bounced to the user as a
+    trend/period_compare route pick. Vague "帮我分析" stays clarifiable.
+    """
+    text = (user_input or "").lower()
+    if not text.strip():
+        return ""
+    if any(marker in text for marker in _EXPLICIT_HYPOTHESIS_PHRASES):
+        return "hypothesis_task"
+    if any(marker in text for marker in _HYPOTHESIS_OBJECT_MARKERS) and any(
+        verb in text for verb in _HYPOTHESIS_TASK_VERBS
+    ):
+        return "competing_hypotheses"
+    if any(marker in text for marker in _ENUMERATION_MARKERS):
+        return "enumerated_subtasks"
+    return ""
+
+
 def _is_vague_route_request(intent: Any) -> bool:
     return (
         _intent_type(intent) == "intent_negotiation"
@@ -436,28 +434,6 @@ def _metric_candidates(state: Any) -> list[str]:
 def _route_needs_metric(route: dict[str, Any]) -> bool:
     direction = _route_direction(route)
     return direction in {"trend", "period_compare", "dimension_decomposition", "funnel"}
-
-
-def _is_high_risk_request(text: str) -> bool:
-    return has_affirmative_keyword(text, _HIGH_RISK_KEYWORDS)
-
-
-def _has_confirmed_high_risk_spec(text: str, state: Any) -> bool:
-    spec = getattr(state, "analysis_spec", None)
-    if not isinstance(spec, dict):
-        return False
-    confirmation = spec.get("method_confirmation")
-    if not isinstance(confirmation, dict) or confirmation.get("status") != "approved":
-        return False
-    return (
-        _text(confirmation.get("analysis_spec_id")) == _text(spec.get("id"))
-        and _text(confirmation.get("playbook_id")) == _text(spec.get("playbook_id"))
-        and _material_request_identity(text) == _text(confirmation.get("request_identity"))
-    )
-
-
-def _material_request_identity(value: Any) -> str:
-    return " ".join(_text(value).casefold().split())
 
 
 def _has_time_window(text: str) -> bool:

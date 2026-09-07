@@ -124,6 +124,16 @@ _PUBLICATION_RECOVERY_MESSAGE = (
     "</publication_narrative_recovery>"
 )
 
+_FALLBACK_RESOLUTION_GUIDANCE = (
+    "<fallback_resolution_guidance>\n"
+    "已执行的 Python 计算结果尚未沉淀。两条合法的继续路径：\n"
+    "1. 调用 record_evidence_record 把结果记录为证据（含口径、样本与限制）；\n"
+    "2. 直接给出最终答复——发布已观测范围内的描述性结论，并对无法支持的部分明确边界"
+    "（例如“无法预测 D30：仅观测到 D7，缺少 D8—D30 观测与验证窗口”）。\n"
+    "带证据边界的拒答是有效完成状态；不要继续探索性工具调用，也不要为未观测数值编造估计。\n"
+    "</fallback_resolution_guidance>"
+)
+
 
 # === LoopResult: Agent loop return types ===
 
@@ -837,6 +847,18 @@ class AgentLoop:
 
         level = _classify_task(user_input, session_ctx) if user_input else "standard"
 
+        # P08-05：无数据时的最短可行动恢复——说明缺少数据＋一个明确入口，
+        # 不列未来路线菜单、不追问无关业务背景。
+        no_data_recovery = ""
+        if not datasets:
+            no_data_recovery = (
+                "<no_data_recovery>\n"
+                "当前没有可分析的数据。回复保持最短：说明缺少数据，并给出一个明确的上传或选择数据集入口；"
+                "收到数据后可直接执行用户已描述的任务。"
+                "不要列举未来分析路线菜单，不要追问与当前请求无关的业务背景，也不要推测业务答案。\n"
+                "</no_data_recovery>"
+            )
+
         # Chat 模式：不传工具列表
         if level == "chat":
             tool_list = ""
@@ -875,7 +897,7 @@ class AgentLoop:
         if level == "chat":
             return build_system_prompt(
                 tool_list=tool_list,
-                project_rules=rules_prompt,
+                project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
                 domain_knowledge="",
                 experience_log="",
                 session_context=session_ctx,
@@ -889,7 +911,7 @@ class AgentLoop:
 
         return build_system_prompt(
             tool_list=tool_list,
-            project_rules=rules_prompt,
+            project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
             domain_knowledge=retrieved_context,
             experience_log="",
             session_context=session_ctx,
@@ -1568,6 +1590,11 @@ class AgentLoop:
             error = validate_final_narrative(final_text, packet)
             if error:
                 return None, error
+            # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
+            # 拒答（如“无法预测 D30”）完成本轮，待解析状态随之满足。
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
+                turn_state.pending_fallback_resolution = False
             return final_text.rstrip(), None
         except Exception as exc:
             logger.warning(
@@ -2366,8 +2393,16 @@ class AgentLoop:
         self._repair_broken_tool_sequence()
 
         from data_agent.llm.request_policy import close_stream
+        provider_messages = self._provider_messages()
+        if provider_messages is None:
+            yield {
+                "type": "_round_failure",
+                "code": "invalid_tool_message_sequence",
+                "detail": "会话工具消息存在不可配对条目，已阻止本次 Provider 投递；请回退或重开该轮。",
+            }
+            return
         stream = self.client.stream_chat_structured(
-            messages=self.messages, tools=self._tools_for_current_round(), system=self._get_system_prompt(),
+            messages=provider_messages, tools=self._tools_for_current_round(), system=self._get_system_prompt(),
         )
         try:
             for ev in stream:
@@ -2433,6 +2468,12 @@ class AgentLoop:
                         "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
+                    if "Fallback Python result" in str(exc):
+                        # P08-02: 指明两条合法继续路径，而不是让错误像终态。
+                        self.messages.append({
+                            "role": "system",
+                            "content": _FALLBACK_RESOLUTION_GUIDANCE,
+                        })
                     yield {"type": "error", "message": str(exc)}
                     return
                 turn_state.record_tool_call(tc.name, tc.arguments)
@@ -2841,6 +2882,11 @@ class AgentLoop:
                         "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(tool_calls, i + 1, str(exc))
+                    if "Fallback Python result" in str(exc):
+                        self.messages.append({
+                            "role": "system",
+                            "content": _FALLBACK_RESOLUTION_GUIDANCE,
+                        })
                     return FinalResponse(content=str(exc))
                 turn_state.record_tool_call(tc.name, tc.arguments)
 
@@ -3064,8 +3110,14 @@ class AgentLoop:
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
+            provider_messages = self._provider_messages()
+            if provider_messages is None:
+                return FinalResponse(content=(
+                    "会话工具消息存在不可配对条目，已阻止本次请求；"
+                    "请回退到上一完整轮次或重开该轮后再继续。"
+                ))
             response = self.client.chat(
-                messages=self.messages,
+                messages=provider_messages,
                 tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             )
@@ -3218,7 +3270,12 @@ class AgentLoop:
         )
 
     def _serialize_messages(self) -> list:
-        """Serialize messages for suspension storage."""
+        """Serialize messages for suspension storage.
+
+        P08-04: assistant.tool_calls 与 tool.tool_call_id 的配对字段必须
+        保留——只写 role/content 会在恢复后制造孤立的 tool 消息，触发
+        Provider 400。参数字符串截断到 2000 字符控制快照体积。
+        """
         serialized = []
         for msg in self.messages:
             m = {"role": msg["role"]}
@@ -3235,8 +3292,54 @@ class AgentLoop:
                 m["content"] = parts
             else:
                 m["content"] = str(content)[:5000]
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                preserved_calls = []
+                for call in tool_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                    preserved_calls.append({
+                        "id": str(call.get("id") or ""),
+                        "type": str(call.get("type") or "function"),
+                        "function": {
+                            "name": str(function.get("name") or ""),
+                            "arguments": str(function.get("arguments") or "")[:2000],
+                        },
+                    })
+                if preserved_calls:
+                    m["tool_calls"] = preserved_calls
+            tool_call_id = msg.get("tool_call_id")
+            if isinstance(tool_call_id, str) and tool_call_id:
+                m["tool_call_id"] = tool_call_id
             serialized.append(m)
         return serialized
+
+    def _provider_messages(self) -> list[dict] | None:
+        """P08-04: 构造投递前副本——剔除孤立 tool 消息并校验成对完整性。
+
+        原始历史不被修改（审计保留）。剔除记录警告；校验仍有违规时返回
+        None，调用方走可恢复的本地诊断而不是把非法序列发给 Provider。
+        """
+        from data_agent.agent.compact import (
+            drop_orphan_tool_messages,
+            validate_tool_message_sequence,
+        )
+
+        provider_copy, dropped = drop_orphan_tool_messages(self.messages)
+        if dropped:
+            logger.warning(
+                "Dropped orphan tool messages from provider copy",
+                extra={"extra_data": {"dropped": dropped[:10], "session_id": self.session_id}},
+            )
+        violations = validate_tool_message_sequence(provider_copy)
+        if violations:
+            logger.warning(
+                "Tool message sequence invalid before provider delivery",
+                extra={"extra_data": {"violations": violations[:10], "session_id": self.session_id}},
+            )
+            return None
+        return provider_copy
 
 
 def _create_streaming_context_methods(loop_context_operation, stream_impl, resume_impl):

@@ -7,7 +7,11 @@ from typing import Any
 from data_agent.agent.artifact_refs import hydrate_refs
 from data_agent.agent.confirmation_policy import pending_confirmation_gate
 from data_agent.agent.intent_refinement import _requests_user_level_retention
-from data_agent.agent.question_need_detector import detect_question_need, to_confirmation_gate
+from data_agent.agent.question_need_detector import (
+    detect_question_need,
+    explicit_task_reason,
+    to_confirmation_gate,
+)
 
 
 _RETENTION_KEYWORDS = ("retention", "cohort", "\u7559\u5b58")
@@ -110,15 +114,23 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
         )
 
     route = _infer_requested_route(user_input, routes)
-    if not route and _text(getattr(intent, "clarity", "")) == "vague" and len(routes) > 1:
+    explicit_reason = explicit_task_reason(user_input)
+    if not route and _text(getattr(intent, "clarity", "")) == "vague" and len(routes) > 1 and not explicit_reason:
         return _decision(
             "clarify_intent",
             reason="Multiple data-supported analysis routes are available.",
             required_user_action="choose_analysis_route",
             route_options=_route_options(routes),
         )
+    internal_route_reason = ""
     if not route and routes:
+        # P08-03: 明确任务（如竞争性假设检验）时，内部路线选择是系统自己的
+        # 决策，不给用户增加技术选型负担；理由进入决策记录供审计。
         route = routes[0]
+        if explicit_reason:
+            internal_route_reason = (
+                f"explicit task ({explicit_reason}); internal default route selected"
+            )
 
     if route:
         risk_fields = _text_list(route.get("risk_fields")) or _required_field_risks(route, cleaning_logs)
@@ -133,11 +145,14 @@ def decide_analysis_entry(user_input: str, intent: Any, state: Any) -> dict[str,
                 limitations=_text_list(route.get("limitations")),
                 evidence_requirements=_text_list(route.get("evidence_requirements")),
             )
+        reason = "The request matches a supported data route."
+        if internal_route_reason:
+            reason = f"{reason} ({internal_route_reason})"
         return _decision(
             "direct_analysis",
             dataset=_text(route.get("dataset")),
             route=_route_direction(route),
-            reason="The request matches a supported data route.",
+            reason=reason,
             confidence="medium",
             limitations=_text_list(route.get("limitations")),
             evidence_requirements=_text_list(route.get("evidence_requirements")),

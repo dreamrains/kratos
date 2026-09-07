@@ -560,3 +560,51 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 
 - B03 的“全部六个来源进入发布包、第四组及之后数值保留、导出完整”本地验收通过。
 - 本轮没有真实 Provider、部署或生产调用。进入 P8 前仍须冻结待验源码、重新计算身份，并获得用户对该次真实 Provider 执行的明确新授权；历史授权不得复用。
+
+
+---
+
+## P08-R：P08 浏览器验证问题修复（P08-01—P08-05，2026-09-08）
+
+阶段 / 状态：**修复完成，离线全量复跑通过**。依据 [P08 问题记录](2026-09-07-p08-browser-validation-issue-record.md) 与 [意图澄清设计 §10](../specs/2026-09-07-intent-clarification-design.md)。B 场景复验归 Codex；P08-06（导出文件落地核对）与 Provider 请求账本按问题记录约定留到下一轮真实浏览器验证。
+
+### P08-01：退役通用方法审批（静态确认链根因修复）
+
+- 根因链（设计 §10.1 已证实）：`select_playbooks` 把模板 `confirmation_policy.requires_confirmation` 映射进 `PlaybookSelection` → `apply_selection_to_state` 创建 `source=method_playbook` pending → controller 以同一静态位封锁四类能力 → detector 的高风险关键词门。M02 的“Forecast & Decision Simulation 方法确认”即此链产物。
+- 修复：`PlaybookSelection.requires_confirmation` 恒为 False（模板风险说明降为 `template_risk_note` 审计元数据）；`apply_selection_to_state` 停发方法 pending（spec/推荐路径/数据要求照常写入）；`is_capability_blocked_by_confirmation` 重写——能力名称不再是确认理由，只有**当前可操作且 `affected_operations` 明确覆盖该能力**的语义确认才阻塞；detector 删除“高风险关键词＋未批准 method_confirmation”硬门（时间窗/指标/字段/文件范围等具体缺口门保留）。
+- 旧会话兼容（L01—L03）：`confirmation_policy.retire_method_approval_confirmations` 在 `prepare_turn` 幂等退役纯方法审批（status=retired＋retired_reason=policy_retired，不伪批准、保留审计）；带语义字段（missing_value/affected_operations/decision_kind）或来源不明的记录不动。
+- 契约更新：11 个固化旧审批行为的测试改写为新正反例（历史需求在注释中说明）；新增 `tests/test_p08_confirmation_convergence.py`（Q13 三层不门控、Q14 四例、L01—L03 四例）。
+
+### P08-03：显式任务优先于内部路线选择
+
+- `question_need_detector.explicit_task_reason`：窄合取判定（假设任务动词短语/竞争假设对象＋任务动词/“分别分析”枚举）；“帮我看看”仍是可澄清泛化指令。
+- detector 的 vague-route 门与 entry 的路线澄清都加 `not explicit_task_reason` 旁路；明确任务时 entry 取内部默认路线并在决策 reason 记录 `explicit task (...)` 供审计，不把 trend/period_compare 选择交给用户。
+
+### P08-02：边界结论正常终结（先复现后补丁）
+
+- 离线复现（`tests/test_p08_boundary_finalization.py`，真实流式 loop＋真实工具）：守卫与发布链本身工作正常——探索调用被 fallback-resolution 正确拦截、干净边界答复（“D7 为 10%；不能预测 D30，缺少 D8—D30 观测”）成功发布。真实失败为模型侧行为＋错误文案像终态。
+- 补丁（按设计 §10.4 第 1/3 行）：fallback-resolution 拦截后追加 `<fallback_resolution_guidance>` 系统消息，指明两条合法继续路径（记录证据／直接发布带边界的终稿，“带证据边界的拒答是有效完成状态”）；**通过发布检查的最终答复清除 `pending_fallback_resolution`**；流式与同步两条路径一致。
+- S02 反向保护保留：curve_fitting 观测范围下的无依据 D30 数值仍被拒绝（负例走 curve 变体——run_python 无范围元数据，宿主不可判）。
+
+### P08-04：工具消息协议完整性
+
+- `compact.validate_tool_message_sequence`（纯函数：tool 必有 tool_call_id、须对应未闭合 assistant 调用、无重复结果、assistant 调用须全有结果）＋ `drop_orphan_tool_messages`（投递副本剔除孤立 tool 消息，原始历史不删）。
+- loop 两条 LLM 轮路径投递前经 `_provider_messages()`：剔除＋校验，仍有违规则本地可恢复诊断（`invalid_tool_message_sequence`），不把非法序列发给 Provider。
+- `_serialize_messages` 保留 `assistant.tool_calls`（id/type/function，参数截断 2000 字符）与 `tool.tool_call_id`——只写 role/content 会在恢复后制造孤立 tool 消息（M04 BadRequest 的主要假设来源）。
+- 回归：`tests/test_p08_tool_message_integrity.py` 七例（单测四例＋M04 版本重载端到端一轮恢复＋序列化保真）。
+
+### P08-05：无数据最短恢复
+
+- `_build_system_prompt` 在工作区无数据时注入 `<no_data_recovery>`：说明缺少数据＋一个明确上传/选择入口；不列未来路线菜单、不追问无关业务背景、不推测答案。有数据时不注入。E1 两例。
+
+### 验证（新 run-dir，Provider 禁用）
+
+- 定向（确认栈全家＋P08 三个新文件＋受影响模块）：`tmp/vp-p08-targeted` **309 passed / 0 failed**。
+- 完整离线回归（tmp/vp-p08-full-offline-r2，JUnit sha256 前缀 `b7a8a33df91a10d5`）：**2543 tests / 0 failures / 0 errors / 1 skipped**（唯一跳过为按离线边界禁用的真实 Provider live smoke）。第一次全量（tmp/vp-p08-full-offline）1 failed：无数据提示用例在套件顺序下被进程级 workspace 单例残留数据干扰——测试改为显式 monkeypatch `list_datasets` 返回空，与执行顺序无关；产品行为无问题。
+
+### 交接（Codex 复验重点）
+
+- Q13/Q14 浏览器复验：D7/D30 请求不得出现方法确认卡；竞争假设请求直接产出假设与证据状态。
+- M04 复验：版本重载后无 Provider 400；（可选）注入孤立 tool 消息验证本地恢复。
+- M06 复验：无数据回复简短＋单入口。
+- P08-06 导出文件落地与 Provider 账本按原计划留待下轮。

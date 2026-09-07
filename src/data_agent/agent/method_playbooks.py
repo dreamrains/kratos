@@ -44,6 +44,8 @@ class PlaybookSelection:
     data_requirement: dict[str, Any] | None = None
     analysis_spec: dict[str, Any] | None = None
     requires_confirmation: bool = False
+    # P08-01: 模板的历史风险说明只作审计/提示元数据，不再是确认签发权。
+    template_risk_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +56,7 @@ class PlaybookSelection:
             "data_requirement": self.data_requirement,
             "analysis_spec": self.analysis_spec,
             "requires_confirmation": self.requires_confirmation,
+            "template_risk_note": self.template_risk_note,
         }
 
 
@@ -464,7 +467,10 @@ def select_playbooks(
         recommended_paths=recommended_paths,
         data_requirement=requirement,
         analysis_spec=analysis_spec,
-        requires_confirmation=bool(playbook.confirmation_policy.get("requires_confirmation")),
+        # P08-01: 方法运行不需要通用审批。模板确认位不再映射为用户确认；
+        # 其风险说明仅保留为审计提示。
+        requires_confirmation=False,
+        template_risk_note=str(playbook.confirmation_policy.get("blocking_reason") or ""),
     )
 
 
@@ -491,7 +497,6 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.data_requirement and state.data_state in {"no_data", "insufficient_data", "unknown"}:
         if not _contains_playbook_artifact(state.data_requirements, selection.primary_playbook_id):
             state.add_data_requirement(selection.data_requirement)
-    analysis_spec = state.analysis_spec
     if selection.analysis_spec:
         selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
         current_spec = state.analysis_spec or {}
@@ -501,56 +506,11 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
             not state.analysis_spec
             or selected_spec_id != current_spec_id
         )
-        analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
-    if selection.requires_confirmation and analysis_spec:
-        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_spec.get('id', '')}"
-        if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
-            confirmation_policy = analysis_spec.get("confirmation_policy", {})
-            state.add_confirmation({
-                "id": confirmation_id,
-                "confirmation_type": confirmation_policy.get("confirmation_type", "method_confirmation"),
-                "question": _method_confirmation_question(selection),
-                "options": _method_confirmation_options(),
-                "blocking_reason": confirmation_policy.get("blocking_reason", "method confirmation required"),
-                "related_spec_id": analysis_spec.get("id", ""),
-                "state_updates": json.dumps(
-                    {
-                        "stage": "plan",
-                        "method_confirmation": {
-                            "playbook_id": selection.primary_playbook_id,
-                            "analysis_spec_id": analysis_spec.get("id", ""),
-                            "allowed_actions": ["confirm_method", "clarify_method_scope"],
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-                "source": "method_playbook",
-                "status": "pending",
-            })
-
-
-def _method_confirmation_question(selection: PlaybookSelection) -> str:
-    playbook = PLAYBOOKS.get(selection.primary_playbook_id)
-    readable_name = playbook.name if playbook else selection.primary_playbook_id
-    return (
-        f"当前问题适合按「{readable_name}」方法继续。"
-        "请确认是否使用这个方法计划，或先补充目标口径、时间窗口和比较对象？"
-    )
-
-
-def _method_confirmation_options() -> list[dict[str, str]]:
-    return [
-        {
-            "label": "按此方法继续",
-            "value": "confirm_method",
-            "description": "使用当前方法计划继续，但结论仍会按证据强度标注限制。",
-        },
-        {
-            "label": "先补充目标口径",
-            "value": "clarify_method_scope",
-            "description": "暂停执行，先说明目标指标、时间窗口或比较对象。",
-        },
-    ]
+        if should_replace_spec:
+            state.set_analysis_spec(selection.analysis_spec)
+    # P08-01: 不再由方法模板创建 source=method_playbook 的通用审批 pending。
+    # spec、推荐路径、数据要求与计划步骤仍照常写入；业务语义缺口由
+    # question_need_detector 的具体缺口门（分母/窗口/字段/文件范围）产生。
 
 
 def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -> bool:

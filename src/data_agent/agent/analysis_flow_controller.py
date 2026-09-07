@@ -9,7 +9,20 @@ from data_agent.agent.analysis_state import (
 )
 from data_agent.agent.analysis_plan_contracts import STAGE3C0B_CONTRACT_VERSION
 from data_agent.agent.intent import TurnIntent
-from data_agent.agent.confirmation_policy import is_actionable_pending_confirmation
+from data_agent.agent.confirmation_policy import (
+    is_actionable_pending_confirmation,
+    retire_method_approval_confirmations,
+)
+
+
+def _text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return ""
 from data_agent.agent.method_playbooks import apply_selection_to_state, select_playbooks
 from data_agent.session.task_manager import task_manager
 from data_agent.tools.registry import registry
@@ -35,6 +48,9 @@ class AnalysisFlowController:
         llm_client=None,
     ) -> None:
         state.data_state = intent.data_state
+        # P08-01/L01: 恢复旧会话时退役纯通用方法审批（幂等；带真实语义
+        # 依赖或来源不明的记录不动）。
+        retire_method_approval_confirmations(state)
         if intent.analysis_stage in {"discover", "scope", "plan", "execute", "report", "follow_up"}:
             if state.stage in ("discover", "follow_up") or intent.analysis_stage != "discover":
                 state.stage = intent.analysis_stage
@@ -83,19 +99,18 @@ class AnalysisFlowController:
     def is_capability_blocked_by_confirmation(self, state: AnalysisSessionState, capability_id: str) -> bool:
         if capability_id in self.NEVER_BLOCK_CAPABILITIES:
             return False
-        spec = state.analysis_spec or {}
-        policy = spec.get("confirmation_policy") or {}
-        if not policy.get("requires_confirmation"):
-            return False
-        if not self.is_high_risk_capability(capability_id, spec):
-            return False
-        confirmation = spec.get("method_confirmation") or {}
-        approved = (
-            confirmation.get("status") == "approved"
-            and confirmation.get("analysis_spec_id") == spec.get("id")
-            and confirmation.get("playbook_id") == spec.get("playbook_id")
-        )
-        return not approved
+        # P08-01: 能力/方法名称本身不再是确认理由。只有当前仍可操作、且其
+        # affected_operations 明确覆盖该能力的语义确认才阻塞依赖分支；
+        # 数据、权限、预算、证据与发布检查由各自路径继续执行。
+        for item in state.pending_confirmations:
+            if not is_actionable_pending_confirmation(item):
+                continue
+            if _text(item.get("confirmation_type")) == "method_confirmation":
+                continue
+            affected = item.get("affected_operations")
+            if isinstance(affected, list) and capability_id in {str(entry) for entry in affected}:
+                return True
+        return False
 
     def is_tool_blocked_by_confirmation(self, state: AnalysisSessionState, tool_name: str) -> bool:
         cap = registry.capability_for(tool_name)

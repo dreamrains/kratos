@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 import json
 
@@ -12,6 +13,10 @@ OBSOLETE_CONFIRMATION_TYPES = frozenset({
     "file_exclusion_confirmation",
     "join_logic_confirmation",
 })
+# P08-01/L01: 这两个生产者只签发过通用方法审批；它们的旧 pending 在恢复时
+# 退役。带真实语义字段的记录（L02）与来源不明的记录（L03）不在此列。
+RETIRED_METHOD_PRODUCERS = frozenset({"method_playbook", "question_need_detector"})
+_SEMANTIC_MARKER_FIELDS = ("missing_value", "affected_operations", "decision_kind")
 
 
 def is_actionable_pending_confirmation(item: Any) -> bool:
@@ -97,6 +102,48 @@ def pending_confirmation_gate(state: Any) -> dict[str, Any] | None:
             "blocked_surfaces": list(BLOCKED_SURFACES),
         }
     return None
+
+
+def is_pure_method_approval(item: Any) -> bool:
+    """True when a pending confirmation is only a generic method approval.
+
+    A pure method approval asks whether to use a method/model with no concrete
+    business value at stake: no semantic markers and (provenance from a
+    retired method producer or method-approval state updates). Records that
+    carry a real decision (L02) or whose provenance cannot be identified
+    (L03) are never pure approvals.
+    """
+    if not isinstance(item, dict):
+        return False
+    if _text(item.get("confirmation_type")) != "method_confirmation":
+        return False
+    if any(item.get(field) for field in _SEMANTIC_MARKER_FIELDS):
+        return False
+    state_updates = _state_updates(item.get("state_updates"))
+    if isinstance(state_updates.get("method_confirmation"), dict):
+        return True
+    return _text(item.get("source")) in RETIRED_METHOD_PRODUCERS
+
+
+def retire_method_approval_confirmations(state: Any) -> int:
+    """Retire legacy generic method approvals in place (L01); idempotent.
+
+    Retired records keep their original fields for audit and are marked
+    status=retired / retired_reason=policy_retired — never approved. Pure
+    method approvals stop blocking; semantic or unidentifiable records are
+    left untouched. Returns the number of newly retired items.
+    """
+    retired = 0
+    for item in _list_attr(state, "pending_confirmations"):
+        if _text(item.get("status") or "pending") != "pending":
+            continue
+        if not is_pure_method_approval(item):
+            continue
+        item["status"] = "retired"
+        item["retired_reason"] = "policy_retired"
+        item["retired_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        retired += 1
+    return retired
 
 
 def route_confirmation_gate(
