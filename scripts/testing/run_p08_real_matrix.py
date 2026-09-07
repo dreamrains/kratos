@@ -91,6 +91,7 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_commit": _git_head(root),
         "launcher_digest": _sha256(Path(__file__).resolve()),
+        "request_policy": "one_shot",
         "model": cfg.model_id,
         "provider_endpoint": cfg.api_base,
         "call_cap": call_cap,
@@ -116,6 +117,7 @@ def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int) -> dict[str
         "schema_version": "p08.real_matrix.v1",
         "source_commit": _git_head(root),
         "launcher_digest": _sha256(Path(__file__).resolve()),
+        "request_policy": "one_shot",
         "call_cap": call_cap,
         "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
     }
@@ -136,6 +138,22 @@ def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int) -> dict[str
     if cfg.model_id != manifest.get("model") or cfg.api_base != manifest.get("provider_endpoint"):
         raise SystemExit("frozen preflight Provider configuration mismatch")
     return manifest
+
+
+def _install_one_shot_request_policy(client_module: Any) -> None:
+    """Make this acceptance process count one physical attempt per LLM request."""
+    client_class = client_module.LLMClient
+    if getattr(client_class, "_p08_one_shot_init_installed", False):
+        return
+    original_init = client_class.__init__
+
+    def acceptance_init(self, *args, **kwargs):
+        from data_agent.llm.request_policy import ONE_SHOT
+        kwargs["request_policy"] = ONE_SHOT
+        original_init(self, *args, **kwargs)
+
+    client_class.__init__ = acceptance_init
+    client_class._p08_one_shot_init_installed = True
 
 
 class ProviderLedger:
@@ -190,6 +208,7 @@ def main() -> None:
     print(json.dumps({"preflight": "revalidated", **manifest}, ensure_ascii=False))
 
     import data_agent.llm.client as client_module
+    _install_one_shot_request_policy(client_module)
     ledger = ProviderLedger(run_dir / "provider-calls.jsonl", args.call_cap)
     client_module.completion = ledger.wrap(client_module.completion)
     from data_agent.web.app import create_app
