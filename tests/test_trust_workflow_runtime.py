@@ -761,43 +761,58 @@ def test_b04_freshness_gate_is_pure_and_conservative():
     }]
 
 
-def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path, monkeypatch):
+def test_b04_version_change_turns_supported_hypothesis_stale(tmp_path):
     from data_agent.config import get_config
+    from data_agent.agent.context import AgentContext, use_agent_context
+    from data_agent.session.workspace import Workspace
 
     cfg = get_config()
     old_sessions = cfg.sessions_dir
     cfg.sessions_dir = tmp_path / "sessions"
     try:
-        state = _relation_state("runtime_b04")
-        first = maybe_create_hypothesis_set(
-            "show revenue trend", _intent("directed_analysis"), state,
-        )
-        assert first is not None
-        hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
-        primary_id = hydrated[0]["hypotheses"][0]["id"]
+        local_workspace = Workspace()
+        context = AgentContext(session_id="runtime_b04", workspace=local_workspace)
+        with use_agent_context(context):
+            local_workspace.add("sales__raw", __import__("pandas").DataFrame({"revenue": [10, 20]}))
+            local_workspace.derive(
+                "sales__raw", "sales", local_workspace.get("sales__raw"), "initial analysis version",
+            )
+            first_identity = local_workspace.get_data_identity("sales")
+            state = _relation_state("runtime_b04")
+            first = maybe_create_hypothesis_set(
+                "show revenue trend", _intent("directed_analysis"), state,
+            )
+            assert first is not None
+            hydrated = hydrate_hypothesis_refs(state.hypothesis_sets)
+            primary_id = hydrated[0]["hypotheses"][0]["id"]
 
-        state.evidence_records = [_binding_evidence("ev_b04_v1", primary_id, "fp_v1")]
-        maybe_create_hypothesis_set(
-            "show revenue trend", _intent("directed_analysis"), state,
-        )
-        before = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
-        assert before["hypotheses"][0]["status"] == "supported"
+            state.evidence_records = [_binding_evidence(
+                "ev_b04_v1", primary_id, first_identity["fingerprint"],
+            )]
+            maybe_create_hypothesis_set(
+                "show revenue trend", _intent("directed_analysis"), state,
+            )
+            before = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+            assert before["hypotheses"][0]["status"] == "supported"
 
-        # 数据集同名重载（指纹变化）：旧证据不再为假设背书，已判定假设转 stale
-        monkeypatch.setattr(
-            runtime, "_workspace_data_identities",
-            lambda: {"sales": {"fingerprint": "fp_v2"}},
-        )
-        refreshed = maybe_create_hypothesis_set(
-            "show revenue trend", _intent("directed_analysis"), state,
-        )
-        assert refreshed is not None
-        after = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
-        assert after["hypotheses"][0]["status"] == "stale"
-        assert after["hypotheses"][0]["supporting_evidence_ids"] == []
-        assert after.get("evidence_exclusions") and after["evidence_exclusions"][0]["reason"] == "data_version_changed"
-        # 假设集保留（历史），证据记录本身不删除
-        assert len(state.hypothesis_sets) == 1
-        assert state.evidence_records
+            # 真实的同名版本替换：归档 v1，再创建 v2；不篡改旧证据。
+            assert local_workspace.archive_version("sales") == "sales__history"
+            local_workspace.add("sales__raw_2", __import__("pandas").DataFrame({"revenue": [10, 10]}))
+            local_workspace.derive(
+                "sales__raw_2", "sales", local_workspace.get("sales__raw_2"), "reloaded analysis version",
+            )
+            assert local_workspace.get_data_identity("sales__history") == first_identity
+
+            refreshed = maybe_create_hypothesis_set(
+                "show revenue trend", _intent("directed_analysis"), state,
+            )
+            assert refreshed is not None
+            after = hydrate_hypothesis_refs(state.hypothesis_sets)[0]
+            assert after["hypotheses"][0]["status"] == "stale"
+            assert after["hypotheses"][0]["supporting_evidence_ids"] == []
+            assert after.get("evidence_exclusions") and after["evidence_exclusions"][0]["reason"] == "data_version_changed"
+            # 假设集保留（历史），证据记录本身不删除。
+            assert len(state.hypothesis_sets) == 1
+            assert state.evidence_records
     finally:
         cfg.sessions_dir = old_sessions

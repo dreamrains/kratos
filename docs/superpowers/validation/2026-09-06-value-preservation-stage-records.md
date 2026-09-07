@@ -478,3 +478,43 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 | B06 | failed | 工具失败会话 `d1d913b405b8` 保持“未发布计算结论”，无 verified/publication packet。预算会话 `fcd22e7b40c7` 在页面显示真实 `Tool call budget reached`；131 条收据（130 次 transform），含 75 条 `budget_exceeded` 工具消息，后续工具被阻止。保存失败、发布修订失败与 pending confirmation 没有新的同源码浏览器收据，不能把 B06 记为通过。 |
 
 后续最小修复：为当前会话提供受审计的数据集版本替换/重载操作（保留旧版本身份、让已绑定证据可被 freshness gate 比对），并扩展 B06 演练为真实保存失败、发布修订失败和 pending confirmation 三条收据路径。P8 仍不可进入。
+
+---
+
+## L3-R2：受审计重载与 B04/B06 浏览器验收（Codex，2026-09-07）
+
+阶段 / 状态：**passed（本地、Provider 禁用）**。本节只更新本地浏览器验收，不改变真实 Provider、部署或生产验证的证据边界。
+
+### 实现
+
+- `Workspace.archive_version` 将旧活动数据集转为唯一的 `<name>__history[_N]` 历史名称：保留 dataframe、`data_identity`、派生血缘和原始来源元数据，并写入 `archive_version` 血缘事件；它不删除或改写任何既有证据。
+- 新工具 `reload_data` 只用于用户明确要求的同名版本更新。它先归档旧活动版本，再创建新的 raw 快照与同名分析版本，并持久化新版本、raw 快照和归档版本。普通 `load_data` 仍拒绝同名覆盖。
+- B04 离线测试从注入 fingerprint 改为真实工作区版本操作；浏览器夹具使用 v1 的两个真实时间窗产生 `supports`（10→20）与 `refutes`（20→20），随后以 `reload_data` 重载平坦 v2。B06 夹具新增受限的保存失败注入，只覆盖 `【B06-SAVE】`，用于验证真实 Web/SSE 的 fail-closed 终止路径。
+
+### 回归
+
+- `tests/test_execution_control.py`、`test_export_conversation.py`、`test_publication_synthesis.py`、`test_slice2_workspace_versions.py`、`test_slice6_workbench_minimal.py`、`test_trust_workflow_runtime.py`：**111 passed**。唯一 warning 是受权限限制无法写入 `.pytest_cache`。
+- 新工具经 `tests/support/tool_surface_manifest.json` 审查并纳入 76 项注册工具表面；完整离线回归 `scripts/testing/run_regression.py full-offline`：**2518 passed / 1 skipped / 16 warnings**。唯一跳过为禁用的真实 Provider smoke；warnings 为既有统计边界与 JUnit 属性兼容提示。
+- `test_reload_data_archives_the_previous_active_version_without_rewriting_it` 断言历史 `orders__history` 的 dataframe、fingerprint 和版本号不变，新活动版本 fingerprint 不同，并存在会话备份。
+- `test_b04_version_change_turns_supported_hypothesis_stale` 在实际 `Workspace`/`AgentContext` 中完成 archive→new active version，断言旧证据不删除、假设集保留、状态转为 `stale`。
+
+### B04：支持 → 冲突 → 版本更新 → stale
+
+- `tmp/p7-browser-rehearsal-23`，会话 `873fee8b13f2`：真实浏览器经 Flask/SSE/AgentLoop 执行 v1 加载、两次 `compare_periods`、结构化 supports/refutes、`reload_data(F-HYP-FLAT.csv, hyp)`。
+- `workspace_meta.json` 保留 `hyp__history`（v1 fingerprint `sha256:041dd9…`）与新活动 `hyp`（v2 fingerprint `sha256:839744…`）；归档版本仍指向 F-HYP，活动版本指向 F-HYP-FLAT。
+- 持久化假设集最终为 `stale`；三条原证据均在 `evidence_exclusions` 以 `data_version_changed` 保存 bound/current fingerprint。页面回复明确说明历史假设需以 stale 保留；刷新时触发并成功恢复了真实 `file_scope_selection` 确认，事件序列为 requested→suspended→response_received→applying→resolved。
+
+### B06：四类失败边界
+
+| 子场景 | 浏览器/持久化证据 | 结论 |
+|---|---|---|
+| 工具失败 | `tmp/p7-browser-rehearsal-23`，会话 `123c537a6150`：页面显示“未能找到所需数据集，未发布计算结论”；0 receipt、0 publication packet。 | passed |
+| 预算 | 同 run，`e59b54a31774`：页面同时显示真实 `Tool call budget reached`；131 条 receipt（load_data + 130 transform），预算错误阻止其余请求，0 publication packet。 | passed |
+| 发布修订 | 同 run，`4cc7dc3c164f`：浏览器不显示 D30=5% 候选；`conversation.json` 仅保留内部 `publication_rejected=true` 和一次受控修订，页面发布“只有 D1 至 D7，不能预测 D30”。 | passed |
+| pending confirmation | 同会话两次方法确认在浏览器挂起并选择答案恢复；`confirmations/events.jsonl` 均为 requested→suspended→response_received→applying→resolved。 | passed |
+| 保存失败 | `tmp/p7-browser-rehearsal-25`，会话 `0e51265d6402`：受限注入 `OSError` 后页面显示“执行状态无法完整保存，请勿将本轮视为分析完成”；`run_state.json` 为 `status=unknown`、`reason=OSError`，未将回答作为完成结果持久化。 | passed |
+
+### 隔离与下一门
+
+- 有效 run 的 `runtime.jsonl` 没有 `forbidden_provider_transport` 事件；`API_BASE` 为 loopback，Provider 网络、MCP 和自动 skill 发现均禁用。脚本化模型只替换模型传输，未替换 Web、SSE、AgentLoop、工具、持久化、发布或确认实现。
+- 本节以当前源码完成 B04 与 B06；B01、B02、B03、B05 的浏览器通过证据属于此前源码基线，不能与本提交拼接为单一 digest 的 B01—B06 全量验收。若需要以本提交进入 P8，须在冻结源码上重跑这四个场景，并重新计算身份后取得用户对真实 Provider 的明确新授权。不得复用任何历史 Provider 授权。

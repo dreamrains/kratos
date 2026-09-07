@@ -53,6 +53,7 @@
     "preview_data",
     "quick_profile",
     "read_file",
+    "reload_data",
     "record_analysis_plan",
     "record_analysis_spec",
     "record_data_requirement",

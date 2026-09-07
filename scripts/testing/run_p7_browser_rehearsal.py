@@ -63,12 +63,12 @@ def _write_fixtures(run_dir: Path) -> None:
     _write_csv(
         inbox / "F-HYP.csv",
         ["date", "amount"],
-        [["2026-09-01", 10], ["2026-09-02", 20]],
+        [["2026-09-01", 10], ["2026-09-02", 20], ["2026-09-03", 20]],
     )
     _write_csv(
         inbox / "F-HYP-FLAT.csv",
         ["date", "amount"],
-        [["2026-09-01", 10], ["2026-09-02", 10]],
+        [["2026-09-01", 10], ["2026-09-02", 10], ["2026-09-03", 10]],
     )
     for number in range(1, 7):
         _write_csv(
@@ -268,14 +268,18 @@ class ScriptedClient:
             )
 
         if marker == "B04":
-            compare = {
+            compare_up = {
                 "name": "hyp", "date_col": "date", "metrics": "amount",
                 "period_a": "2026-09-01~2026-09-01", "period_b": "2026-09-02~2026-09-02",
+            }
+            compare_flat = {
+                "name": "hyp", "date_col": "date", "metrics": "amount",
+                "period_a": "2026-09-02~2026-09-02", "period_b": "2026-09-03~2026-09-03",
             }
             if step == 0:
                 return self._response(calls=[("load_data", {"source": "F-HYP.csv", "name": "hyp"})])
             if step == 1:
-                return self._response(calls=[("compare_periods", compare)])
+                return self._response(calls=[("compare_periods", compare_up)])
             if step == 2:
                 return self._response(calls=[("record_evidence_record", {"record_json": {
                     "claim": "amount changed between the compared periods in hyp.",
@@ -289,18 +293,22 @@ class ScriptedClient:
             if step == 3:
                 return self._response("已创建竞争假设，当前仍待结构化证据区分。")
             if step == 4:
-                return self._response(calls=[("compare_periods", compare)])
+                return self._response(calls=[("compare_periods", compare_up)])
             if step == 5:
                 return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("supports", "increased", 10)})])
             if step == 6:
                 return self._response("结构化支持证据已记录。")
             if step == 7:
-                return self._response(calls=[("load_data", {"source": "F-HYP-FLAT.csv", "name": "hyp"})])
+                return self._response(calls=[("compare_periods", compare_flat)])
             if step == 8:
-                return self._response(calls=[("compare_periods", compare)])
-            if step == 9:
                 return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("refutes", "flat", 0)})])
-            return self._response("结构化反证已记录；竞争解释保持未决。")
+            if step == 9:
+                return self._response("结构化反证已记录；竞争解释保持未决。")
+            if step == 10:
+                return self._response(calls=[("reload_data", {"source": "F-HYP-FLAT.csv", "name": "hyp"})])
+            if step == 11:
+                return self._response("数据已更新为新版本；历史版本及其证据绑定已保留，需重新验证假设。")
+            return self._response("当前数据版本已变化，历史竞争性假设应以 stale 状态保留，等待新版本证据。")
 
         if marker == "B05-BUSINESS":
             return self._response("面向业务：当前 12 条订单金额合计为 120。下周若低于 120，先检查渠道投放；该结论仅覆盖当前记录，不能外推总体。")
@@ -320,6 +328,8 @@ class ScriptedClient:
                     "save_as": "never_created",
                 })])
             return self._response("工具未能找到所需数据集，未发布计算结论；请先加载可用数据后再分析。")
+        if marker == "B06-SAVE":
+            return self._response("这条回答必须在保存失败后被标记为未完成，不能作为已完成分析发布。")
         if marker == "B06-BUDGET":
             if step == 0:
                 return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "budget_sales"})])
@@ -349,7 +359,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-BUDGET))】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET))】",
                 str(message.get("content") or ""),
             )
             if found:
@@ -384,6 +394,25 @@ def main() -> None:
 
     from data_agent.web.agent_manager import AgentManager
     from data_agent.web.app import create_app
+    from data_agent.agent.loop import AgentLoop
+
+    # Deterministically exercise the normal Web/SSE persistence-failure
+    # branch. The failure is restricted to an explicit B06 test marker; the
+    # browser must receive the production fail-closed ``unknown`` terminal,
+    # never a completed turn or a durable final answer.
+    original_auto_save = AgentLoop._auto_save
+
+    def p7_auto_save_with_failure(loop):
+        if any(
+            "【B06-SAVE】" in str(message.get("content") or "")
+            for message in getattr(loop, "messages", [])
+            if isinstance(message, dict) and message.get("role") == "user"
+        ):
+            trace.append("injected_save_failure", session_id=loop.session_id)
+            raise OSError("P7 injected session save failure")
+        return original_auto_save(loop)
+
+    AgentLoop._auto_save = p7_auto_save_with_failure
 
     # These helpers construct module-global LLM clients lazily.  Bind them to
     # the same scripted transport so a local rehearsal has a true zero-call
