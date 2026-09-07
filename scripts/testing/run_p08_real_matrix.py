@@ -59,6 +59,16 @@ def _git_head(root: Path) -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 
 
+def _configure_isolation(run_dir: Path) -> None:
+    os.environ.update({
+        "WORKSPACE_DIR": str(run_dir / "workspace"),
+        "SESSIONS_DIR": str(run_dir / "sessions"),
+        "MCP_ENABLED": "false",
+        "SKILL_AUTO_DISCOVER": "false",
+        "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1",
+    })
+
+
 def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
     tmp_root = (root / "tmp").resolve()
     if not run_dir.is_relative_to(tmp_root) or run_dir.exists():
@@ -71,13 +81,7 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
     sessions.mkdir()
     _write_fixtures(fixtures)
 
-    os.environ.update({
-        "WORKSPACE_DIR": str(workspace),
-        "SESSIONS_DIR": str(sessions),
-        "MCP_ENABLED": "false",
-        "SKILL_AUTO_DISCOVER": "false",
-        "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "1",
-    })
+    _configure_isolation(run_dir)
     from data_agent.config import get_config
     cfg = get_config()
     if not cfg.api_base or not cfg.api_key:
@@ -86,6 +90,7 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
         "schema_version": "p08.real_matrix.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_commit": _git_head(root),
+        "launcher_digest": _sha256(Path(__file__).resolve()),
         "model": cfg.model_id,
         "provider_endpoint": cfg.api_base,
         "call_cap": call_cap,
@@ -96,6 +101,40 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
         "provider_ledger": str((run_dir / "provider-calls.jsonl").relative_to(root)),
     }
     (run_dir / "freeze.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
+    """Revalidate one preflight before serving it; never regenerate its inputs."""
+    freeze_path = run_dir / "freeze.json"
+    if not freeze_path.is_file():
+        raise SystemExit("authorized serving requires a completed preflight freeze.json")
+    if (run_dir / "provider-calls.jsonl").exists():
+        raise SystemExit("authorized serving refuses a run directory with an existing Provider ledger")
+    manifest = json.loads(freeze_path.read_text(encoding="utf-8"))
+    expected = {
+        "schema_version": "p08.real_matrix.v1",
+        "source_commit": _git_head(root),
+        "launcher_digest": _sha256(Path(__file__).resolve()),
+        "call_cap": call_cap,
+        "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise SystemExit(f"frozen preflight mismatch for {key}")
+    fixtures = run_dir / "fixtures"
+    actual_fixtures = {path.name: _sha256(path) for path in sorted(fixtures.glob("*.csv"))}
+    if actual_fixtures != manifest.get("fixtures"):
+        raise SystemExit("frozen preflight fixture digest mismatch")
+    if not (run_dir / "workspace").is_dir() or not (run_dir / "sessions").is_dir():
+        raise SystemExit("frozen preflight isolation directories are missing")
+    _configure_isolation(run_dir)
+    from data_agent.config import get_config
+    cfg = get_config()
+    if not cfg.api_base or not cfg.api_key:
+        raise SystemExit("real Provider configuration is incomplete")
+    if cfg.model_id != manifest.get("model") or cfg.api_base != manifest.get("provider_endpoint"):
+        raise SystemExit("frozen preflight Provider configuration mismatch")
     return manifest
 
 
@@ -141,12 +180,14 @@ def main() -> None:
         raise SystemExit("call cap must be positive")
     root = Path(__file__).resolve().parents[2]
     run_dir = args.run_dir.resolve()
-    manifest = _prepare(root, run_dir, args.call_cap)
-    print(json.dumps({"preflight": "passed", **manifest}, ensure_ascii=False))
     if args.preflight:
+        manifest = _prepare(root, run_dir, args.call_cap)
+        print(json.dumps({"preflight": "passed", **manifest}, ensure_ascii=False))
         return
     if not args.authorized:
         raise SystemExit("real Provider serving requires --authorized")
+    manifest = _load_frozen_preflight(root, run_dir, args.call_cap)
+    print(json.dumps({"preflight": "revalidated", **manifest}, ensure_ascii=False))
 
     import data_agent.llm.client as client_module
     ledger = ProviderLedger(run_dir / "provider-calls.jsonl", args.call_cap)
