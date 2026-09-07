@@ -389,18 +389,28 @@ def validate_tool_message_sequence(messages: list[dict]) -> list[str]:
     tool_calls 必须全部有结果。返回违规描述列表（空＝合法）。
     """
     violations: list[str] = []
+    # Tool-call IDs are scoped to one open assistant tool-call block.  A
+    # scripted transport (and a recovered legacy transcript) may reuse an ID
+    # in a later, already-complete round.  That is not an orphan or a duplicate
+    # result; only an ID that is still open may not be repeated.
     open_calls: set[str] = set()
-    seen_results: set[str] = set()
     for index, message in enumerate(messages):
         role = message.get("role")
         if role == "assistant" and isinstance(message.get("tool_calls"), list):
+            if open_calls:
+                unresolved = ", ".join(sorted(open_calls))
+                violations.append(
+                    f"message[{index}]: assistant tool_calls begin before prior results ({unresolved})"
+                )
+            block_ids: set[str] = set()
             for call in message["tool_calls"]:
                 call_id = str((call or {}).get("id") or "")
                 if not call_id:
                     violations.append(f"message[{index}]: assistant tool_call without id")
                     continue
-                if call_id in open_calls:
+                if call_id in block_ids or call_id in open_calls:
                     violations.append(f"message[{index}]: duplicate tool_call id {call_id}")
+                block_ids.add(call_id)
                 open_calls.add(call_id)
         elif role == "tool":
             tool_call_id = str(message.get("tool_call_id") or "")
@@ -412,9 +422,6 @@ def validate_tool_message_sequence(messages: list[dict]) -> list[str]:
                     f"message[{index}]: orphan tool result {tool_call_id} without a preceding tool_call"
                 )
                 continue
-            if tool_call_id in seen_results:
-                violations.append(f"message[{index}]: duplicate tool result for {tool_call_id}")
-            seen_results.add(tool_call_id)
             open_calls.discard(tool_call_id)
     for call_id in sorted(open_calls):
         violations.append(f"assistant tool_call {call_id} has no tool result")
@@ -428,20 +435,25 @@ def drop_orphan_tool_messages(messages: list[dict]) -> tuple[list[dict], list[st
     仅处理孤立结果；缺失结果由 loop 既有的 _repair_broken_tool_sequence
     在轮开始时补齐，此处不伪造。
     """
-    valid_ids: set[str] = set()
-    for message in messages:
-        if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
-            for call in message["tool_calls"]:
-                call_id = str((call or {}).get("id") or "")
-                if call_id:
-                    valid_ids.add(call_id)
+    # Pair in sequence rather than collecting every ID globally.  Otherwise an
+    # orphan result could be retained merely because a later, unrelated round
+    # happens to reuse the same call ID.
+    open_calls: set[str] = set()
     dropped: list[str] = []
     provider_copy: list[dict] = []
     for message in messages:
+        if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
+            provider_copy.append(message)
+            for call in message["tool_calls"]:
+                call_id = str((call or {}).get("id") or "")
+                if call_id:
+                    open_calls.add(call_id)
+            continue
         if message.get("role") == "tool":
             tool_call_id = str(message.get("tool_call_id") or "")
-            if not tool_call_id or tool_call_id not in valid_ids:
+            if not tool_call_id or tool_call_id not in open_calls:
                 dropped.append(tool_call_id or "<missing-id>")
                 continue
+            open_calls.discard(tool_call_id)
         provider_copy.append(message)
     return provider_copy, dropped

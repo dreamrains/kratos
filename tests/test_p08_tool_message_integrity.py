@@ -57,6 +57,19 @@ def test_missing_tool_result_is_a_violation():
     assert any("b" in violation and "no tool result" in violation for violation in violations)
 
 
+def test_completed_tool_call_id_may_be_reused_in_a_later_round():
+    """P08 browser rehearsal reuses scripted IDs; only open IDs must be unique."""
+    messages = [
+        _assistant_with_calls("p7-1"),
+        _tool_result("p7-1", "first result"),
+        {"role": "assistant", "content": "first conclusion"},
+        _assistant_with_calls("p7-1"),
+        _tool_result("p7-1", "second result"),
+    ]
+
+    assert validate_tool_message_sequence(messages) == []
+
+
 def test_tool_message_without_id_is_a_violation():
     messages = [{"role": "tool", "content": "ok"}]
     assert any("without tool_call_id" in violation for violation in validate_tool_message_sequence(messages))
@@ -141,3 +154,16 @@ def test_serializer_preserves_pairing_fields():
     assert serialized[1]["tool_calls"][0]["function"]["name"] == "list_data"
     assert serialized[2].get("tool_call_id") == "a"
     assert validate_tool_message_sequence(serialized) == []
+
+
+def test_provider_copy_drops_an_orphan_even_when_a_later_round_reuses_its_id():
+    history = [
+        _tool_result("reused", "orphan before any call"),
+        _assistant_with_calls("reused"),
+        _tool_result("reused", "valid later result"),
+    ]
+
+    provider_copy, dropped = drop_orphan_tool_messages(history)
+
+    assert dropped == ["reused"]
+    assert validate_tool_message_sequence(provider_copy) == []

@@ -608,3 +608,29 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - M04 复验：版本重载后无 Provider 400；（可选）注入孤立 tool 消息验证本地恢复。
 - M06 复验：无数据回复简短＋单入口。
 - P08-06 导出文件落地与 Provider 账本按原计划留待下轮。
+
+---
+
+## P08-R2：独立本地浏览器复验与工具协议回归修复（Codex，2026-09-08）
+
+阶段 / 状态：**P08-01—P08-05 在 Provider 禁用的本地浏览器矩阵中通过；P08-06 与真实 Provider 请求账本仍未验收。** 本节验证用户提交 `aeddceb` 后的当前工作树。脚本化模型只代替模型传输；Flask、SSE、AgentLoop、真实工具、会话持久化、版本重载和发布链均实际执行。运行目录为 `tmp/p08-browser-rehearsal-verify-r2`；其 `runtime.jsonl` 仅记录 `server_start`、`auxiliary_call`、`scripted_round`，没有 `forbidden_provider_transport`，因此本次 Provider 发起调用为 0。
+
+| 场景 | 状态 | 复验事实 |
+|---|---|---|
+| M01 / B01 | passed | 会话 `98bf86124959` 发布 12 条、金额合计 120，并说明条件性行动与不可外推限制。 |
+| M02 / B02 | passed | 会话 `4fec9ba4204b` 直接发布 D7=10% 与“不能预测 D30”的证据边界，未出现方法确认卡。 |
+| M03 / B03 | passed | 会话 `ad13ccbdab48` 保留并汇总全部六个来源。 |
+| M04 / B04 | passed | 会话 `ec2d285e59b4` 对显式竞争性假设不要求选择内部路线；完成支持、反驳和 `reload_data` 后，历史假设保留为 `stale`，刷新后会话正常恢复。 |
+| M05 / B05 | passed | 会话 `d622e18aa2ad` 的业务、分析师、管理者、通俗和技术表达有明确差异，核心事实均保持 120、12 条和不可外推。 |
+| M06 / B06 | passed | 会话 `f05bf304caae` 在无数据时只说明未找到数据集、未发布计算结论，并给出一个加载数据入口。 |
+
+### P08-04-R：已完成工具调用 ID 的跨轮复用
+
+- 首次复演发现 `compact.validate_tool_message_sequence` 将所有历史结果 ID 记录为全局已见；P7 脚本模型在**前一轮已完整闭合**后再次使用 `p7-1-compare_periods`，被误判为 `invalid_tool_message_sequence`。这不是 Provider 拒绝，也不代表同一未闭合调用出现重复结果。
+- 修复后，调用 ID 仅在当前未闭合的 assistant tool-call 块内唯一；完成匹配后可被后续独立轮次复用。`drop_orphan_tool_messages` 也改为按顺序配对，避免早期孤立结果因未来同 ID 调用而被错误保留。
+- 新增两项回归覆盖“已闭合 ID 可跨轮复用”和“未来同 ID 不得挽救早期孤立结果”。定向回归为 **118 passed**；完整离线回归 `tmp/test-runs/20260907T171940Z-b88daacb/junit.xml` 为 **2544 passed / 1 skipped / 0 failures / 0 errors**（共 2545 项）。
+
+### 证据边界与后续
+
+- 本节证明当前代码在 Provider 禁用、脚本化模型的真实 Web/SSE/AgentLoop 路径可完成 B01—B06 主流程；它不证明真实模型接受度、真实 Provider 请求账本、浏览器下载文件落地、部署或生产行为。
+- P08-06（导出文件落地）和请求账本依原优先级保留至下一次获明确授权的真实浏览器、真实 Provider 测试；不得将本次 0 Provider 调用外推为该类验收。
