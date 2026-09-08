@@ -654,3 +654,14 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 这同时暴露验收控制缺陷：当前启动器仅记录物理调用，但未将默认 `RequestPolicy(max_attempts=4)` 收敛为单次尝试。后续仅可在**新的代码冻结、零调用预检和新的明确授权**后运行，并须先让主与辅助 LLM 客户端都使用 one-shot 策略。
 - 因连续真实调用在第一场景即全部失败，属于 P08 的账户/基础服务或请求路径全局不可用情形。本批立即停止；M02—M06 不得用本地演练结果代替，也不得复用本批授权或目录。
 - 后续控制修复已加入验收启动器，并由 `tests/test_p08_real_matrix_launcher.py` 在无网络条件下验证：即使调用方显式给出其他策略，验收进程也强制 `ONE_SHOT`。该源码变更使 R3 冻结失效，未使用它发起任何新的 Provider 请求。
+
+---
+
+## P08-R4：one-shot 冻结下的真实 Provider 复验（Codex，2026-09-08）
+
+阶段 / 状态：**全局阻断，批次未验收；M01 failed，M02—M06 blocked_not_started。** 这是用户对当前 `18c3330`、模型 `openai/deepseek-v4-flash`、端点 `https://api.deepseek.com` 和 120 次上限作出新授权后的独立批次。冻结目录为 `tmp/p08-real-provider-20260908-r3`，其中 `request_policy=one_shot`；其零调用预检与 `tests/test_p08_real_matrix_launcher.py` 均通过。
+
+- 真实浏览器会话 `70d93eea2686` 通过页面上传 `M01-sales.csv` 后发送 M01。`upload.json`、`analysis_state.json` 与 `workspace_meta.json` 均显示夹具已加载、会话隔离完好；页面最终显示 `provider_request_failed`，具体链为 `InternalServerError ... OpenAIException - Connection error`，`run_state.json` 为 `status=failed`。
+- 权威账本 `provider-calls.jsonl` 记录 **4 次 `started` 与 4 次 `failed`，无 `dispatched`**：前三次为 `stream=false`，第四次为 `stream=true`。这证明同一会话的辅助与主路径均无法建立 Provider 请求；由于每个 `LLMClient` 已被强制 one-shot，这四次不是同一客户端的重试循环。
+- 账本当前未记录调用 purpose，不能仅由 `stream` 字段判定前三次分别属于哪一个内部决策步骤；但它能确定调用次数、模型、流式属性和错误终态。不得将 4 次未调度成功的本地记录外推为 Provider 实际计费。
+- 该错误覆盖辅助和主路径，属于 P08 的 Provider 连通性/基础服务全局异常。服务与浏览器已关闭，未切换模型/端点、未补发诊断请求，也未执行 M02—M06。当前授权已消耗；后续只有在明确定位配置或 Provider 可用性后，以新的冻结与新授权才能启动完整矩阵。
