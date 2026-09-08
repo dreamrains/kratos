@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
+from data_agent.agent.confirmation.decision import (
+    default_is_host_verified,
+    is_method_approval_shaped,
+    represents_business_gap,
+    stable_decision_key,
+)
 from data_agent.agent.confirmation.models import (
     ConfirmationContractError,
     ConfirmationRecord,
@@ -31,7 +37,12 @@ class PolicyResult:
 
 
 class QuestionPolicy:
-    """Accept only questions tied to material, answerable operations."""
+    """Accept only questions tied to material, answerable operations.
+
+    IC1 contract: only a real business semantic gap may suspend the user.
+    Method approvals downgrade to advisory; a truthy safe_default alone is
+    not an advisory basis unless its origin is host-verified (Q12).
+    """
 
     def evaluate(
         self,
@@ -48,7 +59,13 @@ class QuestionPolicy:
                 reused_confirmation_id=reused.confirmation_id,
             )
 
-        if candidate.safe_default:
+        if is_method_approval_shaped(candidate):
+            return self._nonblocking(
+                "方法选择是系统内部决策，不构成需要用户确认的业务缺口。",
+                allow_advisory,
+            )
+
+        if candidate.safe_default and default_is_host_verified(candidate):
             return self._nonblocking(
                 "A documented safe default is available.",
                 allow_advisory,
@@ -56,6 +73,12 @@ class QuestionPolicy:
         if not candidate.operation or not candidate.blocking_surfaces:
             return self._nonblocking(
                 "The candidate is not tied to a blocked concrete operation.",
+                allow_advisory,
+            )
+        if not represents_business_gap(candidate):
+            return self._nonblocking(
+                "The candidate does not name a concrete business decision, "
+                "missing value, and affected operations.",
                 allow_advisory,
             )
 
@@ -83,10 +106,13 @@ class QuestionPolicy:
         candidate: QuestionCandidate,
         existing: Iterable[ConfirmationRecord],
     ) -> ConfirmationRecord | None:
+        logical_key = stable_decision_key(candidate, session_id=candidate.session_id)
         for record in existing:
             if record.status != ConfirmationStatus.RESOLVED:
                 continue
-            if record.decision_key != candidate.decision_key:
+            if record.decision_key != candidate.decision_key and (
+                not logical_key or record.decision_key != logical_key
+            ):
                 continue
             if record.data_version != candidate.data_version:
                 continue

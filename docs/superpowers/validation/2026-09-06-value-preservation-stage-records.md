@@ -665,3 +665,46 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 权威账本 `provider-calls.jsonl` 记录 **4 次 `started` 与 4 次 `failed`，无 `dispatched`**：前三次为 `stream=false`，第四次为 `stream=true`。这证明同一会话的辅助与主路径均无法建立 Provider 请求；由于每个 `LLMClient` 已被强制 one-shot，这四次不是同一客户端的重试循环。
 - 账本当前未记录调用 purpose，不能仅由 `stream` 字段判定前三次分别属于哪一个内部决策步骤；但它能确定调用次数、模型、流式属性和错误终态。不得将 4 次未调度成功的本地记录外推为 Provider 实际计费。
 - 该错误覆盖辅助和主路径，属于 P08 的 Provider 连通性/基础服务全局异常。服务与浏览器已关闭，未切换模型/端点、未补发诊断请求，也未执行 M02—M06。当前授权已消耗；后续只有在明确定位配置或 Provider 可用性后，以新的冻结与新授权才能启动完整矩阵。
+
+
+---
+
+## IC0—IC3：需求对齐与必要澄清专项实施（2026-09-08）
+
+阶段 / 状态：**IC0—IC3 完成，全量离线复跑通过**。依据 [意图澄清计划](2026-09-07-intent-clarification-plan.md) 与 [开发设计](../specs/2026-09-07-intent-clarification-design.md)。IC4 的 E3 浏览器（B01—B06）与 IC5 真实 Provider 仍归 Codex / 另行授权。
+
+### IC0：契约映射（记录）
+
+- 生产者→策略：`question_need_detector` 六类门、`ask_user_question` 直接询问、multi_file_scope；`method_playbooks` 生产者已在 P08-01 退役。
+- 消费者：`ConfirmationService.request`（经 `QuestionPolicy`）→ loop `_suspend_for_confirmation_request` / `_suspend_for_required_question_payload` / `_maybe_auto_suspend_for_required_question`；`AnalysisFlowController.is_capability_blocked_by_confirmation`（能力门，P08-01 已重写）。
+- 复用键既有缺陷确认：`decision_key` 含 `message_version`/`turn_id`（同问题再问必为新键）；`data_version=messages:N` 随消息数变化——R01/R02 在结构上不可能成立。本阶段以稳定语义键修复。
+- 冻结字段位置：决策上下文放 `resolution_params`（decision_kind/missing_value/affected_operations/business_scope/default_origin/scope_data_version）；`UserConfirmationRequired` 增加 `decision_context` 载体；旧记录兼容由 `retire_method_approval_confirmations`（P08-01）与既有事件状态机承担。
+
+### IC1：统一决定策略核心
+
+- 新模块 `agent/confirmation/decision.py`（纯函数）：决策上下文规范化（gate 类型→decision_kind 映射，含 file_scope_selection）、方法形状判定（仅许可式动词＋方法名词合取，"分析方法"不命中）、宿主可验证 default_origin 集合、业务范围规范化（保留否定与数字）、稳定复用键（session+decision_kind+范围+选项值）、最小业务缺口契约（decision_kind＋missing_value＋affected_operations 三要素）。
+- `QuestionPolicy` 重写：REUSED 先行；方法形状→ADVISORY；`safe_default` 仅宿主可验证来源可降级（Q12：模型自报不信任）；非业务缺口→ADVISORY；复用匹配兼容稳定键。
+- 回归键语义（R01—R05）：同义改写复用、消息数不换键、范围变化不复用、相关数据版本变化阻断复用、无关文件变化不影响未版本化决定；仅 RESOLVED 可复用（R08）；无语义范围的候选保持逐次键（不可验证的不复用）。
+
+### IC2：入口接通与恢复
+
+- `runtime._build_question_candidate`：决策上下文注入（gate 载荷 risk_fields/affected_routes/blocked_surfaces→三要素；`decision_context` dict 载体优先）；稳定键替换逐次键；`data_version` 改为 scope_data_version（空＝未版本化）；`safe_default` 字段映射；`_resolution_params_for` 透传决策上下文字段。
+- loop 两条挂载路径（同步/流式）＋直接询问：ADVISORY/REJECTED→一次正常工具响应并继续本轮（`_nonblocking_confirmation_response`）；REUSED→返回既有答案文本，不对旧 resolved record 再悬挂；`_maybe_auto_suspend_for_required_question` 在旧 pending 被降级时贯穿到本轮新检测的真实语义问题（方法审批让位）。
+- 契约更新：6 个固化"方法 pending 优先/阻塞"的测试改写为新正反例（历史需求注释保留）；确认栈夹具补决策上下文。
+
+### IC3：方法选择与计划覆盖
+
+- `PlaybookSelection` 增加 `primary_source`（llm/keyword/default）与 `supporting_source`（llm/rule）审计字段（O01/O02：主方法来自 LLM＋辅助来自规则是合法组合，不谎报失败）。
+- 复合整体目标优先（M01/M02）：`_is_composite_feature_goal` 合取判定（功能/效果/行为 × 收益/复购/付费价值词同时肯定）→ product_feature_analysis 主线，子指标进 supporting，不被"复购"等子指标关键词抢占主方法。
+- 否定邻接修复（M06 根因）：`has_affirmative_keyword` 增加紧邻前缀"不/没/无"判定——"不预测 D30"在分句截断后不再把"预测"当肯定词，不再误选 forecast_decision_simulation。
+- M03/M04 由既有否定感知（P2 套件）＋新合取规则覆盖；新增 `tests/test_method_selection_coverage.py`（M01—M04、M06、O01—O02）。
+
+### 验证（新 run-dir，Provider 禁用）
+
+- 确认栈定向（policy/runtime/service/models/continuation/session_api/actions/interaction/decision + P08 三件套 + execution_control/method_playbooks/question_need_detector/analysis_entry/method_selection）：`tmp/vp-ic2-full3` 起多轮收敛至 **285+ passed**；意图/策略族 268 passed（`tmp/vp-ic3-m3`）。
+- 完整离线回归（tmp/vp-ic-full-offline，退出码 0）：**2569 tests / 0 failures / 0 errors / 1 skipped**（唯一跳过为按离线边界禁用的真实 Provider live smoke）。
+
+### 交接（Codex / 后续）
+
+- IC4 的 B01—B06（E3 浏览器）与 S 系列既有反例复验、IC5 真实 Provider 对照按验收矩阵执行；本阶段离线用例为 E1/E2。
+- Q09—Q11 的 E2 层由 `TestLoopDirectAskIntegration`（advisory 工具响应/REUSED 答案恢复/真语义悬挂）与既有 confirmation_runtime 套件覆盖；R06—R10 中跨会话/幂等既有测试继续通过。

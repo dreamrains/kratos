@@ -232,6 +232,7 @@ class UserConfirmationRequired(Exception):
         state_updates: str = "",
         related_task_id: int = 0,
         related_spec_id: str = "",
+        decision_context: dict | None = None,
     ):
         self.question = question
         self.options = options
@@ -242,6 +243,9 @@ class UserConfirmationRequired(Exception):
         self.state_updates = state_updates
         self.related_task_id = related_task_id
         self.related_spec_id = related_spec_id
+        # IC1：直接询问携带结构化决策上下文（decision_kind/missing_value/
+        # affected_operations/scope_data_version），模型自报字段仍经宿主校验。
+        self.decision_context = dict(decision_context or {})
         super().__init__(question)
 
 
@@ -439,6 +443,11 @@ _protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
     registry,
     json.dumps,
 )
+
+
+def record_is_none(request_result) -> bool:
+    """True when a confirmation request produced no record to suspend on."""
+    return request_result.record is None
 
 
 def _provider_failure_detail(exc: BaseException, limit: int = 300) -> str:
@@ -1067,6 +1076,37 @@ class AgentLoop:
             source="pending_confirmation" if isinstance(pending, dict) else "question_need_detector",
             operation=str(payload["confirmation_type"] or "auto_required_question"),
         )
+        if susp is None and isinstance(pending, dict) and has_new_question:
+            # IC2：旧 pending 被策略降级（如通用方法审批）时，让位给本轮
+            # 新检测到的真实语义问题，而不是吞掉整个悬挂路径。
+            pending = False
+            pending_data = {}
+            question_data = self._turn_question_need if isinstance(self._turn_question_need, dict) else {}
+            state_updates = pending_data.get("state_updates", question_data.get("state_updates"))
+            if isinstance(state_updates, dict):
+                state_updates_text = json.dumps(state_updates, ensure_ascii=False)
+            elif isinstance(state_updates, str) and state_updates.strip():
+                state_updates_text = state_updates
+            else:
+                state_updates_text = json.dumps({"stage": "scope"}, ensure_ascii=False)
+            payload = {
+                "question": str(pending_data.get("question") or question_data.get("question") or "Please confirm the key information before continuing."),
+                "options": list(pending_data.get("options") or question_data.get("options") or []),
+                "context": str(pending_data.get("context") or ""),
+                "multi_select": False,
+                "confirmation_type": str(pending_data.get("confirmation_type") or question_data.get("question_type") or "scope_confirmation"),
+                "blocking_reason": str(pending_data.get("blocking_reason") or question_data.get("reason") or ""),
+                "state_updates": state_updates_text,
+                "related_task_id": int(pending_data.get("related_task_id") or 0),
+                "related_spec_id": str(pending_data.get("related_spec_id") or ""),
+            }
+            susp = self._suspend_for_required_question_payload(
+                payload,
+                source="question_need_detector",
+                operation=str(payload["confirmation_type"] or "auto_required_question"),
+            )
+        if susp is None:
+            return None
         if isinstance(pending, dict):
             pending.setdefault("question", susp.question)
             pending.setdefault("options", susp.options)
@@ -1844,6 +1884,7 @@ class AgentLoop:
         turn_id: str,
     ) -> SuspendedForConfirmation:
         from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.policy import RequestDisposition
         from data_agent.agent.confirmation.runtime import (
             build_direct_question_candidate,
             confirmation_record_to_loop_result,
@@ -1857,14 +1898,15 @@ class AgentLoop:
             request=request,
         )
         request_result = service.request(candidate)
-        record = request_result.record
-        if record is None and request_result.reused_confirmation_id:
-            record = service.get(self.session_id, request_result.reused_confirmation_id)
-        if record is None:
-            raise RuntimeError(
-                f"confirmation request was not created: {request_result.reason}"
-            )
+        # IC2/设计§5：REUSED 恢复既有答案，不对旧 resolved record 再悬挂；
+        # advisory/rejected 同样以一次正常工具响应继续本轮。
+        if (
+            request_result.disposition == RequestDisposition.REUSED
+            or record_is_none(request_result)
+        ):
+            return self._nonblocking_confirmation_response(request_result)
 
+        record = request_result.record
         checkpoint = service.checkpoint(self.session_id)
         if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
             record = checkpoint
@@ -1878,6 +1920,31 @@ class AgentLoop:
         return confirmation_record_to_loop_result(
             record,
             {"messages": self._serialize_messages()},
+        )
+
+    def _nonblocking_confirmation_response(self, request_result) -> str:
+        """Tool-response text for advisory/reused/rejected confirmation results."""
+        from data_agent.agent.confirmation.policy import RequestDisposition
+
+        if (
+            request_result.disposition == RequestDisposition.REUSED
+            and request_result.reused_confirmation_id
+        ):
+            try:
+                service = self._confirmation_runtime()
+                reused = service.get(self.session_id, request_result.reused_confirmation_id)
+                answer = reused.response if reused is not None else None
+            except Exception:
+                answer = None
+            if answer not in (None, "", [], {}):
+                return (
+                    f"此前的回答仍然适用：{json.dumps(answer, ensure_ascii=False, default=str)}。"
+                    "如业务口径已变化，请说明新的具体口径。"
+                )
+        return (
+            f"该问题无需用户确认：{request_result.reason}。"
+            "请直接继续当前任务；只有当具体业务口径（分母/时间窗/人群/成本范围等）"
+            "确实缺失且会改变结论时才询问用户。"
         )
 
     def _suspend_for_required_question_payload(
@@ -1907,9 +1974,16 @@ class AgentLoop:
         if record is None and request_result.reused_confirmation_id:
             record = service.get(self.session_id, request_result.reused_confirmation_id)
         if record is None:
-            raise RuntimeError(
-                f"confirmation request was not created: {request_result.reason}"
+            # IC2/设计§5：自动门的 advisory/rejected 不悬挂不抛异常——记日志后
+            # 让本轮继续（该缺口已按策略判定无需用户决策）。
+            logger.info(
+                "Auto confirmation downgraded to non-blocking",
+                extra={"extra_data": {
+                    "session_id": self.session_id,
+                    "reason": request_result.reason,
+                }},
             )
+            return None
 
         checkpoint = service.checkpoint(self.session_id)
         if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
@@ -2508,6 +2582,15 @@ class AgentLoop:
                     ucc,
                     turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
                 )
+                if isinstance(susp, str):
+                    # IC2：advisory/reused 的直接询问得到一次正常工具响应并继续
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": susp,
+                    })
+                    yield {"type": "tool_result", "tool_call_id": tc.id, "name": tc.name, "web": None, "duration_ms": 0}
+                    continue
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -2932,6 +3015,14 @@ class AgentLoop:
                 ucc,
                 turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
             )
+            if isinstance(susp, str):
+                # IC2：advisory/reused 的直接询问得到一次正常工具响应并继续
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": susp,
+                })
+                return None
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,

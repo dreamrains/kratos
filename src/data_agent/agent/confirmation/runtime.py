@@ -14,6 +14,11 @@ from data_agent.agent.confirmation.models import (
     FREE_TEXT_ANSWER_ACTIONS,
     QuestionCandidate,
 )
+from data_agent.agent.confirmation.decision import (
+    decision_context_from_payload,
+    stable_decision_key,
+)
+from dataclasses import fields as dataclass_fields
 from data_agent.agent.confirmation_policy import (
     OBSOLETE_CONFIRMATION_TYPES,
     is_obsolete_confirmation_record,
@@ -104,7 +109,8 @@ def _build_question_candidate(
     options = _normalise_options(_request_value(request, "options", ()))
     answer_mode = _answer_mode(options, bool(_request_value(request, "multi_select", False)))
     resolution_params = _resolution_params_for(request)
-    return QuestionCandidate(
+    resolution_params = _with_decision_context(resolution_params, request, source=source)
+    candidate = QuestionCandidate(
         confirmation_id=f"{id_prefix}_{identity[:24]}",
         session_id=session_id,
         turn_id=turn_id,
@@ -122,9 +128,82 @@ def _build_question_candidate(
         skippable=True,
         resolution_action=_resolution_action_for(request),
         resolution_params=resolution_params,
-        data_version=f"messages:{int(message_version)}",
+        # IC1/R02/R05: data_version carries the *relevant* data identity (or
+        # empty = unversioned), never the message count - unrelated file
+        # changes and continued conversation must not invalidate a decision.
+        data_version=str(resolution_params.get("scope_data_version") or "").strip(),
         spec_version=str(_request_value(request, "related_spec_id", "") or "").strip(),
+        safe_default=str(_request_value(request, "safe_default", "") or "").strip(),
     )
+    return _apply_stable_decision_key(candidate)
+
+
+_INTERNAL_SOURCES = frozenset({
+    "question_need_detector",
+    "pending_confirmation",
+    "multi_file_scope",
+})
+
+_FALLBACK_OPERATIONS = ("agent_turn",)
+
+
+def _with_decision_context(params: dict[str, Any], request: Any, *, source: str) -> dict[str, Any]:
+    """Attach the IC1 decision context from the request payload.
+
+    Internal deterministic gates already carry concrete gaps (question type,
+    risk fields, affected routes); the context makes that explicit so the
+    policy contract can verify it without trusting free-form question text.
+    For internal sources the gate's blocked surfaces - at minimum the agent
+    turn the suspension blocks - count as the affected operations. Direct
+    model asks must name their affected operations explicitly.
+    """
+    decision_context = _request_value(request, "decision_context", {}) or {}
+    if not isinstance(decision_context, dict):
+        decision_context = {}
+    payload = {
+        **params,
+        **decision_context,
+        "risk_fields": _request_value(request, "risk_fields", ()),
+        "affected_routes": _request_value(request, "affected_routes", ()),
+        "affected_operations": decision_context.get("affected_operations")
+        or _request_value(request, "affected_operations", ()),
+        "missing_value": decision_context.get("missing_value")
+        or _request_value(request, "missing_value", ""),
+    }
+    context = decision_context_from_payload(payload)
+    if not context["affected_operations"]:
+        blocked = _request_value(request, "blocked_surfaces", ())
+        surfaces = [str(item).strip() for item in (blocked or ()) if str(item).strip()]
+        if surfaces:
+            context["affected_operations"] = surfaces
+        else:
+            # 挂起确认在结构上就阻塞当前 agent 轮；能力级封锁
+            # （is_capability_blocked_by_confirmation）仍要求显式命名能力，
+            # 因此这里不构成 Q12 担心的"默认所有工作都受影响"。
+            context["affected_operations"] = list(_FALLBACK_OPERATIONS)
+    for key in ("decision_kind", "missing_value", "affected_operations", "business_scope"):
+        if context.get(key):
+            params.setdefault(key, context[key])
+    return params
+
+
+def _apply_stable_decision_key(candidate: QuestionCandidate) -> QuestionCandidate:
+    """Swap the per-occurrence key for the semantic reuse key when available.
+
+    Same decision + same business scope across turns then maps to one key, so
+    a resolved answer is reused (R01) and message counts never re-ask (R02).
+    Candidates without a semantic scope keep the per-occurrence key - nothing
+    unverifiable gets reused (design §6).
+    """
+    logical_key = stable_decision_key(candidate, session_id=candidate.session_id)
+    if not logical_key:
+        return candidate
+    values = {
+        field.name: getattr(candidate, field.name)
+        for field in dataclass_fields(QuestionCandidate)
+    }
+    values["decision_key"] = logical_key
+    return QuestionCandidate(**values)
 
 
 def confirmation_record_to_suspended_event(record: ConfirmationRecord) -> dict[str, Any]:
@@ -366,15 +445,33 @@ def _resolution_action_for(request: Any) -> str:
 
 
 def _resolution_params_for(request: Any) -> dict[str, Any]:
-    return {
+    params = {
         "confirmation_type": str(_request_value(request, "confirmation_type", "") or "").strip(),
         "blocking_reason": str(_request_value(request, "blocking_reason", "") or "").strip(),
-        "context": str(_request_value(request, "context", "") or ""),
+        "context": str(_request_value(request, "context") or ""),
         "related_task_id": int(_request_value(request, "related_task_id", 0) or 0),
         "related_spec_id": str(_request_value(request, "related_spec_id", "") or "").strip(),
         "question": str(_request_value(request, "question", "") or "").strip(),
         "state_updates": _safe_state_updates(_request_value(request, "state_updates", "")),
     }
+    # IC1 决策上下文与版本绑定字段从请求透传（宿主生产者显式提供时优先）。
+    decision_context = _request_value(request, "decision_context", {}) or {}
+    if not isinstance(decision_context, dict):
+        decision_context = {}
+    for key in (
+        "decision_kind",
+        "missing_value",
+        "affected_operations",
+        "business_scope",
+        "default_origin",
+        "scope_data_version",
+    ):
+        value = _request_value(request, key, None)
+        if value in (None, "", [], ()) and isinstance(decision_context, dict):
+            value = decision_context.get(key)
+        if value not in (None, "", [], ()):
+            params[key] = value
+    return params
 
 
 def _request_value(request: Any, key: str, default: Any = None) -> Any:

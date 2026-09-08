@@ -46,6 +46,10 @@ class PlaybookSelection:
     requires_confirmation: bool = False
     # P08-01: 模板的历史风险说明只作审计/提示元数据，不再是确认签发权。
     template_risk_note: str = ""
+    # IC3/O01—O02: 选择来源审计——主方法与辅助方法可来自不同层
+    # （llm / keyword / default），不得混淆或谎报失败原因。
+    primary_source: str = "default"
+    supporting_source: str = "rule"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +61,8 @@ class PlaybookSelection:
             "analysis_spec": self.analysis_spec,
             "requires_confirmation": self.requires_confirmation,
             "template_risk_note": self.template_risk_note,
+            "primary_source": self.primary_source,
+            "supporting_source": self.supporting_source,
         }
 
 
@@ -425,6 +431,8 @@ def select_playbooks(
     llm_supporting: list[str] = []
     primary: str | None = None
     llm_attempted = False
+    primary_source = "default"
+    supporting_source = "rule"
     if len(text.strip()) >= 8:
         llm_attempted = True
         try:
@@ -437,6 +445,7 @@ def select_playbooks(
             if llm_result and llm_result.get("primary"):
                 primary = llm_result["primary"]
                 llm_supporting = llm_result.get("supporting", [])
+                primary_source = "llm"
         except Exception:
             pass
 
@@ -448,9 +457,11 @@ def select_playbooks(
             llm_client=llm_client,
             allow_llm=not (llm_attempted and llm_client is not None),
         )
+        primary_source = "keyword" if primary != "data_understanding" else "default"
 
     # Use LLM supporting if available, otherwise fall back to keyword-based
     supporting = llm_supporting if llm_supporting else _choose_supporting(text, primary)
+    supporting_source = "llm" if llm_supporting else "rule"
     playbook = PLAYBOOKS[primary]
 
     recommended_paths = _recommended_paths(primary, supporting)
@@ -471,6 +482,8 @@ def select_playbooks(
         # 其风险说明仅保留为审计提示。
         requires_confirmation=False,
         template_risk_note=str(playbook.confirmation_policy.get("blocking_reason") or ""),
+        primary_source=primary_source,
+        supporting_source=supporting_source,
     )
 
 
@@ -542,6 +555,12 @@ def _choose_primary(
     llm_client=None,
     allow_llm: bool = True,
 ) -> str:
+    # Layer 0: composite feature/effect goal (IC3/M01—M02). "功能效果、收益、
+    # 复购、付费行为" 这类整体目标的主线是功能/效果与行为分析，复购等子
+    # 指标进入 supporting——子指标关键词不得单独抢占主方法。
+    if _is_composite_feature_goal(text):
+        return "product_feature_analysis"
+
     # Layer 1: high-confidence keyword rules → return directly (skip LLM)
     for keywords, playbook_id in _HIGH_CONFIDENCE_RULES:
         if _has_any(text, keywords):
@@ -752,6 +771,19 @@ def _infer_dimensions(text: str) -> list[str]:
         if term in lower:
             dims.append(term)
     return dims
+
+
+_COMPOSITE_FEATURE_MARKERS = ["功能", "效果", "行为", "feature", "impact", "behavior"]
+_COMPOSITE_VALUE_MARKERS = [
+    "收益", "收入", "复购", "付费", "留存", "roi", "revenue", "repurchase",
+]
+
+
+def _is_composite_feature_goal(text: str) -> bool:
+    """整体目标信号（功能/效果＋价值子指标同时出现且均为肯定）。"""
+    return _has_any(text, _COMPOSITE_FEATURE_MARKERS) and _has_any(
+        text, _COMPOSITE_VALUE_MARKERS
+    )
 
 
 def _has_any(text: str, needles: list[str]) -> bool:

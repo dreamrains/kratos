@@ -63,6 +63,9 @@ def _request_runtime_confirmation(
             resolution_params={
                 "context": "Choose the metric.",
                 "confirmation_type": "metric_scope",
+                "decision_kind": "metric_definition",
+                "missing_value": "对比指标口径",
+                "affected_operations": ["period_compare"],
                 "related_task_id": 12,
                 "related_spec_id": "spec_1",
             },
@@ -210,7 +213,7 @@ def test_session_detail_ignores_obsolete_runtime_ledger_states(tmp_path, monkeyp
             blocking_surfaces=("agent_turn",),
             skippable=True,
             resolution_action="resolve_file_relationship",
-            resolution_params={"confirmation_type": confirmation_type},
+            resolution_params={"confirmation_type": confirmation_type, "decision_kind": "metric_definition", "missing_value": "对比指标口径", "affected_operations": ["period_compare"]},
         )
         record = ConfirmationRecord.from_request(
             ConfirmationRequest.from_candidate(candidate),

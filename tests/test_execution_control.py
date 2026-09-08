@@ -458,7 +458,7 @@ def test_structured_loop_relationship_diagnostic_does_not_suspend(monkeypatch):
     assert state.pending_confirmations == []
 
 
-def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monkeypatch):
+def test_p08_method_pending_no_longer_blocks_the_turn(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -476,9 +476,13 @@ def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monk
         lambda user_input, intent, state: {"status": "clear"},
     )
 
-    class FailingClient:
+    class AnsweringClient:
+        def __init__(self):
+            self.called = False
+
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            self.called = True
+            return Response(text="分析结论：收入呈上升趋势。")
 
     ctx = AgentContext(session_id="preexisting_method_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="preexisting_method_gate", data_state="data_loaded")
@@ -492,21 +496,21 @@ def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monk
         "state_updates": json.dumps({"stage": "plan"}),
     }]
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="preexisting_method_gate")
+    client = AnsweringClient()
+    loop = AgentLoop(client=client, session_id="preexisting_method_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("analyze revenue trend")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    # IC1/P08-01 契约更新：原断言通用方法 pending 阻塞整轮；
+    # 新原则下方法审批不再悬挂——分析直接执行，旧 pending 不被解析也不删除。
+    from data_agent.agent.loop import FinalResponse, SuspendedForConfirmation
 
-    assert isinstance(result, SuspendedForConfirmation)
-    assert result.question == "Confirm the existing method?"
-    assert result.options == [{"label": "Confirm", "value": "confirm_method", "description": ""}]
-    assert result.confirmation_type == "method_confirmation"
-    assert result.blocking_reason == "Method choice changes the analysis"
-    assert json.loads(result.state_updates)["stage"] == "plan"
-    assert "suspension_id" not in state.pending_confirmations[0]
+    assert isinstance(result, FinalResponse)
+    assert not isinstance(result, SuspendedForConfirmation)
+    assert client.called
+    assert state.pending_confirmations[0]["status"] == "pending"  # 不伪批准
     assert len(state.pending_confirmations) == 1
 
 

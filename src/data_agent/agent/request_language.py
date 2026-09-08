@@ -26,6 +26,12 @@ def has_affirmative_keyword(text: str, keywords) -> bool:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             prefix = _BOUNDARY.split(text[:match.start()])[-1][-60:]
             negations = list(_NEGATION.finditer(prefix))
+            # 紧邻前缀的“不/没/无”在分句截断后仍构成否定（如“不预测”）。
+            immediately_preceded = (
+                match.start() > 0 and text[match.start() - 1] in "不没无"
+            )
+            if immediately_preceded and not negations:
+                negations = ["immediate"]
             # Double negation is ambiguous, so retain the safety gate.
             if len(negations) != 1:
                 return True

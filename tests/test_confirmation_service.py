@@ -42,7 +42,13 @@ def _candidate(index=1, **overrides):
         "blocking_surfaces": ("analysis_execution",),
         "skippable": False,
         "resolution_action": "choose_metric",
-        "resolution_params": {"analysis_spec_id": "spec_1"},
+        "resolution_params": {
+            "analysis_spec_id": "spec_1",
+            "confirmation_type": "metric_definition",
+            "decision_kind": "metric_definition",
+            "missing_value": "对比指标口径",
+            "affected_operations": ["period_compare"],
+        },
         "data_version": "data_v1",
         "spec_version": "spec_v1",
     }
@@ -76,7 +82,7 @@ def _append_obsolete_id_collision(tmp_path):
         confirmation_id="cf_1",
         operation="metric_scope",
         resolution_action="resolve_file_relationship",
-        resolution_params={"confirmation_type": "metric_scope"},
+        resolution_params={"confirmation_type": "metric_scope", "decision_kind": "metric_definition", "missing_value": "对比指标", "affected_operations": ["period_compare"]},
     )
     record = ConfirmationRecord.from_request(
         ConfirmationRequest.from_candidate(candidate),
@@ -356,13 +362,26 @@ def test_service_restores_active_confirmation_from_disk(tmp_path):
     assert restored_service.restore("session_1") == active
 
 
-def test_safe_default_is_returned_as_advisory_without_record(tmp_path):
+def test_safe_default_requires_host_verified_origin_ic1(tmp_path):
+    """IC1/Q12 契约更新：原断言 truthy safe_default 直接 advisory；
+    新契约下默认值必须来自宿主可验证来源——模型自报默认不再降级。"""
     service, _, _ = _service(tmp_path)
 
-    result = service.request(_candidate(safe_default="Use daily revenue."))
+    claimed = service.request(_candidate(safe_default="Use daily revenue."))
+    assert claimed.disposition == RequestDisposition.CONFIRMATION
 
-    assert result.disposition == RequestDisposition.ADVISORY
-    assert result.record is None
+    verified = service.request(
+        _candidate(safe_default="Use daily revenue.", resolution_params={
+            "analysis_spec_id": "spec_1",
+            "confirmation_type": "metric_definition",
+            "decision_kind": "metric_definition",
+            "missing_value": "对比指标口径",
+            "affected_operations": ["period_compare"],
+            "default_origin": "user_request",
+        })
+    )
+    assert verified.disposition == RequestDisposition.ADVISORY
+    assert verified.record is None
 
 
 def test_matching_resolved_decision_is_reused(tmp_path):
@@ -397,7 +416,7 @@ def test_obsolete_record_id_collision_gets_deterministic_replacement_and_reuses_
         confirmation_id="cf_1",
         operation="metric_scope",
         resolution_action="choose_metric",
-        resolution_params={"confirmation_type": "metric_scope"},
+        resolution_params={"confirmation_type": "metric_scope", "decision_kind": "metric_definition", "missing_value": "对比指标", "affected_operations": ["period_compare"]},
     )
 
     first = service.request(candidate)
