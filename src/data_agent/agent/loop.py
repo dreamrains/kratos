@@ -1439,7 +1439,11 @@ class AgentLoop:
         if not threshold or round_num < threshold:
             return
         self._turn_wrap_up_injected = True
-        packet = self._prepare_publication_packet(user_input) if self._has_substantive_turn_evidence() else None
+        packet = (
+            self._prepare_publication_packet(user_input, phase="preview", persist=False)
+            if self._has_substantive_turn_evidence()
+            else None
+        )
         if packet and packet.get("status") == "ready" and packet.get("evidence"):
             # Round count is advisory, not evidence of analysis completion.
             self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
@@ -1547,30 +1551,46 @@ class AgentLoop:
         try:
             from data_agent.agent.publication_synthesis import extract_publication_facts
 
-            return extract_publication_facts(structured_data)
+            # Receipts are the durable lossless-enough boundary.  The final
+            # packet applies its own display budget after it knows the user's
+            # complete request, so do not discard later business groups here.
+            return extract_publication_facts(structured_data, max_facts=500)
         except Exception:
             return []
 
-    def _prepare_publication_packet(self, user_input: str) -> dict | None:
-        """Freeze a bounded, receipt-backed hand-off before tools are closed."""
+    def _prepare_publication_packet(
+        self,
+        user_input: str,
+        *,
+        phase: str = "final",
+        persist: bool = True,
+    ) -> dict | None:
+        """Build a receipt-backed hand-off for preview or final publication."""
         state = getattr(self.context, "analysis_state", None)
         if state is None:
             return None
         try:
             from data_agent.agent.publication_synthesis import build_publication_packet
 
+            receipt_ids = list(self.context.turn_receipt_ids)
+            if not receipt_ids:
+                prior_packet = getattr(self, "_turn_publication_packet", None)
+                if isinstance(prior_packet, dict):
+                    receipt_ids = [
+                        str(source.get("receipt_id") or "")
+                        for source in prior_packet.get("sources", [])
+                        if isinstance(source, dict) and source.get("receipt_id")
+                    ]
             packet = build_publication_packet(
                 state,
                 user_input=user_input,
                 substantive_tools=_SUBSTANTIVE_TOOLS,
-                receipt_ids=self.context.turn_receipt_ids,
+                receipt_ids=receipt_ids,
+                phase=phase,
             )
             self._turn_publication_packet = packet
-            if packet.get("status") == "ready":
-                add_packet = getattr(state, "add_publication_packet", None)
-                if callable(add_packet):
-                    add_packet(packet)
-                self._register_publication_receipt_artifact(packet, state)
+            if packet.get("status") == "ready" and persist:
+                self._commit_publication_packet(packet)
             return packet
         except Exception as exc:
             logger.warning(
@@ -1578,6 +1598,25 @@ class AgentLoop:
                 extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
             )
             return None
+
+    def _commit_publication_packet(self, packet: dict, final_text: str = "") -> dict:
+        """Persist only the packet that crossed the terminal publication gate."""
+        import hashlib
+
+        committed = dict(packet)
+        committed["phase"] = "final"
+        if final_text:
+            committed["answer_sha256"] = "sha256:" + hashlib.sha256(
+                final_text.encode("utf-8")
+            ).hexdigest()
+        self._turn_publication_packet = committed
+        state = getattr(self.context, "analysis_state", None)
+        if state is not None:
+            add_packet = getattr(state, "add_publication_packet", None)
+            if callable(add_packet):
+                add_packet(committed)
+            self._register_publication_receipt_artifact(committed, state)
+        return committed
 
     def _register_publication_receipt_artifact(self, packet: dict, state: Any) -> None:
         """Persist an openable receipt artifact for the published packet (B03).
@@ -1643,7 +1682,13 @@ class AgentLoop:
             )
             return final_text, None
 
-    def _render_terminal_publication(self, user_input: str, final_text: str) -> tuple[str | None, str | None]:
+    def _render_terminal_publication(
+        self,
+        user_input: str,
+        final_text: str,
+        *,
+        persist: bool = True,
+    ) -> tuple[str | None, str | None]:
         """Publish a receipt-backed appendix for every evidenced terminal answer.
 
         A model can choose to answer before the soft wrap-up threshold.  Its
@@ -1651,14 +1696,23 @@ class AgentLoop:
         so collecting the receipt packet only in forced finalization would
         leave normal short analyses ungrounded.
         """
-        packet = getattr(self, "_turn_publication_packet", None)
-        if (
-            self._has_substantive_turn_evidence()
-            and (not isinstance(packet, dict) or packet.get("status") != "ready")
+        packet = None
+        prior_packet = getattr(self, "_turn_publication_packet", None)
+        if self._has_substantive_turn_evidence() or (
+            isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
         ):
-            packet = self._prepare_publication_packet(user_input)
+            # Always rebuild here.  A ready preview packet may predate late
+            # receipts, EvidenceRecords, or the final verification report.
+            packet = self._prepare_publication_packet(
+                user_input,
+                phase="final",
+                persist=False,
+            )
         if isinstance(packet, dict) and packet.get("status") == "ready":
-            return self._render_finalized_publication(final_text)
+            published_text, error = self._render_finalized_publication(final_text)
+            if not error and published_text is not None and persist:
+                self._commit_publication_packet(packet, published_text)
+            return published_text, error
         return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
@@ -2825,7 +2879,10 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                self._verify_before_publication(user_input)
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
                 if publication_error:
                     if self._recover_publication_narrative(assistant_msg, publication_error):
                         continue
@@ -2842,7 +2899,9 @@ class AgentLoop:
                 if blocked_confirmation is not None:
                     yield self._suspended_event(blocked_confirmation)
                     return
-                self._verify_before_publication(user_input)
+                packet = getattr(self, "_turn_publication_packet", None)
+                if isinstance(packet, dict) and packet.get("status") == "ready":
+                    self._commit_publication_packet(packet, final_text)
                 # Persist the final message and its state before the client
                 # can render the final delta or receive turn_end.
                 self._maybe_archive(user_input, final_text)
@@ -3242,7 +3301,10 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                self._verify_before_publication(user_input)
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
                 if publication_error:
                     if self._recover_publication_narrative(assistant_msg, publication_error):
                         continue
@@ -3256,7 +3318,9 @@ class AgentLoop:
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     return blocked_confirmation
-                self._verify_before_publication(user_input)
+                packet = getattr(self, "_turn_publication_packet", None)
+                if isinstance(packet, dict) and packet.get("status") == "ready":
+                    self._commit_publication_packet(packet, final_text)
                 return FinalResponse(content=final_text)
 
             self.messages.append(assistant_msg)

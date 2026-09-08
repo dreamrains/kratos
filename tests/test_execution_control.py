@@ -892,7 +892,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
 
     final_prompt = client.system_prompts[-1]
     assert ("answer_mode=\"analytical\"" in final_prompt) or ("answer_mode: analytical" in final_prompt)
-    assert ("insight_depth=\"light\"" in final_prompt) or ("insight_depth: light" in final_prompt)
+    assert ("insight_depth=\"standard\"" in final_prompt) or ("insight_depth: standard" in final_prompt)
     assert ("business_translation=\"cautious\"" in final_prompt) or ("business_translation: cautious" in final_prompt)
 
 

@@ -92,7 +92,7 @@ def test_direct_operation_has_no_business_translation():
     assert "business_meaning" not in policy.required_moves
 
 
-def test_formula_fitting_gets_light_cautious_business_meaning():
+def test_formula_fitting_gets_standard_cautious_business_meaning():
     policy = _policy(
         intent=_intent(),
         state=_state_with_evidence(),
@@ -102,7 +102,7 @@ def test_formula_fitting_gets_light_cautious_business_meaning():
 
     assert isinstance(policy, SynthesisPolicy)
     assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "light"
+    assert policy.insight_depth == "standard"
     assert policy.business_translation == "cautious"
     assert policy.risk_boundary == "descriptive"
     assert policy.required_moves == [
@@ -195,7 +195,7 @@ def test_beginner_proficiency_changes_wording_only_not_depth():
 
     assert isinstance(beginner, SynthesisPolicy)
     assert isinstance(advanced, SynthesisPolicy)
-    assert beginner.insight_depth == advanced.insight_depth == "light"
+    assert beginner.insight_depth == advanced.insight_depth == "standard"
     assert beginner.wording_style == "plain_language"
     assert advanced.wording_style == "technical_concise"
 
@@ -231,7 +231,7 @@ def test_retention_formula_regression_matches_expected_policy_shape():
 
     assert isinstance(policy, SynthesisPolicy)
     assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "light"
+    assert policy.insight_depth == "standard"
     assert policy.business_translation == "cautious"
     assert policy.risk_boundary == "descriptive"
     assert "business_meaning" in policy.required_moves
@@ -421,6 +421,15 @@ def test_s03_detailed_diagnosis_not_pinned_to_light():
     assert policy.answer_mode == "analytical"
     assert policy.insight_depth == "standard"
     assert "detailed" in policy.reason.lower() or "详细" in policy.reason
+
+
+def test_regular_analysis_keeps_standard_explanatory_depth():
+    policy = _s_policy("拟合留存公式并说明结果")
+
+    assert policy.answer_mode == "analytical"
+    assert policy.insight_depth == "standard"
+    assert "method_note" in policy.required_moves
+    assert "business_meaning" in policy.required_moves
 
 
 def test_s04_terse_with_explicit_advice_keeps_recommendation():

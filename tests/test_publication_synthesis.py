@@ -6,6 +6,7 @@ from data_agent.agent.publication_synthesis import (
     render_publication_receipt_markdown,
     render_verified_appendix,
     validate_final_narrative,
+    validate_final_narrative_issues,
 )
 
 
@@ -145,12 +146,19 @@ def test_loop_persists_packet_without_exposing_receipts_after_finalization(monke
 
     assert loop._turn_finalization_mode is False
     assert loop._turn_publication_packet["status"] == "ready"
-    assert loop.context.analysis_state.publication_packets[-1]["id"] == loop._turn_publication_packet["id"]
+    assert loop._turn_publication_packet["phase"] == "preview"
+    assert loop.context.analysis_state.publication_packets == []
 
-    published, error = loop._render_finalized_publication("结论：曲线拟合良好，但仅限当前观测范围。")
+    published, error = loop._render_terminal_publication(
+        "拟合留存曲线",
+        "结论：曲线拟合良好，但仅限当前观测范围。",
+    )
     assert error is None
     assert published == "结论：曲线拟合良好，但仅限当前观测范围。"
     assert "本轮计算收据" not in published
+    final_packet = loop.context.analysis_state.publication_packets[-1]
+    assert final_packet["phase"] == "final"
+    assert final_packet["answer_sha256"].startswith("sha256:")
 
 
 def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
@@ -171,6 +179,131 @@ def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
     assert published == "模型说明：结果是描述性的，不构成因果结论。"
     assert "本轮计算收据" not in published
     assert loop.context.analysis_state.publication_packets[-1]["status"] == "ready"
+
+
+def test_terminal_publication_rebuilds_a_ready_preview_after_late_evidence():
+    loop = AgentLoop(client=None, session_id="publication_refresh")
+    loop._reset_turn_tracking()
+    early_id = loop._record_turn_tool_result(
+        "run_python", "early", structured_data={"metric": "收入", "value": 100},
+    )
+    preview = loop._prepare_publication_packet("分析收入和复购率", phase="preview", persist=False)
+    assert preview and preview["phase"] == "preview"
+
+    late_id = loop._record_turn_tool_result(
+        "run_python", "late", structured_data={"metric": "复购率", "value": 0.2},
+    )
+    loop.context.analysis_state.add_evidence_record({
+        "id": "ev_late", "claim": "复购率为20%", "tool_receipt_ids": [late_id],
+        "limitations": [],
+    })
+
+    published, error = loop._render_terminal_publication(
+        "分析收入和复购率", "收入为100，复购率为20%。",
+    )
+
+    assert error is None
+    assert published
+    final = loop.context.analysis_state.publication_packets[-1]
+    assert final["phase"] == "final"
+    assert final["snapshot_digest"] != preview["snapshot_digest"]
+    assert {source["receipt_id"] for source in final["sources"]} == {early_id, late_id}
+    assert [item["evidence_id"] for item in final["evidence"]] == ["ev_late"]
+
+
+def test_packet_digest_changes_when_validation_or_result_content_changes():
+    state = _packet_state([_receipt("run_python", "tr_one", {"metric": "收入", "value": 10})])
+    state.verification_reports = [{"overall_status": "pass"}]
+    packet_a = build_publication_packet(state, user_input="分析收入", substantive_tools={"run_python"})
+    state.verification_reports[-1]["overall_status"] = "fail"
+    packet_b = build_publication_packet(state, user_input="分析收入", substantive_tools={"run_python"})
+    state.tool_receipts[0]["result_sha256"] = "sha256:changed"
+    packet_c = build_publication_packet(state, user_input="分析收入", substantive_tools={"run_python"})
+
+    assert packet_a["snapshot_digest"] != packet_b["snapshot_digest"]
+    assert packet_b["snapshot_digest"] != packet_c["snapshot_digest"]
+
+
+def test_python_business_output_outranks_replay_metadata_and_keeps_tail_lines():
+    data = {
+        "output": "概览完成\nD1普通均值=17.080%\nD1加权均值=16.803%\nweighted_delta=0.00277",
+        "risk_level": "low",
+        "execution_label": "exploratory_sandbox",
+        "replay": {"code": "print('x')", "code_sha256": "abc", "timeout_seconds": 30},
+    }
+    facts = extract_publication_facts(data, max_facts=20)
+    paths = [fact["path"] for fact in facts]
+    values = [fact["value"] for fact in facts]
+
+    assert any("weighted_delta=0.00277" in value for value in values)
+    assert not any(path.startswith("replay") for path in paths)
+    assert "risk_level" not in paths
+    assert "execution_label" not in paths
+
+
+def test_all_group_request_uses_natural_order_and_retains_twelve_complete_groups():
+    data = {"groups": [
+        {"name": f"segment_{i}", "revenue": i * 100, "count": i * 10}
+        for i in range(12)
+    ]}
+    receipt = {
+        "id": "tr_groups_12", "tool_name": "run_python", "result_sha256": "sha256:g12",
+        "result_preview": "all groups", "publication_facts": extract_publication_facts(data, max_facts=100),
+    }
+    packet = build_publication_packet(
+        _packet_state([receipt]), user_input="逐一列出全部分组", substantive_tools={"run_python"},
+    )
+    facts = packet["sources"][0]["facts"]
+    names = [fact["value"] for fact in facts if fact["path"].endswith(".name")]
+
+    assert names == [f"segment_{i}" for i in range(12)]
+    assert len(facts) == 36
+
+
+def test_explicit_arithmetic_mismatch_is_rejected_but_correct_rounding_passes():
+    packet = {"publication_scope": []}
+
+    bad = validate_final_narrative_issues("日新增22400人，D7留存5.1%，约为1.14万人。", packet)
+    good = validate_final_narrative_issues("日新增22400人，D7留存5.1%，约为1142人。", packet)
+
+    assert any(issue["code"] == "arithmetic_mismatch" for issue in bad)
+    assert not any(issue["code"] == "arithmetic_mismatch" for issue in good)
+
+
+def test_explicit_subquestion_requires_visible_result_or_specific_gap():
+    state = _packet_state([_receipt(
+        "run_python",
+        "tr_requirements",
+        {"收入": {"value": 100}, "复购率": {"value": 0.2}},
+    )])
+    packet = build_publication_packet(
+        state,
+        user_input="请回答收入和复购率",
+        substantive_tools={"run_python"},
+    )
+
+    assert [item["label"] for item in packet["requirements"]] == ["收入", "复购率"]
+    missing = validate_final_narrative_issues("收入为100元。", packet)
+    complete = validate_final_narrative_issues("收入为100元，复购率为20%。", packet)
+    explicit_gap = validate_final_narrative_issues("收入为100元；复购率因缺少用户分母而无法计算。", packet)
+
+    assert any(
+        issue["code"] == "missing_answer_requirement" and issue["span"] == "复购率"
+        for issue in missing
+    )
+    assert not any(issue["code"] == "missing_answer_requirement" for issue in complete)
+    assert not any(issue["code"] == "missing_answer_requirement" for issue in explicit_gap)
+
+
+def test_requirement_keyword_without_result_or_gap_is_not_complete():
+    packet = {
+        "publication_scope": [],
+        "requirements": [{"id": "rq_repeat", "label": "复购率", "origin": "joined"}],
+    }
+
+    issues = validate_final_narrative_issues("复购率方面后续会继续观察。", packet)
+
+    assert any(issue["code"] == "missing_answer_requirement" for issue in issues)
 
 
 def test_packet_is_incomplete_without_a_successful_substantive_receipt():

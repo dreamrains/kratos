@@ -136,10 +136,10 @@ def derive_synthesis_policy(
     if uncertain and "assumptions" not in required_moves:
         required_moves.insert(3, "assumptions")
 
-    # Depth follows the user's explicit request, not a fixed ceiling (S03):
-    # a detailed diagnosis earns standard depth while a plain analytical
-    # request keeps the light profile.
-    depth = "standard" if _explicit_depth_request(text) else "light"
+    # A normal analytical request needs enough room for the conclusion,
+    # evidence, interpretation, and limits.  Explicitly terse requests are
+    # handled earlier; do not silently downgrade every other request to light.
+    depth = "standard"
 
     return _apply_verification_status(
         SynthesisPolicy(
@@ -188,7 +188,7 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         "Classify every material statement as direct evidence, inferential evidence, or suggestive context. "
         "Do not represent inferential or suggestive context as proof. "
         "For a recommendation explicitly requested by the user, provide a conditional, reversible recommendation when the available evidence supports it; lack of causal proof alone is not a reason to erase every recommendation. "
-        "Use concise Markdown structure when it improves scanning: a conclusion first, then short sections, bullets, or a compact table for repeated comparisons. Do not dump raw JSON or mechanically repeat the same five headings for every finding. "
+        "Choose Markdown structure from the content: lead with the conclusion, use tables for repeated comparisons, bullets for parallel findings or actions, and additional sections when distinct requested questions need them. Preserve every supported material finding and denominator even when that requires more than four sections. Do not dump raw JSON or mechanically repeat the same headings for every finding. "
         "State competing explanations and the distinguishing evidence needed whenever a causal or driver conclusion remains unresolved."
         "</answer_discipline>"
         "<bounded_evidence_replenishment>"
