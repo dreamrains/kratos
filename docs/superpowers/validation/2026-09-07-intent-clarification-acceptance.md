@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-09｜版本：1.2｜状态：**IC0—IC3 已完成本地实现与 E1/E2 回归并合入 `main@f8ee717`；IC4 的 E3 浏览器矩阵及 IC5/E4 真实 Provider 未执行**。
+日期：2026-09-09｜版本：1.3｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成 E1/E2/E3 本地验收；IC5/E4 真实 Provider 未授权、未执行**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -142,8 +142,8 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | E1 / E2（IC0—IC3） | passed_local | `tmp/integration-20260909-target-intent`：301 passed；`vp-analysis-value@d6e4780` 的既有专项完整离线为 2569 tests、0 failures、1 skipped |
 | 整合相关内容定向 | passed_local | `tmp/integration-20260909-target-content`：129 passed |
 | 整合 full-offline | accepted_for_merge_with_environment_exception | 首次 2492 passed、56 failed、62 skipped：缺 Git 忽略夹具及 Windows 长路径；缩短路径并补齐夹具后为 2608 passed、1 failed、1 skipped，唯一失败为多复制清单外 `游戏C改版.xlsx`；用户接受当前结果并要求合入 `main`，本项不记作全绿 |
-| 本地 `main` 整合 | merged | `main@f8ee717` 为双父合并提交，文件树与整合提交 `9e51b81` 一致；合并后尚未新增测试证据 |
-| E3 / IC4 | not_run | B01—B06 尚未在合并后源码上执行；后续在 `main` 继续 |
+| 本地 `main` 整合 | merged | `f8ee717` 为双父整合提交，`be5ee9a` 同步当前状态文档；合并后 E3 以后者为运行身份 |
+| E3 / IC4 | passed_local | `tmp/main-ic4-browser-20260909-be5ee9a`：IC-B01—IC-B06 全部通过；方法问题非阻塞、真实业务口径正常悬挂/恢复，同范围决定复用，范围/版本变化重新询问，旧方法审批以 `policy_retired` 保留；Provider initiated calls=0 |
 | E4 / IC5 | not_authorized / not_run | 未冻结或调用真实 Provider |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。

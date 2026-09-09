@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-09｜状态：AC01—AC39 已在源实现分支完成本地 E1/E2/E3 验收并合入 `main@f8ee717`；合并后矩阵尚未执行，AC40 真实 Provider 验收未授权、未执行。
+日期：2026-09-09｜状态：AC01—AC39 已合入 `main` 并在 `main@be5ee9a` 完成合并后 E3 矩阵；AC40 真实 Provider 验收未授权、未执行。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -184,6 +184,8 @@ Provider授权引用、计数或明确0调用：
 ```
 
 唯一 skip 是需要 `GOLDEN_LIVE_SMOKE=1` 的真实 Provider agent smoke；本次故意保持 Provider 禁用。E3 使用普通 Flask/SSE/AgentLoop/工具/持久化路径，只替换模型传输；B03 会话 `b2306f8ccffb`、B07 会话 `944d1f86cbce`，各自 `runtime.jsonl` 均为 0 条 `forbidden_provider_transport`，说明没有尝试越过禁用边界。
+
+合并后追加 E3 证据：`main@be5ee9a` 的隔离目录 `tmp/main-ic4-browser-20260909-be5ee9a`。CONTENT-B03 会话 `c2c77b29d01e` 保留 `src_1`—`src_6` 及全部金额事实，实际生成 9380 字节的 Markdown 对话导出和 9150 字节的同快照发布报告；CONTENT-B07 会话 `a5ccf75b6f20` 在 1440×900 下显示真实表格、KaTeX 公式、Plotly 图表及备用链接，无可见整页横向溢出。同批 `runtime.jsonl` 记录 `provider_enabled=false`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。
 
 ## 7. 本次文档校验记录
 

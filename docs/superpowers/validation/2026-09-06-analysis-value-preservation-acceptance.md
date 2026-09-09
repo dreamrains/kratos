@@ -289,3 +289,9 @@ P1—P6：各自必测正反例通过、相关回归通过、阶段记录齐全�
 立即停止依赖工作：跨会话/跨版本归属错误、伪造 verified、确认边界绕过、Provider 核算未知或越额。一般 UI 或内容缺陷在已冻结矩阵中可继续收集，但该场景仍失败；不能忽略后声称全绿。
 
 即便 P8 完成，提交/推送/部署仍是不同决策。未做正式 Web 进程、staging 或生产验证时明确写“未验证”，不把本地浏览器的结果外推。
+
+## 13. 2026-09-09 合并后本地浏览器复核
+
+- 运行身份：`main@be5ee9ac6305c15aec20f9981bf4f3ed25701fa5`；隔离目录 `tmp/main-ic4-browser-20260909-be5ee9a`；真实页面、HTTP/SSE、AgentLoop、工具、artifact 与 session 持久化，仅模型返回为既有脚本化连接。
+- 结果：B01—B06 全部执行。已验证 120/12 的正文、工作台与刷新一致；D30 无依据外推未公开；六来源完整保留；竞争假设的 supports/refutes/未决与 `data_version_changed` 排除闭合；五类表达的数字和证据等级一致；工具、保存和预算失败没有误发布完成终态。
+- 与同批 IC-B01—IC-B06、CONTENT-B03/B07 交叉复核无全局异常。`runtime.jsonl` 记录 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。本结论是 L3/E3 本地证据，不代表真实 Provider、正式 Web 进程、staging、生产或部署通过。

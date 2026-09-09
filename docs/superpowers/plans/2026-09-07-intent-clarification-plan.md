@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-09｜版本：1.3｜状态：**IC0—IC3 已合入本地 `main@f8ee717`；IC4 浏览器验收与 IC5 真实 Provider 验收未完成**。
+日期：2026-09-09｜版本：1.4｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成本地整合验收；IC5 真实 Provider 验收未授权、未执行**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -52,7 +52,7 @@
 
 文档编写期间其他工作开始修改 `context.py`、`loop.py`、`tools/registry.py` 和 `tests/test_execution_control.py`。基线分别记录任务开始状态、已提交版本哈希及后续工作区快照；这些并发改动不属于本专题、不进入本次提交。快照之后仍可能继续变化，实施时必须重查。
 
-本专题在 `vp-analysis-value@d6e4780` 完成 IC0—IC3，并经整合提交 `9e51b81` 合入本地 `main@f8ee717`。原工作树的并行文档未进入合并提交；后续 IC4/IC5 均以 `main` 为唯一执行基线。
+本专题在 `vp-analysis-value@d6e4780` 完成 IC0—IC3，并经整合提交 `9e51b81` 合入 `main@f8ee717`。当前状态文档提交为 `main@be5ee9a`；合并后 IC4 已在该 checkout 的隔离运行目录完成，IC5 仍以 `main` 上后续冻结提交为唯一执行基线。
 
 IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字段名或“另一分支”假设当作实现事实。发现缺少安全前置能力时，选择兼容现有接口，或列出最小独立前置改动讨论，不隐式搬运其他专项。
 
@@ -88,8 +88,8 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | 产品原则与范围 | 用户认同综合评估；已整理成本文 |
 | 设计/验收/交接/基线 | 已准备，属于规划材料 |
 | IC0—IC3 | completed_local / merged；`vp-analysis-value@d6e4780` 已完成实现，整合分支定向确认/意图回归 301 passed，并已合入 `main@f8ee717` |
-| IC4 | not_run；本地浏览器 B01—B06 尚未在合并后的源码上执行 |
+| IC4 | passed_local；`main@be5ee9a` 上使用真实页面/HTTP/SSE/AgentLoop/工具和隔离会话完成 IC-B01—IC-B06，同批次也完成 B01—B06 与 CONTENT-B03/B07；真实 Provider initiated calls=0 |
 | IC5 / 真实 Provider | not_authorized / not_run；不得由离线或历史 Provider 结果替代 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。后续 IC4 与 IC5 以 `main@f8ee717` 及其后续仅文档提交重新冻结和执行；IC5 仍需独立真实 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；IC5 必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。

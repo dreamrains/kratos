@@ -30,9 +30,20 @@
 
 隔离运行目录分别为 `tmp/integration-20260909-target-content`、`tmp/integration-20260909-target-intent`、`tmp/integration-20260909-full-offline` 和 `tmp/f1`。runner 设置 loopback API、禁用真实 Provider 网络；本阶段没有发起真实 Provider 调用。
 
-## 4. 未完成项
+## 4. 合并后本地浏览器验收
 
-- IC4：合并后 `main` 上的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 浏览器矩阵未执行。
-- IC5 / AC40：真实 Provider 未冻结、未授权、未执行；历史授权和旧账本不得复用。
-- 合并后未新增测试运行；已有结果边界保持不变。
-- 未 push、未部署。后续以 `main@f8ee717` 及其后续仅文档提交重新核对源码与运行身份。
+- 运行身份：`main@be5ee9ac6305c15aec20f9981bf4f3ed25701fa5`；时间 2026-09-09 20:33—20:48（Asia/Shanghai）。
+- 入口：`.venv\Scripts\python.exe scripts\testing\run_p7_browser_rehearsal.py --port 5179 --run-dir tmp\main-ic4-browser-20260909-be5ee9a`。复用既有演练入口，未新增测试框架、探针、模型审核调用或重复记录机制。
+- 矩阵：B01—B06、IC-B01—IC-B06、CONTENT-B03、CONTENT-B07 均完整执行并通过。普通异常未触发中途修复或局部重跑。
+- 关键终态：B06-SAVE 的 `run_state.status=unknown`；B06-BUDGET 为 `failed` 并显式停止；其余应完成会话为 `completed`。未发现错误证据升级、跨会话归属或终态重复。
+- B04 会话 `431233c26bd0` 保留 supports/refutes 结构化关系和未决状态；数据指纹改变后，旧证据以 `reason=data_version_changed` 进入排除列表，未升级到新版本。
+- IC 矩阵证明：安全可逆方法不悬挂；成本范围、时间窗口和分母等真实业务口径正常悬挂/恢复；同范围决定可复用，范围或相关数据版本变化后重新确认；跳过不当作批准；旧通用方法审批仅以 `policy_retired` 保留审计。
+- CONTENT-B03 会话 `c2c77b29d01e` 产生六来源发布报告与 9380 字节 Markdown 对话导出；导出菜单未产生浏览器标准 `download` 事件，但应用按既有契约在 session `reports` 中生成了可读文件，六个来源的金额与条数均可追溯。CONTENT-B07 会话 `a5ccf75b6f20` 在 1440×900 下显示表格、KaTeX、Plotly 和备用链接，无可见整页横向溢出。
+- 运行轨迹：`server_start.provider_enabled=false`；`scripted_round=72`；`auxiliary_call=145`（本地脚本客户端）；`forbidden_provider_transport=0`。真实 Provider initiated calls=0。浏览器控制曾短暂断开，本地 HTTP 始终为 200；重连后沿用原 run-dir 从 B04 继续，未重跑 B01—B03。
+
+## 5. 当前边界与未完成项
+
+- IC4 已完成本地 E3/L3 验收，不外推为真实自然模型、正式 Web 进程、staging、生产或部署证据。
+- 整合前 full-offline 结果仍为 2608 passed、1 failed、1 skipped；唯一失败是多复制清单外 `游戏C改版.xlsx` 的隔离夹具例外，用户已接受用于合并，仍不记为 full-offline 全绿。
+- `be5ee9a` 已经一次普通非强制 push 更新远程 `refs/heads/main`；本次后续文档提交尚未 push，没有部署。
+- IC5 / AC40 / P08 真实 Provider 尚未冻结、未授权、未执行；历史授权、旧账本或本地脚本矩阵不得替代。

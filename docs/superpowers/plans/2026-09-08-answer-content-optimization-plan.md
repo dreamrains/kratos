@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-09｜版本：v0.5｜状态：CP0—CP6 的本地实现已合入 `main@f8ee717`；合并后浏览器矩阵与 AC40 真实 Provider 验收仍待执行。
+日期：2026-09-09｜版本：v0.6｜状态：CP0—CP6 已合入 `main`，并在 `main@be5ee9a` 完成合并后浏览器矩阵；AC40 真实 Provider 验收未授权、未执行。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -22,7 +22,7 @@
 
 与 [P08](../validation/2026-09-07-p08-full-matrix-validation-plan.md) 的关系：复用其真实验证与调用核算边界。CP6 的脚本模型浏览器通过不等于 P08 通过；下一真实批次仍须完整 M01—M06，新增内容质量样本另附冻结清单，不在执行中临时追加。
 
-实现最初位于 `codex/answer-content-optimization`，基于 `85f62794e24cfa95a864293d159e0208c8615a4b`；提交 `61e7b47`、`bd42678` 以 patch-equivalent 提交 `1cd415e`、`5446e1a` 进入整合分支，最终随 `9e51b81` 合入本地 `main@f8ee717`。尚未 push、部署或启动真实 Provider。
+实现最初位于 `codex/answer-content-optimization`，基于 `85f62794e24cfa95a864293d159e0208c8615a4b`；提交 `61e7b47`、`bd42678` 以 patch-equivalent 提交 `1cd415e`、`5446e1a` 进入整合分支，最终随 `9e51b81` 合入 `main@f8ee717`。状态文档提交 `be5ee9a` 已普通推送到远程 `main`；未部署或启动真实 Provider。
 
 ## 2. 基线与已知结论
 
@@ -32,7 +32,7 @@
 
 历史 `159 passed` 仅作为 09-07 诊断背景。本分支最终重新执行了专项定向、完整离线和 Provider 禁用的真实 Flask/SSE 浏览器演练；结果独立记录为 `129 passed`、`2585 passed, 1 skipped` 以及 B03/B07 两个 E3 场景。它们证明当前 checkout 的本地实现，不证明凌晨历史服务进程、真实自然模型或生产环境。
 
-原工作树的并行文档没有复制进整合提交。`main@f8ee717` 的文件树与整合提交 `9e51b81` 一致，确认策略、工具消息配对、发布快照、候选隔离、回复级 binding、失败回滚和终态唯一性均保留。源分支绿灯仍只代表其对应 checkout；合并后尚未新增浏览器或 full-offline 通过证据。
+原工作树的并行文档没有复制进整合提交。`main@f8ee717` 的文件树与整合提交 `9e51b81` 一致，确认策略、工具消息配对、发布快照、候选隔离、回复级 binding、失败回滚和终态唯一性均保留。合并后的本地浏览器矩阵已在 `main@be5ee9a` 完成；full-offline 仍保留用户已接受的单一隔离夹具例外，不改写为全绿。
 
 ## 3. 需求与非目标
 
@@ -96,6 +96,7 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 | CP5 | completed_local | 深度策略、Markdown 表格、全角 chart wrapper、会话内图表匹配、桌面端图表/公式/导出体验已实现 |
 | CP6 | completed_local | `129 passed` 定向、`2585 passed, 1 skipped` full-offline、两条真实 Flask/SSE 脚本浏览器场景通过 |
 | 本地 `main` 整合 | merged | `main@f8ee717`；整合定向 129＋301 passed；full-offline 的环境例外由用户接受用于合并，但不记为全绿 |
+| 合并后浏览器 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；CONTENT-B03/B07 与共用 B01—B06、IC-B01—IC-B06 完成，Provider initiated calls=0 |
 | 真实 Provider 验收 | not_run_authorization_required | AC40 未执行；没有继承历史额度、没有发起任何真实 Provider 调用 |
 
 `completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表合并后矩阵、自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；AC40 必须在新的冻结清单、零调用预检和明确 Provider 授权后执行。
