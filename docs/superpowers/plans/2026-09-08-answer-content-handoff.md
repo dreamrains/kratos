@@ -1,6 +1,6 @@
 # 回复内容优化：合并交接
 
-日期：2026-09-08｜状态：独立分支 CP0—CP6 本地实现完成；待合并评审，AC40 真实 Provider 验收未授权
+日期：2026-09-09｜状态：CP0—CP6 已合入本地 `main@f8ee717`；合并后矩阵与 AC40 仍待执行
 
 关联：[总计划](2026-09-08-answer-content-optimization-plan.md)｜[开发设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[验收矩阵](../validation/2026-09-08-answer-content-acceptance.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)｜[差距关闭审计](../../audit/2026-09-08-answer-content-implementation-gap-audit.md)。
 
@@ -10,11 +10,11 @@
 - 分支：`codex/answer-content-optimization`
 - 基线：`85f62794e24cfa95a864293d159e0208c8615a4b`
 - 原工作树保持原状；本分支没有包含其未提交并行改动。
-- 尚未执行合并、push、部署或真实 Provider 调用。
+- 已经由整合提交 `9e51b81` 合入本地 `main@f8ee717`；尚未 push、部署或调用真实 Provider。
 
 本分支完成回复发布快照、事实组和详情恢复、需求到正文绑定、类型化派生数字校验、桌面端 Markdown/图表呈现、刷新和回复级导出绑定。移动端 UI 经用户确认不在本次范围。
 
-## 2. 合并时重点检查
+## 2. 已完成合并的保留项
 
 | 重叠面 | 本分支必须保留 | 目标分支必须保留 |
 |---|---|---|
@@ -25,7 +25,7 @@
 | `app.js` | 全角 ref 定向修复、会话隔离、歧义失败、图表去重和 fallback | 目标分支后续 Workbench/SSE 投影修复 |
 | evidence schema | derived measurements 的向后兼容 schema 与 Decimal 宿主重算 | 既有 EvidenceRecord 必填项和统计验证 |
 
-冲突应按函数块解决，不使用整文件覆盖。尤其不能为了通过内容覆盖而放宽无依据预测、因果、零值解释或跨版本证据边界。
+合并结果树与整合提交 `9e51b81` 一致，并已核对表中不变量。后续修改仍应按函数块审查，尤其不能为了通过内容覆盖而放宽无依据预测、因果、零值解释或跨版本证据边界。
 
 ## 3. 合并后验证命令
 
@@ -51,7 +51,7 @@ $env:PYTHONPATH='src'
 .venv\Scripts\python.exe scripts\testing\run_regression.py full-offline
 ```
 
-本分支当前证据为 `129 passed` 定向和 `2585 passed, 1 skipped, 16 warnings` full-offline。合并后的结果才是目标分支最终证据，不能直接沿用本分支数字。
+源分支证据为 `129 passed` 定向和 `2585 passed, 1 skipped, 16 warnings` full-offline；整合分支另有必要澄清定向 301 passed。合并前 full-offline 的唯一剩余失败是隔离夹具多复制清单外文件，用户已接受用于合并，但不能记为合并后 full-offline 全绿。
 
 ## 4. E3 复验入口
 
@@ -76,4 +76,4 @@ $env:PYTHONPATH='src'
 
 AC40 需要新的零调用预检，冻结真实输入文件 hash、完整提示、模型、源码提交、进程身份和调用预算，再取得明确 Provider 授权。历史批次或未用额度不能继承。本地实现完成不等于 AC40、部署或生产通过。
 
-实际合并、push 与部署也应在用户指定目标和时点后执行。本交接提供可审阅分支，不自行触发这些外部动作。
+本地合并已经完成。push 与部署仍须用户指定目标和时点后执行，本交接不自行触发这些外部动作。
