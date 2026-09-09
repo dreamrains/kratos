@@ -287,11 +287,28 @@ def export_assistant_reply(session_id: str, content: str = "", format: str = "ma
     if len(matches) != 1:
         return {"error": "Reply text is ambiguous; use the conversation export", "error_type": "ambiguous_reply"}
     reply = matches[0]
-    return json.loads(_export_public_messages(session_id, "Assistant Reply", format,
-        [{"role": "assistant", "content": reply["content"]}], True, reply["chart_paths"]))
+    message = {
+        "role": "assistant",
+        "content": reply["content"],
+        "publication_packet_id": reply.get("publication_packet_id", ""),
+        "publication_snapshot_digest": reply.get("publication_snapshot_digest", ""),
+        "answer_sha256": reply.get("answer_sha256", ""),
+        "publication_artifact_path": reply.get("publication_artifact_path", ""),
+    }
+    return json.loads(_export_public_messages(
+        session_id, "Assistant Reply", format, [message], True, reply["chart_paths"]
+    ))
 
 
-def _publication_appendix(session_id: str) -> str:
+def _publication_appendix(
+    session_id: str,
+    *,
+    packet_id: str = "",
+    snapshot_digest: str = "",
+    answer_sha256: str = "",
+    artifact_path: str = "",
+    allow_legacy_latest: bool = False,
+) -> str:
     """Published sources, omissions, and pending labels for exports (P7-L3/B03).
 
     Kept at reference level; rejected candidates and raw evidence JSON are
@@ -308,11 +325,45 @@ def _publication_appendix(session_id: str) -> str:
             packet for packet in (getattr(state, "publication_packets", None) or [])
             if isinstance(packet, dict) and packet.get("status") == "ready"
         ]
-        if not packets:
+        if not packets or not packet_id:
+            if artifact_path:
+                from data_agent.config import get_config
+
+                session_root = (get_config().sessions_resolved / session_id).resolve()
+                candidate = (get_config().sessions_resolved.parent / artifact_path).resolve()
+                if candidate.is_relative_to(session_root) and candidate.suffix.lower() == ".md":
+                    return candidate.read_text(encoding="utf-8")
+            if allow_legacy_latest and packets:
+                workbench = build_workbench_view(state)
+                return render_publication_receipt_markdown(
+                    packets[-1],
+                    pending_findings=workbench.get("pending_findings"),
+                    verified_total=workbench.get("verified_total"),
+                )
+            return ""
+        packets = [packet for packet in packets if str(packet.get("id") or "") == packet_id]
+        if snapshot_digest:
+            packets = [
+                packet for packet in packets
+                if str(packet.get("snapshot_digest") or "") == snapshot_digest
+            ]
+        if answer_sha256:
+            packets = [
+                packet for packet in packets
+                if str(packet.get("answer_sha256") or "") == answer_sha256
+            ]
+        if len(packets) != 1:
+            if artifact_path:
+                from data_agent.config import get_config
+
+                session_root = (get_config().sessions_resolved / session_id).resolve()
+                candidate = (get_config().sessions_resolved.parent / artifact_path).resolve()
+                if candidate.is_relative_to(session_root) and candidate.suffix.lower() == ".md":
+                    return candidate.read_text(encoding="utf-8")
             return ""
         workbench = build_workbench_view(state)
         return render_publication_receipt_markdown(
-            packets[-1],
+            packets[0],
             pending_findings=workbench.get("pending_findings"),
             verified_total=workbench.get("verified_total"),
         )
@@ -322,6 +373,7 @@ def _publication_appendix(session_id: str) -> str:
 
 def _export_public_messages(session_id, title, format, messages, include_charts=True, chart_paths=None):
     blocks: list[str] = []
+    assistant_count = sum(1 for message in messages if message.get("role") == "assistant")
     for message in messages:
         role = message.get("role", "")
         if role not in {"user", "assistant"}:
@@ -330,15 +382,23 @@ def _export_public_messages(session_id, title, format, messages, include_charts=
         if not isinstance(content, str) or not content.strip():
             continue
         speaker = "用户" if role == "user" else "助手"
-        blocks.append(f"## {speaker}\n\n{content.strip()}")
+        block = f"## {speaker}\n\n{content.strip()}"
+        if role == "assistant":
+            appendix = _publication_appendix(
+                session_id,
+                packet_id=str(message.get("publication_packet_id") or ""),
+                snapshot_digest=str(message.get("publication_snapshot_digest") or ""),
+                answer_sha256=str(message.get("answer_sha256") or ""),
+                artifact_path=str(message.get("publication_artifact_path") or ""),
+                allow_legacy_latest=assistant_count == 1 and not message.get("publication_packet_id"),
+            )
+            if appendix:
+                block += "\n\n" + appendix
+        blocks.append(block)
     if not blocks:
         return _json_result(
             {"error": "No conversation messages to export", "error_type": "empty_conversation"}
         )
-
-    appendix = _publication_appendix(session_id)
-    if appendix:
-        blocks.append(appendix)
 
     markdown = (
         f"# {title}\n\n_Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}_\n\n"

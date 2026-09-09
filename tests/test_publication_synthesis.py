@@ -306,6 +306,37 @@ def test_requirement_keyword_without_result_or_gap_is_not_complete():
     assert any(issue["code"] == "missing_answer_requirement" for issue in issues)
 
 
+def test_adjacent_requirement_number_does_not_cover_the_next_requirement():
+    packet = {
+        "publication_scope": [],
+        "requirements": [
+            {"id": "rq_revenue", "label": "收入", "origin": "joined"},
+            {"id": "rq_repeat", "label": "复购率", "origin": "joined"},
+        ],
+    }
+
+    issues = validate_final_narrative_issues("收入为100元。复购率方面后续观察。", packet)
+
+    assert any(
+        issue["code"] == "missing_answer_requirement" and issue["span"] == "复购率"
+        for issue in issues
+    )
+
+
+def test_arithmetic_ignores_date_prefix_and_an_explicitly_corrected_quote():
+    packet = {"publication_scope": []}
+
+    dated = validate_final_narrative_issues(
+        "2026年新增22400人，D7留存5.1%，约为1142人。", packet,
+    )
+    correction = validate_final_narrative_issues(
+        "“22400人乘5.1%约为1.14万人”这个说法错误，正确约为1142人。", packet,
+    )
+
+    assert not any(issue["code"] == "arithmetic_mismatch" for issue in dated)
+    assert not any(issue["code"] == "arithmetic_mismatch" for issue in correction)
+
+
 def test_packet_is_incomplete_without_a_successful_substantive_receipt():
     state = AnalysisSessionState(session_id="publication_empty")
     packet = build_publication_packet(

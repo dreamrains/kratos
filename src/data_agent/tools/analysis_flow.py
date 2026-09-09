@@ -513,6 +513,7 @@ def record_evidence_record(record_json: str | dict) -> str:
         "plan_id" in payload
         or "step_id" in payload
         or payload.get("measurements") is not None
+        or payload.get("derived_measurements") is not None
     )
     if is_stage3c0b_evidence:
         from data_agent.agent.evidence_contracts import validate_stage3c0b_evidence

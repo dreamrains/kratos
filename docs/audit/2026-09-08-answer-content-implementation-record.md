@@ -1,70 +1,123 @@
 # 回复内容优化实施记录
 
-日期：2026-09-08｜分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`
+日期：2026-09-08｜分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`｜状态：CP0—CP6 本地实现完成，AC40 待独立真实 Provider 授权
 
-## 交付范围
+本记录替代先前“第一阶段”记录。完整逐项状态见 [验收矩阵](../superpowers/validation/2026-09-08-answer-content-acceptance.md)，此前指出的遗漏及其关闭证据见 [差距关闭审计](2026-09-08-answer-content-implementation-gap-audit.md)。
 
-本次实现处理诊断中可以由当前运行时可靠修复的四个根因：终局复用旧预览包、业务事实过早裁剪、明确子问题在正文中遗漏、可局部判定的数量级错误；同时解除普通分析默认 `light` 和固定 `2-4` 小节带来的表达压缩。实现沿用现有 `AgentLoop`、`AnalysisSessionState`、发布包、验证和一次修订链，没有增加 Provider 调用或第二套状态机。
+## 1. 分支与工作区
 
-## 实际变更
+- 独立 worktree：`D:\Project\Daily\data-agent\.worktrees\answer-content-optimization`
+- 独立分支：`codex/answer-content-optimization`
+- 基线：`85f62794e24cfa95a864293d159e0208c8615a4b`
+- 原工作树 `D:\Project\Daily\data-agent` 的 dirty/untracked 内容未被搬入、清理或覆盖。
+- 本任务没有合并回原分支、推送、部署或调用真实 Provider。
 
-- 预览包标记为 `phase=preview` 且不持久化；终态在验证完成后必定按最后收据、证据、分析规格和验证报告重建 `phase=final` 包。
-- 发布包升级为 `publication_synthesis.v2`，增加全内容 `snapshot_digest`；正式包增加 `answer_sha256`，同一包 id 继续由状态层幂等更新。
-- 工具收据最多保留 500 个受控事实候选；最终 prompt 再按来源预算选择。Python stdout 按行保留，执行代码、hash、replay、risk label 等审计元数据不再挤占业务事实预算。
-- 分组路径按自然数字顺序排序；明确“全部分组”请求可保留 12 组 `name/count/revenue` 的完整事实组。
-- 对高置信度的编号需求和简短“请回答 A 和 B”请求生成 `requirements`；正文必须给结果或具体缺口。复杂自由文本保持未评估，避免虚假的 100% 覆盖率。
-- 新增受限算术检查，仅检查正文显式写出的乘法或“基数 × 百分比 = 人数”关系，允许正常舍入并识别“万”单位；日期、版本号和未表达的运算不作自动结论。
-- 普通分析深度改为 `standard`；明确简短模式仍由既有 terse 规则控制。回答结构按内容选择表格、列表和小节，不再限制为 2-4 节。
+## 2. 实际实现
 
-## 验证证据
+### CP1：发布快照与公开回复闭环
 
-### 定向回归 E1/E2
+- `loop.py` 在质量、确认与发布检查之前只保存带 `publication_rejected` 的内部候选；公开投影不返回它们。
+- 最终正文通过 `_persist_accepted_answer` 先创建来源说明 artifact、提交 publication packet、写入精确绑定并保存 session，再发正式流式文本。
+- 发布绑定由 snapshot digest 与 answer hash 生成；相同正文幂等复用，正文修订递增 `content_revision` 并记录 `supersedes_packet_id`。
+- artifact 写失败不提交 packet；session 保存失败回滚本次公开消息和 packet，并返回明确未完成状态。
+- `public_messages.py` 保留 `publication_packet_id`、`publication_snapshot_digest`、`answer_sha256`、`publication_artifact_path`，形成回复级绑定。
+- `report.py` 只为对应回复附加其精确来源说明；包已轮换时可按同会话绑定 artifact 恢复，不把最新包错误附到历史回复。
 
-命令：
+### CP2：事实组、详情恢复与压缩
 
-```powershell
-$env:PYTHONPATH=(Join-Path (Get-Location) 'src')
-..\..\.venv\Scripts\python.exe -m pytest `
-  tests/test_publication_synthesis.py tests/test_synthesis_policy.py `
-  tests/test_sse_publication_order.py tests/test_artifact_publication_contracts.py `
-  tests/test_compact_preservation.py tests/test_prompt_system.py `
-  tests/test_prompt_injection_safety.py tests/test_p08_boundary_finalization.py `
-  tests/test_p08_tool_message_integrity.py -q -p no:cacheprovider
-```
+- `publication_synthesis.py` 使用 `publication_synthesis.v3`，提取稳定的完整 FactGroup，记录 source/scope/fields/units/detail_ref/evidence status 与扫描统计。
+- 工具执行在 `tool_outputs/..._detail.json` 持久化完整结构结果及 SHA-256；发布 prompt 只选业务优先的完整组，不在组内截断数字或单位。
+- 多来源预算按来源公平分配；明确全部来源时保留每个来源，超预算组进入完整 `omitted_groups` 清单。
+- 超深、超长列表和 stdout 扫描上限均披露未扫描数量或 unknown；必要大组变为 `detail_required` stub。
+- `read_publication_detail` 只读取当前 session 的 `tool_outputs/*.json`，校验规范化路径和字节哈希；缺失、越界或不匹配失败关闭。
+- `compact.py` 在压缩附录中保留 publication packet/snapshot/artifact 和 detail_ref，不覆盖原始详情。
 
-结果：`226 passed`。
+### CP3：需求生命周期与正文覆盖
 
-### 完整离线回归 E2
+- `analysis_state.py` 持久化 `answer_requirements` 与 `requirement_revision`；`context.py` 记录当轮 requirement IDs/revision。
+- `update_requirement_lifecycle` 保存用户原句、来源引用、撤回和窗口替换关系；状态变化可追溯。
+- 最终模型可在正文末尾给出唯一 `answer-bindings.v1` fenced block；解析器限制位置、数量、大小、schema 和当前 snapshot digest。
+- 宿主核对 requirement/fact/derived refs 和正文定位；损坏、重复、旧包或未知引用不受信，协议块在公开正文、刷新和导出前移除。
+- 覆盖状态区分 `answered`、`not_computed`、`evidence_insufficient` 与未评估语义；缺口不再统一写成数据不足。
 
-第一次运行使用自动生成的长目录，结果 `47 failed, 2445 passed, 62 skipped`。失败分类为：独立 worktree 没有 Git 忽略的 `reference/test_doc/*.xlsx` 夹具；Windows 长路径造成上传临时文件失败；一项旧测试仍期待普通分析为 `light`；以及上述夹具/旧断言引出的关联失败。该次结果不计为通过，也未归因于产品功能。
+### CP4：类型化量值与派生计算
 
-补入主工作树中相同的九个只读、Git 忽略夹具，更新深度策略断言，并使用短的新隔离目录后执行：
+- `evidence_input.py` 接受向后兼容的 `measurements` 和 `derived_measurements`。
+- `evidence_contracts.py` 只用 `Decimal` 重算 sum、difference、product、ratio、percent_change、percentage_point_change，不执行表达式字符串。
+- 校验有限数、元数、零/负基数、scope、source/version、单位、舍入和 scenario；跨版本、跨币种与无标签情景失败关闭。
+- 正文数字校验绑定已验证派生量值，区分百分比与百分点及“万”缩放；日期、版本号、编号和明确纠错引文不会被当成新业务运算。
+- coverage、numeric、scope 问题一次合并进入现有 publication recovery，不增加模型审核调用或额外重试额度。
 
-```powershell
-..\..\.venv\Scripts\python.exe scripts/testing/run_regression.py full-offline --run-dir tmp/r2
-```
+### CP5：内容深度、Markdown 与图表
 
-结果：`2553 passed, 1 skipped, 16 warnings`，退出码 0，JUnit：`tmp/r2/junit.xml`。脚本设置 `DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED=0`、无效本地 `API_BASE` 并声明 `provider_calls=forbidden`；该结果不证明真实浏览器、真实 Provider、部署或生产环境通过。
+- 普通分析默认深度为 standard，显式简短仍保持 terse；章节由问题与事实决定，不受固定 2—4 节限制。
+- `app.js` 只规范化已识别的全角 `［［chart：...］］`，并按当前 session 查找唯一 artifact；缺失、歧义和异会话引用不嵌入。
+- 内嵌图表带标题、延迟加载和新标签页备用链接；全角引用经规范化后不会再重复出现在“补充图表”。
+- Markdown 表格进入可聚焦的横向滚动容器。项目本次按用户确认只验收电脑端 UI；没有加入移动端专项样式。
+- 数据型 Mermaid 不作为图表失败的伪造回退；图失败时沿用可信表或具体缺口。
 
-## 变更后文件摘要
+## 3. 修改文件面
 
-| 文件 | SHA-256 |
+| 文件 | 作用 |
 |---|---|
-| `src/data_agent/agent/loop.py` | `1BBE8695225A8D878713C1723C313D110F47AB773449DFC4994547836A757FD9` |
-| `src/data_agent/agent/publication_synthesis.py` | `BBE564A6A95420918414A8BFC8DCD5DEA28349AF67E5F6A2575919562F125755` |
-| `src/data_agent/agent/synthesis_policy.py` | `3E39E69F0C5EC1F96884CFA91D6794AE6906360C592ABB27B6D95685A4A431E5` |
-| `src/data_agent/agent/prompts.py` | `3A63A1B99A74885632B862A7C551655E537BF8983AD04CDFC72E71EB459107F1` |
-| `tests/test_publication_synthesis.py` | `48FB91588FF154C7B9AAF8CAF32DA678BCD9ACF7B556B7F219B687D81275CE3C` |
-| `tests/test_synthesis_policy.py` | `D351A3CCBA450DB65CDEC0844EE04CEE4162EDE5355B48EF63DE8E50D2B0872E` |
-| `tests/test_execution_control.py` | `41CF425D0E18AE962BE07923E402EE0096CAAD30908E7DBCAAB5ECC6C1EFA213` |
+| `src/data_agent/agent/loop.py` | 候选隔离、终局绑定、先持久化后公开、失败回滚、需求生命周期接入 |
+| `src/data_agent/agent/publication_synthesis.py` | v3 packet、FactGroup/detail_ref、需求与数字校验、收据渲染 |
+| `src/data_agent/agent/analysis_state.py` | 需求生命周期持久化与旧状态兼容 |
+| `src/data_agent/agent/context.py` | 当轮 requirement refs/revision |
+| `src/data_agent/agent/compact.py` | publication/detail 引用跨压缩保留 |
+| `src/data_agent/agent/evidence_contracts.py` | 类型化派生量值宿主重算与来源/单位约束 |
+| `src/data_agent/tools/evidence_input.py` | evidence schema 扩展 |
+| `src/data_agent/tools/analysis_flow.py` | derived measurements 进入统一验证 |
+| `src/data_agent/session/public_messages.py` | 公开回复精确 publication binding 投影 |
+| `src/data_agent/tools/report.py` | 回复级来源附录和同会话 artifact 恢复 |
+| `src/data_agent/web/static/js/app.js` | chart wrapper、会话隔离、表格/图表桌面呈现 |
+| `src/data_agent/web/static/css/app.css` | 桌面表格容器和图表备用链接样式 |
+| `scripts/testing/run_p7_browser_rehearsal.py` | Provider 禁用的 B07 表格/公式/真实图表浏览器场景 |
+| `tests/test_answer_*.py`、`tests/test_publication_synthesis.py` | AC02—AC38 定向正反例 |
+| `tests/fixtures/answer_content/manifest.json` | 固定小中大预算 fixture |
 
-## 尚未形成的证据
+`prompts.py` 和 `synthesis_policy.py` 的深度/表达修订来自本分支先前提交，并继续由完整回归覆盖。
 
-- 没有启动本地真实浏览器，因此移动端 Markdown、图文就近呈现和刷新/导出的 E3 证据仍为 `not_run`。
-- 没有调用真实 Provider；五月与九月真实回答的自然语言丰富度改善仍需另行冻结输入、模型、源码和预算后验证。
-- 自动需求覆盖只处理高置信度结构；复杂自由文本、同义改写与跨来源语义绑定仍为 `unassessed`，不会被伪装成已检查。
-- 自动算术只覆盖显式、局部可解析的乘法和百分比人数换算；百分点、相对变化、币种与跨版本绑定仍依赖现有来源边界和后续专门契约。
+## 4. 验证证据
 
-## 合并说明
+### E1/E2 定向回归
 
-此分支基于 `85f62794e24cfa95a864293d159e0208c8615a4b` 创建。当前分支不要直接覆盖主工作树中并行修改的 `loop.py`；合并时按函数块解决冲突，保留主分支后续的确认策略与 P08 终局改动，再运行同一完整离线命令。Git 忽略的 `reference/test_doc` 与 `tmp/r2` 只用于本地验证，不进入提交。
+```powershell
+$env:PYTHONPATH='src'
+..\..\.venv\Scripts\python.exe -m pytest -q `
+  tests\test_answer_content_coverage.py `
+  tests\test_answer_numeric_consistency.py `
+  tests\test_answer_presentation_contract.py `
+  tests\test_answer_publication_contract.py `
+  tests\test_publication_synthesis.py `
+  tests\test_export_conversation.py `
+  tests\test_output_rendering_contracts.py `
+  tests\test_analysis_quality_guard_scope.py `
+  tests\test_execution_control.py
+```
+
+结果：`129 passed in 16.57s`。
+
+### E2 完整离线
+
+```powershell
+..\..\.venv\Scripts\python.exe scripts\testing\run_regression.py full-offline --run-dir tmp\r6
+```
+
+结果：`2585 passed, 1 skipped, 16 warnings in 170.91s`，退出码 0。唯一 skip 是需要 `GOLDEN_LIVE_SMOKE=1` 的真实 Provider agent smoke。脚本禁用 Provider 网络并使用隔离 workspace/sessions；这项证据不代表真实模型或生产环境。
+
+### E3 电脑端真实浏览器与脚本模型
+
+浏览器连接普通 Flask 页面，走真实 SSE、AgentLoop、工具、artifact、session 保存、刷新和导出；仅模型传输由确定性脚本替代，运行时设置 `DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED=0`。
+
+- B07，会话 `944d1f86cbce`：1440×900 下 Markdown 表格、KaTeX 公式、单个真实 `create_chart` Plotly iframe 和备用打开链接可见；刷新后保持；`documentElement.scrollWidth=1440`、`innerWidth=1440`，无整页横向溢出；无重复“补充图表”。
+- B03，会话 `b2306f8ccffb`：六来源回答刷新后保留；实际打开的 MD 导出包含 `pub_adad40726489`、对应 snapshot digest、answer hash 和 `src_1`—`src_6`；packet 的每个来源均保留 7 个完整 FactGroup。
+- 两个运行目录的 `runtime.jsonl` 中 `forbidden_provider_transport=0`，且没有真实 Provider 调用。
+
+E3 证明桌面页面与编排路径，不证明自然模型会稳定产出更丰富的内容。自然模型对照必须由 AC40 的独立授权批次完成。
+
+## 5. 合并与剩余边界
+
+CP0—CP6 的本地实现和证据已闭合；AC40 是唯一未执行项，原因是它必须冻结真实输入、模型、源码、预算和调用账本后取得新的明确 Provider 授权。没有把历史授权、旧真实会话或离线结果转记为 AC40 通过。
+
+合并时应把本分支提交并入届时目标分支，按函数块解决 `loop.py` 等并行冲突，再运行本记录中的定向与完整离线命令。不要用整文件覆盖主分支后续改动。Git 忽略的 `tmp/r6`、浏览器运行目录和 Plotly vendor 测试副本不进入提交。

@@ -138,6 +138,8 @@ class AnalysisSessionState:
     route_proposals: list[dict[str, Any]] = field(default_factory=list)
     verification_reports: list[dict[str, Any]] = field(default_factory=list)
     publication_packets: list[dict[str, Any]] = field(default_factory=list)
+    answer_requirements: list[dict[str, Any]] = field(default_factory=list)
+    requirement_revision: int = 0
     hypothesis_sets: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmations: list[dict[str, Any]] = field(default_factory=list)
     last_recommended_paths: list[dict[str, Any]] = field(default_factory=list)
@@ -172,6 +174,8 @@ class AnalysisSessionState:
             route_proposals=list(data.get("route_proposals") or []),
             verification_reports=list(data.get("verification_reports") or []),
             publication_packets=_dict_list_or_empty(data.get("publication_packets")),
+            answer_requirements=_dict_list_or_empty(data.get("answer_requirements")),
+            requirement_revision=int(data.get("requirement_revision") or 0),
             hypothesis_sets=list(data.get("hypothesis_sets") or []),
             pending_confirmations=list(data.get("pending_confirmations") or []),
             last_recommended_paths=list(data.get("last_recommended_paths") or []),
@@ -204,6 +208,8 @@ class AnalysisSessionState:
             "route_proposals": self.route_proposals,
             "verification_reports": self.verification_reports,
             "publication_packets": self.publication_packets,
+            "answer_requirements": self.answer_requirements,
+            "requirement_revision": self.requirement_revision,
             "hypothesis_sets": self.hypothesis_sets,
             "pending_confirmations": self.pending_confirmations,
             "last_recommended_paths": self.last_recommended_paths,

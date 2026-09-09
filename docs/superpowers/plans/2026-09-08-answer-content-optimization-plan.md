@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-08｜版本：v0.2｜状态：核心修复已在独立分支实现并通过完整离线回归；浏览器与真实 Provider 未运行。
+日期：2026-09-08｜版本：v0.4｜状态：CP0—CP6 的本地实现与离线/脚本浏览器验收已完成；AC40 真实 Provider 验收依其独立授权规则保留为外部门槛。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -16,6 +16,7 @@
 | [实施交接](2026-09-08-answer-content-handoff.md) | 开发入口、重叠改动处理、可粘贴任务说明 |
 | [规划基线](../../audit/2026-09-08-answer-content-planning-baseline.json) | HEAD、dirty、相关文件与全部现有受控文件字节哈希 |
 | [实施记录](../../audit/2026-09-08-answer-content-implementation-record.md) | 独立分支、实际变更、两次离线运行、文件摘要与证据边界 |
+| [实施差距自检](../../audit/2026-09-08-answer-content-implementation-gap-audit.md) | 计划文件面、AC01—AC40实际状态、代码风险与合并门槛 |
 
 本包细化 [分析价值保留总计划](2026-09-06-analysis-value-preservation-plan.md) 的 P3/P4/P6，不替代 Route A、不从 P0 重做已有工作，不推翻历史测试结果。新的反例说明原验收覆盖不足，须新增回归；不能把旧 passed 当成新用例已通过。
 
@@ -29,9 +30,9 @@
 
 诊断已证实：旧发布包可被终局复用；每来源默认 10 项事实与 180 字符字符串裁剪；Python 技术元数据挤占业务结果；实际加权敏感性结果未进入回答；格式提示偏向紧凑；现有正文校验漏掉数量级错误。没有证实：所有变短均由硬删除造成、原始数据已丢失、特定 CSS 一定有缺陷、历史与当前运行模型完全一致。
 
-历史 `159 passed` 是 09-07 定向离线结果，本次文档没有重新执行产品测试。当前代码复核与文件哈希仅证明检查时的检出状态，不证明凌晨服务进程身份。
+历史 `159 passed` 仅作为 09-07 诊断背景。本分支最终重新执行了专项定向、完整离线和 Provider 禁用的真实 Flask/SSE 浏览器演练；结果独立记录为 `129 passed`、`2585 passed, 1 skipped` 以及 B03/B07 两个 E3 场景。它们证明当前 checkout 的本地实现，不证明凌晨历史服务进程、真实自然模型或生产环境。
 
-文档检查期间发现并行工作继续修改 `src/data_agent/agent/loop.py` 和既有阶段记录；本任务未写入这两个文件。已重新查看终局包准备/复用函数，相关缺口仍存在；其他任务新增的P08测试结果不计入本包验收。基线保留开始时hash及结束时漂移记录，CP0须按目标checkout再核对，不能宣称工作区整体静止。
+原工作树仍有并行工作，本任务没有把其未提交内容复制进来。独立分支对 `loop.py` 等计划文件做了实际修改；未来合并须在目标分支当前函数块上解决冲突并重跑验收，不能把本分支绿灯直接转记为合并后绿灯。
 
 ## 3. 需求与非目标
 
@@ -86,14 +87,14 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
-| 文档准备 | completed | 诊断、计划、设计、表达规范、验收矩阵、交接与实施记录 |
-| CP0 | completed | 独立 worktree/分支、实施基线、夹具与导入路径复核 |
-| CP1 | completed_offline | preview/final 分离、终局重建、snapshot/answer hash；同步/流式相关回归通过 |
-| CP2 | completed_core | 业务事实候选延后裁剪、stdout 分行、审计元数据降权、自然组序；复杂外部详情分页未扩展 |
-| CP3 | completed_scoped | 编号项与短显式并列请求执行正文覆盖门；复杂自由文本保持 unassessed |
-| CP4 | completed_scoped | 显式乘法和百分比人数换算校验；百分点、币种与跨版本运算未自动判定 |
-| CP5 | completed_prompt_policy | 普通分析 standard、取消固定 2-4 节；真实浏览器排版证据未运行 |
-| CP6 | completed_offline | `2553 passed, 1 skipped`；真实浏览器、真实 Provider 和部署证据不在本次范围 |
-| 真实 Provider 验收 | not_run | 没有本专项冻结批次与授权 |
+| 文档准备 | completed | 诊断、计划、设计、表达规范、验收矩阵、交接、实施记录与差距关闭审计已同步 |
+| CP0 | completed_local | 独立 worktree/分支、固定小中大 fixture、AC01—AC40 映射及 Provider 零调用边界已记录 |
+| CP1 | completed_local | preview/final 分离、内容寻址快照、正文绑定、幂等修订、写入失败回滚、流式候选隔离与回复前持久化已实现 |
+| CP2 | completed_local | 完整 FactGroup、同会话 detail_ref/hash、扫描与省略披露、公平分源预算、compact 引用保留已实现 |
+| CP3 | completed_local | 持久化需求生命周期、撤回/替换、内部 answer-bindings 解析/宿主校验及状态区分已实现 |
+| CP4 | completed_local | 类型化量值、受限 Decimal 派生运算、单位/来源/版本/情景绑定及合并修订问题已实现 |
+| CP5 | completed_local | 深度策略、Markdown 表格、全角 chart wrapper、会话内图表匹配、桌面端图表/公式/导出体验已实现 |
+| CP6 | completed_local | `129 passed` 定向、`2585 passed, 1 skipped` full-offline、两条真实 Flask/SSE 脚本浏览器场景通过 |
+| 真实 Provider 验收 | not_run_authorization_required | AC40 未执行；没有继承历史额度、没有发起任何真实 Provider 调用 |
 
-详细记录填入验收文档模板，状态仅在此更新。未来用户明确要求实施后，按已定原则推进常规可逆工作，无需每阶段重复审批；涉及实质语义分歧、外部动作或真实 Provider 时按具体事项处理。
+`completed_local` 表示代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与实施记录；AC40 必须在新的冻结清单、零调用预检和明确 Provider 授权后执行。

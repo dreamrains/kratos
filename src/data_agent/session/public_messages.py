@@ -59,6 +59,17 @@ def assistant_replies(messages: list[dict], session_id: str = "") -> list[dict]:
                 replies.append(current)
             if isinstance(content, str) and content.strip():
                 current["content"] = "\n\n".join(filter(None, [current["content"], content.strip()]))
+            # A reply may contain intermediate assistant messages followed by
+            # one accepted terminal message.  Keep the server-owned terminal
+            # publication binding with the grouped reply; exports must never
+            # guess it from the latest packet in the session.
+            for key in (
+                "publication_packet_id", "publication_snapshot_digest",
+                "answer_sha256", "publication_artifact_path",
+            ):
+                value = message.get(key)
+                if isinstance(value, str) and value:
+                    current[key] = value
         elif role == "tool" and current is not None and isinstance(content, str):
             current["chart_paths"].extend(re.findall(r"Chart saved:\s*(sessions/\S+\.html)", content))
     return replies

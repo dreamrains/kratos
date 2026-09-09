@@ -1,0 +1,10 @@
+{
+  "schema_version": "answer_content_fixture.v1",
+  "cases": [
+    {"id": "small", "group_count": 3, "fields_per_group": 3, "expect_scan_incomplete": false},
+    {"id": "medium", "group_count": 40, "fields_per_group": 3, "expect_scan_incomplete": false},
+    {"id": "large", "group_count": 150, "fields_per_group": 3, "expect_scan_incomplete": true}
+  ],
+  "prompt_max_chars": 65000,
+  "provider_calls": 0
+}

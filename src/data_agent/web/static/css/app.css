@@ -73,7 +73,9 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .prose pre .code-lang-badge + .code-copy-btn { right: 56px; }
 
 /* Tables */
-.prose table { font-size: 0.85rem; width: 100%; border-collapse: collapse; margin: 1em 0; }
+.prose .markdown-table-scroll { width: 100%; overflow-x: auto; margin: 1em 0; border-radius: 0.5rem; }
+.prose .markdown-table-scroll:focus { outline: 2px solid #0d9488; outline-offset: 2px; }
+.prose table { font-size: 0.85rem; width: 100%; min-width: max-content; border-collapse: collapse; margin: 0; }
 .prose table th, .prose table td { padding: 0.5rem 0.75rem; border: 1px solid #e7e5e4; }
 .prose table th { font-weight: 600; background: #fafaf9; }
 .dark .prose table th, .dark .prose table td { border-color: #292524; }
@@ -143,6 +145,7 @@ textarea { min-height: 48px; max-height: 200px; field-sizing: content; }
 .dark .prose .inline-chart-container,
 .dark .prose .plotly-chart-container { background: #1c1917; border-color: #292524; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
 .prose .plotly-chart { width: 100%; min-height: 350px; }
+.prose .inline-chart-open-link { display: inline-block; color: #0d9488; }
 
 /* ── Action buttons ───────────────────────────────────────── */
 .action-btn {

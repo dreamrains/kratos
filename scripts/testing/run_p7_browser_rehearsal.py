@@ -267,6 +267,32 @@ class ScriptedClient:
                 "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
             )
 
+        if marker == "B07-PRESENTATION":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "presentation_sales"})])
+            if step == 1:
+                return self._response(calls=[(
+                    "create_chart",
+                    {
+                        "chart_type": "bar",
+                        "data": "presentation_sales",
+                        "title": "渠道金额对比",
+                        "x_col": "date",
+                        "y_col": "amount",
+                        "purpose": "exploratory",
+                    },
+                )])
+            return self._response(
+                "## 当前数据概览\n\n"
+                "| 指标 | 数值 | 口径 |\n"
+                "|---|---:|---|\n"
+                "| 订单金额 | 120 | 当前导入的 12 条订单 |\n"
+                "| 订单数 | 12 | 当前导入记录数 |\n\n"
+                "计算关系为：$$\\text{平均订单金额}=\\frac{120}{12}=10$$\n\n"
+                "［［chart：渠道金额对比］］\n\n"
+                "该结果只描述当前导入的 12 条记录，不能外推总体。"
+            )
+
         if marker == "B04":
             compare_up = {
                 "name": "hyp", "date_col": "date", "metrics": "amount",
@@ -359,7 +385,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET))】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION))】",
                 str(message.get("content") or ""),
             )
             if found:

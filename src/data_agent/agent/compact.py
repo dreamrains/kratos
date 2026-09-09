@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -229,6 +230,21 @@ def _preserved_identity_and_obligations(messages: list[dict]) -> str:
                 break
         if len(kept) >= 12:
             break
+    # Preserve server-owned publication and recoverable-detail references as
+    # identifiers only. They remain context pointers, never evidence by
+    # themselves, and survive an LLM-written history summary.
+    for message in messages:
+        packet_id = message.get("publication_packet_id")
+        snapshot = message.get("publication_snapshot_digest")
+        artifact = message.get("publication_artifact_path")
+        if packet_id:
+            kept.append(f"publication_packet_id={packet_id} snapshot_digest={snapshot or 'unknown'} artifact={artifact or 'unknown'}")
+        if message.get("role") == "tool" and isinstance(message.get("content"), str):
+            for ref in re.findall(r"tool_outputs/[A-Za-z0-9_.-]+", message["content"]):
+                kept.append(f"detail_ref={ref}")
+        if len(kept) >= 20:
+            break
+    kept = list(dict.fromkeys(kept))[:20]
     if not kept:
         return ""
     return (

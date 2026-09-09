@@ -440,6 +440,8 @@ class AgentContext:
     analysis_state: object | None = None
     turn_state: object | None = None
     turn_receipt_ids: list[str] = field(default_factory=list)
+    turn_requirement_ids: list[str] = field(default_factory=list)
+    requirement_revision: int = 0
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
     audience: str = "general"  # "general" | "business" | "analyst" | "manager" (per-turn)
     detected_proficiency: str = ""  # cached auto-detection; user_proficiency stays "auto"
@@ -500,6 +502,8 @@ def _create_agent_context_type(
         analysis_state: object | None = None,
         turn_state: object | None = None,
         turn_receipt_ids: list[str] | None = None,
+        turn_requirement_ids: list[str] | None = None,
+        requirement_revision: int = 0,
         user_proficiency: str = "auto",
         audience: str = "general",
         detected_proficiency: str = "",
@@ -514,6 +518,8 @@ def _create_agent_context_type(
         object.__setattr__(self, "analysis_state", analysis_state)
         object.__setattr__(self, "turn_state", turn_state)
         object.__setattr__(self, "turn_receipt_ids", [] if turn_receipt_ids is None else list(turn_receipt_ids))
+        object.__setattr__(self, "turn_requirement_ids", [] if turn_requirement_ids is None else list(turn_requirement_ids))
+        object.__setattr__(self, "requirement_revision", int(requirement_revision or 0))
         object.__setattr__(self, "turn_intent", turn_intent)
         object.__setattr__(self, "user_proficiency", user_proficiency)
         object.__setattr__(self, "audience", audience)

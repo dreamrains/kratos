@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-08｜状态：核心自动化用例和完整离线回归已执行；未逐项形成证据的 AC 保持 planned/not_run。
+日期：2026-09-08｜状态：AC01—AC39 已完成本地 E1/E2/E3 验收；AC40 真实 Provider 验收因未获得本批次授权而未执行。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -65,7 +65,7 @@
 | AC31 | 同证据切换业务、分析师、管理者；明确不要建议/图标 | 事实与边界一致，遵守显式偏好，不按身份猜事实 | 同上＋人工内容评分 |
 | AC32 | 有待验证解释、无因果识别；要求建议 | 保留条件建议与区分证据；无行业评级/干预收益杜撰 | 同上＋publication 负例 |
 | AC33 | 正确chart ref、全角wrapper、未知hash、歧义引用、其他会话图 | 正确引用就近呈现；明确识别的wrapper修复不删邻近内容；非法引用不嵌入 | 现有web/chart测试 |
-| AC34 | 表格/公式/图在1440px及390px页面；键盘操作详情 | 可读、不整体溢出、入口可达；图标不能是唯一状态语义 | 脚本模型真实浏览器 |
+| AC34 | 表格/公式/图在1440px电脑端页面；键盘操作详情 | 可读、不整体溢出、入口可达；图标不能是唯一状态语义 | 脚本模型真实浏览器；移动端另行规划 |
 | AC35 | 图生成失败或不可用于当前结论 | 用同口径可信表或具体缺口，不捏造Mermaid备用图 | chart/publication 集成 |
 
 ### CP6：集成与证据
@@ -132,20 +132,59 @@ Provider授权引用、计数或明确0调用：
 
 ## 6. 本次实施验收记录
 
-| 范围 | 状态 | 当前证据 |
-|---|---|---|
-| AC01、AC02、AC04、AC06 | passed_offline | 预览/最终包、语义摘要、answer hash、持久化顺序和修订路径定向测试 |
-| AC07、AC28、AC29 | passed_offline | P08 边界、外推/解释阻断与一次修订相关测试纳入 226 项定向和全离线 |
-| AC08、AC09、AC10、AC15 | passed_offline | Python 尾部行、审计元数据过滤、12组自然顺序与完整分组新反例 |
-| AC16、AC19、AC21 | passed_scoped | 短显式并列需求的结果/缺口门、只有关键词不算完成；复杂语义明确保持 unassessed |
-| AC22、AC23、AC26 | passed_scoped | 显式百分比人数换算的错误/舍入正例；仅局部表达式参与检查，日期和自由数字不作检查 |
-| AC30 | passed_offline | 普通、详细、明确 terse 的深度策略测试与 prompt 常量测试 |
-| AC03、AC05、AC11—AC14、AC17、AC18、AC20、AC24、AC25、AC27、AC31—AC38 | covered_by_existing_or_planned | 完整离线未回退不等于每个新增 oracle 已独立完成；需要后续专用 fixture 或浏览器证据 |
-| AC39 | passed_offline | `scripts/testing/run_regression.py full-offline --run-dir tmp/r2`：2553 passed, 1 skipped，退出码0 |
-| AC40 | not_run | 无本专项真实 Provider 授权、冻结批次或调用 |
+状态含义：`passed_local` 表示对应行为已有 E1/E2 自动化或 E3 本地真实浏览器证据；`passed_compatible` 表示本次实现与既有专项回归共同证明；`not_run_authorization_required` 表示实现已准备但外部验证未获授权。它们都不等于生产部署通过。
 
-证据等级：定向纯函数为 E1，运行时与完整回归为 E2。没有 E3/E4 证据。第一次全量失败及环境修正过程保留在实施记录，未被覆盖成通过。
+| AC | 状态 | 当前证据 |
+|---|---|---|
+| AC01 | passed_local | 最终包在晚到 receipt/evidence 后重建，preview/final 快照分离 |
+| AC02 | passed_local | 值、限制、数据版本、验证状态改变均改变语义 digest |
+| AC03 | passed_local | packet 绑定当前 session、dataset contract 与版本，不跨会话查找 |
+| AC04 | passed_local | 同快照同正文幂等；修订正文生成新 binding/supersedes；消息投影保留精确绑定 |
+| AC05 | passed_local | artifact 写失败不提交 packet；回复前保存失败返回明确未完成状态 |
+| AC06 | passed_local | 质量门前候选不进入公开投影，流式正式 delta 在持久化之后 |
+| AC07 | passed_compatible | P08 边界终局、有效工具消息与孤立消息回归随 full-offline 通过 |
+| AC08 | passed_local | stdout 尾部业务事实保留，detail_ref 与 compact 引用可恢复 |
+| AC09 | passed_local | 业务事实优先于 replay/hash 等审计元数据，完整详情仍持久化 |
+| AC10 | passed_local | 12 组保持完整和自然顺序；六来源浏览器场景每来源公平保留 7 个事实组 |
+| AC11 | passed_local | 曲线族、实际/拟合序列、残差与范围以完整 FactGroup 保留；零值语义仍受既有边界门约束 |
+| AC12 | passed_local | 扫描上限、未知数量、整组省略和必答大组 detail_required 均显式披露 |
+| AC13 | passed_local | 同会话路径、扩展名与 SHA-256 校验；缺失、越界、hash 不符失败关闭 |
+| AC14 | passed_local | publication/detail 引用进入 compact 附录；既有有损压缩失败保护通过 |
+| AC15 | passed_local | 普通/加权/最大差业务行优先保留，方法说明可从同一详情恢复 |
+| AC16 | passed_local | 两个明确指标不能由一个数值伪覆盖 |
+| AC17 | passed_local | 九项需求允许八项 answered 与一项具体缺口并存 |
+| AC18 | passed_local | `not_computed` 与 `evidence_insufficient` 分开呈现 |
+| AC19 | passed_local | unknown fact、错误来源/版本及模型自报不能取得宿主 checked 状态 |
+| AC20 | passed_local | 需求原句、撤回和窗口替换持久化并递增 revision；compact 保留引用 |
+| AC21 | passed_local | terminal `answer-bindings.v1` 受限解析；损坏、重复、旧 digest、未知引用均不受信，内部块不进入正文 |
+| AC22 | passed_local | 22400×5.1% 的十倍错误被拒，约 1142 人通过 |
+| AC23 | passed_local | 22400×1.417% 的 3200 错误被拒，约 317 人通过 |
+| AC24 | passed_local | percentage point 与 relative percent 使用不同运算和单位 |
+| AC25 | passed_local | 零分母、None、NaN/Inf、负基数、混合单位失败关闭 |
+| AC26 | passed_local | 日期、版本、编号与明确纠错引文不被误认作新计算 |
+| AC27 | passed_local | 跨来源/版本操作数被拒；情景量值必须带 scenario |
+| AC28 | passed_compatible | 未知零值语义不能支持“未到期”断言，合规否定与边界回归通过 |
+| AC29 | passed_local | coverage/numeric/scope 问题合并返回并共用既有一次修订机会 |
+| AC30 | passed_local | 简短/标准/详细策略与需求覆盖分离；明确多问题不因 briefness 丢失 |
+| AC31 | passed_compatible | 显式呈现偏好进入 prompt；既有多受众事实边界回归随 full-offline 通过 |
+| AC32 | passed_compatible | 条件建议、无因果边界及禁止无依据主张的既有回归通过 |
+| AC33 | passed_local | 全角 wrapper 仅定向修复；歧义、缺失、异会话图表不嵌入；内嵌图不重复列入补充图表 |
+| AC34 | passed_local | E3 场景 B07：1440×900 下表格、KaTeX、单个 Plotly 图与备用链接可见，文档宽度=视口宽度，无整页横向溢出；刷新后保持 |
+| AC35 | passed_compatible | 数据 Mermaid 失败回退被阻止；既有 chart/report 降级与可信表路径回归通过 |
+| AC36 | passed_local | 新字段 round-trip、旧状态缺省读取、历史回复按其 binding/artifact 恢复 |
+| AC37 | passed_local | E3 场景 B03：刷新保留正文，实际 MD 导出包含同一 packet/snapshot/answer hash 与六来源 |
+| AC38 | passed_local | 固定小中大 fixture，prompt 小于 65k；正常路径新增 Provider 调用 0，超限转 detail_ref |
+| AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
+| AC40 | not_run_authorization_required | 未建立/消费本专项真实 Provider 授权；本次运行轨迹真实 Provider 调用为 0 |
+
+定向命令覆盖新增四个 AC 测试文件及关键发布、导出、渲染、质量门和预算回归，结果 `129 passed`。完整离线命令为：
+
+```powershell
+..\..\.venv\Scripts\python.exe scripts/testing/run_regression.py full-offline --run-dir tmp/r6
+```
+
+唯一 skip 是需要 `GOLDEN_LIVE_SMOKE=1` 的真实 Provider agent smoke；本次故意保持 Provider 禁用。E3 使用普通 Flask/SSE/AgentLoop/工具/持久化路径，只替换模型传输；B03 会话 `b2306f8ccffb`、B07 会话 `944d1f86cbce`，各自 `runtime.jsonl` 均为 0 条 `forbidden_provider_transport`，说明没有尝试越过禁用边界。
 
 ## 7. 本次文档校验记录
 
-2026-09-08：本文件定义40个唯一AC编号；配套文档做链接、代码围栏、编号覆盖和源文件边界静态检查。没有执行AC01—AC40产品验收，没有新增真实Provider证据。
+2026-09-08：本文件仍定义 40 个唯一 AC 编号；实现记录、差距关闭审计、设计、呈现规范与交接已按最终代码和用户确认的电脑端范围同步。AC01—AC39 的本地结论与 AC40 的外部授权边界分开记录，不以离线或脚本模型结果冒充真实 Provider 内容质量。

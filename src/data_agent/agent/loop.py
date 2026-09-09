@@ -985,6 +985,23 @@ class AgentLoop:
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
         try:
+            import hashlib
+            from data_agent.agent.publication_synthesis import update_requirement_lifecycle
+
+            source_ref = "msg_" + hashlib.sha256(user_input.encode("utf-8")).hexdigest()[:12]
+            requirement_ids = update_requirement_lifecycle(
+                state,
+                user_input,
+                source_message_ref=source_ref,
+            )
+            self.context.turn_requirement_ids = requirement_ids
+            self.context.requirement_revision = int(getattr(state, "requirement_revision", 0) or 0)
+        except Exception as exc:
+            logger.warning(
+                "Answer requirement lifecycle update skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+        try:
             from data_agent.agent.trust_workflow_runtime import refine_turn_intent_with_state
 
             intent = refine_turn_intent_with_state(user_input, intent, state)
@@ -1370,6 +1387,7 @@ class AgentLoop:
         self._turn_synthesis_policy_instruction = ""
         self._turn_publication_packet = None
         self.context.turn_receipt_ids = []
+        self.context.turn_requirement_ids = []
 
     def _has_substantive_turn_evidence(self) -> bool:
         """Whether this turn has executed a computation suitable for synthesis."""
@@ -1509,6 +1527,26 @@ class AgentLoop:
                     if isinstance(structured_data.get(key), str):
                         dataset_refs.append(structured_data[key])
             dataset_refs = list(dict.fromkeys(dataset_refs))
+            detail_ref: dict[str, str] = {}
+            if structured_data is not None:
+                try:
+                    from data_agent.tools._utils import persist_detail
+
+                    detail_path = persist_detail(self.session_id, str(tool_call_id or tool_name), structured_data)
+                    detail_ref = {
+                        "path": f"tool_outputs/{detail_path.name}",
+                        "sha256": "sha256:" + hashlib.sha256(detail_path.read_bytes()).hexdigest(),
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "Structured result detail persistence failed",
+                        extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
+                    )
+            publication_groups = self._publication_groups_for_tool(
+                structured_data,
+                receipt_id=str(tool_call_id or ""),
+                detail_ref=detail_ref,
+            )
             receipt = add_receipt({
                 "tool_name": tool_name,
                 "tool_call_id": str(tool_call_id or ""),
@@ -1527,9 +1565,16 @@ class AgentLoop:
                 ).hexdigest(),
                 "result_preview": (tool_msg_content or "")[:2000],
                 "publication_facts": self._publication_facts_for_tool(structured_data),
+                "publication_fact_groups": publication_groups.get("groups", []),
+                "publication_scan": publication_groups.get("scan", {}),
+                "detail_ref": detail_ref,
                 "publication_contract": publication_contract(tool_name, structured_data, args=args),
             })
             receipt_id = str(receipt.get("id") or "")
+            for group in receipt.get("publication_fact_groups") or []:
+                if isinstance(group, dict):
+                    group["receipt_id"] = receipt_id
+                    group["scope_ref"] = receipt_id
             if receipt_id:
                 self.context.turn_receipt_ids.append(receipt_id)
             turn_state = getattr(self.context, "turn_state", None)
@@ -1557,6 +1602,26 @@ class AgentLoop:
             return extract_publication_facts(structured_data, max_facts=500)
         except Exception:
             return []
+
+    @staticmethod
+    def _publication_groups_for_tool(
+        structured_data: dict | None,
+        *,
+        receipt_id: str = "",
+        detail_ref: dict | None = None,
+    ) -> dict:
+        if not isinstance(structured_data, dict):
+            return {"groups": [], "scan": {"scan_incomplete": False, "omitted_count": 0}}
+        try:
+            from data_agent.agent.publication_synthesis import extract_publication_fact_groups
+
+            return extract_publication_fact_groups(
+                structured_data,
+                receipt_id=receipt_id,
+                detail_ref=detail_ref,
+            )
+        except Exception:
+            return {"groups": [], "scan": {"scan_incomplete": True, "unknown_count": True}}
 
     def _prepare_publication_packet(
         self,
@@ -1586,6 +1651,7 @@ class AgentLoop:
                 user_input=user_input,
                 substantive_tools=_SUBSTANTIVE_TOOLS,
                 receipt_ids=receipt_ids,
+                requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
                 phase=phase,
             )
             self._turn_publication_packet = packet
@@ -1609,14 +1675,65 @@ class AgentLoop:
             committed["answer_sha256"] = "sha256:" + hashlib.sha256(
                 final_text.encode("utf-8")
             ).hexdigest()
+            binding_seed = f"{committed.get('snapshot_digest', '')}|{committed['answer_sha256']}"
+            committed["snapshot_packet_id"] = str(packet.get("id") or "")
+            committed["id"] = "pub_" + hashlib.sha256(binding_seed.encode("utf-8")).hexdigest()[:12]
+            state = getattr(self.context, "analysis_state", None)
+            same_snapshot = [
+                item for item in (getattr(state, "publication_packets", []) or [])
+                if isinstance(item, dict) and item.get("snapshot_digest") == committed.get("snapshot_digest")
+                and item.get("answer_sha256")
+            ]
+            same_answer = next((item for item in same_snapshot if item.get("answer_sha256") == committed["answer_sha256"]), None)
+            if same_answer:
+                committed["content_revision"] = int(same_answer.get("content_revision") or 1)
+            else:
+                committed["content_revision"] = 1 + max(
+                    [int(item.get("content_revision") or 0) for item in same_snapshot] or [0]
+                )
+                if same_snapshot:
+                    committed["supersedes_packet_id"] = str(same_snapshot[-1].get("id") or "")
         self._turn_publication_packet = committed
         state = getattr(self.context, "analysis_state", None)
         if state is not None:
+            # The receipt artifact is part of the publication contract.  Write
+            # it before adding the packet to live state so a failed write
+            # cannot be mistaken for a complete, exportable publication.
+            self._register_publication_receipt_artifact(committed, state)
             add_packet = getattr(state, "add_publication_packet", None)
             if callable(add_packet):
                 add_packet(committed)
-            self._register_publication_receipt_artifact(committed, state)
         return committed
+
+    def _persist_accepted_answer(self, assistant_msg: dict, final_text: str) -> str | None:
+        """Bind and persist one accepted terminal answer before exposure."""
+        packet = getattr(self, "_turn_publication_packet", None)
+        state = getattr(self.context, "analysis_state", None)
+        prior_packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
+        try:
+            if isinstance(packet, dict) and packet.get("status") == "ready":
+                committed = self._commit_publication_packet(packet, final_text)
+                assistant_msg["publication_packet_id"] = str(committed.get("id") or "")
+                assistant_msg["publication_snapshot_digest"] = str(committed.get("snapshot_digest") or "")
+                assistant_msg["answer_sha256"] = str(committed.get("answer_sha256") or "")
+                assistant_msg["publication_artifact_path"] = str(committed.get("publication_artifact_path") or "")
+            assistant_msg["content"] = final_text
+            self.messages.append(assistant_msg)
+            self._auto_save()
+            return None
+        except Exception as exc:
+            if self.messages and self.messages[-1] is assistant_msg:
+                self.messages.pop()
+            if state is not None:
+                state.publication_packets[:] = prior_packets
+            logger.error(
+                "Accepted answer persistence failed",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+            return (
+                "最终回答已生成，但正文与来源绑定未能可靠保存，因此本轮未发布完整成功结果。"
+                f"可恢复失败：{type(exc).__name__}: {exc}"
+            )
 
     def _register_publication_receipt_artifact(self, packet: dict, state: Any) -> None:
         """Persist an openable receipt artifact for the published packet (B03).
@@ -1632,31 +1749,26 @@ class AgentLoop:
         packet_id = str(packet.get("id") or "")
         if not packet_id or packet_id in receipted:
             return
-        try:
-            from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
-            from data_agent.agent.workbench_view import build_workbench_view
-            from data_agent.tools.report import _write_report_artifact
+        from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+        from data_agent.agent.workbench_view import build_workbench_view
+        from data_agent.tools.report import _write_report_artifact
 
-            workbench = build_workbench_view(state)
-            content = render_publication_receipt_markdown(
-                packet,
-                pending_findings=workbench.get("pending_findings"),
-                verified_total=workbench.get("verified_total"),
-            )
-            _write_report_artifact(
-                self.session_id,
-                f"计算来源说明 {packet_id}",
-                content,
-                "md",
-                "publication_receipt",
-                "publication",
-            )
-            receipted.add(packet_id)
-        except Exception as exc:
-            logger.warning(
-                "Publication receipt artifact skipped",
-                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
-            )
+        workbench = build_workbench_view(state)
+        content = render_publication_receipt_markdown(
+            packet,
+            pending_findings=workbench.get("pending_findings"),
+            verified_total=workbench.get("verified_total"),
+        )
+        artifact_path = _write_report_artifact(
+            self.session_id,
+            f"计算来源说明 {packet_id}",
+            content,
+            "md",
+            "publication_receipt",
+            "publication",
+        )
+        packet["publication_artifact_path"] = artifact_path
+        receipted.add(packet_id)
 
     def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
         """Validate the answer against persisted evidence without leaking audit records."""
@@ -1664,9 +1776,23 @@ class AgentLoop:
         if not isinstance(packet, dict) or packet.get("status") != "ready":
             return final_text, None
         try:
-            from data_agent.agent.publication_synthesis import validate_final_narrative
+            from data_agent.agent.publication_synthesis import (
+                apply_answer_binding_coverage,
+                parse_answer_bindings,
+                validate_final_narrative,
+            )
 
-            error = validate_final_narrative(final_text, packet)
+            visible_text, bindings, binding_issues = parse_answer_bindings(final_text, packet)
+            if bindings is not None:
+                packet["answer_bindings"] = bindings
+                apply_answer_binding_coverage(packet, bindings)
+            error = validate_final_narrative(visible_text, packet)
+            if binding_issues:
+                binding_error = "\n".join(
+                    f"[{issue['code']}] {issue['reason']}（位置：{issue['span']}）"
+                    for issue in binding_issues
+                )
+                error = "\n".join(filter(None, [error, binding_error]))
             if error:
                 return None, error
             # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
@@ -1674,7 +1800,7 @@ class AgentLoop:
             turn_state = getattr(self.context, "turn_state", None)
             if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
                 turn_state.pending_fallback_resolution = False
-            return final_text.rstrip(), None
+            return visible_text.rstrip(), None
         except Exception as exc:
             logger.warning(
                 "Publication synthesis rendering skipped",
@@ -2890,22 +3016,26 @@ class AgentLoop:
                     return
                 final_text = published_text or final_text
                 assistant_msg["content"] = final_text
-                self.messages.append(assistant_msg)
                 pending_text_events = ([separator_event] if separator_event else []) + [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    rejected["publication_pending_confirmation"] = True
+                    self.messages.append(rejected)
                     yield self._suspended_event(blocked_confirmation)
                     return
-                packet = getattr(self, "_turn_publication_packet", None)
-                if isinstance(packet, dict) and packet.get("status") == "ready":
-                    self._commit_publication_packet(packet, final_text)
-                # Persist the final message and its state before the client
-                # can render the final delta or receive turn_end.
                 self._maybe_archive(user_input, final_text)
-                self._auto_save()
+                persistence_error = self._persist_accepted_answer(assistant_msg, final_text)
+                if persistence_error:
+                    yield {"type": "error", "message": persistence_error}
+                    return
                 for ev in pending_text_events:
                     yield ev
                 return
@@ -3311,16 +3441,22 @@ class AgentLoop:
                     return FinalResponse(content=publication_error)
                 final_text = published_text or final_text
                 assistant_msg["content"] = final_text
-                self.messages.append(assistant_msg)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    rejected["publication_pending_confirmation"] = True
+                    self.messages.append(rejected)
                     return blocked_confirmation
-                packet = getattr(self, "_turn_publication_packet", None)
-                if isinstance(packet, dict) and packet.get("status") == "ready":
-                    self._commit_publication_packet(packet, final_text)
+                persistence_error = self._persist_accepted_answer(assistant_msg, final_text)
+                if persistence_error:
+                    return FinalResponse(content=persistence_error)
                 return FinalResponse(content=final_text)
 
             self.messages.append(assistant_msg)

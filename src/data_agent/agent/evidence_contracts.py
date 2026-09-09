@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
@@ -21,6 +22,11 @@ CANONICAL_EVIDENCE_FIELDS = (
     "evidence_requirement",
     "measurements",
 )
+
+DERIVED_OPERATIONS = {
+    "sum", "difference", "product", "ratio", "percent_change",
+    "percentage_point_change",
+}
 
 MEASUREMENT_FIELDS = (
     "metric",
@@ -190,9 +196,112 @@ def validate_stage3c0b_evidence(
         if field_name in normalized:
             normalized[field_name] = _text(normalized[field_name])
     normalized["measurements"] = normalized_measurements
+    derived = record.get("derived_measurements")
+    if derived is not None:
+        validation = validate_derived_measurements(derived, normalized_measurements)
+        if not validation.ok:
+            return validation
+        normalized["derived_measurements"] = validation.record.get("derived_measurements", [])
     normalized["id"] = evidence_id_for(
         normalized.get("plan_id"),
         normalized.get("step_id"),
         normalized.get("claim_key"),
     )
     return EvidenceValidationResult(True, record=normalized)
+
+
+def _decimal(value: Any) -> Decimal | None:
+    try:
+        number = Decimal(str(value))
+        return number if number.is_finite() else None
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _measurement_ref(measurement: dict[str, Any], index: int) -> str:
+    return str(measurement.get("id") or measurement.get("metric") or f"measurement_{index}")
+
+
+def validate_derived_measurements(
+    derived: Any,
+    measurements: list[dict[str, Any]],
+) -> EvidenceValidationResult:
+    """Recompute a closed set of operations; arbitrary expressions are never executed."""
+    if not isinstance(derived, list):
+        return _error("invalid_derived_measurements", "derived_measurements must be an array.")
+    operands = {
+        _measurement_ref(item, index): item
+        for index, item in enumerate(measurements)
+        if isinstance(item, dict)
+    }
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(derived):
+        if not isinstance(item, dict):
+            return _error("invalid_derived_measurement", "Each derived measurement must be an object.", index=index)
+        operation = str(item.get("operation") or "")
+        refs = item.get("operand_refs")
+        if operation not in DERIVED_OPERATIONS or not isinstance(refs, list) or not refs:
+            return _error("invalid_derived_operation", "Derived operation or operand_refs is invalid.", index=index)
+        if any(str(ref) not in operands for ref in refs):
+            return _error("unbound_derived_operand", "Derived operand does not belong to this EvidenceRecord.", index=index)
+        source = [operands[str(ref)] for ref in refs]
+        values = [_decimal(entry.get("value")) for entry in source]
+        if any(value is None for value in values):
+            return _error("invalid_derived_operand", "Derived operands must be finite numeric values.", index=index)
+        scopes = {
+            (str(entry.get("population_scope") or ""), str(entry.get("time_scope") or ""), str(entry.get("unit") or ""))
+            for entry in source
+        }
+        if len({scope[:2] for scope in scopes}) != 1:
+            return _error("derived_scope_mismatch", "Derived operands have different population or time scopes.", index=index)
+        identities = {
+            str(entry.get("data_identity") or entry.get("source_version") or "")
+            for entry in source
+            if entry.get("data_identity") or entry.get("source_version")
+        }
+        if len(identities) > 1:
+            return _error("derived_source_mismatch", "Derived operands belong to different data versions.", index=index)
+        units = {str(entry.get("unit") or "") for entry in source}
+        if operation in {"sum", "difference", "percent_change", "percentage_point_change"} and len(units) != 1:
+            return _error("derived_unit_mismatch", "Derived operands have incompatible units.", index=index)
+        nums = [value for value in values if value is not None]
+        try:
+            if operation == "sum":
+                expected = sum(nums, Decimal(0))
+            elif operation == "difference":
+                expected = nums[0] - nums[1]
+            elif operation == "product":
+                expected = nums[0]
+                for number in nums[1:]:
+                    expected *= number
+            elif operation == "ratio":
+                if len(nums) != 2 or nums[1] == 0:
+                    raise ZeroDivisionError
+                expected = nums[0] / nums[1]
+            elif operation == "percent_change":
+                if len(nums) != 2 or nums[0] <= 0:
+                    raise ZeroDivisionError
+                expected = (nums[1] - nums[0]) / nums[0] * Decimal(100)
+            else:
+                if len(nums) != 2:
+                    return _error("invalid_derived_arity", "percentage_point_change requires two operands.", index=index)
+                expected = (nums[1] - nums[0]) * Decimal(100)
+        except (ZeroDivisionError, IndexError):
+            return _error("undefined_derived_measurement", "Derived operation is undefined for these operands.", index=index)
+        reported = _decimal(item.get("result"))
+        if reported is None:
+            return _error("invalid_derived_result", "Derived result must be finite.", index=index)
+        tolerance = max(Decimal("0.000000001"), abs(expected) * Decimal("0.000001"))
+        if abs(reported - expected) > tolerance:
+            return _error(
+                "derived_result_mismatch",
+                "Derived result does not match the host recomputation.",
+                index=index,
+                expected=format(expected, "f"),
+            )
+        normalized_item = dict(item)
+        normalized_item["operation"] = operation
+        normalized_item["operand_refs"] = [str(ref) for ref in refs]
+        normalized_item["result"] = format(expected, "f")
+        normalized.append(normalized_item)
+    return EvidenceValidationResult(True, record={"derived_measurements": normalized})
