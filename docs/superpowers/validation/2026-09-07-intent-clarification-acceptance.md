@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-07｜版本：1.0｜状态：**验收规格，所有实施用例未执行**。
+日期：2026-09-09｜版本：1.1｜状态：**IC0—IC3 已完成本地实现与 E1/E2 回归；IC4 的 E3 浏览器矩阵及 IC5/E4 真实 Provider 未执行**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -125,7 +125,7 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 
 ## 9. 执行命令与结果记录
 
-以下为目标分支复核脚本存在后使用的命令，本次未执行。省略 `--run-dir` 让 runner 创建新的隔离目录；避免复用历史产物。
+以下为后续在合并后 `main` 上继续使用的入口。整合阶段已使用两个新的隔离 run-dir 执行定向集合；完整离线也使用新目录，未复用历史产物。
 
 ```powershell
 .venv\Scripts\python.exe scripts/testing/run_regression.py full-offline tests/test_method_playbooks.py tests/test_question_need_detector.py tests/test_analysis_entry.py tests/test_confirmation_policy.py tests/test_confirmation_runtime.py tests/test_confirmation_continuation.py
@@ -138,8 +138,11 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
-| 本文规格检查 | 文档阶段核查，不属于产品验收 | 文档提交及交付说明 |
-| E1 / E2 / E3 | not_run | 无 |
-| E4 | not_authorized / not_run | 无 |
+| 本文规格检查 | completed | 文档状态已按实际实现和整合证据更新 |
+| E1 / E2（IC0—IC3） | passed_local | `tmp/integration-20260909-target-intent`：301 passed；`vp-analysis-value@d6e4780` 的既有专项完整离线为 2569 tests、0 failures、1 skipped |
+| 整合相关内容定向 | passed_local | `tmp/integration-20260909-target-content`：129 passed |
+| 整合 full-offline | accepted_for_merge_with_environment_exception | 首次 2492 passed、56 failed、62 skipped：缺 Git 忽略夹具及 Windows 长路径；缩短路径并补齐夹具后为 2608 passed、1 failed、1 skipped，唯一失败为多复制清单外 `游戏C改版.xlsx`；用户接受当前结果并要求合入 `main`，本项不记作全绿 |
+| E3 / IC4 | not_run | B01—B06 尚未在合并后源码上执行；后续在 `main` 继续 |
+| E4 / IC5 | not_authorized / not_run | 未冻结或调用真实 Provider |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。
