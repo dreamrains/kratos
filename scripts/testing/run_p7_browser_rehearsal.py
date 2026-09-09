@@ -81,6 +81,43 @@ def _write_fixtures(run_dir: Path) -> None:
         )
 
 
+def _seed_legacy_confirmation_fixture() -> None:
+    """Create the portable F5 legacy session used by IC-B05.
+
+    The session is written through the production serializers.  The browser
+    then loads it normally; no test-only route or alternate confirmation store
+    is introduced.
+    """
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.session.history import save_session
+
+    session_id = "ic-b05-legacy"
+    save_session(
+        [{
+            "role": "user",
+            "content": "旧会话包含一个通用方法审批，恢复后应退役并重新判断真实业务缺口。",
+        }],
+        session_id,
+    )
+    state = AnalysisSessionState(session_id=session_id, data_state="data_loaded")
+    state.pending_confirmations = [{
+        "id": "legacy_method_pending",
+        "status": "pending",
+        "source": "method_playbook",
+        "confirmation_type": "method_confirmation",
+        "question": "是否按 Retention & Lifecycle 方法继续？",
+        "options": [
+            {"label": "按此方法继续", "value": "confirm_method"},
+            {"label": "先补充目标口径", "value": "clarify_scope"},
+        ],
+        "blocking_reason": "历史模板要求确认方法。",
+        "state_updates": {
+            "method_confirmation": {"playbook_id": "retention_lifecycle"},
+        },
+    }]
+    state.save()
+
+
 class RunTrace:
     def __init__(self, run_dir: Path) -> None:
         self.path = run_dir / "runtime.jsonl"
@@ -241,7 +278,7 @@ class ScriptedClient:
                 return self._response("渠道 A 的 D30 留存预计为 5%。")
             return self._response("当前只有 D1 至 D7 的观察，不能预测 D30；需补充至第 30 天的数据后再验证。")
 
-        if marker == "B03":
+        if marker in {"B03", "CONTENT-B03"}:
             if step == 0:
                 calls: list[tuple[str, dict]] = []
                 for number in range(1, 7):
@@ -267,7 +304,7 @@ class ScriptedClient:
                 "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
             )
 
-        if marker == "B07-PRESENTATION":
+        if marker in {"B07-PRESENTATION", "CONTENT-B07"}:
             if step == 0:
                 return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "presentation_sales"})])
             if step == 1:
@@ -292,6 +329,114 @@ class ScriptedClient:
                 "［［chart：渠道金额对比］］\n\n"
                 "该结果只描述当前导入的 12 条记录，不能外推总体。"
             )
+
+        if marker == "IC-B01":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-RET7.csv", "name": "ic_retention"})])
+            if step == 1:
+                return self._response(calls=[("curve_fitting", {"name": "ic_retention", "x_col": "day", "y_col": "retention"})])
+            return self._response(
+                "已完成观测范围内的留存曲线拟合：D7 留存为 10%。"
+                "结果只覆盖 D1 至 D7，不包含 D30 外推，也无需用户批准内部拟合方法。"
+            )
+
+        if marker == "IC-B02":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "ic_sales"})])
+            if step == 1:
+                return self._response(calls=[(
+                    "transform_data",
+                    {
+                        "name": "ic_sales",
+                        "operation": "group_aggregate",
+                        "group_by": ["channel"],
+                        "aggregations": [{"column": "amount", "functions": ["sum", "count", "mean"]}],
+                        "save_as": "ic_sales_summary",
+                    },
+                )])
+            return self._response(
+                "九项需求逐项结果：\n"
+                "1. 最终收益：当前导入订单金额合计 120。\n"
+                "2. 复购率：not_computed，当前夹具没有跨订单复购标识。\n"
+                "3. 购买偏好：evidence_insufficient，只有单一渠道。\n"
+                "4. 付费频次：当前 12 条记录。\n"
+                "5. 付费 ARPU：evidence_insufficient，缺少独立用户分母。\n"
+                "6. 人均付费：evidence_insufficient，缺少独立用户分母。\n"
+                "7. 日均付费：当前 12 天合计 120，日均 10。\n"
+                "8. 单次付费：当前 12 笔均值 10。\n"
+                "9. 金额区间分布：当前 12 笔均为 10。\n"
+                "连续付费提升没有对照，不能写成省钱卡造成的因果效果。"
+            )
+
+        if marker in {"IC-B03", "IC-B04-REUSE"}:
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "净收益应采用哪种成本范围？",
+                    "options": [
+                        {"label": "仅代金券成本", "description": "只扣除代金券直接成本。"},
+                        {"label": "代金券及渠道成本", "description": "同时扣除渠道成本。"},
+                    ],
+                    "confirmation_type": "metric_scope",
+                    "blocking_reason": "成本范围会改变净收益口径。",
+                })])
+            return self._response(
+                "已复用当前业务范围内有效的成本口径回答；没有把它扩展成整个方法的永久许可。"
+            )
+
+        if marker == "IC-B04-CHANGE":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "比较窗口改为 7 天还是保留 30 天？",
+                    "options": [
+                        {"label": "7 天", "description": "按新的 7 天窗口计算。"},
+                        {"label": "30 天", "description": "保留原 30 天窗口。"},
+                    ],
+                    "confirmation_type": "time_window",
+                    "blocking_reason": "窗口变化会改变比较范围和结果。",
+                })])
+            return self._response("已按新选择的窗口继续；旧成本范围回答没有替代这次窗口决定。")
+
+        if marker == "IC-B05":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "复购率分母应使用全部购卡用户还是到期用户？",
+                    "options": [
+                        {"label": "全部购卡用户", "description": "以全部购卡用户为分母。"},
+                        {"label": "到期用户", "description": "只以已到期用户为分母。"},
+                    ],
+                    "confirmation_type": "metric_scope",
+                    "blocking_reason": "分母会实质改变复购率。",
+                })])
+            return self._response(
+                "真实分母问题已被跳过，因此没有把 skip 当成批准，也没有输出确定复购率；"
+                "旧通用方法审批仅按 policy_retired 保留审计。"
+            )
+
+        if marker == "IC-B06-METHOD":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "是否使用留存方法继续？",
+                    "options": [
+                        {"label": "使用", "description": "批准内部方法。"},
+                        {"label": "不使用", "description": "拒绝内部方法。"},
+                    ],
+                    "confirmation_type": "method_confirmation",
+                    "blocking_reason": "模型声称内部方法需要批准。",
+                })])
+            return self._response("内部方法许可问题已非阻塞处理，工具消息已闭合，任务继续。")
+
+        if marker == "IC-B06-SEMANTIC":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "应按自然周还是最近 7 天统计？",
+                    "options": [
+                        {"label": "自然周", "description": "按周一至周日。"},
+                        {"label": "最近 7 天", "description": "按滚动七天。"},
+                    ],
+                    "confirmation_type": "time_window",
+                    "blocking_reason": "时间口径会改变当前统计结果。",
+                })])
+            return self._response("已按用户选择的真实时间口径恢复，SSE 终态保持唯一。")
 
         if marker == "B04":
             compare_up = {
@@ -385,7 +530,7 @@ class ScriptedClient:
             if message.get("role") != "user":
                 continue
             found = re.search(
-                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION))】",
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC))】",
                 str(message.get("content") or ""),
             )
             if found:
@@ -405,6 +550,7 @@ def main() -> None:
     run_dir.mkdir(parents=True)
     _configure_environment(run_dir)
     _write_fixtures(run_dir)
+    _seed_legacy_confirmation_fixture()
     trace = RunTrace(run_dir)
     trace.append("server_start", provider_enabled=False, port=args.port)
 
