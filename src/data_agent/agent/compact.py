@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,8 @@ logger = get_logger("compact")
 PERSIST_THRESHOLD = 15_000   # 超过此字符数的工具输出持久化到磁盘
 PREVIEW_CHARS = 2_000        # 持久化后保留的预览字符数
 KEEP_RECENT = 8              # 微压缩时保留最近 N 个工具结果
+
+_COMPACTED_MARKER = "[Compacted:"
 
 
 @dataclass
@@ -45,15 +49,21 @@ def _session_transcripts_dir(session_id: str) -> Path:
     return d
 
 
+def _content_addressed_path(out_dir: Path, tool_call_id: str, content: str) -> Path:
+    safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:10]
+    return out_dir / f"{safe_id}__{digest}.txt"
+
+
 def persist_large_output(session_id: str, tool_call_id: str, content: str) -> str:
     """大工具输出持久化到磁盘，返回预览标记。"""
     if len(content) <= PERSIST_THRESHOLD:
         return content
 
     out_dir = _session_tool_outputs_dir(session_id)
-    safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
-    stored_path = out_dir / f"{safe_id}.txt"
-
+    # Content-addressed storage: the same tool id with different content gets
+    # its own file instead of silently reusing the previous body.
+    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
     if not stored_path.exists():
         stored_path.write_text(content, encoding="utf-8")
 
@@ -135,8 +145,29 @@ def _extract_compact_preview(content: str, max_chars: int = 400) -> str:
     return preview
 
 
+def _persist_micro_output(session_id: str, tool_call_id: str, content: str) -> Path | None:
+    """Persist any compacted tool output before lossy replacement.
+
+    Content-addressed: the same tool id with different content stores a new
+    file rather than silently reusing the previous body. A failed or
+    unverifiable write returns None and the caller must keep the original
+    message content — no reliable copy, no compaction.
+    """
+    out_dir = _session_tool_outputs_dir(session_id)
+    stored_path = _content_addressed_path(out_dir, tool_call_id, content)
+    try:
+        if not stored_path.exists():
+            stored_path.write_text(content, encoding="utf-8")
+        if stored_path.read_text(encoding="utf-8") != content:
+            stored_path.unlink(missing_ok=True)
+            return None
+        return stored_path
+    except OSError:
+        return None
+
+
 def micro_compact(session_id: str, messages: list[dict]) -> None:
-    """微压缩：旧工具结果先持久化，再替换为结论摘要。保留最近 KEEP_RECENT 个。"""
+    """微压缩：旧工具结果先可靠持久化，再替换为带引用的结论摘要。保留最近 KEEP_RECENT 个。"""
     tool_blocks = _collect_tool_result_blocks(messages)
     if len(tool_blocks) <= KEEP_RECENT:
         return
@@ -145,22 +176,20 @@ def micro_compact(session_id: str, messages: list[dict]) -> None:
         content = msg.get("content", "")
         if not isinstance(content, str) or len(content) <= 120:
             continue
+        if content.startswith(_COMPACTED_MARKER):
+            # 已压缩消息的完整原文已落盘；二次压缩不得把旧摘要当原文，
+            # 也不得覆盖已存储的完整结果。
+            continue
 
-        # 先持久化完整内容
         tool_call_id = msg.get("tool_call_id", f"legacy_{id(msg)}")
-        persisted = persist_large_output(session_id, tool_call_id, content)
-
-        safe_id = tool_call_id.replace("/", "_").replace("\\", "_")
-
-        # 如果内容确实被持久化（超出阈值），替换为结论摘要
-        if persisted != content:
-            preview = _extract_compact_preview(content)
-            msg["content"] = (
-                f"[Compacted: {safe_id}.txt]\n{preview}"
-            )
-        else:
-            # 内容不大但超 120 字符，用智能截断
-            msg["content"] = _extract_compact_preview(content, max_chars=200)
+        stored = _persist_micro_output(session_id, tool_call_id, content)
+        if stored is None:
+            # 持久化失败：不进行有损替换
+            continue
+        preview = _extract_compact_preview(content)
+        msg["content"] = (
+            f"[Compacted: {stored.name}]\n{preview}"
+        )
 
 
 def write_transcript(session_id: str, messages: list[dict]) -> Path:
@@ -201,6 +230,21 @@ def _preserved_identity_and_obligations(messages: list[dict]) -> str:
                 break
         if len(kept) >= 12:
             break
+    # Preserve server-owned publication and recoverable-detail references as
+    # identifiers only. They remain context pointers, never evidence by
+    # themselves, and survive an LLM-written history summary.
+    for message in messages:
+        packet_id = message.get("publication_packet_id")
+        snapshot = message.get("publication_snapshot_digest")
+        artifact = message.get("publication_artifact_path")
+        if packet_id:
+            kept.append(f"publication_packet_id={packet_id} snapshot_digest={snapshot or 'unknown'} artifact={artifact or 'unknown'}")
+        if message.get("role") == "tool" and isinstance(message.get("content"), str):
+            for ref in re.findall(r"tool_outputs/[A-Za-z0-9_.-]+", message["content"]):
+                kept.append(f"detail_ref={ref}")
+        if len(kept) >= 20:
+            break
+    kept = list(dict.fromkeys(kept))[:20]
     if not kept:
         return ""
     return (
@@ -351,3 +395,81 @@ def compact_history(
         )},
         {"role": "assistant", "content": "好的，继续。"},
     ] + recent
+
+
+def validate_tool_message_sequence(messages: list[dict]) -> list[str]:
+    """P08-04: Provider 投递前的工具消息成对校验（纯函数）。
+
+    不变量：每条 role=tool 必须有 tool_call_id，且对应此前未闭合的
+    assistant.tool_calls 条目；每个调用至多一个结果；assistant 的
+    tool_calls 必须全部有结果。返回违规描述列表（空＝合法）。
+    """
+    violations: list[str] = []
+    # Tool-call IDs are scoped to one open assistant tool-call block.  A
+    # scripted transport (and a recovered legacy transcript) may reuse an ID
+    # in a later, already-complete round.  That is not an orphan or a duplicate
+    # result; only an ID that is still open may not be repeated.
+    open_calls: set[str] = set()
+    for index, message in enumerate(messages):
+        role = message.get("role")
+        if role == "assistant" and isinstance(message.get("tool_calls"), list):
+            if open_calls:
+                unresolved = ", ".join(sorted(open_calls))
+                violations.append(
+                    f"message[{index}]: assistant tool_calls begin before prior results ({unresolved})"
+                )
+            block_ids: set[str] = set()
+            for call in message["tool_calls"]:
+                call_id = str((call or {}).get("id") or "")
+                if not call_id:
+                    violations.append(f"message[{index}]: assistant tool_call without id")
+                    continue
+                if call_id in block_ids or call_id in open_calls:
+                    violations.append(f"message[{index}]: duplicate tool_call id {call_id}")
+                block_ids.add(call_id)
+                open_calls.add(call_id)
+        elif role == "tool":
+            tool_call_id = str(message.get("tool_call_id") or "")
+            if not tool_call_id:
+                violations.append(f"message[{index}]: tool message without tool_call_id")
+                continue
+            if tool_call_id not in open_calls:
+                violations.append(
+                    f"message[{index}]: orphan tool result {tool_call_id} without a preceding tool_call"
+                )
+                continue
+            open_calls.discard(tool_call_id)
+    for call_id in sorted(open_calls):
+        violations.append(f"assistant tool_call {call_id} has no tool result")
+    return violations
+
+
+def drop_orphan_tool_messages(messages: list[dict]) -> tuple[list[dict], list[str]]:
+    """P08-04: 从 Provider 投递副本中剔除不可配对的 tool 消息。
+
+    原始历史不修改（审计保留）；被剔除的 id 以警告形式返回供日志。
+    仅处理孤立结果；缺失结果由 loop 既有的 _repair_broken_tool_sequence
+    在轮开始时补齐，此处不伪造。
+    """
+    # Pair in sequence rather than collecting every ID globally.  Otherwise an
+    # orphan result could be retained merely because a later, unrelated round
+    # happens to reuse the same call ID.
+    open_calls: set[str] = set()
+    dropped: list[str] = []
+    provider_copy: list[dict] = []
+    for message in messages:
+        if message.get("role") == "assistant" and isinstance(message.get("tool_calls"), list):
+            provider_copy.append(message)
+            for call in message["tool_calls"]:
+                call_id = str((call or {}).get("id") or "")
+                if call_id:
+                    open_calls.add(call_id)
+            continue
+        if message.get("role") == "tool":
+            tool_call_id = str(message.get("tool_call_id") or "")
+            if not tool_call_id or tool_call_id not in open_calls:
+                dropped.append(tool_call_id or "<missing-id>")
+                continue
+            open_calls.discard(tool_call_id)
+        provider_copy.append(message)
+    return provider_copy, dropped

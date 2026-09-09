@@ -13,7 +13,7 @@ from data_agent.file_formats import SUPPORTED_DATA_EXTENSIONS
 from data_agent.session.workspace import Workspace
 from data_agent.tools.data_io import _detect_format, load_data
 from data_agent.web.blueprints.uploads import ALLOWED_EXTENSIONS
-from scripts.acceptance.dependency_preflight import dependency_preflight
+from scripts.testing.dependency_preflight import dependency_preflight
 
 
 @pytest.fixture

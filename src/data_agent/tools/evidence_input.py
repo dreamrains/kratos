@@ -1,6 +1,10 @@
 """Model-visible input contract, also used before any receipt lookup."""
 
 CONFIDENCE = ["high", "medium", "low", "speculative"]
+DERIVED_OPERATIONS = [
+    "sum", "difference", "product", "ratio", "percent_change",
+    "percentage_point_change",
+]
 TOOL_CALL_SCHEMA = {
     "anyOf": [
         {"type": "string", "minLength": 1},
@@ -19,6 +23,25 @@ EVIDENCE_INPUT_SCHEMA = {
         "result_summary": {"type": "string"},
         "limitations": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
         "confidence": {"type": "string", "enum": CONFIDENCE},
+        "measurements": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "object"}}]},
+        "derived_measurements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "operation", "operand_refs", "result", "unit", "scale", "rounding", "scope_ref"],
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "operation": {"type": "string", "enum": DERIVED_OPERATIONS},
+                    "operand_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                    "result": {"anyOf": [{"type": "number"}, {"type": "string", "minLength": 1}]},
+                    "unit": {"type": "string", "minLength": 1},
+                    "scale": {"anyOf": [{"type": "number"}, {"type": "string", "minLength": 1}]},
+                    "rounding": {"type": "string", "minLength": 1},
+                    "scope_ref": {"type": "string", "minLength": 1},
+                    "scenario": {"type": "boolean"},
+                },
+            },
+        },
     },
 }
 

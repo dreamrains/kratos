@@ -400,25 +400,14 @@ def _register_loaded_data_bundle(
     _save_trust_state(state, session_id)
 
 
-@registry.register(
-    name="load_data",
-    description=(
-        "加载数据文件到工作空间，自动执行类型清洗、数据概览和洞察扫描。"
-        "使用场景：分析流程的起点，所有数据必须先加载后才能分析。"
-        "不适用场景：数据库数据（用 load_sql）、已有工作空间数据（用 list_data 查看）。"
-        "参数说明：source 为文件路径（支持 CSV/TSV/XLSX/JSON/JSONL），name 为数据集别名。"
-        "加载后自动执行：类型清洗（日期/百分比）、数据概览、业务语义推断、主动洞察。"
-        "常见错误：文件路径不正确、编码问题（自动尝试 UTF-8 和 GBK）。"
-    ),
-    recovery_hint=(
-        "数据加载失败。请检查："
-        "1) 文件路径是否正确（支持相对路径和绝对路径）"
-            "2) 文件格式是否为 CSV/TSV/XLSX/JSON/JSONL"
-        "3) 文件编码（自动尝试 UTF-8 和 GBK）"
-        "4) 文件是否存在于项目数据目录或 inbox 目录中"
-    ),
-)
-def load_data(source: str, name: str = "main", fmt: str = "", context: str = "") -> str:
+def _load_data(
+    source: str,
+    name: str = "main",
+    fmt: str = "",
+    context: str = "",
+    *,
+    replace_existing: bool = False,
+) -> str:
     try:
         path = _resolve_source(source)
         detected_fmt = _detect_format(source, fmt or None)
@@ -449,8 +438,13 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
         # analysis tools keep receiving typed columns.  The original upload is
         # stored as an immutable ``<name>__raw`` snapshot and is the sole
         # parent of the analysis version.
+        archived_dataset_name = ""
         if workspace.exists(name):
-            return f"Error: 数据集 '{name}' 已存在；请指定新的数据集名称以避免覆盖已有分析版本。"
+            if not replace_existing:
+                return f"Error: 数据集 '{name}' 已存在；请指定新的数据集名称以避免覆盖已有分析版本。"
+            archived_dataset_name = workspace.archive_version(name)
+            if archived_dataset_name.startswith("Error:"):
+                return archived_dataset_name
         raw_df = df.copy(deep=True)
         from data_agent.tools.data_clean import auto_clean
         analysis_df, applied, needs_confirm = auto_clean(raw_df)
@@ -476,6 +470,11 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
             f"{raw_load_msg}\n{derive_result}\n"
             f"默认分析数据集为 '{dataset_name}'；原始快照保留为 '{raw_dataset_name}'。"
         )
+        if archived_dataset_name:
+            load_msg += (
+                f"\n旧活动版本已归档为 '{archived_dataset_name}'；"
+                "其数据身份、血缘和既有证据绑定均已保留。"
+            )
         df = analysis_df
 
         # Save source metadata on the immutable raw snapshot.  The analysis
@@ -634,6 +633,8 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
                 workspace.save_meta(safe_session_id)
                 workspace.persist_dataset(safe_session_id, raw_dataset_name)
                 workspace.persist_dataset(safe_session_id, dataset_name)
+                if archived_dataset_name:
+                    workspace.persist_dataset(safe_session_id, archived_dataset_name)
         except Exception:
             pass
 
@@ -726,6 +727,44 @@ def load_data(source: str, name: str = "main", fmt: str = "", context: str = "")
     except Exception as e:
         return json.dumps({"error": f"Error loading data: {e}",
                            "error_type": "file_not_found" if isinstance(e, FileNotFoundError) else "data_load_error"}, ensure_ascii=False)
+
+
+@registry.register(
+    name="load_data",
+    description=(
+        "加载数据文件到工作空间，自动执行类型清洗、数据概览和洞察扫描。"
+        "使用场景：分析流程的起点，所有数据必须先加载后才能分析。"
+        "不适用场景：数据库数据（用 load_sql）、已有工作空间数据（用 list_data 查看）。"
+        "参数说明：source 为文件路径（支持 CSV/TSV/XLSX/JSON/JSONL），name 为数据集别名。"
+        "加载后自动执行：类型清洗（日期/百分比）、数据概览、业务语义推断、主动洞察。"
+        "同名数据集不会覆盖；需保留历史并更新版本时使用 reload_data。"
+    ),
+    recovery_hint=(
+        "数据加载失败。请检查："
+        "1) 文件路径是否正确（支持相对路径和绝对路径）"
+        "2) 文件格式是否为 CSV/TSV/XLSX/JSON/JSONL"
+        "3) 文件编码（自动尝试 UTF-8 和 GBK）"
+        "4) 文件是否存在于项目数据目录或 inbox 目录中"
+    ),
+)
+def load_data(source: str, name: str = "main", fmt: str = "", context: str = "") -> str:
+    return _load_data(source, name, fmt, context)
+
+
+@registry.register(
+    name="reload_data",
+    description=(
+        "以新文件创建同名数据集的新活动版本。旧活动版本会归档为 "
+        "<name>__history，保留原 fingerprint、血缘和会话备份；既有证据不会被改写，"
+        "会由 freshness gate 判断是否已过期。仅在用户明确要求更新该数据集版本时使用。"
+    ),
+    recovery_hint=(
+        "重载失败。请确认目标数据集已经存在，且新文件可读取；"
+        "不要用 remove 或 load_data 覆盖历史版本。"
+    ),
+)
+def reload_data(source: str, name: str = "main", fmt: str = "", context: str = "") -> str:
+    return _load_data(source, name, fmt, context, replace_existing=True)
 
 
 @registry.register(

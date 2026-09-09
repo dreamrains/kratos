@@ -440,7 +440,11 @@ class AgentContext:
     analysis_state: object | None = None
     turn_state: object | None = None
     turn_receipt_ids: list[str] = field(default_factory=list)
+    turn_requirement_ids: list[str] = field(default_factory=list)
+    requirement_revision: int = 0
     user_proficiency: str = "auto"  # "auto" | "beginner" | "intermediate" | "advanced"
+    audience: str = "general"  # "general" | "business" | "analyst" | "manager" (per-turn)
+    detected_proficiency: str = ""  # cached auto-detection; user_proficiency stays "auto"
     user_quality_requirements: str = ""  # Extracted user quality/format requirements
     turn_intent: object | None = None
 
@@ -466,6 +470,16 @@ class AgentContext:
         self.executed_tools.clear()
         self.turn_state = None
 
+    def reset_tool_groups(self) -> None:
+        """Reset only tool-group routing, preserving the turn budget.
+
+        ``registry.reset_groups`` runs while a turn's execution budget is
+        already armed; wiping ``turn_state`` here silently disabled every
+        budget guard (P7-L3/B06).  Use the narrower reset for routing.
+        """
+        self.active_tool_groups = {"core"}
+        self.executed_tools.clear()
+
 def _create_agent_context_type(
     cls,
     identity_operation,
@@ -488,7 +502,11 @@ def _create_agent_context_type(
         analysis_state: object | None = None,
         turn_state: object | None = None,
         turn_receipt_ids: list[str] | None = None,
+        turn_requirement_ids: list[str] | None = None,
+        requirement_revision: int = 0,
         user_proficiency: str = "auto",
+        audience: str = "general",
+        detected_proficiency: str = "",
         user_quality_requirements: str = "",
         turn_intent: object | None = None,
     ) -> None:
@@ -500,8 +518,12 @@ def _create_agent_context_type(
         object.__setattr__(self, "analysis_state", analysis_state)
         object.__setattr__(self, "turn_state", turn_state)
         object.__setattr__(self, "turn_receipt_ids", [] if turn_receipt_ids is None else list(turn_receipt_ids))
+        object.__setattr__(self, "turn_requirement_ids", [] if turn_requirement_ids is None else list(turn_requirement_ids))
+        object.__setattr__(self, "requirement_revision", int(requirement_revision or 0))
         object.__setattr__(self, "turn_intent", turn_intent)
         object.__setattr__(self, "user_proficiency", user_proficiency)
+        object.__setattr__(self, "audience", audience)
+        object.__setattr__(self, "detected_proficiency", detected_proficiency)
         object.__setattr__(self, "user_quality_requirements", user_quality_requirements)
         bind_scope(self)
         scope_operation(self, "mark_identity_ready")

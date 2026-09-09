@@ -19,11 +19,14 @@ def refine_turn_intent_with_state(user_input: str, intent: TurnIntent, state: An
     """Refine a turn intent using trustworthy state refs without breaking the loop."""
 
     try:
+        scope = getattr(state, "active_scope", None)
+        active_dataset = str(scope.get("active_dataset") or "") if isinstance(scope, dict) else ""
         return refine_intent_with_data(
             user_input=user_input,
             intent=intent,
             dataset_contracts=_list_attr(state, "dataset_contracts"),
             route_proposals=_list_attr(state, "route_proposals"),
+            active_dataset=active_dataset,
         )
     except Exception as exc:
         logger.warning(
@@ -79,6 +82,66 @@ def maybe_verify_turn_claims(user_input: str, state: Any, *, force: bool = False
         return None
 
 
+def _workspace_data_identities() -> dict[str, dict]:
+    """Current dataset identities from the active workspace, or {} offline."""
+    try:
+        from data_agent.session.workspace import workspace as workspace_obj
+
+        identities: dict[str, dict] = {}
+        for name in (workspace_obj.list_datasets() or {}):
+            identity = workspace_obj.get_data_identity(name)
+            if isinstance(identity, dict) and identity.get("fingerprint"):
+                identities[str(name)] = identity
+        return identities
+    except Exception:
+        return {}
+
+
+def _split_evidence_by_data_freshness(
+    records: list[dict[str, Any]],
+    current_identities: dict[str, dict],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split evidence into (fresh, exclusions) by dataset version.
+
+    Only a positive fingerprint mismatch on a dataset that currently exists
+    excludes a record; absent datasets, missing bindings, or identity-free
+    records stay fresh (cannot judge → stay conservative). Excluded records
+    are not deleted — they stop backing hypotheses and the exclusion is
+    recorded with both fingerprints for audit (P7-L3/B04).
+    """
+    fresh: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    for record in records:
+        stale: dict[str, Any] | None = None
+        bindings = record.get("result_bindings") if isinstance(record, dict) else None
+        if isinstance(bindings, list):
+            for binding in bindings:
+                if not isinstance(binding, dict) or stale:
+                    break
+                for name, bound in (binding.get("data_identities") or {}).items():
+                    current = current_identities.get(str(name))
+                    if current is None:
+                        continue
+                    bound_fingerprint = str((bound or {}).get("fingerprint") or "")
+                    current_fingerprint = str(current.get("fingerprint") or "")
+                    if bound_fingerprint and bound_fingerprint != current_fingerprint:
+                        stale = {
+                            "dataset": str(name),
+                            "bound_fingerprint": bound_fingerprint,
+                            "current_fingerprint": current_fingerprint,
+                        }
+                        break
+        if stale is not None:
+            exclusions.append({
+                "evidence_id": str(record.get("id") or ""),
+                "reason": "data_version_changed",
+                **stale,
+            })
+        else:
+            fresh.append(record)
+    return fresh, exclusions
+
+
 def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any) -> dict[str, Any] | None:
     """Create one compact hypothesis set for a runnable analysis route."""
 
@@ -96,19 +159,38 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
             return None
 
         evidence_records = _list_attr(state, "evidence_records")
+        # Data-version gate (P7-L3/B04): evidence bound to an older version of
+        # a still-loaded dataset stops backing hypotheses; decided hypotheses
+        # then transition to stale instead of keeping their verdict.
+        fresh_evidence, exclusions = _split_evidence_by_data_freshness(
+            evidence_records, _workspace_data_identities(),
+        )
         hypothesis_set = build_hypothesis_set(user_input, decision, state)
         dataset = str(hypothesis_set.get("dataset") or "")
         route = str(hypothesis_set.get("route") or "")
-        existing_ref = _find_hypothesis_set_ref(state, dataset, route)
-        if existing_ref and not evidence_records:
-            return None
+        plan_id = str(hypothesis_set.get("plan_id") or "")
+        existing_ref = _find_hypothesis_set_ref(state, dataset, route, plan_id)
         if existing_ref:
             hydrated = hydrate_hypothesis_refs([existing_ref])
             if not hydrated:
                 return None
-            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], evidence_records)
-        elif evidence_records:
-            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, evidence_records)
+            decided = any(
+                hypothesis.get("supporting_evidence_ids")
+                or hypothesis.get("conflicting_evidence_ids")
+                or hypothesis.get("evidence_relations")
+                for hypothesis in hydrated[0].get("hypotheses") or []
+                if isinstance(hypothesis, dict)
+            )
+            # An undecided set with no evidence stays as-is (dedupe); a
+            # decided set must be recomputed even when its evidence is gone,
+            # so it can become stale instead of silently keeping its verdict.
+            if not fresh_evidence and not decided:
+                return None
+            hypothesis_set = update_hypotheses_from_evidence(hydrated[0], fresh_evidence)
+        elif fresh_evidence:
+            hypothesis_set = update_hypotheses_from_evidence(hypothesis_set, fresh_evidence)
+        if exclusions:
+            hypothesis_set["evidence_exclusions"] = exclusions
 
         ref = persist_hypothesis_set(str(getattr(state, "session_id", "")), hypothesis_set)
         if existing_ref and existing_ref.get("created_at"):
@@ -134,10 +216,21 @@ def maybe_create_hypothesis_set(user_input: str, intent: TurnIntent, state: Any)
         return None
 
 
-def _find_hypothesis_set_ref(state: Any, dataset: str, route: str) -> dict[str, Any] | None:
+def _find_hypothesis_set_ref(
+    state: Any,
+    dataset: str,
+    route: str,
+    plan_id: str = "",
+) -> dict[str, Any] | None:
+    """Reuse only a set bound to the same plan; other plans stay as history."""
     for ref in _list_attr(state, "hypothesis_sets"):
-        if str(ref.get("dataset") or "") == dataset and str(ref.get("route") or "") == route:
-            return ref
+        if str(ref.get("dataset") or "") != dataset:
+            continue
+        if str(ref.get("route") or "") != route:
+            continue
+        if str(ref.get("plan_id") or "") != plan_id:
+            continue
+        return ref
     return None
 
 

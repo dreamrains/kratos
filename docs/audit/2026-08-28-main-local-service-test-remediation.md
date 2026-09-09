@@ -2,7 +2,7 @@
 
 日期：2026-08-28
 
-> 后续状态：当前 digest 的 R01–R06、R07 publication 与 R09 routing_integrity 已在精确授权下全部通过，实际 Provider 调用为 38 / 96；用户随后已将该精确 digest 声明为本地发布候选。见 [L4 执行结果与候选决定边界](2026-08-28-gate-d-ea127-l4-execution-and-candidate-decision.md)及[候选声明](2026-08-28-gate-d-ea127-local-release-candidate-declaration.md)。下文保留 L4 执行前的本机测试与修复快照。
+> 后续状态：该 digest 的历史 Gate D 与 Provider 收据已于 2026-09-06 随旧验收矩阵退役，不再作为当前源码证据。下文只保留当时的本机测试与修复快照；当前边界见 `docs/testing/retired-browser-provider-matrix.md`。
 
 ## 结论
 

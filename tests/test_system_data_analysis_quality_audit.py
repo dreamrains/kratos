@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     REFERENCE_DATA_AVAILABLE,
     REFERENCE_DATA_DIR,
     reference_data_path,

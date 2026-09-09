@@ -134,12 +134,14 @@ def test_metric_ambiguity_returns_ask_user_question_gate():
     assert decision["confirmation_gate"]["confirmation_type"] == "metric_scope"
 
 
-def test_high_risk_analysis_returns_ask_user_question_gate():
+def test_p08_predictive_request_not_gated_by_method_confirmation():
+    """P08-01 契约更新：原断言预测请求返回 method_confirmation 门；
+    新原则下不再出现方法类确认门（其余澄清类型不受影响）。"""
     decision = decide_analysis_entry("predict revenue next month", _intent(), _state())
 
-    assert decision["decision"] == "clarify_intent"
-    assert decision["required_user_action"] == "ask_user_question"
-    assert decision["confirmation_gate"]["confirmation_type"] == "method_confirmation"
+    gate_type = (decision.get("confirmation_gate") or {}).get("confirmation_type", "")
+    assert gate_type != "method_confirmation"
+    assert decision["required_user_action"] != "ask_user_question" or gate_type != "method_confirmation"
 
 
 def test_entry_decision_uses_active_dataset_for_vague_multi_dataset_routes():
@@ -384,3 +386,46 @@ def test_blocked_quality_returns_blocked():
     assert decision["reason"] == "Data quality blocks formal analysis."
     assert decision["required_user_action"] == "resolve_data_quality"
     assert decision["limitations"] == ["date column has no usable values"]
+
+
+# ── P2 (D06/I11): host scope is never widened by request text ──
+
+
+def _multi_dataset_state():
+    state = _state()
+    state.dataset_contracts.append({
+        "id": "duc_other",
+        "dataset": "other",
+        "quality": {"status": "ready"},
+        "field_roles": {"date": ["date"], "metrics": ["spend"]},
+        "supported_analyses": ["trend"],
+        "unsupported_analyses": [],
+    })
+    state.route_proposals.append({
+        "id": "route_other_trend",
+        "dataset": "other",
+        "direction": "trend",
+        "limitations": [],
+        "evidence_requirements": ["date", "metric"],
+    })
+    state.active_scope["active_dataset"] = "sales"
+    state.active_scope["active_mode"] = "analysis"
+    return state
+
+
+def test_i11_mentioned_other_dataset_does_not_widen_active_scope():
+    decision = decide_analysis_entry("分析 other 的 spend 趋势", _intent(), _multi_dataset_state())
+
+    # The host scope stays on the active dataset: other's routes must not be
+    # selected, and the out-of-scope metric wording resolves to a scoped
+    # clarification instead of a cross-dataset execution.
+    assert decision["dataset"] != "other"
+    assert decision["decision"] in {"direct_analysis", "clarify_intent"}
+
+
+def test_i11_scoped_request_still_runs_on_active_dataset():
+    decision = decide_analysis_entry("分析 revenue 趋势", _intent(), _multi_dataset_state())
+
+    assert decision["decision"] == "direct_analysis"
+    assert decision["dataset"] == "sales"
+    assert decision["route"] == "trend"

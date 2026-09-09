@@ -554,10 +554,14 @@ class ToolRegistry:
         return new_groups
 
     def reset_groups(self) -> None:
-        """重置活跃工具分组为默认状态（仅 core）。应在每轮 turn 开始时调用。"""
+        """重置活跃工具分组为默认状态（仅 core）。应在每轮 turn 开始时调用。
+
+        只重置分组路由，不清 turn_state：重置发生在预算状态已装配的
+        turn 准备阶段，连带清空会让预算守卫整轮失效（P7-L3/B06）。
+        """
         ctx = self._current_context()
         if ctx is not None:
-            ctx.reset_turn_state()
+            ctx.reset_tool_groups()
             return
         self._active_groups = {"core"}
         self._executed_tools.clear()

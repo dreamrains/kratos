@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     REFERENCE_DATA_AVAILABLE,
     REFERENCE_DATA_DIR,
     reference_data_path,
@@ -408,7 +408,10 @@ class TestCompactSystem:
         long = "a" * 20000
         persist_large_output("test", "tc_file", long)
         d = _session_tool_outputs_dir("test")
-        assert (d / "tc_file.txt").exists()
+        # P4/E07: 文件名带内容摘要（tc_file__<digest>.txt），防同 id 碰撞复用
+        stored = list(d.glob("tc_file__*.txt"))
+        assert stored
+        assert stored[0].read_text(encoding="utf-8") == long
 
     def test_micro_compact_preserves_recent(self, env):
         from data_agent.agent.compact import micro_compact

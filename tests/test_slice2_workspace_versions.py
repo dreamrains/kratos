@@ -7,7 +7,7 @@ import pandas as pd
 from data_agent.session.workspace import Workspace
 from data_agent.agent.context import AgentContext, use_agent_context
 from data_agent.tools.data_clean import apply_type_conversion, auto_clean, clean_data
-from data_agent.tools.data_io import load_data
+from data_agent.tools.data_io import load_data, reload_data
 from data_agent.tools.eda import top_n
 from data_agent.tools.statistics import ab_test
 from data_agent.tools.chart_contract import validate_chart_request
@@ -142,6 +142,44 @@ def test_load_data_keeps_d05_upload_as_raw_and_uses_named_analysis_dataset():
     finally:
         workspace.remove(analysis_name)
         workspace.remove(raw_snapshot_name)
+
+
+def test_reload_data_archives_the_previous_active_version_without_rewriting_it(tmp_path):
+    """A same-name reload must preserve the old evidence-addressable version."""
+    from data_agent.config import get_config
+
+    first_path = tmp_path / "orders_v1.csv"
+    second_path = tmp_path / "orders_v2.csv"
+    first_path.write_text("date,amount\n2026-09-01,10\n2026-09-02,20\n", encoding="utf-8")
+    second_path.write_text("date,amount\n2026-09-01,10\n2026-09-02,10\n", encoding="utf-8")
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    local_workspace = Workspace()
+    context = AgentContext(session_id="reload_data_audit", workspace=local_workspace)
+    try:
+        with use_agent_context(context):
+            first_output = load_data(str(first_path), name="orders")
+            first_identity = local_workspace.get_data_identity("orders")
+            reload_output = reload_data(str(second_path), name="orders")
+
+        archived = "orders__history"
+        current_identity = local_workspace.get_data_identity("orders")
+        archived_identity = local_workspace.get_data_identity(archived)
+        assert "orders__raw" in first_output
+        assert "旧活动版本已归档为 'orders__history'" in reload_output
+        assert local_workspace.get(archived)["amount"].tolist() == [10, 20]
+        assert local_workspace.get("orders")["amount"].tolist() == [10, 10]
+        assert archived_identity == first_identity
+        assert current_identity["fingerprint"] != first_identity["fingerprint"]
+        assert local_workspace.get_metadata(archived, "archived_from") == "orders"
+        assert any(
+            item["op"] == "archive_version" and item["to"] == archived
+            for item in local_workspace.get_transform_log()
+        )
+        assert (cfg.sessions_dir / context.session_id / "data" / "orders__history.pkl").is_file()
+    finally:
+        cfg.sessions_dir = old_sessions
 
 
 def test_top_n_can_create_a_copy_on_write_dataset_for_a_following_chart():

@@ -124,6 +124,16 @@ _PUBLICATION_RECOVERY_MESSAGE = (
     "</publication_narrative_recovery>"
 )
 
+_FALLBACK_RESOLUTION_GUIDANCE = (
+    "<fallback_resolution_guidance>\n"
+    "已执行的 Python 计算结果尚未沉淀。两条合法的继续路径：\n"
+    "1. 调用 record_evidence_record 把结果记录为证据（含口径、样本与限制）；\n"
+    "2. 直接给出最终答复——发布已观测范围内的描述性结论，并对无法支持的部分明确边界"
+    "（例如“无法预测 D30：仅观测到 D7，缺少 D8—D30 观测与验证窗口”）。\n"
+    "带证据边界的拒答是有效完成状态；不要继续探索性工具调用，也不要为未观测数值编造估计。\n"
+    "</fallback_resolution_guidance>"
+)
+
 
 # === LoopResult: Agent loop return types ===
 
@@ -222,6 +232,7 @@ class UserConfirmationRequired(Exception):
         state_updates: str = "",
         related_task_id: int = 0,
         related_spec_id: str = "",
+        decision_context: dict | None = None,
     ):
         self.question = question
         self.options = options
@@ -232,6 +243,9 @@ class UserConfirmationRequired(Exception):
         self.state_updates = state_updates
         self.related_task_id = related_task_id
         self.related_spec_id = related_spec_id
+        # IC1：直接询问携带结构化决策上下文（decision_kind/missing_value/
+        # affected_operations/scope_data_version），模型自报字段仍经宿主校验。
+        self.decision_context = dict(decision_context or {})
         super().__init__(question)
 
 
@@ -429,6 +443,11 @@ _protected_scope_guard, _scope_guard_dispatch = _create_scope_guard_descriptor(
     registry,
     json.dumps,
 )
+
+
+def record_is_none(request_result) -> bool:
+    """True when a confirmation request produced no record to suspend on."""
+    return request_result.record is None
 
 
 def _provider_failure_detail(exc: BaseException, limit: int = 300) -> str:
@@ -746,7 +765,12 @@ class AgentLoop:
         return ""
 
     def _build_system_prompt(self) -> str:
-        from data_agent.agent.prompts import build_system_prompt, _classify_task, detect_user_proficiency
+        from data_agent.agent.prompts import (
+            _classify_task,
+            build_system_prompt,
+            detect_audience,
+            resolve_proficiency,
+        )
         from data_agent.session.workspace import workspace
         from data_agent.tools.knowledge_tools import get_knowledge_instances
 
@@ -761,11 +785,17 @@ class AgentLoop:
                 user_input = content if isinstance(content, str) else str(content)
                 break
 
-        # Detect user proficiency level
-        proficiency = self.context.user_proficiency
-        if proficiency == "auto":
-            proficiency = detect_user_proficiency(user_input, self.messages)
-            self.context.user_proficiency = proficiency
+        # Proficiency: "auto" re-detects every turn without being written
+        # back, so a later plain-language request is honored (P6/D07).
+        proficiency = resolve_proficiency(
+            self.context.user_proficiency, user_input, self.messages,
+        )
+        if self.context.user_proficiency == "auto":
+            self.context.detected_proficiency = proficiency
+        # Audience is per-turn from explicit self-identification; it never
+        # changes facts, evidence thresholds, or permissions.
+        audience = detect_audience(user_input)
+        self.context.audience = audience
 
         # 判断任务级别
         datasets = workspace.list_datasets()
@@ -826,6 +856,18 @@ class AgentLoop:
 
         level = _classify_task(user_input, session_ctx) if user_input else "standard"
 
+        # P08-05：无数据时的最短可行动恢复——说明缺少数据＋一个明确入口，
+        # 不列未来路线菜单、不追问无关业务背景。
+        no_data_recovery = ""
+        if not datasets:
+            no_data_recovery = (
+                "<no_data_recovery>\n"
+                "当前没有可分析的数据。回复保持最短：说明缺少数据，并给出一个明确的上传或选择数据集入口；"
+                "收到数据后可直接执行用户已描述的任务。"
+                "不要列举未来分析路线菜单，不要追问与当前请求无关的业务背景，也不要推测业务答案。\n"
+                "</no_data_recovery>"
+            )
+
         # Chat 模式：不传工具列表
         if level == "chat":
             tool_list = ""
@@ -864,7 +906,7 @@ class AgentLoop:
         if level == "chat":
             return build_system_prompt(
                 tool_list=tool_list,
-                project_rules=rules_prompt,
+                project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
                 domain_knowledge="",
                 experience_log="",
                 session_context=session_ctx,
@@ -873,11 +915,12 @@ class AgentLoop:
                 user_input=user_input,
                 proficiency=proficiency,
                 user_requirements=self.context.user_quality_requirements,
+                audience=audience,
             )
 
         return build_system_prompt(
             tool_list=tool_list,
-            project_rules=rules_prompt,
+            project_rules=(no_data_recovery + "\n\n" + rules_prompt).strip(),
             domain_knowledge=retrieved_context,
             experience_log="",
             session_context=session_ctx,
@@ -886,6 +929,7 @@ class AgentLoop:
             user_input=user_input,
             proficiency=proficiency,
             user_requirements=self.context.user_quality_requirements,
+            audience=audience,
         )
 
     def _get_system_prompt(self) -> str:
@@ -940,6 +984,23 @@ class AgentLoop:
         self._flow_controller = controller
         state = self.context.analysis_state if self.context.analysis_state is not None else controller.load_state()
         self.context.analysis_state = state
+        try:
+            import hashlib
+            from data_agent.agent.publication_synthesis import update_requirement_lifecycle
+
+            source_ref = "msg_" + hashlib.sha256(user_input.encode("utf-8")).hexdigest()[:12]
+            requirement_ids = update_requirement_lifecycle(
+                state,
+                user_input,
+                source_message_ref=source_ref,
+            )
+            self.context.turn_requirement_ids = requirement_ids
+            self.context.requirement_revision = int(getattr(state, "requirement_revision", 0) or 0)
+        except Exception as exc:
+            logger.warning(
+                "Answer requirement lifecycle update skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
         try:
             from data_agent.agent.trust_workflow_runtime import refine_turn_intent_with_state
 
@@ -1032,6 +1093,37 @@ class AgentLoop:
             source="pending_confirmation" if isinstance(pending, dict) else "question_need_detector",
             operation=str(payload["confirmation_type"] or "auto_required_question"),
         )
+        if susp is None and isinstance(pending, dict) and has_new_question:
+            # IC2：旧 pending 被策略降级（如通用方法审批）时，让位给本轮
+            # 新检测到的真实语义问题，而不是吞掉整个悬挂路径。
+            pending = False
+            pending_data = {}
+            question_data = self._turn_question_need if isinstance(self._turn_question_need, dict) else {}
+            state_updates = pending_data.get("state_updates", question_data.get("state_updates"))
+            if isinstance(state_updates, dict):
+                state_updates_text = json.dumps(state_updates, ensure_ascii=False)
+            elif isinstance(state_updates, str) and state_updates.strip():
+                state_updates_text = state_updates
+            else:
+                state_updates_text = json.dumps({"stage": "scope"}, ensure_ascii=False)
+            payload = {
+                "question": str(pending_data.get("question") or question_data.get("question") or "Please confirm the key information before continuing."),
+                "options": list(pending_data.get("options") or question_data.get("options") or []),
+                "context": str(pending_data.get("context") or ""),
+                "multi_select": False,
+                "confirmation_type": str(pending_data.get("confirmation_type") or question_data.get("question_type") or "scope_confirmation"),
+                "blocking_reason": str(pending_data.get("blocking_reason") or question_data.get("reason") or ""),
+                "state_updates": state_updates_text,
+                "related_task_id": int(pending_data.get("related_task_id") or 0),
+                "related_spec_id": str(pending_data.get("related_spec_id") or ""),
+            }
+            susp = self._suspend_for_required_question_payload(
+                payload,
+                source="question_need_detector",
+                operation=str(payload["confirmation_type"] or "auto_required_question"),
+            )
+        if susp is None:
+            return None
         if isinstance(pending, dict):
             pending.setdefault("question", susp.question)
             pending.setdefault("options", susp.options)
@@ -1295,6 +1387,7 @@ class AgentLoop:
         self._turn_synthesis_policy_instruction = ""
         self._turn_publication_packet = None
         self.context.turn_receipt_ids = []
+        self.context.turn_requirement_ids = []
 
     def _has_substantive_turn_evidence(self) -> bool:
         """Whether this turn has executed a computation suitable for synthesis."""
@@ -1364,7 +1457,11 @@ class AgentLoop:
         if not threshold or round_num < threshold:
             return
         self._turn_wrap_up_injected = True
-        packet = self._prepare_publication_packet(user_input) if self._has_substantive_turn_evidence() else None
+        packet = (
+            self._prepare_publication_packet(user_input, phase="preview", persist=False)
+            if self._has_substantive_turn_evidence()
+            else None
+        )
         if packet and packet.get("status") == "ready" and packet.get("evidence"):
             # Round count is advisory, not evidence of analysis completion.
             self.messages.append({"role": "system", "content": _WRAP_UP_GUARD_MESSAGE})
@@ -1430,6 +1527,26 @@ class AgentLoop:
                     if isinstance(structured_data.get(key), str):
                         dataset_refs.append(structured_data[key])
             dataset_refs = list(dict.fromkeys(dataset_refs))
+            detail_ref: dict[str, str] = {}
+            if structured_data is not None:
+                try:
+                    from data_agent.tools._utils import persist_detail
+
+                    detail_path = persist_detail(self.session_id, str(tool_call_id or tool_name), structured_data)
+                    detail_ref = {
+                        "path": f"tool_outputs/{detail_path.name}",
+                        "sha256": "sha256:" + hashlib.sha256(detail_path.read_bytes()).hexdigest(),
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "Structured result detail persistence failed",
+                        extra={"extra_data": {"tool": tool_name, "error": str(exc)}},
+                    )
+            publication_groups = self._publication_groups_for_tool(
+                structured_data,
+                receipt_id=str(tool_call_id or ""),
+                detail_ref=detail_ref,
+            )
             receipt = add_receipt({
                 "tool_name": tool_name,
                 "tool_call_id": str(tool_call_id or ""),
@@ -1448,9 +1565,16 @@ class AgentLoop:
                 ).hexdigest(),
                 "result_preview": (tool_msg_content or "")[:2000],
                 "publication_facts": self._publication_facts_for_tool(structured_data),
-                "publication_contract": publication_contract(tool_name, structured_data),
+                "publication_fact_groups": publication_groups.get("groups", []),
+                "publication_scan": publication_groups.get("scan", {}),
+                "detail_ref": detail_ref,
+                "publication_contract": publication_contract(tool_name, structured_data, args=args),
             })
             receipt_id = str(receipt.get("id") or "")
+            for group in receipt.get("publication_fact_groups") or []:
+                if isinstance(group, dict):
+                    group["receipt_id"] = receipt_id
+                    group["scope_ref"] = receipt_id
             if receipt_id:
                 self.context.turn_receipt_ids.append(receipt_id)
             turn_state = getattr(self.context, "turn_state", None)
@@ -1472,29 +1596,67 @@ class AgentLoop:
         try:
             from data_agent.agent.publication_synthesis import extract_publication_facts
 
-            return extract_publication_facts(structured_data)
+            # Receipts are the durable lossless-enough boundary.  The final
+            # packet applies its own display budget after it knows the user's
+            # complete request, so do not discard later business groups here.
+            return extract_publication_facts(structured_data, max_facts=500)
         except Exception:
             return []
 
-    def _prepare_publication_packet(self, user_input: str) -> dict | None:
-        """Freeze a bounded, receipt-backed hand-off before tools are closed."""
+    @staticmethod
+    def _publication_groups_for_tool(
+        structured_data: dict | None,
+        *,
+        receipt_id: str = "",
+        detail_ref: dict | None = None,
+    ) -> dict:
+        if not isinstance(structured_data, dict):
+            return {"groups": [], "scan": {"scan_incomplete": False, "omitted_count": 0}}
+        try:
+            from data_agent.agent.publication_synthesis import extract_publication_fact_groups
+
+            return extract_publication_fact_groups(
+                structured_data,
+                receipt_id=receipt_id,
+                detail_ref=detail_ref,
+            )
+        except Exception:
+            return {"groups": [], "scan": {"scan_incomplete": True, "unknown_count": True}}
+
+    def _prepare_publication_packet(
+        self,
+        user_input: str,
+        *,
+        phase: str = "final",
+        persist: bool = True,
+    ) -> dict | None:
+        """Build a receipt-backed hand-off for preview or final publication."""
         state = getattr(self.context, "analysis_state", None)
         if state is None:
             return None
         try:
             from data_agent.agent.publication_synthesis import build_publication_packet
 
+            receipt_ids = list(self.context.turn_receipt_ids)
+            if not receipt_ids:
+                prior_packet = getattr(self, "_turn_publication_packet", None)
+                if isinstance(prior_packet, dict):
+                    receipt_ids = [
+                        str(source.get("receipt_id") or "")
+                        for source in prior_packet.get("sources", [])
+                        if isinstance(source, dict) and source.get("receipt_id")
+                    ]
             packet = build_publication_packet(
                 state,
                 user_input=user_input,
                 substantive_tools=_SUBSTANTIVE_TOOLS,
-                receipt_ids=self.context.turn_receipt_ids,
+                receipt_ids=receipt_ids,
+                requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
+                phase=phase,
             )
             self._turn_publication_packet = packet
-            if packet.get("status") == "ready":
-                add_packet = getattr(state, "add_publication_packet", None)
-                if callable(add_packet):
-                    add_packet(packet)
+            if packet.get("status") == "ready" and persist:
+                self._commit_publication_packet(packet)
             return packet
         except Exception as exc:
             logger.warning(
@@ -1503,18 +1665,142 @@ class AgentLoop:
             )
             return None
 
+    def _commit_publication_packet(self, packet: dict, final_text: str = "") -> dict:
+        """Persist only the packet that crossed the terminal publication gate."""
+        import hashlib
+
+        committed = dict(packet)
+        committed["phase"] = "final"
+        if final_text:
+            committed["answer_sha256"] = "sha256:" + hashlib.sha256(
+                final_text.encode("utf-8")
+            ).hexdigest()
+            binding_seed = f"{committed.get('snapshot_digest', '')}|{committed['answer_sha256']}"
+            committed["snapshot_packet_id"] = str(packet.get("id") or "")
+            committed["id"] = "pub_" + hashlib.sha256(binding_seed.encode("utf-8")).hexdigest()[:12]
+            state = getattr(self.context, "analysis_state", None)
+            same_snapshot = [
+                item for item in (getattr(state, "publication_packets", []) or [])
+                if isinstance(item, dict) and item.get("snapshot_digest") == committed.get("snapshot_digest")
+                and item.get("answer_sha256")
+            ]
+            same_answer = next((item for item in same_snapshot if item.get("answer_sha256") == committed["answer_sha256"]), None)
+            if same_answer:
+                committed["content_revision"] = int(same_answer.get("content_revision") or 1)
+            else:
+                committed["content_revision"] = 1 + max(
+                    [int(item.get("content_revision") or 0) for item in same_snapshot] or [0]
+                )
+                if same_snapshot:
+                    committed["supersedes_packet_id"] = str(same_snapshot[-1].get("id") or "")
+        self._turn_publication_packet = committed
+        state = getattr(self.context, "analysis_state", None)
+        if state is not None:
+            # The receipt artifact is part of the publication contract.  Write
+            # it before adding the packet to live state so a failed write
+            # cannot be mistaken for a complete, exportable publication.
+            self._register_publication_receipt_artifact(committed, state)
+            add_packet = getattr(state, "add_publication_packet", None)
+            if callable(add_packet):
+                add_packet(committed)
+        return committed
+
+    def _persist_accepted_answer(self, assistant_msg: dict, final_text: str) -> str | None:
+        """Bind and persist one accepted terminal answer before exposure."""
+        packet = getattr(self, "_turn_publication_packet", None)
+        state = getattr(self.context, "analysis_state", None)
+        prior_packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
+        try:
+            if isinstance(packet, dict) and packet.get("status") == "ready":
+                committed = self._commit_publication_packet(packet, final_text)
+                assistant_msg["publication_packet_id"] = str(committed.get("id") or "")
+                assistant_msg["publication_snapshot_digest"] = str(committed.get("snapshot_digest") or "")
+                assistant_msg["answer_sha256"] = str(committed.get("answer_sha256") or "")
+                assistant_msg["publication_artifact_path"] = str(committed.get("publication_artifact_path") or "")
+            assistant_msg["content"] = final_text
+            self.messages.append(assistant_msg)
+            self._auto_save()
+            return None
+        except Exception as exc:
+            if self.messages and self.messages[-1] is assistant_msg:
+                self.messages.pop()
+            if state is not None:
+                state.publication_packets[:] = prior_packets
+            logger.error(
+                "Accepted answer persistence failed",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+            return (
+                "最终回答已生成，但正文与来源绑定未能可靠保存，因此本轮未发布完整成功结果。"
+                f"可恢复失败：{type(exc).__name__}: {exc}"
+            )
+
+    def _register_publication_receipt_artifact(self, packet: dict, state: Any) -> None:
+        """Persist an openable receipt artifact for the published packet (B03).
+
+        The browser artifacts panel and exports must show which sources,
+        receipts, and omissions back the published answer. One artifact per
+        packet id; re-preparing the same packet does not duplicate it.
+        """
+        receipted = getattr(self, "_publication_receipt_packet_ids", None)
+        if receipted is None:
+            receipted = set()
+            self._publication_receipt_packet_ids = receipted
+        packet_id = str(packet.get("id") or "")
+        if not packet_id or packet_id in receipted:
+            return
+        from data_agent.agent.publication_synthesis import render_publication_receipt_markdown
+        from data_agent.agent.workbench_view import build_workbench_view
+        from data_agent.tools.report import _write_report_artifact
+
+        workbench = build_workbench_view(state)
+        content = render_publication_receipt_markdown(
+            packet,
+            pending_findings=workbench.get("pending_findings"),
+            verified_total=workbench.get("verified_total"),
+        )
+        artifact_path = _write_report_artifact(
+            self.session_id,
+            f"计算来源说明 {packet_id}",
+            content,
+            "md",
+            "publication_receipt",
+            "publication",
+        )
+        packet["publication_artifact_path"] = artifact_path
+        receipted.add(packet_id)
+
     def _render_finalized_publication(self, final_text: str) -> tuple[str | None, str | None]:
         """Validate the answer against persisted evidence without leaking audit records."""
         packet = getattr(self, "_turn_publication_packet", None)
         if not isinstance(packet, dict) or packet.get("status") != "ready":
             return final_text, None
         try:
-            from data_agent.agent.publication_synthesis import validate_final_narrative
+            from data_agent.agent.publication_synthesis import (
+                apply_answer_binding_coverage,
+                parse_answer_bindings,
+                validate_final_narrative,
+            )
 
-            error = validate_final_narrative(final_text, packet)
+            visible_text, bindings, binding_issues = parse_answer_bindings(final_text, packet)
+            if bindings is not None:
+                packet["answer_bindings"] = bindings
+                apply_answer_binding_coverage(packet, bindings)
+            error = validate_final_narrative(visible_text, packet)
+            if binding_issues:
+                binding_error = "\n".join(
+                    f"[{issue['code']}] {issue['reason']}（位置：{issue['span']}）"
+                    for issue in binding_issues
+                )
+                error = "\n".join(filter(None, [error, binding_error]))
             if error:
                 return None, error
-            return final_text.rstrip(), None
+            # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
+            # 拒答（如“无法预测 D30”）完成本轮，待解析状态随之满足。
+            turn_state = getattr(self.context, "turn_state", None)
+            if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
+                turn_state.pending_fallback_resolution = False
+            return visible_text.rstrip(), None
         except Exception as exc:
             logger.warning(
                 "Publication synthesis rendering skipped",
@@ -1522,7 +1808,13 @@ class AgentLoop:
             )
             return final_text, None
 
-    def _render_terminal_publication(self, user_input: str, final_text: str) -> tuple[str | None, str | None]:
+    def _render_terminal_publication(
+        self,
+        user_input: str,
+        final_text: str,
+        *,
+        persist: bool = True,
+    ) -> tuple[str | None, str | None]:
         """Publish a receipt-backed appendix for every evidenced terminal answer.
 
         A model can choose to answer before the soft wrap-up threshold.  Its
@@ -1530,14 +1822,23 @@ class AgentLoop:
         so collecting the receipt packet only in forced finalization would
         leave normal short analyses ungrounded.
         """
-        packet = getattr(self, "_turn_publication_packet", None)
-        if (
-            self._has_substantive_turn_evidence()
-            and (not isinstance(packet, dict) or packet.get("status") != "ready")
+        packet = None
+        prior_packet = getattr(self, "_turn_publication_packet", None)
+        if self._has_substantive_turn_evidence() or (
+            isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
         ):
-            packet = self._prepare_publication_packet(user_input)
+            # Always rebuild here.  A ready preview packet may predate late
+            # receipts, EvidenceRecords, or the final verification report.
+            packet = self._prepare_publication_packet(
+                user_input,
+                phase="final",
+                persist=False,
+            )
         if isinstance(packet, dict) and packet.get("status") == "ready":
-            return self._render_finalized_publication(final_text)
+            published_text, error = self._render_finalized_publication(final_text)
+            if not error and published_text is not None and persist:
+                self._commit_publication_packet(packet, published_text)
+            return published_text, error
         return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
@@ -1624,7 +1925,20 @@ class AgentLoop:
             user_requirements=self.context.user_quality_requirements,
             proficiency=self.context.user_proficiency,
         )
-        self._turn_synthesis_policy_instruction = build_synthesis_instruction(policy)
+        instruction = build_synthesis_instruction(policy)
+        try:
+            from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+
+            hydrated = hydrate_hypothesis_refs(list(getattr(state, "hypothesis_sets", []) or []))
+            brief = hypotheses_prompt_brief(state, hydrated=hydrated)
+            if brief:
+                instruction = f"{instruction}\n{brief}"
+        except Exception as exc:
+            logger.warning(
+                "Hypothesis brief injection skipped",
+                extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+            )
+        self._turn_synthesis_policy_instruction = instruction
         self._turn_synthesis_policy_injected = True
 
     def _verify_before_publication(self, user_input: str) -> None:
@@ -1646,6 +1960,19 @@ class AgentLoop:
                 "Publication-boundary verification skipped",
                 extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
             )
+        # Hypothesis states are refreshed on the same evidence snapshot as
+        # verification, so a final answer never ships with stale verdicts.
+        intent = getattr(self, "_last_turn_intent", None)
+        if intent is not None:
+            try:
+                from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+
+                maybe_create_hypothesis_set(user_input, intent, state)
+            except Exception as exc:
+                logger.warning(
+                    "Publication-boundary hypothesis refresh skipped",
+                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+                )
 
     @staticmethod
     def _budget_truncation_message(response) -> str | None:
@@ -1737,6 +2064,7 @@ class AgentLoop:
         turn_id: str,
     ) -> SuspendedForConfirmation:
         from data_agent.agent.confirmation.models import ConfirmationStatus
+        from data_agent.agent.confirmation.policy import RequestDisposition
         from data_agent.agent.confirmation.runtime import (
             build_direct_question_candidate,
             confirmation_record_to_loop_result,
@@ -1750,14 +2078,15 @@ class AgentLoop:
             request=request,
         )
         request_result = service.request(candidate)
-        record = request_result.record
-        if record is None and request_result.reused_confirmation_id:
-            record = service.get(self.session_id, request_result.reused_confirmation_id)
-        if record is None:
-            raise RuntimeError(
-                f"confirmation request was not created: {request_result.reason}"
-            )
+        # IC2/设计§5：REUSED 恢复既有答案，不对旧 resolved record 再悬挂；
+        # advisory/rejected 同样以一次正常工具响应继续本轮。
+        if (
+            request_result.disposition == RequestDisposition.REUSED
+            or record_is_none(request_result)
+        ):
+            return self._nonblocking_confirmation_response(request_result)
 
+        record = request_result.record
         checkpoint = service.checkpoint(self.session_id)
         if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
             record = checkpoint
@@ -1771,6 +2100,31 @@ class AgentLoop:
         return confirmation_record_to_loop_result(
             record,
             {"messages": self._serialize_messages()},
+        )
+
+    def _nonblocking_confirmation_response(self, request_result) -> str:
+        """Tool-response text for advisory/reused/rejected confirmation results."""
+        from data_agent.agent.confirmation.policy import RequestDisposition
+
+        if (
+            request_result.disposition == RequestDisposition.REUSED
+            and request_result.reused_confirmation_id
+        ):
+            try:
+                service = self._confirmation_runtime()
+                reused = service.get(self.session_id, request_result.reused_confirmation_id)
+                answer = reused.response if reused is not None else None
+            except Exception:
+                answer = None
+            if answer not in (None, "", [], {}):
+                return (
+                    f"此前的回答仍然适用：{json.dumps(answer, ensure_ascii=False, default=str)}。"
+                    "如业务口径已变化，请说明新的具体口径。"
+                )
+        return (
+            f"该问题无需用户确认：{request_result.reason}。"
+            "请直接继续当前任务；只有当具体业务口径（分母/时间窗/人群/成本范围等）"
+            "确实缺失且会改变结论时才询问用户。"
         )
 
     def _suspend_for_required_question_payload(
@@ -1800,9 +2154,16 @@ class AgentLoop:
         if record is None and request_result.reused_confirmation_id:
             record = service.get(self.session_id, request_result.reused_confirmation_id)
         if record is None:
-            raise RuntimeError(
-                f"confirmation request was not created: {request_result.reason}"
+            # IC2/设计§5：自动门的 advisory/rejected 不悬挂不抛异常——记日志后
+            # 让本轮继续（该缺口已按策略判定无需用户决策）。
+            logger.info(
+                "Auto confirmation downgraded to non-blocking",
+                extra={"extra_data": {
+                    "session_id": self.session_id,
+                    "reason": request_result.reason,
+                }},
             )
+            return None
 
         checkpoint = service.checkpoint(self.session_id)
         if checkpoint is not None and checkpoint.confirmation_id == record.confirmation_id:
@@ -2286,8 +2647,16 @@ class AgentLoop:
         self._repair_broken_tool_sequence()
 
         from data_agent.llm.request_policy import close_stream
+        provider_messages = self._provider_messages()
+        if provider_messages is None:
+            yield {
+                "type": "_round_failure",
+                "code": "invalid_tool_message_sequence",
+                "detail": "会话工具消息存在不可配对条目，已阻止本次 Provider 投递；请回退或重开该轮。",
+            }
+            return
         stream = self.client.stream_chat_structured(
-            messages=self.messages, tools=self._tools_for_current_round(), system=self._get_system_prompt(),
+            messages=provider_messages, tools=self._tools_for_current_round(), system=self._get_system_prompt(),
         )
         try:
             for ev in stream:
@@ -2353,6 +2722,12 @@ class AgentLoop:
                         "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
+                    if "Fallback Python result" in str(exc):
+                        # P08-02: 指明两条合法继续路径，而不是让错误像终态。
+                        self.messages.append({
+                            "role": "system",
+                            "content": _FALLBACK_RESOLUTION_GUIDANCE,
+                        })
                     yield {"type": "error", "message": str(exc)}
                     return
                 turn_state.record_tool_call(tc.name, tc.arguments)
@@ -2387,6 +2762,15 @@ class AgentLoop:
                     ucc,
                     turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
                 )
+                if isinstance(susp, str):
+                    # IC2：advisory/reused 的直接询问得到一次正常工具响应并继续
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": susp,
+                    })
+                    yield {"type": "tool_result", "tool_call_id": tc.id, "name": tc.name, "web": None, "duration_ms": 0}
+                    continue
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -2433,6 +2817,7 @@ class AgentLoop:
             self._auto_track_task_progress(tc.name, True)
 
             # Phase 3: check for stage regression after tool execution
+            regression_msg = None
             if self.context.analysis_state is not None:
                 fc = getattr(self, '_flow_controller', None)
                 if fc is not None:
@@ -2620,7 +3005,10 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                self._verify_before_publication(user_input)
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
                 if publication_error:
                     if self._recover_publication_narrative(assistant_msg, publication_error):
                         continue
@@ -2628,20 +3016,26 @@ class AgentLoop:
                     return
                 final_text = published_text or final_text
                 assistant_msg["content"] = final_text
-                self.messages.append(assistant_msg)
                 pending_text_events = ([separator_event] if separator_event else []) + [{"type": "text_delta", "text": final_text, "turn_id": None}]
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    rejected["publication_pending_confirmation"] = True
+                    self.messages.append(rejected)
                     yield self._suspended_event(blocked_confirmation)
                     return
-                self._verify_before_publication(user_input)
-                # Persist the final message and its state before the client
-                # can render the final delta or receive turn_end.
                 self._maybe_archive(user_input, final_text)
-                self._auto_save()
+                persistence_error = self._persist_accepted_answer(assistant_msg, final_text)
+                if persistence_error:
+                    yield {"type": "error", "message": persistence_error}
+                    return
                 for ev in pending_text_events:
                     yield ev
                 return
@@ -2760,6 +3154,11 @@ class AgentLoop:
                         "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(tool_calls, i + 1, str(exc))
+                    if "Fallback Python result" in str(exc):
+                        self.messages.append({
+                            "role": "system",
+                            "content": _FALLBACK_RESOLUTION_GUIDANCE,
+                        })
                     return FinalResponse(content=str(exc))
                 turn_state.record_tool_call(tc.name, tc.arguments)
 
@@ -2805,6 +3204,14 @@ class AgentLoop:
                 ucc,
                 turn_id=str(getattr(tc, "id", "") or "direct_user_question"),
             )
+            if isinstance(susp, str):
+                # IC2：advisory/reused 的直接询问得到一次正常工具响应并继续
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": susp,
+                })
+                return None
             self.messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -2983,8 +3390,14 @@ class AgentLoop:
             # Defensive: repair any broken tool_call sequences from prior turns
             self._repair_broken_tool_sequence()
 
+            provider_messages = self._provider_messages()
+            if provider_messages is None:
+                return FinalResponse(content=(
+                    "会话工具消息存在不可配对条目，已阻止本次请求；"
+                    "请回退到上一完整轮次或重开该轮后再继续。"
+                ))
             response = self.client.chat(
-                messages=self.messages,
+                messages=provider_messages,
                 tools=self._tools_for_current_round(),
                 system=self._get_system_prompt(),
             )
@@ -3018,21 +3431,32 @@ class AgentLoop:
                 ]
 
             if not response.has_tool_calls:
-                published_text, publication_error = self._render_terminal_publication(user_input, final_text)
+                self._verify_before_publication(user_input)
+                published_text, publication_error = self._render_terminal_publication(
+                    user_input, final_text, persist=False
+                )
                 if publication_error:
                     if self._recover_publication_narrative(assistant_msg, publication_error):
                         continue
                     return FinalResponse(content=publication_error)
                 final_text = published_text or final_text
                 assistant_msg["content"] = final_text
-                self.messages.append(assistant_msg)
                 if self._should_continue_for_analysis_quality(user_input, final_text):
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
+                    rejected = dict(assistant_msg)
+                    rejected["publication_rejected"] = True
+                    rejected["publication_pending_confirmation"] = True
+                    self.messages.append(rejected)
                     return blocked_confirmation
-                self._verify_before_publication(user_input)
+                persistence_error = self._persist_accepted_answer(assistant_msg, final_text)
+                if persistence_error:
+                    return FinalResponse(content=persistence_error)
                 return FinalResponse(content=final_text)
 
             self.messages.append(assistant_msg)
@@ -3137,7 +3561,12 @@ class AgentLoop:
         )
 
     def _serialize_messages(self) -> list:
-        """Serialize messages for suspension storage."""
+        """Serialize messages for suspension storage.
+
+        P08-04: assistant.tool_calls 与 tool.tool_call_id 的配对字段必须
+        保留——只写 role/content 会在恢复后制造孤立的 tool 消息，触发
+        Provider 400。参数字符串截断到 2000 字符控制快照体积。
+        """
         serialized = []
         for msg in self.messages:
             m = {"role": msg["role"]}
@@ -3154,8 +3583,54 @@ class AgentLoop:
                 m["content"] = parts
             else:
                 m["content"] = str(content)[:5000]
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                preserved_calls = []
+                for call in tool_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                    preserved_calls.append({
+                        "id": str(call.get("id") or ""),
+                        "type": str(call.get("type") or "function"),
+                        "function": {
+                            "name": str(function.get("name") or ""),
+                            "arguments": str(function.get("arguments") or "")[:2000],
+                        },
+                    })
+                if preserved_calls:
+                    m["tool_calls"] = preserved_calls
+            tool_call_id = msg.get("tool_call_id")
+            if isinstance(tool_call_id, str) and tool_call_id:
+                m["tool_call_id"] = tool_call_id
             serialized.append(m)
         return serialized
+
+    def _provider_messages(self) -> list[dict] | None:
+        """P08-04: 构造投递前副本——剔除孤立 tool 消息并校验成对完整性。
+
+        原始历史不被修改（审计保留）。剔除记录警告；校验仍有违规时返回
+        None，调用方走可恢复的本地诊断而不是把非法序列发给 Provider。
+        """
+        from data_agent.agent.compact import (
+            drop_orphan_tool_messages,
+            validate_tool_message_sequence,
+        )
+
+        provider_copy, dropped = drop_orphan_tool_messages(self.messages)
+        if dropped:
+            logger.warning(
+                "Dropped orphan tool messages from provider copy",
+                extra={"extra_data": {"dropped": dropped[:10], "session_id": self.session_id}},
+            )
+        violations = validate_tool_message_sequence(provider_copy)
+        if violations:
+            logger.warning(
+                "Tool message sequence invalid before provider delivery",
+                extra={"extra_data": {"violations": violations[:10], "session_id": self.session_id}},
+            )
+            return None
+        return provider_copy
 
 
 def _create_streaming_context_methods(loop_context_operation, stream_impl, resume_impl):

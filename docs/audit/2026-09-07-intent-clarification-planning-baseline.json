@@ -1,0 +1,743 @@
+{
+  "schema_version": 1,
+  "purpose": "documentation planning snapshot; not a Provider freeze or implementation acceptance receipt",
+  "captured_at_utc": "2026-09-06T18:45:07.875428+00:00",
+  "workspace": "D:\\Project\\Daily\\data-agent",
+  "planning_branch": "vp-analysis-value",
+  "planning_parent_head": "86f55af05b053d42b1e9fd5f10c95e1545109cc4",
+  "implementation_branch": null,
+  "implementation_base": null,
+  "implementation_status": "not_started",
+  "capture_note": "At task start: HEAD as recorded, empty index, no tracked changes, 27 pre-existing untracked matrix documents. During documentation work, unrelated tracked edits appeared. This snapshot records committed HEAD bytes separately from current workspace bytes. It does not attribute those edits to this documentation task; later edits may occur.",
+  "initial_tracked_status": [],
+  "initial_index_empty": true,
+  "initial_untracked_paths": [
+    "docs/audit/2026-09-05-matrix-a06r3-authorization-proposal.md",
+    "docs/audit/2026-09-05-matrix-a06r3-batch.json",
+    "docs/audit/2026-09-05-matrix-a06r3-freeze-identity.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m01-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m02-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m03-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m04-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m05-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r3-m06-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-authorization-proposal.md",
+    "docs/audit/2026-09-05-matrix-a06r4-batch.json",
+    "docs/audit/2026-09-05-matrix-a06r4-freeze-identity.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m01-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m02-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m03-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m04-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m05-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r4-m06-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-authorization-proposal.md",
+    "docs/audit/2026-09-05-matrix-a06r5-batch.json",
+    "docs/audit/2026-09-05-matrix-a06r5-freeze-identity.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m01-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m02-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m03-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m04-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m05-candidate.json",
+    "docs/audit/2026-09-05-matrix-a06r5-m06-candidate.json"
+  ],
+  "index_empty_at_capture": true,
+  "concurrent_worktree_status_excluding_planning_documents": [
+    " M src/data_agent/agent/context.py",
+    " M src/data_agent/agent/loop.py",
+    " M src/data_agent/tools/registry.py",
+    " M tests/test_execution_control.py",
+    "?? docs/audit/2026-09-05-matrix-a06r3-authorization-proposal.md",
+    "?? docs/audit/2026-09-05-matrix-a06r3-batch.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-freeze-identity.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m01-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m02-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m03-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m04-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m05-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r3-m06-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-authorization-proposal.md",
+    "?? docs/audit/2026-09-05-matrix-a06r4-batch.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-freeze-identity.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m01-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m02-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m03-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m04-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m05-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r4-m06-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-authorization-proposal.md",
+    "?? docs/audit/2026-09-05-matrix-a06r5-batch.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-freeze-identity.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m01-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m02-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m03-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m04-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m05-candidate.json",
+    "?? docs/audit/2026-09-05-matrix-a06r5-m06-candidate.json"
+  ],
+  "concurrent_tracked_diff_paths": [
+    "src/data_agent/agent/context.py",
+    "src/data_agent/agent/loop.py",
+    "src/data_agent/tools/registry.py",
+    "tests/test_execution_control.py"
+  ],
+  "preexisting_untracked_files_at_capture": [
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-authorization-proposal.md",
+      "exists": true,
+      "bytes": 1446,
+      "sha256": "a5d55ca59c78421b6503d67dc3060ac543d267f976ebd73210c65d6e3f212bd6"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-batch.json",
+      "exists": true,
+      "bytes": 15310,
+      "sha256": "dc6df07826405fd832cfc3d05b6fb215863681cffbb9c4c81cce79a8c814cb49"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-freeze-identity.json",
+      "exists": true,
+      "bytes": 767,
+      "sha256": "233e97269f5beda22f558fa37665f0aa0a0f534dd5a7aca11b4cd7d9c321d65c"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m01-candidate.json",
+      "exists": true,
+      "bytes": 9092,
+      "sha256": "acd975ed898f8b321d2c7a6c6a0d4a2f65cea19261af832504b66e6648c97862"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m02-candidate.json",
+      "exists": true,
+      "bytes": 9526,
+      "sha256": "4c0b1de42a6aa47330f0e67a566ad87cfa42dc6042e6bfff8d0d831d4c832127"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m03-candidate.json",
+      "exists": true,
+      "bytes": 9084,
+      "sha256": "7f31c8bee28b4a1d60c6668b41912d121a39d1cae52922175ae0ad7d21b9163d"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m04-candidate.json",
+      "exists": true,
+      "bytes": 9277,
+      "sha256": "ff033184c733ba43acbd5d0badd75b40cc0b4871242498093dc44d095bd56471"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m05-candidate.json",
+      "exists": true,
+      "bytes": 9031,
+      "sha256": "fa94ba1a144ab85b7b12c7cc311c4612a039ae00dcab7a8b7b6579407d02d6c8"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r3-m06-candidate.json",
+      "exists": true,
+      "bytes": 10889,
+      "sha256": "4f86ccf220de3aa959481c9a44d3a7fd0157688125ade83235e47ba9979923a5"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-authorization-proposal.md",
+      "exists": true,
+      "bytes": 1446,
+      "sha256": "c603cf2fcf03fbb845882958404a1f06412628859352d101b3acd2f600f58224"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-batch.json",
+      "exists": true,
+      "bytes": 15310,
+      "sha256": "968baae0c26a935960137280b87c6945d5ffc7441bdeaf644f5c95732383e51b"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-freeze-identity.json",
+      "exists": true,
+      "bytes": 767,
+      "sha256": "cf989504e54d78771d5faa3ef1a9bcf27f02803ac6ba51da6e1880d0b7afbeff"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m01-candidate.json",
+      "exists": true,
+      "bytes": 9092,
+      "sha256": "6a9a063c097c09ca08739959bd4ecb1bdc52e8e3fb911d96aa2683d7d9627781"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m02-candidate.json",
+      "exists": true,
+      "bytes": 9526,
+      "sha256": "e8af9a32e943c237add0bb5a584804307c0dc4f0cfa4832ad85c769a8ce345ee"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m03-candidate.json",
+      "exists": true,
+      "bytes": 9084,
+      "sha256": "348f52ca4f8a0eee4659b1423ea8df2890f2b2ec6ae748e6f65fa766b8a2978c"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m04-candidate.json",
+      "exists": true,
+      "bytes": 9277,
+      "sha256": "132423795d9a7ad1d0b8c769c9027311482c0371809a611a9093be1aaf694d09"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m05-candidate.json",
+      "exists": true,
+      "bytes": 9031,
+      "sha256": "4dad61ecf2e233a1b3a214cf0efc21be776a4be5c4ccb0095b97d019d29e73dc"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r4-m06-candidate.json",
+      "exists": true,
+      "bytes": 10889,
+      "sha256": "69cb90028fb29c02d012297b76aac6c9cd4f4c81bbcd6536ad9760784ba151ee"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-authorization-proposal.md",
+      "exists": true,
+      "bytes": 1527,
+      "sha256": "571f75e77ddec24971c7c8cf08c60217b4780b4dc68f061a87b30174d9104a80"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-batch.json",
+      "exists": true,
+      "bytes": 15358,
+      "sha256": "6c5c70cf8847b5c58ea753eeec5abacfc9dc69e712d3576b91e7f76dbb04758b"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-freeze-identity.json",
+      "exists": true,
+      "bytes": 775,
+      "sha256": "a70b92dd294ad85a44ffddbf653622f85d1514c9087d6905b8ae66faf0399010"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m01-candidate.json",
+      "exists": true,
+      "bytes": 9110,
+      "sha256": "e6ccc93386db803ab6f68295ae90ad9f3ac89d93d0a1feb6537291028aee0a39"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m02-candidate.json",
+      "exists": true,
+      "bytes": 9544,
+      "sha256": "ab52d4f224dd807b792b25a49fd2c8899b9d4c16b3a41f61c8e528054441a381"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m03-candidate.json",
+      "exists": true,
+      "bytes": 9102,
+      "sha256": "4700c52278d3344b24a8e85343a7f477dd6af1c2926481b952beceee43329742"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m04-candidate.json",
+      "exists": true,
+      "bytes": 9295,
+      "sha256": "51af4a05edc0a3b43a90247d8d8c47b49253fcd07d370a70ae3694272d2fd968"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m05-candidate.json",
+      "exists": true,
+      "bytes": 9049,
+      "sha256": "a7bd3433931e2b66d44a10556caadba0d4bdf4c8575fb9e67638eed299fb1bbf"
+    },
+    {
+      "path": "docs/audit/2026-09-05-matrix-a06r5-m06-candidate.json",
+      "exists": true,
+      "bytes": 10907,
+      "sha256": "e7d9cc859adefc118e7a60bcda99aa04a68ed79666f06b2d00643ac1bb9193c5"
+    }
+  ],
+  "planned_document_paths": [
+    "docs/superpowers/plans/2026-09-07-intent-clarification-plan.md",
+    "docs/superpowers/specs/2026-09-07-intent-clarification-design.md",
+    "docs/superpowers/validation/2026-09-07-intent-clarification-acceptance.md",
+    "docs/audit/2026-09-07-intent-clarification-diagnosis.md",
+    "docs/superpowers/plans/2026-09-07-intent-clarification-handoff.md",
+    "docs/audit/2026-09-07-intent-clarification-planning-baseline.json"
+  ],
+  "watched_source_and_test_files": [
+    {
+      "path": "src/data_agent/agent/method_playbooks.py",
+      "exists": true,
+      "bytes": 45303,
+      "sha256": "2343085eb9ff1b2a7efc9d1e2a30d1e86944b8ce8cb6efbcfdcd523f0aea0f2e",
+      "head_bytes": 44503,
+      "head_sha256": "178ef0f56e1ef4235eeba39e5275601e42b10e517c20fc99199f9c1cc46fb5ab",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/llm_playbook.py",
+      "exists": true,
+      "bytes": 8877,
+      "sha256": "96fe450b0925f5edd624d0a73b450cc0b581349cc9352201e15a8f5453a59ec6",
+      "head_bytes": 8650,
+      "head_sha256": "7ade56598e326fbc777bd2afb334fa418588c2730874c368b66ae34dc89a5e3c",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/analysis_flow_controller.py",
+      "exists": true,
+      "bytes": 13314,
+      "sha256": "4d35f99b9e1cb6f3012d783bae30fcfea3a0c2f6bfc7347c15f6336c2cd1e604",
+      "head_bytes": 13015,
+      "head_sha256": "12198c0474925bb242f115909bbd6f8347d745d165ffdc0d951f3fbc0a1c1577",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/loop.py",
+      "exists": true,
+      "bytes": 143116,
+      "sha256": "d97902c9cea6842cdbd4d397ffa29f83064ba2257dce5399e1cf99b6302351b9",
+      "head_bytes": 139847,
+      "head_sha256": "4f35dd8f9278d32f78905e311881b3c67b7ffcb3c8e2efd64d461a0178d2c192",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/context.py",
+      "exists": true,
+      "bytes": 26815,
+      "sha256": "377ce11ff09680852e6adb432a90d06a551d817d6df2f6a3faed64247acbd779",
+      "head_bytes": 25727,
+      "head_sha256": "4e70cab59d299cba9857a542caf188d6c3d9e548ba5b19d19a1db61edd8b9399",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/analysis_entry.py",
+      "exists": true,
+      "bytes": 14258,
+      "sha256": "8a076ab17112c2221f2bc08f5a2c09c6af7bbdf01f2c4e50ffad8323ad4cd3c0",
+      "head_bytes": 13897,
+      "head_sha256": "241dc3a8c6a4f39b5eaf4dea6c2ae92c9ac92e24d4e24023b2fd284a3861f7ff",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/question_need_detector.py",
+      "exists": true,
+      "bytes": 20196,
+      "sha256": "e2eb5297bfb7fc0c7814d07d70f8e5efff153fef6d68496b1d4add10c61f5093",
+      "head_bytes": 19676,
+      "head_sha256": "11f40505c312defb90509c32d4432218bb23c1dea1498216eb3ade04cf8e199d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation_policy.py",
+      "exists": true,
+      "bytes": 5041,
+      "sha256": "8a4e23c61e4f06a3cd6543ecc2ce9eb3cb5b4dff9624ebf13162f93217c455b0",
+      "head_bytes": 4892,
+      "head_sha256": "166a4fc32f86d91cdb753373c1eb3ec341c1841ff8d76821e54a85aac27f71f1",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation/runtime.py",
+      "exists": true,
+      "bytes": 14780,
+      "sha256": "31983fe893f665c628f0d6664a2a64947e992f29f13c71846bc31b406645f092",
+      "head_bytes": 14368,
+      "head_sha256": "16fccf304152c77c33ca8c3f9e194cb47a939e1761861eb184de729a4822990e",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation/models.py",
+      "exists": true,
+      "bytes": 15062,
+      "sha256": "817caa5c9eafcb123499296bbde8e2cab8c549a706b9213b48a56b74c32ffaa9",
+      "head_bytes": 14681,
+      "head_sha256": "b1961b27ee788840ae2789de286d3f514b151a953f828e3b449ce37bd6a18d7d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation/policy.py",
+      "exists": true,
+      "bytes": 3143,
+      "sha256": "58ea20a8396d396e95d8f0040c3827a5f2e49bb741c6b579e4042a555d48963a",
+      "head_bytes": 3047,
+      "head_sha256": "9700cc04d70630e5da528b7345942c5077440a1cb3e34be223e191d655befe9d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation/service.py",
+      "exists": true,
+      "bytes": 20059,
+      "sha256": "0994178884bd1a08e5dc977cfe63b1e3a934dff0e9ba9f1e4e57973263960805",
+      "head_bytes": 19552,
+      "head_sha256": "601224ffaf63c5cccaedb5fcea3bc4c879756625d7a9be1acf9fa56eb8b5650d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/confirmation/actions.py",
+      "exists": true,
+      "bytes": 6827,
+      "sha256": "4ff3a1c7167da08d962bdaa714fb46606131a32b51543bbbb55b4b6fa937d8f9",
+      "head_bytes": 6622,
+      "head_sha256": "543b3f4f30456bd2f9d67c4ad51f9271588bedbd524c1c7e572ae2c7f9379d0f",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/analysis_state.py",
+      "exists": true,
+      "bytes": 37774,
+      "sha256": "fa8dfb64b5dfe6f3427f303c7abe03e82b79b49f61b25cddc7973301b736c139",
+      "head_bytes": 36924,
+      "head_sha256": "5710d36df8ff96ab145b166f90bbb2a93afddc4dd926ddba061e805eb33395a4",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/workflow_projection.py",
+      "exists": true,
+      "bytes": 8537,
+      "sha256": "8de20e23be4a51104d376daffa895d45588b0e4286ab576eeb11a34ccc85d912",
+      "head_bytes": 8310,
+      "head_sha256": "1ef1817cef1f9c4ab21142072993675fd6a0b3d887ae4bb795429a247dac189d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/intent.py",
+      "exists": true,
+      "bytes": 20625,
+      "sha256": "3365ee0d62db35e2856cffb07518cd7e16e3c0b9ff2cc1956660eab7d17542a1",
+      "head_bytes": 20170,
+      "head_sha256": "184445d09a8cd7138eb0cab0737d19aa4168c3004d91b6e90ac8f079aa18dff9",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/request_language.py",
+      "exists": true,
+      "bytes": 2860,
+      "sha256": "5d7b7e6e258552b1a69674f4d8369d7619e58e73b08fbfdd8c1085fe480fffa6",
+      "head_bytes": 2788,
+      "head_sha256": "15412f2296c113e62bab681fc4c28c7724207a1c35488fefb4712d8bafd02806",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/intent_refinement.py",
+      "exists": true,
+      "bytes": 7704,
+      "sha256": "e55440788a519f0c2261ed395a05848ee9ada2639b76966a721283a69b468865",
+      "head_bytes": 7500,
+      "head_sha256": "f76a1cc394d25f707625cb6ad993bd326435e867841174656a36c83fb756943a",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/execution_scope.py",
+      "exists": true,
+      "bytes": 27813,
+      "sha256": "06f3b3da2a9d7cc097de056f99bf319f43c706932d31add90525001f6e386c38",
+      "head_bytes": 27101,
+      "head_sha256": "25307b934b4b2a2ab4ff201e2d4be6fd95f65a21bd8d6c1f21aed544ee31f4b8",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/publication_synthesis.py",
+      "exists": true,
+      "bytes": 30523,
+      "sha256": "26de20f5290a6444c705b7dc54d250b457fe15b73947fe7b868a160eb6c11b8c",
+      "head_bytes": 29873,
+      "head_sha256": "dc6039ea42e956acc72af4446b88a3241e53cf0a3a864a31b126c5384a1b8e70",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/agent/prompts.py",
+      "exists": true,
+      "bytes": 32507,
+      "sha256": "d615f6e8bd659576cf971b1fa2b1d8f16454aa49283864aa9512c43c51bae940",
+      "head_bytes": 31853,
+      "head_sha256": "2fbbd50f85c374ba9d487f29a25b28fa4a3020b473bf0ef248de600850ad0c08",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/tools/interaction.py",
+      "exists": true,
+      "bytes": 16181,
+      "sha256": "f11addb4e074642bc2deed242c6c3492cb5c94d5dc147ddd4e1da571b6d1260b",
+      "head_bytes": 15744,
+      "head_sha256": "983591562138a9bd932459c9421140b5f86f839ca91b75b7cb46ab109e1ff5a4",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/tools/data_io.py",
+      "exists": true,
+      "bytes": 36983,
+      "sha256": "b517c03f81d5d6641c570affb44caefba0c97be9abe6a3ef221c22766711eef8",
+      "head_bytes": 36135,
+      "head_sha256": "d4df011bdf1816c827b7f05d768023db0d332aee622cf77006851f71ce79c9cc",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/tools/registry.py",
+      "exists": true,
+      "bytes": 37907,
+      "sha256": "6d2a688740b4813f532c811610ed99da182628a01c903815ad2be080b23d098c",
+      "head_bytes": 36800,
+      "head_sha256": "c41f2af5615bcb04abe917fa373b8c5d2e15ef3535cff6b22c26778bf8333228",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "src/data_agent/web/blueprints/chat.py",
+      "exists": true,
+      "bytes": 14720,
+      "sha256": "c807c3506c0b823feb2981f2766993e1b257b3ec89e8ae2fb83e0208c7729cd3",
+      "head_bytes": 14357,
+      "head_sha256": "cf1138a210edece54b8926b540f1280504c9a2a8e8e641b3f7863d9dac1c655c",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "project/skills/full_report/SKILL.md",
+      "exists": true,
+      "bytes": 3101,
+      "sha256": "871035be86ea480351152a128ea125a3361679b1bda276ce5ba725bbede835cb",
+      "head_bytes": 3014,
+      "head_sha256": "358542537322c30ef4dea2005da1ca420a47d46316e5f24ff95ed9c95580bf6d",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "scripts/testing/run_regression.py",
+      "exists": true,
+      "bytes": 3182,
+      "sha256": "d52f46f8b759126996944e37d96fbd5b6349388afcd8e1cadf702b66e4759ac3",
+      "head_bytes": 3089,
+      "head_sha256": "1746d635614731e81e28c56d6c22c151051c4b042ae538835f9075ee4b114aeb",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "scripts/testing/run_p7_browser_rehearsal.py",
+      "exists": true,
+      "bytes": 18986,
+      "sha256": "c0856540b3a60c7d8bddfd8f63df35e9fe739b91a4e38fb23919d489e27e4517",
+      "head_bytes": 18986,
+      "head_sha256": "c0856540b3a60c7d8bddfd8f63df35e9fe739b91a4e38fb23919d489e27e4517",
+      "working_tree_differs_from_head_bytes": false
+    },
+    {
+      "path": "tests/test_method_playbooks.py",
+      "exists": true,
+      "bytes": 20792,
+      "sha256": "bd9469522f3f21fef52b76d6e10b4363469ed6b5860a84e9f1219e4c351abde6",
+      "head_bytes": 20336,
+      "head_sha256": "7eb567f23033d413a7e284232b969ecd0402d031f8e84b8e3d6120421f3a18f1",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_question_need_detector.py",
+      "exists": true,
+      "bytes": 21115,
+      "sha256": "831cd1c06bdd9a661bc3e64fed8e27ed895c27fdb0f5c232398c917f4f984651",
+      "head_bytes": 20530,
+      "head_sha256": "514adbbab527c4ebf242e744226c90a0b3bd0fdb912040117d22e1741d27a914",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_analysis_entry.py",
+      "exists": true,
+      "bytes": 16546,
+      "sha256": "7e419e74e0dceb33bec2429ac59cb765e7d717064b337941c5772e418c9b7f8c",
+      "head_bytes": 16117,
+      "head_sha256": "40b3c27f7d4ed19d2948ac3ab956f6b9f2d390b7e168ad311b4fb43e6f6157c1",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_policy.py",
+      "exists": true,
+      "bytes": 7004,
+      "sha256": "09c23e96ff118eb6161a110ebdece4ee12fb8f2a5f87434bd110be7e03bc5603",
+      "head_bytes": 6792,
+      "head_sha256": "155c412fafd9c493f8835ef292ba4530d9f2785a26ea4071ad9e4b41ba0395e6",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_runtime.py",
+      "exists": true,
+      "bytes": 41361,
+      "sha256": "188d6aa2abc4261d5e8a50c3cfd9c094ce3eac1b43b78ea514241a2054580bc6",
+      "head_bytes": 40248,
+      "head_sha256": "acd7f0720435fab69422e4570be543a5e16110f365b79874a7ca4e2209494396",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_continuation.py",
+      "exists": true,
+      "bytes": 2814,
+      "sha256": "90c07d8eee3f65e6a92a284ef4c451493c462f06c725aa0b4b426f97fe012a2a",
+      "head_bytes": 2728,
+      "head_sha256": "37ba2164b3020a1a9467ffad94fae827056769ef150e685d316321d3ed564fba",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_session_api.py",
+      "exists": true,
+      "bytes": 9283,
+      "sha256": "bf146bfc720aae7a1de1f571011eea230bcb04f4fadb89ac60cd5633e0a0fcb9",
+      "head_bytes": 9042,
+      "head_sha256": "09b554cf5df52678ec3ab3567937677d271a4611ba2cb3965136623d2488b671",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_service.py",
+      "exists": true,
+      "bytes": 18270,
+      "sha256": "63df352bac4a72d58d33631697ce820051bcae2d912518f8ce8d148fba5dc710",
+      "head_bytes": 17744,
+      "head_sha256": "089264565dc1614d5eeed5732598ba4f39866190e746c999617f80087780cfe5",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_models.py",
+      "exists": true,
+      "bytes": 3878,
+      "sha256": "e44660e85607e07d108c48787110a3624b8a1789e3ba1064b1831c4d5f66c40d",
+      "head_bytes": 3768,
+      "head_sha256": "79674a71cb729dd0eb06b9825d07fe92340d41d08a0dc504106469f7f30d7044",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_store.py",
+      "exists": true,
+      "bytes": 4084,
+      "sha256": "2fa4883ac6510ca006f2fd5245107e1863160d953ea15b734c0ec7ebb6a297fb",
+      "head_bytes": 3952,
+      "head_sha256": "635cfdf0e5ecf70886e3bcae563bb568b5f9ac5f220534bf2feac32177f7378e",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_confirmation_actions.py",
+      "exists": true,
+      "bytes": 3334,
+      "sha256": "1e05bfcd631613638f81af4e483f1ce607ce6c64296de9477f21bb5c4d1e455d",
+      "head_bytes": 3231,
+      "head_sha256": "ec21888e22265069c35d7cf8f9720cf7d4ddf9c61e459da258831180c9414c55",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_publication_synthesis.py",
+      "exists": true,
+      "bytes": 26299,
+      "sha256": "1507c33df9a115e7037953e3e77a8186800655d3e80cd2b563748d1c59fb90a0",
+      "head_bytes": 25672,
+      "head_sha256": "3241ecc8249e1ca7ca8fa5db8eb6489ec4810d530c77a4bf6fe49b5cf4049c85",
+      "working_tree_differs_from_head_bytes": true
+    },
+    {
+      "path": "tests/test_value_preservation_p7_boundaries.py",
+      "exists": true,
+      "bytes": 11288,
+      "sha256": "014a294480ecbce690404126a70985e1e0e8e839c0624cc212a89e66db450e9c",
+      "head_bytes": 11288,
+      "head_sha256": "014a294480ecbce690404126a70985e1e0e8e839c0624cc212a89e66db450e9c",
+      "working_tree_differs_from_head_bytes": false
+    },
+    {
+      "path": "tests/test_execution_control.py",
+      "exists": true,
+      "bytes": 49422,
+      "sha256": "fe5286841b25f0ec7f4cc761c64b61b6e4631dfedb855709b14e073030ea8fe2",
+      "head_bytes": 43797,
+      "head_sha256": "21bf421cf4a26352c001710743134fc46ddf79ea4400a8ba7bbe6c17538adfdf",
+      "working_tree_differs_from_head_bytes": true
+    }
+  ],
+  "watched_file_count": 42,
+  "watched_head_collection_sha256": "e971d5db42aba0444ea1eaae07e64a6a39d06290116d339bc180eb9654ab58ff",
+  "collection_hash_rule": "UTF-8 LF path<TAB>HEAD-byte-sha256 lines sorted by path, including trailing LF. head_sha256 hashes git show HEAD:path bytes; sha256 hashes working-tree raw bytes. Line endings may differ independently of logical edits. Focused set only, not full application source digest.",
+  "local_session_evidence": [
+    {
+      "path": "sessions/9810fe7bacf6/conversation.json",
+      "exists": true,
+      "bytes": 352687,
+      "sha256": "aeca49df64504fb5157a56eac98ac279db9893d7d7ebf3f6fb9ce9ff4fb03f4d",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9810fe7bacf6/analysis_state.json",
+      "exists": true,
+      "bytes": 1068096,
+      "sha256": "2321c0a51ec08e5386071a623071a9e8b29c385283029faffcee10a1bd3415d6",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9810fe7bacf6/confirmations/snapshot.json",
+      "exists": true,
+      "bytes": 2900,
+      "sha256": "e809d5b0fafa2149bf17504afd30ee2848997be513497c41ba316c9189a68669",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9810fe7bacf6/confirmations/events.jsonl",
+      "exists": true,
+      "bytes": 10746,
+      "sha256": "b3fb83a9dd08982637b700b56260d21ecd1947cff42b9f11e6ab695c028ba957",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9959216b6a4a/conversation.json",
+      "exists": true,
+      "bytes": 96621,
+      "sha256": "1243a4b951e7aeff2b25f3573370a8f0eb542d75ee87016145ede30231e5c809",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9959216b6a4a/analysis_state.json",
+      "exists": true,
+      "bytes": 88395,
+      "sha256": "d44b7140b55452214e514d875b260b1bc6f48242afa182b732b038b7c354938d",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9959216b6a4a/confirmations/snapshot.json",
+      "exists": true,
+      "bytes": 2901,
+      "sha256": "c7722c8b5d9f90c33c33a2a214ee9a17e0a096c0d0630a9292c2f273d0308ca8",
+      "git_tracked": false
+    },
+    {
+      "path": "sessions/9959216b6a4a/confirmations/events.jsonl",
+      "exists": true,
+      "bytes": 10749,
+      "sha256": "fbdf1654194240361471f9c9b5d4c4085d4d1ede81b996460935c9546f5832dc",
+      "git_tracked": false
+    }
+  ],
+  "prior_guidance_files": [
+    {
+      "path": "docs/superpowers/specs/2026-08-23-route-a-top-architecture-design.md",
+      "exists": true,
+      "bytes": 8411,
+      "sha256": "ab6a9318de684c1812b4b12973a55ca5dc93966eabb524b7c1d9064906e69f36"
+    },
+    {
+      "path": "docs/audit/2026-08-25-capability-preservation-ledger.md",
+      "exists": true,
+      "bytes": 19988,
+      "sha256": "0e58545994778e7449fe49b7f259a888cd9f5f125c6c6d0b0987980e94593a48"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-09-06-analysis-value-preservation-design.md",
+      "exists": true,
+      "bytes": 24089,
+      "sha256": "da0736f44302bf66e547df3a6392da1b3da3dfdb36d4f2da14252e55a152a815"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-06-analysis-value-preservation-plan.md",
+      "exists": true,
+      "bytes": 21477,
+      "sha256": "f1e836a1d577b4228b3bd64f2965dc9a12addc7de083e1b9470b3101f2706a08"
+    }
+  ],
+  "validation_scope": {
+    "documentation_checks": "Required before commit; final results in delivery response and Git scope verification.",
+    "new_implementation_tests": "not_run",
+    "browser_acceptance": "not_run",
+    "real_provider_calls_this_documentation_task": 0,
+    "real_provider_acceptance": "not_authorized_not_run"
+  },
+  "authorization": {
+    "create_and_commit_named_documentation": true,
+    "implement_on_current_branch": false,
+    "create_implementation_branch_in_this_task": false,
+    "push_merge_deploy": false,
+    "real_provider_calls": false
+  },
+  "portability_notes": [
+    "Cherry-pick only the documentation commit onto the user-selected implementation base; do not merge its parent branch.",
+    "Local sessions and historical artifacts may be absent in the target checkout; use synthetic fixtures.",
+    "Do not copy original data, model reasoning, credentials or matrix authorizations.",
+    "Recheck schema and safety prerequisites at IC0; different target-base hashes require an explained compatibility map.",
+    "Do not stage or revert concurrent source/test edits; this snapshot is time-bound and not a lock on others work."
+  ]
+}

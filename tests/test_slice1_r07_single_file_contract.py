@@ -16,7 +16,7 @@ from data_agent.config import get_config
 from data_agent.session.workspace import Workspace
 from data_agent.tools.analysis_flow import record_evidence_record
 from data_agent.tools.visualization import create_chart
-from scripts.acceptance.real_data_manifest import reference_data_path
+from tests.support.real_data_manifest import reference_data_path
 
 
 ROOT = Path(__file__).resolve().parents[1]

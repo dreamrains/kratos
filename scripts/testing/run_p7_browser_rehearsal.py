@@ -1,0 +1,618 @@
+"""Serve an isolated, Provider-disabled Web rehearsal for P7 browser cases.
+
+This is a test runner, not an alternative application path.  The browser talks
+to the ordinary Flask/SSE endpoints; the ordinary AgentLoop executes its real
+tools, persists its session, builds its Workbench projection, and validates a
+publication before the response reaches the page.  Only the model transport is
+scripted.  Any attempt to use the production Provider transport raises and is
+recorded in the run trace.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import re
+import threading
+import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+
+def _configure_environment(run_dir: Path) -> None:
+    workspace_dir = run_dir / "workspace"
+    sessions_dir = run_dir / "sessions"
+    os.environ.update(
+        {
+            "API_BASE": "http://127.0.0.1:9",
+            "API_KEY": "p7-browser-rehearsal-no-provider",
+            "GOLDEN_LIVE_SMOKE": "0",
+            "DATA_AGENT_REAL_PROVIDER_NETWORK_ENABLED": "0",
+            "MCP_ENABLED": "false",
+            "SKILL_AUTO_DISCOVER": "false",
+            "WORKSPACE_DIR": str(workspace_dir),
+            "SESSIONS_DIR": str(sessions_dir),
+        }
+    )
+    (workspace_dir / "inbox").mkdir(parents=True, exist_ok=False)
+    sessions_dir.mkdir(parents=True, exist_ok=False)
+
+
+def _write_csv(path: Path, columns: list[str], rows: list[list[Any]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(columns)
+        writer.writerows(rows)
+
+
+def _write_fixtures(run_dir: Path) -> None:
+    inbox = run_dir / "workspace" / "inbox"
+    _write_csv(
+        inbox / "F-SALES.csv",
+        ["order_id", "date", "channel", "amount"],
+        [[f"O{i:02d}", f"2026-09-{i:02d}", "all", 10] for i in range(1, 13)],
+    )
+    _write_csv(
+        inbox / "F-RET7.csv",
+        ["day", "retention"],
+        [[day, value] for day, value in enumerate((0.55, 0.42, 0.31, 0.24, 0.18, 0.13, 0.10), 1)],
+    )
+    _write_csv(
+        inbox / "F-HYP.csv",
+        ["date", "amount"],
+        [["2026-09-01", 10], ["2026-09-02", 20], ["2026-09-03", 20]],
+    )
+    _write_csv(
+        inbox / "F-HYP-FLAT.csv",
+        ["date", "amount"],
+        [["2026-09-01", 10], ["2026-09-02", 10], ["2026-09-03", 10]],
+    )
+    for number in range(1, 7):
+        _write_csv(
+            inbox / f"F-SRC{number}.csv",
+            ["source", "date", "amount"],
+            [
+                [f"source_{number}", "2026-09-01", number * 10],
+                [f"source_{number}", "2026-09-02", number * 11],
+            ],
+        )
+
+
+def _seed_legacy_confirmation_fixture() -> None:
+    """Create the portable F5 legacy session used by IC-B05.
+
+    The session is written through the production serializers.  The browser
+    then loads it normally; no test-only route or alternate confirmation store
+    is introduced.
+    """
+    from data_agent.agent.analysis_state import AnalysisSessionState
+    from data_agent.session.history import save_session
+
+    session_id = "ic-b05-legacy"
+    save_session(
+        [{
+            "role": "user",
+            "content": "旧会话包含一个通用方法审批，恢复后应退役并重新判断真实业务缺口。",
+        }],
+        session_id,
+    )
+    state = AnalysisSessionState(session_id=session_id, data_state="data_loaded")
+    state.pending_confirmations = [{
+        "id": "legacy_method_pending",
+        "status": "pending",
+        "source": "method_playbook",
+        "confirmation_type": "method_confirmation",
+        "question": "是否按 Retention & Lifecycle 方法继续？",
+        "options": [
+            {"label": "按此方法继续", "value": "confirm_method"},
+            {"label": "先补充目标口径", "value": "clarify_scope"},
+        ],
+        "blocking_reason": "历史模板要求确认方法。",
+        "state_updates": {
+            "method_confirmation": {"playbook_id": "retention_lifecycle"},
+        },
+    }]
+    state.save()
+
+
+class RunTrace:
+    def __init__(self, run_dir: Path) -> None:
+        self.path = run_dir / "runtime.jsonl"
+        self._lock = threading.Lock()
+
+    def append(self, event: str, **payload: Any) -> None:
+        record = {"timestamp": time.time(), "event": event, **payload}
+        with self._lock, self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+
+
+class ScriptedClient:
+    """Small deterministic model replacement used only by this test server."""
+
+    model_id = "p7-browser-scripted"
+    max_tokens = 2048
+
+    def __init__(self, trace: RunTrace) -> None:
+        self.trace = trace
+        self._rounds: dict[str, int] = defaultdict(int)
+
+    def for_purpose(self, **_: Any) -> "ScriptedClient":
+        return self
+
+    def cancel(self) -> None:
+        self.trace.append("scripted_cancel")
+
+    def reset_cancellation(self) -> None:
+        return None
+
+    @staticmethod
+    def _last_user(messages: list[dict]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                return str(message.get("content") or "")
+        return ""
+
+    @staticmethod
+    def _current_hypothesis() -> tuple[str, str, str]:
+        """Read the persisted production hypothesis artifact for B04 relations."""
+        from data_agent.agent.context import get_current_context
+
+        state = get_current_context().analysis_state
+        plan_id = str((state.analysis_plan or {}).get("id") or "")
+        contract_id = next(
+            (str(item.get("id") or "") for item in state.dataset_contracts if str(item.get("dataset") or "") == "hyp"),
+            "",
+        )
+        for ref in state.hypothesis_sets:
+            if str(ref.get("dataset") or "") != "hyp":
+                continue
+            payload = json.loads(Path(str(ref["artifact_path"])).read_text(encoding="utf-8"))
+            hypotheses = payload.get("hypotheses") or []
+            if hypotheses:
+                return str(hypotheses[0]["id"]), plan_id, contract_id
+        raise RuntimeError("B04 requires a persisted hypothesis set for dataset hyp")
+
+    @classmethod
+    def _hypothesis_evidence(cls, relation: str, observed: str, delta: int) -> dict[str, Any]:
+        hypothesis_id, plan_id, contract_id = cls._current_hypothesis()
+        return {
+            "plan_id": plan_id,
+            "step_id": "period_compare_amount",
+            "claim_key": f"b04_{relation}_{observed}",
+            "claim": "amount changed between the compared periods in hyp.",
+            "dataset": "hyp",
+            "dataset_contract_id": contract_id,
+            "method": "compare_periods",
+            "tool_calls": ["compare_periods"],
+            "result_summary": f"amount delta={delta} in the compared periods.",
+            "limitations": ["descriptive comparison only"],
+            "confidence": "medium",
+            "sample_size": 2,
+            "evidence_requirement": "amount",
+            "measurements": [{
+                "metric": "amount",
+                "definition": "amount aggregated per period",
+                "value": max(abs(delta), 1),
+                "unit": "currency",
+                "grain": "period",
+                "population_scope": "all records",
+                "time_scope": "2026-09",
+                "method": "compare_periods",
+                "denominator": "period days",
+                "limitations": ["descriptive comparison only"],
+                "delta": delta,
+            }],
+            "competing_hypotheses": [{
+                "hypothesis_id": hypothesis_id,
+                "relation": relation,
+                "metric": "amount",
+                "observed": observed,
+            }],
+        }
+
+    @staticmethod
+    def _response(text: str = "", calls: list[tuple[str, dict]] | None = None):
+        from data_agent.llm.client import Response, ToolCall
+
+        return Response(
+            text=text,
+            tool_calls=[ToolCall(f"p7-{index}-{name}", name, args) for index, (name, args) in enumerate(calls or [], 1)],
+        )
+
+    def chat(self, messages, tools=None, system=None):  # auxiliary intent/playbook calls
+        self.trace.append("auxiliary_call", messages=len(messages))
+        return self._response('{"intent_type":"directed_analysis","clarity":"clear"}')
+
+    def _next(self, marker: str, messages: list[dict]):
+        user = self._last_user(messages)
+        step = self._rounds[marker]
+        self._rounds[marker] += 1
+        self.trace.append("scripted_round", marker=marker, step=step, user=user)
+
+        if marker == "B01":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "f_sales"})])
+            if step == 1:
+                return self._response(calls=[(
+                    "transform_data",
+                    {
+                        "name": "f_sales",
+                        "operation": "group_aggregate",
+                        "group_by": ["channel"],
+                        "aggregations": [{"column": "amount", "functions": ["sum", "count"]}],
+                        "save_as": "f_sales_total",
+                    },
+                )])
+            if step == 2:
+                return self._response(calls=[(
+                    "record_evidence_record",
+                    {"record_json": {
+                        "claim": "当前 12 条订单金额合计为 120",
+                        "dataset": "f_sales_total",
+                        "method": "group_aggregate",
+                        "tool_calls": ["transform_data"],
+                        "result_summary": "amount_sum=120，amount_count=12",
+                        "limitations": "仅覆盖当前导入的 12 条订单，不能外推总体。",
+                        "confidence": "high",
+                    }},
+                )])
+            return self._response(
+                "已验证观察：当前 12 条订单金额合计为 120。行动建议：若下周同口径订单金额低于 120，先复核渠道投放；若连续两周低于 120，停止扩大投放并复核渠道成本。限制：这只是当前 12 条记录的描述，不能外推总体。"
+            )
+
+        if marker == "B02":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-RET7.csv", "name": "ret_a"})])
+            if step == 1:
+                return self._response(calls=[("curve_fitting", {"name": "ret_a", "x_col": "day", "y_col": "retention"})])
+            return self._response("已验证观察：D7 留存为 10%。当前不能预测 D30，建议继续收集至第 30 天后再验证。")
+
+        if marker == "B02-NEG":
+            if step == 0:
+                return self._response(calls=[("curve_fitting", {"name": "ret_a", "x_col": "day", "y_col": "retention"})])
+            # The first candidate must be stopped by the real publication guard.
+            if step == 1:
+                return self._response("渠道 A 的 D30 留存预计为 5%。")
+            return self._response("当前只有 D1 至 D7 的观察，不能预测 D30；需补充至第 30 天的数据后再验证。")
+
+        if marker in {"B03", "CONTENT-B03"}:
+            if step == 0:
+                calls: list[tuple[str, dict]] = []
+                for number in range(1, 7):
+                    name = f"src_{number}"
+                    calls.append(("load_data", {"source": f"F-SRC{number}.csv", "name": name}))
+                return self._response(calls=calls)
+            if step == 1:
+                calls = []
+                for number in range(1, 7):
+                    name = f"src_{number}"
+                    calls.append((
+                        "compare_periods",
+                        {
+                            "name": name,
+                            "date_col": "date",
+                            "metrics": "amount",
+                            "period_a": "2026-09-01~2026-09-01",
+                            "period_b": "2026-09-02~2026-09-02",
+                        },
+                    ))
+                return self._response(calls=calls)
+            return self._response(
+                "已完成六个来源的分组汇总。来源 1 至来源 6 均保留在本轮收据中；导出时应保留全部来源和每个来源的金额与记录数。"
+            )
+
+        if marker in {"B07-PRESENTATION", "CONTENT-B07"}:
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "presentation_sales"})])
+            if step == 1:
+                return self._response(calls=[(
+                    "create_chart",
+                    {
+                        "chart_type": "bar",
+                        "data": "presentation_sales",
+                        "title": "渠道金额对比",
+                        "x_col": "date",
+                        "y_col": "amount",
+                        "purpose": "exploratory",
+                    },
+                )])
+            return self._response(
+                "## 当前数据概览\n\n"
+                "| 指标 | 数值 | 口径 |\n"
+                "|---|---:|---|\n"
+                "| 订单金额 | 120 | 当前导入的 12 条订单 |\n"
+                "| 订单数 | 12 | 当前导入记录数 |\n\n"
+                "计算关系为：$$\\text{平均订单金额}=\\frac{120}{12}=10$$\n\n"
+                "［［chart：渠道金额对比］］\n\n"
+                "该结果只描述当前导入的 12 条记录，不能外推总体。"
+            )
+
+        if marker == "IC-B01":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-RET7.csv", "name": "ic_retention"})])
+            if step == 1:
+                return self._response(calls=[("curve_fitting", {"name": "ic_retention", "x_col": "day", "y_col": "retention"})])
+            return self._response(
+                "已完成观测范围内的留存曲线拟合：D7 留存为 10%。"
+                "结果只覆盖 D1 至 D7，不包含 D30 外推，也无需用户批准内部拟合方法。"
+            )
+
+        if marker == "IC-B02":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "ic_sales"})])
+            if step == 1:
+                return self._response(calls=[(
+                    "transform_data",
+                    {
+                        "name": "ic_sales",
+                        "operation": "group_aggregate",
+                        "group_by": ["channel"],
+                        "aggregations": [{"column": "amount", "functions": ["sum", "count", "mean"]}],
+                        "save_as": "ic_sales_summary",
+                    },
+                )])
+            return self._response(
+                "九项需求逐项结果：\n"
+                "1. 最终收益：当前导入订单金额合计 120。\n"
+                "2. 复购率：not_computed，当前夹具没有跨订单复购标识。\n"
+                "3. 购买偏好：evidence_insufficient，只有单一渠道。\n"
+                "4. 付费频次：当前 12 条记录。\n"
+                "5. 付费 ARPU：evidence_insufficient，缺少独立用户分母。\n"
+                "6. 人均付费：evidence_insufficient，缺少独立用户分母。\n"
+                "7. 日均付费：当前 12 天合计 120，日均 10。\n"
+                "8. 单次付费：当前 12 笔均值 10。\n"
+                "9. 金额区间分布：当前 12 笔均为 10。\n"
+                "连续付费提升没有对照，不能写成省钱卡造成的因果效果。"
+            )
+
+        if marker in {"IC-B03", "IC-B04-REUSE"}:
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "净收益应采用哪种成本范围？",
+                    "options": [
+                        {"label": "仅代金券成本", "description": "只扣除代金券直接成本。"},
+                        {"label": "代金券及渠道成本", "description": "同时扣除渠道成本。"},
+                    ],
+                    "confirmation_type": "metric_scope",
+                    "blocking_reason": "成本范围会改变净收益口径。",
+                })])
+            return self._response(
+                "已复用当前业务范围内有效的成本口径回答；没有把它扩展成整个方法的永久许可。"
+            )
+
+        if marker == "IC-B04-CHANGE":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "比较窗口改为 7 天还是保留 30 天？",
+                    "options": [
+                        {"label": "7 天", "description": "按新的 7 天窗口计算。"},
+                        {"label": "30 天", "description": "保留原 30 天窗口。"},
+                    ],
+                    "confirmation_type": "time_window",
+                    "blocking_reason": "窗口变化会改变比较范围和结果。",
+                })])
+            return self._response("已按新选择的窗口继续；旧成本范围回答没有替代这次窗口决定。")
+
+        if marker == "IC-B05":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "复购率分母应使用全部购卡用户还是到期用户？",
+                    "options": [
+                        {"label": "全部购卡用户", "description": "以全部购卡用户为分母。"},
+                        {"label": "到期用户", "description": "只以已到期用户为分母。"},
+                    ],
+                    "confirmation_type": "metric_scope",
+                    "blocking_reason": "分母会实质改变复购率。",
+                })])
+            return self._response(
+                "真实分母问题已被跳过，因此没有把 skip 当成批准，也没有输出确定复购率；"
+                "旧通用方法审批仅按 policy_retired 保留审计。"
+            )
+
+        if marker == "IC-B06-METHOD":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "是否使用留存方法继续？",
+                    "options": [
+                        {"label": "使用", "description": "批准内部方法。"},
+                        {"label": "不使用", "description": "拒绝内部方法。"},
+                    ],
+                    "confirmation_type": "method_confirmation",
+                    "blocking_reason": "模型声称内部方法需要批准。",
+                })])
+            return self._response("内部方法许可问题已非阻塞处理，工具消息已闭合，任务继续。")
+
+        if marker == "IC-B06-SEMANTIC":
+            if step == 0:
+                return self._response(calls=[("ask_user_question", {
+                    "question": "应按自然周还是最近 7 天统计？",
+                    "options": [
+                        {"label": "自然周", "description": "按周一至周日。"},
+                        {"label": "最近 7 天", "description": "按滚动七天。"},
+                    ],
+                    "confirmation_type": "time_window",
+                    "blocking_reason": "时间口径会改变当前统计结果。",
+                })])
+            return self._response("已按用户选择的真实时间口径恢复，SSE 终态保持唯一。")
+
+        if marker == "B04":
+            compare_up = {
+                "name": "hyp", "date_col": "date", "metrics": "amount",
+                "period_a": "2026-09-01~2026-09-01", "period_b": "2026-09-02~2026-09-02",
+            }
+            compare_flat = {
+                "name": "hyp", "date_col": "date", "metrics": "amount",
+                "period_a": "2026-09-02~2026-09-02", "period_b": "2026-09-03~2026-09-03",
+            }
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-HYP.csv", "name": "hyp"})])
+            if step == 1:
+                return self._response(calls=[("compare_periods", compare_up)])
+            if step == 2:
+                return self._response(calls=[("record_evidence_record", {"record_json": {
+                    "claim": "amount changed between the compared periods in hyp.",
+                    "dataset": "hyp",
+                    "method": "compare_periods",
+                    "tool_calls": ["compare_periods"],
+                    "result_summary": "amount increased from 10 to 20 in the compared periods.",
+                    "limitations": "descriptive comparison only",
+                    "confidence": "medium",
+                }})])
+            if step == 3:
+                return self._response("已创建竞争假设，当前仍待结构化证据区分。")
+            if step == 4:
+                return self._response(calls=[("compare_periods", compare_up)])
+            if step == 5:
+                return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("supports", "increased", 10)})])
+            if step == 6:
+                return self._response("结构化支持证据已记录。")
+            if step == 7:
+                return self._response(calls=[("compare_periods", compare_flat)])
+            if step == 8:
+                return self._response(calls=[("record_evidence_record", {"record_json": self._hypothesis_evidence("refutes", "flat", 0)})])
+            if step == 9:
+                return self._response("结构化反证已记录；竞争解释保持未决。")
+            if step == 10:
+                return self._response(calls=[("reload_data", {"source": "F-HYP-FLAT.csv", "name": "hyp"})])
+            if step == 11:
+                return self._response("数据已更新为新版本；历史版本及其证据绑定已保留，需重新验证假设。")
+            return self._response("当前数据版本已变化，历史竞争性假设应以 stale 状态保留，等待新版本证据。")
+
+        if marker == "B05-BUSINESS":
+            return self._response("面向业务：当前 12 条订单金额合计为 120。下周若低于 120，先检查渠道投放；该结论仅覆盖当前记录，不能外推总体。")
+        if marker == "B05-ANALYST":
+            return self._response("面向分析师：f_sales_total 经 group_aggregate 得到 amount_sum=120、amount_count=12；范围为当前 12 条订单，不能外推总体。")
+        if marker == "B05-MANAGER":
+            return self._response("面向管理层：当前样本的订单金额为 120（12 条）。下周低于 120 时复核投放；该结果仅适用于当前样本，不能外推总体。")
+        if marker == "B05-PLAIN":
+            return self._response("大白话：这 12 笔订单一共是 120。下周低于 120 就先查投放；这只说明眼前这批记录，不能代表全部订单。")
+        if marker == "B05-TECH":
+            return self._response("分析表达：f_sales_total 经 group_aggregate 得到 amount_sum=120、amount_count=12；该描述性结果仅覆盖当前 12 条订单，不能外推总体。")
+        if marker == "B06-TOOL":
+            if step == 0:
+                return self._response(calls=[("transform_data", {
+                    "name": "missing_dataset", "operation": "group_aggregate",
+                    "group_by": ["channel"], "aggregations": [{"column": "amount", "functions": ["sum"]}],
+                    "save_as": "never_created",
+                })])
+            return self._response("工具未能找到所需数据集，未发布计算结论；请先加载可用数据后再分析。")
+        if marker == "B06-SAVE":
+            return self._response("这条回答必须在保存失败后被标记为未完成，不能作为已完成分析发布。")
+        if marker == "B06-BUDGET":
+            if step == 0:
+                return self._response(calls=[("load_data", {"source": "F-SALES.csv", "name": "budget_sales"})])
+            if step == 1:
+                calls = []
+                # This scenario is classified as a comprehensive report, whose
+                # production budget profile permits 200 non-meta tool calls.
+                # Send one more than the remaining allowance so AgentLoop itself
+                # must raise BudgetExceeded; do not simulate that outcome here.
+                for number in range(1, 206):
+                    calls.append(("transform_data", {
+                        "name": "budget_sales", "operation": "group_aggregate", "group_by": ["channel"],
+                        "aggregations": [{"column": "amount", "functions": ["sum"]}], "save_as": f"budget_{number}",
+                    }))
+                return self._response(calls=calls)
+            return self._response("已触及工具调用预算，停止继续调用并保留当前可验证状态。")
+        return self._response("演练脚本未识别当前场景标记。")
+
+    def stream_chat_structured(self, messages, tools=None, system=None):
+        from data_agent.llm.client import StreamComplete
+
+        # A Web confirmation resume appends the selected answer as the latest
+        # user message.  The originating scenario remains the closest earlier
+        # explicit marker and must retain control of the actual resumed loop.
+        marker = "UNKNOWN"
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            found = re.search(
+                r"【(B(?:01|02-NEG|02|03|04|05-BUSINESS|05-ANALYST|05-MANAGER|05-PLAIN|05-TECH|06-TOOL|06-SAVE|06-BUDGET|07-PRESENTATION)|CONTENT-B0[37]|IC-B(?:01|02|03|04-REUSE|04-CHANGE|05|06-METHOD|06-SEMANTIC))】",
+                str(message.get("content") or ""),
+            )
+            if found:
+                marker = found.group(1)
+                break
+        yield StreamComplete(response=self._next(marker, messages))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--run-dir", type=Path, required=True)
+    args = parser.parse_args()
+    run_dir = args.run_dir.resolve()
+    if run_dir.exists():
+        raise SystemExit(f"run directory must not exist: {run_dir}")
+    run_dir.mkdir(parents=True)
+    _configure_environment(run_dir)
+    _write_fixtures(run_dir)
+    _seed_legacy_confirmation_fixture()
+    trace = RunTrace(run_dir)
+    trace.append("server_start", provider_enabled=False, port=args.port)
+
+    # Belt-and-braces: a default client or accidental direct LiteLLM call fails
+    # closed and leaves an auditable trace rather than touching a Provider.
+    import data_agent.llm.client as llm_client
+
+    def forbidden_completion(*_args: Any, **_kwargs: Any):
+        trace.append("forbidden_provider_transport")
+        raise RuntimeError("P7 browser rehearsal forbids Provider transport")
+
+    llm_client.completion = forbidden_completion
+
+    from data_agent.web.agent_manager import AgentManager
+    from data_agent.web.app import create_app
+    from data_agent.agent.loop import AgentLoop
+
+    # Deterministically exercise the normal Web/SSE persistence-failure
+    # branch. The failure is restricted to an explicit B06 test marker; the
+    # browser must receive the production fail-closed ``unknown`` terminal,
+    # never a completed turn or a durable final answer.
+    original_auto_save = AgentLoop._auto_save
+
+    def p7_auto_save_with_failure(loop):
+        if any(
+            "【B06-SAVE】" in str(message.get("content") or "")
+            for message in getattr(loop, "messages", [])
+            if isinstance(message, dict) and message.get("role") == "user"
+        ):
+            trace.append("injected_save_failure", session_id=loop.session_id)
+            raise OSError("P7 injected session save failure")
+        return original_auto_save(loop)
+
+    AgentLoop._auto_save = p7_auto_save_with_failure
+
+    # These helpers construct module-global LLM clients lazily.  Bind them to
+    # the same scripted transport so a local rehearsal has a true zero-call
+    # Provider preflight rather than merely catching accidental fallbacks.
+    import data_agent.agent.llm_intent as llm_intent
+    import data_agent.agent.llm_playbook as llm_playbook
+    import data_agent.agent.quality_judge as quality_judge
+
+    llm_intent._client = ScriptedClient(trace)
+    llm_playbook._client = ScriptedClient(trace)
+    quality_judge._judge_client = ScriptedClient(trace)
+
+    app = create_app()
+    app.config["agent_manager"] = AgentManager(
+        client_factory=lambda **_: ScriptedClient(trace),
+        auxiliary_client_factory=lambda: ScriptedClient(trace),
+    )
+
+    @app.get("/__p7__/health")
+    def p7_health():
+        return {"ok": True, "provider_enabled": False, "run_dir": str(run_dir)}
+
+    @app.get("/__p7__/trace")
+    def p7_trace():
+        return app.response_class(trace.path.read_text(encoding="utf-8"), mimetype="application/x-ndjson")
+
+    app.run(host="127.0.0.1", port=args.port, debug=False, use_reloader=False, threaded=True)
+
+
+if __name__ == "__main__":
+    main()

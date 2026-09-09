@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+from tests.support.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
 
 from data_agent.knowledge.evidence import EvidenceStore
 from data_agent.knowledge.library import KnowledgeLibrary

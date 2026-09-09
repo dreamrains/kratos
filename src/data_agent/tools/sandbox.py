@@ -51,7 +51,7 @@ def _build_safe_globals(dataset_snapshot=None) -> dict:
         if level or name != module_name or module_name not in safe_modules:
             available = ", ".join(sorted(safe_modules))
             raise ImportError(
-                f"Sandbox import is limited to: {available}; "
+                f"Sandbox import denied for '{name}'; allowed modules: {available}; "
                 "use a native analysis tool for other modules"
             )
         module = safe_modules[module_name]

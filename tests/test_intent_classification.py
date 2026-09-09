@@ -798,3 +798,65 @@ class TestPriorityOrdering:
         # since "分析" was removed from _ANALYSIS_KEYWORDS
         result2 = plan_turn_intent("分析一下", DATA_LOADED_CTX)
         assert result2.intent_type == "intent_negotiation"
+
+
+# ══════════════════════════════════════════════════════════════
+# 21. P2 (D05): compound, negated, and conflicted fast-path inputs
+# ══════════════════════════════════════════════════════════════
+
+class TestValuePreservationP2Intent:
+
+    def test_i01_greeting_plus_analysis_keeps_main_task(self):
+        """问候后跟明确分析任务时，主任务不被问候覆盖。"""
+        result = plan_turn_intent("你好，请分析收入趋势", DATA_LOADED_CTX)
+        assert result.intent_type == "directed_analysis"
+        assert result.clarity == "clear"
+        assert result.recommended_action == "run_analysis"
+
+    def test_i01_pure_greeting_remains_simple(self):
+        result = plan_turn_intent("你好", DATA_LOADED_CTX)
+        assert result.intent_type == "simple_response"
+        assert result.clarity == "clear"
+
+    def test_i01_greeting_with_particle_remains_simple(self):
+        result = plan_turn_intent("你好呀", NO_DATA_CTX)
+        assert result.intent_type == "simple_response"
+
+    def test_i02_negated_report_with_export_is_operation(self):
+        """“不要报告，只导出这张表”是数据操作，报告关键词被否定后不得触发。"""
+        result = plan_turn_intent("不要报告，只导出这张表", DATA_LOADED_CTX)
+        assert result.intent_type == "data_operation"
+        assert result.recommended_action == "execute_operation"
+
+    def test_i02_composite_export_and_report_keeps_report_goal(self):
+        result = plan_turn_intent("导出报告并完整分析", DATA_LOADED_CTX)
+        assert result.intent_type == "comprehensive_report"
+
+    def test_i03_execution_with_advice_tail_stays_directed(self):
+        """“分析＋分析建议”复合输入的主任务是执行分析，建议是输出要求。"""
+        result = plan_turn_intent("请分析收入下降原因并给出分析建议", DATA_LOADED_CTX)
+        assert result.intent_type == "directed_analysis"
+        assert result.clarity == "clear"
+
+    def test_i03_pure_method_question_stays_consultation(self):
+        result = plan_turn_intent("应该如何分析", NO_DATA_CTX)
+        assert result.intent_type == "analysis_consultation"
+        assert result.recommended_action == "answer_directly"
+
+    @patch("data_agent.agent.intent._try_llm_classify", return_value=None)
+    def test_i04_double_negated_report_defers_to_semantic_layer(self, mock_llm):
+        """双重否定不得被快路径强标 clear，交语义层判断。"""
+        result = plan_turn_intent("我说的不是不要报告", DATA_LOADED_CTX)
+        mock_llm.assert_called_once()
+        assert result.clarity != "clear"
+
+    @patch("data_agent.agent.intent._try_llm_classify", return_value=None)
+    def test_i06_conflicting_consult_and_execution_defers(self, mock_llm):
+        """咨询与执行同时出现且主任务不明时，交语义层，不隐式重试。"""
+        result = plan_turn_intent("如何分析？还是直接帮我分析吧", DATA_LOADED_CTX)
+        mock_llm.assert_called_once()
+        assert result.clarity != "clear"
+
+    def test_i05_regular_operation_and_qa_unaffected(self):
+        assert plan_turn_intent("计算总收入", DATA_LOADED_CTX).intent_type == "data_operation"
+        assert plan_turn_intent("什么是回归分析", NO_DATA_CTX).intent_type == "knowledge_qa"

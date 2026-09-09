@@ -104,7 +104,10 @@ def test_large_tool_output_is_persisted_before_llm_context(tmp_path, monkeypatch
 
     assert "<persisted-output>" in output
     assert len(output) < 3000
-    assert (tmp_path / "sessions" / "large_output" / "tool_outputs" / "tc_big.txt").exists()
+    # P4/E07: 持久化文件名带内容摘要，同 id 不同内容不得复用旧文件
+    stored = list((tmp_path / "sessions" / "large_output" / "tool_outputs").glob("tc_big__*.txt"))
+    assert stored
+    assert stored[0].read_text(encoding="utf-8") == "x" * 20000
 
 
 def test_run_python_success_requires_resolution_before_more_exploration():
@@ -139,7 +142,9 @@ def test_repeated_tool_error_is_blocked_after_two_failures():
         raise AssertionError("expected repeated forecast error to be blocked")
 
 
-def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
+def test_p08_causal_capability_not_blocked_and_no_confirmation_task(tmp_path):
+    """P08-01/Q07 契约更新：原断言因果类能力被方法门封锁并创建确认任务；
+    新原则下能力名称不是确认理由，也不创建通用审批任务。"""
     old_task_dir = task_manager._dir
     old_next_id = task_manager._next_id_val
     task_manager._dir = tmp_path / "tasks"
@@ -166,12 +171,16 @@ def test_high_risk_gate_blocks_causal_and_creates_confirmation_task(tmp_path):
             llm_client=_OfflineNullClient(),
         )
 
-        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is False
         assert controller.is_capability_blocked_by_confirmation(state, "data.profile") is False
+        assert not state.pending_confirmations
 
         tasks = task_manager.list_for_scope(session_id="gate_savings")
-        assert any(t.get("node_type") == "confirmation" for t in tasks)
-        assert any(t.get("confirmation_policy", {}).get("requires_confirmation") for t in tasks)
+        assert not any(
+            t.get("node_type") == "confirmation"
+            and t.get("confirmation_policy", {}).get("requires_confirmation")
+            for t in tasks
+        )
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
@@ -220,7 +229,10 @@ class _EvidenceThenFinalClient:
             "confidence": "high",
         }
         self.system_prompts = []
+        # P7-L3/B06 契约更新：预算/收据门修复后，turn_state 在整轮存活，
+        # 证据必须绑定本轮真实工具收据——先执行 run_python 再记录证据。
         self._calls = [
+            Response(tool_calls=[ToolCall("tc0", "run_python", {"code": "result = 1 + 1", "purpose": "compute constant"})]),
             Response(tool_calls=[ToolCall("tc1", "record_evidence_record", {"record_json": json.dumps(evidence)})]),
             Response(text="final answer"),
         ]
@@ -232,7 +244,9 @@ class _EvidenceThenFinalClient:
         return self._calls.pop(0)
 
 
-def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypatch):
+def test_p08_static_method_pending_does_not_block_tool(tmp_path, monkeypatch):
+    """P08-01 契约更新：原断言静态方法确认 pending 阻塞工具调用；
+    新原则下 prepare_turn 会退役纯方法 pending，工具照常执行。"""
     monkeypatch.setattr(
         AnalysisFlowController,
         "prepare_turn",
@@ -254,7 +268,11 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
         "confirmation_policy": {"requires_confirmation": True, "confirmation_type": "method_confirmation"},
         "method_plan": [{"required_capability": "analysis.causal", "node_type": "analysis"}],
     }
-    state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation"}]
+    state.pending_confirmations = [{"id": "method_gate", "status": "pending", "confirmation_type": "method_confirmation", "source": "method_playbook"}]
+    # 先退役（prepare_turn 被屏蔽时手工触发同一入口的退役语义）
+    from data_agent.agent.confirmation_policy import retire_method_approval_confirmations
+
+    retire_method_approval_confirmations(state)
     ctx.analysis_state = state
     loop = AgentLoop(client=_OneToolClient("causal_analysis", {"name": "main", "target_col": "revenue"}), session_id="loop_gate")
     loop.context = ctx
@@ -262,10 +280,46 @@ def test_loop_blocks_high_risk_tool_when_confirmation_pending(tmp_path, monkeypa
     try:
         with use_agent_context(ctx):
             result = loop.run_turn("run causal analysis")
-        assert "confirmation" in result.lower() or "确认" in result
         tool_messages = [m for m in loop.messages if m.get("role") == "tool"]
-        assert any("confirmation_required" in m.get("content", "") for m in tool_messages)
-        assert not any("effect estimate" in m.get("content", "").lower() for m in tool_messages)
+        assert tool_messages
+        assert not any("confirmation_required" in m.get("content", "") for m in tool_messages)
+    finally:
+        task_manager._dir = old_task_dir
+        task_manager._next_id_val = old_next_id
+
+
+def test_p08_semantic_pending_with_affected_operations_still_blocks_tool(tmp_path, monkeypatch):
+    """P08-01 反向保护：affected_operations 覆盖能力的语义确认仍阻塞依赖分支。"""
+    monkeypatch.setattr(
+        AnalysisFlowController,
+        "prepare_turn",
+        lambda self, state, intent, user_input, dataset_profile: None,
+    )
+    monkeypatch.setattr(
+        "data_agent.agent.question_need_detector.detect_question_need",
+        lambda user_input, intent, state: {"status": "no_question"},
+    )
+    old_task_dir = task_manager._dir
+    old_next_id = task_manager._next_id_val
+    task_manager._dir = tmp_path / "tasks"
+    task_manager._next_id_val = 0
+    try:
+        workspace_obj = Workspace()
+        ctx = AgentContext(session_id="loop_semantic_gate", workspace=workspace_obj)
+        state = AnalysisSessionState(session_id="loop_semantic_gate")
+        state.pending_confirmations = [{
+            "id": "semantic_gate",
+            "status": "pending",
+            "confirmation_type": "time_window",
+            "question": "请确认对比时间窗口",
+            "options": [],
+            "state_updates": "{}",
+            "affected_operations": ["analysis.causal"],
+        }]
+        ctx.analysis_state = state
+        controller = AnalysisFlowController("loop_semantic_gate")
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is True
+        assert controller.is_capability_blocked_by_confirmation(state, "analysis.forecast") is False
     finally:
         task_manager._dir = old_task_dir
         task_manager._next_id_val = old_next_id
@@ -404,7 +458,7 @@ def test_structured_loop_relationship_diagnostic_does_not_suspend(monkeypatch):
     assert state.pending_confirmations == []
 
 
-def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monkeypatch):
+def test_p08_method_pending_no_longer_blocks_the_turn(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -422,9 +476,13 @@ def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monk
         lambda user_input, intent, state: {"status": "clear"},
     )
 
-    class FailingClient:
+    class AnsweringClient:
+        def __init__(self):
+            self.called = False
+
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            self.called = True
+            return Response(text="分析结论：收入呈上升趋势。")
 
     ctx = AgentContext(session_id="preexisting_method_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="preexisting_method_gate", data_state="data_loaded")
@@ -438,21 +496,21 @@ def test_structured_loop_promotes_actionable_pending_when_detector_is_clear(monk
         "state_updates": json.dumps({"stage": "plan"}),
     }]
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="preexisting_method_gate")
+    client = AnsweringClient()
+    loop = AgentLoop(client=client, session_id="preexisting_method_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("analyze revenue trend")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    # IC1/P08-01 契约更新：原断言通用方法 pending 阻塞整轮；
+    # 新原则下方法审批不再悬挂——分析直接执行，旧 pending 不被解析也不删除。
+    from data_agent.agent.loop import FinalResponse, SuspendedForConfirmation
 
-    assert isinstance(result, SuspendedForConfirmation)
-    assert result.question == "Confirm the existing method?"
-    assert result.options == [{"label": "Confirm", "value": "confirm_method", "description": ""}]
-    assert result.confirmation_type == "method_confirmation"
-    assert result.blocking_reason == "Method choice changes the analysis"
-    assert json.loads(result.state_updates)["stage"] == "plan"
-    assert "suspension_id" not in state.pending_confirmations[0]
+    assert isinstance(result, FinalResponse)
+    assert not isinstance(result, SuspendedForConfirmation)
+    assert client.called
+    assert state.pending_confirmations[0]["status"] == "pending"  # 不伪批准
     assert len(state.pending_confirmations) == 1
 
 
@@ -711,7 +769,7 @@ def test_structured_loop_ignores_untyped_obsolete_pending_when_detector_is_clear
     assert "suspension_id" not in state.pending_confirmations[0]
 
 
-def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(tmp_path, monkeypatch):
+def test_p08_structured_loop_no_longer_suspends_on_playbook_method_selection(tmp_path, monkeypatch):
     from data_agent.config import get_config
 
     monkeypatch.setattr(get_config(), "sessions_dir", tmp_path / "sessions")
@@ -728,29 +786,37 @@ def test_structured_loop_converts_playbook_pending_confirmation_to_suspension(tm
     monkeypatch.setattr("data_agent.agent.intent.plan_turn_intent", lambda user_input, session_context: intent)
     monkeypatch.setattr("data_agent.agent.llm_playbook.select_playbook_llm", lambda **kwargs: None)
 
-    class FailingClient:
+    class AnsweringClient:
+        def __init__(self):
+            self.called = False
+
         def chat(self, *args, **kwargs):
-            raise AssertionError("LLM should not be called before required confirmation")
+            self.called = True
+            return Response(text="预测结论：示例答复。")
 
     ctx = AgentContext(session_id="playbook_pending_gate", workspace=Workspace())
     state = AnalysisSessionState(session_id="playbook_pending_gate", data_state="data_loaded")
     state.active_scope["active_dataset"] = "main"
     state.active_scope["active_mode"] = "data_loaded"
     ctx.analysis_state = state
-    loop = AgentLoop(client=FailingClient(), session_id="playbook_pending_gate")
+    client = AnsweringClient()
+    loop = AgentLoop(client=client, session_id="playbook_pending_gate")
     loop.context = ctx
 
     with use_agent_context(ctx):
         result = loop.run_turn_structured("forecast revenue and ROI next month")
 
-    from data_agent.agent.loop import SuspendedForConfirmation
+    # P08-01 契约更新：方法模板不再创建 pending，因此不再悬挂；
+    # 预测请求直接进入正常应答（无通用方法审批）。
+    from data_agent.agent.loop import FinalResponse, SuspendedForConfirmation
 
-    assert isinstance(result, SuspendedForConfirmation)
-    assert result.confirmation_type == "method_confirmation"
-    pending = [item for item in state.pending_confirmations if item.get("status") == "pending"]
-    assert len(pending) == 1
-    assert "suspension_id" not in pending[0]
-    assert result.confirmation_id == result.suspension_id
+    assert isinstance(result, FinalResponse)
+    assert not isinstance(result, SuspendedForConfirmation)
+    assert client.called
+    assert not [
+        item for item in state.pending_confirmations
+        if item.get("confirmation_type") == "method_confirmation"
+    ]
 
 
 def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
@@ -826,7 +892,7 @@ def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
 
     final_prompt = client.system_prompts[-1]
     assert ("answer_mode=\"analytical\"" in final_prompt) or ("answer_mode: analytical" in final_prompt)
-    assert ("insight_depth=\"light\"" in final_prompt) or ("insight_depth: light" in final_prompt)
+    assert ("insight_depth=\"standard\"" in final_prompt) or ("insight_depth: standard" in final_prompt)
     assert ("business_translation=\"cautious\"" in final_prompt) or ("business_translation: cautious" in final_prompt)
 
 
@@ -1062,3 +1128,102 @@ def test_synthesis_policy_instruction_reflects_failed_runtime_verification(monke
     assert "verification status is fail" in loop._turn_synthesis_policy_instruction.lower()
     assert "decision_recommendation" in loop._turn_synthesis_policy_instruction
     assert "suppressed" in loop._turn_synthesis_policy_instruction.lower()
+
+
+# ── P7-L3/B06: the turn budget must stay armed through real loop paths ──
+
+
+def test_prepare_analysis_turn_keeps_execution_budget_armed(tmp_path, monkeypatch):
+    """registry.reset_groups 不得清掉 turn_state（B06 根因回归）。"""
+    from data_agent.agent.loop import AgentLoop
+
+    loop = AgentLoop(client=None, session_id="budget_armed")
+    loop._reset_turn_tracking()
+    loop.auxiliary_llm_client = None
+
+    loop._prepare_analysis_turn("分析销售趋势")
+
+    turn_state = loop.context.turn_state
+    assert turn_state is not None, "activate_tool_groups 不得把刚装配的预算状态清成 None"
+    assert turn_state.budget.max_tool_calls and turn_state.budget.max_tool_calls > 0
+    # 分组激活本身不受影响
+    assert loop.context.active_tool_groups
+
+
+def test_streaming_loop_enforces_tool_budget_and_stops_execution(tmp_path, monkeypatch):
+    """超过预算的真实工具调用必须被阻止：budget_exceeded 消息＋有限收据＋错误事件。"""
+    import csv
+    import os
+
+    inbox = tmp_path / "ws" / "inbox"
+    inbox.mkdir(parents=True)
+    fixture = inbox / "F-SALES.csv"
+    with fixture.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["date", "channel", "amount", "order_id"])
+        for index in range(12):
+            writer.writerow([f"2026-09-{index + 1:02d}", "A", 10, index + 1])
+
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path / "ws"))
+    monkeypatch.setenv("SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("API_BASE", "http://127.0.0.1:9")
+    monkeypatch.setenv("MCP_ENABLED", "false")
+    monkeypatch.setenv("SKILL_AUTO_DISCOVER", "false")
+
+    from data_agent import config as config_module
+    from data_agent.config import AgentConfig
+
+    monkeypatch.setattr(config_module, "_config", AgentConfig(
+        WORKSPACE_DIR=tmp_path / "ws",
+        SESSIONS_DIR=tmp_path / "sessions",
+    ))
+
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.llm.client import Response, ToolCall, StreamComplete
+
+    responses = [
+        Response(tool_calls=[ToolCall(
+            id="r1-0", name="load_data",
+            arguments={"source": "F-SALES.csv", "name": "budget_sales"},
+        )]),
+        Response(tool_calls=[
+            ToolCall(
+                id=f"r2-{number}", name="transform_data",
+                arguments={
+                    "name": "budget_sales", "operation": "group_aggregate",
+                    "group_by": ["channel"],
+                    "aggregations": [{"column": "amount", "functions": ["sum"]}],
+                    "save_as": f"budget_{number}",
+                },
+            )
+            for number in range(1, 206)
+        ]),
+        Response(text="done"),
+    ]
+    cursor = {"index": 0}
+
+    class ScriptedClient:
+        def stream_chat_structured(self, messages, tools=None, system=None):
+            index = cursor["index"]
+            cursor["index"] += 1
+            yield StreamComplete(response=responses[min(index, len(responses) - 1)])
+
+    loop = AgentLoop(client=ScriptedClient(), session_id="budget_stream")
+    events = list(loop.stream_turn("【B06-BUDGET】请执行大量分析以触发预算边界"))
+
+    error_events = [event for event in events if event.get("type") == "error"]
+    assert any("budget" in str(event.get("message", "")).lower() for event in error_events), (
+        "超过预算必须产生真实 budget_exceeded 错误事件，而不是仅靠模型文本声称触界"
+    )
+    receipts = loop.context.analysis_state.tool_receipts
+    budget_messages = [
+        message for message in loop.messages
+        if message.get("role") == "tool"
+        and "budget_exceeded" in str(message.get("content", ""))
+    ]
+    assert budget_messages, "被阻止的调用必须留下 budget_exceeded 工具消息"
+    executed = [r for r in receipts if r.get("tool_name") == "transform_data"]
+    max_calls = loop.context.turn_state.budget.max_tool_calls
+    assert len(executed) <= max_calls + 1, (
+        f"实际执行 {len(executed)} 次非元工具调用，超出预算 {max_calls}"
+    )

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.acceptance.real_data_manifest import (
+from tests.support.real_data_manifest import (
     PROJECT_ROOT,
     REFERENCE_DATA,
     REFERENCE_DATA_AVAILABLE,

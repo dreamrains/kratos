@@ -36,7 +36,13 @@ def _candidate(**overrides):
         "blocking_surfaces": ("analysis_execution", "report_generation"),
         "skippable": False,
         "resolution_action": "choose_metric",
-        "resolution_params": {"analysis_spec_id": "spec_1"},
+        "resolution_params": {
+            "analysis_spec_id": "spec_1",
+            "confirmation_type": "metric_scope",
+            "decision_kind": "metric_definition",
+            "missing_value": "对比指标口径",
+            "affected_operations": ["period_compare"],
+        },
         "data_version": "data_v1",
         "spec_version": "spec_v1",
     }
@@ -95,12 +101,29 @@ def test_policy_does_not_reuse_answer_after_spec_version_changes():
 
 
 def test_policy_downgrades_declared_safe_default():
-    result = QuestionPolicy().evaluate(
+    """IC1/Q12 契约更新：原断言 truthy safe_default 直接降为 advisory；
+    新契约要求 default_origin 来自宿主可验证来源。"""
+    claimed = QuestionPolicy().evaluate(
         _candidate(safe_default="Use the documented daily revenue metric."),
         allow_advisory=True,
     )
+    assert claimed.disposition == RequestDisposition.CONFIRMATION
 
-    assert result.disposition == RequestDisposition.ADVISORY
+    verified = QuestionPolicy().evaluate(
+        _candidate(
+            safe_default="Use the documented daily revenue metric.",
+            resolution_params={
+                "analysis_spec_id": "spec_1",
+                "confirmation_type": "metric_scope",
+                "decision_kind": "metric_definition",
+                "missing_value": "对比指标口径",
+                "affected_operations": ["period_compare"],
+                "default_origin": "schema",
+            },
+        ),
+        allow_advisory=True,
+    )
+    assert verified.disposition == RequestDisposition.ADVISORY
 
 
 def test_policy_downgrades_speculative_file_relationship():

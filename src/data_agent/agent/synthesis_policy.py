@@ -52,10 +52,14 @@ def derive_synthesis_policy(
     spec = analysis_spec if analysis_spec is not None else (_get(state, "analysis_spec", None) or {})
     evidence = evidence_records if evidence_records is not None else (_get(state, "evidence_records", None) or [])
     evidence = list(evidence or [])
-    verification_status = _latest_verification_status(state)
+    verification_report = _latest_verification_report(state)
+    verification_status = str(verification_report.get("overall_status") or "").strip() if isinstance(verification_report, dict) else ""
     wording_style = _wording_style(proficiency)
+    advisory = _is_advisory_request(text, profile_text, intent_type)
 
-    if _is_terse(text) or _is_direct_intent(intent_type, action):
+    # An explicitly requested recommendation survives a terse framing: brevity
+    # bounds wording, never the user's requested action advice (S04).
+    if (_is_terse(text) or _is_direct_intent(intent_type, action)) and not advisory:
         return _apply_verification_status(
             SynthesisPolicy(
                 answer_mode="direct",
@@ -68,6 +72,7 @@ def derive_synthesis_policy(
                 reason="Direct or terse request; suppressing business translation.",
             ),
             verification_status,
+            verification_report,
         )
 
     if not evidence:
@@ -83,9 +88,9 @@ def derive_synthesis_policy(
                 reason="No evidence records are available, so synthesis stays exploratory.",
             ),
             verification_status,
+            verification_report,
         )
 
-    advisory = _is_advisory_request(text, profile_text, intent_type)
     uncertain = _has_low_confidence(evidence) or _is_uncertain_context(text, profile_text, spec)
     reasons: list[str] = []
     if advisory:
@@ -108,7 +113,7 @@ def derive_synthesis_policy(
         return _apply_verification_status(
             SynthesisPolicy(
                 answer_mode="advisory",
-                insight_depth="standard",
+                insight_depth="light" if _is_terse(text) else "standard",
                 business_translation="cautious",
                 risk_boundary="predictive",
                 required_moves=required_moves,
@@ -117,6 +122,7 @@ def derive_synthesis_policy(
                 reason=_reason(reasons, "Evidence supports a cautious advisory synthesis."),
             ),
             verification_status,
+            verification_report,
         )
 
     required_moves = [
@@ -130,18 +136,29 @@ def derive_synthesis_policy(
     if uncertain and "assumptions" not in required_moves:
         required_moves.insert(3, "assumptions")
 
+    # A normal analytical request needs enough room for the conclusion,
+    # evidence, interpretation, and limits.  Explicitly terse requests are
+    # handled earlier; do not silently downgrade every other request to light.
+    depth = "standard"
+
     return _apply_verification_status(
         SynthesisPolicy(
             answer_mode="analytical",
-            insight_depth="light",
+            insight_depth=depth,
             business_translation="cautious",
             risk_boundary="descriptive",
             required_moves=required_moves,
             suppressed_moves=["decision_recommendation"],
             wording_style=wording_style,
-            reason=_reason(reasons, "Evidence supports a light analytical synthesis."),
+            reason=_reason(
+                reasons,
+                "Evidence supports a detailed analytical synthesis."
+                if depth == "standard"
+                else "Evidence supports a light analytical synthesis.",
+            ),
         ),
         verification_status,
+        verification_report,
     )
 
 
@@ -171,7 +188,7 @@ def build_synthesis_instruction(policy: SynthesisPolicy) -> str:
         "Classify every material statement as direct evidence, inferential evidence, or suggestive context. "
         "Do not represent inferential or suggestive context as proof. "
         "For a recommendation explicitly requested by the user, provide a conditional, reversible recommendation when the available evidence supports it; lack of causal proof alone is not a reason to erase every recommendation. "
-        "Use concise Markdown structure when it improves scanning: a conclusion first, then short sections, bullets, or a compact table for repeated comparisons. Do not dump raw JSON or mechanically repeat the same five headings for every finding. "
+        "Choose Markdown structure from the content: lead with the conclusion, use tables for repeated comparisons, bullets for parallel findings or actions, and additional sections when distinct requested questions need them. Preserve every supported material finding and denominator even when that requires more than four sections. Do not dump raw JSON or mechanically repeat the same headings for every finding. "
         "State competing explanations and the distinguishing evidence needed whenever a causal or driver conclusion remains unresolved."
         "</answer_discipline>"
         "<bounded_evidence_replenishment>"
@@ -192,17 +209,26 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _latest_verification_status(state: Any) -> str:
+def _latest_verification_report(state: Any) -> Any:
     reports = _get(state, "verification_reports", None)
     if not isinstance(reports, list) or not reports:
-        return ""
+        return None
     latest = reports[-1]
-    if not isinstance(latest, dict):
+    return latest if isinstance(latest, dict) else None
+
+
+def _latest_verification_status(state: Any) -> str:
+    report = _latest_verification_report(state)
+    if not isinstance(report, dict):
         return ""
-    return str(latest.get("overall_status") or "").strip()
+    return str(report.get("overall_status") or "").strip()
 
 
-def _apply_verification_status(policy: SynthesisPolicy, status: str) -> SynthesisPolicy:
+def _apply_verification_status(
+    policy: SynthesisPolicy,
+    status: str,
+    report: Any = None,
+) -> SynthesisPolicy:
     if status not in {"fail", "pass_with_downgrades"}:
         return policy
 
@@ -221,6 +247,13 @@ def _apply_verification_status(policy: SynthesisPolicy, status: str) -> Synthesi
 
     suppressed_moves = _append_unique(policy.suppressed_moves, "decision_recommendation")
     reason = f"{policy.reason} Verification status is {status}; decision recommendations are suppressed."
+    if isinstance(report, dict) and report.get("passed_evidence_ids"):
+        # Verification failure scopes to the failed claims; observations that
+        # passed on their own evidence remain publishable (S07).
+        reason += (
+            " Suppression applies to claims relying on failed evidence; "
+            "independent verified observations remain publishable."
+        )
     return replace(
         policy,
         business_translation="cautious",
@@ -265,28 +298,87 @@ def _is_terse(text: str) -> bool:
         "answer only",
         "terse",
         "brief",
+        "只要公式",
+        "只给公式",
+        "只给结论",
+        "只要结论",
+        "简短",
+        "简要说",
+        "简要说明",
+        "简洁",
     )
     return any(marker in text for marker in terse_markers)
 
 
+_ADVISORY_MARKERS_EN = (
+    "advis",
+    "recommend",
+    "decision",
+    "should we",
+    "worth",
+    "ltv",
+    "lifetime value",
+    "forecast",
+    "predict",
+    "projection",
+    "estimate future",
+)
+# Chinese advisory/predictive wording must produce the same policy as its
+# English equivalent (S01/S02). Matching is negation-aware: "不需要建议"
+# must not count as an advisory request (S05).
+_ADVISORY_MARKERS_ZH = (
+    "行动建议",
+    "给出建议",
+    "给个建议",
+    "给一个建议",
+    "给建议",
+    "建议",
+    "推荐",
+    "该怎么",
+    "怎么办",
+    "要不要",
+    "是否值得",
+    "值不值得",
+    "决策",
+    "预测",
+    "预估",
+    "预计",
+    "推算",
+)
+
+
 def _is_advisory_request(text: str, profile_text: str, intent_type: str) -> bool:
-    advisory_markers = (
-        "advis",
-        "recommend",
-        "decision",
-        "should we",
-        "worth",
-        "ltv",
-        "lifetime value",
-        "forecast",
-        "predict",
-        "projection",
-        "estimate future",
-    )
+    from data_agent.agent.request_language import keyword_group_state
+
     if intent_type == "comprehensive_report":
         return True
     combined = f"{text} {profile_text}"
-    return any(marker in combined for marker in advisory_markers)
+    if any(marker in combined for marker in _ADVISORY_MARKERS_EN):
+        return True
+    return keyword_group_state(text, _ADVISORY_MARKERS_ZH) == "affirmative"
+
+
+_DEPTH_MARKERS = (
+    "详细",
+    "深入",
+    "仔细",
+    "全面",
+    "诊断",
+    "深挖",
+    "透彻",
+    "detailed",
+    "in depth",
+    "deep dive",
+    "thorough",
+    "diagnose",
+    "comprehensive",
+)
+
+
+def _explicit_depth_request(text: str) -> bool:
+    from data_agent.agent.request_language import keyword_group_state
+
+    return keyword_group_state(text, _DEPTH_MARKERS) == "affirmative"
 
 
 def _has_low_confidence(evidence: list[Any]) -> bool:

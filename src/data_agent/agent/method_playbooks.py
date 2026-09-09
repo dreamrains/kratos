@@ -44,6 +44,12 @@ class PlaybookSelection:
     data_requirement: dict[str, Any] | None = None
     analysis_spec: dict[str, Any] | None = None
     requires_confirmation: bool = False
+    # P08-01: 模板的历史风险说明只作审计/提示元数据，不再是确认签发权。
+    template_risk_note: str = ""
+    # IC3/O01—O02: 选择来源审计——主方法与辅助方法可来自不同层
+    # （llm / keyword / default），不得混淆或谎报失败原因。
+    primary_source: str = "default"
+    supporting_source: str = "rule"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +60,9 @@ class PlaybookSelection:
             "data_requirement": self.data_requirement,
             "analysis_spec": self.analysis_spec,
             "requires_confirmation": self.requires_confirmation,
+            "template_risk_note": self.template_risk_note,
+            "primary_source": self.primary_source,
+            "supporting_source": self.supporting_source,
         }
 
 
@@ -422,6 +431,8 @@ def select_playbooks(
     llm_supporting: list[str] = []
     primary: str | None = None
     llm_attempted = False
+    primary_source = "default"
+    supporting_source = "rule"
     if len(text.strip()) >= 8:
         llm_attempted = True
         try:
@@ -434,6 +445,7 @@ def select_playbooks(
             if llm_result and llm_result.get("primary"):
                 primary = llm_result["primary"]
                 llm_supporting = llm_result.get("supporting", [])
+                primary_source = "llm"
         except Exception:
             pass
 
@@ -445,9 +457,11 @@ def select_playbooks(
             llm_client=llm_client,
             allow_llm=not (llm_attempted and llm_client is not None),
         )
+        primary_source = "keyword" if primary != "data_understanding" else "default"
 
     # Use LLM supporting if available, otherwise fall back to keyword-based
     supporting = llm_supporting if llm_supporting else _choose_supporting(text, primary)
+    supporting_source = "llm" if llm_supporting else "rule"
     playbook = PLAYBOOKS[primary]
 
     recommended_paths = _recommended_paths(primary, supporting)
@@ -464,7 +478,12 @@ def select_playbooks(
         recommended_paths=recommended_paths,
         data_requirement=requirement,
         analysis_spec=analysis_spec,
-        requires_confirmation=bool(playbook.confirmation_policy.get("requires_confirmation")),
+        # P08-01: 方法运行不需要通用审批。模板确认位不再映射为用户确认；
+        # 其风险说明仅保留为审计提示。
+        requires_confirmation=False,
+        template_risk_note=str(playbook.confirmation_policy.get("blocking_reason") or ""),
+        primary_source=primary_source,
+        supporting_source=supporting_source,
     )
 
 
@@ -491,7 +510,6 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
     if selection.data_requirement and state.data_state in {"no_data", "insufficient_data", "unknown"}:
         if not _contains_playbook_artifact(state.data_requirements, selection.primary_playbook_id):
             state.add_data_requirement(selection.data_requirement)
-    analysis_spec = state.analysis_spec
     if selection.analysis_spec:
         selection.analysis_spec.setdefault("id", _analysis_spec_id(selection.analysis_spec))
         current_spec = state.analysis_spec or {}
@@ -501,56 +519,11 @@ def apply_selection_to_state(state: AnalysisSessionState, selection: PlaybookSel
             not state.analysis_spec
             or selected_spec_id != current_spec_id
         )
-        analysis_spec = state.set_analysis_spec(selection.analysis_spec) if should_replace_spec else state.analysis_spec
-    if selection.requires_confirmation and analysis_spec:
-        confirmation_id = f"method_{selection.primary_playbook_id}_{analysis_spec.get('id', '')}"
-        if not any(c.get("id") == confirmation_id for c in state.pending_confirmations):
-            confirmation_policy = analysis_spec.get("confirmation_policy", {})
-            state.add_confirmation({
-                "id": confirmation_id,
-                "confirmation_type": confirmation_policy.get("confirmation_type", "method_confirmation"),
-                "question": _method_confirmation_question(selection),
-                "options": _method_confirmation_options(),
-                "blocking_reason": confirmation_policy.get("blocking_reason", "method confirmation required"),
-                "related_spec_id": analysis_spec.get("id", ""),
-                "state_updates": json.dumps(
-                    {
-                        "stage": "plan",
-                        "method_confirmation": {
-                            "playbook_id": selection.primary_playbook_id,
-                            "analysis_spec_id": analysis_spec.get("id", ""),
-                            "allowed_actions": ["confirm_method", "clarify_method_scope"],
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-                "source": "method_playbook",
-                "status": "pending",
-            })
-
-
-def _method_confirmation_question(selection: PlaybookSelection) -> str:
-    playbook = PLAYBOOKS.get(selection.primary_playbook_id)
-    readable_name = playbook.name if playbook else selection.primary_playbook_id
-    return (
-        f"当前问题适合按「{readable_name}」方法继续。"
-        "请确认是否使用这个方法计划，或先补充目标口径、时间窗口和比较对象？"
-    )
-
-
-def _method_confirmation_options() -> list[dict[str, str]]:
-    return [
-        {
-            "label": "按此方法继续",
-            "value": "confirm_method",
-            "description": "使用当前方法计划继续，但结论仍会按证据强度标注限制。",
-        },
-        {
-            "label": "先补充目标口径",
-            "value": "clarify_method_scope",
-            "description": "暂停执行，先说明目标指标、时间窗口或比较对象。",
-        },
-    ]
+        if should_replace_spec:
+            state.set_analysis_spec(selection.analysis_spec)
+    # P08-01: 不再由方法模板创建 source=method_playbook 的通用审批 pending。
+    # spec、推荐路径、数据要求与计划步骤仍照常写入；业务语义缺口由
+    # question_need_detector 的具体缺口门（分母/窗口/字段/文件范围）产生。
 
 
 def _contains_playbook_artifact(items: list[dict[str, Any]], playbook_id: str) -> bool:
@@ -582,6 +555,12 @@ def _choose_primary(
     llm_client=None,
     allow_llm: bool = True,
 ) -> str:
+    # Layer 0: composite feature/effect goal (IC3/M01—M02). "功能效果、收益、
+    # 复购、付费行为" 这类整体目标的主线是功能/效果与行为分析，复购等子
+    # 指标进入 supporting——子指标关键词不得单独抢占主方法。
+    if _is_composite_feature_goal(text):
+        return "product_feature_analysis"
+
     # Layer 1: high-confidence keyword rules → return directly (skip LLM)
     for keywords, playbook_id in _HIGH_CONFIDENCE_RULES:
         if _has_any(text, keywords):
@@ -792,6 +771,19 @@ def _infer_dimensions(text: str) -> list[str]:
         if term in lower:
             dims.append(term)
     return dims
+
+
+_COMPOSITE_FEATURE_MARKERS = ["功能", "效果", "行为", "feature", "impact", "behavior"]
+_COMPOSITE_VALUE_MARKERS = [
+    "收益", "收入", "复购", "付费", "留存", "roi", "revenue", "repurchase",
+]
+
+
+def _is_composite_feature_goal(text: str) -> bool:
+    """整体目标信号（功能/效果＋价值子指标同时出现且均为肯定）。"""
+    return _has_any(text, _COMPOSITE_FEATURE_MARKERS) and _has_any(
+        text, _COMPOSITE_VALUE_MARKERS
+    )
 
 
 def _has_any(text: str, needles: list[str]) -> bool:

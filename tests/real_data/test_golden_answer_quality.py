@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+from tests.support.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
 
 from data_agent.agent.golden_answer_runner import (
     load_golden_manifest,

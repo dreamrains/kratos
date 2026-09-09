@@ -9,7 +9,12 @@ from data_agent.agent.trust_workflow_runtime import _evidence_fingerprint
 
 def test_empty_trust_view_is_only_an_empty_conclusion_contract() -> None:
     view = build_trust_view(None, session_id="missing")
-    assert view == {"status": "empty", "session_id": "missing", "updated_at": "", "workbench": {"verified_conclusions": []}}
+    # P6/U01—U03: workbench 最简契约增加 verified_total 与 pending_findings；
+    # 空状态两字段分别为 0 与空列表。
+    assert view == {
+        "status": "empty", "session_id": "missing", "updated_at": "",
+        "workbench": {"verified_conclusions": [], "verified_total": 0, "pending_findings": []},
+    }
 
 
 def test_workbench_projects_only_current_fingerprinted_verified_evidence() -> None:
@@ -34,4 +39,6 @@ def test_stale_verification_cannot_project_old_conclusion() -> None:
     state = AnalysisSessionState(session_id="stale")
     state.evidence_records = [{"id": "ev", "claim": "Changed", "confidence": "medium", "result_summary": "new"}]
     state.verification_reports = [{"passed_evidence_ids": ["ev"], "evidence_fingerprint": "sha256:stale"}]
-    assert build_trust_view(state)["workbench"] == {"verified_conclusions": []}
+    workbench = build_trust_view(state)["workbench"]
+    assert workbench["verified_conclusions"] == []
+    assert workbench["verified_total"] == 0

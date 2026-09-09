@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.acceptance.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
+from tests.support.real_data_manifest import REFERENCE_DATA_AVAILABLE, REFERENCE_DATA_DIR
 
 import data_agent.config as config_module
 from data_agent.config import AgentConfig

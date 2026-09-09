@@ -17,7 +17,10 @@ def _js() -> str:
 def test_workbench_has_one_verified_conclusions_primary_surface() -> None:
     html = _html()
     assert 'data-testid="workbench-verified-conclusions"' in html
-    assert html.count("trust-section") == 1
+    # P6/U02：主表面仍是唯一的已验证结论区；新增的待验证发现为独立默认折叠入口。
+    assert html.count("trust-section") == 2
+    assert 'data-testid="workbench-pending-findings"' in html
+    assert "<details" in html  # 默认折叠
     for removed in ("action-board", "workbench-scope", "multifile-data-understanding", "multifile-relationships", "workbench-full-answer"):
         assert removed not in html
 

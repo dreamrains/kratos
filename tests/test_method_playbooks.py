@@ -106,7 +106,10 @@ def test_method_playbooks_are_complete():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_method_confirmation_is_answerable_when_playbook_requires_confirmation():
+def test_p08_method_selection_no_longer_creates_confirmation():
+    """P08-01 契约更新：原断言方法模板会创建可回答的 method pending；
+    新原则下方法运行不需要通用审批——选择只写 spec/路径/数据要求，
+    模板风险说明降为审计元数据（template_risk_note）。"""
     state = AnalysisSessionState(session_id="method_confirmation_contract", data_state="data_loaded")
     intent = TurnIntent(
         intent_type="directed_analysis",
@@ -120,19 +123,14 @@ def test_method_confirmation_is_answerable_when_playbook_requires_confirmation()
     selection = choose_playbook("predict user churn next month", intent, has_data=True)
     apply_selection_to_state(state, selection)
 
-    pending = [
+    assert not [
         item for item in state.pending_confirmations
         if item.get("confirmation_type") == "method_confirmation"
     ]
-    assert pending
-    confirmation = pending[0]
-    assert confirmation["status"] == "pending"
-    assert confirmation["confirmation_type"] == "method_confirmation"
-    assert confirmation["question"]
-    assert confirmation["options"]
-    assert confirmation["blocking_reason"]
-    assert confirmation["state_updates"]
-    assert confirmation["source"] == "method_playbook"
+    assert selection.requires_confirmation is False
+    assert selection.template_risk_note  # 审计提示保留，不再是签发权
+    assert state.analysis_spec is not None
+    assert state.last_recommended_paths
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
@@ -161,16 +159,13 @@ def test_method_confirmation_uses_new_selection_spec_when_existing_state_has_sta
 
     apply_selection_to_state(state, selection)
 
-    confirmation = next(
-        item for item in state.pending_confirmations
-        if item.get("related_spec_id") == selection.analysis_spec["id"]
-    )
-    updates = json.loads(confirmation["state_updates"])
-    assert confirmation["related_spec_id"] == selection.analysis_spec["id"]
+    # P08-01：spec 替换语义保留；不再产生方法确认
     assert state.analysis_spec["id"] == selection.analysis_spec["id"]
     assert state.analysis_spec["playbook_id"] == "forecast_decision_simulation"
-    assert updates["method_confirmation"]["analysis_spec_id"] == selection.analysis_spec["id"]
-    assert confirmation["blocking_reason"] != "old reason"
+    assert not [
+        item for item in state.pending_confirmations
+        if item.get("related_spec_id") == selection.analysis_spec["id"]
+    ]
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
@@ -188,18 +183,29 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
         state = AnalysisSessionState(session_id=f"method_resolution_{answer}", data_state="data_loaded")
         selection = choose_playbook("forecast next month revenue and estimate ROI", intent, has_data=True)
         apply_selection_to_state(state, selection)
-        confirmation = next(
-            item for item in state.pending_confirmations
-            if item.get("related_spec_id") == state.analysis_spec["id"]
-        )
+        # P08-01：新选择不再创建确认；这里手工注入旧形状的 pending，
+        # 验证历史会话在恢复/应答时的解析安全性不回退。
+        confirmation = state.add_confirmation({
+            "id": f"method_forecast_{state.analysis_spec['id']}",
+            "confirmation_type": "method_confirmation",
+            "related_spec_id": state.analysis_spec["id"],
+            "source": "method_playbook",
+            "state_updates": json.dumps(
+                {
+                    "stage": "plan",
+                    "method_confirmation": {
+                        "playbook_id": "forecast_decision_simulation",
+                        "analysis_spec_id": state.analysis_spec["id"],
+                        "allowed_actions": ["confirm_method", "clarify_method_scope"],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        })
         updates = json.loads(confirmation["state_updates"])
 
         assert updates["stage"] in STAGES
-        assert updates["method_confirmation"] == {
-            "playbook_id": "forecast_decision_simulation",
-            "analysis_spec_id": state.analysis_spec["id"],
-            "allowed_actions": ["confirm_method", "clarify_method_scope"],
-        }
+        assert updates["method_confirmation"]["analysis_spec_id"] == state.analysis_spec["id"]
 
         result = state.resolve_confirmation(confirmation["id"], answer)
 
@@ -210,7 +216,10 @@ def test_method_confirmation_state_updates_are_safe_for_resolution_options():
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
-def test_method_scope_clarification_keeps_forecast_blocked_until_method_is_confirmed():
+def test_p08_forecast_capability_not_blocked_by_method_state():
+    """P08-01/Q07 契约更新：原断言 forecast 能力在方法确认前被封锁；
+    新原则下能力名称不是确认理由——方法状态（无论已选/待澄清）不封锁；
+    只有 affected_operations 覆盖该能力的语义确认才封锁。"""
     intent = TurnIntent(
         intent_type="directed_analysis",
         clarity="clear",
@@ -221,33 +230,24 @@ def test_method_scope_clarification_keeps_forecast_blocked_until_method_is_confi
     )
     controller = AnalysisFlowController("method_scope_resolution")
 
-    clarify_state = AnalysisSessionState(session_id="method_scope_clarify", data_state="data_loaded")
+    state = AnalysisSessionState(session_id="method_scope_clarify", data_state="data_loaded")
     selection = choose_playbook("forecast next month revenue and estimate ROI", intent, has_data=True)
-    apply_selection_to_state(clarify_state, selection)
-    confirmation = next(item for item in clarify_state.pending_confirmations if item["status"] == "pending")
+    apply_selection_to_state(state, selection)
 
-    clarify_state.resolve_confirmation(confirmation["id"], "clarify_method_scope")
+    assert controller.is_capability_blocked_by_confirmation(state, "analysis.forecast") is False
 
-    assert clarify_state.stage == "scope"
-    assert controller.is_capability_blocked_by_confirmation(clarify_state, "analysis.forecast") is True
-    clarification = next(item for item in clarify_state.pending_confirmations if item["status"] == "pending")
-    assert clarification["confirmation_type"] == "method_scope_clarification"
-    assert clarification["related_spec_id"] == clarify_state.analysis_spec["id"]
-    assert clarification["options"]
-
-    clarify_state.resolve_confirmation(clarification["id"], "confirm_method")
-
-    assert controller.is_capability_blocked_by_confirmation(clarify_state, "analysis.forecast") is False
-    assert not any(item["status"] == "pending" for item in clarify_state.pending_confirmations)
-
-    confirm_state = AnalysisSessionState(session_id="method_scope_confirm", data_state="data_loaded")
-    apply_selection_to_state(confirm_state, selection)
-    confirmation = next(item for item in confirm_state.pending_confirmations if item["status"] == "pending")
-
-    confirm_state.resolve_confirmation(confirmation["id"], "confirm_method")
-
-    assert confirm_state.analysis_spec["method_confirmation"]["status"] == "approved"
-    assert controller.is_capability_blocked_by_confirmation(confirm_state, "analysis.forecast") is False
+    # 语义确认明确覆盖该能力时仍封锁（保留真正的语义依赖门）
+    state.add_confirmation({
+        "id": "window_semantic_gate",
+        "confirmation_type": "time_window",
+        "status": "pending",
+        "question": "请确认预测的时间窗口",
+        "options": [],
+        "state_updates": "{}",
+        "affected_operations": ["analysis.forecast"],
+    })
+    assert controller.is_capability_blocked_by_confirmation(state, "analysis.forecast") is True
+    assert controller.is_capability_blocked_by_confirmation(state, "analysis.causal") is False
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)
@@ -267,11 +267,6 @@ def test_changed_high_risk_request_replaces_spec_and_requires_new_confirmation()
     assert first.analysis_spec["id"]
     apply_selection_to_state(state, first)
     first_spec_id = state.analysis_spec["id"]
-    first_confirmation = next(
-        item for item in state.pending_confirmations
-        if item.get("related_spec_id") == first_spec_id
-    )
-    state.resolve_confirmation(first_confirmation["id"], "confirm_method")
 
     second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
     duplicate_second = choose_playbook("forecast cost and ROI next quarter", intent, has_data=True)
@@ -285,15 +280,14 @@ def test_changed_high_risk_request_replaces_spec_and_requires_new_confirmation()
     apply_selection_to_state(state, duplicate_second)
 
     second_spec_id = second.analysis_spec["id"]
-    second_confirmations = [
-        item for item in state.pending_confirmations
-        if item.get("related_spec_id") == second_spec_id and item.get("status") == "pending"
-    ]
     assert state.analysis_spec["id"] == second_spec_id
     assert state.analysis_spec["goal"] == "forecast cost and ROI next quarter"
     assert state.goal == "forecast cost and ROI next quarter"
-    assert len(second_confirmations) == 1
-    assert second_confirmations[0]["id"] != first_confirmation["id"]
+    # P08-01：更换请求替换 spec，但不再要求新的方法确认
+    assert not [
+        item for item in state.pending_confirmations
+        if item.get("related_spec_id") == second_spec_id and item.get("status") == "pending"
+    ]
 
 
 @patch("data_agent.agent.llm_playbook.select_playbook_llm", _no_llm_playbook)

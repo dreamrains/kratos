@@ -92,7 +92,7 @@ def test_direct_operation_has_no_business_translation():
     assert "business_meaning" not in policy.required_moves
 
 
-def test_formula_fitting_gets_light_cautious_business_meaning():
+def test_formula_fitting_gets_standard_cautious_business_meaning():
     policy = _policy(
         intent=_intent(),
         state=_state_with_evidence(),
@@ -102,7 +102,7 @@ def test_formula_fitting_gets_light_cautious_business_meaning():
 
     assert isinstance(policy, SynthesisPolicy)
     assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "light"
+    assert policy.insight_depth == "standard"
     assert policy.business_translation == "cautious"
     assert policy.risk_boundary == "descriptive"
     assert policy.required_moves == [
@@ -195,7 +195,7 @@ def test_beginner_proficiency_changes_wording_only_not_depth():
 
     assert isinstance(beginner, SynthesisPolicy)
     assert isinstance(advanced, SynthesisPolicy)
-    assert beginner.insight_depth == advanced.insight_depth == "light"
+    assert beginner.insight_depth == advanced.insight_depth == "standard"
     assert beginner.wording_style == "plain_language"
     assert advanced.wording_style == "technical_concise"
 
@@ -231,7 +231,7 @@ def test_retention_formula_regression_matches_expected_policy_shape():
 
     assert isinstance(policy, SynthesisPolicy)
     assert policy.answer_mode == "analytical"
-    assert policy.insight_depth == "light"
+    assert policy.insight_depth == "standard"
     assert policy.business_translation == "cautious"
     assert policy.risk_boundary == "descriptive"
     assert "business_meaning" in policy.required_moves
@@ -383,3 +383,95 @@ def test_pandas_or_numpy_verification_reports_do_not_raise_truth_value_ambiguity
 
         assert policy.answer_mode == "analytical"
         assert "verification status" not in policy.reason.lower()
+
+
+# ── P2 (D01): request semantics and output policy decoupling (S01–S08) ──
+
+
+def _s_policy(user_input, state=None, **kwargs):
+    return derive_synthesis_policy(
+        intent=_intent(),
+        state=state if state is not None else _state_with_evidence(),
+        user_input=user_input,
+        **kwargs,
+    )
+
+
+def test_s01_chinese_and_english_action_advice_get_equivalent_policy():
+    chinese = _s_policy("比较两个渠道表现，并给出行动建议")
+    english = _s_policy("Compare channel performance and recommend actions")
+
+    assert chinese.answer_mode == english.answer_mode == "advisory"
+    assert chinese.insight_depth == english.insight_depth
+    assert chinese.suppressed_moves == english.suppressed_moves == []
+    assert chinese.risk_boundary == english.risk_boundary
+
+
+def test_s02_chinese_and_english_forecast_get_equivalent_policy():
+    chinese = _s_policy("预测下个月销量")
+    english = _s_policy("forecast next month's sales")
+
+    assert chinese.answer_mode == english.answer_mode == "advisory"
+    assert chinese.risk_boundary == english.risk_boundary == "predictive"
+
+
+def test_s03_detailed_diagnosis_not_pinned_to_light():
+    policy = _s_policy("请详细诊断渠道收入下降原因")
+
+    assert policy.answer_mode == "analytical"
+    assert policy.insight_depth == "standard"
+    assert "detailed" in policy.reason.lower() or "详细" in policy.reason
+
+
+def test_regular_analysis_keeps_standard_explanatory_depth():
+    policy = _s_policy("拟合留存公式并说明结果")
+
+    assert policy.answer_mode == "analytical"
+    assert policy.insight_depth == "standard"
+    assert "method_note" in policy.required_moves
+    assert "business_meaning" in policy.required_moves
+
+
+def test_s04_terse_with_explicit_advice_keeps_recommendation():
+    policy = _s_policy("简短说明并给一个建议")
+
+    assert policy.answer_mode == "advisory"
+    assert "decision_recommendation" not in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert "next_step" in policy.required_moves
+
+
+def test_s05_formula_only_without_advice_stays_direct():
+    policy = _s_policy("只要公式，不需要建议")
+
+    assert policy.answer_mode == "direct"
+    assert "business_meaning" not in policy.required_moves
+
+
+def test_s06_downgrades_keep_chinese_conditional_recommendations():
+    policy = _s_policy("给出行动建议", state=_state_with_verification("pass_with_downgrades"))
+
+    assert "decision_recommendation" not in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert "conditional" in policy.reason.lower()
+
+
+def test_s07_failed_verification_keeps_independent_observations_publishable():
+    state = _state_with_verification("fail")
+    state.verification_reports[-1]["passed_evidence_ids"] = ["ev_1"]
+
+    policy = _s_policy("fit a retention curve formula from the data", state=state)
+
+    assert "decision_recommendation" in policy.suppressed_moves
+    assert "core_answer" in policy.required_moves
+    assert "evidence" in policy.required_moves
+    assert "independent" in policy.reason.lower()
+
+
+def test_s08_no_evidence_allows_method_guidance_but_not_business_conclusions():
+    policy = _s_policy("给出行动建议", state=AnalysisSessionState(session_id="s8_empty"))
+
+    assert policy.answer_mode == "exploratory"
+    assert "business_meaning" in policy.suppressed_moves
+    assert "limitation" in policy.required_moves
+    assert "next_step" in policy.required_moves

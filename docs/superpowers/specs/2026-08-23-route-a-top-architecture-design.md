@@ -1,6 +1,6 @@
 # 路线 A 顶层架构优化设计（基于 7/13 基座）
 
-> **状态变更（2026-08-25）：本文件降级为历史架构提案，不再是实施权威。** 当前实施边界和顺序以 [能力保全台账](../../audit/2026-08-25-capability-preservation-ledger.md)、[提交取舍台账](../../audit/2026-08-25-post-july-commit-decision-ledger.md)、[故障验收矩阵](../../audit/2026-08-25-failure-acceptance-matrix.md) 和 [纵向切片实施计划](../plans/2026-08-23-route-a-phased-plan.md) 为准。若下文的“九个引擎全部移植”“compile-verifier”“R0–R6 横向顺序”“基线已充分验证”等表述与新台账/计划冲突，采用新文件；这些表述只能作为候选假设，必须先经能力保全、RED 测试和真实数据纵向切片验证。
+> **状态变更（2026-09-06）：本文件降级为历史架构提案，不再是实施权威。** 旧验收矩阵及纵向切片批次已退役；当前测试边界见[退役说明](../../testing/retired-browser-provider-matrix.md)和 `tests/TESTING.md`。下文只能作为历史候选假设，不能作为当前质量或发布证据。
 
 - 日期：2026-08-23｜状态：Superseded proposal（历史参考）
 - 基座：`1d57061`（rebuild 分支）｜决策背景：用户拍板路线 A（v1 主体+融合两月严谨性资产），v2 线归档（archive/v2-exploration，反面教材兼参考）

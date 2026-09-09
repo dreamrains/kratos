@@ -220,3 +220,98 @@ def test_risky_cleaning_decision_downgrades_related_claim():
     assert check["status"] == "downgraded"
     assert check["strength"] == "likely"
     assert any("cleaning decision" in issue.lower() for issue in check["issues"])
+
+
+# ── P3 (D10): claim-type calibration (C01–C08) ──
+
+from data_agent.tools.analysis_flow import _auto_generate_limitations, _calibrate_confidence
+
+
+def _cal_payload(**overrides):
+    payload = {
+        "claim": "当前 12 条订单记录合计 120。",
+        "dataset": "sales",
+        "method": "descriptive_sum",
+        "tool_calls": ["transform_data"],
+        "result_summary": "sum(amount) = 120 over 12 rows",
+        "limitations": [],
+        "confidence": "high",
+        "sample_size": 12,
+        "time_scope": "2026-08-01 至 2026-08-31",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestCSeriesCalibration:
+
+    def test_c01_descriptive_exact_sum_not_flagged_small_sample(self):
+        payload = _cal_payload()
+
+        assert not any("不足30" in w for w in _calibrate_confidence(payload))
+        assert not any("样本量" in l for l in _auto_generate_limitations(payload))
+
+    def test_c02_descriptive_generalization_gets_scope_limitation(self):
+        payload = _cal_payload(claim="全部市场的订单合计为 120，代表整体市场规模。")
+
+        limitations = _auto_generate_limitations(payload)
+        assert any(("总体" in l or "外推" in l) for l in limitations)
+
+    def test_c03_single_source_descriptive_fact_not_denied(self):
+        payload = _cal_payload()
+
+        assert not any("单一" in l or "交叉验证" in l for l in _auto_generate_limitations(payload))
+        assert not any("交叉验证" in w or "单一" in w for w in _calibrate_confidence(payload))
+
+    def test_c04_large_sample_does_not_silence_method_issues(self):
+        payload = _cal_payload(
+            sample_size=10000,
+            method="before_after",
+            limitations=["选择偏差未评估"],
+            statistical_inference=True,
+        )
+
+        limitations = _auto_generate_limitations(payload)
+        assert any("对照" in l for l in limitations)
+        assert not any("样本量" in l for l in limitations)
+
+    def test_c05_structured_365_day_window_not_flagged_short(self):
+        payload = _cal_payload(time_scope="365天", method="trend_analysis", statistical_inference=True)
+
+        assert not any("观察期较短" in l for l in _auto_generate_limitations(payload))
+
+    def test_c06_unparseable_window_adds_no_fabricated_warning(self):
+        payload = _cal_payload(time_scope="节假日季", method="trend_analysis", statistical_inference=True)
+
+        assert not any("观察期" in l for l in _auto_generate_limitations(payload))
+
+    def test_c07_missing_or_zero_semantics_not_fabricated(self):
+        payload = _cal_payload()
+        produced = _auto_generate_limitations(payload) + _calibrate_confidence(payload)
+
+        assert not any(("缺失" in l and "影响小" in l) or ("零" in l and "未观测" in l) for l in produced)
+
+    def test_c08_causal_method_allows_causal_claim_without_downgrade(self):
+        evidence = {
+            "id": "ev_causal",
+            "claim": "营销活动导致收入提升。",
+            "dataset": "sales",
+            "method": "did",
+            "sample_size": 1200,
+            "time_scope": "2026-05-01 to 2026-05-31",
+            "calculation_method": "difference in differences",
+            "method_detail": "treated vs control periods",
+            "limitations": ["parallel trends assumption not fully checked"],
+            "confidence": "medium",
+        }
+
+        report = verify_analysis_claims(
+            claims=[evidence["claim"]],
+            evidence_records=[evidence],
+            route_proposals=[],
+            cleaning_logs=[],
+        )
+
+        check = report["claim_checks"][0]
+        assert check["status"] == "passed"
+        assert "causal" not in " ".join(check["issues"]).lower()

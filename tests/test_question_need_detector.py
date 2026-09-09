@@ -494,15 +494,16 @@ def test_period_comparison_requires_time_window_question_when_missing_window():
     assert "period" in gate["reason"].lower()
 
 
-def test_high_risk_predictive_analysis_requires_method_confirmation():
+def test_p08_high_risk_keywords_alone_do_not_gate():
+    """P08-01/Q07 契约更新：原断言预测类关键词触发 method_confirmation 硬门；
+    新原则下方法/预测关键词本身不构成确认理由。"""
     gate = detect_question_need("predict next month revenue", _intent(), _state())
 
-    assert gate["status"] == "hard_question"
-    assert gate["question_type"] == "method_confirmation"
-    assert gate["blocking_surfaces"] == ["analysis_execution", "report_generation"]
+    assert gate["status"] == "clear"
+    assert gate.get("question_type") != "method_confirmation"
 
 
-def test_confirmed_matching_high_risk_spec_skips_generic_gate_but_changed_request_does_not():
+def test_p08_removed_method_gate_applies_to_changed_requests_too():
     state = _state()
     state.analysis_spec = {
         "id": "spec_forecast_revenue",
@@ -510,25 +511,13 @@ def test_confirmed_matching_high_risk_spec_skips_generic_gate_but_changed_reques
         "playbook_id": "forecast_decision_simulation",
         "confirmation_policy": {"requires_confirmation": True},
     }
-    state.add_confirmation({
-        "id": "method_forecast_revenue",
-        "related_spec_id": "spec_forecast_revenue",
-        "state_updates": json.dumps({
-            "method_confirmation": {
-                "playbook_id": "forecast_decision_simulation",
-                "analysis_spec_id": "spec_forecast_revenue",
-                "allowed_actions": ["confirm_method", "clarify_method_scope"],
-            },
-        }),
-    })
-    state.resolve_confirmation("method_forecast_revenue", "confirm_method")
 
     matching = detect_question_need("predict next month revenue", _intent(), state)
     changed = detect_question_need("predict next quarter profit", _intent(), state)
 
+    # 方法审批门已移除：匹配与变更请求都不再因方法类别被拦
     assert matching["status"] == "clear"
-    assert changed["status"] == "hard_question"
-    assert changed["question_type"] == "method_confirmation"
+    assert changed.get("question_type") != "method_confirmation"
 
 
 def test_consulting_and_knowledge_questions_do_not_block():

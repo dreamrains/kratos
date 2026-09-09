@@ -309,6 +309,35 @@ class Workspace:
             return f"数据集 '{name}' 已删除"
         return f"数据集 '{name}' 不存在"
 
+    def archive_version(self, name: str, label: str = "history") -> str:
+        """Move an active dataset to an immutable, addressable history name.
+
+        This is intentionally a rename of the stored snapshot rather than a
+        copy followed by deletion: its dataframe, data identity and lineage
+        stay intact.  A caller can then create a new active version using the
+        original name, while receipts bound to the prior fingerprint remain
+        auditable and can be invalidated by the freshness gate.
+        """
+        if name not in self._datasets:
+            return f"Error: dataset '{name}' does not exist"
+        archived_name = self.next_analysis_name(name, label)
+        identity = copy.deepcopy(self.get_data_identity(name))
+        self._datasets[archived_name] = self._datasets.pop(name)
+        metadata = self._metadata.pop(name, {})
+        self._metadata[archived_name] = metadata
+        lineage = self._derived_lineage.pop(name, None)
+        if lineage is not None:
+            self._derived_lineage[archived_name] = lineage
+        self.set_metadata(archived_name, "archived_from", name)
+        self.set_metadata(archived_name, "archived_version_id", identity.get("version_id", ""))
+        self._log_transform(
+            name,
+            "archive_version",
+            archived_name,
+            {"retained_version_id": identity.get("version_id", "")},
+        )
+        return archived_name
+
 
 def _create_workspace_registry(
     current_context_getter,
@@ -328,6 +357,7 @@ def _create_workspace_registry(
         "add",
         "derive",
         "derive_multi",
+        "archive_version",
         "remove",
         "set_metadata",
         "log_transform",
@@ -481,6 +511,11 @@ def _create_workspace_registry(
         if operation == "remove":
             name = args[0]
             return write_error(scope, name) or storage.remove(name)
+        if operation == "archive_version":
+            name, label = args
+            if not readable(scope, name):
+                return "Error: dataset_outside_current_task_scope"
+            return write_error(scope, name) or storage.archive_version(name, label)
         if operation == "set_metadata":
             name, key, value = args
             return write_error(scope, name) or storage.set_metadata(name, key, copy.deepcopy(value))
@@ -651,6 +686,9 @@ class WorkspaceProxy:
 
     def remove(self, name: str) -> str:
         return self.__operate("remove", name)
+
+    def archive_version(self, name: str, label: str = "history") -> str:
+        return self.__operate("archive_version", name, label)
 
     def set_metadata(self, name: str, key: str, value: Any) -> Any:
         return self.__operate("set_metadata", name, key, value)

@@ -179,26 +179,27 @@ AGENT_ANALYSIS = """\
 - **数据特征感知**：查看 [data_features] 中的质量级别
   - 🔴 Block 级问题 → 先用 ask_user_question 确认再分析
   - ⚠ Warning 级问题 → 在结论中标注数据限制
-- **竞争假设**：归因/驱动/异常类结论，列出至少1个被排除的替代解释
+- **竞争假设**：归因/驱动/异常类结论，列出竞争解释及其当前状态（已获支持/被反驳/未决）；未排除的替代解释必须如实标注未决并说明所需的区分性证据，不得虚构排除结论
 - **完备性自检**：输出前对照计划维度检查覆盖度
 
 ## 回复格式（每条分析结论）
 不要机械地为每条发现重复同一套五段标题。按整份回答组织：
 1. 首句或首段直接给核心结论
-2. 用 2-4 个简短 Markdown 小节展开数据支撑、关键证据和业务含义
+2. 按用户问题和证据密度组织 Markdown 小节，用数据支撑结论；每个已支持的重要子问题都要得到回答，不设固定小节数量上限
 3. 多组同口径比较优先用紧凑表格；步骤、影响和建议优先用列表
 4. 趋势、分布、构成或多组比较在图形明显优于文字时调用 create_chart，并把图放在对应结论旁；不为装饰强制作图
 5. 方法、置信度与边界合并成简短说明，不倾倒原始 JSON、Python repr 或内部收据
 
 ## 置信度校准规则（强制）
 声明置信度时必须遵守以下规则，违反时必须降级：
-- 样本量 < 30：置信度必须标"低"，并注明样本不足
+- 推断类结论（检验/模型/总体估计）样本量 < 30：置信度必须标"低"，并注明样本不足；已核对口径与范围的记录内描述性汇总（如精确加总）不受此条约束
 - p > 0.05：不得使用"显著"等词，应说明现有样本不足以拒绝无差异假设；未做检验时写"未检验"，不能写成"统计不显著"
 - 无对照组/无随机化：禁止因果性断言，只能使用"相关性"或"关联性"表述
 - 数据为聚合粒度：禁止个体级结论
 - 缺失率 > 20% 的列参与分析：必须标注数据限制
 - 时间跨度不足 2 个周期：趋势类结论置信度不得标"高"
-- 唯一数据源且无交叉验证：置信度不得标"高"
+- 总体外推或因果类结论仅有单一数据源且无交叉验证：置信度不得标"高"；已核对口径的记录内描述性事实不受此条约束
+- 描述性结果仅在已读记录范围内陈述；推广到总体需要抽样依据或全量数据
 
 ## 置信度声明强制规则
 当分析结论包含以下语言时，必须附带置信度声明和支撑证据：
@@ -351,6 +352,81 @@ def detect_user_proficiency(user_input: str, history_messages: list | None = Non
     return "intermediate"
 
 
+def resolve_proficiency(current: str, user_input: str, history_messages: list | None = None) -> str:
+    """Effective proficiency without mutating the stored preference.
+
+    An explicit setting always wins; "auto" re-detects on every turn so a
+    later "用大白话" request is honored instead of being locked to the first
+    detection (D07).
+    """
+    level = (current or "").strip().lower()
+    if level in {"beginner", "intermediate", "advanced"}:
+        return level
+    return detect_user_proficiency(user_input, history_messages)
+
+
+_AUDIENCE_KEYWORDS = (
+    ("business", (
+        "我是业务", "业务人员", "业务方", "作为业务", "面向业务",
+        "非技术背景", "business stakeholder", "i am business",
+    )),
+    ("analyst", (
+        "数据分析师", "我是分析师", "作为分析师", "分析师视角",
+        "分析同行", "data analyst",
+    )),
+    ("manager", (
+        "给管理层", "向管理层", "管理层汇报", "汇报给领导", "向领导汇报",
+        "管理视角", "管理者视角", "给高管", "向高管", "给老板汇报",
+        "for management", "for the leadership",
+    )),
+)
+
+# 受众只改变呈现重点与表达；事实、口径、范围、限制与证据等级对所有受众一致。
+_AUDIENCE_BASELINE = (
+    "## 受众共用底线\n"
+    "- 数值、口径、范围、限制与证据等级对全部受众一致；受众只改变呈现重点与表达方式，不得改变事实或证据门槛\n"
+)
+_AUDIENCE_INSTRUCTIONS = {
+    "business": (
+        "## 受众适配（业务人员）\n"
+        "- 优先呈现：发生了什么变化、业务含义、可执行动作、跟踪指标\n"
+        "- 统计表述附通俗解释\n"
+    ),
+    "analyst": (
+        "## 受众适配（数据分析师）\n"
+        "- 优先呈现：数据口径、方法与参数、误差与假设、竞争解释与复现依据\n"
+        "- 业务结论仍需给出，不能只罗列参数\n"
+    ),
+    "manager": (
+        "## 受众适配（管理者）\n"
+        "- 优先呈现：业务影响、优先级排序、可选方案、资源权衡与停止条件\n"
+        "- 主要证据与限制必须保留\n"
+    ),
+    "general": (
+        "## 受众适配（通用）\n"
+        "- 核心发现优先，配通俗解释与下一步\n"
+        "- 与当前任务相关的必要方法与边界保留\n"
+    ),
+}
+
+
+def detect_audience(user_input: str) -> str:
+    """Per-turn audience from explicit self-identification in the request.
+
+    Identity is never inferred from data content (a 经理 column does not make
+    the user a manager). Unspecified requests stay general.
+    """
+    text = (user_input or "").lower()
+    for audience, markers in _AUDIENCE_KEYWORDS:
+        if any(marker in text for marker in markers):
+            return audience
+    return "general"
+
+
+def _audience_block(audience: str) -> str:
+    return _AUDIENCE_BASELINE + "\n" + _AUDIENCE_INSTRUCTIONS.get(audience, _AUDIENCE_INSTRUCTIONS["general"])
+
+
 _PROFICIENCY_INSTRUCTIONS = {
     "beginner": (
         "## 用户水平适配（初学者）\n"
@@ -436,6 +512,7 @@ def build_system_prompt(
     user_input: str = "",
     proficiency: str = "intermediate",
     user_requirements: str = "",
+    audience: str = "general",
 ) -> str:
     from data_agent.agent.intent import plan_turn_intent, _PROMPT_LEVEL_MAP
 
@@ -494,7 +571,7 @@ def build_system_prompt(
             session_context=untrusted_session_context,
         )
         # Conversation: only inject project_rules (business constraints), no Mermaid
-        injections = []
+        injections = [_audience_block(audience)]
         if project_rules:
             injections.append(project_rules)
         if user_requirements_block:
@@ -530,7 +607,7 @@ def build_system_prompt(
             _strategy_shared=strategy_shared,
             ambiguities=ambiguities or "无",
         )
-        injections = []
+        injections = [_audience_block(audience)]
         prof_instruction = _get_proficiency_instruction(proficiency)
         if prof_instruction:
             injections.append(prof_instruction)
@@ -557,7 +634,7 @@ def build_system_prompt(
             _mermaid_ref=mermaid_ref,
             _strategy_shared=strategy_shared,
         )
-        injections = []
+        injections = [_audience_block(audience)]
         prof_instruction = _get_proficiency_instruction(proficiency)
         if prof_instruction:
             injections.append(prof_instruction)

@@ -42,7 +42,7 @@ def _append_ledger_record(
         blocking_surfaces=("agent_turn",),
         skippable=True,
         resolution_action=resolution_action,
-        resolution_params={"confirmation_type": confirmation_type},
+        resolution_params={"confirmation_type": confirmation_type, "decision_kind": "metric_definition", "missing_value": "对比指标口径", "affected_operations": ["period_compare"]},
     )
     request = ConfirmationRequest.from_candidate(candidate)
     record = ConfirmationRecord.from_request(request, now="2026-06-27T00:00:00Z")
@@ -293,6 +293,8 @@ def test_required_question_candidate_uses_runtime_source_and_operation():
                 {"label": "Compare", "value": "period_compare"},
             ],
             "confirmation_type": "route_selection",
+            "risk_fields": ["分析路线"],
+            "affected_routes": ["trend"],
             "blocking_reason": "Different routes change the analysis output.",
             "state_updates": {"stage": "scope"},
         },
@@ -677,9 +679,11 @@ def test_existing_actionable_confirmation_precedes_new_scope_question(tmp_path, 
 
     result = loop._maybe_auto_suspend_for_required_question()
 
+    # IC2 契约更新：原断言通用方法 pending 优先悬挂；新原则下方法审批被
+    # 策略降级，让位给本轮新检测到的真实文件范围问题。
     assert result is not None
-    assert result.confirmation_type == "method_confirmation"
-    assert result.question == "Confirm the method?"
+    assert result.confirmation_type == "file_scope_selection"
+    assert "file" in result.question.lower() or "sales" in result.question.lower()
 
 
 def test_runtime_confirms_independent_scope_groups_in_successive_rounds(tmp_path, monkeypatch):
@@ -1055,6 +1059,8 @@ def test_sync_loop_blocks_final_response_when_runtime_confirmation_pending(tmp_p
             "question": "Confirm route?",
             "options": [{"label": "Trend", "value": "trend"}],
             "confirmation_type": "route_selection",
+            "risk_fields": ["分析路线"],
+            "affected_routes": ["trend"],
             "blocking_reason": "Route affects the final answer.",
         },
         source="question_need_detector",
@@ -1093,6 +1099,8 @@ def test_stream_loop_blocks_final_response_when_runtime_confirmation_pending(tmp
             "question": "Confirm stream route?",
             "options": [{"label": "Trend", "value": "trend"}],
             "confirmation_type": "route_selection",
+            "risk_fields": ["分析路线"],
+            "affected_routes": ["trend"],
             "blocking_reason": "Route affects the final answer.",
         },
         source="question_need_detector",

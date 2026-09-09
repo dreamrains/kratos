@@ -550,9 +550,10 @@
 
             <section class="trust-section" data-testid="workbench-verified-conclusions"
                      x-show="sessionSidePanelTab === 'current'">
-              <h4 class="text-sm font-semibold text-stone-700 dark:text-stone-300">已验证结论</h4>
+              <h4 class="text-sm font-semibold text-stone-700 dark:text-stone-300"
+                  x-text="'已验证结论' + (verifiedTotal() ? '（' + visibleListItems('workbench-verified', verifiedConclusions()).length + '/' + verifiedTotal() + '）' : '')"></h4>
               <div class="space-y-1.5 mt-2">
-                <template x-for="conclusion in verifiedConclusions()" :key="conclusion.id">
+                <template x-for="conclusion in visibleListItems('workbench-verified', verifiedConclusions())" :key="conclusion.id">
                   <div class="workbench-item">
                     <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="conclusion.claim"></div>
                     <details x-show="conclusion.summary" class="workbench-conclusion-details mt-1">
@@ -562,7 +563,38 @@
                   </div>
                 </template>
                 <div x-show="!verifiedConclusions().length" class="text-xs text-stone-400 mt-1">暂无已验证结论</div>
+                <button type="button" x-show="hiddenListCount('workbench-verified', verifiedConclusions())"
+                        class="text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 underline"
+                        @click="showMoreListItems('workbench-verified', verifiedConclusions())"
+                        x-text="'展开其余 ' + hiddenListCount('workbench-verified', verifiedConclusions()) + ' 条'"></button>
+                <button type="button" x-show="canCollapseList('workbench-verified')"
+                        class="text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 underline"
+                        @click="collapseListItems('workbench-verified')">收起</button>
               </div>
+            </section>
+
+            <section class="trust-section" data-testid="workbench-pending-findings"
+                     x-show="sessionSidePanelTab === 'current'">
+              <details class="group">
+                <summary class="text-sm font-semibold text-stone-700 dark:text-stone-300 cursor-pointer select-none">
+                  待验证发现
+                  <span class="text-xs font-normal text-stone-400" x-text="pendingFindings().length ? '（' + pendingFindings().length + '）' : ''"></span>
+                </summary>
+                <div class="space-y-1.5 mt-2">
+                  <template x-for="finding in pendingFindings()" :key="finding.id">
+                    <div class="workbench-item">
+                      <div class="text-xs font-medium text-stone-700 dark:text-stone-300" x-text="finding.claim"></div>
+                      <div class="text-[11px] mt-1">
+                        <span class="inline-block px-1.5 py-0.5 rounded bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 border border-stone-200 dark:border-stone-700" x-text="finding.status_label"></span>
+                      </div>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400 mt-1" x-show="finding.basis" x-text="'依据：' + finding.basis"></div>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400" x-show="finding.gap" x-text="'尚缺：' + finding.gap"></div>
+                      <div class="text-[11px] text-stone-500 dark:text-stone-400" x-show="finding.next_step" x-text="'下一步：' + finding.next_step"></div>
+                    </div>
+                  </template>
+                  <div x-show="!pendingFindings().length" class="text-xs text-stone-400 mt-1">暂无待验证发现</div>
+                </div>
+              </details>
             </section>
 
             <!-- Conversation Export -->

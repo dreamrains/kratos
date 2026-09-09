@@ -65,7 +65,13 @@ def test_method_confirmation_remains_in_internal_state_not_workbench_projection(
     ]
 
     assert state.pending_confirmations[0]["question"].strip()
-    assert build_trust_view(state)["workbench"] == {"verified_conclusions": []}
+    # P6/U02 契约更新：workbench 增加 verified_total/pending_findings 空态字段；
+    # 保护语义保留——确认信息不得进入任何投影区，空态无已验证结论。
+    workbench = build_trust_view(state)["workbench"]
+    assert workbench["verified_conclusions"] == []
+    assert workbench["verified_total"] == 0
+    assert workbench["pending_findings"] == []
+    assert "confirm" not in str(workbench).lower()
 
 
 def test_unsupported_retention_route_is_exploratory_when_identity_fields_are_missing():
@@ -111,7 +117,10 @@ def test_orphan_relationship_flag_does_not_create_an_actionable_confirmation_gat
     ]
 
     assert state.file_relationships[0]["relationship_id"] == "rel_orders_coupon"
-    assert build_trust_view(state)["workbench"] == {"verified_conclusions": []}
+    workbench = build_trust_view(state)["workbench"]
+    assert workbench["verified_conclusions"] == []
+    assert workbench["verified_total"] == 0
+    assert workbench["pending_findings"] == []
 
 
 def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
@@ -120,4 +129,6 @@ def test_no_file_consulting_state_keeps_a_valid_unverified_workbench_context():
     view = build_trust_view(state)
 
     assert view["status"] == "empty"
-    assert view["workbench"] == {"verified_conclusions": []}
+    assert view["workbench"]["verified_conclusions"] == []
+    assert view["workbench"]["verified_total"] == 0
+    assert view["workbench"]["pending_findings"] == []

@@ -7,7 +7,7 @@ import sys
 
 import pandas as pd
 
-from scripts.acceptance.real_data_manifest import REFERENCE_DATA_DIR
+from tests.support.real_data_manifest import REFERENCE_DATA_DIR
 
 from data_agent.agent.analysis_quality_rubric import score_analysis_quality
 from data_agent.agent.relationship_validation import validate_relationship
