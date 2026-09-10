@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-09｜版本：1.3｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成 E1/E2/E3 本地验收；IC5/E4 真实 Provider 未授权、未执行**。
+日期：2026-09-10｜版本：1.4｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成 E1/E2/E3 本地验收；IC5/E4 已在 `main@1516337` 执行但未通过**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -144,6 +144,6 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | 整合 full-offline | accepted_for_merge_with_environment_exception | 首次 2492 passed、56 failed、62 skipped：缺 Git 忽略夹具及 Windows 长路径；缩短路径并补齐夹具后为 2608 passed、1 failed、1 skipped，唯一失败为多复制清单外 `游戏C改版.xlsx`；用户接受当前结果并要求合入 `main`，本项不记作全绿 |
 | 本地 `main` 整合 | merged | `f8ee717` 为双父整合提交，`be5ee9a` 同步当前状态文档；合并后 E3 以后者为运行身份 |
 | E3 / IC4 | passed_local | `tmp/main-ic4-browser-20260909-be5ee9a`：IC-B01—IC-B06 全部通过；方法问题非阻塞、真实业务口径正常悬挂/恢复，同范围决定复用，范围/版本变化重新询问，旧方法审批以 `policy_retired` 保留；Provider initiated calls=0 |
-| E4 / IC5 | not_authorized / not_run | 未冻结或调用真实 Provider |
+| E4 / IC5 | executed_failed / not_accepted | 冻结批次 `tmp/p08-real-provider-20260909-1516337-r1` 全部执行；M06 真实业务成本口径正常悬挂、记录 `integrity_status=ok`，回答后一次恢复且缺失成本仍未计算；M04 明确跨版本假设请求却出现 `trend` / `period_compare` 路线确认并以 `cancelled` 结束，违反 Q14；M02 未发布 D7/D30 合规边界。账本 77 started / 77 dispatched / 0 failed。 |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。

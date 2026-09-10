@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-09｜状态：AC01—AC39 已合入 `main` 并在 `main@be5ee9a` 完成合并后 E3 矩阵；AC40 真实 Provider 验收未授权、未执行。
+日期：2026-09-10｜状态：AC01—AC39 已合入 `main` 并在 `main@be5ee9a` 完成合并后 E3 矩阵；AC40 已在 `main@1516337` 执行但未通过。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -76,7 +76,7 @@
 | AC37 | 答案→刷新→Markdown及当前支持的其他导出→实际打开文件 | 同一正文与来源绑定，图的静态替代/链接明确；不能只测按钮点击 | 脚本模型真实浏览器 |
 | AC38 | 固定合成小中大结果，已有上下文预算，记录调用数 | 正常路径新增Provider调用为0，超限走详情；无无界扫描/整库复制 | 离线性能与调用守卫 |
 | AC39 | CP1—CP5改完，当前full-offline及全部40项记录 | 当前检出检查通过，skip逐项解释；不以159项历史通过替代 | run_regression.py full-offline |
-| AC40 | 授权后新真实批次：P08 M01—M06＋冻结内容样本 | 账本/身份闭合，原文和截图可查，批次内不修不重跑，内容独立评分 | 新真实Provider批次，当前not_run |
+| AC40 | 授权后新真实批次：P08 M01—M06＋冻结内容样本 | 账本/身份闭合，原文和截图可查，批次内不修不重跑，内容独立评分 | 本次真实 Provider 批次已执行，状态 `executed_failed` |
 
 ## 2. 内容质量指标与门槛
 
@@ -175,7 +175,7 @@ Provider授权引用、计数或明确0调用：
 | AC37 | passed_local | E3 场景 B03：刷新保留正文，实际 MD 导出包含同一 packet/snapshot/answer hash 与六来源 |
 | AC38 | passed_local | 固定小中大 fixture，prompt 小于 65k；正常路径新增 Provider 调用 0，超限转 detail_ref |
 | AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
-| AC40 | not_run_authorization_required | 未建立/消费本专项真实 Provider 授权；本次运行轨迹真实 Provider 调用为 0 |
+| AC40 | executed_failed / not_accepted | `tmp/p08-real-provider-20260909-1516337-r1` 完整执行 M01—M06；77 started / 77 dispatched / 0 failed。M03 六来源正文/导出完整但发布收敛失败且 Workbench 无已验证结论；M05 大白话回合把未知金额单位写成“块钱”；M06 分层正确但残留 `[[chart:]]`。硬门槛未通过。 |
 
 定向命令覆盖新增四个 AC 测试文件及关键发布、导出、渲染、质量门和预算回归，结果 `129 passed`。完整离线命令为：
 
@@ -186,6 +186,8 @@ Provider授权引用、计数或明确0调用：
 唯一 skip 是需要 `GOLDEN_LIVE_SMOKE=1` 的真实 Provider agent smoke；本次故意保持 Provider 禁用。E3 使用普通 Flask/SSE/AgentLoop/工具/持久化路径，只替换模型传输；B03 会话 `b2306f8ccffb`、B07 会话 `944d1f86cbce`，各自 `runtime.jsonl` 均为 0 条 `forbidden_provider_transport`，说明没有尝试越过禁用边界。
 
 合并后追加 E3 证据：`main@be5ee9a` 的隔离目录 `tmp/main-ic4-browser-20260909-be5ee9a`。CONTENT-B03 会话 `c2c77b29d01e` 保留 `src_1`—`src_6` 及全部金额事实，实际生成 9380 字节的 Markdown 对话导出和 9150 字节的同快照发布报告；CONTENT-B07 会话 `a5ccf75b6f20` 在 1440×900 下显示真实表格、KaTeX 公式、Plotly 图表及备用链接，无可见整页横向溢出。同批 `runtime.jsonl` 记录 `provider_enabled=false`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。
+
+追加 E4 证据：`main@1516337`、冻结 SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46`，模型 `openai/deepseek-v4-flash`。AC40 内容样本对应 M03/M05/M06：M03 的六来源两日金额、绝对/相对变化和记录数在正文及 4914 字节 Markdown 中完整，但 run_state 为 failed、fallback 未收敛且 Workbench 无 verified；M05 的 12 笔/120 在六类身份中保留，但“大白话”把未声明币种升级为“块钱”，核心单位一致性失败；M06 将 answered、not_computed、evidence_insufficient 分开，但页面显示原始 `[[chart:]]`。因此 AC40 不能通过。账本与会话原文保存在该隔离目录；证据只到本地真实浏览器＋真实 Provider，不代表生产。
 
 ## 7. 本次文档校验记录
 

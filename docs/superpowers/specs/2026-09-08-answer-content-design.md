@@ -1,6 +1,6 @@
 # 回复内容完整性：开发设计
 
-日期：2026-09-08｜版本：v0.3｜状态：CP1—CP5 设计已在独立优化分支落地；本地验收完成，真实 Provider 效果验证待 AC40 授权。
+日期：2026-09-10｜版本：v0.4｜状态：CP1—CP5 设计已合入 `main` 且本地验收完成；AC40 真实 Provider 批次已执行但未通过。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[验收](../validation/2026-09-08-answer-content-acceptance.md)｜[表达规范](2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。本文定义的发布绑定、FactGroup/detail_ref、需求生命周期、`answer-bindings.v1`、类型化派生量值和桌面端图文绑定已实现；自由文本中无法确定性定位的语义仍按设计标为 `unassessed`，不伪装为已证明。
 

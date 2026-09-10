@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：开发设计
 
-日期：2026-09-07｜版本：1.1｜状态：**已纳入当前分支；P08 问题修复设计，尚未实现**。
+日期：2026-09-10｜版本：1.2｜状态：**设计已随 IC0—IC3 合入 `main`，IC4 本地验收通过；IC5 真实 Provider 批次已执行但未通过**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[验收](../validation/2026-09-07-intent-clarification-acceptance.md)｜[P08 问题记录](../validation/2026-09-07-p08-browser-validation-issue-record.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。下文逻辑字段必须在 IC0 映射到目标分支现有接口；不是现有 API 的声明。
 

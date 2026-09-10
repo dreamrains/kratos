@@ -708,3 +708,26 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 
 - IC4 的 B01—B06（E3 浏览器）与 S 系列既有反例复验、IC5 真实 Provider 对照按验收矩阵执行；本阶段离线用例为 E1/E2。
 - Q09—Q11 的 E2 层由 `TestLoopDirectAskIntegration`（advisory 工具响应/REUSED 答案恢复/真语义悬挂）与既有 confirmation_runtime 套件覆盖；R06—R10 中跨会话/幂等既有测试继续通过。
+
+## P08-R5：合并后完整真实 Provider 批次（Codex，2026-09-10）
+
+阶段 / 状态：**批次有效但未通过；M01、M06 passed，M02—M05 failed；P08 / IC5 / AC40 均为 executed_failed / not_accepted。** 本轮严格按 M01→M06 执行，普通失败未中断矩阵，未修代码、未局部重跑，也未修改提示、夹具、oracle、模型、端点或预算。
+
+- 冻结身份：`main@15163374b5acf6f4a78acfd1b59bcf89db07300b`；`tmp/p08-real-provider-20260909-1516337-r1/freeze.json` SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；`request_policy=one_shot`；调用上限 120。
+- 用户对上述精确身份授权后启动普通本地 Flask 页面和真实 Provider。Provider 账本 `tmp/p08-real-provider-20260909-1516337-r1/provider-calls.jsonl` 最终 **77 started / 77 dispatched / 0 failed**，SHA-256 `7c3cd0a6a1fc84a177dd598caf8fe185a30f837358e34456e4540be0208e8d14`；分场景 M01 8、M02 12、M03 11、M04 15、M05 19、M06 12。所有 started 均有 dispatched，模型唯一值正确，未超额。
+
+| 场景 | 会话 | 结果 | 主要证据与失败点 |
+|---|---|---|---|
+| M01 | `14dbe7e4889a` | passed | 12 笔、amount 合计 120、单位未知、样本/外推限制与条件建议均进入正文和 verified Workbench；刷新一致；run_state completed。 |
+| M02 | `c96e79aebde9` | failed | run_state failed；D7=10% 未形成最终发布，D30 合规边界被 `unbound_time_point_claim` 与 fallback 收敛问题拒绝；Workbench 留下未发布的曲线外推区间；导出文件存在但只反映失败提示。 |
+| M03 | `499dde01fa82` | failed | 正文和 4914 字节 Markdown 含六来源全部金额、绝对/相对变化与记录数；但 fallback 三次未收敛、run_state failed、Workbench 无已验证结论。 |
+| M04 | `e86b389e1eec` | failed | v1/v2 的支持、反证、冲突、未决及 v2 下失效均由收据约束且两版报告可查；但明确任务仍触发 `trend` / `period_compare` 路线确认，记录最终为 cancelled，违反“方法名不阻塞”；Workbench 无已验证结论。 |
+| M05 | `29537e77db9a` | failed | 六种表达均保留 12 笔和合计 120，技术表达可恢复；但金额单位原本未知，“大白话”回合擅自写成“10 块钱/120 块”，并把混合已发生/未来日期的窗口笼统称为“未来日期”，身份事实一致性硬门槛失败。 |
+| M06 | `f3b5907370a5` | passed | 缺失 `missing_orders` 时无造数且只给一个恢复方向；净收益仅在真实成本口径处悬挂，确认记录 integrity_status=ok、status=resolved、回答“代金券及渠道成本”；一次恢复后明确 120 只是可计算收入，券成本/渠道成本/净收益为未计算，其他代表性问题为证据不足。正文残留 `[[chart:]]`，作为 P2 呈现问题记录。 |
+
+- 工具消息完整性：六会话 assistant tool calls / tool messages 分别为 7/7、12/12、14/14、16/16、2/2、6/6；无孤立工具消息。最终 run_state 为 completed、failed、failed、completed、completed、completed，与浏览器终态一致。
+- 批次结束后的页面控制台审计记录两次 `tool_result` SSE JSON 解析失败：结果含非标准 `NaN`，分别出现在 M01 普通发送和 M04 确认恢复。持久化会话的工具消息仍配对，但浏览器丢失对应事件载荷，按 P1 生命周期/事件完整性问题进入修复队列；发现时 M01—M06 已全部完成，故没有剩余依赖路径可停止，也没有据此补跑。
+- 导出与报告均位于各会话 `reports/`；M02、M03、M05、M06 的 Markdown 导出通过页面实际生成并由 `/api/files/...` 返回 200。M01/M04 的 publication 报告与各自版本对应。未发现跨会话数据归属或 Provider 账本缺口。
+- 浏览器 DOM 状态在本次 Codex 执行记录中逐场保存，M01 与 M06 另有截图；未生成独立的六场景截图文件包，因此 AC40 的截图型交付物不视为完成。
+- 修复优先级：P1 先统一解决 fallback 已计算结果的收敛与发布、明确任务的路线确认、SSE 非有限数 JSON 序列化以及身份改写的单位/时点事实漂移；P2 再处理原始 `[[chart:]]` 和导出交互可见性。下一次验证必须在修复提交上重新冻结并取得新授权，完整重跑 M01—M06；本批未用的 43 次额度不继承。
+- 证据边界：本轮只证明本地 E4/L4 的真实浏览器、真实 Provider、真实 HTTP/SSE/AgentLoop/工具/持久化行为，不代表 staging、生产、部署或其他模型。服务已关闭；本轮没有 push、部署或产品代码修改。

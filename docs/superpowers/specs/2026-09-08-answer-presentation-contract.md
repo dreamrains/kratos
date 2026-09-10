@@ -1,6 +1,6 @@
 # 回答内容与排版规范
 
-日期：2026-09-08｜状态：prompt、深度策略与电脑端渲染契约已实施并完成脚本模型浏览器验收；自然模型内容效果待 AC40 独立验收。
+日期：2026-09-10｜状态：prompt、深度策略与电脑端渲染契约已实施并完成脚本模型浏览器验收；AC40 自然模型批次已执行但因单位漂移、发布收敛和原始图表标记问题未通过。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](2026-09-08-answer-content-design.md)｜[验收](../validation/2026-09-08-answer-content-acceptance.md)。
 

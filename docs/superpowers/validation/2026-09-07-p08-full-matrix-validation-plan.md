@@ -1,7 +1,7 @@
 # P08：真实浏览器与真实 Provider 全矩阵验证方案
 
 日期：2026-09-07
-状态：`planned`（本文件只定义验证方法；不启动浏览器、不调用 Provider）
+状态：`executed_valid_failed`（验证方法保持不变；最新完整批次已执行但未通过，结果见 [阶段记录 P08-R5](2026-09-06-value-preservation-stage-records.md)）
 
 ## 1. 背景与调整
 

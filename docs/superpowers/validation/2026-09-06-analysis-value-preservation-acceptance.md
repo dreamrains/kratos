@@ -192,7 +192,7 @@ Provider 必须禁用，使用明确脚本化模型响应驱动真实本地工�
 
 ## 12. P8：真实 Provider 质量验证
 
-本阶段未授权、未启动。执行前必须明确：源码/输入/模型/endpoint/oracle/预算/运行目录/停止条件；冻结后任何受控修改使该冻结不再代表新源码。
+本阶段已在 `main@1516337` 获一次精确授权并执行完整 M01—M06；批次有效但未通过。冻结身份、账本、分场景结果和问题见 [阶段记录 P08-R5](2026-09-06-value-preservation-stage-records.md)。后续修复后的复验仍须重新冻结和重新授权；本次剩余额度不得继承。
 
 推荐覆盖与 B01—B06 对应的真实语义场景，至少包括中文建议、复合意图、聚合留存、竞争解释、跨轮补证、三类受众。具体场景与轮数在 P7 后根据结果冻结，不在规划阶段虚设“已获 216 次调用”等历史容量。
 
@@ -295,3 +295,11 @@ P1—P6：各自必测正反例通过、相关回归通过、阶段记录齐全�
 - 运行身份：`main@be5ee9ac6305c15aec20f9981bf4f3ed25701fa5`；隔离目录 `tmp/main-ic4-browser-20260909-be5ee9a`；真实页面、HTTP/SSE、AgentLoop、工具、artifact 与 session 持久化，仅模型返回为既有脚本化连接。
 - 结果：B01—B06 全部执行。已验证 120/12 的正文、工作台与刷新一致；D30 无依据外推未公开；六来源完整保留；竞争假设的 supports/refutes/未决与 `data_version_changed` 排除闭合；五类表达的数字和证据等级一致；工具、保存和预算失败没有误发布完成终态。
 - 与同批 IC-B01—IC-B06、CONTENT-B03/B07 交叉复核无全局异常。`runtime.jsonl` 记录 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。本结论是 L3/E3 本地证据，不代表真实 Provider、正式 Web 进程、staging、生产或部署通过。
+
+## 14. 2026-09-10 E4 真实 Provider 完整批次
+
+- 身份：`main@15163374b5acf6f4a78acfd1b59bcf89db07300b`；冻结 SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；调用上限 120。
+- 结果：M01 passed、M02 failed、M03 failed、M04 failed、M05 failed、M06 passed；M01—M06 全部执行，无中途修复或局部重跑，因此批次有效但 P8 未通过。
+- 账本：`tmp/p08-real-provider-20260909-1516337-r1/provider-calls.jsonl` 为 77 started / 77 dispatched / 0 failed，SHA-256 `7c3cd0a6a1fc84a177dd598caf8fe185a30f837358e34456e4540be0208e8d14`，调用归属闭合且未超额。
+- 未解决 P1：D7/D30 合规边界未形成可发布终态；六来源正文虽完整但 fallback 收敛失败且没有 Workbench 已验证结论；明确的跨版本假设任务仍触发内部路线确认；身份改写出现单位漂移；两次 SSE `tool_result` 因 `NaN` 不是合法 JSON 而在页面解析失败。故关键安全/生命周期/身份一致性硬门槛不满足。
+- 正向证据：M01 的 12 笔/合计 120、单位未知、条件建议和刷新一致；M06 只在会改变净收益的成本口径处暂停，选择后一次恢复，并保持成本字段为明确缺口。证据等级仅为本地 E4，不代表 staging、生产或部署。

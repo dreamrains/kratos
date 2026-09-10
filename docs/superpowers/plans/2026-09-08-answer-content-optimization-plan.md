@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-09｜版本：v0.6｜状态：CP0—CP6 已合入 `main`，并在 `main@be5ee9a` 完成合并后浏览器矩阵；AC40 真实 Provider 验收未授权、未执行。
+日期：2026-09-10｜版本：v0.7｜状态：CP0—CP6 已合入 `main`，并在 `main@be5ee9a` 完成合并后浏览器矩阵；AC40 已在 `main@1516337` 执行但未通过。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -97,6 +97,6 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 | CP6 | completed_local | `129 passed` 定向、`2585 passed, 1 skipped` full-offline、两条真实 Flask/SSE 脚本浏览器场景通过 |
 | 本地 `main` 整合 | merged | `main@f8ee717`；整合定向 129＋301 passed；full-offline 的环境例外由用户接受用于合并，但不记为全绿 |
 | 合并后浏览器 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；CONTENT-B03/B07 与共用 B01—B06、IC-B01—IC-B06 完成，Provider initiated calls=0 |
-| 真实 Provider 验收 | not_run_authorization_required | AC40 未执行；没有继承历史额度、没有发起任何真实 Provider 调用 |
+| 真实 Provider 验收 | executed_failed / not_accepted | AC40 随 P08 M01—M06 完整批次执行；账本 77 started / 77 dispatched / 0 failed。M03 发布收敛/Workbench 不闭合，M05 发生未知单位→“块钱”漂移，M06 残留原始 `[[chart:]]` 标记，内容硬门槛未通过。 |
 
-`completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表合并后矩阵、自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；AC40 必须在新的冻结清单、零调用预检和明确 Provider 授权后执行。
+`completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；本次 AC40 的 `executed_failed` 不能由局部通过项升级，修复后的复验必须使用新的冻结清单、零调用预检和明确 Provider 授权。

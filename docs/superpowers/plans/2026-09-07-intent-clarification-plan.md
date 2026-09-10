@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-09｜版本：1.4｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成本地整合验收；IC5 真实 Provider 验收未授权、未执行**。
+日期：2026-09-10｜版本：1.5｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成本地整合验收；IC5 已在 `main@1516337` 执行但未通过**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -89,7 +89,7 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | 设计/验收/交接/基线 | 已准备，属于规划材料 |
 | IC0—IC3 | completed_local / merged；`vp-analysis-value@d6e4780` 已完成实现，整合分支定向确认/意图回归 301 passed，并已合入 `main@f8ee717` |
 | IC4 | passed_local；`main@be5ee9a` 上使用真实页面/HTTP/SSE/AgentLoop/工具和隔离会话完成 IC-B01—IC-B06，同批次也完成 B01—B06 与 CONTENT-B03/B07；真实 Provider initiated calls=0 |
-| IC5 / 真实 Provider | not_authorized / not_run；不得由离线或历史 Provider 结果替代 |
+| IC5 / 真实 Provider | executed_failed / not_accepted；M06 的真实成本口径确认与一次恢复通过，但 M04 对明确任务错误弹出内部路线确认，M02 的边界回答未形成发布终态；批次账本 77/77/0，修复后须新冻结并完整复验 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；IC5 必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；本次 IC5 只证明冻结批次的真实模型行为且未通过，不代表部署或生产。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。

@@ -46,4 +46,14 @@
 - IC4 已完成本地 E3/L3 验收，不外推为真实自然模型、正式 Web 进程、staging、生产或部署证据。
 - 整合前 full-offline 结果仍为 2608 passed、1 failed、1 skipped；唯一失败是多复制清单外 `游戏C改版.xlsx` 的隔离夹具例外，用户已接受用于合并，仍不记为 full-offline 全绿。
 - `be5ee9a` 已经一次普通非强制 push 更新远程 `refs/heads/main`；本次后续文档提交尚未 push，没有部署。
-- IC5 / AC40 / P08 真实 Provider 尚未冻结、未授权、未执行；历史授权、旧账本或本地脚本矩阵不得替代。
+- IC5 / AC40 / P08 已在后续冻结提交 `1516337` 上执行一次真实浏览器＋真实 Provider 完整批次；批次有效但未通过，不能以其中的通过场景或既有本地绿灯转记为整体完成。详见下节与 [P08 阶段记录](../superpowers/validation/2026-09-06-value-preservation-stage-records.md)。
+
+## 6. 合并后真实 Provider 完整批次
+
+- 运行身份：`main@15163374b5acf6f4a78acfd1b59bcf89db07300b`；冻结文件 `tmp/p08-real-provider-20260909-1516337-r1/freeze.json`，SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；`request_policy=one_shot`；物理调用上限 120。
+- 用户按上述精确身份授权后，M01—M06 于 2026-09-10 12:38—12:52（Asia/Shanghai）顺序执行，每个场景使用独立会话；没有修改代码、提示、夹具、oracle、模型、端点或预算，也没有局部重跑。
+- Provider 账本 `tmp/p08-real-provider-20260909-1516337-r1/provider-calls.jsonl` 最终为 **77 started / 77 dispatched / 0 failed**，SHA-256 `7c3cd0a6a1fc84a177dd598caf8fe185a30f837358e34456e4540be0208e8d14`；分场景调用数为 M01 8、M02 12、M03 11、M04 15、M05 19、M06 12，未超过授权上限。
+- 场景结果：M01 passed；M02 failed；M03 failed；M04 failed；M05 failed；M06 passed。批次本身有效，但 P08 / IC5 / AC40 均为 **executed_failed / not_accepted**。
+- 主要问题：M02 的 D7/D30 合规回答未能发布并以 `run_state=failed` 终结；M03 虽在正文和 Markdown 中保留六来源事实，但 fallback 收敛失败且 Workbench 无已验证结论；M04 对明确任务错误弹出 `trend` / `period_compare` 路线确认；M05 大白话回合把未知金额单位改成“块钱”；页面还记录两次含 `NaN` 的 `tool_result` SSE JSON 解析错误。M06 的业务口径确认、一次恢复以及已计算/未计算/证据不足区分正确，但正文残留 `[[chart:]]` 原始标记，作为呈现缺陷记录。
+- 会话隔离和工具消息配对仍闭合：六会话分别为 `14dbe7e4889a`、`c96e79aebde9`、`499dde01fa82`、`e86b389e1eec`、`29537e77db9a`、`f3b5907370a5`；对应 assistant tool calls / tool messages 为 7/7、12/12、14/14、16/16、2/2、6/6，无孤立工具消息。M04 的无效路线确认以 `cancelled` 留存；M06 成本口径记录 `integrity_status=ok`、`status=resolved`、回答“代金券及渠道成本”。
+- 本结论只到 E4/L4 的本地真实浏览器＋真实 Provider；没有执行 staging、生产、部署或 push。本次未修改产品代码，后续修复后必须重新冻结并执行新的完整 M01—M06 批次，不能只补跑失败项。
