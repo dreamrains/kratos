@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-10｜版本：1.5｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成 E1/E2/E3 本地验收；IC5/E4 在 `main@1516337` 执行但未通过，失败项修复已在 `main@13c129a` 完成 E1/E2 回归，新的 E3/E4 尚未完成**。
+日期：2026-09-10｜版本：1.6｜状态：**IC0—IC4 已完成 E1/E2/E3 本地验收；IC5/E4 在 `main@1516337` 执行但未通过，失败项修复已在 `main@13c129a` 完成 E1/E2，修复后的 E3 已在 `main@176f5f2` 通过，新的 E4 尚未执行**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -145,6 +145,7 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | 本地 `main` 整合 | merged | `f8ee717` 为双父整合提交，`be5ee9a` 同步当前状态文档；合并后 E3 以后者为运行身份 |
 | E3 / IC4 | passed_local | `tmp/main-ic4-browser-20260909-be5ee9a`：IC-B01—IC-B06 全部通过；方法问题非阻塞、真实业务口径正常悬挂/恢复，同范围决定复用，范围/版本变化重新询问，旧方法审批以 `policy_retired` 保留；Provider initiated calls=0 |
 | E4 / IC5 | executed_failed / not_accepted | 冻结批次 `tmp/p08-real-provider-20260909-1516337-r1` 全部执行；M06 真实业务成本口径正常悬挂、记录 `integrity_status=ok`，回答后一次恢复且缺失成本仍未计算；M04 明确跨版本假设请求却出现 `trend` / `period_compare` 路线确认并以 `cancelled` 结束，违反 Q14；M02 未发布 D7/D30 合规边界。账本 77 started / 77 dispatched / 0 failed。 |
-| E1 / E2（IC5 失败项修复） | passed_local / revalidation_pending | `main@13c129a`；`tmp/repair-control-targeted-20260910-r2` 为 130 passed。跨版本关系重判作为明确任务直接执行；已解决决定复用、相关版本变化重判、业务口径确认和工具消息完整性测试保持通过。未用该结果改写 IC5。 |
+| E1 / E2（IC5 失败项修复） | passed_local | `main@13c129a`；`tmp/repair-control-targeted-20260910-r2` 为 130 passed。跨版本关系重判作为明确任务直接执行；已解决决定复用、相关版本变化重判、业务口径确认和工具消息完整性测试保持通过。未用该结果改写 IC5。 |
+| E3（IC5 失败项修复后） | passed_local | `main@176f5f2`、`tmp/repair-browser-20260910-r3`：IC-B01—IC-B06 全部达到预期；方法许可非阻塞，成本范围/窗口/分母正常暂停恢复，同范围决定复用、窗口变化重问、skip 不授权，刷新后状态保留。浏览器控制台无 JSON 错误，Provider initiated calls=0。 |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。

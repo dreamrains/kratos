@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-10｜状态：AC01—AC39 已合入 `main` 并在 `main@be5ee9a` 完成合并后 E3 矩阵；AC40 在 `main@1516337` 执行但未通过，失败项本地修复已提交为 `main@13c129a`，新的 E3/AC40 复验尚未完成。
+日期：2026-09-10｜状态：AC01—AC39 已合入 `main`；AC40 在 `main@1516337` 执行但未通过，失败项本地修复已提交为 `main@13c129a`，修复后的 Provider-disabled E3 已在 `main@176f5f2` 通过，新的 AC40 真实 Provider 复验尚未执行。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -177,7 +177,7 @@ Provider授权引用、计数或明确0调用：
 | AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
 | AC40 | executed_failed / not_accepted | `tmp/p08-real-provider-20260909-1516337-r1` 完整执行 M01—M06；77 started / 77 dispatched / 0 failed。M03 六来源正文/导出完整但发布收敛失败且 Workbench 无已验证结论；M05 大白话回合把未知金额单位写成“块钱”；M06 分层正确但残留 `[[chart:]]`。硬门槛未通过。 |
 
-AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续进入下一模型轮且 SSE 工具事件保持配对；纯表达回合只在当前数据身份与已接受快照一致时复用发布绑定；未知金额单位不能被身份表达改写成币种，混合已发生/未来日期不能笼统称为未来；非有限数在 SSE 中转为严格 JSON `null`；空图表引用显示明确缺失提示。隔离回归为内容/Web 208 passed、最终聚焦 173 passed；这些是 E1/E2 证据，不把 AC40 改为通过。
+AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续进入下一模型轮且 SSE 工具事件保持配对；纯表达回合只在当前数据身份与已接受快照一致时复用发布绑定；未知金额单位不能被身份表达改写成币种，混合已发生/未来日期不能笼统称为未来；非有限数在 SSE 中转为严格 JSON `null`；空图表引用显示明确缺失提示。隔离回归为内容/Web 208 passed、最终聚焦 173 passed；修复后的 E3 结果见下文。这些证据不把 AC40 的真实 Provider 批次改为通过。
 
 定向命令覆盖新增四个 AC 测试文件及关键发布、导出、渲染、质量门和预算回归，结果 `129 passed`。完整离线命令为：
 
@@ -195,4 +195,4 @@ AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续�
 
 2026-09-08：本文件仍定义 40 个唯一 AC 编号；实现记录、差距关闭审计、设计、呈现规范与交接已按最终代码和用户确认的电脑端范围同步。AC01—AC39 的本地结论与 AC40 的外部授权边界分开记录，不以离线或脚本模型结果冒充真实 Provider 内容质量。
 
-2026-09-10：尝试以现有 `run_p7_browser_rehearsal.py` 在 `tmp/repair-browser-20260910-r2` 启动 Provider-disabled 服务，并由 Codex 内置浏览器加载页面。首页、静态资源和核心 API 返回 200，但内置 Playwright 驱动因模块导出/Windows 沙箱错误无法进入交互矩阵；`runtime.jsonl` 只有 `server_start`，没有场景轮次或 `forbidden_provider_transport`。本次不记录新的 E3 通过，真实 Provider initiated calls=0。
+2026-09-10：`tmp/repair-browser-20260910-r2` 的页面与 API 返回 200；当时把通用 Playwright 模块加载失败误记为内置驱动不可用。改用已安装 Browser 插件的内置客户端后，在 `main@176f5f2`、`tmp/repair-browser-20260910-r3` 完成联合 E3：CONTENT-B03 会话 `2cc0a85c9d1f` 的刷新正文、9380 字节 Markdown 和 9150 字节发布报告均保留 `src_1`—`src_6`、金额与来源；CONTENT-B07 会话 `51fe66986d44` 渲染表格、KaTeX、Plotly 和备用链接，741×805 视口无整页横向溢出。B01 的五种表达保留 120/12、范围和证据等级；浏览器控制台无 JSON 解析错误。`runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。本次只补齐 E3，不代表 AC40/E4、生产或部署通过。

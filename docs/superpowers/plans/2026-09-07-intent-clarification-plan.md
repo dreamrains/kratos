@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-10｜版本：1.6｜状态：**IC0—IC4 已在 `main@be5ee9a` 完成本地整合验收；IC5 在 `main@1516337` 执行但未通过，明确任务误触路线确认的本地修复已进入 `main@13c129a`，新的 IC4/IC5 完整复验尚未完成**。
+日期：2026-09-10｜版本：1.7｜状态：**IC0—IC4 已完成；IC5 在 `main@1516337` 执行但未通过，明确任务误触路线确认的本地修复已进入 `main@13c129a`，修复后的 IC4 联合浏览器复验已在 `main@176f5f2` 通过，新的 IC5 真实 Provider 复验尚未执行**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -52,7 +52,7 @@
 
 文档编写期间其他工作开始修改 `context.py`、`loop.py`、`tools/registry.py` 和 `tests/test_execution_control.py`。基线分别记录任务开始状态、已提交版本哈希及后续工作区快照；这些并发改动不属于本专题、不进入本次提交。快照之后仍可能继续变化，实施时必须重查。
 
-本专题在 `vp-analysis-value@d6e4780` 完成 IC0—IC3，并经整合提交 `9e51b81` 合入 `main@f8ee717`。合并后 IC4 已在 `main@be5ee9a` 的隔离运行目录完成；IC5 在后续冻结提交 `1516337` 执行但未通过。当前本地 `main@13c129a` 已修复“重新判断哪些关系已失效、哪些仍未决”被误识别为路线选择的问题，并以隔离的确认/执行控制定向回归 130 passed 验证；这不是新的 IC4 浏览器或 IC5 真实 Provider 通过证据。
+本专题在 `vp-analysis-value@d6e4780` 完成 IC0—IC3，并经整合提交 `9e51b81` 合入 `main@f8ee717`。合并后 IC4 已在 `main@be5ee9a` 的隔离运行目录完成；IC5 在后续冻结提交 `1516337` 执行但未通过。`main@13c129a` 已修复“重新判断哪些关系已失效、哪些仍未决”被误识别为路线选择的问题，并以隔离的确认/执行控制定向回归 130 passed 验证；修复后的 IC4 又在 `main@176f5f2`、`tmp/repair-browser-20260910-r3` 完成真实页面/SSE/确认恢复联合复验，Provider initiated calls=0。这仍不是新的 IC5 真实 Provider 通过证据。
 
 IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字段名或“另一分支”假设当作实现事实。发现缺少安全前置能力时，选择兼容现有接口，或列出最小独立前置改动讨论，不隐式搬运其他专项。
 
@@ -90,7 +90,7 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | IC0—IC3 | completed_local / merged；`vp-analysis-value@d6e4780` 已完成实现，整合分支定向确认/意图回归 301 passed，并已合入 `main@f8ee717` |
 | IC4 | passed_local；`main@be5ee9a` 上使用真实页面/HTTP/SSE/AgentLoop/工具和隔离会话完成 IC-B01—IC-B06，同批次也完成 B01—B06 与 CONTENT-B03/B07；真实 Provider initiated calls=0 |
 | IC5 / 真实 Provider | executed_failed / not_accepted；M06 的真实成本口径确认与一次恢复通过，但 M04 对明确任务错误弹出内部路线确认，M02 的边界回答未形成发布终态；批次账本 77/77/0，修复后须新冻结并完整复验 |
-| IC5 失败项本地修复 | completed_local / revalidation_pending；`main@13c129a` 将跨版本关系重判识别为明确任务，保持真实业务语义问题的确认门；相关隔离回归 130 passed。未执行新的完整浏览器矩阵或 Provider 批次 |
+| IC5 失败项本地修复 | completed_local / E3 passed；`main@13c129a` 将跨版本关系重判识别为明确任务，保持真实业务语义问题的确认门；相关隔离回归 130 passed。`main@176f5f2` 的联合浏览器复验覆盖 IC-B01—IC-B06：方法问题非阻塞、业务口径暂停/恢复、同范围复用、窗口变化重问、skip 不授权；Provider initiated calls=0。新的 Provider 批次未执行 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
 整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；本次 IC5 只证明冻结批次的真实模型行为且未通过，不代表部署或生产。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。

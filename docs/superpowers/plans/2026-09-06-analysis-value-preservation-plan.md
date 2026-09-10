@@ -1,6 +1,6 @@
 # 分析价值保留与能力完整性：实施总计划
 
-版本：v0.7｜日期：2026-09-10｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；P08 在 `main@1516337` 的完整批次因 M02—M05 失败未通过，针对失败项的本地修复已提交为 `13c129a` 并完成 E1/E2 回归，新的完整浏览器/Provider 验收尚未完成**。
+版本：v0.8｜日期：2026-09-10｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；P08 在 `main@1516337` 的完整批次因 M02—M05 失败未通过，针对失败项的本地修复已提交为 `13c129a` 并完成 E1/E2；修复后的 Provider-disabled E3 联合浏览器矩阵已在 `main@176f5f2` 通过，新的真实 Provider 验收尚未执行**。
 
 用户已接受产品原则：允许发布明确标注的待验证解释和有证据支持的条件性建议，继续严格区分已验证结论。最初“先不要修复”的要求用于规划交付；用户现已明确说明 P0—P6 已推进，并要求“从 P7 阶段继续开始”。当前执行以该后续指令为准。P7 发现的问题、原始证据和恢复条件见 [P7 执行报告](../validation/2026-09-06-vp-p7-execution-report.md)；真实 Provider、提交、推送、部署仍不自动获得授权。
 
@@ -48,7 +48,7 @@
 
 规划快照包含 402 个当前存在的受控文件，精确字节聚合 SHA-256 为 `fbafe8019a177f22c9f06277e8275b37edf53b2d592c6145a42b083f4df0860e`。它只用于规划期变更识别，**不是 Provider 冻结摘要或授权凭据**。
 
-当前本地整合基线为 `main@13c129a`：P0—P7、必要澄清 IC0—IC3、回答内容 CP0—CP6 已进入同一文件树。整合定向结果为回答内容 129 passed、必要澄清 301 passed；合并前 full-offline 的唯一剩余失败属于多复制清单外夹具，用户接受该结果用于合并，但不得记为 full-offline 全绿。合并后的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 已在 `main@be5ee9a` 的同一 Provider 禁用批次通过。随后 P08/IC5/AC40 在 `main@1516337` 执行一次真实 Provider 完整批次，账本 77/77/0 且未超额，但 M02—M05 失败。`13c129a` 对该批暴露的发布收敛、明确重判任务、单位/日期边界、SSE 严格 JSON 和空图表引用实施本地修复；其两组最新定向回归为 130 passed 与 208 passed，full-offline 为 2616 passed、1 failed、1 skipped（唯一失败为报告落盘瞬时 `FileNotFoundError`，单例与整个 golden 文件隔离复跑均通过）。这些结果不把 P08 升级为通过。
+当前本地整合基线为 `main@176f5f2`：产品修复停在 `13c129a`，其后仅有状态文档。P0—P7、必要澄清 IC0—IC3、回答内容 CP0—CP6 已进入同一文件树。整合定向结果为回答内容 129 passed、必要澄清 301 passed；合并前 full-offline 的唯一剩余失败属于多复制清单外夹具，用户接受该结果用于合并，但不得记为 full-offline 全绿。合并后的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 已在 `main@be5ee9a` 的同一 Provider 禁用批次通过。随后 P08/IC5/AC40 在 `main@1516337` 执行一次真实 Provider 完整批次，账本 77/77/0 且未超额，但 M02—M05 失败。`13c129a` 对该批暴露的发布收敛、明确重判任务、单位/日期边界、SSE 严格 JSON 和空图表引用实施本地修复；其两组最新定向回归为 130 passed 与 208 passed，full-offline 为 2616 passed、1 failed、1 skipped（唯一失败为报告落盘瞬时 `FileNotFoundError`，单例与整个 golden 文件隔离复跑均通过）。修复后的联合 E3 又在 `tmp/repair-browser-20260910-r3` 完成，矩阵全部达到预期且 Provider initiated calls=0；这些结果仍不把 P08 升级为通过。
 
 ## 4. 已确认原则、目标与非目标
 
@@ -244,6 +244,7 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P6 | passed（2026-09-06，L2） | A01—A08、U01—U04 全绿；U05—U08 归 Codex L3 |
 | P7 | passed（本地、Provider 禁用） | 完整离线回归 `2519 passed / 1 skipped`；B01—B06 均已完成本地真实浏览器验证。详细收据与 B03 修复见阶段记录 L3-R2 至 L3-R4。 |
 | 合并后 P7/IC4/CP6 联合复核 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 通过；保存失败为 `unknown`、预算耗尽为 `failed`，未误发布完成；Provider initiated calls=0 |
+| R5 修复后 P7/IC4/CP6 联合复核 | passed_local | `main@176f5f2`、`tmp/repair-browser-20260910-r3`；同一联合矩阵通过，刷新/导出/Plotly/澄清恢复/失败终态均核对；控制台无 JSON 错误，Provider initiated calls=0 |
 | P8 | executed_failed / not_accepted | `main@1516337` 上 M01—M06 全部执行，M01/M06 passed、M02—M05 failed；账本 77 started / 77 dispatched / 0 failed，调用核算已闭合。未通过原因包括发布/fallback 收敛、无效路线确认、身份单位漂移和 SSE `NaN` JSON 解析问题；修复后须新冻结、新授权并完整重跑。 |
 
 ## 8. 风险、停止规则与回退

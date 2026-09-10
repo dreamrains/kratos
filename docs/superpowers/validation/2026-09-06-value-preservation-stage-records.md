@@ -750,5 +750,17 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 内容/Web 组：`tmp/repair-content-targeted-20260910-r1`，**208 passed**；最终聚焦组 `tmp/repair-publication-targeted-20260910-r2`，**173 passed**。
 - quick-offline：`tmp/test-runs/repair-quick-20260910-9bafaf9`，**235 passed**。
 - full-offline：`tmp/test-runs/repair-full-offline-20260910-9bafaf9`，**2616 passed、1 failed、1 skipped**。唯一失败为 golden funnel 发布报告落盘的瞬时 `FileNotFoundError`；相同单例和整个 golden 文件在新目录复跑分别为 1 passed、5 passed。该套结果不记为全绿。
-- `tmp/repair-browser-20260910-r2` 的普通 Flask 页面、静态资源和核心 API 经 Codex 内置浏览器返回 200；内置自动化驱动未能进入交互矩阵，`runtime.jsonl` 只有 `server_start`。因此没有新的 E3 场景结果，真实 Provider initiated calls=0。
+- `tmp/repair-browser-20260910-r2` 的普通 Flask 页面、静态资源和核心 API 返回 200；当时因错误加载通用 Playwright 而未进入交互矩阵，`runtime.jsonl` 只有 `server_start`。该控制入口诊断已由下节 R7 更正；r2 本身仍不计 E3 场景结果，真实 Provider initiated calls=0。
 - 后续必须基于新的确切提交先完整执行 Provider-disabled 浏览器矩阵；若通过，再冻结提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，取得一次新的明确授权后完整重跑 M01—M06。R5 未用额度不继承。
+
+## P08-R7：R5 修复后的 Provider-disabled 内置浏览器复验（Codex，2026-09-10）
+
+阶段 / 状态：**E3 passed_local；P08 / IC5 / AC40 的 E4 仍为 executed_failed / not_accepted。** 运行身份为 `main@176f5f2`（产品代码仍为 `13c129a`，其后仅有文档提交），隔离目录为 `tmp/repair-browser-20260910-r3`。
+
+- 复用既有 `scripts/testing/run_p7_browser_rehearsal.py`，Provider 强制禁用。上一轮 R6 所记“内置自动化驱动不可用”实为控制入口错误：直接加载通用 Playwright 失败，而仓库页面、脚本和 Browser 插件客户端均未损坏；通过当前插件 `browser-client.mjs` 连接后复用 5038 内置标签页完成交互。
+- 分析价值 B01—B06：120/12 的事实、范围与条件建议在业务/分析师/管理者/大白话/技术表达间保持一致；B02→B02-NEG 同会话链路拒绝 D30=5% 候选并输出具体观测缺口；B03 六来源完整；B04 支持、反证、冲突/未决及版本变化后 stale 闭合；工具失败不发布，保存失败为 `unknown`，预算耗尽为 `failed`。
+- 必要澄清 IC-B01—IC-B06：拟合和内部方法许可不阻塞；成本范围、比较窗口、复购分母和自然周/最近 7 天等业务语义问题正常暂停/恢复；同范围成本决定复用，窗口变化重新询问，skip 不视为批准，旧方法审批仍只以 `policy_retired` 保留。
+- 内容与排版：CONTENT-B03 `2cc0a85c9d1f` 生成 9380 字节对话 Markdown 与 9150 字节发布报告，均含六来源、金额和来源身份；CONTENT-B07 `51fe66986d44` 实际渲染表格、KaTeX、Plotly 与备用链接，741×805 内置视口没有整页横向溢出。B01 `46e9d6c43b28`、B04 `18cbef03ada1` 和两个内容会话刷新后均保留目标内容。
+- 浏览器控制台为 0 条错误/JSON 解析异常。`runtime.jsonl` 总计 `scripted_round=69`、`auxiliary_call=98`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。
+- 轨迹总数还包含两条矩阵外诊断探测：它们错误地在独立空会话直接执行 B02-NEG，缺少 B02 先加载 `ret_a` 的场景前置条件；一条因额外必答词失败，一条展示了无数据条件下不适用的脚本候选。两者不计入矩阵；按标准同会话链路隔离复核后负例通过。该边界保留在记录中，不作为产品绿灯或红灯删除。
+- E3 通过只证明修复后本地真实页面、HTTP/SSE、AgentLoop、工具、持久化、刷新和导出链路。新的真实 Provider 批次尚未冻结或授权，不得复用 R5 身份、授权或剩余额度。

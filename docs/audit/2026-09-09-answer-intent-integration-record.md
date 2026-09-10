@@ -67,5 +67,16 @@
 - 跨场景：SSE 将 NaN/Inf 转为严格 JSON `null`；空 `[[chart:]]` 转为既有缺失引用提示。
 - 回归：确认/控制组 130 passed（`tmp/repair-control-targeted-20260910-r2`）；内容/Web 组 208 passed（`tmp/repair-content-targeted-20260910-r1`）；最终聚焦 173 passed（`tmp/repair-publication-targeted-20260910-r2`）；quick-offline 235 passed。均禁用 Provider。
 - full-offline `tmp/test-runs/repair-full-offline-20260910-9bafaf9`：2616 passed、1 failed、1 skipped。唯一失败为 golden funnel 报告落盘的瞬时 `FileNotFoundError`；同一单例与整个 golden 文件在新目录复跑分别 1 passed、5 passed。本记录不把整套写成全绿。
-- 浏览器：`tmp/repair-browser-20260910-r2` 的普通 Flask 页面、静态资源和核心 API 经 Codex 内置浏览器返回 200；自动化驱动未能进入交互矩阵，`runtime.jsonl` 只有 `server_start`。真实 Provider initiated calls=0。
-- 结论：本地 E1/E2 修复完成；新的 E3/E4 为 `revalidation_pending`。P08 / IC5 / AC40 保持 `executed_failed / not_accepted`，后续须在新提交上重新冻结并取得新的明确 Provider 授权。
+- 浏览器初查：`tmp/repair-browser-20260910-r2` 的页面、静态资源和核心 API 返回 200；当时把通用 Playwright 模块加载失败误记成“内置自动化驱动不可用”。后续确认当前内置浏览器应通过已安装 Browser 插件的 `browser-client.mjs` 连接，该初查结论已由下节 E3 实跑取代。
+- 结论：本地 E1/E2 修复完成；新的 E3 已完成，E4 仍为 `revalidation_pending`。P08 / IC5 / AC40 保持 `executed_failed / not_accepted`，后续须在新提交上重新冻结并取得新的明确 Provider 授权。
+
+## 8. 修复提交后的内置浏览器复验（2026-09-10）
+
+- 运行身份：`main@176f5f2`（产品代码仍为 `13c129a`，其后仅有状态文档）；隔离目录 `tmp/repair-browser-20260910-r3`；入口仍为既有 `run_p7_browser_rehearsal.py`，未新增测试框架、探针、模型审核调用或重复记录机制。
+- 根因：上一轮错误地从 Node 环境直接加载通用 Playwright；仓库页面和演练脚本没有退化。改用 Codex 已安装 Browser 插件的内置客户端后，复用原 5038 标签页即可读取可访问树并执行交互。
+- 联合矩阵：B01—B06、IC-B01—IC-B06、CONTENT-B03、CONTENT-B07 均完成并达到既定终态。B01/B05 的 120、12、范围和证据等级在五种表达间不变；B02 的 D30 数值候选在同会话负例中被拒绝；B04 完成 supports/refutes/未决/版本变化后 stale；B06 工具失败不发布，保存失败为 `unknown`，预算耗尽为 `failed`。
+- 澄清：IC-B01 与 IC-B06-METHOD 没有因内部方法名称暂停；IC-B03、IC-B04-CHANGE、IC-B05、IC-B06-SEMANTIC 只在成本范围、窗口或分母等业务口径处暂停并恢复；同范围成本决定复用，窗口变化重新询问，skip 不视为批准。
+- 内容与呈现：CONTENT-B03 会话 `2cc0a85c9d1f` 的正文和刷新保留六来源；页面生成 9380 字节对话 Markdown 与 9150 字节发布报告，二者均含 `src_1`—`src_6`、金额与来源。CONTENT-B07 会话 `51fe66986d44` 实际渲染表格、KaTeX、Plotly 与备用链接；741×805 的内置视口下文档宽度等于视口宽度，无整页横向溢出。
+- 刷新：B01 会话 `46e9d6c43b28`、B04 `18cbef03ada1`、CONTENT-B03 `2cc0a85c9d1f`、CONTENT-B07 `51fe66986d44` 重新导航后均保留目标正文和状态。浏览器控制台没有记录错误或 JSON 解析异常。
+- 运行轨迹：`server_start.provider_enabled=false`；总计 `scripted_round=69`、`auxiliary_call=98`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。总数包含两条不计入矩阵的诊断探测：它们在独立空会话直接执行 B02-NEG，缺少标准 B02 先加载 `ret_a` 的前置条件；按 B02→B02-NEG 同会话链路复核后发布门正确输出“不能预测 D30”。
+- 证据边界：本节完成修复后的本地 E3；不改变 R5 的真实 Provider 失败记录，也不代表新 E4、staging、生产、部署或 push 已完成。
