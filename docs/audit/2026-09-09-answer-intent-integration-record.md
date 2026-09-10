@@ -57,3 +57,15 @@
 - 主要问题：M02 的 D7/D30 合规回答未能发布并以 `run_state=failed` 终结；M03 虽在正文和 Markdown 中保留六来源事实，但 fallback 收敛失败且 Workbench 无已验证结论；M04 对明确任务错误弹出 `trend` / `period_compare` 路线确认；M05 大白话回合把未知金额单位改成“块钱”；页面还记录两次含 `NaN` 的 `tool_result` SSE JSON 解析错误。M06 的业务口径确认、一次恢复以及已计算/未计算/证据不足区分正确，但正文残留 `[[chart:]]` 原始标记，作为呈现缺陷记录。
 - 会话隔离和工具消息配对仍闭合：六会话分别为 `14dbe7e4889a`、`c96e79aebde9`、`499dde01fa82`、`e86b389e1eec`、`29537e77db9a`、`f3b5907370a5`；对应 assistant tool calls / tool messages 为 7/7、12/12、14/14、16/16、2/2、6/6，无孤立工具消息。M04 的无效路线确认以 `cancelled` 留存；M06 成本口径记录 `integrity_status=ok`、`status=resolved`、回答“代金券及渠道成本”。
 - 本结论只到 E4/L4 的本地真实浏览器＋真实 Provider；没有执行 staging、生产、部署或 push。本次未修改产品代码，后续修复后必须重新冻结并执行新的完整 M01—M06 批次，不能只补跑失败项。
+
+## 7. 真实批次失败项的本地修复（2026-09-10）
+
+- 产品修复提交：`main@13c129a`（父提交 `9bafaf1`）；未改动 R5 的冻结文件、账本、提示、fixture 或 oracle。
+- M02/M03：fallback Python 结果后的策略拒绝改为可恢复的非终态工具结果，保持 assistant/tool 与 SSE 事件配对；D30 缺观测的明确否定可发布，正向预测仍拒绝。
+- M04：跨版本关系“重新判断/评估/检验”识别为明确重判任务，不触发内部路线选择确认。
+- M05：表达回合仅在已接受快照与当前数据身份一致时复用来源；未知金额单位不能改写成币种，混合日期窗口不能笼统认作全部未来。
+- 跨场景：SSE 将 NaN/Inf 转为严格 JSON `null`；空 `[[chart:]]` 转为既有缺失引用提示。
+- 回归：确认/控制组 130 passed（`tmp/repair-control-targeted-20260910-r2`）；内容/Web 组 208 passed（`tmp/repair-content-targeted-20260910-r1`）；最终聚焦 173 passed（`tmp/repair-publication-targeted-20260910-r2`）；quick-offline 235 passed。均禁用 Provider。
+- full-offline `tmp/test-runs/repair-full-offline-20260910-9bafaf9`：2616 passed、1 failed、1 skipped。唯一失败为 golden funnel 报告落盘的瞬时 `FileNotFoundError`；同一单例与整个 golden 文件在新目录复跑分别 1 passed、5 passed。本记录不把整套写成全绿。
+- 浏览器：`tmp/repair-browser-20260910-r2` 的普通 Flask 页面、静态资源和核心 API 经 Codex 内置浏览器返回 200；自动化驱动未能进入交互矩阵，`runtime.jsonl` 只有 `server_start`。真实 Provider initiated calls=0。
+- 结论：本地 E1/E2 修复完成；新的 E3/E4 为 `revalidation_pending`。P08 / IC5 / AC40 保持 `executed_failed / not_accepted`，后续须在新提交上重新冻结并取得新的明确 Provider 授权。

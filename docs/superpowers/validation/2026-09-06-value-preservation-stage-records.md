@@ -731,3 +731,24 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 浏览器 DOM 状态在本次 Codex 执行记录中逐场保存，M01 与 M06 另有截图；未生成独立的六场景截图文件包，因此 AC40 的截图型交付物不视为完成。
 - 修复优先级：P1 先统一解决 fallback 已计算结果的收敛与发布、明确任务的路线确认、SSE 非有限数 JSON 序列化以及身份改写的单位/时点事实漂移；P2 再处理原始 `[[chart:]]` 和导出交互可见性。下一次验证必须在修复提交上重新冻结并取得新授权，完整重跑 M01—M06；本批未用的 43 次额度不继承。
 - 证据边界：本轮只证明本地 E4/L4 的真实浏览器、真实 Provider、真实 HTTP/SSE/AgentLoop/工具/持久化行为，不代表 staging、生产、部署或其他模型。服务已关闭；本轮没有 push、部署或产品代码修改。
+
+## P08-R6：R5 失败项本地修复（Codex，2026-09-10）
+
+阶段 / 状态：**产品修复与 E1/E2 回归完成；新的 E3 浏览器矩阵和 E4 真实 Provider 批次未完成。P08 / IC5 / AC40 仍为 executed_failed / not_accepted。** 修复提交为 `main@13c129a`，父提交 `9bafaf1`；没有改写 R5 的会话、账本或结果。
+
+### 修复范围
+
+- fallback 策略拒绝改为可恢复的非终态工具结果；阻断调用仍生成配对的 `tool_call` / `tool_result` 事件，下一轮可以基于已有计算继续终局发布。
+- D30 缺失观测的明确边界不再触发 `unbound_time_point_claim`；同句正向预测或数值外推仍拒绝。
+- 跨版本“重新判断哪些关系已失效、哪些仍未决”识别为明确证据重判任务，不弹内部路线选择确认。
+- 纯展示回合仅在已接受发布快照与当前全部数据身份一致时复用来源；未知金额单位禁止升级为元/人民币/“块钱”，混合已发生/未来日期禁止笼统标为未来。
+- SSE 递归将 NaN/Inf 转为严格 JSON `null`；空 `[[chart:]]` 进入既有缺失引用提示，不再显示原始标记。
+
+### 本地验证与边界
+
+- 确认/控制组：`tmp/repair-control-targeted-20260910-r2`，**130 passed**。
+- 内容/Web 组：`tmp/repair-content-targeted-20260910-r1`，**208 passed**；最终聚焦组 `tmp/repair-publication-targeted-20260910-r2`，**173 passed**。
+- quick-offline：`tmp/test-runs/repair-quick-20260910-9bafaf9`，**235 passed**。
+- full-offline：`tmp/test-runs/repair-full-offline-20260910-9bafaf9`，**2616 passed、1 failed、1 skipped**。唯一失败为 golden funnel 发布报告落盘的瞬时 `FileNotFoundError`；相同单例和整个 golden 文件在新目录复跑分别为 1 passed、5 passed。该套结果不记为全绿。
+- `tmp/repair-browser-20260910-r2` 的普通 Flask 页面、静态资源和核心 API 经 Codex 内置浏览器返回 200；内置自动化驱动未能进入交互矩阵，`runtime.jsonl` 只有 `server_start`。因此没有新的 E3 场景结果，真实 Provider initiated calls=0。
+- 后续必须基于新的确切提交先完整执行 Provider-disabled 浏览器矩阵；若通过，再冻结提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，取得一次新的明确授权后完整重跑 M01—M06。R5 未用额度不继承。
