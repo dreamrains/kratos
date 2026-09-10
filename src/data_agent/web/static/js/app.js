@@ -2191,7 +2191,7 @@ function chatApp() {
 
         _replaceChartReferences(text, turn) {
             if (!turn || !text) return text;
-            return text.replace(/\[\[chart:([^\]\n]+)\]\]/g, (match, rawRef) => {
+            return text.replace(/\[\[chart:([^\]\n]*)\]\]/g, (match, rawRef) => {
                 const result = this._findChartArtifact(turn, rawRef.trim());
                 if (result.status === 'ambiguous') {
                     return `<div class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 not-prose">Chart reference is ambiguous: ${this._escapeHtml(rawRef.trim())}</div>`;

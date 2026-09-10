@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
@@ -77,6 +78,25 @@ _SUBSTANTIVE_TOOLS = {
     "attribution_analysis",
     "what_if_simulation",
 }
+
+# Profiling receipts are sufficient evidence for a bounded factual summary,
+# even though they do not satisfy the analysis-quality requirement for a new
+# substantive analysis. Keeping these concepts separate prevents presentation
+# follow-ups from losing their source/unit/version guardrails.
+_PUBLICATION_EVIDENCE_TOOLS = _SUBSTANTIVE_TOOLS | {
+    "preview_data",
+    "describe_dataset",
+    "quick_profile",
+    "detect_data_quality",
+    "interpret_dataset",
+}
+
+_PRESENTATION_FOLLOWUP = re.compile(
+    r"(?:改成|换成).{0,16}(?:表达|视角|版本)|"
+    r"(?:重述|重新表述|恢复).{0,16}(?:技术|业务|分析师|管理者|大白话|表达)|"
+    r"用大白话(?:重述|说明|解释)?",
+    re.I,
+)
 
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "<analysis_quality_guard>\n"
@@ -1376,6 +1396,7 @@ class AgentLoop:
     def _reset_turn_tracking(self) -> None:
         self._turn_tools_used = []
         self._turn_successful_substantive_tools = set()
+        self._turn_successful_publication_tools = set()
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
         self._turn_verification_injected = False
@@ -1392,6 +1413,47 @@ class AgentLoop:
     def _has_substantive_turn_evidence(self) -> bool:
         """Whether this turn has executed a computation suitable for synthesis."""
         return bool(getattr(self, "_turn_successful_substantive_tools", set()))
+
+    def _has_publishable_turn_evidence(self) -> bool:
+        """Whether this turn produced a receipt suitable for factual publication."""
+        return bool(getattr(self, "_turn_successful_publication_tools", set()))
+
+    def _latest_publication_packet_for_presentation(self, user_input: str) -> dict | None:
+        """Reuse the last accepted snapshot for a presentation-only follow-up.
+
+        The answer may change emphasis, but only while every bound dataset still
+        has the same fingerprint. A data-version change disables reuse.
+        """
+        if not _PRESENTATION_FOLLOWUP.search(str(user_input or "")):
+            return None
+        state = getattr(self.context, "analysis_state", None)
+        packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
+        for packet in reversed(packets):
+            if not isinstance(packet, dict) or packet.get("status") != "ready":
+                continue
+            if not packet.get("answer_sha256") or not packet.get("sources"):
+                continue
+            identity_count = 0
+            stale = False
+            for source in packet.get("sources") or []:
+                if not isinstance(source, dict):
+                    continue
+                for dataset, identity in (source.get("data_identities") or {}).items():
+                    if not isinstance(identity, dict):
+                        stale = True
+                        break
+                    current = self.context.workspace.get_data_identity(str(dataset))
+                    expected = str(identity.get("fingerprint") or identity.get("version_id") or "")
+                    actual = str((current or {}).get("fingerprint") or (current or {}).get("version_id") or "")
+                    identity_count += 1
+                    if not expected or expected != actual:
+                        stale = True
+                        break
+                if stale:
+                    break
+            if identity_count and not stale:
+                return copy.deepcopy(packet)
+        return None
 
     def _tools_for_current_round(self):
         """Offer tools until a sufficiently evidenced turn enters finalization.
@@ -1494,6 +1556,8 @@ class AgentLoop:
         self._turn_tools_used.append(tool_name)
         if tool_name in _SUBSTANTIVE_TOOLS and not self._tool_content_is_error(tool_msg_content):
             self._turn_successful_substantive_tools.add(tool_name)
+        if tool_name in _PUBLICATION_EVIDENCE_TOOLS and not self._tool_content_is_error(tool_msg_content):
+            self._turn_successful_publication_tools.add(tool_name)
         if tool_name == "load_data" and not self._tool_content_is_error(tool_msg_content):
             self._turn_loaded_data = True
         if self._tool_content_is_error(tool_msg_content):
@@ -1649,7 +1713,11 @@ class AgentLoop:
             packet = build_publication_packet(
                 state,
                 user_input=user_input,
-                substantive_tools=_SUBSTANTIVE_TOOLS,
+                substantive_tools=(
+                    _SUBSTANTIVE_TOOLS
+                    if self._has_substantive_turn_evidence()
+                    else _PUBLICATION_EVIDENCE_TOOLS
+                ),
                 receipt_ids=receipt_ids,
                 requirement_ids=list(getattr(self.context, "turn_requirement_ids", []) or []),
                 phase=phase,
@@ -1824,7 +1892,7 @@ class AgentLoop:
         """
         packet = None
         prior_packet = getattr(self, "_turn_publication_packet", None)
-        if self._has_substantive_turn_evidence() or (
+        if self._has_publishable_turn_evidence() or (
             isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
         ):
             # Always rebuild here.  A ready preview packet may predate late
@@ -1834,6 +1902,10 @@ class AgentLoop:
                 phase="final",
                 persist=False,
             )
+        elif prior_packet is None:
+            packet = self._latest_publication_packet_for_presentation(user_input)
+            if packet is not None:
+                self._turn_publication_packet = packet
         if isinstance(packet, dict) and packet.get("status") == "ready":
             published_text, error = self._render_finalized_publication(final_text)
             if not error and published_text is not None and persist:
@@ -2716,10 +2788,11 @@ class AgentLoop:
                 try:
                     turn_state.ensure_can_call(tc.name, tc.arguments)
                 except BudgetExceeded as exc:
+                    error_payload = {"error": str(exc), "error_type": "budget_exceeded"}
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps({"error": str(exc), "error_type": "budget_exceeded"}, ensure_ascii=False),
+                        "content": json.dumps(error_payload, ensure_ascii=False),
                     })
                     self._fill_remaining_tool_responses(response.tool_calls, i + 1, str(exc))
                     if "Fallback Python result" in str(exc):
@@ -2728,6 +2801,30 @@ class AgentLoop:
                             "role": "system",
                             "content": _FALLBACK_RESOLUTION_GUIDANCE,
                         })
+                        # This is a recoverable policy rejection, not a failed
+                        # turn. Emit paired attempted-call/result events so the
+                        # browser and durable message history observe the same
+                        # lifecycle while the next LLM round can finalize.
+                        for offset, blocked_tc in enumerate(response.tool_calls[i:]):
+                            blocked_payload = error_payload if offset == 0 else {
+                                "error": str(exc),
+                                "error_type": "early_termination",
+                            }
+                            yield {
+                                "type": "tool_call",
+                                "tool_call_id": blocked_tc.id,
+                                "name": blocked_tc.name,
+                                "arguments": blocked_tc.arguments,
+                                "round": round_num,
+                            }
+                            yield {
+                                "type": "tool_result",
+                                "tool_call_id": blocked_tc.id,
+                                "name": blocked_tc.name,
+                                "web": blocked_payload,
+                                "duration_ms": 0,
+                            }
+                        return
                     yield {"type": "error", "message": str(exc)}
                     return
                 turn_state.record_tool_call(tc.name, tc.arguments)

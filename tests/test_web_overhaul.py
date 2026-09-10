@@ -118,6 +118,9 @@ class TestMermaidChartRendering:
         assert "inline-chart-artifact" in js
         assert "renderMarkdown(turn.content, turn)" in html
 
+    def test_empty_chart_reference_is_replaced_by_visible_missing_reference_notice(self, js):
+        assert r"\[\[chart:([^\]\n]*)\]\]" in js
+
     def test_unreferenced_charts_render_after_markdown_as_supplemental(self, html, js):
         assert "Supplemental charts" in html or "补充图表" in html
         assert "supplementalArtifacts(turn)" in html

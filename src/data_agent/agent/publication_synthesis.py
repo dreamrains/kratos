@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 
@@ -1076,8 +1077,16 @@ _TIME_POINT = re.compile(r"(?:(?<![A-Za-z0-9])D|第)(\d+(?:\.\d+)?)(?:天|日)?"
 _ASSERTS_VALUE = re.compile(
     r"(?:为|是|约|大约|左右|达到|超过了?|降至|升至|预计为|预估为)\s*[-+]?[0-9]", re.I,
 )
-_BOUNDARY_BEFORE = re.compile(r"不能|无法|不可|未知|尚无|尚不能|没有依据|不支持|难以|无法准确")
+_BOUNDARY_BEFORE = re.compile(
+    r"不能|无法|不可|未知|尚无|尚不能|没有依据|不支持|难以|无法准确|"
+    r"未观测|无观测|仅观测|没有.{0,8}(?:观测|数据|证据)"
+)
 _PREDICTION_VERB = re.compile(r"预计|预估|预测|推算|大概会|可能会|将达|会达|forecast|project", re.I)
+_NEGATED_PREDICTION = re.compile(
+    r"(?:不能|无法|不可|不应|不支持|尚不能).{0,12}(?:预测|预估|推算)|"
+    r"(?:预测|预估|推算).{0,12}(?:不能|无法|不可|不支持)",
+    re.I,
+)
 _COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
 
 
@@ -1158,7 +1167,13 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             suffix = clause[match.start():]
             asserts_value = bool(_ASSERTS_VALUE.search(suffix))
             predicts = bool(_PREDICTION_VERB.search(clause))
-            if _BOUNDARY_BEFORE.search(prefix[-30:]) and not asserts_value:
+            negated_prediction = bool(_NEGATED_PREDICTION.search(clause))
+            boundary_window = clause[max(0, match.start() - 30):min(len(clause), match.end() + 36)]
+            if (
+                _BOUNDARY_BEFORE.search(boundary_window)
+                and not asserts_value
+                and (not predicts or negated_prediction)
+            ):
                 continue  # explicit boundary statement, not an extrapolated claim
             if _COLLECTION_ACTION.search(prefix[-30:]):
                 continue  # future data-collection action, not a published value
@@ -1231,6 +1246,96 @@ def _significance_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
                 "span": clause.strip()[:80],
                 "reason": "“差异不显著”未关联本轮已执行检验的对象；请把该结论绑定到具体已检验的指标或分组，或改为未检验表述。",
             }]
+    return []
+
+
+_CURRENCY_VALUE = re.compile(
+    r"(?:[¥￥]\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|块钱|块|人民币|RMB|CNY))",
+    re.I,
+)
+_CURRENCY_NEGATION = re.compile(r"不能|不可|不应|不得|不是|并非|不能称为|不能写成")
+_FUTURE_MARKER = re.compile(r"未来(?:日期|时点|数据|月份|时间)")
+_FUTURE_QUALIFIER = re.compile(r"部分|包含|包括|跨越|混合|其中")
+_FUTURE_NEGATION = re.compile(r"不是|并非|不属于|不能称为|不可视为")
+
+
+def _currency_unit_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    statuses = [
+        str(scope.get("unit_status") or "not_confirmed").lower()
+        for scope in scopes
+        if isinstance(scope, dict)
+    ]
+    confirmed = {"confirmed", "known", "currency", "confirmed_currency", "currency_confirmed"}
+    unknown_unit = bool(statuses) and not any(status in confirmed for status in statuses)
+    if not unknown_unit:
+        return []
+    for clause in _split_claims(text):
+        for match in _CURRENCY_VALUE.finditer(clause):
+            window = clause[max(0, match.start() - 24):min(len(clause), match.end() + 16)]
+            if _CURRENCY_NEGATION.search(window):
+                continue
+            return [{
+                "code": "unconfirmed_currency_unit",
+                "span": match.group(0)[:80],
+                "reason": "来源未确认金额单位，正文不能把无单位数值改写为元、人民币或“块钱”。",
+            }]
+    return []
+
+
+def _parse_observed_date(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            return None
+
+
+def _observed_date_ranges(scopes: list[dict]) -> list[tuple[date, date]]:
+    ranges: list[tuple[date, date]] = []
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        window = scope.get("observation_window")
+        if not isinstance(window, dict):
+            continue
+        candidates = []
+        columns = window.get("columns")
+        if isinstance(columns, dict):
+            candidates.extend(item for item in columns.values() if isinstance(item, dict))
+        candidates.append(window)
+        for item in candidates:
+            minimum = _parse_observed_date(item.get("min"))
+            maximum = _parse_observed_date(item.get("max"))
+            if minimum is not None and maximum is not None:
+                ranges.append((minimum, maximum))
+    return ranges
+
+
+def _future_window_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    ranges = _observed_date_ranges(scopes)
+    if not ranges:
+        return []
+    today = date.today()
+    earliest = min(item[0] for item in ranges)
+    latest = max(item[1] for item in ranges)
+    for clause in _split_claims(text):
+        marker = _FUTURE_MARKER.search(clause)
+        if marker is None or _FUTURE_NEGATION.search(clause):
+            continue
+        if earliest > today:
+            continue
+        if latest > today and _FUTURE_QUALIFIER.search(clause):
+            continue
+        return [{
+            "code": "incorrect_future_window_label",
+            "span": clause.strip()[:80],
+            "reason": "观测窗口并非全部位于当前日期之后；请区分已发生日期与未来日期，不能把整个窗口笼统标为未来。",
+        }]
     return []
 
 
@@ -1543,6 +1648,8 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_curve_interpretation_issues(text_value, scopes))
     issues.extend(_extrapolation_issues(text_value, scopes))
     issues.extend(_significance_issues(text_value, scopes))
+    issues.extend(_currency_unit_issues(text_value, scopes))
+    issues.extend(_future_window_issues(text_value, scopes))
     issues.extend(_arithmetic_issues(text_value))
     issues.extend(_binding_numeric_issues(text_value, packet or {}))
     issues.extend(_answer_coverage_issues(text_value, (packet or {}).get("requirements") or []))

@@ -94,9 +94,18 @@ def _run_boundary_turn(final_text, substantive="run_python"):
 def test_m02_boundary_conclusion_finalizes_after_fallback_guard(isolated_env):
     loop, events = _run_boundary_turn(BOUNDARY_FINAL)
 
-    # 观察点 3：探索性工具被 fallback-resolution 守卫阻止（错误事件＋工具消息）
-    error_events = [e for e in events if e.get("type") == "error"]
-    assert any("Fallback Python result" in str(e.get("message", "")) for e in error_events)
+    # 观察点 3：探索性工具被 fallback-resolution 守卫阻止，但这是可恢复的
+    # 工具拒绝，不得污染最终 run_state 为 failed。
+    assert not any(
+        e.get("type") == "error" and "Fallback Python result" in str(e.get("message", ""))
+        for e in events
+    )
+    blocked_results = [
+        e for e in events
+        if e.get("type") == "tool_result"
+        and "Fallback Python result" in str((e.get("web") or {}).get("error", ""))
+    ]
+    assert blocked_results
     budget_messages = [
         m for m in loop.messages
         if m.get("role") == "tool" and "Fallback Python result" in str(m.get("content", ""))

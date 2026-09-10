@@ -8,6 +8,7 @@ from data_agent.agent.publication_synthesis import (
     validate_final_narrative,
     validate_final_narrative_issues,
 )
+from datetime import date, timedelta
 
 
 def _curve_data():
@@ -515,6 +516,13 @@ class TestNSeriesPublication:
             "D7 留存为 10%。当前不能预测 D30，需补充数据。", packet,
         ) is None
 
+    def test_n01_full_missing_observation_boundary_is_not_misread_as_prediction(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "D30 目前不可预测：本数据只有 D1–D7，没有 D8–D30 的任何观测，也没有验证窗口。",
+            packet,
+        ) is None
+
     def test_n02_collection_plan_with_day30_publishes(self):
         packet = _retention_packet()
         assert validate_final_narrative(
@@ -526,6 +534,11 @@ class TestNSeriesPublication:
         error = validate_final_narrative("D30 留存预计为 5%。", packet)
         assert error is not None
         assert "外推" in error
+
+    def test_n03_missing_observation_does_not_qualify_positive_directional_prediction(self):
+        packet = _retention_packet()
+        error = validate_final_narrative("没有 D8–D30 观测，预测 D30 会继续下降。", packet)
+        assert error is not None
 
     def test_n04_negation_does_not_cover_assertion_in_same_sentence(self):
         packet = _retention_packet()
@@ -613,6 +626,82 @@ class TestNSeriesPublication:
         error = validate_final_narrative(text, packet)
         assert error is not None
         assert issues[0]["span"][:6] in error
+
+
+def test_unconfirmed_amount_unit_rejects_currency_rewrite_but_allows_explicit_unknown():
+    packet = {"publication_scope": [{"unit_status": "not_confirmed"}], "requirements": []}
+
+    error = validate_final_narrative("每单都是10块钱，12单合计120块。", packet)
+
+    assert error is not None
+    assert "unconfirmed_currency_unit" in error
+    assert validate_final_narrative("amount 合计为120，金额单位未知，不能写成120元。", packet) is None
+    assert validate_final_narrative("金额单位未知，但每单10元。", packet) is not None
+    assert validate_final_narrative("合计120元（金额单位未知）。", packet) is not None
+
+
+def test_mixed_observed_future_window_cannot_be_labeled_wholly_future():
+    today = date.today()
+    packet = {
+        "publication_scope": [{
+            "unit_status": "not_confirmed",
+            "observation_window": {
+                "columns": {
+                    "date": {
+                        "min": (today - timedelta(days=2)).isoformat(),
+                        "max": (today + timedelta(days=2)).isoformat(),
+                    }
+                }
+            },
+        }],
+        "requirements": [],
+    }
+
+    error = validate_final_narrative("观测窗口属于未来日期，数据时效未验证。", packet)
+
+    assert error is not None
+    assert "incorrect_future_window_label" in error
+    assert validate_final_narrative("观测窗口包含部分未来日期，采集截止未知。", packet) is None
+
+
+def test_presentation_followup_reuses_only_current_bound_publication_snapshot():
+    import pandas as pd
+    from data_agent.agent.publication_synthesis import publication_contract
+
+    loop = AgentLoop(client=None, session_id="presentation_snapshot")
+    loop.context.workspace.add("orders", pd.DataFrame({"amount": [10, 10]}))
+    identity = loop.context.workspace.get_data_identity("orders")
+    receipt = _receipt("describe_dataset", "tr_profile", {
+        "shape": {"rows": 2, "columns": 1},
+        "observation_window": {},
+    })
+    receipt["data_identities"] = {"orders": identity}
+    receipt["publication_contract"] = publication_contract(
+        "describe_dataset", {"observation_window": {}}, args={"name": "orders"},
+    )
+    loop.context.analysis_state.add_tool_receipt(receipt)
+    loop.context.turn_receipt_ids = ["tr_profile"]
+    loop._turn_successful_publication_tools = {"describe_dataset"}
+    packet = loop._prepare_publication_packet("给出事实摘要", persist=False)
+    packet["answer_sha256"] = "sha256:accepted"
+    loop.context.analysis_state.add_publication_packet(packet)
+
+    reused = loop._latest_publication_packet_for_presentation("请用大白话重述，但不要改变事实")
+
+    assert packet["status"] == "ready"
+    assert reused is not None
+    assert reused["snapshot_digest"] == packet["snapshot_digest"]
+    assert loop._latest_publication_packet_for_presentation("请分析另一个业务问题") is None
+
+    loop._turn_publication_packet = None
+    published, error = loop._render_terminal_publication(
+        "请用大白话重述，但不要改变事实", "每单都是10块钱。", persist=False,
+    )
+    assert published is None
+    assert error is not None and "unconfirmed_currency_unit" in error
+
+    loop.context.workspace.add("orders", pd.DataFrame({"amount": [20, 20]}))
+    assert loop._latest_publication_packet_for_presentation("请用大白话重述") is None
 
 
 # ── P4 (D03): evidence coverage and recoverable packet selection (E01–E05, E09–E10) ──

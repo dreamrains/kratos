@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import math
+
 from data_agent.web.blueprints.chat import _feed_events
+from data_agent.web.event_bus import EventQueue, SSEEvent
 
 
 class _Loop:
@@ -47,3 +51,16 @@ def test_turn_end_is_emitted_only_after_a_durable_save():
     assert queue.save_count_at_turn_end == 1
     assert queue.events[-1].data["status"] == "completed"
     assert queue.closed is True
+
+
+def test_event_queue_serializes_non_finite_tool_values_as_strict_json_null():
+    queue = EventQueue()
+    queue.put(SSEEvent("tool_result", {"web": {"score": math.nan, "bounds": [math.inf, -math.inf]}}))
+    queue.close()
+
+    raw = "".join(queue.iter())
+    payload = next(line[6:] for line in raw.splitlines() if line.startswith("data: "))
+    decoded = json.loads(payload, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+
+    assert "NaN" not in raw and "Infinity" not in raw
+    assert decoded == {"web": {"score": None, "bounds": [None, None]}}

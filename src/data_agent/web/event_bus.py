@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any, Optional
@@ -12,6 +13,17 @@ from typing import Any, Optional
 class SSEEvent:
     event: str
     data: dict[str, Any]
+
+
+def _json_safe(value: Any) -> Any:
+    """Return strict-JSON data so every emitted SSE payload is parseable."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 class EventQueue:
@@ -48,4 +60,5 @@ class EventQueue:
                 continue
             if item is None:
                 return
-            yield f"event: {item.event}\ndata: {json.dumps(item.data, ensure_ascii=False)}\n\n"
+            payload = json.dumps(_json_safe(item.data), ensure_ascii=False, allow_nan=False)
+            yield f"event: {item.event}\ndata: {payload}\n\n"

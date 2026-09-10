@@ -88,6 +88,7 @@ class TestQ14CompetingHypotheses:
     def test_q14_explicit_task_reason_recognized(self):
         assert explicit_task_reason("请提出并检验至少两种竞争性假设") == "hypothesis_task"
         assert explicit_task_reason("对收入下降提出竞争性假设并验证") == "competing_hypotheses"
+        assert explicit_task_reason("载入新版本后，请重新判断哪些关系已失效、哪些仍未决") == "evidence_reassessment"
         # 泛化指令不算明确任务
         assert explicit_task_reason("帮我看看这数据") == ""
 
@@ -105,6 +106,28 @@ class TestQ14CompetingHypotheses:
         gate = detect_question_need("请提出并检验至少两种竞争性假设", vague, state)
 
         assert gate.get("question_type") != "route_selection"
+
+    def test_q14_new_version_reassessment_skips_internal_route_confirmation(self):
+        state = _retention_state()
+        state.route_proposals.append({
+            "id": "route_compare",
+            "dataset": "retention",
+            "direction": "period_compare",
+            "limitations": [],
+            "evidence_requirements": ["day", "metric"],
+        })
+        vague = _intent("intent_negotiation", clarity="vague", analysis_stage="discover", recommended_action="guide_analysis")
+        request = (
+            "现在把新文件作为同一业务对象的新数据版本载入。"
+            "请保留旧版假设与证据审计，重新判断哪些关系已失效、哪些仍未决。"
+        )
+
+        gate = detect_question_need(request, vague, state)
+        decision = decide_analysis_entry(request, vague, state)
+
+        assert gate.get("question_type") != "route_selection"
+        assert decision["required_user_action"] != "choose_analysis_route"
+        assert decision["decision"] == "direct_analysis"
 
     def test_q14_entry_chooses_internal_route_not_user_route_pick(self):
         state = _retention_state()

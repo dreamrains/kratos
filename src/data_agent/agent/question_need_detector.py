@@ -298,6 +298,8 @@ _HYPOTHESIS_OBJECT_MARKERS = ("竞争性假设", "竞争假设", "替代解释",
 _HYPOTHESIS_TASK_VERBS = ("提出", "检验", "验证", "比较", "列出", "评估", "分析")
 _EXPLICIT_HYPOTHESIS_PHRASES = ("提出并检验", "提出假设", "检验假设", "验证假设", "假设检验", "比较解释")
 _ENUMERATION_MARKERS = ("分别分析", "分别计算", "分别对比", "逐项分析", "逐个分析")
+_REASSESSMENT_MARKERS = ("重新判断", "重新评估", "重新检验", "再次判断", "重新审视")
+_REASSESSMENT_OBJECTS = ("关系", "假设", "证据", "失效", "未决", "冲突")
 
 
 def explicit_task_reason(user_input: str) -> str:
@@ -319,6 +321,10 @@ def explicit_task_reason(user_input: str) -> str:
         return "competing_hypotheses"
     if any(marker in text for marker in _ENUMERATION_MARKERS):
         return "enumerated_subtasks"
+    if any(marker in text for marker in _REASSESSMENT_MARKERS) and any(
+        marker in text for marker in _REASSESSMENT_OBJECTS
+    ):
+        return "evidence_reassessment"
     return ""
 
 
