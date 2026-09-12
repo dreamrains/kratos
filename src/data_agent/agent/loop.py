@@ -2483,7 +2483,8 @@ class AgentLoop:
             # Persist the datasets readable in this execution scope before
             # publishing the terminal. No broader storage access is granted.
             from data_agent.session.workspace import workspace
-            if self.context.workspace_scope.phase in {"legacy", "execution"}:
+            scope = self.context.workspace_scope
+            if scope is not None and scope.phase in {"legacy", "execution"}:
                 names = list(workspace.list_datasets())
                 for name in names:
                     workspace.persist_dataset(self.session_id, name)

@@ -190,6 +190,22 @@ def test_autosave_and_reconstruction_preserve_derived_values_and_identity(contex
         assert restored.context.workspace.get_data_identity("derived") == expected_identity
 
 
+def test_autosave_without_workspace_scope_still_persists_session(context):
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.session.history import load_session
+
+    loop = AgentLoop(client=object(), session_id=context.session_id)
+    loop.messages = [{"role": "user", "content": "compact"}]
+    with use_agent_context(loop.context):
+        assert loop.context.workspace_scope is None
+        loop._auto_save()
+
+    saved = load_session(context.session_id)
+    assert saved is not None
+    assert saved["messages"] == loop.messages
+
+
 def test_publication_scope_rejects_unperformed_test_and_fit_extrapolation():
     from data_agent.agent.publication_synthesis import publication_contract, validate_final_narrative
     packet = {"publication_scope": [publication_contract("curve_fitting", {"points": [{"x": 1}, {"x": 30}]})]}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -34,18 +35,22 @@ def _verified_conclusions(state: Any) -> list[dict[str, str]]:
     reports = _list_attr(state, "verification_reports")
     latest = reports[-1] if reports else {}
     verified_ids = _current_verified_evidence_ids(state, evidence, latest)
+    active_dataset = _active_dataset(state)
     conclusions = []
     for item in evidence:
         evidence_id = _text(item.get("id"))
         confidence = _text(item.get("confidence")) or "medium"
         claim = _text(item.get("claim"))
+        dataset = _text(item.get("dataset"))
+        if _is_older_named_version(dataset, active_dataset):
+            continue
         if claim and confidence in _CONFIDENCE_ORDER and evidence_id in verified_ids:
             conclusions.append({
                 "id": evidence_id,
                 "claim": claim,
                 "summary": _text(item.get("result_summary")),
                 "confidence": confidence,
-                "dataset": _text(item.get("dataset")),
+                "dataset": dataset,
             })
     # The full verified set is projected with its real total; the default
     # six-item display and expansion happen in the frontend (U01).
@@ -62,9 +67,15 @@ def _pending_findings(state: Any) -> list[dict[str, str]]:
     except Exception:
         hypothesis_sets = _list_attr(state, "hypothesis_sets")
     findings: list[dict[str, str]] = []
+    active_dataset = _active_dataset(state)
     for hypothesis_set in hypothesis_sets[:2]:
+        historical_version = _is_older_named_version(
+            _text(hypothesis_set.get("dataset")), active_dataset,
+        )
         for hypothesis in _list_items(hypothesis_set.get("hypotheses")):
             status = _text(hypothesis.get("status"))
+            if historical_version:
+                status = "stale"
             if status not in _PENDING_STATUSES:
                 continue
             required = [
@@ -87,6 +98,29 @@ def _pending_findings(state: Any) -> list[dict[str, str]]:
             if len(findings) >= _PENDING_LIMIT:
                 return findings
     return findings
+
+
+_NAMED_VERSION_SUFFIX = re.compile(r"(?:[-_\s]+v(?:ersion)?\d+)$", re.I)
+
+
+def _active_dataset(state: Any) -> str:
+    scope = getattr(state, "active_scope", None)
+    return _text(scope.get("active_dataset")) if isinstance(scope, dict) else ""
+
+
+def _is_older_named_version(dataset: str, active_dataset: str) -> bool:
+    """Treat an inactive ``name-vN`` sibling as history in the Workbench.
+
+    Uploads keep immutable dataset names, so a user-supplied replacement such
+    as ``sales-v2`` may coexist with ``sales-v1``. The active sibling is the
+    current version; earlier siblings remain auditable but must not project as
+    currently verified. Unversioned multi-source datasets are unaffected.
+    """
+    if not dataset or not active_dataset or dataset == active_dataset:
+        return False
+    dataset_base = _NAMED_VERSION_SUFFIX.sub("", dataset)
+    active_base = _NAMED_VERSION_SUFFIX.sub("", active_dataset)
+    return dataset_base != dataset and active_base != active_dataset and dataset_base.casefold() == active_base.casefold()
 
 
 def _status_label(status: str) -> str:

@@ -1087,6 +1087,11 @@ _NEGATED_PREDICTION = re.compile(
     r"(?:预测|预估|推算).{0,12}(?:不能|无法|不可|不支持)",
     re.I,
 )
+_PREDICTION_QUESTION = re.compile(
+    r"(?:能否|是否|可否|能不能|可不可以).{0,12}(?:预测|预估|推算)|"
+    r"(?:预测|预估|推算).{0,12}(?:能否|是否|可否|能不能|可不可以)",
+    re.I,
+)
 _COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
 
 
@@ -1168,6 +1173,7 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             asserts_value = bool(_ASSERTS_VALUE.search(suffix))
             predicts = bool(_PREDICTION_VERB.search(clause))
             negated_prediction = bool(_NEGATED_PREDICTION.search(clause))
+            prediction_question = bool(_PREDICTION_QUESTION.search(clause))
             boundary_window = clause[max(0, match.start() - 30):min(len(clause), match.end() + 36)]
             if (
                 _BOUNDARY_BEFORE.search(boundary_window)
@@ -1175,6 +1181,8 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
                 and (not predicts or negated_prediction)
             ):
                 continue  # explicit boundary statement, not an extrapolated claim
+            if prediction_question and not asserts_value:
+                continue  # section/question label, not a published prediction
             if _COLLECTION_ACTION.search(prefix[-30:]):
                 continue  # future data-collection action, not a published value
             if not asserts_value and not predicts:

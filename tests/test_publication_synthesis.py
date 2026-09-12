@@ -523,6 +523,13 @@ class TestNSeriesPublication:
             packet,
         ) is None
 
+    def test_n01_prediction_question_heading_is_not_misread_as_prediction(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            '## 三、“能否预测 D30”——证据分级\nD30 当前不能预测：只有 D1–D7 观测。',
+            packet,
+        ) is None
+
     def test_n02_collection_plan_with_day30_publishes(self):
         packet = _retention_packet()
         assert validate_final_narrative(

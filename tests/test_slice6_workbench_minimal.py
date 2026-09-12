@@ -214,3 +214,32 @@ def test_u02_stale_hypothesis_shows_as_expired_history_not_verified():
     pending = {item["id"]: item for item in workbench["pending_findings"]}
     assert "hyps_orders_trend_h1" in pending
     assert "失效" in pending["hyps_orders_trend_h1"]["status_label"]
+
+
+def test_named_version_replacement_hides_old_verified_and_marks_hypothesis_stale():
+    state = AnalysisSessionState(session_id="named_versions", data_state="data_loaded")
+    state.active_scope = {"active_dataset": "sales-v2"}
+    state.evidence_records = [
+        {"id": "ev_v1", "claim": "v1 revenue rose", "confidence": "high", "dataset": "sales-v1"},
+        {"id": "ev_v2", "claim": "v2 revenue is flat", "confidence": "high", "dataset": "sales-v2"},
+    ]
+    report = {"passed_evidence_ids": ["ev_v1", "ev_v2"]}
+    report["evidence_fingerprint"] = _evidence_fingerprint(state, state.evidence_records)
+    state.verification_reports = [report]
+    state.hypothesis_sets = [{
+        "id": "hyps_sales_v1",
+        "dataset": "sales-v1",
+        "route": "trend",
+        "hypotheses": [{
+            "id": "hyp_v1",
+            "claim": "v1 revenue keeps rising",
+            "status": "inconclusive",
+            "evidence_requirements": [],
+        }],
+    }]
+
+    workbench = build_trust_view(state)["workbench"]
+
+    assert [item["id"] for item in workbench["verified_conclusions"]] == ["ev_v2"]
+    assert workbench["pending_findings"][0]["status"] == "stale"
+    assert "失效" in workbench["pending_findings"][0]["status_label"]
