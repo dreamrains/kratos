@@ -93,3 +93,11 @@
 - M05：事实摘要、业务负责人、分析师、管理者、大白话、技术表达六轮均保留 12 条、合计 120、2026-09-01—09-12、未知金额单位及受限证据等级；没有再次出现“块钱/元/人民币/美元”漂移。刷新和 9377 字节 Markdown 一致，技术方法与来源绑定可恢复。
 - M06：缺失 `missing_orders` 时只说明数据缺口与唯一上传动作；载入销售数据后只对会改变净收益的成本口径提问，选择“口径B：代金券及渠道成本”后恢复一次。确认快照 `integrity_status=ok`、记录 `status=resolved`；最终只发布已计算总金额 120，并把促销增量收入、代金券成本、渠道成本和净收益列为未计算/证据不足，没有用用户选择替代缺失数据。刷新和 16608 字节 Markdown 保留该边界；刷新时确认提问所在的中间 assistant 气泡显示“（无回复内容）”，作为非终态呈现问题记录，不改变唯一完成终态。
 - 结论：本次 E4 批次有效且调用核算闭合，但 P08 / IC5 / AC40 仍为 **executed_failed / not_accepted**。后续只应针对 M02 发布门、M03 空 workspace scope 压缩保存、M04 工作台跨版本失效投影修复；修复后必须新提交、新冻结、新授权并完整重跑 M01—M06。没有执行 push、部署、staging 或生产验证。
+
+## 10. R8 失败项的本地修复与复核（2026-09-12）
+
+- 产品修复提交：`main@d9164fa`。M02 的发布检查不再把“能否预测 D30”这类无数值断言的问句/标题当作正向预测；M03 `_auto_save()` 在 `workspace_scope=None` 时跳过工作区持久化但继续保存会话；M04 Workbench 以活动的 `*-vN` 数据集为当前版本，同系列非活动版本不再进入当前 verified，并在待验证区显示为 stale 历史。
+- 回归：相关模块 135 passed（`tmp/test-runs/20260912T110259Z-dec8066d`）；同一次 runner 随后完成 full-offline，结果 **2620 passed、1 skipped、16 warnings**，Provider 网络保持禁用。
+- Provider-disabled 内置浏览器复核：`tmp/repair-browser-20260912-r9`。M02 会话 `4342b3edf76b` 发布并在刷新后保留 D7=10% 与“不能预测 D30”；M03 会话 `a67927a591d1` 保留六来源回答，随后 `/api/compact` 返回 200；M04 脚本会话 `e97030bfa704` 完成支持、反证与同名数据重载。对 R8 真实 M04 会话 `29e4536464f3` 的 `analysis_state.json` 作只读重放后，Workbench 当前 verified 仅含 4 条 v2 结论，v1 假设显示为 stale。
+- `runtime.jsonl` 只含 `server_start(provider_enabled=false)`、`auxiliary_call` 和 `scripted_round`，没有 `forbidden_provider_transport`，因此本次真实 Provider initiated calls=0。
+- 证据边界：本节只关闭本地修复与 E1/E2/E3 复核，不改写第 9 节已失败的真实批次。P08 / IC5 / AC40 继续为 **executed_failed / not_accepted**；下一次 E4 必须以 `d9164fa` 之后的确切文档提交重新冻结并取得一次新的明确授权。未 push、未部署。

@@ -118,6 +118,6 @@ E3 证明桌面页面与编排路径，不证明自然模型会稳定产出更�
 
 ## 5. 合并与剩余边界
 
-CP0—CP6 的本地实现和证据已闭合。AC40 随后已在 `main@1516337`、冻结 SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46` 的真实浏览器＋真实 Provider 批次执行；账本为 77 started / 77 dispatched / 0 failed，但 M03 的发布收敛/Workbench、M05 的金额单位漂移和 M06 的原始图表标记使 AC40 未通过。没有把历史授权、旧真实会话、离线结果或局部通过项转记为 AC40 通过；修复后须新冻结、新授权并完整复验。
+CP0—CP6 的本地实现和证据已闭合。AC40 已先后执行两次真实浏览器＋真实 Provider 完整批次；最新 `main@3873ff9` 批次账本为 80 started / 80 dispatched，M01/M05/M06 通过，M02/M03/M04 失败，AC40 仍未通过。其三个失败项已在 `main@d9164fa` 完成本地修复：预测问句不再被误判为正向预测，空 workspace scope 的压缩保存不再崩溃，Workbench 排除同系列非活动具名版本的旧 verified 并显示 stale 历史。相关回归 135 passed，full-offline 2620 passed、1 skipped，重点 Provider-disabled 内置浏览器复核通过且 initiated calls=0。没有把本地修复、历史授权或旧真实会话转记为 AC40 通过；后续仍须新冻结、新授权并完整复验。
 
 合并时应把本分支提交并入届时目标分支，按函数块解决 `loop.py` 等并行冲突，再运行本记录中的定向与完整离线命令。不要用整文件覆盖主分支后续改动。Git 忽略的 `tmp/r6`、浏览器运行目录和 Plotly vendor 测试副本不进入提交。

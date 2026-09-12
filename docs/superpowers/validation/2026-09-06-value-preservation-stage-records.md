@@ -779,3 +779,14 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - M05 passed：六种受众表达均保留 12 条、合计 120、观察范围、受限证据等级；金额单位始终保持未知，没有“块钱/元/币种”升级。刷新与 9377 字节 Markdown 一致，技术表达恢复来源与计算。
 - M06 passed：无数据时不编造；只对净收益成本范围这一真实业务语义暂停。确认快照 `integrity_status=ok`、`status=resolved`，选择口径 B 后只恢复一次；总金额 120 与未计算的促销增量、代金券成本、渠道成本、净收益明确分开。刷新/16608 字节 Markdown/唯一 completed 终态一致；刷新后的中间确认气泡出现“（无回复内容）”，列为非终态呈现问题。
 - 本轮未执行 push、部署、staging 或生产验证。后续只在 M02 发布门、M03 空 workspace scope 保存、M04 Workbench 版本失效投影修复完成并形成新提交后，重新冻结和申请一次新的完整 Provider 授权。
+
+## P08-R9：R8 失败项本地修复（Codex，2026-09-12）
+
+阶段 / 状态：**E1/E2 修复通过，重点 E3 复核通过；P08 / IC5 / AC40 的 E4 仍为 executed_failed / not_accepted。** 产品修复提交为 `main@d9164fa`。
+
+- M02：发布门区分预测问句/章节标题与带数值的正向预测断言；D7=10% 与“不能预测 D30”可发布，真实外推仍被拒绝。
+- M03：`_auto_save()` 对空 `workspace_scope` 安全处理；无工作区作用域时仍保存会话，内置浏览器 `/api/compact` 返回 200。
+- M04：Workbench 根据活动的具名版本数据集过滤同系列旧版本 verified，并把旧版本假设投影为 stale；R8 会话 `29e4536464f3` 的保存状态经修复后只投影 4 条 v2 verified，v1 假设为失效历史。
+- 测试：相关回归 135 passed；full-offline 为 **2620 passed、1 skipped、16 warnings**，证据目录 `tmp/test-runs/20260912T110259Z-dec8066d`。
+- 内置浏览器重点复核目录 `tmp/repair-browser-20260912-r9`：M02 `4342b3edf76b`、M03 `a67927a591d1`、M04 `e97030bfa704`。M02 刷新保留边界回答，M03 压缩保存成功，M04 完成支持/反证/版本更新。运行器强制禁用 Provider，`forbidden_provider_transport=0`，真实 Provider initiated calls=0。
+- 本轮没有真实 Provider 调用、push、部署、staging 或生产验证。下一次完整 M01—M06 真实复验须基于新的冻结文件和用户明确授权。
