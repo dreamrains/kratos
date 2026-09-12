@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-10｜版本：v0.9｜状态：CP0—CP6 已合入 `main`；AC40 在 `main@1516337` 执行但未通过，失败项本地修复已提交为 `main@13c129a`，修复后的 Provider-disabled E3 已在 `main@176f5f2` 通过，新的 AC40 真实 Provider 复验尚未执行。
+日期：2026-09-12｜版本：v1.0｜状态：CP0—CP6 已合入 `main`；修复后的 AC40/E4 已在 `main@3873ff9` 完整复验，M05 单位/身份表达和 M06 状态分层通过，但 M02 发布、M03 压缩保存、M04 工作台跨版本失效仍未通过，AC40 保持 `executed_failed / not_accepted`。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -99,5 +99,6 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 | 合并后浏览器 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；CONTENT-B03/B07 与共用 B01—B06、IC-B01—IC-B06 完成，Provider initiated calls=0 |
 | 真实 Provider 验收 | executed_failed / not_accepted | AC40 随 P08 M01—M06 完整批次执行；账本 77 started / 77 dispatched / 0 failed。M03 发布收敛/Workbench 不闭合，M05 发生未知单位→“块钱”漂移，M06 残留原始 `[[chart:]]` 标记，内容硬门槛未通过。 |
 | AC40 失败项本地修复 | completed_local / E3 passed | `main@13c129a`：可恢复 fallback 不再作为终态错误；展示回合仅在数据身份未变时复用已接受发布快照；未知金额单位和混合日期窗口受确定性边界约束；SSE 非有限数转为严格 JSON `null`；空 `[[chart:]]` 转为可见缺失提示。内容/Web 定向 208 passed；`main@176f5f2`、`tmp/repair-browser-20260910-r3` 的联合浏览器复验通过，六来源 Markdown/发布报告、表格/公式/Plotly/刷新和控制台均已核对，Provider initiated calls=0；真实 Provider 未复验。 |
+| AC40 / E4 修复后复验 | executed_failed / not_accepted | `main@3873ff9`、冻结 SHA-256 `7156c9e...8827f44`；账本 80 started / 80 dispatched。M05 六种表达均保留 12/120、范围、未知金额单位和受限证据等级；M06 正确区分已计算、未计算、证据不足。M02 合规 D7/D30 边界被发布门拒绝；M03 六来源正文/刷新/Markdown 完整但压缩保存 500；M04 正文重判正确但 Workbench 仍把 v1 旧事实列为 verified。 |
 
-`completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；本次 AC40 的 `executed_failed` 不能由局部通过项升级，修复后的复验必须使用新的冻结清单、零调用预检和明确 Provider 授权。
+`completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；最新 AC40 的 `executed_failed` 不能由 M05/M06 或 M03 正文局部通过升级。后续修复后仍须使用新的冻结清单、零调用预检和明确 Provider 授权。

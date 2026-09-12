@@ -80,3 +80,16 @@
 - 刷新：B01 会话 `46e9d6c43b28`、B04 `18cbef03ada1`、CONTENT-B03 `2cc0a85c9d1f`、CONTENT-B07 `51fe66986d44` 重新导航后均保留目标正文和状态。浏览器控制台没有记录错误或 JSON 解析异常。
 - 运行轨迹：`server_start.provider_enabled=false`；总计 `scripted_round=69`、`auxiliary_call=98`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。总数包含两条不计入矩阵的诊断探测：它们在独立空会话直接执行 B02-NEG，缺少标准 B02 先加载 `ret_a` 的前置条件；按 B02→B02-NEG 同会话链路复核后发布门正确输出“不能预测 D30”。
 - 证据边界：本节完成修复后的本地 E3；不改变 R5 的真实 Provider 失败记录，也不代表新 E4、staging、生产、部署或 push 已完成。
+
+## 9. 修复后的真实 Provider 完整复验（2026-09-12）
+
+- 运行身份：`main@3873ff99301f47023e6da422f97316bbf345684a`；冻结文件 `tmp/p08-real-provider-20260910-3873ff9-r1/freeze.json`，SHA-256 `7156c9e115f9f6451249396bdb28e7dd970e1d81d2f5c78a15a45777a8827f44`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；调用上限 120。用户按该精确身份授权后，使用 Codex 内置浏览器在端口 5182 串行执行 M01—M06，每个场景使用新会话；批次内未修改代码、提示、夹具、oracle、模型、端点或预算，也未局部重跑。
+- Provider 账本 `tmp/p08-real-provider-20260910-3873ff9-r1/provider-calls.jsonl` 最终为 **80 started / 80 dispatched / 0 missing / 0 orphan / 0 denied**，SHA-256 `f272a2791910a53dd9affbf0d944bff11bb677dd6c81800af8335712e8cf46dd`；调用号连续 1—80，分场景为 M01 7、M02 11、M03 14（含一次压缩请求）、M04 17、M05 19、M06 12，未超过授权上限。
+- 场景结果：M01 passed；M02 failed；M03 failed；M04 failed；M05 passed；M06 passed。六会话分别为 `5ca39d702f63`、`66a96196bb27`、`2fc39f5f2a14`、`29e4536464f3`、`76e0f71fa8ff`、`3c9b81654363`；对应工具调用/工具消息为 4/4、9/9、21/21、29/29、3/3、6/6，均无缺失、孤立或重复 ID。除 M02 `run_state=failed` 外，其余五会话均为唯一 `completed` 终态；浏览器 error console 为 0。
+- M01：页面、刷新和工作台保留 12 条、金额合计 120、未知金额单位、来源与条件性建议；没有因果或总体外推，达到 oracle。
+- M02：工具已计算 D7=10%，正文也拒绝无依据 D30，但发布门以 `[unbound_time_point_claim]` 误判“能否预测 D30”的边界段落，`run_state=failed`；刷新后只剩图表/空回复壳。126594 字节 Markdown 虽已导出，页面、终态与导出不一致，未达到 oracle。
+- M03：正文、刷新、14994 字节 Markdown 和发布报告完整保留六来源逐项事实与合计，未发生摘要裁剪；但冻结的“压缩上下文”动作在 `/api/compact` 返回 500，根因为 `_auto_save()` 对 `workspace_scope=None` 直接访问 `.phase`。该动作已发起一次已记账 Provider 请求，随后本地保存失败；因此 M03 按完整场景记失败，不能用正文通过覆盖操作失败。
+- M04：两轮真实模型均直接执行，没有出现 `trend` / `period_compare` 等方法名确认；正文正确区分 v1/v2，声明 v1 的 +100% 与正斜率在 v2 未再现。不过刷新后的工作台仍在“已验证结论（6/7）”列出 v1 的 +100% 等旧结论，没有 stale/excluded 标记，违反跨版本证据失效 oracle，因此记失败。
+- M05：事实摘要、业务负责人、分析师、管理者、大白话、技术表达六轮均保留 12 条、合计 120、2026-09-01—09-12、未知金额单位及受限证据等级；没有再次出现“块钱/元/人民币/美元”漂移。刷新和 9377 字节 Markdown 一致，技术方法与来源绑定可恢复。
+- M06：缺失 `missing_orders` 时只说明数据缺口与唯一上传动作；载入销售数据后只对会改变净收益的成本口径提问，选择“口径B：代金券及渠道成本”后恢复一次。确认快照 `integrity_status=ok`、记录 `status=resolved`；最终只发布已计算总金额 120，并把促销增量收入、代金券成本、渠道成本和净收益列为未计算/证据不足，没有用用户选择替代缺失数据。刷新和 16608 字节 Markdown 保留该边界；刷新时确认提问所在的中间 assistant 气泡显示“（无回复内容）”，作为非终态呈现问题记录，不改变唯一完成终态。
+- 结论：本次 E4 批次有效且调用核算闭合，但 P08 / IC5 / AC40 仍为 **executed_failed / not_accepted**。后续只应针对 M02 发布门、M03 空 workspace scope 压缩保存、M04 工作台跨版本失效投影修复；修复后必须新提交、新冻结、新授权并完整重跑 M01—M06。没有执行 push、部署、staging 或生产验证。

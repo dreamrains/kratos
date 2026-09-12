@@ -764,3 +764,18 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 浏览器控制台为 0 条错误/JSON 解析异常。`runtime.jsonl` 总计 `scripted_round=69`、`auxiliary_call=98`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。
 - 轨迹总数还包含两条矩阵外诊断探测：它们错误地在独立空会话直接执行 B02-NEG，缺少 B02 先加载 `ret_a` 的场景前置条件；一条因额外必答词失败，一条展示了无数据条件下不适用的脚本候选。两者不计入矩阵；按标准同会话链路隔离复核后负例通过。该边界保留在记录中，不作为产品绿灯或红灯删除。
 - E3 通过只证明修复后本地真实页面、HTTP/SSE、AgentLoop、工具、持久化、刷新和导出链路。新的真实 Provider 批次尚未冻结或授权，不得复用 R5 身份、授权或剩余额度。
+
+## P08-R8：修复后的真实 Provider 内置浏览器完整复验（Codex，2026-09-12）
+
+阶段 / 状态：**完整批次有效，P08 / IC5 / AC40 为 executed_failed / not_accepted；M01/M05/M06 passed，M02/M03/M04 failed。**
+
+- 精确身份：`main@3873ff99301f47023e6da422f97316bbf345684a`；冻结 `tmp/p08-real-provider-20260910-3873ff9-r1/freeze.json`，SHA-256 `7156c9e115f9f6451249396bdb28e7dd970e1d81d2f5c78a15a45777a8827f44`；启动器摘要 `sha256:cc6e268d799466575ee6db468988d4861ae27268469f79f4ee1c270a0212d351`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；上限 120；内置浏览器端口 5182。用户按该身份明确授权；批次中没有修改或重跑。
+- 账本：`provider-calls.jsonl` SHA-256 `f272a2791910a53dd9affbf0d944bff11bb677dd6c81800af8335712e8cf46dd`，80 started / 80 dispatched，调用号 1—80 连续，missing/orphan/denied 均为 0；分场景 M01 7、M02 11、M03 14、M04 17、M05 19、M06 12。
+- 会话与工具消息：M01 `5ca39d702f63` 4/4，M02 `66a96196bb27` 9/9，M03 `2fc39f5f2a14` 21/21，M04 `29e4536464f3` 29/29，M05 `76e0f71fa8ff` 3/3，M06 `3c9b81654363` 6/6；所有 tool call ID 均有唯一 tool message，无孤立或重复。M02 唯一终态为 failed，其余唯一终态为 completed；浏览器 error console 为 0。
+- M01 passed：12 条、金额合计 120、未知单位、来源、限制、触发和停止条件在正文/刷新/工作台一致，没有因果或总体外推。
+- M02 failed：真实工具得到 D7=10%，回答拒绝无依据 D30；发布门却以 `[unbound_time_point_claim]` 拒绝“能否预测 D30”的边界段落，`run_state=failed`，刷新只保留图表与空回复壳。导出文件 126594 字节，不能补偿页面和终态不一致。
+- M03 failed：六来源 10→11、20→22、30→33、40→44、50→55、60→66，合计 210→231，正文、刷新、14994 字节 Markdown 与发布报告均完整；但冻结的压缩动作 `/api/compact` 返回 500，栈为 `AgentLoop._auto_save()` 在 `workspace_scope=None` 时访问 `.phase`。该压缩请求计入一次 Provider 调用，后续本地保存失败。
+- M04 failed：v1/v2 两轮均直接执行，不再出现内部路线确认；正文将 v1 正斜率和 +100% 标为在 v2 未再现，并保留冲突/未决。刷新后的 Workbench 仍在“已验证结论（6/7）”展示 v1 +100% 等旧结论，没有 stale/excluded 状态，违反版本证据隔离要求。
+- M05 passed：六种受众表达均保留 12 条、合计 120、观察范围、受限证据等级；金额单位始终保持未知，没有“块钱/元/币种”升级。刷新与 9377 字节 Markdown 一致，技术表达恢复来源与计算。
+- M06 passed：无数据时不编造；只对净收益成本范围这一真实业务语义暂停。确认快照 `integrity_status=ok`、`status=resolved`，选择口径 B 后只恢复一次；总金额 120 与未计算的促销增量、代金券成本、渠道成本、净收益明确分开。刷新/16608 字节 Markdown/唯一 completed 终态一致；刷新后的中间确认气泡出现“（无回复内容）”，列为非终态呈现问题。
+- 本轮未执行 push、部署、staging 或生产验证。后续只在 M02 发布门、M03 空 workspace scope 保存、M04 Workbench 版本失效投影修复完成并形成新提交后，重新冻结和申请一次新的完整 Provider 授权。

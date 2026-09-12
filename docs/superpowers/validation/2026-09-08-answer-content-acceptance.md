@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-10｜状态：AC01—AC39 已合入 `main`；AC40 在 `main@1516337` 执行但未通过，失败项本地修复已提交为 `main@13c129a`，修复后的 Provider-disabled E3 已在 `main@176f5f2` 通过，新的 AC40 真实 Provider 复验尚未执行。
+日期：2026-09-12｜状态：AC01—AC39 已合入 `main`；修复后的 AC40/E4 已在 `main@3873ff9` 完整执行，M05/M06 通过，M03 正文完整性通过但压缩保存失败，M02 发布与 M04 工作台版本状态失败，AC40 仍为 `executed_failed / not_accepted`。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -175,7 +175,7 @@ Provider授权引用、计数或明确0调用：
 | AC37 | passed_local | E3 场景 B03：刷新保留正文，实际 MD 导出包含同一 packet/snapshot/answer hash 与六来源 |
 | AC38 | passed_local | 固定小中大 fixture，prompt 小于 65k；正常路径新增 Provider 调用 0，超限转 detail_ref |
 | AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
-| AC40 | executed_failed / not_accepted | `tmp/p08-real-provider-20260909-1516337-r1` 完整执行 M01—M06；77 started / 77 dispatched / 0 failed。M03 六来源正文/导出完整但发布收敛失败且 Workbench 无已验证结论；M05 大白话回合把未知金额单位写成“块钱”；M06 分层正确但残留 `[[chart:]]`。硬门槛未通过。 |
+| AC40 | executed_failed / not_accepted | 最新 `tmp/p08-real-provider-20260910-3873ff9-r1` 完整复验：80 started / 80 dispatched。M05 六种表达与 M06 分层通过，M03 六来源正文/刷新/Markdown 完整；但 M02 发布门拒绝合规边界，M03 压缩保存 500，M04 Workbench 未将 v1 旧结论标为 stale/excluded，硬门槛仍未通过。 |
 
 AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续进入下一模型轮且 SSE 工具事件保持配对；纯表达回合只在当前数据身份与已接受快照一致时复用发布绑定；未知金额单位不能被身份表达改写成币种，混合已发生/未来日期不能笼统称为未来；非有限数在 SSE 中转为严格 JSON `null`；空图表引用显示明确缺失提示。隔离回归为内容/Web 208 passed、最终聚焦 173 passed；修复后的 E3 结果见下文。这些证据不把 AC40 的真实 Provider 批次改为通过。
 
@@ -190,6 +190,8 @@ AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续�
 合并后追加 E3 证据：`main@be5ee9a` 的隔离目录 `tmp/main-ic4-browser-20260909-be5ee9a`。CONTENT-B03 会话 `c2c77b29d01e` 保留 `src_1`—`src_6` 及全部金额事实，实际生成 9380 字节的 Markdown 对话导出和 9150 字节的同快照发布报告；CONTENT-B07 会话 `a5ccf75b6f20` 在 1440×900 下显示真实表格、KaTeX 公式、Plotly 图表及备用链接，无可见整页横向溢出。同批 `runtime.jsonl` 记录 `provider_enabled=false`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。
 
 追加 E4 证据：`main@1516337`、冻结 SHA-256 `c0bd787f64e2c7b8f05b2026db0a73ffa1336c9cb3b6d6f44ff2caca16a6c46`，模型 `openai/deepseek-v4-flash`。AC40 内容样本对应 M03/M05/M06：M03 的六来源两日金额、绝对/相对变化和记录数在正文及 4914 字节 Markdown 中完整，但 run_state 为 failed、fallback 未收敛且 Workbench 无 verified；M05 的 12 笔/120 在六类身份中保留，但“大白话”把未声明币种升级为“块钱”，核心单位一致性失败；M06 将 answered、not_computed、evidence_insufficient 分开，但页面显示原始 `[[chart:]]`。因此 AC40 不能通过。账本与会话原文保存在该隔离目录；证据只到本地真实浏览器＋真实 Provider，不代表生产。
+
+修复后追加 E4 证据（2026-09-12）：`main@3873ff99301f47023e6da422f97316bbf345684a`、冻结 SHA-256 `7156c9e115f9f6451249396bdb28e7dd970e1d81d2f5c78a15a45777a8827f44`、模型 `openai/deepseek-v4-flash`、账本 80 started / 80 dispatched。M03 会话 `2fc39f5f2a14` 的六来源正文、刷新、14994 字节 Markdown 和发布报告全部保留逐来源金额/变化/记录数，证明内容裁剪问题已关闭；但压缩上下文在 `_auto_save()` 处因 `workspace_scope=None` 返回 500，完整场景仍失败。M05 会话 `76e0f71fa8ff` 六种表达均保持 12/120、范围、限制、未知单位和证据等级，9377 字节 Markdown 与刷新一致，单位漂移已关闭。M06 会话 `3c9b81654363` 将总金额 120、未计算净收益和证据不足明确分开，刷新与 16608 字节 Markdown 一致，原始 chart 标记未再出现。批次新增暴露：M02 的合规 D7/D30 边界被发布门拒绝；M04 正文虽正确标记 v1 关系失效，Workbench 却仍把 v1 旧结论列为 verified。因此 AC40 仍不能通过；详细错误、会话与账本见整合记录第 9 节。
 
 ## 7. 本次文档校验记录
 

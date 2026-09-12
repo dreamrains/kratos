@@ -1,6 +1,6 @@
 # 分析价值保留与能力完整性：实施总计划
 
-版本：v0.8｜日期：2026-09-10｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；P08 在 `main@1516337` 的完整批次因 M02—M05 失败未通过，针对失败项的本地修复已提交为 `13c129a` 并完成 E1/E2；修复后的 Provider-disabled E3 联合浏览器矩阵已在 `main@176f5f2` 通过，新的真实 Provider 验收尚未执行**。
+版本：v0.9｜日期：2026-09-12｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；修复后的真实 Provider P08 完整复验已在 `main@3873ff9` 执行，M01/M05/M06 通过，M02/M03/M04 失败，账本 80/80 闭合，P08 仍为 `executed_failed / not_accepted`**。
 
 用户已接受产品原则：允许发布明确标注的待验证解释和有证据支持的条件性建议，继续严格区分已验证结论。最初“先不要修复”的要求用于规划交付；用户现已明确说明 P0—P6 已推进，并要求“从 P7 阶段继续开始”。当前执行以该后续指令为准。P7 发现的问题、原始证据和恢复条件见 [P7 执行报告](../validation/2026-09-06-vp-p7-execution-report.md)；真实 Provider、提交、推送、部署仍不自动获得授权。
 
@@ -245,7 +245,7 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P7 | passed（本地、Provider 禁用） | 完整离线回归 `2519 passed / 1 skipped`；B01—B06 均已完成本地真实浏览器验证。详细收据与 B03 修复见阶段记录 L3-R2 至 L3-R4。 |
 | 合并后 P7/IC4/CP6 联合复核 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 通过；保存失败为 `unknown`、预算耗尽为 `failed`，未误发布完成；Provider initiated calls=0 |
 | R5 修复后 P7/IC4/CP6 联合复核 | passed_local | `main@176f5f2`、`tmp/repair-browser-20260910-r3`；同一联合矩阵通过，刷新/导出/Plotly/澄清恢复/失败终态均核对；控制台无 JSON 错误，Provider initiated calls=0 |
-| P8 | executed_failed / not_accepted | `main@1516337` 上 M01—M06 全部执行，M01/M06 passed、M02—M05 failed；账本 77 started / 77 dispatched / 0 failed，调用核算已闭合。未通过原因包括发布/fallback 收敛、无效路线确认、身份单位漂移和 SSE `NaN` JSON 解析问题；修复后须新冻结、新授权并完整重跑。 |
+| P8 | executed_failed / not_accepted | 最新 `main@3873ff9` 完整复验：M01/M05/M06 passed，M02/M03/M04 failed；账本 80 started / 80 dispatched，调用号连续且无缺失/孤立。M02 发布门误拒 D7/D30 边界，M03 压缩保存因空 workspace scope 返回 500，M04 Workbench 未将 v1 旧结论标为 stale/excluded；须修复后新冻结、新授权并完整重跑。 |
 
 ## 8. 风险、停止规则与回退
 
@@ -289,3 +289,9 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 新增 [回复内容完整性与表达优化计划](2026-09-08-answer-content-optimization-plan.md)，细化本计划 P3/P4/P6 的剩余缺口。依据是 [09-07 保存会话与当前源码诊断](../../audit/2026-09-07-answer-content-and-presentation-audit.md)：终局发布包未刷新、Python业务结果被摘要裁剪、正文覆盖与算术核验不足，以及排版过度紧凑。
 
 补充包使用独立 CP0—CP6 阶段与 AC01—AC40 用例。CP0—CP6 已完成源分支本地实现并随整合提交 `9e51b81` 合入 `main@f8ee717`；其源分支证据不自动升级为合并后矩阵通过。AC40 已随 `main@1516337` 的 P08 完整批次执行，但因 M03/M05 等内容硬门槛失败而未通过；后续仍适用 Provider 独立冻结、授权和调用账本规范。
+
+## 13. 2026-09-12 P08 修复后真实复验
+
+`main@3873ff99301f47023e6da422f97316bbf345684a` 使用冻结 SHA-256 `7156c9e115f9f6451249396bdb28e7dd970e1d81d2f5c78a15a45777a8827f44`、模型 `openai/deepseek-v4-flash`、端点 `https://api.deepseek.com` 和 120 次上限完成一次 M01—M06 内置浏览器完整批次。账本为 80 started / 80 dispatched，调用号 1—80 连续且无缺失/孤立；六会话工具消息配对全部闭合。
+
+结果为 M01/M05/M06 passed，M02/M03/M04 failed。M02 的 D7=10% 与 D30 证据边界被发布门误判并以 failed 终结；M03 六来源正文/刷新/导出完整，但压缩上下文在保存时因 `workspace_scope=None` 返回 500；M04 不再误触方法路线确认，正文也正确重判版本，但工作台仍把 v1 结论列为 verified 而非 stale/excluded。因而 P08 保持 `executed_failed / not_accepted`；通过项不得拼接为整体通过。详细身份、会话、导出与账本证据见 [整合记录](../../audit/2026-09-09-answer-intent-integration-record.md) 第 9 节。未执行 push、部署、staging 或生产验证。

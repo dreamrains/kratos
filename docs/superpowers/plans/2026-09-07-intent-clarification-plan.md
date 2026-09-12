@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-10｜版本：1.7｜状态：**IC0—IC4 已完成；IC5 在 `main@1516337` 执行但未通过，明确任务误触路线确认的本地修复已进入 `main@13c129a`，修复后的 IC4 联合浏览器复验已在 `main@176f5f2` 通过，新的 IC5 真实 Provider 复验尚未执行**。
+日期：2026-09-12｜版本：1.8｜状态：**IC0—IC4 已完成；修复后的 IC5/E4 已在 `main@3873ff9` 完整复验，方法名确认误触已消除、真实成本口径确认正常，但 M02 的 D7/D30 合规边界仍未形成发布终态，因此 IC5 仍为 `executed_failed / not_accepted`**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -91,6 +91,7 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | IC4 | passed_local；`main@be5ee9a` 上使用真实页面/HTTP/SSE/AgentLoop/工具和隔离会话完成 IC-B01—IC-B06，同批次也完成 B01—B06 与 CONTENT-B03/B07；真实 Provider initiated calls=0 |
 | IC5 / 真实 Provider | executed_failed / not_accepted；M06 的真实成本口径确认与一次恢复通过，但 M04 对明确任务错误弹出内部路线确认，M02 的边界回答未形成发布终态；批次账本 77/77/0，修复后须新冻结并完整复验 |
 | IC5 失败项本地修复 | completed_local / E3 passed；`main@13c129a` 将跨版本关系重判识别为明确任务，保持真实业务语义问题的确认门；相关隔离回归 130 passed。`main@176f5f2` 的联合浏览器复验覆盖 IC-B01—IC-B06：方法问题非阻塞、业务口径暂停/恢复、同范围复用、窗口变化重问、skip 不授权；Provider initiated calls=0。新的 Provider 批次未执行 |
+| IC5 / E4 修复后复验 | executed_failed / not_accepted；`main@3873ff9`、`tmp/p08-real-provider-20260910-3873ff9-r1` 完整执行 M01—M06，账本 80 started / 80 dispatched。M04 两轮均直接执行、无方法路线确认；M06 仅对成本业务口径暂停，确认记录完整且只恢复一次，缺失成本未被选择替代。M02 虽计算 D7=10% 并拒绝 D30 外推，却被发布门以 `unbound_time_point_claim` 拒绝且 `run_state=failed`，违反 Q13 的“直接发布边界”要求，故 IC5 不能通过。 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；本次 IC5 只证明冻结批次的真实模型行为且未通过，不代表部署或生产。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 的本地结论不代表真实模型、部署或生产验收；最新 IC5 证明方法许可与真实业务口径确认路径已在真实模型下工作，但不能覆盖 M02 的发布终态失败，也不代表部署或生产。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
