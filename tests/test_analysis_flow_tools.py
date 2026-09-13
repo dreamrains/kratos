@@ -179,6 +179,7 @@ class TestRecordAnalysisPlan:
 
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
+        assert result["workflow"]["started_task_id"] in result["workflow"]["task_ids"]
 
     def test_missing_fields(self):
         from data_agent.tools.analysis_flow import record_analysis_plan

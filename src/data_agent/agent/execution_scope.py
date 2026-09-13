@@ -155,7 +155,14 @@ def resolve_workspace_scope(manager, session_id: str, project_name: str = "") ->
     if not stage_tasks and tasks:
         return WorkspaceScopeSnapshot(session_id=session, project_name=project)
 
-    in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+    active_stage_tasks = [
+        task for task in stage_tasks
+        if task.get("status") in {"pending", "blocked", "in_progress"}
+    ]
+    if stage_tasks and not active_stage_tasks:
+        return WorkspaceScopeSnapshot(session_id=session, project_name=project)
+
+    in_progress = [task for task in active_stage_tasks if task.get("status") == "in_progress"]
     if len(in_progress) != 1:
         error_type = (
             "multiple_in_progress_tasks"
@@ -425,7 +432,16 @@ def _create_scope_enforcement_chain(
         if not stage_tasks and tasks:
             return snapshot_type(session_id=session, project_name=project)
 
-        in_progress = [task for task in stage_tasks if task.get("status") == "in_progress"]
+        active_stage_tasks = [
+            task for task in stage_tasks
+            if task.get("status") in {"pending", "blocked", "in_progress"}
+        ]
+        if stage_tasks and not active_stage_tasks:
+            return snapshot_type(session_id=session, project_name=project)
+
+        in_progress = [
+            task for task in active_stage_tasks if task.get("status") == "in_progress"
+        ]
         if len(in_progress) != 1:
             multiple = len(in_progress) > 1
             return snapshot_type(

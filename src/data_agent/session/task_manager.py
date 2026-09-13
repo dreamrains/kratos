@@ -248,6 +248,32 @@ class TaskManager:
         task = self._normalize(dict(task))
         return task.get("status") == "pending" and not task.get("blockedBy")
 
+    def start_next_ready_stage3c0b_task(
+        self,
+        *,
+        session_id: str,
+        project_name: str = "",
+        plan_id: str = "",
+    ) -> int | None:
+        """Atomically establish the single current task for an active Stage 3C0B plan."""
+        tasks = self.list_active_for_scope(
+            session_id=session_id,
+            project_name=project_name,
+        )
+        if plan_id:
+            tasks = [task for task in tasks if task.get("plan_id") == plan_id]
+        stage_tasks = [task for task in tasks if self._is_stage3c0b_scoped_task(task)]
+        if any(task.get("status") == "in_progress" for task in stage_tasks):
+            return None
+        ready = sorted(
+            (task for task in stage_tasks if self.is_ready(task)),
+            key=lambda task: int(task.get("id") or 0),
+        )
+        if not ready:
+            return None
+        started = self.update(ready[0]["id"], status="in_progress")
+        return int(started["id"]) if started is not None else None
+
     def _active_plans_path(self) -> Path:
         return self.dir / "active_plans.json"
 
@@ -667,6 +693,21 @@ class TaskManager:
                 completed_task_id = self._complete_stage3c0b_task_from_evidence(task, evidence)
                 if completed_task_id is not None:
                     completed.append(completed_task_id)
+            advanced_scopes = {
+                (
+                    str(task.get("session_id") or ""),
+                    str(task.get("project_name") or ""),
+                    str(task.get("plan_id") or ""),
+                )
+                for task in active_tasks
+                if task.get("id") in completed
+            }
+            for completed_session, completed_project, completed_plan in advanced_scopes:
+                self.start_next_ready_stage3c0b_task(
+                    session_id=completed_session,
+                    project_name=completed_project,
+                    plan_id=completed_plan,
+                )
             return completed
 
         evidence_text = self._evidence_text(evidence)

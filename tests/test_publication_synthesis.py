@@ -271,6 +271,42 @@ def test_explicit_arithmetic_mismatch_is_rejected_but_correct_rounding_passes():
     assert not any(issue["code"] == "arithmetic_mismatch" for issue in good)
 
 
+def test_nonzero_mean_cannot_be_described_as_zero_cv_denominator():
+    bad = validate_final_narrative_issues(
+        "amount 描述统计：mean=10.0、std=0.0、min=10，变差系数 CV 无定义（分母为 0）。"
+    )
+    good_zero = validate_final_narrative_issues(
+        "amount 描述统计：mean=0.0、std=0.0，变差系数 CV 无定义（分母为 0）。"
+    )
+    good_computed = validate_final_narrative_issues(
+        "amount 描述统计：mean=10.0、std=0.0，变差系数 CV=0。"
+    )
+
+    assert any(issue["code"] == "coefficient_variation_denominator_mismatch" for issue in bad)
+    assert not any(issue["code"] == "coefficient_variation_denominator_mismatch" for issue in good_zero)
+    assert not any(issue["code"] == "coefficient_variation_denominator_mismatch" for issue in good_computed)
+
+
+def test_constant_sample_does_not_license_data_origin_or_population_claims():
+    unsupported = validate_final_narrative_issues(
+        "amount 全等于 10，极可能是脱敏/占位/示意数据，真实业务波动为零。"
+    )
+    question = validate_final_narrative_issues(
+        "amount 全等于 10；需确认该文件是否为占位或样例数据。"
+    )
+
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in unsupported)
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in question)
+
+
+def test_plain_language_non_ledger_inference_is_rejected():
+    issues = validate_final_narrative_issues(
+        "每笔 amount 都是 10。这大概率是份占位/样例数据，不是真账本。"
+    )
+
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
+
+
 def test_explicit_subquestion_requires_visible_result_or_specific_gap():
     state = _packet_state([_receipt(
         "run_python",
@@ -535,6 +571,12 @@ class TestNSeriesPublication:
         assert validate_final_narrative(
             '## 三、“能否预测 D30”——证据分级\nD30 当前不能预测：只有 D1–D7 观测。',
             packet,
+        ) is None
+
+    def test_n01_prediction_barrier_table_heading_is_not_misread_as_prediction(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "| 判断维度 | 现状（均来自已加载数据） | 为什么阻断 D30 预测 |", packet,
         ) is None
 
     def test_n01_non_predictive_hypothesis_reference_publishes_without_a_value(self):

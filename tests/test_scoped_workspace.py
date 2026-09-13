@@ -181,6 +181,20 @@ def test_active_stage3c0b_plan_without_current_task_fails_closed(tmp_path):
     assert task["id"]
 
 
+def test_completed_stage3c0b_plan_releases_workspace_scope(tmp_path):
+    from data_agent.agent.execution_scope import resolve_workspace_scope
+
+    manager = TaskManager(tasks_dir=tmp_path / "tasks")
+    task = _stage3c0b_task(manager, status="in_progress")
+    manager.update(task["id"], status="completed")
+
+    scope = resolve_workspace_scope(manager, "s1", "")
+
+    assert scope.phase == "legacy"
+    assert scope.error_type == ""
+    assert scope.task_id == 0
+
+
 def test_active_analysis_plan_without_task_records_fails_closed(tmp_path):
     from data_agent.agent.execution_scope import resolve_workspace_scope
 

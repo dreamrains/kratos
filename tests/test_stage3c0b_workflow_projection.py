@@ -57,6 +57,77 @@ def test_projector_carries_stage3c0b_bindings(tmp_path):
     assert banner["dataset_contract_ids"] == ["contract_banner"]
     assert banner["combination_mode"] == "independent"
     assert banner["evidence_requirements"] == ["click_rate"]
+    synthesis = next(task for task in tasks if task["step_id"] == "step_synthesis")
+    assert result["started_task_id"] == banner["id"]
+    assert banner["status"] == "in_progress"
+    assert synthesis["status"] == "pending"
+
+
+def test_projector_starts_exactly_one_of_multiple_ready_steps(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    result = validate_analysis_plan_contract(
+        {
+            "contract_version": STAGE3C0B_CONTRACT_VERSION,
+            "goal": "Analyze two independent files.",
+            "method_plan": [
+                {
+                    "step_id": "step_a",
+                    "goal": "Analyze A.",
+                    "dataset_inputs": ["a"],
+                    "combination_mode": "independent",
+                    "expected_output": "A evidence",
+                    "evidence_requirements": ["a_metric"],
+                },
+                {
+                    "step_id": "step_b",
+                    "goal": "Analyze B.",
+                    "dataset_inputs": ["b"],
+                    "combination_mode": "independent",
+                    "expected_output": "B evidence",
+                    "evidence_requirements": ["b_metric"],
+                },
+            ],
+        },
+        dataset_contracts=[
+            {"dataset": "a", "id": "contract_a"},
+            {"dataset": "b", "id": "contract_b"},
+        ],
+    )
+    assert result.ok
+
+    projected = project_plan_to_workflow_tasks(
+        manager, result.plan, session_id="s1", project_name="p1",
+    )
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+
+    assert projected["started_task_id"] == tasks[0]["id"]
+    assert len([task for task in tasks if task["status"] == "in_progress"]) == 1
+
+
+def test_evidence_completion_atomically_advances_to_next_ready_step(tmp_path):
+    manager = TaskManager(tasks_dir=tmp_path)
+    plan = _validated_plan()
+    project_plan_to_workflow_tasks(manager, plan, session_id="s1", project_name="p1")
+    tasks = manager.list_active_for_scope(session_id="s1", project_name="p1")
+    banner = next(task for task in tasks if task["step_id"] == "step_banner")
+    synthesis = next(task for task in tasks if task["step_id"] == "step_synthesis")
+
+    completed = manager.complete_matching_tasks_from_evidence(
+        session_id="s1",
+        analysis_spec_id=plan["id"],
+        evidence={
+            "id": "ev_banner_click_rate",
+            "plan_id": plan["id"],
+            "step_id": "step_banner",
+            "dataset_contract_id": "contract_banner",
+            "evidence_requirement": "click_rate",
+            "result_summary": "click_rate=0.15",
+        },
+    )
+
+    assert completed == [banner["id"]]
+    assert manager.get(banner["id"])["status"] == "completed"
+    assert manager.get(synthesis["id"])["status"] == "in_progress"
 
 
 def test_projector_distinguishes_same_subject_steps_by_step_id(tmp_path):

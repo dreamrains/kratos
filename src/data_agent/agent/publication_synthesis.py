@@ -1098,6 +1098,15 @@ _NON_PREDICTIVE_REFERENCE = re.compile(
     r"(?:不报告|不给出|不提供|不发布).{0,12}(?:D\d+|数值|数字)",
     re.I,
 )
+_PREDICTION_BARRIER_LABEL = re.compile(
+    r"(?:为什么|为何|原因|依据|条件).{0,12}(?:阻断|禁止|拒绝|限制).{0,16}(?:预测|预估|推算)|"
+    r"(?:阻断|禁止|拒绝|限制).{0,16}(?:预测|预估|推算).{0,10}(?:原因|依据|条件)",
+    re.I,
+)
+_POSITIVE_PREDICTION_DIRECTION = re.compile(
+    r"(?:继续|将|会|预计|预估|预测).{0,8}(?:上升|下降|增长|减少|提高|降低)",
+    re.I,
+)
 _COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
 _ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 
@@ -1190,6 +1199,13 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
                 and _NON_PREDICTIVE_REFERENCE.search(boundary_window)
             ):
                 continue  # labels a hypothetical number as non-predictive; publishes no value
+            if (
+                not asserts_value
+                and not has_reported_rate
+                and _PREDICTION_BARRIER_LABEL.search(boundary_window)
+                and not _POSITIVE_PREDICTION_DIRECTION.search(clause)
+            ):
+                continue  # heading/label explains why prediction is blocked; it publishes no forecast
             if (
                 _BOUNDARY_BEFORE.search(boundary_window)
                 and not asserts_value
@@ -1407,6 +1423,35 @@ _PRODUCT_ARITHMETIC = re.compile(
     r"\s*(?:约为|约有|约|≈|=)\s*(?P<result>\d[\d,]*(?:\.\d+)?)\s*(?P<wan>万)?\s*(?:人)?",
     re.I,
 )
+_CV_ZERO_DENOMINATOR = re.compile(
+    r"(?:mean|均值)\s*(?:=|为|[:：])?\s*(?:\*\*)?"
+    r"(?P<mean>[-+]?\d[\d,]*(?:\.\d+)?)(?:\*\*)?"
+    r"(?:[^\n]|\n(?!\n)){0,320}?"
+    r"(?:变差系数|\bCV\b)(?:[^\n]|\n(?!\n)){0,80}?"
+    r"(?:无定义|未定义|undefined)(?:[^\n]|\n(?!\n)){0,40}?"
+    r"(?:分母(?:为|=)|denominator\s*(?:is|=))\s*(?:\*\*)?0(?:\.0+)?(?:\*\*)?",
+    re.I,
+)
+
+_UNSUPPORTED_DATA_ORIGIN = re.compile(
+    r"(?:大概率|极可能|很可能|可能|疑为|显然|说明|表明|就是|属于).{0,24}"
+    r"(?:脱敏|占位|样例|示意|演示)(?:数据|账本)?|"
+    r"(?:不是真账本|不是实际账本|并非真实账本)|"
+    r"真实业务(?:的)?波动(?:为|是)\s*零",
+    re.I,
+)
+_CONSTANT_SAMPLE_CONTEXT = re.compile(
+    r"(?:全(?:都|部)?(?:等于|为|是)|(?:均|都)(?:等于|为|是)|恒(?:为|等于)|零方差|无波动|"
+    r"unique(?:_values)?\s*=\s*1|std\s*=\s*(?:\*\*)?0(?:\.0+)?)",
+    re.I,
+)
+_DATA_ORIGIN_BOUNDARY = re.compile(
+    r"(?:是否|是不是|能否|无法|不能|未知|尚不清楚|需(?:要)?确认|待确认|"
+    r"如果|若|假如).{0,30}(?:脱敏|占位|样例|示意|演示|真实账本|真账本)|"
+    r"(?:脱敏|占位|样例|示意|演示|真实账本|真账本).{0,30}"
+    r"(?:是否|是不是|无法|不能|未知|尚不清楚|需(?:要)?确认|待确认)",
+    re.I,
+)
 
 
 def _decimal_number(value: str) -> Decimal | None:
@@ -1464,7 +1509,39 @@ def _arithmetic_issues(text: str) -> list[dict[str, str]]:
                     "请核对百分比、小数与万/千单位后再发布。"
                 ),
             })
+    for match in _CV_ZERO_DENOMINATOR.finditer(text):
+        mean = _decimal_number(match.group("mean"))
+        if mean is not None and mean != 0:
+            issues.append({
+                "code": "coefficient_variation_denominator_mismatch",
+                "span": match.group(0)[:80],
+                "reason": (
+                    "变差系数 CV 的分母是均值；正文同时给出非零均值却称分母为 0。"
+                    "请按 std / mean 重算，或更正无法计算的具体原因。"
+                ),
+            })
     return issues
+
+
+def _unsupported_data_semantics_issues(text: str) -> list[dict[str, str]]:
+    """Reject data-origin or population claims that cannot follow from observed constancy."""
+    if _CONSTANT_SAMPLE_CONTEXT.search(text) is None:
+        return []
+    for clause in _split_claims(text):
+        match = _UNSUPPORTED_DATA_ORIGIN.search(clause)
+        if match is None:
+            continue
+        if _DATA_ORIGIN_BOUNDARY.search(clause):
+            continue
+        return [{
+            "code": "unsupported_data_origin_inference",
+            "span": clause.strip()[:80],
+            "reason": (
+                "当前观测只能证明样本内取值恒定，不能据此判定数据是脱敏、占位、样例或非真实账本，"
+                "也不能推断真实业务总体波动为零；请改为待确认的数据来源问题。"
+            ),
+        }]
+    return []
 
 
 def _answer_coverage_issues(text: str, requirements: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1709,6 +1786,7 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_future_window_issues(text_value, scopes))
     issues.extend(_period_label_issues(text_value))
     issues.extend(_arithmetic_issues(text_value))
+    issues.extend(_unsupported_data_semantics_issues(text_value))
     issues.extend(_binding_numeric_issues(text_value, packet or {}))
     issues.extend(_answer_coverage_issues(text_value, (packet or {}).get("requirements") or []))
     return issues

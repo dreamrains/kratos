@@ -217,6 +217,12 @@ def project_plan_to_workflow_tasks(
             for dependency_id in dependency_ids:
                 manager.update(dependency_id, addBlocks=[task["id"]])
 
+    started_task_id = manager.start_next_ready_stage3c0b_task(
+        session_id=session_id,
+        project_name=project_name,
+        plan_id=plan_record["id"],
+    )
+
     return {
         "workflow_id": workflow_id,
         "plan_id": plan_record["id"],
@@ -224,4 +230,5 @@ def project_plan_to_workflow_tasks(
         "created": len(created),
         "reused": len(reused),
         "task_ids": [task["id"] for task in created + reused],
+        "started_task_id": started_task_id,
     }
