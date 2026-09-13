@@ -156,5 +156,7 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | E4 / IC5（`fe83160` R11 复验） | executed_failed / not_accepted | 冻结 SHA-256 `c41c606...d7e0`，真实 Provider 账本 89 started / 89 dispatched。M06 产生一个 `metric_definition` 成本口径确认，选择“代金券成本 + 渠道成本”后一次恢复，记录和事件完整；M04 无方法许可确认。M02 的 D7=10% / 不报告 D30 数值边界被发布门误拒，M04 没有形成结构化 evidence/hypothesis 状态，完整批次仍不通过。 |
 | E1 / E2（R11 失败项修复） | passed_local | `main@bed3b15`；隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped。发布门区分明确不报告数值与正向预测；既有计划、measurement 和竞争假设契约向模型公开并兼容旧记录。 |
 | E3（`bed3b15` 修复后） | passed_local | `tmp/repair-browser-20260913-r11`：B02/B02-NEG completed；B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets，并在版本变化后排除旧证据。浏览器控制台无错误，Provider initiated calls=0。该证据不升级 IC5/E4。 |
+| E4 / IC5（`ae8a5f4` R14 复验） | executed_failed / not_accepted | 冻结 SHA-256 `b4826cb...a0cce`，真实 Provider 账本 74 started / 74 dispatched。M06 的成本业务口径确实暂停、选择并只恢复一次，确认完整；但最终含无证据来源/总体波动表述。M02 边界误拒、M04 计划启动死锁和 M05 内容失败使完整批次不能通过。 |
+| E1 / E2 / E3（R14 失败项修复） | passed_local | `main@6d6f7e0`；隔离回归 324 passed 与 80 passed，full-offline 2637 passed、1 skipped；`tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。确认流程未重设，新的 IC5/E4 尚未冻结或授权。 |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。

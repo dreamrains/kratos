@@ -311,3 +311,9 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 结果为 M01/M03/M05/M06 passed，M02/M04 failed。M02 已给出 D7=10% 且没有 D30 数值，但发布门误拒“当前数据不足以支持对 D30 的预测，因此我不报告任何 D30 数值”，终态 failed；M04 正文正确区分 v1/v2 且无方法确认，但模型未形成有效分析计划和结构化证据，持久化 `evidence_records=0`、`hypothesis_sets=0`，因此不能以正文通过替代审计闭环。P08 继续为 `executed_failed / not_accepted`。
 
 对应修复提交为 `main@bed3b15`：发布门识别“不报告/不给出 Dxx 数值”的非预测边界；分析计划工具向模型暴露既有 Stage3C0B 契约并兼容对象/JSON 字符串；普通 measurements 不再被误当严格计划证据；显式竞争假设任务在证据前建立稳定假设 ID。隔离回归为 131 passed 与 80 passed，full-offline 为 2630 passed、1 skipped、0 failures。Provider-disabled 内置浏览器 `tmp/repair-browser-20260913-r11` 中 B02/B02-NEG 和 B04 均完成，B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets，版本变化后旧证据进入 exclusions；浏览器控制台为 0，真实 Provider initiated calls=0。该证据只关闭本地 E1/E2/E3；新的 E4 尚未冻结或授权。
+
+## 16. 2026-09-14 R14 E4 与本地修复
+
+`main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc` 按冻结 SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce` 完整执行 M01—M06；账本为 74 started / 74 dispatched，调用号连续、无缺失/孤立/重复，SHA-256 `1c98710278f18945f34bc534ca913a34e67a1c278572e530b9196104faadf2c7`。M01/M03 passed；M02 的正确 D1—D7/D30 边界被表头误拒，M04 命中 Stage3C0B 任务启动死锁，M05 存在总额缺失、CV 算术矛盾及无证据数据来源推断，M06 确认生命周期通过但仍有无依据来源/总体波动表述。P08 仍为 `executed_failed / not_accepted`。
+
+产品修复提交 `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 沿用既有发布修订和任务状态：识别预测阻断标题，校验 CV 分母和恒定样本语义，原子启动并推进唯一 ready 任务，全部终态后释放 scope。隔离回归 324 passed 与 80 passed；full-offline 2637 passed、1 skipped；提交后 Provider-disabled 内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。M05 的“六轮均保留总额 120”在首轮提示未明确要求求和，下一次冻结应修正提示/oracle 对齐，但不降低 oracle 或把 R14 改写为通过。新的 E4 尚未冻结或授权。

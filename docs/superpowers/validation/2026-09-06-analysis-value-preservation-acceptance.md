@@ -303,3 +303,10 @@ P1—P6：各自必测正反例通过、相关回归通过、阶段记录齐全�
 - 账本：`tmp/p08-real-provider-20260909-1516337-r1/provider-calls.jsonl` 为 77 started / 77 dispatched / 0 failed，SHA-256 `7c3cd0a6a1fc84a177dd598caf8fe185a30f837358e34456e4540be0208e8d14`，调用归属闭合且未超额。
 - 未解决 P1：D7/D30 合规边界未形成可发布终态；六来源正文虽完整但 fallback 收敛失败且没有 Workbench 已验证结论；明确的跨版本假设任务仍触发内部路线确认；身份改写出现单位漂移；两次 SSE `tool_result` 因 `NaN` 不是合法 JSON 而在页面解析失败。故关键安全/生命周期/身份一致性硬门槛不满足。
 - 正向证据：M01 的 12 笔/合计 120、单位未知、条件建议和刷新一致；M06 只在会改变净收益的成本口径处暂停，选择后一次恢复，并保持成本字段为明确缺口。证据等级仅为本地 E4，不代表 staging、生产或部署。
+
+## 16. 2026-09-14 R14 E4 与修复后 E3
+
+- R14 身份为 `main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc`、冻结 SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce`、账本 74 started / 74 dispatched。M01/M03 passed；M02/M04/M05/M06 failed，因此 P8 保持 `executed_failed / not_accepted`。
+- M02 五次近期完整批次都正确理解 D1—D7 和 D30 拒绝边界，重复失败是发布门误报；M04 是计划投影后没有唯一进行中任务的确定性启动死锁；M05/M06 暴露 CV 算术及恒定样本无依据来源/总体解释。M05 的总额硬 oracle 还需要在下一冻结提示中明确请求求和，不能靠模型自由发挥满足。
+- `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 已在既有发布与任务生命周期内修复上述确定性产品缺口。隔离定向为 324 passed 与 80 passed；full-offline 为 2637 passed、1 skipped；提交后内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 均 completed，B04 保留 3 条 evidence records、4 个 hypothesis sets，控制台 0 error/warning，Provider initiated calls=0。
+- 本地 E3 不升级 R14 E4。下一批仍须新冻结、新授权、完整执行 M01—M06；未 push、部署、staging 或生产验证。

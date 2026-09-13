@@ -841,3 +841,19 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 测试：隔离定向回归 131 passed 与 80 passed；full-offline 为 **2630 passed、1 skipped、16 warnings**，运行目录 `tmp/test-runs/20260913-r11-full-offline`，Provider 网络禁用。
 - 内置浏览器重点复核目录 `tmp/repair-browser-20260913-r11`：B02 `abc88e4eaaf4` 正确发布 D7/D30 边界并拒绝无依据 5%；B04 `470a4d26e812` 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets、8 条 receipts，版本变化后旧证据进入 exclusions，刷新状态保持。浏览器 error/warning console 为 0。
 - `runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。本地证据不升级 E4；新的完整 M01—M06 复验必须另行冻结并取得明确授权。本轮未 push、部署、staging 或生产验证。
+
+## P08-R14：`ae8a5f4` 真实 Provider 内置浏览器完整复验（Codex，2026-09-14）
+
+阶段 / 状态：**完整批次有效，P08 / IC5 / AC40 为 executed_failed / not_accepted；M01/M03 passed，M02/M04/M05/M06 failed。** 普通失败后继续执行完整矩阵，批次内未修代码、换提示、换夹具或局部重跑。
+
+- 身份：`main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc`；冻结 SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；账本 74 started / 74 dispatched，调用号连续且无 missing/orphan/duplicate，SHA-256 `1c98710278f18945f34bc534ca913a34e67a1c278572e530b9196104faadf2c7`。
+- M02 五批历史证据均表明模型能正确计算 D1—D7 并拒绝 D30；本轮失败点是“为什么阻断 D30 预测”表头被发布门误拒。M04 的有效计划暴露 task 全 pending 与 scope 要求 in_progress 的启动死锁。M05 缺总额 120、CV 分母矛盾并推断样例/账本来源；其总额 oracle 与首轮提示也存在未明确要求计算的对齐缺口。M06 确认状态机与结果分类通过，但存在无证据的数据来源/总体波动表述和“唯一下一步”多路径。
+- 六会话工具消息全部配对，浏览器控制台无 error/warning，Provider 授权与账本闭合；该批次不代表 staging、生产或部署。
+
+## P08-R15：R14 失败项本地修复（Codex，2026-09-14）
+
+阶段 / 状态：**E1/E2/full-offline 与重点 E3 passed_local；E4 仍是 R14 的 executed_failed / not_accepted。**
+
+- `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 在既有发布和 Stage3C0B 任务生命周期内修复：边界标题不再误拒；CV 分母与恒定样本无依据来源/总体解释进入一次修订；计划投影后启动唯一首任务、证据完成后推进下一 ready 任务、全部终态后释放 scope。没有新增流程、测试框架、探针、模型审核调用或记录机制。
+- 隔离回归为 324 passed 与 80 passed；full-offline `tmp/test-runs/20260914-r14-full-offline` 为 **2637 passed、1 skipped、16 warnings**。提交后内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 会话均 completed；B04 为 3 evidence records、4 hypothesis sets、3 publication packets；控制台 0 error/warning，Provider initiated calls=0。
+- 下一次 E4 必须使用新冻结和新授权完整执行 M01—M06；R14 授权、调用余额与会话均不可复用。未 push、部署、staging 或生产验证。

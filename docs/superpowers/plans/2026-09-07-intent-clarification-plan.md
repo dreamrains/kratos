@@ -96,6 +96,8 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | IC5 最新失败项本地修复 | completed_local / E3 passed；`main@16d2257` 将含明确成本、时间窗口或分母口径的误标方法请求恢复为真实业务决定，并把恢复后的类型持久化；显式方法/模型许可仍非阻塞。隔离回归 152 passed 与 126 passed，full-offline 2626 passed、1 skipped；`tmp/repair-browser-20260913-r10` 中成本范围仅暂停一次、选择“代金券及渠道成本”后只恢复一次，方法许可无确认记录，Provider initiated calls=0。新的 IC5/E4 尚未执行。 |
 | IC5 / E4 R11 复验 | executed_failed / not_accepted；`main@fe83160`、冻结 SHA-256 `c41c606...d7e0`、账本 89 started / 89 dispatched。M06 对 `metric_definition` 真实成本口径暂停，选择“代金券成本 + 渠道成本”后只恢复一次，确认记录与事件完整；M04 也没有方法许可确认。M02 合规 D7/D30 边界仍被发布门误拒，M04 未形成结构化证据/竞争假设闭环，故 IC5 不能升级。 |
 | IC5 R11 失败项本地修复 | completed_local / E3 passed；`main@bed3b15` 修正非预测边界识别，并向模型暴露既有分析计划、measurement 与竞争假设契约，未增加新的确认流程。隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped；`tmp/repair-browser-20260913-r11` 的 B02/B04 重点复核完成，Provider initiated calls=0。新的 IC5/E4 尚未执行。 |
+| IC5 / E4 R14 复验 | executed_failed / not_accepted；`main@ae8a5f4`、冻结 SHA-256 `b4826cb...a0cce`、账本 74 started / 74 dispatched。M06 的 `metric_definition` 成本口径只暂停和恢复一次，确认事件完整；但最终仍从恒定样本推断数据来源/总体波动。M02 合规边界被误拒，M04 计划启动死锁，M05 内容门槛另有失败，完整批次不能升级 IC5。 |
+| IC5 R14 失败项本地修复 | completed_local / E3 passed；`main@6d6f7e0` 没有改变确认流程，修复发布边界、Stage3C0B 唯一任务启动/推进和无证据恒定样本语义。隔离回归 324 passed 与 80 passed，full-offline 2637 passed、1 skipped；`tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；`fe83160` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；最新 `ae8a5f4` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。

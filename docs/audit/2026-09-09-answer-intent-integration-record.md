@@ -132,3 +132,23 @@
 - 隔离测试：`tmp/test-runs/20260913-r11-targeted-2` 为 131 passed；`tmp/test-runs/20260913-r11-targeted-3` 为 80 passed；`tmp/test-runs/20260913-r11-full-offline` 为 **2630 passed、1 skipped、16 warnings、0 failures**。runner 禁止 Provider 网络。
 - Provider-disabled 内置浏览器：`tmp/repair-browser-20260913-r11`。B02 会话 `abc88e4eaaf4` 发布 D7=10% 与 D30 边界，B02-NEG 的无依据 5% 候选经既有一次修订后完成；B04 会话 `470a4d26e812` 完成支持、反证、冲突、未决、版本更新与 stale，持久化包含 3 条 evidence records、4 个 plan-scoped hypothesis sets、8 条 receipts、3 个 publication packets，旧版本证据进入 exclusions。刷新后状态保留，浏览器控制台 error/warning 为 0。
 - 运行轨迹：`server_start=1`、`auxiliary_call=26`、`scripted_round=19`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。该 E1/E2/E3 证据不改写第 13 节 E4 失败结论；新的完整 M01—M06 E4 尚未冻结或授权。未 push、未部署。
+
+## 15. `ae8a5f4` 真实 Provider 完整批次（2026-09-14）
+
+- 精确身份：`main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc`；冻结文件 `tmp/p08-real-provider-20260914-ae8a5f4-r1/freeze.json`，SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；Codex 内置浏览器。授权只用于本批次，现已消耗。
+- Provider 账本 `tmp/p08-real-provider-20260914-ae8a5f4-r1/provider-calls.jsonl` 为 **74 started / 74 dispatched / 0 failed / 0 denied**，调用号 1—74 连续；无 missing、orphan 或重复 start/dispatch；32 次非流式、42 次流式；SHA-256 `1c98710278f18945f34bc534ca913a34e67a1c278572e530b9196104faadf2c7`。冻结文件运行后摘要保持不变，待处理上传目录为空。
+- 六会话依次为 M01 `d6409e344dee`、M02 `3ce00e6c94b3`、M03 `afeee6826efc`、M04 `0d1249585f93`、M05 `809883a02e5a`、M06 `cccaf32e8f0e`。全部 assistant tool call ID 与 tool receipt 一一配对，无缺失、孤立或重复；M01/M03/M05/M06 的 run_state 为 completed，M02/M04 为 failed；浏览器 error/warning console 为 0。
+- 验收结果为 **M01/M03 passed；M02/M04/M05/M06 failed**。M01 保留 12 条、合计 120、未知单位、范围、限制及触发/停止条件。M03 保留六来源 10→11 至 60→66、合计 210→231、逐来源绝对/相对变化与记录数，正文、压缩、刷新和导出一致。
+- M02 的模型输出正确给出 D1=55% 至 D7=10%，也拒绝 D30 数值；发布门却把表头“为什么阻断 D30 预测”误判为 `[unbound_time_point_claim]`。结合 `1516337`、`3873ff9`、`dc44382`、`fe83160` 与本批五次完整结果，模型每次都理解 D1—D7 和 D30 边界，反复失败的主因是确定性发布误报，不是 DXX 概念随机理解。
+- M04 已成功调用有效 `record_analysis_plan`，但投影出的任务全部保持 pending；工具返回后 workspace scope 立即要求唯一 in_progress，形成 `stage3c0b_current_task_missing` 启动死锁，后续证据记录均被阻断，v2 上传又因错误 scope 被拒。该结果把 R12 的“模型未形成有效计划”进一步定位为既有任务生命周期没有原子启动/推进，而非需要另一套计划流程。
+- M05 六轮均保留 12 条、日期、未知单位和描述性证据等级，但没有任何一轮给出合计 120；分析师/技术表达还把 `mean=10、std=0` 写成“CV 分母为 0”，大白话将恒定样本推断为“占位/样例、不是真账本”。其中“六轮都保留总额 120”的硬 oracle 与首轮仅要求“事实摘要”的提示并不完全对齐：本轮模型未调用求和工具，不能把该缺失全部归为内容保留退化；下一次冻结应在不改变流程的前提下明确要求订单数与总额。
+- M06 的 `metric_definition` 成本口径确认及 requested→suspended→response_received→applying→resolved 生命周期完整，只选择并恢复一次；最终也把总额 120、未计算成本/净收益和证据不足分开。但正文从常量样本推断“极可能脱敏/占位、真实业务波动为零”，缺乏来源和总体证据；缺失数据回答的“唯一下一步”又列出多个替代路径。确认状态机通过不能覆盖这两个内容门槛。
+- 结论：批次身份、调用核算、会话隔离、事件配对与授权边界有效，但 P08 / IC5 / AC40 仍为 **executed_failed / not_accepted**。没有 push、部署、staging 或生产验证，也没有在批次后追加 Provider 调用。
+
+## 16. R14 失败项系统修复与本地复核（2026-09-14）
+
+- 产品修复提交：`main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9`。发布门允许无数值、无正向方向断言的“为什么阻断 D30 预测”标题，仍拒绝未观测数值和正向方向；新增既有终局修订路径内的 CV 分母一致性与恒定样本来源/总体语义检查，待确认问句不被误拒。
+- Stage3C0B 继续使用原有 task/plan/evidence 状态：计划投影完成依赖关系后启动且只启动首个 ready 任务；当前任务由证据完成时推进下一个 ready 任务；全部终态后释放 workspace scope。pending/blocked 而无唯一 in_progress 的异常仍失败关闭，没有新增工作流、记录库或模型审核调用。
+- 隔离回归：`tmp/test-runs/20260914-r14-targeted-runtime` **324 passed**；`tmp/test-runs/20260914-r14-targeted-contracts` **80 passed**；`tmp/test-runs/20260914-r14-full-offline` **2637 passed、1 skipped、16 warnings、0 failures**；最终聚焦 `tmp/test-runs/20260914-r14-final-smoke` 97 passed，补充发布回归 `tmp/test-runs/20260914-r14-publication-final2` 59 passed。所有 runner 均禁止 Provider 网络。
+- 提交后 Provider-disabled 内置浏览器目录 `tmp/repair-browser-20260914-r15`：B02 会话 `251abaf5a0bc` 正常发布 D7=10% 与 D30 边界并 completed；B04 会话 `a504bddcf8b2` 完成支持、反证、冲突、未决和版本失效，持久化为 3 条 evidence records、4 个 hypothesis sets、3 个 publication packets，run_state completed。浏览器控制台 error/warning 为 0；`runtime.jsonl` 无 `forbidden_provider_transport`，真实 Provider initiated calls=0。
+- 本地修复证据不升级第 15 节 E4 结论。下一次真实 Provider 验收必须先把精确提交、模型、端点、fixture、完整提示、矩阵、预算、账本路径和冻结摘要重新冻结，再取得新的单次明确授权；旧授权与剩余调用容量不可复用。

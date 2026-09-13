@@ -175,7 +175,7 @@ Provider授权引用、计数或明确0调用：
 | AC37 | passed_local | E3 场景 B03：刷新保留正文，实际 MD 导出包含同一 packet/snapshot/answer hash 与六来源 |
 | AC38 | passed_local | 固定小中大 fixture，prompt 小于 65k；正常路径新增 Provider 调用 0，超限转 detail_ref |
 | AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
-| AC40 | executed_failed / not_accepted | 最新 `tmp/p08-real-provider-20260913-fe83160-r1` 完整复验：89 started / 89 dispatched。M01/M03/M05/M06 通过；M02 误拒明确不报告 D30 数值的边界，M04 正文正确但 `evidence_records=0`、`hypothesis_sets=0`，内容与可审计证据闭环的硬门槛仍未通过。 |
+| AC40 | executed_failed / not_accepted | 最新 `tmp/p08-real-provider-20260914-ae8a5f4-r1` 完整复验：74 started / 74 dispatched。M01/M03 通过；M02 边界标题误拒，M04 计划启动死锁，M05 总额缺失、CV 算术和无依据来源解释失败，M06 的确认与结果分类通过但仍有无依据来源/总体波动表述。完整内容门槛未通过。 |
 
 AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续进入下一模型轮且 SSE 工具事件保持配对；纯表达回合只在当前数据身份与已接受快照一致时复用发布绑定；未知金额单位不能被身份表达改写成币种，混合已发生/未来日期不能笼统称为未来；非有限数在 SSE 中转为严格 JSON `null`；空图表引用显示明确缺失提示。隔离回归为内容/Web 208 passed、最终聚焦 173 passed；修复后的 E3 结果见下文。这些证据不把 AC40 的真实 Provider 批次改为通过。
 
@@ -202,6 +202,10 @@ R10 E4 证据（2026-09-13）：`main@dc44382f873c2842d77307d7c8075bbd1e5f6233`�
 R11 E4 证据（2026-09-13）：`main@fe831601b7adef52a831317adaf93c2aeba760ba`、冻结 SHA-256 `c41c6064dac6887339512874705097e9f8d90087b0c73886c565e9b60309d7e0`、模型 `openai/deepseek-v4-flash`、账本 89 started / 89 dispatched。M03 的六来源 10→11 至 60→66、合计 210→231、记录数、`日环比`、刷新、压缩和 5523 字节 Markdown 一致；M05 六种表达保持 12/120、日期、未知单位与证据等级；M06 将总额 120、未计算促销增量/成本/净收益和证据不足分开。M02 仍误拒无数值 D30 边界；M04 虽正确叙述 v1/v2，但持久化结构化证据和竞争假设为空。因此 AC40 仍不通过。
 
 R11 失败项本地修复证据（2026-09-14 收口）：`main@bed3b15`。相关隔离回归为 131 passed 与 80 passed；full-offline 为 2630 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器目录 `tmp/repair-browser-20260913-r11` 中，B02/B02-NEG 完成且仍拒绝无依据 5% 预测；B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets、8 条 receipts，版本变化后旧证据进入 exclusions。`runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。该证据不把 AC40/E4 改写为通过。
+
+R14 E4 证据（2026-09-14）：`main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc`、冻结 SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce`、模型 `openai/deepseek-v4-flash`、账本 74 started / 74 dispatched。M03 六来源内容、总计与压缩/刷新/导出完整；M05 六轮保留 12 条、日期、未知单位与证据等级，但均未给出总额 120，并出现 `mean=10` 却称 CV 分母为 0、以及样例/账本来源推断；M06 确认和结果分类正确，但含无依据来源/总体波动解释。M02/M04 另有确定性运行时失败，AC40 仍不通过。M05 首轮提示未明确要求求和，与“六轮总额 120”硬 oracle 不完全对齐，下一冻结应明确请求订单数和总额，不能降低 oracle 或把本轮算通过。
+
+R14 失败项本地修复证据：`main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9`。发布门修复边界标题、CV 分母和恒定样本语义；Stage3C0B 计划投影后启动唯一 ready 任务、证据完成后推进、全部终态后释放 scope。隔离回归 324 passed 与 80 passed；full-offline 2637 passed、1 skipped；提交后内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 completed，控制台 0 error/warning，Provider initiated calls=0。新的 AC40/E4 尚未冻结或授权。
 
 ## 7. 本次文档校验记录
 
