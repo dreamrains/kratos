@@ -101,3 +101,18 @@
 - Provider-disabled 内置浏览器复核：`tmp/repair-browser-20260912-r9`。M02 会话 `4342b3edf76b` 发布并在刷新后保留 D7=10% 与“不能预测 D30”；M03 会话 `a67927a591d1` 保留六来源回答，随后 `/api/compact` 返回 200；M04 脚本会话 `e97030bfa704` 完成支持、反证与同名数据重载。对 R8 真实 M04 会话 `29e4536464f3` 的 `analysis_state.json` 作只读重放后，Workbench 当前 verified 仅含 4 条 v2 结论，v1 假设显示为 stale。
 - `runtime.jsonl` 只含 `server_start(provider_enabled=false)`、`auxiliary_call` 和 `scripted_round`，没有 `forbidden_provider_transport`，因此本次真实 Provider initiated calls=0。
 - 证据边界：本节只关闭本地修复与 E1/E2/E3 复核，不改写第 9 节已失败的真实批次。P08 / IC5 / AC40 继续为 **executed_failed / not_accepted**；下一次 E4 必须以 `d9164fa` 之后的确切文档提交重新冻结并取得一次新的明确授权。未 push、未部署。
+
+## 11. `dc44382` 真实 Provider 完整批次（2026-09-13）
+
+- 运行身份：`main@dc44382f873c2842d77307d7c8075bbd1e5f6233`；冻结 SHA-256 `087974003fdb023e64fc86aec4f4c39a8431d89ecdbcb70832c039ea4c79e451`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；内置浏览器。
+- Provider 账本 `tmp/p08-real-provider-20260912-dc44382-r1/provider-calls.jsonl` 为 **78 started / 78 dispatched / 0 failed / 0 denied**，调用号 1—78 连续，SHA-256 `df8045038700236c24108a4b60034f7b07a2eb72780173117437384041aff3c7`。分场景为 M01 7、M02 11、M03 12、M04 15、M05 19、M06 14。
+- 结果：M01/M04/M05 passed；M02/M03/M06 failed。M02 将无数值的 D30 假设边界误拒；M03 的六来源内容、刷新、导出和压缩完整，但把相邻两日变化误称“同比”；M06 未造数且正确区分未计算/证据不足，但真实成本范围问题被误标为方法确认，宿主未暂停，确认 ledger 为空。
+- 六会话 `b3dcb3370dfe`、`80657c554ead`、`082344612717`、`062b7cebfa07`、`c8a8d856d396`、`13c4cdfd474d` 的工具消息分别为 5/5、11/11、5/5、15/15、3/3、9/9，均闭合；浏览器 error console 为 0。批次内未修复或局部重跑。
+- 结论：批次身份和调用核算有效，但 P08 / IC5 / AC40 仍为 **executed_failed / not_accepted**；该授权已消耗，不能复用余额或会话。
+
+## 12. R10 失败项修复与本地复核（2026-09-13）
+
+- 产品修复提交：`main@16d2257`。发布门允许不带具体数值的非预测假设边界、仍拒绝未观测率；显式日期的错误“同比”标签进入一次修订；宿主把明确成本/窗口/分母业务口径从误标的 `method_confirmation` 恢复为业务决定并持久化，真正方法许可保持非阻塞。
+- 隔离测试：`tmp/test-runs/20260913-r10-targeted-1` 152 passed；`tmp/test-runs/20260913-r10-targeted-confirmation` 126 passed；`tmp/test-runs/20260913-r10-full-offline` 2626 passed、1 skipped、0 failures。直接 pytest 曾因复用仓库默认 sessions 产生 5 个 ID/状态污染失败，改用既有隔离 runner 后全部通过；该污染结果不计为产品失败，也未删除或改写用户数据。
+- Provider-disabled 内置浏览器：`tmp/repair-browser-20260913-r10`。B02/B02-NEG 会话 `cf46a735a5c0` 以 D7=10% 和 D30 边界 completed；CONTENT-B03 `6d00e72c303f` 在压缩、刷新和 9380 字节 Markdown 中保留六来源金额、变化、日期与记录数；IC-B03 `62f33fd6ade2` 只有一个成本范围确认，选择“代金券及渠道成本”后恢复一次并 resolved；IC-B06-METHOD `a254cdfd4ffe` 不暂停。四会话 run_state 均 completed，确认快照均 `integrity_status=ok`。
+- `runtime.jsonl` 明确 `provider_enabled=false`，没有 Provider 传输记录，真实 Provider initiated calls=0。该 E3 只验证修复后的本地页面、HTTP/SSE、持久化、压缩、刷新、导出与确认恢复，不把第 11 节改写为通过；未 push、未部署。

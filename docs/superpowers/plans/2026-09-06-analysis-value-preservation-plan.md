@@ -1,6 +1,6 @@
 # 分析价值保留与能力完整性：实施总计划
 
-版本：v0.9｜日期：2026-09-12｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；`main@d9164fa` 已修复最新真实 Provider 批次暴露的 M02/M03/M04 问题并通过 full-offline 与重点 E3，本地修复完成；P08 仍为 `executed_failed / not_accepted`，等待新冻结、新授权的完整 E4 复验**。
+版本：v0.10｜日期：2026-09-13｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；`main@dc44382` 的最新真实 Provider 完整批次已执行但 M02/M03/M06 未通过，P08 保持 `executed_failed / not_accepted`；对应产品修复已提交为 `main@16d2257`，E1/E2/full-offline 与重点 Provider-disabled E3 已通过，等待新冻结、新授权的完整 E4 复验**。
 
 用户已接受产品原则：允许发布明确标注的待验证解释和有证据支持的条件性建议，继续严格区分已验证结论。最初“先不要修复”的要求用于规划交付；用户现已明确说明 P0—P6 已推进，并要求“从 P7 阶段继续开始”。当前执行以该后续指令为准。P7 发现的问题、原始证据和恢复条件见 [P7 执行报告](../validation/2026-09-06-vp-p7-execution-report.md)；真实 Provider、提交、推送、部署仍不自动获得授权。
 
@@ -48,7 +48,7 @@
 
 规划快照包含 402 个当前存在的受控文件，精确字节聚合 SHA-256 为 `fbafe8019a177f22c9f06277e8275b37edf53b2d592c6145a42b083f4df0860e`。它只用于规划期变更识别，**不是 Provider 冻结摘要或授权凭据**。
 
-当前本地整合基线为 `main@176f5f2`：产品修复停在 `13c129a`，其后仅有状态文档。P0—P7、必要澄清 IC0—IC3、回答内容 CP0—CP6 已进入同一文件树。整合定向结果为回答内容 129 passed、必要澄清 301 passed；合并前 full-offline 的唯一剩余失败属于多复制清单外夹具，用户接受该结果用于合并，但不得记为 full-offline 全绿。合并后的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 已在 `main@be5ee9a` 的同一 Provider 禁用批次通过。随后 P08/IC5/AC40 在 `main@1516337` 执行一次真实 Provider 完整批次，账本 77/77/0 且未超额，但 M02—M05 失败。`13c129a` 对该批暴露的发布收敛、明确重判任务、单位/日期边界、SSE 严格 JSON 和空图表引用实施本地修复；其两组最新定向回归为 130 passed 与 208 passed，full-offline 为 2616 passed、1 failed、1 skipped（唯一失败为报告落盘瞬时 `FileNotFoundError`，单例与整个 golden 文件隔离复跑均通过）。修复后的联合 E3 又在 `tmp/repair-browser-20260910-r3` 完成，矩阵全部达到预期且 Provider initiated calls=0；这些结果仍不把 P08 升级为通过。
+当前本地产品基线为 `main@16d2257`。P0—P7、必要澄清 IC0—IC4、回答内容 CP0—CP6 已进入同一文件树并有本地 E1/E2/E3 证据。最新真实 Provider 批次在 `main@dc44382` 完整执行，账本 78 started / 78 dispatched，但 M02/M03/M06 未通过；其发布边界、周期标签和澄清恢复缺口已在 `16d2257` 修复。最新隔离回归为 152 passed 与 126 passed，full-offline 为 2626 passed、1 skipped；重点内置浏览器复核位于 `tmp/repair-browser-20260913-r10`，Provider initiated calls=0。P08 仍保持 `executed_failed / not_accepted`，不能以修复后的本地绿灯替代新的真实 Provider 完整复验。
 
 ## 4. 已确认原则、目标与非目标
 
@@ -245,7 +245,7 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P7 | passed（本地、Provider 禁用） | 完整离线回归 `2519 passed / 1 skipped`；B01—B06 均已完成本地真实浏览器验证。详细收据与 B03 修复见阶段记录 L3-R2 至 L3-R4。 |
 | 合并后 P7/IC4/CP6 联合复核 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 通过；保存失败为 `unknown`、预算耗尽为 `failed`，未误发布完成；Provider initiated calls=0 |
 | R5 修复后 P7/IC4/CP6 联合复核 | passed_local | `main@176f5f2`、`tmp/repair-browser-20260910-r3`；同一联合矩阵通过，刷新/导出/Plotly/澄清恢复/失败终态均核对；控制台无 JSON 错误，Provider initiated calls=0 |
-| P8 | executed_failed / not_accepted | 最新 `main@3873ff9` 完整复验：M01/M05/M06 passed，M02/M03/M04 failed；账本 80 started / 80 dispatched，调用号连续且无缺失/孤立。M02 发布门误拒 D7/D30 边界，M03 压缩保存因空 workspace scope 返回 500，M04 Workbench 未将 v1 旧结论标为 stale/excluded；须修复后新冻结、新授权并完整重跑。 |
+| P8 | executed_failed / not_accepted | 最新 `main@dc44382` 完整复验：M01/M04/M05 passed，M02/M03/M06 failed；账本 78 started / 78 dispatched，调用号连续。三个失败项已在 `main@16d2257` 完成本地修复并通过 full-offline 与重点 E3，但仍须新冻结、新授权并完整重跑。 |
 
 ## 8. 风险、停止规则与回退
 
@@ -295,3 +295,11 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 `main@3873ff99301f47023e6da422f97316bbf345684a` 使用冻结 SHA-256 `7156c9e115f9f6451249396bdb28e7dd970e1d81d2f5c78a15a45777a8827f44`、模型 `openai/deepseek-v4-flash`、端点 `https://api.deepseek.com` 和 120 次上限完成一次 M01—M06 内置浏览器完整批次。账本为 80 started / 80 dispatched，调用号 1—80 连续且无缺失/孤立；六会话工具消息配对全部闭合。
 
 结果为 M01/M05/M06 passed，M02/M03/M04 failed。M02 的 D7=10% 与 D30 证据边界被发布门误判并以 failed 终结；M03 六来源正文/刷新/导出完整，但压缩上下文在保存时因 `workspace_scope=None` 返回 500；M04 不再误触方法路线确认，正文也正确重判版本，但工作台仍把 v1 结论列为 verified 而非 stale/excluded。因而 P08 保持 `executed_failed / not_accepted`；通过项不得拼接为整体通过。详细身份、会话、导出与账本证据见 [整合记录](../../audit/2026-09-09-answer-intent-integration-record.md) 第 9 节。未执行 push、部署、staging 或生产验证。
+
+## 14. 2026-09-13 最新 E4 与本地修复
+
+`main@dc44382f873c2842d77307d7c8075bbd1e5f6233` 按冻结 SHA-256 `087974003fdb023e64fc86aec4f4c39a8431d89ecdbcb70832c039ea4c79e451`、模型 `openai/deepseek-v4-flash`、端点 `https://api.deepseek.com` 和物理调用上限 120，在内置浏览器完整执行 M01—M06。账本 `tmp/p08-real-provider-20260912-dc44382-r1/provider-calls.jsonl` 为 78 started / 78 dispatched / 0 failed，调用号 1—78 连续，SHA-256 为 `df8045038700236c24108a4b60034f7b07a2eb72780173117437384041aff3c7`。
+
+结果为 M01/M04/M05 passed，M02/M03/M06 failed。M02 的 D7=10% 已计算，但“把任何 D30 数字视为假设，而非预测”被发布门误拒；M03 六来源金额、变化和记录数在正文、刷新、导出与压缩后均保留，但把相邻两日变化错误称为“同比”；M06 正确区分已计算、未计算和证据不足，却把真实成本范围问题误标为 `method_confirmation`，宿主因此未暂停，确认账本为空。批次内未修复或局部重跑，P08 继续为 `executed_failed / not_accepted`。
+
+三个缺口已在 `main@16d2257` 做最小宿主修复：允许不含数值主张的非预测假设边界、拒绝显式相邻日期的错误“同比”标签、将含明确成本/时间/分母业务口径的误标方法请求恢复为业务决定，同时保留真正方法许可的非阻塞语义。隔离回归为 152 passed 与 126 passed；full-offline 为 2626 passed、1 skipped、0 failures。Provider-disabled 内置浏览器目录 `tmp/repair-browser-20260913-r10` 验证了 D30 拒绝/单次修订、六来源压缩/刷新/9380 字节 Markdown、成本范围单次暂停恢复和方法许可非阻塞；四个会话终态均为 completed，确认快照完整，真实 Provider initiated calls=0。该本地证据不升级 P08/E4，下一轮仍须新冻结和新授权。

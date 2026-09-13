@@ -790,3 +790,29 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 测试：相关回归 135 passed；full-offline 为 **2620 passed、1 skipped、16 warnings**，证据目录 `tmp/test-runs/20260912T110259Z-dec8066d`。
 - 内置浏览器重点复核目录 `tmp/repair-browser-20260912-r9`：M02 `4342b3edf76b`、M03 `a67927a591d1`、M04 `e97030bfa704`。M02 刷新保留边界回答，M03 压缩保存成功，M04 完成支持/反证/版本更新。运行器强制禁用 Provider，`forbidden_provider_transport=0`，真实 Provider initiated calls=0。
 - 本轮没有真实 Provider 调用、push、部署、staging 或生产验证。下一次完整 M01—M06 真实复验须基于新的冻结文件和用户明确授权。
+
+## P08-R10：`dc44382` 真实 Provider 内置浏览器完整复验（Codex，2026-09-13）
+
+阶段 / 状态：**完整批次有效，P08 / IC5 / AC40 为 executed_failed / not_accepted；M01/M04/M05 passed，M02/M03/M06 failed。** 普通失败后继续执行完整矩阵，批次内未修代码、换提示、换夹具或局部重跑。
+
+- 精确身份：`main@dc44382f873c2842d77307d7c8075bbd1e5f6233`；冻结 `tmp/p08-real-provider-20260912-dc44382-r1/freeze.json`，SHA-256 `087974003fdb023e64fc86aec4f4c39a8431d89ecdbcb70832c039ea4c79e451`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；Codex 内置浏览器。
+- 账本：`tmp/p08-real-provider-20260912-dc44382-r1/provider-calls.jsonl` SHA-256 `df8045038700236c24108a4b60034f7b07a2eb72780173117437384041aff3c7`，78 started / 78 dispatched / 0 failed / 0 denied；调用号 1—78 连续。分场景 M01 7、M02 11、M03 12（含压缩）、M04 15、M05 19、M06 14。
+- 会话：M01 `b3dcb3370dfe`、M02 `80657c554ead`、M03 `082344612717`、M04 `062b7cebfa07`、M05 `c8a8d856d396`、M06 `13c4cdfd474d`。六会话工具调用与工具消息分别为 5/5、11/11、5/5、15/15、3/3、9/9，均闭合；浏览器 error console 为 0。
+- M01 passed：正文保留 12 条、合计 120、未知单位、范围、限制、触发/停止条件，无因果或总体外推，刷新一致。
+- M02 failed：D7=10% 已计算且未给出 D30 预测，但发布门把“在此之前，请把任何 D30 数字视为假设，而非预测”误判为 `unbound_time_point_claim`，终态 failed。
+- M03 failed：六个来源及其两日金额、变化与记录数在正文、刷新、5877 字节 Markdown、2668 字节发布报告及压缩后均保留；但正文把 2026-09-01→09-02 的相邻日期变化错误标为“同比”，属于业务语义错误。
+- M04 passed：v1 10→20→20 与 v2 10→10→10 的支持、反证、冲突、未决和失效状态正常；当前 Workbench verified 只保留 v2，v1 为 stale 历史，无证据升级。
+- M05 passed：六种表达均保持 12/120、日期范围、未知单位、限制和证据等级；技术方法与来源可恢复，刷新/导出一致。
+- M06 failed：缺失数据分支未造数；最终回答也区分总额 120、未计算成本/净收益和证据不足。但模型把真实成本范围问题标为 `method_confirmation`，宿主按方法许可放行，未出现暂停、选择“代金券及渠道成本”或单次恢复，确认快照虽 `integrity_status=ok` 但 records 为空。
+- 证据边界：本轮只证明指定提交、模型和端点下的本地真实浏览器＋真实 Provider 行为，不代表 staging、生产或部署。授权已消耗；后续必须修复后重新冻结并取得新授权。
+
+## P08-R11：R10 失败项本地修复与 Provider-disabled 复核（Codex，2026-09-13）
+
+阶段 / 状态：**E1/E2/full-offline 与重点 E3 passed_local；P08 / IC5 / AC40 的 E4 仍为 executed_failed / not_accepted。** 产品修复提交为 `main@16d2257`。
+
+- 发布边界：无具体数值主张的“任何 D30 数字仅是假设而非预测”可发布；同句出现未观测百分比仍拒绝。
+- 周期语义：正文明确列出至少两个 ISO 日期时，“同比”必须存在跨年同月同日配对；相邻日期的错误标签触发一次终局修订。
+- 澄清恢复：含成本范围、时间窗口或分母口径的 `method_confirmation` 误标由宿主恢复为业务决定并按恢复后的类型持久化；明确询问方法/模型许可仍为 advisory/nonblocking。
+- 隔离回归：`tmp/test-runs/20260913-r10-targeted-1` 为 152 passed；`tmp/test-runs/20260913-r10-targeted-confirmation` 为 126 passed；`tmp/test-runs/20260913-r10-full-offline` 为 **2626 passed、1 skipped、0 failures**。Provider 网络禁用。
+- 内置浏览器：复用现有 `run_p7_browser_rehearsal.py`，隔离目录 `tmp/repair-browser-20260913-r10`。B02→B02-NEG 拒绝无依据 D30=5% 后仅修订一次并以 completed 终结；CONTENT-B03 六来源在刷新、压缩和 9380 字节 Markdown 中保留；IC-B03 仅对成本范围暂停，选择“代金券及渠道成本”后恢复一次，确认记录 `status=resolved`；IC-B06-METHOD 无确认记录并直接完成。四个会话确认快照均 `integrity_status=ok`。
+- `runtime.jsonl` 的 `server_start.provider_enabled=false`，只记录本地 `scripted_round` / `auxiliary_call`，没有 Provider 传输事件，因此真实 Provider initiated calls=0。本轮未 push、部署、staging 或生产验证；新的 E4 尚未冻结或授权。

@@ -1,6 +1,6 @@
 # 回复内容优化实施记录
 
-日期：2026-09-08｜分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`｜状态：CP0—CP6 本地实现完成，AC40 待独立真实 Provider 授权
+日期：2026-09-13｜源分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`｜当前状态：CP0—CP6 已合入 `main`；AC40 最新真实批次已执行但未通过，`main@16d2257` 已完成对应本地修复，等待新冻结与新授权复验
 
 本记录替代先前“第一阶段”记录。完整逐项状态见 [验收矩阵](../superpowers/validation/2026-09-08-answer-content-acceptance.md)，此前指出的遗漏及其关闭证据见 [差距关闭审计](2026-09-08-answer-content-implementation-gap-audit.md)。
 
@@ -118,6 +118,8 @@ E3 证明桌面页面与编排路径，不证明自然模型会稳定产出更�
 
 ## 5. 合并与剩余边界
 
-CP0—CP6 的本地实现和证据已闭合。AC40 已先后执行两次真实浏览器＋真实 Provider 完整批次；最新 `main@3873ff9` 批次账本为 80 started / 80 dispatched，M01/M05/M06 通过，M02/M03/M04 失败，AC40 仍未通过。其三个失败项已在 `main@d9164fa` 完成本地修复：预测问句不再被误判为正向预测，空 workspace scope 的压缩保存不再崩溃，Workbench 排除同系列非活动具名版本的旧 verified 并显示 stale 历史。相关回归 135 passed，full-offline 2620 passed、1 skipped，重点 Provider-disabled 内置浏览器复核通过且 initiated calls=0。没有把本地修复、历史授权或旧真实会话转记为 AC40 通过；后续仍须新冻结、新授权并完整复验。
+CP0—CP6 的本地实现和证据已闭合。AC40 已执行多次真实浏览器＋真实 Provider 完整批次；最新 `main@dc44382` 批次账本为 78 started / 78 dispatched，M01/M04/M05 通过，M02/M03/M06 失败，AC40 仍未通过。失败点为非预测 D30 假设边界被误拒、相邻两日变化被错误称为“同比”、真实成本范围被误标为方法确认后未暂停。
+
+对应修复已提交为 `main@16d2257`：发布门区分无数值非预测边界与未观测率，显式日期约束“同比”语义，宿主恢复成本/时间/分母业务口径误标且保留真正方法许可的非阻塞行为。隔离回归为 152 passed 与 126 passed，full-offline 为 2626 passed、1 skipped；`tmp/repair-browser-20260913-r10` 的 Provider-disabled 内置浏览器重点复核通过，initiated calls=0。没有把本地修复、历史授权或旧真实会话转记为 AC40 通过；后续仍须新冻结、新授权并完整复验。
 
 合并时应把本分支提交并入届时目标分支，按函数块解决 `loop.py` 等并行冲突，再运行本记录中的定向与完整离线命令。不要用整文件覆盖主分支后续改动。Git 忽略的 `tmp/r6`、浏览器运行目录和 Plotly vendor 测试副本不进入提交。

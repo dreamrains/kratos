@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-12｜版本：v1.0｜状态：CP0—CP6 已合入 `main`；`main@d9164fa` 已在本地修复 AC40/E4 最新批次暴露的 M02 发布、M03 压缩保存和 M04 工作台跨版本失效问题，并通过 full-offline 与重点 E3；AC40 保持 `executed_failed / not_accepted`，等待新冻结、新授权的完整 E4 复验。
+日期：2026-09-13｜版本：v1.1｜状态：CP0—CP6 已合入 `main`；`main@dc44382` 的最新 AC40/E4 完整批次已执行但 M02/M03/M06 未通过，AC40 保持 `executed_failed / not_accepted`；对应发布语义与澄清恢复修复已提交为 `main@16d2257` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，等待新冻结、新授权的完整 E4 复验。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -100,5 +100,7 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 | 真实 Provider 验收 | executed_failed / not_accepted | AC40 随 P08 M01—M06 完整批次执行；账本 77 started / 77 dispatched / 0 failed。M03 发布收敛/Workbench 不闭合，M05 发生未知单位→“块钱”漂移，M06 残留原始 `[[chart:]]` 标记，内容硬门槛未通过。 |
 | AC40 失败项本地修复 | completed_local / E3 passed | `main@13c129a`：可恢复 fallback 不再作为终态错误；展示回合仅在数据身份未变时复用已接受发布快照；未知金额单位和混合日期窗口受确定性边界约束；SSE 非有限数转为严格 JSON `null`；空 `[[chart:]]` 转为可见缺失提示。内容/Web 定向 208 passed；`main@176f5f2`、`tmp/repair-browser-20260910-r3` 的联合浏览器复验通过，六来源 Markdown/发布报告、表格/公式/Plotly/刷新和控制台均已核对，Provider initiated calls=0；真实 Provider 未复验。 |
 | AC40 / E4 修复后复验 | executed_failed / not_accepted | `main@3873ff9`、冻结 SHA-256 `7156c9e...8827f44`；账本 80 started / 80 dispatched。M05 六种表达均保留 12/120、范围、未知金额单位和受限证据等级；M06 正确区分已计算、未计算、证据不足。M02 合规 D7/D30 边界被发布门拒绝；M03 六来源正文/刷新/Markdown 完整但压缩保存 500；M04 正文重判正确但 Workbench 仍把 v1 旧事实列为 verified。 |
+| AC40 / E4 最新复验 | executed_failed / not_accepted | `main@dc44382`、冻结 SHA-256 `0879740...9e451`；账本 78 started / 78 dispatched。M01/M04/M05 通过；M02 的非预测假设边界被误拒，M03 的六来源事实虽在正文/刷新/导出/压缩后完整保留但相邻日期被错误称为“同比”，M06 的成本范围未形成真实确认暂停。 |
+| AC40 最新失败项本地修复 | completed_local / E3 passed | `main@16d2257`：发布门允许无数值的非预测假设边界但继续拒绝未观测率；显式相邻日期的“同比”会触发一次修订；误标方法确认的真实成本/窗口/分母口径由宿主恢复，真正方法许可仍非阻塞。隔离回归 152 passed 与 126 passed；full-offline 2626 passed、1 skipped。`tmp/repair-browser-20260913-r10` 的六来源刷新、压缩和 9380 字节 Markdown 保留全部六组金额/变化/记录数，成本口径与方法许可路径通过，Provider initiated calls=0；新的真实 Provider 批次未执行。 |
 
-`completed_local` 表示源实现分支的代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；最新 AC40 的 `executed_failed` 不能由 M05/M06 或 M03 正文局部通过升级。后续修复后仍须使用新的冻结清单、零调用预检和明确 Provider 授权。
+`completed_local` 表示代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；最新 AC40 的 `executed_failed` 不能由本地修复或单场景通过升级。后续复验仍须使用新的冻结清单、零调用预检和明确 Provider 授权。
