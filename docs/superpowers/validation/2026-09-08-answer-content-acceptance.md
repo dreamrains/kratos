@@ -1,6 +1,6 @@
 # 回复内容优化：验收矩阵与执行记录模板
 
-日期：2026-09-13｜状态：AC01—AC39 已合入 `main`；最新 AC40/E4 已在 `main@dc44382` 完整执行，M01/M04/M05 通过，M02/M03/M06 失败，AC40 仍为 `executed_failed / not_accepted`；对应最小修复已提交为 `main@16d2257` 并通过本地验收，新的 E4 尚未执行。
+日期：2026-09-14｜状态：AC01—AC39 已合入 `main`；最新 AC40/E4 已在 `main@fe83160` 完整执行，M01/M03/M05/M06 通过，M02/M04 失败，AC40 仍为 `executed_failed / not_accepted`；对应最小修复已提交为 `main@bed3b15` 并通过本地验收，新的 E4 尚未执行。
 
 关联：[计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[设计](../specs/2026-09-08-answer-content-design.md)｜[表达规范](../specs/2026-09-08-answer-presentation-contract.md)｜[实施记录](../../audit/2026-09-08-answer-content-implementation-record.md)。历史 159 项绿灯仅为诊断背景；本次实际结果单独记录。
 
@@ -175,7 +175,7 @@ Provider授权引用、计数或明确0调用：
 | AC37 | passed_local | E3 场景 B03：刷新保留正文，实际 MD 导出包含同一 packet/snapshot/answer hash 与六来源 |
 | AC38 | passed_local | 固定小中大 fixture，prompt 小于 65k；正常路径新增 Provider 调用 0，超限转 detail_ref |
 | AC39 | passed_local | `tmp/r6`：`2585 passed, 1 skipped, 16 warnings`，退出码 0 |
-| AC40 | executed_failed / not_accepted | 最新 `tmp/p08-real-provider-20260912-dc44382-r1` 完整复验：78 started / 78 dispatched。M01/M04/M05 通过；M02 误拒非预测假设边界，M03 六来源内容完整但把相邻两日变化称为“同比”，M06 的真实成本范围未形成确认暂停，硬门槛仍未通过。 |
+| AC40 | executed_failed / not_accepted | 最新 `tmp/p08-real-provider-20260913-fe83160-r1` 完整复验：89 started / 89 dispatched。M01/M03/M05/M06 通过；M02 误拒明确不报告 D30 数值的边界，M04 正文正确但 `evidence_records=0`、`hypothesis_sets=0`，内容与可审计证据闭环的硬门槛仍未通过。 |
 
 AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续进入下一模型轮且 SSE 工具事件保持配对；纯表达回合只在当前数据身份与已接受快照一致时复用发布绑定；未知金额单位不能被身份表达改写成币种，混合已发生/未来日期不能笼统称为未来；非有限数在 SSE 中转为严格 JSON `null`；空图表引用显示明确缺失提示。隔离回归为内容/Web 208 passed、最终聚焦 173 passed；修复后的 E3 结果见下文。这些证据不把 AC40 的真实 Provider 批次改为通过。
 
@@ -195,9 +195,13 @@ AC40 失败项在 `main@13c129a` 完成本地修复：可恢复 fallback 继续�
 
 R8 失败项本地修复证据（2026-09-12）：`main@d9164fa`。相关回归 135 passed；full-offline 为 2620 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器目录 `tmp/repair-browser-20260912-r9` 中，M02 边界回答刷新保持，M03 六来源回答后压缩保存返回 200；对真实 M04 会话 `29e4536464f3` 的持久化状态只读重放后，Workbench 当前 verified 仅保留 4 条 v2 结论，v1 假设为 stale 历史。真实 Provider initiated calls=0；这些证据说明三个已知实现缺口在本地关闭，但不把 AC40/E4 改写为通过。
 
-最新 E4 证据（2026-09-13）：`main@dc44382f873c2842d77307d7c8075bbd1e5f6233`、冻结 SHA-256 `087974003fdb023e64fc86aec4f4c39a8431d89ecdbcb70832c039ea4c79e451`、模型 `openai/deepseek-v4-flash`、账本 78 started / 78 dispatched。M03 会话 `082344612717` 的六来源正文、刷新、5877 字节 Markdown、2668 字节发布报告及压缩后内容均完整，但将 2026-09-01→09-02 错误描述为“同比”；M02 的无数值 D30 假设边界被误拒；M06 的成本范围被误标为方法确认，确认 records 为空。M01/M04/M05 通过不能覆盖这些硬失败，AC40 仍不通过。
+R10 E4 证据（2026-09-13）：`main@dc44382f873c2842d77307d7c8075bbd1e5f6233`、冻结 SHA-256 `087974003fdb023e64fc86aec4f4c39a8431d89ecdbcb70832c039ea4c79e451`、模型 `openai/deepseek-v4-flash`、账本 78 started / 78 dispatched。M03 会话 `082344612717` 的六来源正文、刷新、5877 字节 Markdown、2668 字节发布报告及压缩后内容均完整，但将 2026-09-01→09-02 错误描述为“同比”；M02 的无数值 D30 假设边界被误拒；M06 的成本范围被误标为方法确认，确认 records 为空。M01/M04/M05 通过不能覆盖这些硬失败，AC40 仍不通过。
 
 对应本地修复证据（2026-09-13）：`main@16d2257`。发布门允许无数值的非预测假设边界、继续拒绝未观测率；显式相邻日期的“同比”进入一次修订；宿主恢复被误标的成本/时间/分母业务口径且不扩大到真正的方法许可。隔离回归 152 passed 与 126 passed；full-offline 为 2626 passed、1 skipped、0 failures。Provider-disabled 内置浏览器 `tmp/repair-browser-20260913-r10` 中，B02 负例单次修订后 completed；CONTENT-B03 的刷新、压缩和 9380 字节 Markdown 保留六来源金额/变化/日期/记录数；成本口径一次暂停恢复，方法许可不暂停；Provider initiated calls=0。该证据不把 AC40/E4 改写为通过。
+
+R11 E4 证据（2026-09-13）：`main@fe831601b7adef52a831317adaf93c2aeba760ba`、冻结 SHA-256 `c41c6064dac6887339512874705097e9f8d90087b0c73886c565e9b60309d7e0`、模型 `openai/deepseek-v4-flash`、账本 89 started / 89 dispatched。M03 的六来源 10→11 至 60→66、合计 210→231、记录数、`日环比`、刷新、压缩和 5523 字节 Markdown 一致；M05 六种表达保持 12/120、日期、未知单位与证据等级；M06 将总额 120、未计算促销增量/成本/净收益和证据不足分开。M02 仍误拒无数值 D30 边界；M04 虽正确叙述 v1/v2，但持久化结构化证据和竞争假设为空。因此 AC40 仍不通过。
+
+R11 失败项本地修复证据（2026-09-14 收口）：`main@bed3b15`。相关隔离回归为 131 passed 与 80 passed；full-offline 为 2630 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器目录 `tmp/repair-browser-20260913-r11` 中，B02/B02-NEG 完成且仍拒绝无依据 5% 预测；B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets、8 条 receipts，版本变化后旧证据进入 exclusions。`runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。该证据不把 AC40/E4 改写为通过。
 
 ## 7. 本次文档校验记录
 
@@ -205,4 +209,4 @@ R8 失败项本地修复证据（2026-09-12）：`main@d9164fa`。相关回归 1
 
 2026-09-10：`tmp/repair-browser-20260910-r2` 的页面与 API 返回 200；当时把通用 Playwright 模块加载失败误记为内置驱动不可用。改用已安装 Browser 插件的内置客户端后，在 `main@176f5f2`、`tmp/repair-browser-20260910-r3` 完成联合 E3：CONTENT-B03 会话 `2cc0a85c9d1f` 的刷新正文、9380 字节 Markdown 和 9150 字节发布报告均保留 `src_1`—`src_6`、金额与来源；CONTENT-B07 会话 `51fe66986d44` 渲染表格、KaTeX、Plotly 和备用链接，741×805 视口无整页横向溢出。B01 的五种表达保留 120/12、范围和证据等级；浏览器控制台无 JSON 解析错误。`runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，真实 Provider initiated calls=0。本次只补齐 E3，不代表 AC40/E4、生产或部署通过。
 
-2026-09-13：最新真实批次和修复后 E3 已分别记入上文；文件继续保留 AC01—AC40 的既有编号，没有增加新的验收框架、探针、模型审核调用或重复账本。新的 AC40/E4 仍须单独冻结和授权。
+2026-09-14：最新真实批次和修复后 E3 已分别记入上文；文件继续保留 AC01—AC40 的既有编号，没有增加新的验收框架、探针、模型审核调用或重复账本。新的 AC40/E4 仍须单独冻结和授权。

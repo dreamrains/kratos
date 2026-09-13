@@ -116,3 +116,19 @@
 - 隔离测试：`tmp/test-runs/20260913-r10-targeted-1` 152 passed；`tmp/test-runs/20260913-r10-targeted-confirmation` 126 passed；`tmp/test-runs/20260913-r10-full-offline` 2626 passed、1 skipped、0 failures。直接 pytest 曾因复用仓库默认 sessions 产生 5 个 ID/状态污染失败，改用既有隔离 runner 后全部通过；该污染结果不计为产品失败，也未删除或改写用户数据。
 - Provider-disabled 内置浏览器：`tmp/repair-browser-20260913-r10`。B02/B02-NEG 会话 `cf46a735a5c0` 以 D7=10% 和 D30 边界 completed；CONTENT-B03 `6d00e72c303f` 在压缩、刷新和 9380 字节 Markdown 中保留六来源金额、变化、日期与记录数；IC-B03 `62f33fd6ade2` 只有一个成本范围确认，选择“代金券及渠道成本”后恢复一次并 resolved；IC-B06-METHOD `a254cdfd4ffe` 不暂停。四会话 run_state 均 completed，确认快照均 `integrity_status=ok`。
 - `runtime.jsonl` 明确 `provider_enabled=false`，没有 Provider 传输记录，真实 Provider initiated calls=0。该 E3 只验证修复后的本地页面、HTTP/SSE、持久化、压缩、刷新、导出与确认恢复，不把第 11 节改写为通过；未 push、未部署。
+
+## 13. `fe83160` 真实 Provider 完整批次（2026-09-13）
+
+- 精确身份：`main@fe831601b7adef52a831317adaf93c2aeba760ba`；冻结 SHA-256 `c41c6064dac6887339512874705097e9f8d90087b0c73886c565e9b60309d7e0`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；Codex 内置浏览器。
+- Provider 账本 `tmp/p08-real-provider-20260913-fe83160-r1/provider-calls.jsonl` 为 **89 started / 89 dispatched**，调用号 1—89 连续，无 missing/orphan/duplicate 或超额；SHA-256 `7081EB193F260715A5AE0208335176C06A014CB3AA0183BFE14434C0063B28C3`。分场景为 M01 9、M02 13、M03 12（含压缩）、M04 23、M05 20、M06 12。
+- 六会话依次为 M01 `ae0f19610090`、M02 `72b58ee16e69`、M03 `10baecd73ca0`、M04 `0b3090c608fa`、M05 `86aebe9517fb`、M06 `11b7fc3fedef`。assistant tool calls / tool messages 分别为 6/6、12/12、14/14、24/24、2/2、6/6；无缺失、孤立或重复 ID。每个会话各有一个终态；M02 failed，其余 completed；浏览器 error/warning console 为 0。
+- 结果：M01/M03/M05/M06 passed；M02/M04 failed。M01 的 12 条、合计 120、未知单位、范围与限制在刷新后保留；M03 的六来源 10→11 至 60→66、合计 210→231、记录数、`日环比`、刷新、压缩和 5523 字节 Markdown 一致；M05 六种表达保持 12/120、日期、未知单位、证据等级与技术来源；M06 只对 `metric_definition` 成本口径暂停，选择“代金券成本 + 渠道成本”后恢复一次，最终分开已计算总额 120、未计算成本/净收益与证据不足。
+- M02 已给出 D7=10% 且没有 D30 数值，但发布门以 `[unbound_time_point_claim]` 误拒“当前数据不足以支持对 D30 的预测，因此我不报告任何 D30 数值”，`run_state=failed`。M04 正文正确区分 v1 10→20→20 与 v2 10→10→10，也没有方法确认；但模型多次未满足 `record_analysis_plan` 契约，普通 measurements 又被严格 Stage3C0B 路径拒绝，最终 `analysis_state.json` 为 `evidence_records=0`、`hypothesis_sets=0`，不能以正文正确替代结构化审计闭环。
+- 结论：批次身份、调用核算、会话隔离、工具消息配对和终态唯一性有效，但 P08 / IC5 / AC40 仍为 **executed_failed / not_accepted**。该授权已消耗；批次后已关闭服务和浏览器，没有追加 Provider 调用、push、部署、staging 或生产验证。
+
+## 14. R11 失败项修复与本地复核（2026-09-14 收口）
+
+- 产品修复提交：`main@bed3b15`。`publication_synthesis.py` 识别“不报告/不给出/不提供/不发布 Dxx 数值”的非预测边界，同时保留同句含正向预测时的拒绝；`record_analysis_plan` 向模型公开既有 Stage3C0B schema 并兼容对象/JSON 字符串；普通 measurements 不再被误当严格计划证据；显式竞争假设/重判任务在证据前建立稳定 hypothesis IDs，继续使用现有状态、账本和一次修订路径。
+- 隔离测试：`tmp/test-runs/20260913-r11-targeted-2` 为 131 passed；`tmp/test-runs/20260913-r11-targeted-3` 为 80 passed；`tmp/test-runs/20260913-r11-full-offline` 为 **2630 passed、1 skipped、16 warnings、0 failures**。runner 禁止 Provider 网络。
+- Provider-disabled 内置浏览器：`tmp/repair-browser-20260913-r11`。B02 会话 `abc88e4eaaf4` 发布 D7=10% 与 D30 边界，B02-NEG 的无依据 5% 候选经既有一次修订后完成；B04 会话 `470a4d26e812` 完成支持、反证、冲突、未决、版本更新与 stale，持久化包含 3 条 evidence records、4 个 plan-scoped hypothesis sets、8 条 receipts、3 个 publication packets，旧版本证据进入 exclusions。刷新后状态保留，浏览器控制台 error/warning 为 0。
+- 运行轨迹：`server_start=1`、`auxiliary_call=26`、`scripted_round=19`、`forbidden_provider_transport=0`，因此真实 Provider initiated calls=0。该 E1/E2/E3 证据不改写第 13 节 E4 失败结论；新的完整 M01—M06 E4 尚未冻结或授权。未 push、未部署。

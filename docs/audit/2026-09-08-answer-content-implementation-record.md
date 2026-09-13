@@ -1,6 +1,6 @@
 # 回复内容优化实施记录
 
-日期：2026-09-13｜源分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`｜当前状态：CP0—CP6 已合入 `main`；AC40 最新真实批次已执行但未通过，`main@16d2257` 已完成对应本地修复，等待新冻结与新授权复验
+日期：2026-09-14｜源分支：`codex/answer-content-optimization`｜实施基线：`85f62794e24cfa95a864293d159e0208c8615a4b`｜当前状态：CP0—CP6 已合入 `main`；AC40 最新真实批次已执行但未通过，`main@bed3b15` 已完成对应本地修复，等待新冻结与新授权复验
 
 本记录替代先前“第一阶段”记录。完整逐项状态见 [验收矩阵](../superpowers/validation/2026-09-08-answer-content-acceptance.md)，此前指出的遗漏及其关闭证据见 [差距关闭审计](2026-09-08-answer-content-implementation-gap-audit.md)。
 
@@ -118,8 +118,8 @@ E3 证明桌面页面与编排路径，不证明自然模型会稳定产出更�
 
 ## 5. 合并与剩余边界
 
-CP0—CP6 的本地实现和证据已闭合。AC40 已执行多次真实浏览器＋真实 Provider 完整批次；最新 `main@dc44382` 批次账本为 78 started / 78 dispatched，M01/M04/M05 通过，M02/M03/M06 失败，AC40 仍未通过。失败点为非预测 D30 假设边界被误拒、相邻两日变化被错误称为“同比”、真实成本范围被误标为方法确认后未暂停。
+CP0—CP6 的本地实现和证据已闭合。AC40 已执行多次真实浏览器＋真实 Provider 完整批次；最新 `main@fe83160` 批次账本为 89 started / 89 dispatched，M01/M03/M05/M06 通过，M02/M04 失败，AC40 仍未通过。M02 已计算 D7=10% 且明确不报告 D30 数值，却被发布门误拒；M04 的正文正确区分 v1/v2 且无方法许可确认，但持久化 `evidence_records=0`、`hypothesis_sets=0`，没有形成可审计的竞争假设闭环。
 
-对应修复已提交为 `main@16d2257`：发布门区分无数值非预测边界与未观测率，显式日期约束“同比”语义，宿主恢复成本/时间/分母业务口径误标且保留真正方法许可的非阻塞行为。隔离回归为 152 passed 与 126 passed，full-offline 为 2626 passed、1 skipped；`tmp/repair-browser-20260913-r10` 的 Provider-disabled 内置浏览器重点复核通过，initiated calls=0。没有把本地修复、历史授权或旧真实会话转记为 AC40 通过；后续仍须新冻结、新授权并完整复验。
+对应修复已提交为 `main@bed3b15`：发布门识别明确不报告 Dxx 数值的非预测边界；`record_analysis_plan` 向模型公开既有 Stage3C0B 契约并兼容对象/JSON 字符串；普通 measurements 保持普通 receipt-bound evidence；显式假设/重判任务在证据前建立稳定假设 ID。隔离回归为 131 passed 与 80 passed，full-offline 为 2630 passed、1 skipped；`tmp/repair-browser-20260913-r11` 的 Provider-disabled 内置浏览器重点复核通过，B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets，版本变化后旧证据进入 exclusions，initiated calls=0。没有把本地修复、历史授权或旧真实会话转记为 AC40 通过；后续仍须新冻结、新授权并完整复验。
 
 合并时应把本分支提交并入届时目标分支，按函数块解决 `loop.py` 等并行冲突，再运行本记录中的定向与完整离线命令。不要用整文件覆盖主分支后续改动。Git 忽略的 `tmp/r6`、浏览器运行目录和 Plotly vendor 测试副本不进入提交。

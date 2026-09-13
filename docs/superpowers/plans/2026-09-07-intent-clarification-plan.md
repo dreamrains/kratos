@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-13｜版本：1.9｜状态：**IC0—IC4 已完成；`main@dc44382` 的最新 IC5/E4 完整批次暴露 M06 成本口径被误标为方法确认，IC5 保持 `executed_failed / not_accepted`；对应修复已提交为 `main@16d2257` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，等待新冻结、新授权的完整 E4 复验**。
+日期：2026-09-14｜版本：1.10｜状态：**IC0—IC4 已完成；`main@fe83160` 的最新 IC5/E4 完整批次中 M06 的真实成本口径确认已通过，但 M02 的合规边界仍被发布门误拒、M04 未形成结构化证据与竞争假设闭环，IC5 保持 `executed_failed / not_accepted`；对应修复已提交为 `main@bed3b15` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，等待新冻结、新授权的完整 E4 复验**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -92,8 +92,10 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | IC5 / 真实 Provider | executed_failed / not_accepted；M06 的真实成本口径确认与一次恢复通过，但 M04 对明确任务错误弹出内部路线确认，M02 的边界回答未形成发布终态；批次账本 77/77/0，修复后须新冻结并完整复验 |
 | IC5 失败项本地修复 | completed_local / E3 passed；`main@13c129a` 将跨版本关系重判识别为明确任务，保持真实业务语义问题的确认门；相关隔离回归 130 passed。`main@176f5f2` 的联合浏览器复验覆盖 IC-B01—IC-B06：方法问题非阻塞、业务口径暂停/恢复、同范围复用、窗口变化重问、skip 不授权；Provider initiated calls=0。新的 Provider 批次未执行 |
 | IC5 / E4 修复后复验 | executed_failed / not_accepted；`main@3873ff9`、`tmp/p08-real-provider-20260910-3873ff9-r1` 完整执行 M01—M06，账本 80 started / 80 dispatched。M04 两轮均直接执行、无方法路线确认；M06 仅对成本业务口径暂停，确认记录完整且只恢复一次，缺失成本未被选择替代。M02 虽计算 D7=10% 并拒绝 D30 外推，却被发布门以 `unbound_time_point_claim` 拒绝且 `run_state=failed`，违反 Q13 的“直接发布边界”要求，故 IC5 不能通过。 |
-| IC5 / E4 最新复验 | executed_failed / not_accepted；`main@dc44382`、`tmp/p08-real-provider-20260912-dc44382-r1` 完整执行 M01—M06，账本 78 started / 78 dispatched。M04 无方法确认并正确维持跨版本未决；M06 的成本范围问题被模型误标为 `method_confirmation`，宿主按退役方法许可处理后未暂停，确认账本为空，违反 Q04/Q10。M02/M03 另有发布语义失败，故 IC5 不能通过。 |
+| IC5 / E4 R10 复验 | executed_failed / not_accepted；`main@dc44382`、`tmp/p08-real-provider-20260912-dc44382-r1` 完整执行 M01—M06，账本 78 started / 78 dispatched。M04 无方法确认并正确维持跨版本未决；M06 的成本范围问题被模型误标为 `method_confirmation`，宿主按退役方法许可处理后未暂停，确认账本为空，违反 Q04/Q10。M02/M03 另有发布语义失败，故 IC5 不能通过。 |
 | IC5 最新失败项本地修复 | completed_local / E3 passed；`main@16d2257` 将含明确成本、时间窗口或分母口径的误标方法请求恢复为真实业务决定，并把恢复后的类型持久化；显式方法/模型许可仍非阻塞。隔离回归 152 passed 与 126 passed，full-offline 2626 passed、1 skipped；`tmp/repair-browser-20260913-r10` 中成本范围仅暂停一次、选择“代金券及渠道成本”后只恢复一次，方法许可无确认记录，Provider initiated calls=0。新的 IC5/E4 尚未执行。 |
+| IC5 / E4 R11 复验 | executed_failed / not_accepted；`main@fe83160`、冻结 SHA-256 `c41c606...d7e0`、账本 89 started / 89 dispatched。M06 对 `metric_definition` 真实成本口径暂停，选择“代金券成本 + 渠道成本”后只恢复一次，确认记录与事件完整；M04 也没有方法许可确认。M02 合规 D7/D30 边界仍被发布门误拒，M04 未形成结构化证据/竞争假设闭环，故 IC5 不能升级。 |
+| IC5 R11 失败项本地修复 | completed_local / E3 passed；`main@bed3b15` 修正非预测边界识别，并向模型暴露既有分析计划、measurement 与竞争假设契约，未增加新的确认流程。隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped；`tmp/repair-browser-20260913-r11` 的 B02/B04 重点复核完成，Provider initiated calls=0。新的 IC5/E4 尚未执行。 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；`dc44382` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；`fe83160` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。

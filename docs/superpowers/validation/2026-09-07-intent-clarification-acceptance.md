@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-13｜版本：1.8｜状态：**IC0—IC4 已完成 E1/E2/E3；最新 IC5/E4 已在 `main@dc44382` 完整执行，但 M06 的真实成本范围问题被误标为方法确认而未暂停，IC5 仍为 `executed_failed / not_accepted`；宿主恢复修复已提交为 `main@16d2257` 并通过本地验收，新的 E4 尚未执行**。
+日期：2026-09-14｜版本：1.9｜状态：**IC0—IC4 已完成 E1/E2/E3；最新 IC5/E4 已在 `main@fe83160` 完整执行，M06 的真实成本口径确认通过，但 M02 的合规边界被误拒、M04 缺少结构化证据与竞争假设闭环，IC5 仍为 `executed_failed / not_accepted`；对应修复已提交为 `main@bed3b15` 并通过本地验收，新的 E4 尚未执行**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -153,5 +153,8 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | E4 / IC5（`dc44382` 最新复验） | executed_failed / not_accepted | 冻结 SHA-256 `0879740...9e451`，真实 Provider 账本 78 started / 78 dispatched。M04 无方法确认且跨版本状态正确；但 M06 将真实成本范围误标为 `method_confirmation` 后被宿主非阻塞处理，确认账本为空，没有选择与一次恢复；M02/M03 另有发布语义失败。IC5 不能升级。 |
 | E1 / E2（`dc44382` 失败项修复） | passed_local | `main@16d2257`；隔离回归 152 passed 与 126 passed，full-offline 2626 passed、1 skipped。明确成本/窗口/分母口径可从误标方法请求恢复为业务决定并按恢复类型持久化；显式方法/模型许可仍非阻塞。 |
 | E3（`16d2257` 修复后） | passed_local | `tmp/repair-browser-20260913-r10`：IC-B03 只产生一个成本范围确认，选择“代金券及渠道成本”后一次恢复，记录 resolved；IC-B06-METHOD 无确认记录并 completed。确认快照 integrity_status 均为 ok，Provider initiated calls=0。该证据不升级 IC5/E4。 |
+| E4 / IC5（`fe83160` R11 复验） | executed_failed / not_accepted | 冻结 SHA-256 `c41c606...d7e0`，真实 Provider 账本 89 started / 89 dispatched。M06 产生一个 `metric_definition` 成本口径确认，选择“代金券成本 + 渠道成本”后一次恢复，记录和事件完整；M04 无方法许可确认。M02 的 D7=10% / 不报告 D30 数值边界被发布门误拒，M04 没有形成结构化 evidence/hypothesis 状态，完整批次仍不通过。 |
+| E1 / E2（R11 失败项修复） | passed_local | `main@bed3b15`；隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped。发布门区分明确不报告数值与正向预测；既有计划、measurement 和竞争假设契约向模型公开并兼容旧记录。 |
+| E3（`bed3b15` 修复后） | passed_local | `tmp/repair-browser-20260913-r11`：B02/B02-NEG completed；B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets，并在版本变化后排除旧证据。浏览器控制台无错误，Provider initiated calls=0。该证据不升级 IC5/E4。 |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。
