@@ -171,6 +171,15 @@ class TestRecordAnalysisPlan:
         assert result["type"] == "analysis_plan"
         assert result["analysis_plan_id"]
 
+    def test_valid_plan_accepts_object_input(self):
+        from data_agent.tools.analysis_flow import record_analysis_plan
+        ctx = _add_banner_contract(_make_ctx("plan_object_test"))
+        with use_agent_context(ctx):
+            result = json.loads(record_analysis_plan(_stage3c0b_plan()))
+
+        assert result["type"] == "analysis_plan"
+        assert result["analysis_plan_id"]
+
     def test_missing_fields(self):
         from data_agent.tools.analysis_flow import record_analysis_plan
         ctx = _make_ctx()

@@ -213,6 +213,32 @@ def test_record_evidence_record_treats_null_measurements_as_legacy_evidence():
     assert result["statistical_detail_status"] == "missing"
 
 
+def test_record_evidence_record_treats_unscoped_concise_measurements_as_ordinary_evidence():
+    from data_agent.tools.analysis_flow import record_evidence_record
+
+    ctx = AgentContext(
+        session_id="concise_measurements_ordinary",
+        project_name=None,
+        workspace=Workspace(),
+    )
+    evidence = {
+        "claim": "The observed series increased within the loaded window.",
+        "dataset": "sales",
+        "method": "descriptive trend",
+        "tool_calls": [],
+        "result_summary": "slope=5",
+        "limitations": ["three observations only"],
+        "confidence": "low",
+        "measurements": [{"metric": "slope", "value": 5, "unit": "amount/day"}],
+    }
+
+    with use_agent_context(ctx):
+        result = json.loads(record_evidence_record(evidence))
+
+    assert "error" not in result
+    assert result["type"] == "evidence_record"
+
+
 def test_record_evidence_record_upserts_canonical_evidence_and_skips_legacy_stat_status():
     from data_agent.agent.analysis_state import AnalysisSessionState
     from data_agent.tools.analysis_flow import record_evidence_record

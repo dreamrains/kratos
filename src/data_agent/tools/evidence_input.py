@@ -23,7 +23,41 @@ EVIDENCE_INPUT_SCHEMA = {
         "result_summary": {"type": "string"},
         "limitations": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
         "confidence": {"type": "string", "enum": CONFIDENCE},
-        "measurements": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "object"}}]},
+        "measurements": {
+            "description": (
+                "Optional receipt-bound measurements. For ordinary evidence, concise metric/value/unit or "
+                "metric/delta/direction objects are allowed. Executable Stage 3C0B evidence is selected only "
+                "by explicit plan_id/step_id and must use the full canonical measurement contract."
+            ),
+            "anyOf": [{"type": "null"}, {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "metric": {"type": "string"},
+                    "value": {"type": ["number", "string", "null"]},
+                    "unit": {"type": "string"},
+                    "delta": {"type": ["number", "null"]},
+                    "change": {"type": ["number", "null"]},
+                    "pct_change": {"type": ["number", "null"]},
+                    "direction": {"type": "string", "enum": ["increased", "decreased", "flat", "unknown"]},
+                },
+            }}],
+        },
+        "competing_hypotheses": {
+            "description": (
+                "Optional host-validated relations to hypothesis IDs shown in <competing_hypotheses>. "
+                "Use one entry per proposed support/refute relation."
+            ),
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "hypothesis_id": {"type": "string", "minLength": 1},
+                    "relation": {"type": "string", "enum": ["supports", "refutes"]},
+                    "metric": {"type": "string", "minLength": 1},
+                    "observed": {"type": "string", "enum": ["increased", "decreased", "flat"]},
+                },
+            },
+        },
         "derived_measurements": {
             "type": "array",
             "items": {

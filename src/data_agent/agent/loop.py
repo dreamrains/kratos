@@ -1959,6 +1959,26 @@ class AgentLoop:
             return
         evidence = getattr(state, "evidence_records", []) or []
         if not evidence:
+            # An explicit competing-hypothesis task needs stable hypothesis
+            # IDs before the model can attach receipt-backed support/refute
+            # relations.  Create and expose only that deterministic brief;
+            # ordinary analyses keep the existing no-evidence fast path.
+            try:
+                from data_agent.agent.question_need_detector import explicit_task_reason
+                from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+                from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+
+                if explicit_task_reason(user_input) in {"hypothesis_task", "competing_hypotheses", "evidence_reassessment"}:
+                    maybe_create_hypothesis_set(user_input, intent, state)
+                    hydrated = hydrate_hypothesis_refs(list(getattr(state, "hypothesis_sets", []) or []))
+                    brief = hypotheses_prompt_brief(state, hydrated=hydrated)
+                    if brief:
+                        self._turn_synthesis_policy_instruction = brief
+            except Exception as exc:
+                logger.warning(
+                    "Pre-evidence hypothesis brief skipped",
+                    extra={"extra_data": {"error": str(exc), "session_id": self.session_id}},
+                )
             return
 
         if not getattr(self, "_turn_verification_injected", False):

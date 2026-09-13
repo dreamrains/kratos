@@ -394,13 +394,44 @@ def record_analysis_spec(spec_json: str) -> str:
 
 @registry.register(
     name="record_analysis_plan",
-    description="Save an AnalysisPlan JSON for the expert analysis flow.",
+    description=(
+        "Save an executable Stage 3C0B AnalysisPlan before recording plan-scoped evidence. Required top-level "
+        "fields: contract_version='stage3c0b.v1', goal, method_plan, visualization_strategy. Every method_plan "
+        "item is an object requiring goal, expected_output, evidence_requirements, and dataset_inputs. An "
+        "independent item binds exactly one current dataset; a synthesis item uses combination_mode='synthesis', "
+        "dataset_inputs=[], and required_evidence_step_ids. Use the returned analysis_plan_id as evidence plan_id "
+        "and the normalized step_id as evidence step_id."
+    ),
+    schema_overrides={"plan_json": {
+        "type": ["object", "string"],
+        "description": "Analysis plan object, or a JSON-encoded object for compatibility.",
+        "properties": {
+            "contract_version": {"type": "string", "enum": ["stage3c0b.v1"]},
+            "goal": {"type": "string", "minLength": 1},
+            "method_plan": {"type": "array", "minItems": 1, "items": {
+                "type": "object",
+                "required": ["goal", "expected_output", "evidence_requirements", "dataset_inputs"],
+                "properties": {
+                    "step_id": {"type": "string"},
+                    "goal": {"type": "string", "minLength": 1},
+                    "expected_output": {"type": "string", "minLength": 1},
+                    "evidence_requirements": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                    "dataset_inputs": {"type": "array", "items": {"type": "string"}},
+                    "combination_mode": {"type": "string", "enum": ["independent", "synthesis"]},
+                    "required_evidence_step_ids": {"type": "array", "items": {"type": "string"}},
+                },
+            }},
+            "visualization_strategy": {"type": "array"},
+        },
+    }},
 )
-def record_analysis_plan(plan_json: str) -> str:
+def record_analysis_plan(plan_json: str | dict) -> str:
     try:
-        payload = json.loads(plan_json)
-    except json.JSONDecodeError:
+        payload = json.loads(plan_json) if isinstance(plan_json, str) else plan_json
+    except (json.JSONDecodeError, TypeError):
         return json.dumps({"error": "plan_json must be valid JSON"}, ensure_ascii=False)
+    if not isinstance(payload, dict):
+        return json.dumps({"error": "AnalysisPlan must be a JSON object."}, ensure_ascii=False)
     required = ["goal", "method_plan", "visualization_strategy"]
     missing = [k for k in required if k not in payload]
     if missing:
@@ -509,10 +540,14 @@ def record_evidence_record(record_json: str | dict) -> str:
     if state is not None and isinstance(getattr(state, "analysis_plan", None), dict):
         current_plan_id = str(state.analysis_plan.get("id") or "")
 
+    # Stage 3C0B is an explicit plan/step contract.  A model may attach
+    # concise receipt-bound measurements to an ordinary EvidenceRecord; that
+    # alone must not silently opt the record into the stricter executable
+    # contract (and then reject it because no plan exists).  Explicit plan or
+    # step identity, or a derived-measurement expression, remains fail-closed.
     is_stage3c0b_evidence = (
         "plan_id" in payload
         or "step_id" in payload
-        or payload.get("measurements") is not None
         or payload.get("derived_measurements") is not None
     )
     if is_stage3c0b_evidence:

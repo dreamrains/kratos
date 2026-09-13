@@ -1034,6 +1034,54 @@ def test_synthesis_policy_injection_creates_hypothesis_set_before_policy(tmp_pat
         cfg.sessions_dir = old_sessions
 
 
+def test_explicit_hypothesis_task_exposes_stable_ids_before_evidence(tmp_path):
+    from data_agent.config import get_config
+
+    cfg = get_config()
+    old_sessions = cfg.sessions_dir
+    cfg.sessions_dir = tmp_path / "sessions"
+    try:
+        intent = TurnIntent(
+            intent_type="directed_analysis",
+            clarity="clear",
+            data_state="data_loaded",
+            analysis_stage="execute",
+            recommended_action="run_analysis",
+            execution_readiness="ready",
+            reason="test",
+            ambiguities=[],
+        )
+        ctx = AgentContext(session_id="loop_hyp_before_evidence", workspace=Workspace())
+        state = AnalysisSessionState(session_id="loop_hyp_before_evidence")
+        state.dataset_contracts = [{
+            "dataset": "sales",
+            "quality": {"status": "ready"},
+            "field_roles": {"date": ["date"], "metrics": ["revenue"]},
+        }]
+        state.route_proposals = [{
+            "id": "route_trend",
+            "dataset": "sales",
+            "direction": "trend",
+            "evidence_requirements": ["date", "metric"],
+        }]
+        ctx.analysis_state = state
+        loop = AgentLoop(client=object(), session_id=ctx.session_id)
+        loop.context = ctx
+        loop._last_turn_intent = intent
+        loop._reset_turn_tracking()
+
+        with use_agent_context(ctx):
+            loop._maybe_inject_synthesis_policy("请提出并检验至少两种竞争性假设")
+
+        assert state.evidence_records == []
+        assert state.hypothesis_sets
+        assert "<competing_hypotheses>" in loop._turn_synthesis_policy_instruction
+        assert state.hypothesis_sets[0]["id"] in loop._turn_synthesis_policy_instruction
+        assert loop._turn_synthesis_policy_injected is False
+    finally:
+        cfg.sessions_dir = old_sessions
+
+
 def test_synthesis_policy_injection_marks_failed_verification_attempt(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",

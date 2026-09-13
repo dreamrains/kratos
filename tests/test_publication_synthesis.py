@@ -523,6 +523,13 @@ class TestNSeriesPublication:
             packet,
         ) is None
 
+    def test_n01_withheld_d30_number_is_not_misread_as_prediction(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "当前数据不足以支持对 D30 的预测，因此我不报告任何 D30 数值。",
+            packet,
+        ) is None
+
     def test_n01_prediction_question_heading_is_not_misread_as_prediction(self):
         packet = _retention_packet()
         assert validate_final_narrative(
