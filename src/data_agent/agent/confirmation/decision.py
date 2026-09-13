@@ -57,6 +57,39 @@ _METHOD_PERMISSION_MARKERS = (
     "confirm the method", "该方法继续", "此方法继续", "这个方法继续",
 )
 
+_MISLABELED_BUSINESS_HINTS = (
+    ("metric_definition", ("成本口径", "成本范围", "净收益 =", "净收益=", "是否包含渠道成本")),
+    ("time_window", ("时间窗口", "比较窗口", "观察窗口", "统计周期")),
+    ("denominator", ("分母口径", "复购分母", "转化分母")),
+)
+
+
+def _explicit_method_permission(text: str) -> bool:
+    return (
+        any(marker in text for marker in _METHOD_PERMISSION_MARKERS)
+        and any(word in text for word in ("方法", "模型", "算法", "method", "model"))
+    )
+
+
+def _mislabelled_business_kind(params: Mapping[str, Any]) -> str:
+    """Recover a narrow business gap mislabeled as method_confirmation.
+
+    Natural models sometimes put a metric-definition question (notably cost
+    inclusion for net revenue) in the retired method-confirmation bucket.  A
+    concrete business-scope phrase may correct that tag, while an actual
+    permission question about a method/model remains non-blocking.
+    """
+    text = normalized_business_scope(" ".join(
+        str(params.get(key) or "")
+        for key in ("question", "missing_value", "blocking_reason")
+    ))
+    if not text or _explicit_method_permission(text):
+        return ""
+    for kind, markers in _MISLABELED_BUSINESS_HINTS:
+        if any(marker in text for marker in markers):
+            return kind
+    return ""
+
 
 def normalized_business_scope(value: Any) -> str:
     """Whitespace/case normalization that keeps numbers and negations.
@@ -79,12 +112,19 @@ def decision_context_from_candidate(candidate: Any) -> dict[str, Any]:
     """
     params: Mapping[str, Any] = getattr(candidate, "resolution_params", {}) or {}
     confirmation_type = str(params.get("confirmation_type") or "").strip()
+    recovered_kind = (
+        _mislabelled_business_kind(params)
+        if confirmation_type in METHOD_DECISION_KINDS
+        else ""
+    )
 
     decision_kind = str(params.get("decision_kind") or "").strip()
     if decision_kind in METHOD_DECISION_KINDS:
         decision_kind = ""
     if not decision_kind:
-        if confirmation_type in _GATE_KIND_MAP:
+        if recovered_kind:
+            decision_kind = recovered_kind
+        elif confirmation_type in _GATE_KIND_MAP:
             decision_kind = _GATE_KIND_MAP[confirmation_type]
         elif confirmation_type in DECISION_KINDS:
             decision_kind = confirmation_type
@@ -117,17 +157,14 @@ def is_method_approval_shaped(candidate: Any) -> bool:
     params: Mapping[str, Any] = getattr(candidate, "resolution_params", {}) or {}
     confirmation_type = str(params.get("confirmation_type") or "").strip()
     if confirmation_type in METHOD_DECISION_KINDS:
-        return True
+        return not bool(_mislabelled_business_kind(params))
     source = str(getattr(candidate, "source", "") or "").strip()
     if source in {"method_playbook"}:
         return True
     question = normalized_business_scope(params.get("question"))
     if not question:
         return False
-    if any(marker in question for marker in _METHOD_PERMISSION_MARKERS):
-        method_words = ("方法", "模型", "算法", "method", "model")
-        return any(word in question for word in method_words)
-    return False
+    return _explicit_method_permission(question)
 
 
 def default_is_host_verified(candidate: Any) -> bool:
@@ -212,11 +249,18 @@ def decision_context_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     affected routes) become explicit decision context.
     """
     confirmation_type = str(payload.get("confirmation_type") or "").strip()
+    recovered_kind = (
+        _mislabelled_business_kind(payload)
+        if confirmation_type in METHOD_DECISION_KINDS
+        else ""
+    )
     decision_kind = str(payload.get("decision_kind") or "").strip()
     if decision_kind in METHOD_DECISION_KINDS:
         decision_kind = ""
     if not decision_kind:
-        if confirmation_type in _GATE_KIND_MAP:
+        if recovered_kind:
+            decision_kind = recovered_kind
+        elif confirmation_type in _GATE_KIND_MAP:
             decision_kind = _GATE_KIND_MAP[confirmation_type]
         elif confirmation_type in DECISION_KINDS:
             decision_kind = confirmation_type

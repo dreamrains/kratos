@@ -1092,7 +1092,13 @@ _PREDICTION_QUESTION = re.compile(
     r"(?:预测|预估|推算).{0,12}(?:能否|是否|可否|能不能|可不可以)",
     re.I,
 )
+_NON_PREDICTIVE_REFERENCE = re.compile(
+    r"(?:视为|当作).{0,12}(?:假设|情景).{0,12}(?:而非|不是|不作为).{0,8}(?:预测|预估|推算)|"
+    r"(?:非|不是|不作为).{0,8}(?:预测|预估|推算)",
+    re.I,
+)
 _COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
+_ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 
 
 def _split_claims(text: str) -> list[str]:
@@ -1174,7 +1180,15 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             predicts = bool(_PREDICTION_VERB.search(clause))
             negated_prediction = bool(_NEGATED_PREDICTION.search(clause))
             prediction_question = bool(_PREDICTION_QUESTION.search(clause))
+            without_point = clause[:match.start()] + clause[match.end():]
+            has_reported_rate = bool(re.search(r"[-+]?\d+(?:\.\d+)?\s*%", without_point))
             boundary_window = clause[max(0, match.start() - 30):min(len(clause), match.end() + 36)]
+            if (
+                not asserts_value
+                and not has_reported_rate
+                and _NON_PREDICTIVE_REFERENCE.search(boundary_window)
+            ):
+                continue  # labels a hypothetical number as non-predictive; publishes no value
             if (
                 _BOUNDARY_BEFORE.search(boundary_window)
                 and not asserts_value
@@ -1255,6 +1269,40 @@ def _significance_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
                 "reason": "“差异不显著”未关联本轮已执行检验的对象；请把该结论绑定到具体已检验的指标或分组，或改为未检验表述。",
             }]
     return []
+
+
+def _period_label_issues(text: str) -> list[dict[str, str]]:
+    """Reject a YoY label when the narrative only names non-YoY dates.
+
+    This is deliberately narrow: without at least two explicit ISO dates the
+    checker leaves the wording unassessed.  When dates are explicit, ``同比``
+    requires a same-month/day pair in different years; adjacent days must be
+    described as a relative or day-over-day change instead.
+    """
+    if "同比" not in text:
+        return []
+    dates: list[date] = []
+    for year, month, day in _ISO_DATE.findall(text):
+        try:
+            dates.append(date(int(year), int(month), int(day)))
+        except ValueError:
+            continue
+    if len(dates) < 2:
+        return []
+    has_yoy_pair = any(
+        left.month == right.month
+        and left.day == right.day
+        and left.year != right.year
+        for index, left in enumerate(dates)
+        for right in dates[index + 1:]
+    )
+    if has_yoy_pair:
+        return []
+    return [{
+        "code": "unsupported_yoy_label",
+        "span": next((clause.strip()[:80] for clause in _split_claims(text) if "同比" in clause), "同比"),
+        "reason": "正文使用了“同比”，但列出的日期不是跨年同期；请改为相对变化或与实际周期一致的表述。",
+    }]
 
 
 _CURRENCY_VALUE = re.compile(
@@ -1658,6 +1706,7 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_significance_issues(text_value, scopes))
     issues.extend(_currency_unit_issues(text_value, scopes))
     issues.extend(_future_window_issues(text_value, scopes))
+    issues.extend(_period_label_issues(text_value))
     issues.extend(_arithmetic_issues(text_value))
     issues.extend(_binding_numeric_issues(text_value, packet or {}))
     issues.extend(_answer_coverage_issues(text_value, (packet or {}).get("requirements") or []))

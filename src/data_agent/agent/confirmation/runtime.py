@@ -15,6 +15,7 @@ from data_agent.agent.confirmation.models import (
     QuestionCandidate,
 )
 from data_agent.agent.confirmation.decision import (
+    METHOD_DECISION_KINDS,
     decision_context_from_payload,
     stable_decision_key,
 )
@@ -171,6 +172,14 @@ def _with_decision_context(params: dict[str, Any], request: Any, *, source: str)
         or _request_value(request, "missing_value", ""),
     }
     context = decision_context_from_payload(payload)
+    if (
+        str(params.get("confirmation_type") or "").strip() in METHOD_DECISION_KINDS
+        and context["decision_kind"]
+    ):
+        # Persist the host-recovered business type, not the model's retired
+        # method tag.  This keeps the UI, ledger and reuse identity aligned
+        # with the operation that genuinely blocks.
+        params["confirmation_type"] = context["decision_kind"]
     if not context["affected_operations"]:
         blocked = _request_value(request, "blocked_surfaces", ())
         surfaces = [str(item).strip() for item in (blocked or ()) if str(item).strip()]

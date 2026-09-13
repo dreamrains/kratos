@@ -530,10 +530,35 @@ class TestNSeriesPublication:
             packet,
         ) is None
 
+    def test_n01_non_predictive_hypothesis_reference_publishes_without_a_value(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "在此之前，请把任何 D30 数字视为假设，而非预测。", packet,
+        ) is None
+
+    def test_n01_hypothesis_label_does_not_license_an_unobserved_value(self):
+        packet = _retention_packet()
+        error = validate_final_narrative(
+            "D30 的 5% 只是一个假设，而非预测。", packet,
+        )
+        assert error is not None
+
     def test_n02_collection_plan_with_day30_publishes(self):
         packet = _retention_packet()
         assert validate_final_narrative(
             "D7 留存为 10%。建议继续收集至第30天再验证。", packet,
+        ) is None
+
+    def test_n02_adjacent_dates_cannot_be_labeled_yoy(self):
+        error = validate_final_narrative(
+            "2026-09-01 与 2026-09-02 的金额均同比增长 10%。",
+        )
+        assert error is not None
+        assert "同比" in error
+
+    def test_n02_same_calendar_day_across_years_may_be_labeled_yoy(self):
+        assert validate_final_narrative(
+            "2025-09-01 与 2026-09-01 相比，金额同比增长 10%。",
         ) is None
 
     def test_n03_unsupported_d30_prediction_rejected(self):

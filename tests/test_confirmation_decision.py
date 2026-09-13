@@ -46,6 +46,16 @@ METHOD_ASK = {
     "confirmation_type": "method_confirmation",
 }
 
+MISLABELED_COST_SCOPE_ASK = {
+    "question": "评估促销净收益时，成本口径采用哪一种？（即净收益 = 促销收入 − 哪些成本）",
+    "options": [
+        {"label": "仅扣代金券成本", "value": "voucher_only"},
+        {"label": "代金券成本及渠道成本", "value": "voucher_and_channel"},
+    ],
+    "confirmation_type": "method_confirmation",
+    "blocking_reason": "成本口径直接改变净收益结果，需用户先定义口径。",
+}
+
 
 class TestDecisionContract:
 
@@ -60,6 +70,22 @@ class TestDecisionContract:
 
         assert result.disposition is RequestDisposition.ADVISORY
         assert "方法" in result.reason or "内部决策" in result.reason
+
+    def test_q04_cost_scope_mislabeled_as_method_is_recovered_as_business_gap(self):
+        candidate = _candidate(MISLABELED_COST_SCOPE_ASK)
+        result = QuestionPolicy().evaluate(candidate)
+
+        assert decision_context_from_candidate(candidate)["decision_kind"] == "metric_definition"
+        assert candidate.resolution_params["confirmation_type"] == "metric_definition"
+        assert not is_method_approval_shaped(candidate)
+        assert result.disposition is RequestDisposition.CONFIRMATION
+
+    def test_q09_explicit_method_permission_is_not_promoted_by_cost_words(self):
+        request = dict(METHOD_ASK)
+        request["question"] = "是否使用 ROI 模型继续分析渠道成本？"
+        result = QuestionPolicy().evaluate(_candidate(request))
+
+        assert result.disposition is RequestDisposition.ADVISORY
 
     def test_candidate_without_semantic_kind_is_not_a_business_gap(self):
         # 无语义类型（decision_kind 为空）的候选不是业务缺口——问题文本再具体
