@@ -43,6 +43,42 @@ def test_guard_fires_once_per_turn_only():
     assert loop._should_continue_for_analysis_quality("比较收入", "answer") is False
 
 
+def test_explicit_hypothesis_task_requires_plan_set_and_structured_relations():
+    loop = _loop_with(["compare_periods", "record_evidence_record"])
+    loop.context.analysis_state.analysis_plan = None
+    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_sales_trend"}]
+    loop.context.analysis_state.evidence_records = [{"id": "ev_1"}]
+
+    assert loop._should_continue_for_analysis_quality(
+        "请提出并检验至少两种竞争性假设", "prose only",
+    ) is True
+    loop._inject_analysis_quality_guard()
+
+    guard = loop.messages[-1]["content"]
+    assert "<competing_hypothesis_quality_guard>" in guard
+    assert "record_analysis_plan" in guard
+    assert "structured hypothesis relations" in guard
+
+
+def test_explicit_hypothesis_task_structural_gate_accepts_complete_audit_presence():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    loop.context.analysis_state.analysis_plan = {"id": "plan_1"}
+    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_sales_trend_plan_1"}]
+    loop.context.analysis_state.evidence_records = [{
+        "id": "ev_1",
+        "competing_hypotheses": [{
+            "hypothesis_id": "h1",
+            "relation": "supports",
+            "metric": "amount",
+            "observed": "increased",
+        }],
+    }]
+
+    assert loop._should_continue_for_analysis_quality(
+        "请提出并检验至少两种竞争性假设", "structured answer",
+    ) is False
+
+
 def _wrap_up_count(loop):
     return sum(
         1

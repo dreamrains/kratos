@@ -1569,8 +1569,18 @@ function chatApp() {
             }));
             // Auto-attach file references if files were uploaded
             if (attachedUploads.length) {
-                const fileRefs = attachedUploads.map(file => `分析文件: ${file.filename}`).join('\n');
-                text = text ? `${text}\n${fileRefs}` : fileRefs;
+                const existingLines = new Set(text.split(/\r?\n/).map(line => line.trim()));
+                const missingFileRefs = [];
+                for (const file of attachedUploads) {
+                    const fileRef = `分析文件: ${file.filename}`;
+                    if (existingLines.has(fileRef)) continue;
+                    existingLines.add(fileRef);
+                    missingFileRefs.push(fileRef);
+                }
+                if (missingFileRefs.length) {
+                    const fileRefs = missingFileRefs.join('\n');
+                    text = text ? `${text}\n${fileRefs}` : fileRefs;
+                }
             }
             this.inputText = '';
             this.connectionError = '';

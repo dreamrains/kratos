@@ -1079,12 +1079,13 @@ _ASSERTS_VALUE = re.compile(
 )
 _BOUNDARY_BEFORE = re.compile(
     r"不能|无法|不可|未知|尚无|尚不能|没有依据|不支持|难以|无法准确|"
-    r"未观测|无观测|仅观测|没有.{0,8}(?:观测|数据|证据)"
+    r"未观测|无观测|仅观测|不构成|没有.{0,8}(?:观测|数据|证据)"
 )
 _PREDICTION_VERB = re.compile(r"预计|预估|预测|推算|大概会|可能会|将达|会达|forecast|project", re.I)
 _NEGATED_PREDICTION = re.compile(
     r"(?:不能|无法|不可|不应|不支持|不足以支持|尚不能).{0,12}(?:预测|预估|推算)|"
-    r"(?:预测|预估|推算).{0,12}(?:不能|无法|不可|不支持)",
+    r"(?:预测|预估|推算).{0,12}(?:不能|无法|不可|不支持)|"
+    r"不构成.{0,24}(?:预测|预估|推算)(?:依据|结论)?",
     re.I,
 )
 _PREDICTION_QUESTION = re.compile(
@@ -1288,6 +1289,9 @@ def _significance_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
     return []
 
 
+_YOY_LABEL = re.compile(r"同比(?!例)")
+
+
 def _period_label_issues(text: str) -> list[dict[str, str]]:
     """Reject a YoY label when the narrative only names non-YoY dates.
 
@@ -1296,7 +1300,7 @@ def _period_label_issues(text: str) -> list[dict[str, str]]:
     requires a same-month/day pair in different years; adjacent days must be
     described as a relative or day-over-day change instead.
     """
-    if "同比" not in text:
+    if _YOY_LABEL.search(text) is None:
         return []
     dates: list[date] = []
     for year, month, day in _ISO_DATE.findall(text):
@@ -1317,7 +1321,10 @@ def _period_label_issues(text: str) -> list[dict[str, str]]:
         return []
     return [{
         "code": "unsupported_yoy_label",
-        "span": next((clause.strip()[:80] for clause in _split_claims(text) if "同比" in clause), "同比"),
+        "span": next(
+            (clause.strip()[:80] for clause in _split_claims(text) if _YOY_LABEL.search(clause)),
+            "同比",
+        ),
         "reason": "正文使用了“同比”，但列出的日期不是跨年同期；请改为相对变化或与实际周期一致的表述。",
     }]
 
@@ -1440,6 +1447,11 @@ _UNSUPPORTED_DATA_ORIGIN = re.compile(
     r"真实业务(?:的)?波动(?:为|是)\s*零",
     re.I,
 )
+_EXPLICIT_UNSUPPORTED_DATA_ORIGIN = re.compile(
+    r"人为(?:规则|构造)(?:的)?数据|"
+    r"呈现出.{0,12}(?:构造|人为)(?:的)?(?:样例|示例)(?:数据)?(?:的)?特征",
+    re.I,
+)
 _CONSTANT_SAMPLE_CONTEXT = re.compile(
     r"(?:全(?:都|部)?(?:等于|为|是)|(?:均|都)(?:等于|为|是)|恒(?:为|等于)|零方差|无波动|"
     r"unique(?:_values)?\s*=\s*1|std\s*=\s*(?:\*\*)?0(?:\.0+)?)",
@@ -1525,10 +1537,11 @@ def _arithmetic_issues(text: str) -> list[dict[str, str]]:
 
 def _unsupported_data_semantics_issues(text: str) -> list[dict[str, str]]:
     """Reject data-origin or population claims that cannot follow from observed constancy."""
-    if _CONSTANT_SAMPLE_CONTEXT.search(text) is None:
-        return []
+    has_constant_context = _CONSTANT_SAMPLE_CONTEXT.search(text) is not None
     for clause in _split_claims(text):
-        match = _UNSUPPORTED_DATA_ORIGIN.search(clause)
+        match = _EXPLICIT_UNSUPPORTED_DATA_ORIGIN.search(clause)
+        if match is None and has_constant_context:
+            match = _UNSUPPORTED_DATA_ORIGIN.search(clause)
         if match is None:
             continue
         if _DATA_ORIGIN_BOUNDARY.search(clause):
@@ -1539,6 +1552,33 @@ def _unsupported_data_semantics_issues(text: str) -> list[dict[str, str]]:
             "reason": (
                 "当前观测只能证明样本内取值恒定，不能据此判定数据是脱敏、占位、样例或非真实账本，"
                 "也不能推断真实业务总体波动为零；请改为待确认的数据来源问题。"
+            ),
+        }]
+    return []
+
+
+_MISSING_VALUE_CONTEXT = re.compile(
+    r"缺少|缺失|未提供|不可得|无法计算|尚未计算|未计算|not[_ -]?computed|"
+    r"evidence[_ -]?insufficient",
+    re.I,
+)
+_MISSING_VALUE_COERCED_ZERO = re.compile(r"后者(?:当前|目前)?(?:为|是)零")
+
+
+def _missing_value_zero_issues(text: str) -> list[dict[str, str]]:
+    """Do not let a missing input become a reported zero through pronoun shorthand."""
+    if _MISSING_VALUE_CONTEXT.search(text) is None:
+        return []
+    for clause in _split_claims(text):
+        match = _MISSING_VALUE_COERCED_ZERO.search(clause)
+        if match is None:
+            continue
+        return [{
+            "code": "missing_value_coerced_to_zero",
+            "span": clause.strip()[:80],
+            "reason": (
+                "正文已说明相关输入缺失或尚未计算，不能随后把该缺口表述为零；"
+                "请继续标为未计算或证据不足，并说明所缺字段。"
             ),
         }]
     return []
@@ -1787,6 +1827,7 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_period_label_issues(text_value))
     issues.extend(_arithmetic_issues(text_value))
     issues.extend(_unsupported_data_semantics_issues(text_value))
+    issues.extend(_missing_value_zero_issues(text_value))
     issues.extend(_binding_numeric_issues(text_value, packet or {}))
     issues.extend(_answer_coverage_issues(text_value, (packet or {}).get("requirements") or []))
     return issues

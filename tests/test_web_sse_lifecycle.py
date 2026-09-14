@@ -116,6 +116,35 @@ async function normalChatUsesOneCompletionRefresh() {
   assert.deepStrictEqual(trustCalls, ['session-a']);
 }
 
+async function uploadedFileReferencesAreAddedExactlyOnce() {
+  const app = makeApp();
+  let requestBody = null;
+  app.inputText = '分析这两个文件\n分析文件: M01-sales.csv';
+  app.uploadedFiles = [
+    {upload_id:'upload-1', filename:'M01-sales.csv'},
+    {upload_id:'upload-2', filename:'M01-costs.csv'},
+  ];
+  app.loadTrustView = async () => {};
+  fetchImpl = async (url, options) => {
+    assert.strictEqual(url, '/api/chat');
+    requestBody = JSON.parse(options.body);
+    return streamResponse(completeSSE);
+  };
+
+  await app.sendMessage();
+
+  const userText = app._sessionStates['session-a'].turns[0].content;
+  for (const text of [requestBody.message, userText]) {
+    assert.strictEqual((text.match(/^分析文件: M01-sales\.csv$/gm) || []).length, 1);
+    assert.strictEqual((text.match(/^分析文件: M01-costs\.csv$/gm) || []).length, 1);
+  }
+  assert.deepStrictEqual(requestBody.uploads, [
+    {upload_id:'upload-1', filename:'M01-sales.csv'},
+    {upload_id:'upload-2', filename:'M01-costs.csv'},
+  ]);
+  assert.deepStrictEqual(app.uploadedFiles, []);
+}
+
 async function confirmationResumeUsesCompletionRefresh() {
   const app = makeApp();
   const trustCalls = [];
@@ -385,6 +414,7 @@ const scenarios = {
   reply_export_names: replyExportsHaveUniqueSessionOwnedFilenames,
   execution_notice: executionNoticesSurviveReplayWithoutDuplication,
   normal_chat: normalChatUsesOneCompletionRefresh,
+  upload_file_refs: uploadedFileReferencesAreAddedExactlyOnce,
   confirmation_resume: confirmationResumeUsesCompletionRefresh,
   chunked_sse: chunkedSSEPreservesEventStateAndFlushesEOF,
   session_switch: switchingSessionDoesNotProjectBackgroundCompletion,
@@ -407,6 +437,7 @@ const scenarios = {
     "scenario",
     [
         "normal_chat",
+        "upload_file_refs",
         "terminal_before_eof",
         "confirmation_resume",
         "chunked_sse",

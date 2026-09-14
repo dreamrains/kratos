@@ -106,6 +106,17 @@ _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "</analysis_quality_guard>"
 )
 
+_HYPOTHESIS_QUALITY_GUARD_MESSAGE = (
+    "<competing_hypothesis_quality_guard>\n"
+    "The user explicitly requested competing hypotheses, but the structured audit trail is incomplete: {gaps}. "
+    "Continue with tools before answering. Record an analysis plan, keep at least two stable hypotheses, "
+    "and attach receipt-backed support/refute proposals through record_evidence_record.competing_hypotheses "
+    "using the hypothesis IDs already shown in <competing_hypotheses>. The host will validate each relation. "
+    "Report unsupported, refuted, supported, contested, inconclusive, or stale exactly as the resulting state shows; "
+    "do not ask the user to choose an analysis method and do not invent a verdict.\n"
+    "</competing_hypothesis_quality_guard>"
+)
+
 _WRAP_UP_GUARD_MESSAGE = (
     "<analysis_wrap_up_guard>\n"
     "The analysis has already run for many rounds. Conclude now with the evidence "
@@ -1399,6 +1410,7 @@ class AgentLoop:
         self._turn_successful_publication_tools = set()
         self._turn_loaded_data = False
         self._turn_final_guard_injected = False
+        self._turn_analysis_quality_gaps = []
         self._turn_verification_injected = False
         self._turn_wrap_up_injected = False
         self._turn_finalization_mode = False
@@ -2084,7 +2096,48 @@ class AgentLoop:
         )
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
+        hypothesis_gaps = self._competing_hypothesis_quality_gaps(user_input)
+        if hypothesis_gaps:
+            self._turn_analysis_quality_gaps = hypothesis_gaps
+            return True
         return self._is_analysis_quality_guard_candidate()
+
+    def _competing_hypothesis_quality_gaps(self, user_input: str) -> list[str]:
+        """Return missing audit structures for an explicit hypothesis task.
+
+        This gate checks presence only. Relation direction and status remain
+        host-validated by the existing hypothesis workflow.
+        """
+        if getattr(self, "_turn_final_guard_injected", False):
+            return []
+        try:
+            from data_agent.agent.question_need_detector import explicit_task_reason
+
+            reason = explicit_task_reason(user_input)
+        except Exception:
+            return []
+        if reason not in {"hypothesis_task", "competing_hypotheses", "evidence_reassessment"}:
+            return []
+        state = getattr(self.context, "analysis_state", None)
+        if state is None:
+            return ["analysis state is missing"]
+        gaps: list[str] = []
+        plan = getattr(state, "analysis_plan", None)
+        if not isinstance(plan, dict) or not str(plan.get("id") or "").strip():
+            gaps.append("record_analysis_plan has not produced a current plan")
+        hypothesis_sets = getattr(state, "hypothesis_sets", None)
+        if not isinstance(hypothesis_sets, list) or not hypothesis_sets:
+            gaps.append("no persisted competing-hypothesis set exists")
+        evidence_records = getattr(state, "evidence_records", None)
+        has_relation_proposal = any(
+            isinstance(record, dict)
+            and isinstance(record.get("competing_hypotheses"), list)
+            and bool(record.get("competing_hypotheses"))
+            for record in (evidence_records or [])
+        )
+        if not has_relation_proposal:
+            gaps.append("no evidence record contains structured hypothesis relations")
+        return gaps
 
     def _is_analysis_quality_guard_candidate(self) -> bool:
         if getattr(self, "_turn_final_guard_injected", False):
@@ -2110,7 +2163,12 @@ class AgentLoop:
             last_msg = self.messages[-1]
             if last_msg.get("role") == "assistant" and not last_msg.get("tool_calls"):
                 self.messages.pop()
-        self.messages.append({"role": "system", "content": _ANALYSIS_QUALITY_GUARD_MESSAGE})
+        gaps = list(getattr(self, "_turn_analysis_quality_gaps", []) or [])
+        content = (
+            _HYPOTHESIS_QUALITY_GUARD_MESSAGE.format(gaps="; ".join(gaps))
+            if gaps else _ANALYSIS_QUALITY_GUARD_MESSAGE
+        )
+        self.messages.append({"role": "system", "content": content})
 
     def _last_external_user_message(self) -> str:
         for msg in reversed(self.messages):

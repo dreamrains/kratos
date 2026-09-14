@@ -307,6 +307,34 @@ def test_plain_language_non_ledger_inference_is_rejected():
     assert any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
 
 
+def test_unqualified_human_rule_and_constructed_sample_claims_are_rejected():
+    human_rule = validate_final_narrative_issues(
+        "样本极小（12 行）且为人为规则数据。"
+    )
+    constructed = validate_final_narrative_issues(
+        "各来源均上涨 10%，呈现出构造样例特征，更可能是数据本身为样例。"
+    )
+    bounded = validate_final_narrative_issues(
+        "各来源均上涨 10%；需确认该文件是否为构造样例。"
+    )
+
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in human_rule)
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in constructed)
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in bounded)
+
+
+def test_missing_cost_cannot_be_rewritten_as_zero_by_pronoun():
+    bad = validate_final_narrative_issues(
+        "渠道成本字段未提供，因此净收益无法计算。口径决定怎么减，数据决定减多少，后者当前为零。"
+    )
+    explicit_zero = validate_final_narrative_issues(
+        "渠道成本由账本计算为零；代金券成本字段未提供，因此净收益无法计算。"
+    )
+
+    assert any(issue["code"] == "missing_value_coerced_to_zero" for issue in bad)
+    assert not any(issue["code"] == "missing_value_coerced_to_zero" for issue in explicit_zero)
+
+
 def test_explicit_subquestion_requires_visible_result_or_specific_gap():
     state = _packet_state([_receipt(
         "run_python",
@@ -566,6 +594,13 @@ class TestNSeriesPublication:
             packet,
         ) is None
 
+    def test_n01_not_a_prediction_basis_is_not_misread_as_prediction(self):
+        packet = _retention_packet()
+        assert validate_final_narrative(
+            "曲线拟合为观测区间内的描述，不构成 D30 或任何未来天数的预测依据。",
+            packet,
+        ) is None
+
     def test_n01_prediction_question_heading_is_not_misread_as_prediction(self):
         packet = _retention_packet()
         assert validate_final_narrative(
@@ -604,6 +639,11 @@ class TestNSeriesPublication:
         )
         assert error is not None
         assert "同比" in error
+
+    def test_n02_same_proportional_growth_is_not_a_yoy_label(self):
+        assert validate_final_narrative(
+            "2026-09-01 至 2026-09-02，各来源均同比例上升 10%。",
+        ) is None
 
     def test_n02_same_calendar_day_across_years_may_be_labeled_yoy(self):
         assert validate_final_narrative(
