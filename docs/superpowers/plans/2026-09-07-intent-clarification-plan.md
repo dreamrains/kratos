@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：优化实施计划
 
-日期：2026-09-14｜版本：1.10｜状态：**IC0—IC4 已完成；`main@fe83160` 的最新 IC5/E4 完整批次中 M06 的真实成本口径确认已通过，但 M02 的合规边界仍被发布门误拒、M04 未形成结构化证据与竞争假设闭环，IC5 保持 `executed_failed / not_accepted`；对应修复已提交为 `main@bed3b15` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，等待新冻结、新授权的完整 E4 复验**。
+日期：2026-09-14｜版本：1.11｜状态：**IC0—IC4 已完成；最新 IC5/E4 为 `main@b833501` 的 R16 完整批次，M06 的成本口径确认生命周期通过，但最终将缺失成本归零，且 M01/M02/M03/M04 另有证据与结构化失败，IC5 保持 `executed_failed / not_accepted`；对应修复已提交为 `main@1dd19e8` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，新的 E4 尚未冻结或授权**。
 
 用户已授权将本专题和当前分支的价值保留优化一并解决。实施仍只使用隔离夹具和 Provider 禁用的回归；真实 Provider 验收保持为单独阶段，不因本次计划调整自动开始。
 
@@ -98,6 +98,13 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 | IC5 R11 失败项本地修复 | completed_local / E3 passed；`main@bed3b15` 修正非预测边界识别，并向模型暴露既有分析计划、measurement 与竞争假设契约，未增加新的确认流程。隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped；`tmp/repair-browser-20260913-r11` 的 B02/B04 重点复核完成，Provider initiated calls=0。新的 IC5/E4 尚未执行。 |
 | IC5 / E4 R14 复验 | executed_failed / not_accepted；`main@ae8a5f4`、冻结 SHA-256 `b4826cb...a0cce`、账本 74 started / 74 dispatched。M06 的 `metric_definition` 成本口径只暂停和恢复一次，确认事件完整；但最终仍从恒定样本推断数据来源/总体波动。M02 合规边界被误拒，M04 计划启动死锁，M05 内容门槛另有失败，完整批次不能升级 IC5。 |
 | IC5 R14 失败项本地修复 | completed_local / E3 passed；`main@6d6f7e0` 没有改变确认流程，修复发布边界、Stage3C0B 唯一任务启动/推进和无证据恒定样本语义。隔离回归 324 passed 与 80 passed，full-offline 2637 passed、1 skipped；`tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。 |
+| IC5 / E4 R16 复验 | executed_failed / not_accepted；`main@b833501`、冻结 SHA-256 `a018f0d...92306`、账本 72 started / 72 dispatched。M06 的真实成本口径确认只选择并恢复一次，但最终把缺失成本归零；M04 无方法确认却缺结构化竞争证据闭环；完整批次不能升级 IC5。 |
+| IC5 R16 失败项本地修复 | completed_local / E3 passed；`main@1dd19e8` 未改变确认流程，修复缺失归零、结构化竞争证据收敛及相关发布边界，并去除上传引用重复。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；`tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定通过，Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。 |
 | 本地整合回归 | 回答内容定向 129 passed；完整离线第二次为 2608 passed、1 failed、1 skipped，唯一失败是隔离夹具多复制了清单外文件；用户于 2026-09-09 接受当前结果用于合并，不能记为 full-offline passed |
 
-整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；最新 `ae8a5f4` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+整合与测试明细见 [实施记录](../../audit/2026-09-09-answer-intent-integration-record.md)。IC4 与最新本地修复结论不代表真实模型、部署或生产验收；最新 `b833501` 的 IC5 仍是失败证据。后续复验必须使用新的精确提交、冻结清单、零调用预检和单次明确 Provider 授权。
+
+## 9. 2026-09-14 R16 E4 与 R17 本地状态
+
+- R16：`main@b833501` 按冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306` 完整执行 M01—M06，账本 72 started / 72 dispatched。M06 的成本口径确认只选择并恢复一次、事件完整，但最终把缺失成本写成“后者当前为零”；M04 没有方法许可确认，却缺少结构化计划、假设集与竞争证据闭环。连同 M01/M02/M03 的失败，IC5 仍为 `executed_failed / not_accepted`。
+- R17：`main@1dd19e8` 未改变确认决策与复用流程；它修复缺失归零、竞争假设结构化收敛及相关发布边界，并对上传引用做精确去重。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定复核通过，真实 Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。

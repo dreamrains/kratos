@@ -1,10 +1,10 @@
 # 分析价值保留与能力完整性：验收矩阵
 
-版本：v0.1｜日期：2026-09-06｜状态：**用例设计，尚未执行**。
+版本：v0.2｜日期：2026-09-14｜状态：**P0—P7 本地验收已完成；最新 P08/E4 为 `main@b833501` 的 R16 完整批次，只有 M05 通过，M01/M02/M03/M04/M06 失败，状态为 `executed_failed / not_accepted`；对应修复已提交为 `main@1dd19e8` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，新的 E4 尚未冻结或授权**。
 
 关联：[总计划](D:/Project/Daily/data-agent/docs/superpowers/plans/2026-09-06-analysis-value-preservation-plan.md)｜[技术设计](D:/Project/Daily/data-agent/docs/superpowers/specs/2026-09-06-analysis-value-preservation-design.md)。
 
-本文件列出的全部新用例初始状态均为 `not_started`。历史 392 项相关测试通过和 33 个探针观察不能填入本矩阵作为本轮 PASS。新增 fixture、测试名和阶段收据路径在 P0 创建与映射；下面的名称是设计，不代表文件已经存在。
+本文件中的用例名称最初作为设计编号建立；当前执行状态以第 13 节后的阶段记录、[阶段记录](2026-09-06-value-preservation-stage-records.md) 和当前提交证据为准。历史观察、本地回归、Provider-disabled 浏览器与真实 Provider E4 必须分层，不得相互替代。
 
 ## 1. 验收原则与证据等级
 
@@ -310,3 +310,10 @@ P1—P6：各自必测正反例通过、相关回归通过、阶段记录齐全�
 - M02 五次近期完整批次都正确理解 D1—D7 和 D30 拒绝边界，重复失败是发布门误报；M04 是计划投影后没有唯一进行中任务的确定性启动死锁；M05/M06 暴露 CV 算术及恒定样本无依据来源/总体解释。M05 的总额硬 oracle 还需要在下一冻结提示中明确请求求和，不能靠模型自由发挥满足。
 - `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 已在既有发布与任务生命周期内修复上述确定性产品缺口。隔离定向为 324 passed 与 80 passed；full-offline 为 2637 passed、1 skipped；提交后内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 均 completed，B04 保留 3 条 evidence records、4 个 hypothesis sets，控制台 0 error/warning，Provider initiated calls=0。
 - 本地 E3 不升级 R14 E4。下一批仍须新冻结、新授权、完整执行 M01—M06；未 push、部署、staging 或生产验证。
+
+## 17. 2026-09-14 R16 E4 与 R17 本地复核
+
+- R16 精确身份：`main@b8335015414737c27e4c3deba1f7ba5737f61a13`；冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；账本 `tmp/p08-real-provider-20260914-b833501-r1/provider-calls.jsonl` 为 72 started / 72 dispatched，SHA-256 `CE11CB969C4133237FCB033EF6DCB63679BEB1DB9C114CFAF6999F397534299F`。
+- R16 结果：只有 M05 passed；M01/M02/M03/M04/M06 failed。失败分别落在无证据数据来源、非预测边界误拒、“同比例”误判及样例推断、结构化竞争证据未收敛、缺失成本归零；另有上传文件引用重复。调用、会话、工具消息和终态证据闭合，但 P08 仍为 `executed_failed / not_accepted`。
+- R17 修复：`main@1dd19e8` 使用既有发布修订、计划/假设状态和上传 binding 修复上述已知缺口，没有增加新的流程、测试框架、探针、模型审核调用或记录机制。隔离回归 165 passed 与 173 passed；full-offline `tmp/p08-post-r16-full-offline-1` 为 2644 passed、1 skipped、16 warnings。
+- R17 E3：Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 中，上传引用发送与刷新后均恰好一次；B04 持久化 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 保留 D7=10% 且不发布 D30 数值。控制台无 error/warning，真实 Provider initiated calls=0。该证据不升级 R16 E4；新的完整批次尚未冻结或授权。

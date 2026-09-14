@@ -1,6 +1,6 @@
 # 分析价值保留与能力完整性：实施总计划
 
-版本：v0.11｜日期：2026-09-14｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；`main@fe83160` 的最新真实 Provider 完整批次已执行但 M02/M04 未通过，P08 保持 `executed_failed / not_accepted`；对应产品修复已提交为 `main@bed3b15`，E1/E2/full-offline 与重点 Provider-disabled E3 已通过，等待新冻结、新授权的完整 E4 复验**。
+版本：v0.12｜日期：2026-09-14｜状态：**P0—P7 及后续 IC/CP 本地实现已合入 `main`；最新 E4 为 `main@b833501` 的 R16 完整批次，只有 M05 通过，M01/M02/M03/M04/M06 失败，P08 保持 `executed_failed / not_accepted`；对应产品修复已提交为 `main@1dd19e8`，E1/E2/full-offline 与重点 Provider-disabled E3 已通过，新的 E4 尚未冻结或授权**。
 
 用户已接受产品原则：允许发布明确标注的待验证解释和有证据支持的条件性建议，继续严格区分已验证结论。最初“先不要修复”的要求用于规划交付；用户现已明确说明 P0—P6 已推进，并要求“从 P7 阶段继续开始”。当前执行以该后续指令为准。P7 发现的问题、原始证据和恢复条件见 [P7 执行报告](../validation/2026-09-06-vp-p7-execution-report.md)；真实 Provider、提交、推送、部署仍不自动获得授权。
 
@@ -48,7 +48,7 @@
 
 规划快照包含 402 个当前存在的受控文件，精确字节聚合 SHA-256 为 `fbafe8019a177f22c9f06277e8275b37edf53b2d592c6145a42b083f4df0860e`。它只用于规划期变更识别，**不是 Provider 冻结摘要或授权凭据**。
 
-当前本地产品基线为 `main@bed3b15`。P0—P7、必要澄清 IC0—IC4、回答内容 CP0—CP6 已进入同一文件树并有本地 E1/E2/E3 证据。最新真实 Provider 批次在 `main@fe83160` 完整执行，账本 89 started / 89 dispatched，但 M02/M04 未通过；其非预测边界误判、计划/证据契约收敛和竞争假设初始化缺口已在 `bed3b15` 修复。最新隔离回归为 131 passed 与 80 passed，full-offline 为 2630 passed、1 skipped；重点内置浏览器复核位于 `tmp/repair-browser-20260913-r11`，Provider initiated calls=0。P08 仍保持 `executed_failed / not_accepted`，不能以修复后的本地绿灯替代新的真实 Provider 完整复验。
+当前本地产品基线为 `main@1dd19e8`。P0—P7、必要澄清 IC0—IC4、回答内容 CP0—CP6 已进入同一文件树并有本地 E1/E2/E3 证据。最新真实 Provider 批次在 `main@b833501` 完整执行，账本 72 started / 72 dispatched；只有 M05 通过，M01/M02/M03/M04/M06 未通过。确定性发布边界、结构化收敛和上传引用重复缺口已在 `1dd19e8` 修复。最新隔离回归为 165 passed 与 173 passed，full-offline 为 2644 passed、1 skipped；重点内置浏览器复核位于 `tmp/p08-post-r16-browser-2`，Provider initiated calls=0。P08 仍保持 `executed_failed / not_accepted`，不能以修复后的本地绿灯替代新的真实 Provider 完整复验。
 
 ## 4. 已确认原则、目标与非目标
 
@@ -245,7 +245,7 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 | P7 | passed（本地、Provider 禁用） | 完整离线回归 `2519 passed / 1 skipped`；B01—B06 均已完成本地真实浏览器验证。详细收据与 B03 修复见阶段记录 L3-R2 至 L3-R4。 |
 | 合并后 P7/IC4/CP6 联合复核 | passed_local | `main@be5ee9a`、`tmp/main-ic4-browser-20260909-be5ee9a`；B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 通过；保存失败为 `unknown`、预算耗尽为 `failed`，未误发布完成；Provider initiated calls=0 |
 | R5 修复后 P7/IC4/CP6 联合复核 | passed_local | `main@176f5f2`、`tmp/repair-browser-20260910-r3`；同一联合矩阵通过，刷新/导出/Plotly/澄清恢复/失败终态均核对；控制台无 JSON 错误，Provider initiated calls=0 |
-| P8 | executed_failed / not_accepted | 最新 `main@fe83160` 完整复验：M01/M03/M05/M06 passed，M02/M04 failed；账本 89 started / 89 dispatched，调用号连续。两个失败项已在 `main@bed3b15` 完成本地修复并通过 full-offline 与重点 E3，但仍须新冻结、新授权并完整重跑。 |
+| P8 | executed_failed / not_accepted | 最新 `main@b833501` R16 完整复验：只有 M05 passed，M01/M02/M03/M04/M06 failed；账本 72 started / 72 dispatched，调用号连续。已知缺口已在 `main@1dd19e8` 完成本地修复并通过 full-offline 与重点 E3，但仍须新冻结、新授权并完整重跑。 |
 
 ## 8. 风险、停止规则与回退
 
@@ -317,3 +317,11 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 `main@ae8a5f40f6c7bf9fa5572bdcea2d92cf1ed59cfc` 按冻结 SHA-256 `b4826cb582abd868f5db90418932c5674ea49790d668821e137a77e5fe5a0cce` 完整执行 M01—M06；账本为 74 started / 74 dispatched，调用号连续、无缺失/孤立/重复，SHA-256 `1c98710278f18945f34bc534ca913a34e67a1c278572e530b9196104faadf2c7`。M01/M03 passed；M02 的正确 D1—D7/D30 边界被表头误拒，M04 命中 Stage3C0B 任务启动死锁，M05 存在总额缺失、CV 算术矛盾及无证据数据来源推断，M06 确认生命周期通过但仍有无依据来源/总体波动表述。P08 仍为 `executed_failed / not_accepted`。
 
 产品修复提交 `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 沿用既有发布修订和任务状态：识别预测阻断标题，校验 CV 分母和恒定样本语义，原子启动并推进唯一 ready 任务，全部终态后释放 scope。隔离回归 324 passed 与 80 passed；full-offline 2637 passed、1 skipped；提交后 Provider-disabled 内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。M05 的“六轮均保留总额 120”在首轮提示未明确要求求和，下一次冻结应修正提示/oracle 对齐，但不降低 oracle 或把 R14 改写为通过。新的 E4 尚未冻结或授权。
+
+## 17. 2026-09-14 R16 E4 与 R17 本地修复
+
+`main@b8335015414737c27e4c3deba1f7ba5737f61a13` 按冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`、模型 `openai/deepseek-v4-flash`、端点 `https://api.deepseek.com` 和物理调用上限 120，以内置浏览器完整执行 M01—M06。账本 `tmp/p08-real-provider-20260914-b833501-r1/provider-calls.jsonl` 为 72 started / 72 dispatched / 0 failed / 0 denied，调用号 1—72 连续，SHA-256 为 `CE11CB969C4133237FCB033EF6DCB63679BEB1DB9C114CFAF6999F397534299F`。
+
+M05 passed；M01/M02/M03/M04/M06 failed。M01 含无证据“人为规则数据”；M02 的正确 D30 非预测边界被误拒；M03 把“同比例”误识别为同比并推断构造样例；M04 正文完成但计划/假设/竞争证据没有结构化收敛；M06 在正确区分缺失后又写“后者当前为零”。同批还确认上传文件引用在部分会话重复展示。六会话工具消息配对、终态和账本完整，普通失败后继续完成矩阵，不能把 M05 单项通过拼接为整体通过。
+
+`main@1dd19e813b3c9d7c2f26caf06952fbe41a16c9ee` 在既有发布修订、分析状态和上传绑定内完成修复：识别否定预测边界；区分“同比例”与同比；阻止无证据样例/人为规则来源及缺失值归零；显式竞争假设任务要求已有计划、假设集及含竞争关系的证据；前端仅补齐尚未出现的精确文件引用。没有新增流程、测试框架、探针、模型审核调用或记录机制。隔离回归 165 passed 与 173 passed；full-offline 为 2644 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 验证文件引用发送与刷新后各仅一次，B04 形成 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet，B02/B02-NEG 保留 D7=10% 并拒绝 D30 无依据数值；控制台无 error/warning，真实 Provider initiated calls=0。新的 E4 尚未冻结或授权。

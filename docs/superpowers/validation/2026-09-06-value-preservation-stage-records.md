@@ -857,3 +857,24 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - `main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9` 在既有发布和 Stage3C0B 任务生命周期内修复：边界标题不再误拒；CV 分母与恒定样本无依据来源/总体解释进入一次修订；计划投影后启动唯一首任务、证据完成后推进下一 ready 任务、全部终态后释放 scope。没有新增流程、测试框架、探针、模型审核调用或记录机制。
 - 隔离回归为 324 passed 与 80 passed；full-offline `tmp/test-runs/20260914-r14-full-offline` 为 **2637 passed、1 skipped、16 warnings**。提交后内置浏览器 `tmp/repair-browser-20260914-r15` 的 B02/B04 会话均 completed；B04 为 3 evidence records、4 hypothesis sets、3 publication packets；控制台 0 error/warning，Provider initiated calls=0。
 - 下一次 E4 必须使用新冻结和新授权完整执行 M01—M06；R14 授权、调用余额与会话均不可复用。未 push、部署、staging 或生产验证。
+
+## P08-R16：`b833501` 真实 Provider 内置浏览器完整复验（Codex，2026-09-14）
+
+阶段 / 状态：**完整批次有效，P08 / IC5 / AC40 为 executed_failed / not_accepted；只有 M05 passed，M01/M02/M03/M04/M06 failed。** 普通失败后继续执行完整矩阵，批次内未修代码、换提示、换夹具或局部重跑。
+
+- 精确身份：`main@b8335015414737c27e4c3deba1f7ba5737f61a13`；冻结文件 `tmp/p08-real-provider-20260914-b833501-r1/freeze.json`，SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；Codex 内置浏览器。
+- 账本：`tmp/p08-real-provider-20260914-b833501-r1/provider-calls.jsonl` 为 **72 started / 72 dispatched / 0 failed / 0 denied**，调用号 1—72 连续，SHA-256 `CE11CB969C4133237FCB033EF6DCB63679BEB1DB9C114CFAF6999F397534299F`。分场景 M01 7、M02 10、M03 9（含压缩）、M04 17、M05 19、M06 10。
+- 会话：M01 `f68d84ad550e`、M02 `4adccc24e2ed`、M03 `77a224bb0f73`、M04 `881059252a02`、M05 `58da9082dc02`、M06 `dff3581fd84b`。工具调用/工具消息为 5/5、9/9、9/9、19/19、4/4、4/4，无 missing/orphan/duplicate；M02/M03 为 failed，其余 completed；浏览器 error/warning console 为 0，待处理上传为 0。
+- M01 failed：12 条、合计 120、未知单位等主体事实保留，但写入无证据“人为规则数据”。M02 failed：D1—D7 与 D7=10% 正确，也拒绝预测，发布门却误拒“不构成 D30 或未来天数预测依据”的边界并以 failed 终结。
+- M03 failed：六来源 10→11 至 60→66、合计 210→231 等事实保留，但“同比例上升”被子串规则误判为同比，且写入无依据“构造样例”推断。M04 failed：正文竞争假设合理且无方法确认，但没有持久化有效分析计划、假设集及含竞争关系的证据，结构化审计闭环缺失。
+- M05 passed：六种表达均保留 12/120、日期范围、未知单位和限制；含“块钱”的候选被既有发布门拒绝，最终答案干净。M06 failed：成本业务口径确认、单次选择/恢复和结果分类正确，但末句“后者当前为零”把未计算/缺失成本归零。
+- 同批补充缺陷：上传文件引用在 M01、M02、M04、M05 等会话重复展示；M03 压缩摘要也记录文件清单重复。该授权已消耗，批次后没有追加 Provider 调用。未 push、部署、staging 或生产验证。
+
+## P08-R17：R16 失败项本地修复与 Provider-disabled 复核（Codex，2026-09-14）
+
+阶段 / 状态：**E1/E2/full-offline 与重点 E3 passed_local；P08 / IC5 / AC40 的 E4 仍为 R16 的 executed_failed / not_accepted。**
+
+- 产品提交：`main@1dd19e813b3c9d7c2f26caf06952fbe41a16c9ee`。发布门识别否定预测边界、区分“同比例”与同比、拒绝无依据样例/人为规则来源及缺失值归零；显式竞争假设任务要求既有计划、假设集和含竞争关系的证据；前端对 `分析文件: <filename>` 做逐行精确去重并保留上传 ticket。没有新增流程、测试框架、探针、模型审核调用或记录机制。
+- 隔离回归：`tmp/p08-post-r16-targeted-1` **165 passed**；`tmp/p08-post-r16-targeted-2` **173 passed、9 warnings**；`tmp/p08-post-r16-full-offline-1` **2644 passed、1 skipped、16 warnings**。full-offline runner 禁止 Provider 网络。
+- Provider-disabled 内置浏览器：`tmp/p08-post-r16-browser-2`。上传 `F-SALES.csv` 后，显式文件引用在发送与刷新后均恰好一次，上传 binding 保留；B04 会话 `bef7b32130de` completed，持久化为 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 会话 `92fd8c99b127` completed，保留 D7=10% 和 D30 证据边界，未出现无依据“D30 留存预计为 5%”。
+- 浏览器控制台 error/warning 为 0；`runtime.jsonl` 的 `server_start.provider_enabled=false`，没有 `forbidden_provider_transport`，真实 Provider initiated calls=0。服务已关闭。本地证据不升级 E4；新批次必须重新冻结并取得新的精确授权。未 push、部署、staging 或生产验证。

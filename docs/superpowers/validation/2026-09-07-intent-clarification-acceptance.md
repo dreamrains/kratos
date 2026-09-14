@@ -1,6 +1,6 @@
 # 需求对齐与必要澄清：验收矩阵
 
-日期：2026-09-14｜版本：1.9｜状态：**IC0—IC4 已完成 E1/E2/E3；最新 IC5/E4 已在 `main@fe83160` 完整执行，M06 的真实成本口径确认通过，但 M02 的合规边界被误拒、M04 缺少结构化证据与竞争假设闭环，IC5 仍为 `executed_failed / not_accepted`；对应修复已提交为 `main@bed3b15` 并通过本地验收，新的 E4 尚未执行**。
+日期：2026-09-14｜版本：1.10｜状态：**IC0—IC4 已完成 E1/E2/E3；最新 IC5/E4 已在 `main@b833501` 完整执行，M06 的真实成本口径确认生命周期通过但最终将缺失成本归零，M04 缺少结构化竞争证据闭环，且 M01/M02/M03 另有失败，IC5 仍为 `executed_failed / not_accepted`；对应修复已提交为 `main@1dd19e8` 并通过本地验收，新的 E4 尚未冻结或授权**。
 
 关联：[计划](../plans/2026-09-07-intent-clarification-plan.md)｜[设计](../specs/2026-09-07-intent-clarification-design.md)｜[诊断](../../audit/2026-09-07-intent-clarification-diagnosis.md)。诊断里的历史观察/模拟不计入下表通过数量。
 
@@ -158,5 +158,13 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 | E3（`bed3b15` 修复后） | passed_local | `tmp/repair-browser-20260913-r11`：B02/B02-NEG completed；B04 形成 3 条 evidence records、4 个 plan-scoped hypothesis sets，并在版本变化后排除旧证据。浏览器控制台无错误，Provider initiated calls=0。该证据不升级 IC5/E4。 |
 | E4 / IC5（`ae8a5f4` R14 复验） | executed_failed / not_accepted | 冻结 SHA-256 `b4826cb...a0cce`，真实 Provider 账本 74 started / 74 dispatched。M06 的成本业务口径确实暂停、选择并只恢复一次，确认完整；但最终含无证据来源/总体波动表述。M02 边界误拒、M04 计划启动死锁和 M05 内容失败使完整批次不能通过。 |
 | E1 / E2 / E3（R14 失败项修复） | passed_local | `main@6d6f7e0`；隔离回归 324 passed 与 80 passed，full-offline 2637 passed、1 skipped；`tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。确认流程未重设，新的 IC5/E4 尚未冻结或授权。 |
+| E4 / IC5（`b833501` R16 复验） | executed_failed / not_accepted | 冻结 SHA-256 `a018f0d...92306`，真实 Provider 账本 72 started / 72 dispatched。M06 成本口径确认只选择并恢复一次但最终将缺失成本归零；M04 无方法确认却缺结构化竞争证据闭环。连同 M01/M02/M03 的失败，IC5 不能升级。 |
+| E1 / E2 / E3（R16 失败项修复） | passed_local | `main@1dd19e8`；隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；`tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定通过，Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。 |
 
 强制退出：矩阵全部通过或每个非适用项有基于范围的明确理由；不得用“没有弹窗”掩盖结果缺失。出现调用记账、数据归属、事件完整性或错误证据升级失败时，按计划停止依赖路径，离线修复后重新验证。
+
+## 10. 2026-09-14 R16 E4 与 R17 本地复核
+
+- R16：`main@b833501`、冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`，账本 72 started / 72 dispatched。M06 对真实 `metric_definition` 成本口径暂停、选择和恢复各一次，确认事件完整；但最终文本把仍缺失的成本写成“后者当前为零”。M04 无方法许可确认，却没有形成可审计的计划/假设/竞争证据闭环。连同其他内容失败，IC5 为 `executed_failed / not_accepted`。
+- R17：`main@1dd19e8` 保留既有确认决定、回复级 binding、失败回滚和终态语义，修复缺失归零及结构化收敛，并去除上传引用重复。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定复核完成，Provider initiated calls=0。
+- 证据边界：R17 只关闭本地 E1/E2/E3，不把 IC5 写成通过。下一次 E4 必须重新冻结精确提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，并取得新的单次明确授权。

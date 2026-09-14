@@ -1,6 +1,6 @@
 # 回复内容完整性与表达优化：补充整改计划
 
-日期：2026-09-14｜版本：v1.2｜状态：CP0—CP6 已合入 `main`；`main@fe83160` 的最新 AC40/E4 完整批次已执行但 M02/M04 未通过，AC40 保持 `executed_failed / not_accepted`；对应发布边界与结构化证据收敛修复已提交为 `main@bed3b15` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，等待新冻结、新授权的完整 E4 复验。
+日期：2026-09-14｜版本：v1.3｜状态：CP0—CP6 已合入 `main`；最新 AC40/E4 为 `main@b833501` 的 R16 完整批次，只有 M05 通过，M01/M02/M03/M04/M06 失败，AC40 保持 `executed_failed / not_accepted`；对应内容、发布、结构化收敛和上传绑定修复已提交为 `main@1dd19e8` 并通过 E1/E2/full-offline 与重点 Provider-disabled E3，新的 E4 尚未冻结或授权。
 
 目标：在保持来源、口径、版本与推断边界的前提下，使已经完成的有价值分析进入最终回答，并按用户需求组织清楚、完整的表达。
 
@@ -106,5 +106,12 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 | AC40 R11 失败项本地修复 | completed_local / E3 passed | `main@bed3b15`：发布门识别明确不报告 Dxx 数值的边界；计划、measurement 与竞争假设使用既有契约向模型公开并兼容既有自由格式记录。隔离回归 131 passed 与 80 passed，full-offline 2630 passed、1 skipped；`tmp/repair-browser-20260913-r11` 的 B02/B04 重点复核通过，版本变更后旧证据进入 exclusions，Provider initiated calls=0。新的真实 Provider 批次未执行。 |
 | AC40 / E4 R14 复验 | executed_failed / not_accepted | `main@ae8a5f4`、冻结 SHA-256 `b4826cb...a0cce`；账本 74 started / 74 dispatched。M01/M03 通过；M02 表头边界误拒，M04 计划任务启动死锁，M05 六轮未保留总额且出现 CV 算术矛盾与样例/账本推断，M06 虽保持已计算/未计算/证据不足和确认事件，却仍含无依据数据来源/总体波动解释。 |
 | AC40 R14 失败项本地修复 | completed_local / E3 passed | `main@6d6f7e0`：沿用一次修订，允许预测阻断标题，拒绝非零均值下“CV 分母为 0”和恒定样本无依据来源/总体语义；Stage3C0B 任务原子启动/推进并在全部终态后释放 scope。隔离回归 324 passed 与 80 passed，full-offline 2637 passed、1 skipped；`tmp/repair-browser-20260914-r15` 的 B02/B04 completed，Provider initiated calls=0。新的 E4 尚未冻结或授权。 |
+| AC40 / E4 R16 复验 | executed_failed / not_accepted | `main@b833501`、冻结 SHA-256 `a018f0d...92306`；账本 72 started / 72 dispatched。只有 M05 通过；M01 无依据来源，M02 合规边界误拒，M03 “同比例”误判及样例推断，M04 结构化竞争证据未收敛，M06 缺失成本归零；同批发现上传引用重复。 |
+| AC40 R16 失败项本地修复 | completed_local / E3 passed | `main@1dd19e8`：沿用一次修订和既有状态，修复否定预测边界、同比标签、无依据来源、缺失归零、结构化收敛及文件引用精确去重。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；`tmp/p08-post-r16-browser-2` 的上传绑定、B02/B02-NEG 和 B04 通过，Provider initiated calls=0。新的 E4 尚未冻结或授权。 |
 
 `completed_local` 表示代码、离线回归和本地脚本浏览器门槛已达到，不代表自然模型内容评分、部署或生产验证。详细证据见验收与整合记录；最新 AC40 的 `executed_failed` 不能由本地修复或局部场景通过升级。后续复验仍须使用新的冻结清单、零调用预检和明确 Provider 授权。
+
+## 8. 2026-09-14 R16 E4 与 R17 本地状态
+
+- R16：`main@b833501` 按冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306` 完整执行 M01—M06，账本 72 started / 72 dispatched。只有 M05 通过；M01 无依据来源，M02 合规非预测边界被误拒，M03 “同比例”误判及样例推断，M04 结构化竞争证据未收敛，M06 缺失成本归零。同批确认上传文件引用在会话中重复展示。因此 AC40 保持 `executed_failed / not_accepted`。
+- R17：`main@1dd19e8` 沿用既有一次修订、分析状态和上传 binding，修复上述确定性边界与结构化收敛，并仅补齐缺少的精确文件引用。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 验证上传引用发送/刷新均为一次，B02/B02-NEG 与 B04 完成，控制台无 error/warning，真实 Provider initiated calls=0。新的 AC40/E4 尚未冻结或授权。
