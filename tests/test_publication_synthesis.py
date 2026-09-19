@@ -10,6 +10,8 @@ from data_agent.agent.publication_synthesis import (
 )
 from datetime import date, timedelta
 
+import pytest
+
 
 def _curve_data():
     return {
@@ -323,6 +325,48 @@ def test_unqualified_human_rule_and_constructed_sample_claims_are_rejected():
     assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in bounded)
 
 
+@pytest.mark.parametrize("text", [
+    "该数据是测试数据。",
+    "该样本由机器生成。",
+    "这是合成数据。",
+    "这个文件是人工构造的。",
+    "这些记录并非真实账本。",
+])
+def test_unqualified_provenance_assertions_require_evidence(text):
+    issues = validate_final_narrative_issues(text)
+
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
+
+
+@pytest.mark.parametrize("text", [
+    "需确认该数据是否为测试数据。",
+    "尚不清楚该样本是否由机器生成。",
+    "无法判断这些记录是否来自真实账本。",
+    "分析文件: M01-sales.csv",
+])
+def test_bounded_provenance_language_and_source_labels_publish(text):
+    issues = validate_final_narrative_issues(text)
+
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
+
+
+def test_structured_provenance_fact_licenses_the_matching_assertion_only():
+    packet = {
+        "publication_scope": [],
+        "sources": [{
+            "facts": [
+                {"path": "metadata.provenance", "value": "synthetic"},
+            ],
+        }],
+    }
+
+    supported = validate_final_narrative_issues("这是合成数据。", packet)
+    unsupported = validate_final_narrative_issues("该样本由机器生成。", packet)
+
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in supported)
+    assert any(issue["code"] == "unsupported_data_origin_inference" for issue in unsupported)
+
+
 def test_missing_cost_cannot_be_rewritten_as_zero_by_pronoun():
     bad = validate_final_narrative_issues(
         "渠道成本字段未提供，因此净收益无法计算。口径决定怎么减，数据决定减多少，后者当前为零。"
@@ -572,7 +616,73 @@ def _causal_data() -> dict:
     }
 
 
+LEGAL_D30_BOUNDARIES = [
+    "目前暂不具备 D30 预测条件。",
+    "D30 预测尚缺外推基础。",
+    "D30 无从推算。",
+    "现有证据无法支持 D30 的点估计。",
+    "对 D30 暂不作方向判断。",
+    "是否可以预测 D30？",
+    "为什么当前阻断 D30 预测？",
+    "建议继续观测至第 30 天再判断。",
+    "如果 D30 达到预先阈值，则继续试点。",
+    "D7 留存为 10%，当前不能预测 D30。",
+    "D30 目前不可预测，只有 D1 至 D7 的观测。",
+    "当前数据不足以支持对 D30 的预测，因此不报告 D30 数值。",
+    "观测区间内的拟合不构成 D30 预测依据。",
+    "能否预测 D30——当前证据分级。",
+    "请把任何 D30 数字视为假设而非预测。",
+    "D30 尚未观测。",
+    "D30 缺少验证窗口。",
+    "暂时没有 D30 的证据基础。",
+    "D30 方向未知。",
+    "现阶段无法形成 D30 结论。",
+    "不应从 D7 直接外推 D30。",
+    "当前不发布 D30 趋势判断。",
+    "D30 外推条件尚未满足。",
+    "已有数据不能用于估计 D30。",
+    "D30 的变化方向仍不清楚。",
+    "D30 不在当前观测窗口内。",
+    "需要补充 D8 至 D30 数据后再验证。",
+    "关于 D30 的结论仍待验证。",
+    "D30 应保持为未知项。",
+    "当前没有经过验证的 D30 结果。",
+    "本轮没有计算 D30。",
+    "D30 标记为未计算。",
+]
+
+
+ILLEGAL_D30_CLAIMS = [
+    "预计 D30 将达到 5%。",
+    "D30 留存大约是 5%。",
+    "预测 D30 会继续下降。",
+    "D30 将保持稳定。",
+    "D30 预计处于低位。",
+    "不能预测 D30，但 D30 大约是 5%。",
+    "D30 留存为 0.05。",
+    "D30 约 0.05。",
+    "D30 会继续上升。",
+    "D30 将出现反弹。",
+    "D30 预计改善。",
+    "D30 会回落。",
+    "D30 将保持高位。",
+    "D30 留存将翻倍。",
+    "D30 将提高 8 个百分点。",
+    "D30 留存将在 4% 至 6% 之间。",
+    "D30 不低于 5%。",
+    "渠道 A 的 D30 留存为 5%。",
+]
+
+
 class TestNSeriesPublication:
+
+    @pytest.mark.parametrize("text", LEGAL_D30_BOUNDARIES)
+    def test_n01_legal_d30_paraphrases_publish(self, text):
+        assert validate_final_narrative(text, _retention_packet()) is None
+
+    @pytest.mark.parametrize("text", ILLEGAL_D30_CLAIMS)
+    def test_n03_affirmative_d30_claims_are_rejected(self, text):
+        assert validate_final_narrative(text, _retention_packet()) is not None
 
     def test_n01_boundary_statement_with_d30_publishes(self):
         packet = _retention_packet()

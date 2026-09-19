@@ -856,6 +856,71 @@ def test_stream_loop_auto_suspends_for_required_question(monkeypatch):
     assert len(events[0]["options"]) == 2
 
 
+def _incomplete_hypothesis_loop(session_id):
+    loop = AgentLoop(client=None, session_id=session_id)
+    loop._reset_turn_tracking()
+    loop.context.analysis_state.analysis_plan = None
+    loop.context.analysis_state.hypothesis_sets = []
+    loop.context.analysis_state.evidence_records = []
+    loop._ensure_mcp_initialized = lambda: None
+    loop._runtime_confirmation_checkpoint = lambda: None
+    loop._verify_before_publication = lambda *_args: None
+    loop._render_terminal_publication = lambda _user, text, persist=False: (text, None)
+    loop._persist_accepted_answer = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("incomplete audit must not be persisted")
+    )
+    return loop
+
+
+def test_incomplete_hypothesis_audit_fails_once_in_sync_loop():
+    class TwoFinals:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, **_kwargs):
+            self.calls += 1
+            return Response(text=f"prose candidate {self.calls}")
+
+    loop = _incomplete_hypothesis_loop("incomplete_hypothesis_sync")
+    client = TwoFinals()
+    loop.client = client
+    loop._provider_messages = lambda: []
+    loop._get_system_prompt = lambda: ""
+    loop._tools_for_current_round = lambda: None
+
+    result = loop._loop_impl("请提出并检验至少两种竞争性假设")
+
+    assert "analysis_audit_incomplete" in result.content
+    assert client.calls == 2
+    assert sum(
+        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
+        for message in loop.messages
+    ) == 1
+
+
+def test_incomplete_hypothesis_audit_fails_once_in_stream_loop():
+    loop = _incomplete_hypothesis_loop("incomplete_hypothesis_stream")
+    rounds = []
+
+    def scripted_round(round_num):
+        rounds.append(round_num)
+        text = f"prose candidate {round_num}"
+        yield {"type": "text_delta", "text": text, "turn_id": None}
+        yield {"type": "_response", "response": Response(text=text), "streamed_text": text}
+
+    loop._stream_llm_round = scripted_round
+
+    events = list(loop._stream_analysis_loop("请提出并检验至少两种竞争性假设"))
+
+    assert rounds == [1, 2]
+    assert [event["type"] for event in events] == ["error"]
+    assert "analysis_audit_incomplete" in events[0]["message"]
+    assert sum(
+        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
+        for message in loop.messages
+    ) == 1
+
+
 def test_loop_injects_synthesis_policy_before_final_answer(monkeypatch):
     intent = TurnIntent(
         intent_type="directed_analysis",

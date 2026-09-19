@@ -79,6 +79,45 @@ def test_explicit_hypothesis_task_structural_gate_accepts_complete_audit_presenc
     ) is False
 
 
+def test_explicit_hypothesis_task_rechecks_gaps_after_guard():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    loop.context.analysis_state.analysis_plan = None
+    loop.context.analysis_state.hypothesis_sets = []
+    loop.context.analysis_state.evidence_records = []
+    loop._turn_analysis_quality_gaps = ["initial gap"]
+    loop._inject_analysis_quality_guard()
+
+    assert loop._should_continue_for_analysis_quality(
+        "请提出并检验至少两种竞争性假设", "still prose only",
+    ) is False
+    assert "analysis_audit_incomplete" in loop._analysis_quality_failure_after_guard()
+    assert sum(
+        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
+        for message in loop.messages
+    ) == 1
+
+
+def test_complete_repair_clears_post_guard_failure():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    loop._turn_analysis_quality_gaps = ["initial gap"]
+    loop._inject_analysis_quality_guard()
+    loop.context.analysis_state.analysis_plan = {"id": "plan_1"}
+    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_plan_1"}]
+    loop.context.analysis_state.evidence_records = [{
+        "id": "ev_1",
+        "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
+    }]
+
+    assert loop._should_continue_for_analysis_quality(
+        "请提出并检验至少两种竞争性假设", "structured answer",
+    ) is False
+    assert loop._analysis_quality_failure_after_guard() is None
+    assert sum(
+        "<competing_hypothesis_quality_guard>" in str(message.get("content") or "")
+        for message in loop.messages
+    ) == 1
+
+
 def _wrap_up_count(loop):
     return sum(
         1

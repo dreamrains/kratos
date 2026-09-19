@@ -2097,9 +2097,9 @@ class AgentLoop:
 
     def _should_continue_for_analysis_quality(self, user_input: str, final_text: str) -> bool:
         hypothesis_gaps = self._competing_hypothesis_quality_gaps(user_input)
+        self._turn_analysis_quality_gaps = hypothesis_gaps
         if hypothesis_gaps:
-            self._turn_analysis_quality_gaps = hypothesis_gaps
-            return True
+            return not getattr(self, "_turn_final_guard_injected", False)
         return self._is_analysis_quality_guard_candidate()
 
     def _competing_hypothesis_quality_gaps(self, user_input: str) -> list[str]:
@@ -2108,8 +2108,6 @@ class AgentLoop:
         This gate checks presence only. Relation direction and status remain
         host-validated by the existing hypothesis workflow.
         """
-        if getattr(self, "_turn_final_guard_injected", False):
-            return []
         try:
             from data_agent.agent.question_need_detector import explicit_task_reason
 
@@ -2138,6 +2136,12 @@ class AgentLoop:
         if not has_relation_proposal:
             gaps.append("no evidence record contains structured hypothesis relations")
         return gaps
+
+    def _analysis_quality_failure_after_guard(self) -> str | None:
+        gaps = list(getattr(self, "_turn_analysis_quality_gaps", []) or [])
+        if not getattr(self, "_turn_final_guard_injected", False) or not gaps:
+            return None
+        return "[analysis_audit_incomplete] 竞争假设审计结构仍不完整：" + "; ".join(gaps)
 
     def _is_analysis_quality_guard_candidate(self) -> bool:
         if getattr(self, "_turn_final_guard_injected", False):
@@ -3199,6 +3203,10 @@ class AgentLoop:
                     self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
+                analysis_quality_failure = self._analysis_quality_failure_after_guard()
+                if analysis_quality_failure:
+                    yield {"type": "error", "message": analysis_quality_failure}
+                    return
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     rejected = dict(assistant_msg)
@@ -3623,6 +3631,9 @@ class AgentLoop:
                     self.messages.append(rejected)
                     self._inject_analysis_quality_guard()
                     continue
+                analysis_quality_failure = self._analysis_quality_failure_after_guard()
+                if analysis_quality_failure:
+                    return FinalResponse(content=analysis_quality_failure)
                 blocked_confirmation = self._runtime_confirmation_checkpoint()
                 if blocked_confirmation is not None:
                     rejected = dict(assistant_msg)

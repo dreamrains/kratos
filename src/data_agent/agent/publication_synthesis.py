@@ -1077,35 +1077,10 @@ _TIME_POINT = re.compile(r"(?:(?<![A-Za-z0-9])D|第)(\d+(?:\.\d+)?)(?:天|日)?"
 _ASSERTS_VALUE = re.compile(
     r"(?:为|是|约|大约|左右|达到|超过了?|降至|升至|预计为|预估为)\s*[-+]?[0-9]", re.I,
 )
-_BOUNDARY_BEFORE = re.compile(
-    r"不能|无法|不可|未知|尚无|尚不能|没有依据|不支持|难以|无法准确|"
-    r"未观测|无观测|仅观测|不构成|没有.{0,8}(?:观测|数据|证据)"
-)
-_PREDICTION_VERB = re.compile(r"预计|预估|预测|推算|大概会|可能会|将达|会达|forecast|project", re.I)
-_NEGATED_PREDICTION = re.compile(
-    r"(?:不能|无法|不可|不应|不支持|不足以支持|尚不能).{0,12}(?:预测|预估|推算)|"
-    r"(?:预测|预估|推算).{0,12}(?:不能|无法|不可|不支持)|"
-    r"不构成.{0,24}(?:预测|预估|推算)(?:依据|结论)?",
-    re.I,
-)
-_PREDICTION_QUESTION = re.compile(
-    r"(?:能否|是否|可否|能不能|可不可以).{0,12}(?:预测|预估|推算)|"
-    r"(?:预测|预估|推算).{0,12}(?:能否|是否|可否|能不能|可不可以)",
-    re.I,
-)
-_NON_PREDICTIVE_REFERENCE = re.compile(
-    r"(?:视为|当作).{0,12}(?:假设|情景).{0,12}(?:而非|不是|不作为).{0,8}(?:预测|预估|推算)|"
-    r"(?:非|不是|不作为).{0,8}(?:预测|预估|推算)|"
-    r"(?:不报告|不给出|不提供|不发布).{0,12}(?:D\d+|数值|数字)",
-    re.I,
-)
-_PREDICTION_BARRIER_LABEL = re.compile(
-    r"(?:为什么|为何|原因|依据|条件).{0,12}(?:阻断|禁止|拒绝|限制).{0,16}(?:预测|预估|推算)|"
-    r"(?:阻断|禁止|拒绝|限制).{0,16}(?:预测|预估|推算).{0,10}(?:原因|依据|条件)",
-    re.I,
-)
-_POSITIVE_PREDICTION_DIRECTION = re.compile(
-    r"(?:继续|将|会|预计|预估|预测).{0,8}(?:上升|下降|增长|减少|提高|降低)",
+_AFFIRMATIVE_POINT_DIRECTION = re.compile(
+    r"(?:将|会|预计|预估|预测|推算|可能)?[^。；;\n]{0,12}"
+    r"(?:继续)?(?:上升|下降|增长|减少|提高|降低|改善|恶化|反弹|回落|趋稳|翻倍|"
+    r"保持(?:稳定|不变|低位|高位)|处于(?:低位|高位|稳定状态))",
     re.I,
 )
 _COLLECTION_ACTION = re.compile(r"(?:收集|观测|观察|验证|跟踪|积累|等待)[^。；;，,]{0,12}(?:至|到)")
@@ -1173,6 +1148,23 @@ def _bind_claim_source(clause: str, curve_scopes: list[dict]) -> dict | None:
     return None
 
 
+def _asserts_time_point_payload(clause: str, match: re.Match) -> bool:
+    """Return whether a time point carries a publishable value or direction.
+
+    Words such as ``预测`` and ``推算`` may name the boundary itself (for
+    example, ``D30 预测尚缺外推基础``).  They are therefore not evidence of a
+    prediction.  The gate activates only for a numeric/rate payload or an
+    affirmative state/direction attached to the time point.
+    """
+    suffix = clause[match.start():]
+    after_point = clause[match.end():]
+    return bool(
+        _ASSERTS_VALUE.search(suffix)
+        or re.search(r"[-+]?\d+(?:\.\d+)?\s*%", after_point)
+        or _AFFIRMATIVE_POINT_DIRECTION.search(suffix)
+    )
+
+
 def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
     curve_scopes = [
         scope for scope in scopes
@@ -1186,40 +1178,12 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
         for match in _TIME_POINT.finditer(clause):
             value = float(match.group(1))
             prefix = clause[:match.start()]
-            suffix = clause[match.start():]
-            asserts_value = bool(_ASSERTS_VALUE.search(suffix))
-            predicts = bool(_PREDICTION_VERB.search(clause))
-            negated_prediction = bool(_NEGATED_PREDICTION.search(clause))
-            prediction_question = bool(_PREDICTION_QUESTION.search(clause))
-            without_point = clause[:match.start()] + clause[match.end():]
-            has_reported_rate = bool(re.search(r"[-+]?\d+(?:\.\d+)?\s*%", without_point))
-            boundary_window = clause[max(0, match.start() - 30):min(len(clause), match.end() + 36)]
-            if (
-                not asserts_value
-                and not has_reported_rate
-                and _NON_PREDICTIVE_REFERENCE.search(boundary_window)
-            ):
-                continue  # labels a hypothetical number as non-predictive; publishes no value
-            if (
-                not asserts_value
-                and not has_reported_rate
-                and _PREDICTION_BARRIER_LABEL.search(boundary_window)
-                and not _POSITIVE_PREDICTION_DIRECTION.search(clause)
-            ):
-                continue  # heading/label explains why prediction is blocked; it publishes no forecast
-            if (
-                _BOUNDARY_BEFORE.search(boundary_window)
-                and not asserts_value
-                and (not predicts or negated_prediction)
-            ):
-                continue  # explicit boundary statement, not an extrapolated claim
-            if prediction_question and not asserts_value:
-                continue  # section/question label, not a published prediction
-            if _COLLECTION_ACTION.search(prefix[-30:]):
+            asserts_payload = _asserts_time_point_payload(clause, match)
+            if _COLLECTION_ACTION.search(prefix[-30:]) and not asserts_payload:
                 continue  # future data-collection action, not a published value
-            if not asserts_value and not predicts:
-                # Conditional actions and bare mentions without a value or a
-                # prediction verb are not extrapolated claims.
+            if not asserts_payload:
+                # Boundary language, questions, actions and bare mentions do
+                # not publish a value or direction and need no rescue lexicon.
                 continue
 
             # Source-bound range check: one source's observation never
@@ -1440,30 +1404,33 @@ _CV_ZERO_DENOMINATOR = re.compile(
     re.I,
 )
 
-_UNSUPPORTED_DATA_ORIGIN = re.compile(
-    r"(?:大概率|极可能|很可能|可能|疑为|显然|说明|表明|就是|属于).{0,24}"
-    r"(?:脱敏|占位|样例|示意|演示)(?:数据|账本)?|"
-    r"(?:不是真账本|不是实际账本|并非真实账本)|"
-    r"真实业务(?:的)?波动(?:为|是)\s*零",
+_PROVENANCE_ASSERTION = re.compile(
+    r"(?:是|为|属于|由|并非|不是|不属于|大概率|极可能|很可能|疑为|显然|说明|表明|呈现出)"
+    r"[^。；;\n]{0,24}"
+    r"(?:测试数据|机器生成|合成数据|synthetic|人为规则数据|人工构造|构造样例|构造示例|"
+    r"脱敏数据?|占位数据?|样例数据?|示意数据?|演示数据?|真实账本|真账本)",
     re.I,
 )
-_EXPLICIT_UNSUPPORTED_DATA_ORIGIN = re.compile(
-    r"人为(?:规则|构造)(?:的)?数据|"
-    r"呈现出.{0,12}(?:构造|人为)(?:的)?(?:样例|示例)(?:数据)?(?:的)?特征",
+_PROVENANCE_UNCERTAINTY = re.compile(
+    r"是否|是不是|能否|无法(?:判断|确认)?|不能(?:判断|确认)?|未知|尚不清楚|"
+    r"需(?:要)?确认|待确认|未验证|如果|若|假如",
     re.I,
 )
-_CONSTANT_SAMPLE_CONTEXT = re.compile(
-    r"(?:全(?:都|部)?(?:等于|为|是)|(?:均|都)(?:等于|为|是)|恒(?:为|等于)|零方差|无波动|"
-    r"unique(?:_values)?\s*=\s*1|std\s*=\s*(?:\*\*)?0(?:\.0+)?)",
+_UNSUPPORTED_POPULATION_CLAIM = re.compile(r"真实业务(?:的)?波动(?:为|是)\s*零", re.I)
+_PROVENANCE_FACT_PATH = re.compile(
+    r"(?:^|[._-])(?:provenance|origin|source_type|data_kind|generation_method)(?:$|[._-])",
     re.I,
 )
-_DATA_ORIGIN_BOUNDARY = re.compile(
-    r"(?:是否|是不是|能否|无法|不能|未知|尚不清楚|需(?:要)?确认|待确认|"
-    r"如果|若|假如).{0,30}(?:脱敏|占位|样例|示意|演示|真实账本|真账本)|"
-    r"(?:脱敏|占位|样例|示意|演示|真实账本|真账本).{0,30}"
-    r"(?:是否|是不是|无法|不能|未知|尚不清楚|需(?:要)?确认|待确认)",
-    re.I,
-)
+_PROVENANCE_KINDS = {
+    "test": re.compile(r"测试数据|\btest(?:[_ -]?data)?\b", re.I),
+    "machine_generated": re.compile(r"机器生成|machine[_ -]?generated", re.I),
+    "synthetic": re.compile(r"合成数据|\bsynthetic\b", re.I),
+    "constructed": re.compile(r"人为规则数据|人工构造|构造(?:样例|示例)|manually?[_ -]?constructed", re.I),
+    "masked": re.compile(r"脱敏|masked|anonymi[sz]ed", re.I),
+    "placeholder": re.compile(r"占位|placeholder", re.I),
+    "sample": re.compile(r"样例|示意|演示|sample|demo", re.I),
+    "not_real_ledger": re.compile(r"并非真实账本|不是真账本|不是实际账本|not[_ -]?real[_ -]?ledger", re.I),
+}
 
 
 def _decimal_number(value: str) -> Decimal | None:
@@ -1535,23 +1502,44 @@ def _arithmetic_issues(text: str) -> list[dict[str, str]]:
     return issues
 
 
-def _unsupported_data_semantics_issues(text: str) -> list[dict[str, str]]:
-    """Reject data-origin or population claims that cannot follow from observed constancy."""
-    has_constant_context = _CONSTANT_SAMPLE_CONTEXT.search(text) is not None
+def _provenance_kinds(value: str) -> set[str]:
+    return {
+        kind for kind, pattern in _PROVENANCE_KINDS.items()
+        if pattern.search(str(value or ""))
+    }
+
+
+def _packet_provenance_kinds(packet: dict) -> set[str]:
+    supported: set[str] = set()
+    for source in packet.get("sources") or []:
+        for fact in source.get("facts") or []:
+            if not isinstance(fact, dict):
+                continue
+            if not _PROVENANCE_FACT_PATH.search(str(fact.get("path") or "")):
+                continue
+            supported.update(_provenance_kinds(str(fact.get("value") or "")))
+    return supported
+
+
+def _unsupported_data_semantics_issues(text: str, packet: dict) -> list[dict[str, str]]:
+    """Reject assertive provenance claims unless structured evidence supports them."""
+    supported_kinds = _packet_provenance_kinds(packet)
     for clause in _split_claims(text):
-        match = _EXPLICIT_UNSUPPORTED_DATA_ORIGIN.search(clause)
-        if match is None and has_constant_context:
-            match = _UNSUPPORTED_DATA_ORIGIN.search(clause)
-        if match is None:
+        population_match = _UNSUPPORTED_POPULATION_CLAIM.search(clause)
+        match = _PROVENANCE_ASSERTION.search(clause)
+        if match is None and population_match is None:
             continue
-        if _DATA_ORIGIN_BOUNDARY.search(clause):
+        if _PROVENANCE_UNCERTAINTY.search(clause):
+            continue
+        claim_kinds = _provenance_kinds(match.group(0)) if match is not None else set()
+        if population_match is None and claim_kinds and claim_kinds <= supported_kinds:
             continue
         return [{
             "code": "unsupported_data_origin_inference",
             "span": clause.strip()[:80],
             "reason": (
-                "当前观测只能证明样本内取值恒定，不能据此判定数据是脱敏、占位、样例或非真实账本，"
-                "也不能推断真实业务总体波动为零；请改为待确认的数据来源问题。"
+                "正文把数据来源或生成方式写成事实，但发布包没有匹配的结构化来源证据；"
+                "请提供来源字段，或改为待确认的数据来源问题。样本恒定也不能证明真实业务总体波动为零。"
             ),
         }]
     return []
@@ -1826,7 +1814,7 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_future_window_issues(text_value, scopes))
     issues.extend(_period_label_issues(text_value))
     issues.extend(_arithmetic_issues(text_value))
-    issues.extend(_unsupported_data_semantics_issues(text_value))
+    issues.extend(_unsupported_data_semantics_issues(text_value, packet or {}))
     issues.extend(_missing_value_zero_issues(text_value))
     issues.extend(_binding_numeric_issues(text_value, packet or {}))
     issues.extend(_answer_coverage_issues(text_value, (packet or {}).get("requirements") or []))
