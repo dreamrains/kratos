@@ -345,6 +345,8 @@ def _register_loaded_data_bundle(
     from data_agent.agent.data_bundle import classify_file_relationship, stable_file_id
 
     field_roles = contract.get("field_roles") if isinstance(contract.get("field_roles"), dict) else {}
+    data_identity = workspace.get_data_identity(dataset)
+    source_path = str(workspace.get_metadata(dataset, "_source_path") or path.resolve())
     file_id = stable_file_id(path.name, dataset)
     previous_bundle = state.active_bundle() if hasattr(state, "active_bundle") else None
     file_ref = state.add_data_pool_file({
@@ -358,6 +360,8 @@ def _register_loaded_data_bundle(
         "time_fields": list(field_roles.get("date") or []),
         "time_range": contract.get("time_range") if isinstance(contract.get("time_range"), dict) else {},
         "dataset_contract_id": str(contract.get("id") or ""),
+        "source_path": source_path,
+        "source_fingerprint": str(data_identity.get("source_fingerprint") or ""),
         "status": "loaded",
     })
 

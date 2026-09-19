@@ -520,9 +520,14 @@ def _material_ambiguity_groups(
             if alias_kind == "file_id" or not alias_in_goal(goal, alias, alias_kind=alias_kind):
                 continue
             key = (_normalize_alias(alias), alias_kind)
-            group = alias_groups.setdefault(key, {"alias": alias, "files": []})
+            group = alias_groups.setdefault(key, {"alias": alias, "files": [], "_source_paths": set()})
+            source_path = _normalized_source_path(profile)
+            if source_path and source_path in group["_source_paths"]:
+                continue
             if file_id not in {_text(item.get("file_id")) for item in group["files"]}:
                 group["files"].append(_ambiguity_file_ref(profile, profile_index))
+                if source_path:
+                    group["_source_paths"].add(source_path)
 
     result: list[dict[str, Any]] = []
     seen_groups: set[tuple[str, ...]] = set()
@@ -533,9 +538,10 @@ def _material_ambiguity_groups(
         if file_ids in seen_groups:
             continue
         seen_groups.add(file_ids)
-        result.append(group)
+        result.append({"alias": group["alias"], "files": group["files"]})
 
     for binding, indexes in plan_groups or []:
+        indexes = _distinct_physical_source_indexes(profiles, indexes)
         files = [
             _ambiguity_file_ref(profiles[index], index + 1)
             for index in indexes
@@ -549,6 +555,26 @@ def _material_ambiguity_groups(
         seen_groups.add(file_ids)
         result.append({"alias": binding, "files": files})
     return result
+
+
+def _normalized_source_path(profile: dict[str, Any]) -> str:
+    return _text(profile.get("source_path")).replace("\\", "/").casefold()
+
+
+def _distinct_physical_source_indexes(
+    profiles: list[dict[str, Any]],
+    indexes: list[int],
+) -> list[int]:
+    distinct: list[int] = []
+    seen_paths: set[str] = set()
+    for index in indexes:
+        source_path = _normalized_source_path(profiles[index])
+        if source_path and source_path in seen_paths:
+            continue
+        distinct.append(index)
+        if source_path:
+            seen_paths.add(source_path)
+    return distinct
 
 
 def _ambiguity_file_ref(profile: dict[str, Any], upload_order: int) -> dict[str, Any]:

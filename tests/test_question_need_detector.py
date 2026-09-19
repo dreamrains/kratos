@@ -179,6 +179,32 @@ def test_duplicate_material_file_reference_requires_scope_selection_first():
     assert gate["metadata"] == {"file_ids": ["sales_a", "sales_b"]}
 
 
+def test_same_source_loaded_alias_does_not_create_file_scope_ambiguity():
+    state = _duplicate_file_state()
+    for profile in state.data_pool:
+        profile["source_fingerprint"] = "sha256:same-physical-upload"
+        profile["source_path"] = r"D:\sessions\uploads\one\sales.csv"
+    state.route_proposals = [{
+        "id": "route_trend",
+        "dataset": "sales_b",
+        "direction": "trend",
+        "label": "Sales trend",
+    }]
+    state.active_scope["active_dataset"] = "sales_b"
+    state.dataset_contracts[1]["field_roles"] = {
+        "date": ["sale_date"],
+        "metrics": ["revenue"],
+    }
+
+    gate = detect_question_need(
+        "analyze sales.csv using competing hypotheses",
+        _intent(),
+        state,
+    )
+
+    assert gate["question_type"] != "file_scope_selection"
+
+
 def test_explicit_unique_file_id_skips_scope_gate_and_continues_detection():
     state = _duplicate_file_state()
     state.route_proposals = [

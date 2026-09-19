@@ -401,6 +401,8 @@ def test_loaded_dataset_registers_data_pool_and_active_bundle(tmp_path):
         assert not result.startswith("Error:")
         assert state.data_pool
         assert state.data_pool[0]["dataset_contract_id"] == state.dataset_contracts[0]["id"]
+        assert state.data_pool[0]["source_fingerprint"].startswith("sha256:")
+        assert state.data_pool[0]["source_path"] == str(csv_path.resolve())
         assert state.active_bundle_id
         assert state.active_bundle()["dataset_names"] == ["orders"]
         assert state.active_bundle()["relationship_status"] == "diagnostic_only"
