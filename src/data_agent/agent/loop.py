@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import threading
@@ -28,6 +29,17 @@ from data_agent.agent.compact import (
 from data_agent.tools._utils import persist_detail
 
 TOOL_SUMMARY_THRESHOLD = 3000  # chars: auto-persist tool output exceeding this
+
+
+def _structured_detail_identity(tool_call_id: str, data: Any) -> tuple[str, str]:
+    """Return a bounded content address and the canonical payload digest."""
+    payload_digest = hashlib.sha256(
+        json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+    call_digest = hashlib.sha256(str(tool_call_id).encode("utf-8")).hexdigest()
+    return f"result-{call_digest[:12]}-{payload_digest[:12]}", f"sha256:{payload_digest}"
+
+
 from data_agent.agent.context import (
     AgentContext,
     _claim_authoritative_scope_controller,
@@ -1292,7 +1304,8 @@ class AgentLoop:
         # If ToolResult has structured data, persist it
         if tool_result.data is not None:
             try:
-                detail_path = persist_detail(self.session_id, tc.id, tool_result.data)
+                detail_key, _ = _structured_detail_identity(tc.id, tool_result.data)
+                detail_path = persist_detail(self.session_id, detail_key, tool_result.data)
                 detail_ref = f" [detail: tool_outputs/{detail_path.name}]"
             except Exception:
                 detail_ref = ""
@@ -1580,7 +1593,6 @@ class AgentLoop:
         if not callable(add_receipt):
             return ""
         try:
-            import hashlib
             from data_agent.agent.publication_synthesis import publication_contract
 
             args = dict(tool_args or {})
@@ -1604,11 +1616,19 @@ class AgentLoop:
                         dataset_refs.append(structured_data[key])
             dataset_refs = list(dict.fromkeys(dataset_refs))
             detail_ref: dict[str, str] = {}
+            structured_result_sha256 = ""
             if structured_data is not None:
                 try:
                     from data_agent.tools._utils import persist_detail
 
-                    detail_path = persist_detail(self.session_id, str(tool_call_id or tool_name), structured_data)
+                    # Provider call IDs are unbounded and may be reused across
+                    # rounds. A fixed-length call hash plus the payload digest
+                    # keeps the path stable, bounded, and immutable. The same
+                    # helper is used for the reference shown to the model.
+                    detail_key, structured_result_sha256 = _structured_detail_identity(
+                        str(tool_call_id or tool_name), structured_data
+                    )
+                    detail_path = persist_detail(self.session_id, detail_key, structured_data)
                     detail_ref = {
                         "path": f"tool_outputs/{detail_path.name}",
                         "sha256": "sha256:" + hashlib.sha256(detail_path.read_bytes()).hexdigest(),
@@ -1632,10 +1652,7 @@ class AgentLoop:
                     name: self.context.workspace.get_data_identity(name) for name in dataset_refs
                     if self.context.workspace.get_data_identity(name)
                 },
-                "structured_result_sha256": (
-                    "sha256:" + hashlib.sha256(json.dumps(structured_data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
-                    if structured_data is not None else ""
-                ),
+                "structured_result_sha256": structured_result_sha256,
                 "result_sha256": "sha256:" + hashlib.sha256(
                     (tool_msg_content or "").encode("utf-8")
                 ).hexdigest(),

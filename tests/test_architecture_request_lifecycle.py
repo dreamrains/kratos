@@ -120,13 +120,14 @@ def test_curve_chart_uses_receipted_values_and_rejects_modified_details(tmp_path
         result = curve_fitting("retention", x_col="x", y_col="y")
         ref = loop._compact_tool_output(result, NS(id="curve"))
         loop._record_turn_tool_result("curve_fitting", ref, {"name": "retention"}, "curve", result.data)
-        payload, binding = load_result_reference("tool_outputs/curve_detail.json")
+        reference = loop.context.analysis_state.tool_receipts[-1]["detail_ref"]["path"]
+        payload, binding = load_result_reference(reference)
         assert payload["chart_data"][0]["actual"] == 0.5
         best = payload["fits"][0]
         assert [row[best["family"] + "_fit"] for row in payload["chart_data"]] == best["predicted"]
-        path = tmp_path / "sessions/curve-result/tool_outputs/curve_detail.json"
+        path = tmp_path / "sessions" / "curve-result" / reference
         changed = json.loads(path.read_text(encoding="utf-8"))
         changed["chart_data"][0]["actual"] = 0
         path.write_text(json.dumps(changed), encoding="utf-8")
         with pytest.raises(ValueError, match="does not match"):
-            load_result_reference("tool_outputs/curve_detail.json")
+            load_result_reference(reference)

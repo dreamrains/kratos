@@ -120,8 +120,17 @@ def bind_computed_statistics(payload: dict, receipts: list[dict]) -> None:
     for receipt in receipts:
         if not receipt.get("structured_result_sha256"):
             continue  # Legacy receipts remain subject to their existing checks.
-        reference = "tool_outputs/" + sanitize_filename(receipt["tool_call_id"]) + "_detail.json"
-        result, binding = load_result_reference(reference)
+        reference = str((receipt.get("detail_ref") or {}).get("path") or "")
+        if reference:
+            result, binding = load_result_reference(
+                reference,
+                expected_receipt_id=receipt["id"],
+            )
+        else:
+            reference = "tool_outputs/" + sanitize_filename(receipt["tool_call_id"]) + "_detail.json"
+            # Legacy receipts predate receipt-specific detail references.
+            # Preserve their existing digest/path lookup contract.
+            result, binding = load_result_reference(reference)
         if binding["receipt_id"] != receipt["id"]:
             raise ValueError("Statistical detail does not match selected receipt")
         results.append((receipt["tool_name"], result, binding, receipt.get("arguments", {})))
