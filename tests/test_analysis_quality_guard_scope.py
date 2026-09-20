@@ -79,6 +79,43 @@ def test_explicit_hypothesis_task_structural_gate_accepts_complete_audit_presenc
     ) is False
 
 
+def test_executable_hypothesis_plan_requires_authoritative_task_completion(tmp_path, monkeypatch):
+    from data_agent.session.task_manager import task_manager
+
+    monkeypatch.setattr(task_manager, "_dir", tmp_path / "tasks")
+    monkeypatch.setattr(task_manager, "_next_id_val", 0)
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    analysis_plan_id = "analysis_plan_1"
+    workflow = task_manager.create_plan(session_id=loop.session_id, goal="Compare hypotheses")
+    task = task_manager.create(
+        "Test H1",
+        session_id=loop.session_id,
+        plan_id=workflow["id"],
+        analysis_plan_id=analysis_plan_id,
+        step_id="step_h1",
+        status="in_progress",
+    )
+    loop.context.analysis_state.analysis_plan = {
+        "id": analysis_plan_id,
+        "method_plan": [{"step_id": "step_h1"}],
+    }
+    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_1"}]
+    loop.context.analysis_state.evidence_records = [{
+        "id": "ev_1",
+        "plan_id": analysis_plan_id,
+        "step_id": "step_h1",
+        "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
+    }]
+
+    gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
+    assert any("unfinished tasks" in gap for gap in gaps)
+
+    task_manager.update(task["id"], status="completed")
+    assert loop._competing_hypothesis_quality_gaps(
+        "请提出并检验至少两种竞争性假设"
+    ) == []
+
+
 def test_explicit_hypothesis_task_rechecks_gaps_after_guard():
     loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
     loop.context.analysis_state.analysis_plan = None

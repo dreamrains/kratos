@@ -2527,6 +2527,10 @@ function chatApp() {
             let terminalReceived = false;
             const runGeneration = state.runGeneration;
             let completionProjection = null;
+            // The server emits an SSE comment keepalive every ~2s. Missing
+            // three consecutive keepalives means the browser should reconcile
+            // against durable run_state rather than wait on a dead socket.
+            const silenceTimeoutMs = this._sseSilenceTimeoutMs || 6000;
 
             const dispatchEvent = async () => {
                 if (eventType && eventDataLines.length) {
@@ -2577,7 +2581,32 @@ function chatApp() {
 
             while (true) {
                 let result;
-                try { result = await reader.read(); } catch {
+                let silenceTimer;
+                const readOutcome = reader.read().then(
+                    value => ({kind: 'read', value}),
+                    error => ({kind: 'error', error}),
+                );
+                const silenceOutcome = new Promise(resolve => {
+                    silenceTimer = setTimeout(() => resolve({kind: 'silence'}), silenceTimeoutMs);
+                });
+                const outcome = await Promise.race([readOutcome, silenceOutcome]);
+                clearTimeout(silenceTimer);
+                if (outcome.kind === 'silence') {
+                    // The HTTP body can remain open even after the durable run
+                    // has finished. Stop waiting on this socket and let the
+                    // run-state watcher reconcile the authoritative terminal.
+                    try { await reader.cancel?.('sse_silence_watchdog'); } catch {}
+                    reader.releaseLock?.();
+                    if (terminalReceived || state.runGeneration !== runGeneration) {
+                        await completionProjection;
+                        return effectiveSid;
+                    }
+                    turn.isThinking = false;
+                    this.connectionError = '流式连接长时间无事件，正在核对后台执行状态';
+                    this._watchRunState(effectiveSid, state);
+                    return effectiveSid;
+                }
+                if (outcome.kind === 'error') {
                     reader.releaseLock?.();
                     if (terminalReceived || state.runGeneration !== runGeneration) {
                         await completionProjection;
@@ -2589,6 +2618,7 @@ function chatApp() {
                     this._watchRunState(effectiveSid, state);
                     return effectiveSid;
                 }
+                result = outcome.value;
                 const { done, value } = result;
                 if (done) {
                     buffer += decoder.decode();

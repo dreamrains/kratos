@@ -49,14 +49,19 @@ class EventQueue:
         self._closed = True
         self._queue.put(None)  # sentinel
 
-    def iter(self):
-        """Sync generator yielding SSE-formatted strings for Flask Response."""
+    def iter(self, heartbeat_interval_seconds: float = 2.0):
+        """Yield SSE events plus comment keepalives while the run is active."""
+        interval = max(float(heartbeat_interval_seconds), 0.001)
         while True:
             try:
-                item = self._queue.get(timeout=0.05)
+                item = self._queue.get(timeout=interval)
             except Empty:
                 if self._closed and self._queue.empty():
                     return
+                # SSE comments carry no product event and are ignored by the
+                # parser, but prove that the local service and response stream
+                # are still alive while a Provider is legitimately silent.
+                yield ": keepalive\n\n"
                 continue
             if item is None:
                 return

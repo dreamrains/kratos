@@ -1,11 +1,32 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from types import SimpleNamespace as NS
 
 import pytest
 
 from data_agent.llm.client import LLMClient
+
+
+def test_provider_request_has_a_host_wall_clock_deadline_without_retrying_inflight_work():
+    calls = []
+    release = threading.Event()
+
+    def stalled_transport(**kwargs):
+        calls.append(kwargs)
+        release.wait(1)
+
+    client = LLMClient(model_id="test/model", timeout=0.05, transport=stalled_transport)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="host wall-clock deadline"):
+        client.chat([])
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert elapsed < 0.5
+    assert len(calls) == 1
 
 
 def test_default_silent_truncation_is_one_request_not_a_budget_upgrade():

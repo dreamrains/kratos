@@ -409,8 +409,80 @@ async function terminalPublishesBeforeEOFAndOldEOFDoesNotUnlockNextRun() {
   }
 }
 
+async function silentSSEFallsBackToDurableRunState() {
+  const app = makeApp();
+  app._sseSilenceTimeoutMs = 5;
+  app.inputText = 'analyze';
+  let cancelled = false;
+  let runStateChecks = 0;
+  const response = streamResponse([]);
+  response.body.getReader = () => ({
+    read() { return new Promise(() => {}); },
+    async cancel() { cancelled = true; },
+    releaseLock() {},
+  });
+  fetchImpl = async url => {
+    if (url === '/api/chat') return response;
+    if (url === '/api/sessions/session-a/run-state') {
+      runStateChecks += 1;
+      return jsonResponse({turn_id:null,status:'completed',notice:''});
+    }
+    if (url === '/api/sessions/session-a') {
+      return jsonResponse({messages:[{role:'user',content:'analyze'},{role:'assistant',content:'done'}],run_state:{status:'completed'}});
+    }
+    throw new Error('unexpected fetch ' + url);
+  };
+  app.loadTrustView = async () => {};
+
+  await app.sendMessage();
+  await new Promise(resolve => setTimeout(resolve, 20));
+
+  assert.strictEqual(cancelled, true);
+  assert.ok(runStateChecks >= 1);
+  assert.strictEqual(app.isLoading, false);
+  assert.strictEqual(app._getSessionState('session-a').isLoading, false);
+}
+
+async function keepalivePreventsFalseSilentStreamRecovery() {
+  const app = makeApp();
+  app._sseSilenceTimeoutMs = 15;
+  app.inputText = 'analyze';
+  let cancelled = false;
+  let readIndex = 0;
+  const chunks = [
+    'event: turn_start\ndata: {"session_id":"session-a"}\n\n',
+    ': keepalive\n\n',
+    ': keepalive\n\n',
+    'event: text_delta\ndata: {"text":"done"}\n\n' +
+      'event: turn_end\ndata: {"session_id":"session-a","status":"completed"}\n\n',
+  ];
+  const response = streamResponse([]);
+  response.body.getReader = () => ({
+    async read() {
+      if (readIndex >= chunks.length) return {done:true,value:undefined};
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return {done:false,value:encoder.encode(chunks[readIndex++])};
+    },
+    async cancel() { cancelled = true; },
+    releaseLock() {},
+  });
+  fetchImpl = async url => {
+    assert.strictEqual(url, '/api/chat');
+    return response;
+  };
+  app.loadTrustView = async () => {};
+
+  await app.sendMessage();
+
+  assert.strictEqual(cancelled, false);
+  assert.strictEqual(app.connectionError, '');
+  assert.strictEqual(app.turns[app.turns.length - 1].content, 'done');
+}
+
 const scenarios = {
   terminal_before_eof: terminalPublishesBeforeEOFAndOldEOFDoesNotUnlockNextRun,
+  silent_sse_recovery: silentSSEFallsBackToDurableRunState,
+  sse_keepalive: keepalivePreventsFalseSilentStreamRecovery,
   reply_export_names: replyExportsHaveUniqueSessionOwnedFilenames,
   execution_notice: executionNoticesSurviveReplayWithoutDuplication,
   normal_chat: normalChatUsesOneCompletionRefresh,
@@ -439,6 +511,8 @@ const scenarios = {
         "normal_chat",
         "upload_file_refs",
         "terminal_before_eof",
+        "silent_sse_recovery",
+        "sse_keepalive",
         "confirmation_resume",
         "chunked_sse",
         "session_switch",

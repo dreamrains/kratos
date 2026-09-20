@@ -220,6 +220,23 @@ def _create_context_state_registry():
                 snapshot = authoritative_refresh_error(owner, current)
             scope_var.set(snapshot)
             return snapshot
+        if operation == "reset_authoritative_for_new_data":
+            authority = claimed_authorities.get(token)
+            if authority is None or not args or args[0] is not authority:
+                raise PermissionError("workspace_scope_authority_required")
+            current = ensure_authoritative(owner, scope_var)
+            snapshot = resolve_authoritative(owner)
+            if snapshot.phase != "legacy":
+                reject_escalation(
+                    "new data cannot replace a scope while an authoritative plan remains active"
+                )
+            if current is not None and (
+                snapshot.session_id != owner.session_id
+                or snapshot.project_name != (owner.project_name or "")
+            ):
+                reject_escalation("new-data scope identity does not match the agent context")
+            scope_var.set(snapshot)
+            return snapshot
         if operation == "bind":
             snapshot = args[0]
             current = ensure_authoritative(owner, scope_var)
@@ -293,6 +310,9 @@ def _create_context_state_registry():
         def refresh_from_resolver():
             return operate_scope(owner, "refresh_authoritative", authority)
 
+        def reset_for_new_data():
+            return operate_scope(owner, "reset_authoritative_for_new_data", authority)
+
         def guard_tool(tool_registry, tool_name, arguments):
             if authoritative_scope_guard is None:
                 raise RuntimeError("Authoritative workspace scope guard is not initialized")
@@ -323,7 +343,7 @@ def _create_context_state_registry():
                 raise RuntimeError("Agent context scope binding is no longer available")
             scope_var.set(snapshot)
 
-        return refresh_from_resolver, guard_tool, record_worker_refresh_error
+        return refresh_from_resolver, guard_tool, record_worker_refresh_error, reset_for_new_data
 
     def bind_workspace(owner, storage):
         if workspace_binding is None:

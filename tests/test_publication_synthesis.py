@@ -599,6 +599,20 @@ def _retention_packet(extra_receipts=(), substantive=None):
     )
 
 
+def _retention_packet_for_fits(fits):
+    state = AnalysisSessionState(session_id="n_series_multi_fit")
+    data = _retention_curve_data()
+    data["fits"] = fits
+    state.add_tool_receipt(_receipt_with_args(
+        "curve_fitting", "tr_multi_fit", data, args={"name": "渠道 A"},
+    ))
+    return build_publication_packet(
+        state,
+        user_input="留存拟合敏感性分析",
+        substantive_tools={"curve_fitting"},
+    )
+
+
 def _ab_test_data() -> dict:
     return {
         "metric": "revenue",
@@ -674,6 +688,13 @@ ILLEGAL_D30_CLAIMS = [
 ]
 
 
+AUDITABLE_D30_SCENARIO = (
+    "以下仅为拟合外推情景，不是经过验证的预测；假设 D1-D7 的幂律关系延续至 D30。"
+    "幂律模型 R²=0.97，未做留出、回测或 D30 验证；不同模型结果应作为敏感性分析。"
+    "幂律情景下 D30 留存约为 12.83%。"
+)
+
+
 class TestNSeriesPublication:
 
     @pytest.mark.parametrize("text", LEGAL_D30_BOUNDARIES)
@@ -683,6 +704,90 @@ class TestNSeriesPublication:
     @pytest.mark.parametrize("text", ILLEGAL_D30_CLAIMS)
     def test_n03_affirmative_d30_claims_are_rejected(self, text):
         assert validate_final_narrative(text, _retention_packet()) is not None
+
+    def test_n03_receipt_bound_scenario_extrapolation_with_full_disclosure_publishes(self):
+        assert validate_final_narrative(AUDITABLE_D30_SCENARIO, _retention_packet()) is None
+
+    def test_n03_scenario_caveats_do_not_rescue_wrong_extrapolation_arithmetic(self):
+        wrong = AUDITABLE_D30_SCENARIO.replace("12.83%", "5%")
+        assert validate_final_narrative(wrong, _retention_packet()) is not None
+
+    def test_n03_scenario_requires_validation_and_sensitivity_disclosures(self):
+        incomplete = (
+            "假设 D1-D7 的幂律关系延续，幂律模型 R²=0.97。"
+            "幂律情景下 D30 留存约为 12.83%。"
+        )
+        assert validate_final_narrative(incomplete, _retention_packet()) is not None
+
+    def test_n03_inline_multi_family_sensitivity_recomputes_each_value(self):
+        packet = _retention_packet_for_fits([
+            {"family": "power", "parameters": {"a": 0.5, "b": -0.4}, "r_squared": 0.97},
+            {"family": "exponential", "parameters": {"a": 0.5, "b": -0.1}, "r_squared": 0.91},
+        ])
+        disclosure = (
+            "以下仅为拟合外推情景，不是经过验证的预测；幂律 R²=0.97，指数 R²=0.91，"
+            "未做留出、回测或 D30 验证；不同模型结果仅作敏感性分析。"
+        )
+        correct = disclosure + "延伸至 D30：指数约 2.49%，幂律约 12.83%。"
+        wrong_second = disclosure + "延伸至 D30：指数约 2.49%，幂律约 3.27%。"
+
+        assert validate_final_narrative(correct, packet) is None
+        assert validate_final_narrative(wrong_second, packet) is not None
+
+    def test_n03_markdown_d30_column_audits_each_row_value(self):
+        prefix = (
+            "以下仅为拟合外推情景，不是经过验证的预测；幂律模型 R²=0.97，"
+            "未做留出、回测或 D30 验证；不同模型结果仅作敏感性分析。\n"
+        )
+        correct = prefix + "| 模型 | D30 |\n| --- | --- |\n| 幂律 | 12.83% |"
+        wrong = prefix + "| 模型 | D30 |\n| --- | --- |\n| 幂律 | 5.00% |"
+
+        assert validate_final_narrative(correct, _retention_packet()) is None
+        assert validate_final_narrative(wrong, _retention_packet()) is not None
+
+    def test_n03_markdown_d30_column_does_not_bind_another_percentage_column(self):
+        text = (
+            "以下仅为拟合外推情景，不是经过验证的预测；幂律模型 R²=0.97，"
+            "未做留出、回测或 D30 验证；不同模型结果仅作敏感性分析。\n"
+            "| 模型 | R² | D30 |\n| --- | --- | --- |\n| 幂律 | 97% | 12.83% |"
+        )
+
+        assert validate_final_narrative(text, _retention_packet()) is None
+
+
+def test_provenance_question_is_not_misread_as_an_asserted_origin():
+    assert validate_final_narrative(
+        "请确认该文件是完整、抽样还是测试数据？", _retention_packet()
+    ) is None
+
+
+def test_ordinary_sample_size_language_is_not_a_provenance_classification():
+    assert validate_final_narrative(
+        "The observed sample size is 7, so uncertainty remains high.", _retention_packet()
+    ) is None
+
+
+@pytest.mark.parametrize("text", [
+    "下面用一个样例说明计算过程。",
+    "附上演示数据的加载代码。",
+    "这不是占位数据，是真实流水。",
+    "请问这是不是测试数据？",
+])
+def test_non_assertive_or_negated_provenance_mentions_publish(text):
+    issues = validate_final_narrative_issues(text, _retention_packet())
+
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
+
+
+@pytest.mark.parametrize("text", [
+    "该文件是单一取值的样例数据。",
+    "数据来源分类：占位数据。",
+    "当前交付的这份文件属于测试数据。",
+])
+def test_provenance_taxonomy_rejects_unsupported_assertions_without_phrase_enumeration(text):
+    error = validate_final_narrative(text, _retention_packet())
+    assert error is not None
+    assert "unsupported_data_origin_inference" in error
 
     def test_n01_boundary_statement_with_d30_publishes(self):
         packet = _retention_packet()

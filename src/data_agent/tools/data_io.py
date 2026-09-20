@@ -469,6 +469,9 @@ def _load_data(
             ),
         )
         if derive_result.startswith("Error:"):
+            # Keep load_data atomic: a failed analysis copy must not leave a
+            # source snapshot that looks like a successfully ingested upload.
+            workspace.remove(raw_dataset_name)
             return derive_result
         load_msg = (
             f"{raw_load_msg}\n{derive_result}\n"

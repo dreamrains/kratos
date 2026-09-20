@@ -379,6 +379,10 @@ def _create_loop_context_registry(
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
             return binding[3](*args)
+        if operation == "reset_for_new_data":
+            if binding is None:
+                raise RuntimeError("Agent loop context is not initialized")
+            return binding[4]()
         if operation == "set":
             if binding is None:
                 raise RuntimeError("Agent loop context is not initialized")
@@ -402,8 +406,14 @@ def _create_loop_context_registry(
                             "workspace_context_mutation: cannot replace the active "
                             f"agent context while scope phase is {scope.phase}"
                         )
-            refresh, guard, record_worker_refresh_error = scope_controller_claimant(replacement)
-            bindings[loop] = (replacement, refresh, guard, record_worker_refresh_error)
+            refresh, guard, record_worker_refresh_error, reset_for_new_data = scope_controller_claimant(replacement)
+            bindings[loop] = (
+                replacement,
+                refresh,
+                guard,
+                record_worker_refresh_error,
+                reset_for_new_data,
+            )
             return None
         raise ValueError(f"Unsupported agent loop context operation: {operation}")
 
@@ -601,6 +611,40 @@ class AgentLoop:
     def invalidate_prompt_cache(self) -> None:
         """标记提示词缓存失效（数据集、技能等上下文变化时调用）。"""
         self._prompt_cache_dirty = True
+
+    def prepare_for_bound_upload(self) -> dict:
+        """Retire an obsolete plan and reopen the exact session for new data."""
+
+        from data_agent.session.task_manager import task_manager
+
+        retired = task_manager.retire_active_plan_for_new_data(
+            session_id=self.session_id,
+            project_name=self.context.project_name or "",
+        )
+        try:
+            scope = self.__context_operation("reset_for_new_data")
+            if scope.phase != "legacy":
+                raise RuntimeError("bound upload did not obtain a legacy workspace scope")
+        except Exception:
+            task_manager.restore_retired_plan(retired)
+            self.__context_operation("refresh")
+            raise
+        self.invalidate_prompt_cache()
+        return retired
+
+    def rollback_bound_upload(self, retirement: dict) -> dict:
+        """Restore the prior execution scope after ingestion fails."""
+
+        from data_agent.session.task_manager import task_manager
+
+        restored = task_manager.restore_retired_plan(retirement)
+        if restored.get("restored") or restored.get("reason") in {
+            "nothing_retired",
+            "already_restored",
+        }:
+            self.__context_operation("refresh")
+        self.invalidate_prompt_cache()
+        return restored
 
     def restore_object_context(self) -> None:
         """恢复会话的对象绑定和知识上下文。
@@ -2122,8 +2166,9 @@ class AgentLoop:
     def _competing_hypothesis_quality_gaps(self, user_input: str) -> list[str]:
         """Return missing audit structures for an explicit hypothesis task.
 
-        This gate checks presence only. Relation direction and status remain
-        host-validated by the existing hypothesis workflow.
+        The gate is deliberately host-owned: a plan-shaped object and one
+        relation-shaped record are not completion evidence.  Executable plans
+        must have step-bound evidence and all of their current tasks completed.
         """
         try:
             from data_agent.agent.question_need_detector import explicit_task_reason
@@ -2140,12 +2185,44 @@ class AgentLoop:
         plan = getattr(state, "analysis_plan", None)
         if not isinstance(plan, dict) or not str(plan.get("id") or "").strip():
             gaps.append("record_analysis_plan has not produced a current plan")
+        plan_id = str((plan or {}).get("id") or "")
+        method_plan = (plan or {}).get("method_plan")
+        executable_plan = bool(plan_id and isinstance(method_plan, list) and method_plan)
+        if executable_plan:
+            try:
+                from data_agent.session.task_manager import task_manager
+
+                matching_tasks = [
+                    task
+                    for task in task_manager.list_all(include_stale=True)
+                    if str(task.get("session_id") or "") == self.session_id
+                    and str(task.get("project_name") or "") == (self.context.project_name or "")
+                    and str(task.get("analysis_plan_id") or "") == plan_id
+                    and task.get("status") not in {"deleted", "archived", "superseded"}
+                ]
+            except Exception:
+                matching_tasks = []
+            if not matching_tasks:
+                gaps.append("current analysis plan has no authoritative workflow tasks")
+            else:
+                unfinished = [
+                    str(task.get("step_id") or task.get("id") or "unknown")
+                    for task in matching_tasks
+                    if task.get("status") != "completed"
+                ]
+                if unfinished:
+                    gaps.append(
+                        "current analysis plan still has unfinished tasks: "
+                        + ", ".join(unfinished[:8])
+                    )
         hypothesis_sets = getattr(state, "hypothesis_sets", None)
         if not isinstance(hypothesis_sets, list) or not hypothesis_sets:
             gaps.append("no persisted competing-hypothesis set exists")
         evidence_records = getattr(state, "evidence_records", None)
         has_relation_proposal = any(
             isinstance(record, dict)
+            and (not executable_plan or str(record.get("plan_id") or "") == plan_id)
+            and (not executable_plan or bool(str(record.get("step_id") or "")))
             and isinstance(record.get("competing_hypotheses"), list)
             and bool(record.get("competing_hypotheses"))
             for record in (evidence_records or [])

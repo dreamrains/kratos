@@ -64,3 +64,16 @@ def test_event_queue_serializes_non_finite_tool_values_as_strict_json_null():
 
     assert "NaN" not in raw and "Infinity" not in raw
     assert decoded == {"web": {"score": None, "bounds": [None, None]}}
+
+
+def test_event_queue_emits_comment_keepalive_without_fabricating_product_events():
+    queue = EventQueue()
+    stream = queue.iter(heartbeat_interval_seconds=0.001)
+
+    assert next(stream) == ": keepalive\n\n"
+    queue.put(SSEEvent("turn_end", {"status": "completed"}))
+    queue.close()
+    remainder = "".join(stream)
+
+    assert "event: turn_end" in remainder
+    assert '"status": "completed"' in remainder

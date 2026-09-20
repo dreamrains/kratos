@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11, pytest, existing `scripts/testing/run_regression.py`, Flask/SSE, existing Provider-disabled browser rehearsal, Git.
 
-**Status (2026-09-20):** Tasks 1—5 and the local documentation/static-verification objective are complete. The three semantic implementation units were committed together as `4bae5b0` rather than as the three example commits below; this execution difference is recorded instead of rewriting history. The incomplete post-guard path is covered by deterministic sync/stream contracts, while the complete Provider-disabled E3 used the existing frozen browser matrix. `b33587b` and `9a3031e` closed physical-source aliasing and immutable receipt binding found during the broader local acceptance. Latest evidence is `tmp/p08-fo-r4` (2713 passed, 1 skipped, 0 failures) and `tmp/p08-br-r3` (complete B01—B06, IC-B01—IC-B06, CONTENT-B03/B07; Provider initiated calls=0). A new E4 zero-call freeze and authorization gate remain deliberately unchecked until after the status-document commit; historical E4 remains `executed_failed / not_accepted`.
+**Status (2026-09-20):** Tasks 1—5 describe the earlier semantic convergence and remain historical local evidence. R19 at `a360d257…` subsequently ended `executed_incomplete / not_accepted` and exposed additional publication, upload-compensation and SSE lifecycle gaps. Task 6 below is the current uncommitted remediation scope. No new E4 freeze or authorization exists; R19 authorization, sessions and remaining call capacity are not reusable.
 
 ---
 
@@ -20,6 +20,18 @@
 - Modify `tests/test_analysis_quality_guard_scope.py`: one guard, successful repair, and failed repair contracts.
 - Modify `tests/test_execution_control.py`: prove sync/stream terminal parity for an incomplete post-guard audit.
 - Update the three current plans, three acceptance matrices, stage record, and integration record after code validation.
+
+### R19 remediation addendum: close review gaps without rewriting R19
+
+- [x] Replace provenance noun-only triggering with assertion-polarity tests and implementation; preserve unsupported affirmative origin rejection.
+- [x] Bind and recompute every inline fitted family value, including Dxx inherited from a Markdown table column header.
+- [x] Make upload-triggered plan retirement compensatable across load, dataset metadata and ticket-record failures; never overwrite a successor plan.
+- [x] Add server SSE comment keepalive, client missed-keepalive recovery, and deterministic Provider busy/backoff classification tests while preserving the 120-second non-retryable host deadline.
+- [x] Rewrite the P08 result contract into execution, evidence validity, analytical value and delivery-consistency dimensions; constrain `external_inconclusive`; record R19 as incomplete rather than passed.
+- [x] Run the final targeted set in a new isolated directory and attach its receipt: `tmp/p08-post-r19-remediation-targeted-2`, 203 passed.
+- [x] Run `full-offline` in a new run directory and attach its receipt: `tmp/p08-post-r19-remediation-full-offline-3`, 2717 passed, 1 skipped, 16 warnings, Provider forbidden. Preserve the superseded `full-offline-2` failure: its 104-item child smoke exceeded the former 90-second timeout; direct replay passed 104/104, and `tmp/p08-post-r19-tool-surface-diagnostic-2` passed after retaining all assertions and raising the finite cold-cache bound to 180 seconds.
+- [ ] Perform Provider-disabled built-in-browser acceptance only after the user resumes browser testing; record Provider initiated calls as 0.
+- [ ] Commit the closed local scope, then create a new zero-call freeze. Real Provider remains forbidden until the user authorizes that exact new identity.
 
 ### Task 1: Establish the M02 paraphrase gate in RED
 

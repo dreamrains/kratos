@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -97,6 +98,22 @@ def publication_contract(tool: str, result: dict | None, args: dict | None = Non
         if points:
             contract["observed_x_range"] = [min(points), max(points)]
             contract["extrapolation_allowed"] = False
+            contract["scenario_extrapolation"] = {
+                "status": "descriptive_fit_only",
+                "effective_n": data.get("effective_n") or len(points),
+                "models": [
+                    {
+                        "family": fit.get("family"),
+                        "parameters": fit.get("parameters") or {},
+                        "r_squared": fit.get("r_squared"),
+                    }
+                    for fit in (data.get("fits") or [])
+                    if isinstance(fit, dict)
+                    and fit.get("family") in {"power", "exponential", "logarithmic"}
+                    and isinstance(fit.get("parameters"), dict)
+                ],
+                "validation": "none",
+            }
     if tool == "compare_periods":
         contract["observation_window"] = {key: data[key].get("range") for key in ("period_a", "period_b") if isinstance(data.get(key), dict)}
         contract["denominators"].update({key: {field: data[key].get(field) for field in ("rows", "day_count")} for key in ("period_a", "period_b") if isinstance(data.get(key), dict)})
@@ -1165,6 +1182,182 @@ def _asserts_time_point_payload(clause: str, match: re.Match) -> bool:
     )
 
 
+_SCENARIO_DISCLOSURE = re.compile(r"情景|假设|外推估算|scenario|what[- ]?if", re.I)
+_FIT_QUALITY_DISCLOSURE = re.compile(r"R\s*[²2^]\s*(?:=|为|[:：])", re.I)
+_NO_VALIDATION_DISCLOSURE = re.compile(
+    r"未(?:做|经|进行)?(?:留出|回测|验证)|无(?:留出|回测|验证)|"
+    r"没有(?:留出|回测|验证)|D\s*\d+[^。；;\n]{0,20}(?:未观测|未验证)|"
+    r"not\s+(?:validated|backtested)|no\s+(?:holdout|validation|backtest)",
+    re.I,
+)
+_SENSITIVITY_DISCLOSURE = re.compile(r"敏感性|不同模型|模型间|区间|sensitivity", re.I)
+_FAMILY_LABELS = {
+    "power": re.compile(r"幂律|power", re.I),
+    "exponential": re.compile(r"指数|exponential", re.I),
+    "logarithmic": re.compile(r"对数|logarithmic", re.I),
+}
+
+
+def _scenario_point_value(clause: str, match: re.Match) -> float | None:
+    """Extract a percentage value attached to the out-of-range point."""
+
+    nearby = clause[match.end():match.end() + 80]
+    value_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*%", nearby)
+    return float(value_match.group(1)) / 100 if value_match else None
+
+
+def _scenario_family_values(
+    clause: str,
+    match: re.Match,
+    models: list[dict],
+) -> list[tuple[dict, float]] | None:
+    """Bind every named fitted family in a claim to its own displayed value.
+
+    A sensitivity sentence may legitimately report multiple families inline.
+    Treating the whole sentence as one value both rejected that presentation
+    and left the second value unchecked.  Family spans provide an explicit,
+    local binding without borrowing a value from another row or sentence.
+    """
+
+    by_family = {
+        str(model.get("family") or ""): model
+        for model in models
+        if str(model.get("family") or "") in _FAMILY_LABELS
+    }
+    occurrences: list[tuple[int, int, str]] = []
+    for family, pattern in _FAMILY_LABELS.items():
+        if family not in by_family:
+            continue
+        occurrences.extend(
+            (family_match.start(), family_match.end(), family)
+            for family_match in pattern.finditer(clause)
+        )
+    occurrences.sort()
+
+    if not occurrences:
+        if len(models) != 1:
+            return None
+        reported = _scenario_point_value(clause, match)
+        return [(models[0], reported)] if reported is not None else None
+
+    pairs: list[tuple[dict, float]] = []
+    seen: set[str] = set()
+    for index, (start, _end, family) in enumerate(occurrences):
+        if family in seen:
+            return None
+        next_start = occurrences[index + 1][0] if index + 1 < len(occurrences) else len(clause)
+        segment = clause[start:next_start]
+        value_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*%", segment)
+        if value_match is None:
+            return None
+        pairs.append((by_family[family], float(value_match.group(1)) / 100))
+        seen.add(family)
+    return pairs
+
+
+def _scenario_model_value(model: dict, x_value: float) -> float | None:
+    params = model.get("parameters") or {}
+    try:
+        family = model.get("family")
+        if family == "power":
+            return float(params["a"]) * x_value ** float(params["b"])
+        if family == "exponential":
+            return float(params["a"]) * math.exp(float(params["b"]) * x_value)
+        if family == "logarithmic":
+            return float(params["a"]) + float(params["b"]) * math.log(x_value)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return None
+
+
+def _is_auditable_scenario_extrapolation(
+    text: str,
+    clause: str,
+    match: re.Match,
+    scope: dict,
+) -> bool:
+    """Allow a fitted scenario only when its assumptions and arithmetic are auditable.
+
+    This is intentionally not a forecast escape hatch.  The host requires a
+    scenario label, a named fitted family, R-squared, explicit absence of
+    validation, and sensitivity language; it also recomputes the displayed
+    percentage from the receipt-bound model parameters.
+    """
+
+    scenario = scope.get("scenario_extrapolation")
+    if not isinstance(scenario, dict) or scenario.get("validation") != "none":
+        return False
+    if not all(pattern.search(text) for pattern in (
+        _SCENARIO_DISCLOSURE,
+        _FIT_QUALITY_DISCLOSURE,
+        _NO_VALIDATION_DISCLOSURE,
+        _SENSITIVITY_DISCLOSURE,
+    )):
+        return False
+    models = [model for model in scenario.get("models") or [] if isinstance(model, dict)]
+    pairs = _scenario_family_values(clause, match, models)
+    if not pairs:
+        return False
+    for model, reported in pairs:
+        if not isinstance(model.get("r_squared"), (int, float)):
+            return False
+        expected = _scenario_model_value(model, float(match.group(1)))
+        if expected is None or abs(reported - expected) > 0.0005:
+            return False
+    # Accept ordinary percentage display rounding (0.05 percentage point),
+    # never an arbitrary value merely dressed up with caveats.
+    return True
+
+
+def _markdown_table_time_point_claims(text: str) -> list[str]:
+    """Project Dxx table columns into auditable row-local claims."""
+
+    lines = str(text or "").splitlines()
+    claims: list[str] = []
+    index = 0
+    separator_cell = re.compile(r"^:?-{3,}:?$")
+    while index + 1 < len(lines):
+        header = [cell.strip() for cell in lines[index].strip().strip("|").split("|")]
+        separator = [cell.strip() for cell in lines[index + 1].strip().strip("|").split("|")]
+        if (
+            "|" not in lines[index]
+            or len(header) != len(separator)
+            or not separator
+            or not all(separator_cell.fullmatch(cell) for cell in separator)
+        ):
+            index += 1
+            continue
+        time_columns = [
+            column for column, cell in enumerate(header)
+            if _TIME_POINT.search(cell)
+        ]
+        row_index = index + 2
+        while row_index < len(lines) and "|" in lines[row_index]:
+            row = [cell.strip() for cell in lines[row_index].strip().strip("|").split("|")]
+            if len(row) != len(header):
+                break
+            label_cells = [
+                row[column] for column in range(len(row))
+                if column not in time_columns and row[column]
+            ]
+            family_cells = [
+                cell for cell in label_cells
+                if any(pattern.search(cell) for pattern in _FAMILY_LABELS.values())
+            ]
+            other_cells = [cell for cell in label_cells if cell not in family_cells]
+            for column in time_columns:
+                if row[column]:
+                    # Put the governed cell immediately after its model label.
+                    # Other percentage columns (for example R² rendered as
+                    # 97%) must never be mistaken for the Dxx result.
+                    claims.append(" ".join(
+                        family_cells + [header[column], row[column]] + other_cells
+                    ).strip())
+            row_index += 1
+        index = max(row_index, index + 1)
+    return claims
+
+
 def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
     curve_scopes = [
         scope for scope in scopes
@@ -1174,7 +1367,8 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
     ]
     if not curve_scopes:
         return []
-    for clause in _split_claims(text):
+    claims = _split_claims(text) + _markdown_table_time_point_claims(text)
+    for clause in claims:
         for match in _TIME_POINT.finditer(clause):
             value = float(match.group(1))
             prefix = clause[:match.start()]
@@ -1192,6 +1386,8 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             if bound is not None:
                 if value <= float(bound["observed_x_range"][1]):
                     continue
+                if _is_auditable_scenario_extrapolation(text, clause, match, bound):
+                    continue
                 return [{
                     "code": "extrapolated_time_point",
                     "span": clause.strip()[:80],
@@ -1204,6 +1400,10 @@ def _extrapolation_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]
             # point; otherwise it lacks a source binding and goes through the
             # bounded revision instead of riding the widest range.
             if all(value <= float(scope["observed_x_range"][1]) for scope in curve_scopes):
+                continue
+            if len(curve_scopes) == 1 and _is_auditable_scenario_extrapolation(
+                text, clause, match, curve_scopes[0]
+            ):
                 continue
             return [{
                 "code": "unbound_time_point_claim",
@@ -1413,7 +1613,8 @@ _PROVENANCE_ASSERTION = re.compile(
 )
 _PROVENANCE_UNCERTAINTY = re.compile(
     r"是否|是不是|能否|无法(?:判断|确认)?|不能(?:判断|确认)?|未知|尚不清楚|"
-    r"需(?:要)?确认|待确认|未验证|如果|若|假如",
+    r"需(?:要)?确认|请(?:确认|说明|标明)|待确认|未验证|如果|若|假如|"
+    r"不要(?:认定|视为|当作)|不得(?:认定|视为)|不应(?:认定|视为)|[？?]",
     re.I,
 )
 _UNSUPPORTED_POPULATION_CLAIM = re.compile(r"真实业务(?:的)?波动(?:为|是)\s*零", re.I)
@@ -1428,7 +1629,7 @@ _PROVENANCE_KINDS = {
     "constructed": re.compile(r"人为规则数据|人工构造|构造(?:样例|示例)|manually?[_ -]?constructed", re.I),
     "masked": re.compile(r"脱敏|masked|anonymi[sz]ed", re.I),
     "placeholder": re.compile(r"占位|placeholder", re.I),
-    "sample": re.compile(r"样例|示意|演示|sample|demo", re.I),
+    "sample": re.compile(r"样例数据|示意数据?|演示数据?|sample[_ -]?data|demo[_ -]?data", re.I),
     "not_real_ledger": re.compile(r"并非真实账本|不是真账本|不是实际账本|not[_ -]?real[_ -]?ledger", re.I),
 }
 
@@ -1509,6 +1710,26 @@ def _provenance_kinds(value: str) -> set[str]:
     }
 
 
+def _asserted_provenance_kinds(clause: str) -> set[str]:
+    """Return provenance kinds that this clause affirmatively classifies."""
+
+    if _PROVENANCE_UNCERTAINTY.search(clause):
+        return set()
+    classification = re.search(r"(?:数据)?来源分类\s*[:：]", clause, re.I)
+    if _PROVENANCE_ASSERTION.search(clause) is None and classification is None:
+        return set()
+    asserted: set[str] = set()
+    for kind, pattern in _PROVENANCE_KINDS.items():
+        for match in pattern.finditer(clause):
+            prefix = clause[max(0, match.start() - 16):match.start()]
+            denied = re.search(r"(?:并非|不是|不属于|不为)\s*$", prefix)
+            if denied and kind != "not_real_ledger":
+                continue
+            asserted.add(kind)
+            break
+    return asserted
+
+
 def _packet_provenance_kinds(packet: dict) -> set[str]:
     supported: set[str] = set()
     for source in packet.get("sources") or []:
@@ -1526,12 +1747,9 @@ def _unsupported_data_semantics_issues(text: str, packet: dict) -> list[dict[str
     supported_kinds = _packet_provenance_kinds(packet)
     for clause in _split_claims(text):
         population_match = _UNSUPPORTED_POPULATION_CLAIM.search(clause)
-        match = _PROVENANCE_ASSERTION.search(clause)
-        if match is None and population_match is None:
+        claim_kinds = _asserted_provenance_kinds(clause)
+        if not claim_kinds and population_match is None:
             continue
-        if _PROVENANCE_UNCERTAINTY.search(clause):
-            continue
-        claim_kinds = _provenance_kinds(match.group(0)) if match is not None else set()
         if population_match is None and claim_kinds and claim_kinds <= supported_kinds:
             continue
         return [{

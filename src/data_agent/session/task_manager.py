@@ -291,9 +291,12 @@ class TaskManager:
             return {}
 
     def _write_active_plans(self, data: dict) -> None:
-        self._active_plans_path().write_text(
+        path = self._active_plans_path()
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        temporary.replace(path)
 
     def get_active_plan_id(self, session_id: str = "", project_name: str = "") -> str:
         active = self._read_active_plans()
@@ -347,6 +350,98 @@ class TaskManager:
                     superseded_by=superseded_by,
                     plan_status="superseded",
                 )
+
+    def retire_active_plan_for_new_data(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        reason: str = "new_data_upload",
+    ) -> dict:
+        """Retire the exact active plan before a bound upload changes its data basis.
+
+        A same-session upload is a data-scope transition, not another execution
+        step in the old plan.  Keeping the old plan active makes the workspace
+        resolver reject the newly derived analysis dataset and, worse, lets a
+        later narrative reuse tasks whose dataset contract is no longer current.
+        """
+
+        active_plan_id = self.get_active_plan_id(session_id, project_name)
+        if not active_plan_id:
+            return {
+                "retired": False,
+                "plan_id": "",
+                "reason": reason,
+                "session_id": session_id,
+                "project_name": project_name,
+                "tasks": [],
+            }
+        task_snapshots = [
+            dict(task)
+            for task in self._session_project_tasks(
+                session_id=session_id,
+                project_name=project_name,
+                include_stale=True,
+            )
+            if task.get("plan_id") == active_plan_id
+            and task.get("status") in ("pending", "blocked", "in_progress")
+        ]
+        self._supersede_active_plan(
+            session_id=session_id,
+            project_name=project_name,
+            superseded_by=reason,
+        )
+        active = self._read_active_plans()
+        active.pop(self._plan_key(session_id, project_name), None)
+        self._write_active_plans(active)
+        return {
+            "retired": True,
+            "plan_id": active_plan_id,
+            "reason": reason,
+            "session_id": session_id,
+            "project_name": project_name,
+            "tasks": task_snapshots,
+        }
+
+    def restore_retired_plan(self, retirement: dict) -> dict:
+        """Compensate a failed new-data transition without overwriting successors."""
+
+        if not isinstance(retirement, dict) or not retirement.get("retired"):
+            return {"restored": False, "reason": "nothing_retired"}
+        session_id = str(retirement.get("session_id") or "")
+        project_name = str(retirement.get("project_name") or "")
+        plan_id = str(retirement.get("plan_id") or "")
+        reason = str(retirement.get("reason") or "new_data_upload")
+        current_plan_id = self.get_active_plan_id(session_id, project_name)
+        if current_plan_id == plan_id:
+            return {"restored": False, "reason": "already_restored", "plan_id": plan_id}
+        if current_plan_id:
+            return {
+                "restored": False,
+                "reason": "successor_plan_active",
+                "plan_id": current_plan_id,
+            }
+
+        originals = [task for task in retirement.get("tasks") or [] if isinstance(task, dict)]
+        current_tasks: list[tuple[dict, dict]] = []
+        for original in originals:
+            current = self.get(int(original.get("id") or 0))
+            if (
+                current is None
+                or current.get("plan_id") != plan_id
+                or current.get("status") != "superseded"
+                or current.get("superseded_by") != reason
+            ):
+                return {
+                    "restored": False,
+                    "reason": "retired_task_changed",
+                    "plan_id": plan_id,
+                }
+            current_tasks.append((current, original))
+
+        for _current, original in current_tasks:
+            self._save(dict(original))
+        self._set_active_plan_id(plan_id, session_id, project_name)
+        return {"restored": True, "reason": "ingestion_failed", "plan_id": plan_id}
 
     def create_plan(
         self,

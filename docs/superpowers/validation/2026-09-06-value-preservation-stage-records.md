@@ -890,3 +890,25 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 最终 Provider-disabled 内置浏览器目录 `tmp/p08-br-r3`，端口 5214、服务 PID 10724，完整执行 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07。B04 会话 `51edc7d3fb12` 完成第 2—13 步同会话链并保留 supports、refutes、未决与版本变化后的 stale；CONTENT-B03 `a11f217e0d87` 和 CONTENT-B07 `7befcd866b19` 的刷新/导出/呈现保持。B06 的工具、保存和预算负路径分别保持 completed、unknown/OSError、failed 边界。浏览器控制台 0 error / 0 warning。
 - `tmp/p08-br-r3/runtime.jsonl` 的 `server_start.provider_enabled=false`，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。`main@fa9e8965998e0e9f10f208862336fb77c122dd49` 只记录上述本地验收，没有产品代码变化。
 - 证据边界：本节只把最新本地 E3 记为 passed_local，不把 R16 或更早真实批次改写为通过。所有旧冻结、授权、调用余额和会话均已消耗；新的 E4 必须在状态文档提交后重新冻结精确 commit、模型、端点、fixture/提示/oracle 矩阵、120 次物理调用上限、账本路径与内置浏览器协议，并取得新的明确授权。未执行 push、部署、staging 或生产验证。
+
+## P08-R19：`a360d25` 真实 Provider 内置浏览器批次（Codex，2026-09-20）
+
+阶段 / 状态：**`executed_incomplete / not_accepted`。批次未完整执行 M01—M06，不得归类为 `external_inconclusive`，也不得用后续状态回放改写为完整通过。** 批次内没有修代码、改 fixture/oracle 或局部重跑；授权已经消耗。
+
+- 精确身份：`main@a360d2570ef4c42748b9e912730fb4849ef517a0`；冻结 `tmp/p08-real-provider-20260920-a360d25-r1/freeze.json`，SHA-256 `4fe2f50f6d43682bd5bb21febeb4cbdfda5fe829dd8e7d2d1131b8d9710a52d1`；模型 `openai/deepseek-v4-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；Codex 内置浏览器。
+- 账本：`tmp/p08-real-provider-20260920-a360d25-r1/provider-calls.jsonl`，SHA-256 `81876639f2b51fa624af6d6ccc91aefd8ae72dc3046eb4977edad801940c1914`。记录 67 started、60 dispatched、7 failed；失败均标为 `ServiceUnavailableError`。最大一次 dispatched 调用从 started 到 dispatched 约 548.35 秒，证明当时产品缺少有效的宿主 120 秒硬 deadline；这属于产品侧生命周期失败，不是可降级为外部未决的证据。
+- 会话归属：M01 `f1a075e525d7`、M02 `2674ccd292ea`、M03 `59c412bd827d`、M04 `108f61b91155`、M05 `fb2d62999f28`、M06 `703d02f02325`。M04 的持久化 `run_state` 为 `failed / upload_rejected`，第二版本上传未完成，因而版本更新路径没有闭合。M06 只完成缺失 `missing_orders` 的第一分支；成本口径文件上传、确认、恢复、导出和刷新链没有执行完成。M06 后来显示 completed 只对应第一分支，不能代表整个 M06 场景完成。
+- M02 冻结 oracle 当时要求“不得给出 D30 数值”。真实输出使用 curve-fitting 回执生成多模型 D30 拟合情景；后续只读轨迹回放表明其数值可由真实回执参数重算，但这既不满足当时冻结 oracle，也不构成批次重跑。未来矩阵采用修订后的规则：允许明确标注为拟合外推、披露 R² 和无验证状态、展示模型敏感性且逐值通过宿主重算的情景；不得称为已验证预测。
+- 四维判定：执行与生命周期=`product_failed`（M04 上传拒绝、M06 未完整执行、548 秒调用）；证据与主张有效性=`not_run`（无法对未闭合的 M04/M06 全链作最终判定，M02 只保留回放观察）；分析价值与需求覆盖=`not_run`（矩阵不完整）；传输、持久化与呈现一致性=`product_failed`（浏览器等待与持久化终态未能证明完整场景闭合）。因此整体只能是 `not_accepted`。
+- 后续本地修复不得写回本节结果。修复必须在新提交上完成新隔离 targeted/full-offline；Provider-disabled 浏览器恢复后也只形成 E3 证据。下一次真实 Provider 批次必须重新冻结完整 fixture/提示/oracle 矩阵、模型、端点、预算和账本，并取得新的精确授权。
+
+## P08-R20：R19 审查缺口本地修复（Codex，2026-09-20）
+
+阶段 / 状态：**E1/E2/full-offline passed_local；Provider-disabled E3 按用户要求暂停；E4 未冻结、未授权、未执行。** 本节不改变 R19 的失败与未完成判定。
+
+- 发布审计：provenance 只在肯定性来源分类断言上触发，普通“样例说明”、演示数据代码说明、疑问与“不是占位数据”等否认不误拒；无受控 provenance 事实的肯定分类仍拒绝。拟合情景支持单句多个模型族和 Markdown Dxx 表头，每个模型族数值均按回执参数重算，任一错误值使整项拒绝。
+- 上传事务：新数据摄取前仍退役旧 active plan，但事务保存被改写任务的完整状态和原 workspace metadata。加载、派生、metadata 或票据记录失败时，删除本批新增数据集、原样恢复 `workspace_meta.json`、任务状态与 active plan，并刷新权威作用域；若已有后继计划或任务状态发生变化则拒绝覆盖并显式报告补偿失败。
+- M06 生命周期：LLM 同步和流式调用保留 120 秒宿主 wall-clock deadline，超时不可重试。服务端活动 SSE 每约 2 秒发送 comment keepalive，客户端约 6 秒收不到任何字节才转向持久化 `run_state`；keepalive 不读取文件、不判断上传路径。既有 Provider busy 分类与有界指数退避增加确定性测试，流已发布后仍禁止重放。
+- 验收治理：P08 改为执行/生命周期、证据/主张有效性、分析价值/需求覆盖、传输/持久化/呈现一致性四维记录；`external_inconclusive` 仅限外部不可判定且产品 deadline、恢复、账本和终态均通过，不能掩盖产品卡死、上传失败或状态不闭合。
+- 隔离回归：最终 targeted `tmp/p08-post-r19-remediation-targeted-2` 为 **203 passed**；最终 full-offline `tmp/p08-post-r19-remediation-full-offline-3` 为 **2717 passed、1 skipped、16 warnings**。中间 `full-offline-2` 为 2716 passed、1 failed、1 skipped：失败仅为 104 项工具 smoke 超过固定 90 秒子进程上限；直接运行 104/104 通过，`tmp/p08-post-r19-tool-surface-diagnostic-2` 在保留全部断言并把有限 cold-cache 上限调整为 180 秒后为 **1 passed（71.97 秒）**。runner 强制禁止 Provider，实际 Provider initiated calls=0。
+- 证据边界：没有启动内置浏览器，没有真实 Provider 调用，没有 push、部署、staging 或生产验证。完成代码审计并提交后，仍须先进行零调用 preflight；任何真实 Provider 执行都需要用户针对新精确身份重新授权。

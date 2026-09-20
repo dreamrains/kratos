@@ -1,6 +1,6 @@
 # 真实 Provider 验收语义收敛：开发设计
 
-日期：2026-09-19｜版本：v0.2｜状态：**设计已实现并完成本地 E1/E2/full-offline/E3 验证；新的 E4 尚未冻结或授权，历史 E4 仍为 `executed_failed / not_accepted`**。
+日期：2026-09-19｜版本：v0.3｜状态：**R19 真实 Provider 批次为 `executed_incomplete / not_accepted`；针对其暴露问题的补偿事务、结构化发布审计与 SSE 恢复已在未提交工作树通过 targeted 与 full-offline，浏览器按用户要求暂停，尚无新的 E4 冻结或授权。**
 
 关联：[分析价值保留计划](../plans/2026-09-06-analysis-value-preservation-plan.md)｜[必要澄清计划](../plans/2026-09-07-intent-clarification-plan.md)｜[回答内容计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[阶段记录](../validation/2026-09-06-value-preservation-stage-records.md)｜[整合记录](../../audit/2026-09-09-answer-intent-integration-record.md)。
 
@@ -116,3 +116,18 @@ R5—R16 六个完整 E4 批次共发生 470 次真实 Provider 调用，通过�
 - `main@b33587b` 进一步按物理来源去重同一上传文件的加载别名；`main@9a3031e` 以确切收据 ID 绑定内容寻址详情，关闭复用 tool call ID 时误选收据的问题，并保留旧收据兼容。
 - 最新完整本地验证对应产品提交 `9a3031e`：聚焦回归 17 passed 与 44 passed；`tmp/p08-fo-r4` 为 2713 passed、1 skipped、0 failures。Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07；控制台 0 error / 0 warning，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。
 - `main@fa9e896` 只追加上述本地验收记录，没有产品代码变化。本地证据不等同于真实 Provider、staging、production 或 deployment 证据；R16 及更早授权均已消耗，不得复用冻结、余额或会话。下一步只能在状态文档提交后为精确新提交执行零调用 E4 preflight，再等待新的精确授权。
+
+## 9. R19 后续设计修订（2026-09-20）
+
+R19 说明“命中目标场景”不能代替对设计完成定义的反向核对。后续实现与验收增加以下约束：
+
+1. **provenance 是有极性的断言，不是名词命中。** 普通教学用法、代码说明、疑问和对某一来源类别的明确否认不得触发来源推断门；无结构化来源证据的肯定分类仍拒绝。实现按来源类别定位断言和否定，不再用“出现样例/占位等名词”作为充分条件。
+2. **拟合外推允许作为受限情景，而不是已验证预测。** 发布必须同时具有情景/假设标记、具名模型族及回执参数、R²、未留出/回测/验证说明和模型敏感性。一个句子或表格可展示多个模型族，但宿主必须逐个“模型族—时间点—数值”绑定和重算，显示误差容限为 0.05 个百分点。Markdown 表头中的 D30 必须传播到同列数据单元，不能因数据行未重复写 D30 而逃逸审计。
+3. **新上传的旧计划退役是可补偿事务。** 上传票据和 SHA-256 在退役前验证。加载、派生、metadata 或票据落盘任一步失败时，删除本批新增数据集、恢复原 `workspace_meta.json`、恢复被 supersede 的任务字段和原 active plan，再刷新权威作用域。若已有后继计划或任务被并发修改，禁止覆盖并显式报告补偿未完成。
+4. **SSE keepalive 不参与文件判断。** 文件可用性只由上传票据、大小、SHA-256 和同步摄取结果决定。运行中的 SSE 每约 2 秒发送无业务语义的 comment keepalive；客户端连续约 6 秒收不到任何字节才查询持久化 `run_state`。Provider 请求仍由独立的 120 秒宿主 wall-clock deadline 终止，deadline 超时不可自动重试。
+5. **Provider busy 沿用现有有界退避。** `RateLimitError` 与 `ServiceUnavailableError` 可在尚未发布流式内容时按明确 attempt 上限指数退避；已经发布任何 delta 后不得重放；宿主 deadline 不属于 retryable。先以确定性测试证明现有策略，再根据失败证据决定是否改产品策略。
+6. **通用计划发布门不在本修订中暗中扩张。** 显式结构化执行计划产生的结论必须满足任务终态和 `plan_id + step_id` 证据绑定；不依赖执行计划的直接分析不被强迫制造任务。若要将该不变量扩展到所有非假设计划，需另立设计并验证兼容面。
+
+完成定义不再是“新增测试通过”，而是同一清单中的设计条目、生产 diff、正反例、失败补偿、验收文档和新隔离 full-offline 逐项闭合。Provider-disabled 浏览器与真实 Provider 仍是后续独立证据层，不能由本地测试替代。
+
+本修订的最终隔离证据为：`tmp/p08-post-r19-remediation-targeted-2`（203 passed）和 `tmp/p08-post-r19-remediation-full-offline-3`（2717 passed、1 skipped、16 warnings）。`full-offline-2` 曾因 104 项工具 smoke 的 90 秒子进程上限超时而失败；直接运行证明 104/104 通过但冷启动接近上限，随后只把该离线测试的有限上限提高为 180 秒，并由 `tmp/p08-post-r19-tool-surface-diagnostic-2`（1 passed，71.97 秒）和最终 full-offline 复验。所有 runner 均禁止 Provider；用户要求浏览器暂停，因此 E3 未执行且不得写成通过。

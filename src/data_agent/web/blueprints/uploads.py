@@ -223,44 +223,114 @@ def ingest_bound_uploads(agent_loop, uploads: list[BoundUpload]) -> str:
         return ""
 
     from data_agent.agent.context import use_agent_context
+    from data_agent.session.history import _session_dir
     from data_agent.session.workspace import workspace
     from data_agent.tools.data_io import load_data
+    from data_agent.utils.atomic_files import write_text_atomic
 
     loaded: list[tuple[BoundUpload, str, str]] = []
+    record_snapshots: dict[str, dict] = {}
+    # A retry of an upload that is already present must not retire a newer
+    # plan.  Inspect only ticket metadata plus the currently readable names;
+    # perform the authoritative scope transition only when bytes still need
+    # to enter this workspace.
     with use_agent_context(agent_loop.context):
-        existing = set(workspace.list_datasets())
+        readable = set(workspace.list_datasets())
+        needs_ingestion = False
         for upload in uploads:
             record = _read_upload_record(upload.record_path.parent, upload.upload_id)
             _verify_upload_payload(upload.record_path.parent, record)
-            recorded_dataset = str(record.get("dataset_name") or "")
-            if record.get("status") == "loaded" and recorded_dataset in existing:
-                loaded.append((upload, recorded_dataset, "already loaded from an earlier retry"))
-                continue
-
-            dataset_name = _dataset_name_for_upload(upload.filename, existing)
-            result = str(load_data(str(upload.path), name=dataset_name))
-            if result.lstrip().startswith("Error"):
-                _update_ingestion_record(upload, status="failed", error=result[:2000])
-                raise UploadIngestionError(
-                    f"Uploaded file {upload.filename} could not be loaded: {result}"
-                )
-
+            record_snapshots[upload.upload_id] = dict(record)
+            if (
+                record.get("status") != "loaded"
+                or str(record.get("dataset_name") or "") not in readable
+            ):
+                needs_ingestion = True
+        baseline_datasets = set(readable)
+        workspace_meta_path = _session_dir(agent_loop.session_id) / "workspace_meta.json"
+        workspace_meta_before = (
+            workspace_meta_path.read_text(encoding="utf-8")
+            if workspace_meta_path.exists()
+            else None
+        )
+    retirement = {"retired": False}
+    if needs_ingestion:
+        # A new bound upload changes the data basis for the session. Retire
+        # the old execution plan so the authoritative scope can accept the
+        # new immutable raw snapshot and its analysis copy.
+        retirement = agent_loop.prepare_for_bound_upload()
+    try:
+        with use_agent_context(agent_loop.context):
             existing = set(workspace.list_datasets())
-            for name, info in workspace.list_datasets().items():
-                metadata = info.get("metadata") if isinstance(info, dict) else {}
-                if str((metadata or {}).get("_source_path") or "") == str(upload.path):
-                    workspace.set_metadata(name, "_upload_id", upload.upload_id)
-                    workspace.set_metadata(name, "_original_filename", upload.filename)
-                    workspace.set_metadata(name, "_source_sha256", upload.sha256)
-            workspace.save_meta(upload.session_id)
-            _update_ingestion_record(
-                upload,
-                status="loaded",
-                dataset_name=dataset_name,
-                loaded_at=_now(),
-                error="",
-            )
-            loaded.append((upload, dataset_name, result))
+            for upload in uploads:
+                record = _read_upload_record(upload.record_path.parent, upload.upload_id)
+                recorded_dataset = str(record.get("dataset_name") or "")
+                if record.get("status") == "loaded" and recorded_dataset in existing:
+                    loaded.append((upload, recorded_dataset, "already loaded from an earlier retry"))
+                    continue
+
+                dataset_name = _dataset_name_for_upload(upload.filename, existing)
+                result = str(load_data(str(upload.path), name=dataset_name))
+                if result.lstrip().startswith("Error"):
+                    raise UploadIngestionError(
+                        f"Uploaded file {upload.filename} could not be loaded: {result}"
+                    )
+
+                existing = set(workspace.list_datasets())
+                for name, info in workspace.list_datasets().items():
+                    metadata = info.get("metadata") if isinstance(info, dict) else {}
+                    if str((metadata or {}).get("_source_path") or "") == str(upload.path):
+                        workspace.set_metadata(name, "_upload_id", upload.upload_id)
+                        workspace.set_metadata(name, "_original_filename", upload.filename)
+                        workspace.set_metadata(name, "_source_sha256", upload.sha256)
+                workspace.save_meta(upload.session_id)
+                _update_ingestion_record(
+                    upload,
+                    status="loaded",
+                    dataset_name=dataset_name,
+                    loaded_at=_now(),
+                    error="",
+                )
+                loaded.append((upload, dataset_name, result))
+    except Exception as exc:
+        # Loading and metadata publication form one transaction from the
+        # caller's perspective.  Remove all datasets created by this batch,
+        # restore ticket records, then reactivate the exact prior plan/scope.
+        compensation_errors: list[str] = []
+        try:
+            with use_agent_context(agent_loop.context):
+                for name in set(workspace.list_datasets()) - baseline_datasets:
+                    workspace.remove(name)
+            if workspace_meta_before is None:
+                workspace_meta_path.unlink(missing_ok=True)
+            else:
+                write_text_atomic(workspace_meta_path, workspace_meta_before)
+        except Exception as cleanup_exc:
+            compensation_errors.append(f"workspace:{cleanup_exc}")
+        for upload in uploads:
+            try:
+                original = dict(record_snapshots[upload.upload_id])
+                if original.get("status") != "loaded":
+                    original.update({
+                        "status": "failed",
+                        "error": str(exc)[:2000],
+                        "updated_at": _now(),
+                    })
+                _write_json_atomic(upload.record_path, original)
+            except Exception as record_exc:
+                compensation_errors.append(f"ticket:{upload.upload_id}:{record_exc}")
+        try:
+            rollback = agent_loop.rollback_bound_upload(retirement)
+            if retirement.get("retired") and not (
+                rollback.get("restored") or rollback.get("reason") == "already_restored"
+            ):
+                compensation_errors.append(f"plan:{rollback.get('reason')}")
+        except Exception as rollback_exc:
+            compensation_errors.append(f"plan:{rollback_exc}")
+        detail = f"Upload ingestion failed: {exc}"
+        if compensation_errors:
+            detail += "; compensation incomplete: " + " | ".join(compensation_errors)
+        raise UploadIngestionError(detail) from exc
 
     invalidate = getattr(agent_loop, "invalidate_prompt_cache", None)
     if callable(invalidate):

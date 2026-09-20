@@ -140,6 +140,185 @@ def test_chat_binds_and_loads_upload_before_the_model_turn(isolated_storage):
     ).exists()
 
 
+def test_same_session_upload_retires_old_execution_scope_before_loading(isolated_storage, monkeypatch):
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.session.task_manager import task_manager
+    from data_agent.session.workspace import workspace
+    from data_agent.web.app import create_app
+    import pandas as pd
+
+    monkeypatch.setattr(task_manager, "_dir", isolated_storage.workspace_resolved / "tasks")
+    monkeypatch.setattr(task_manager, "_next_id_val", 0)
+    loop = AgentLoop(client=object(), session_id="upload-replan")
+    with use_agent_context(loop.context):
+        workspace.add("old_data", pd.DataFrame({"x": [1]}))
+    old_plan = task_manager.create_plan(session_id=loop.session_id, goal="Old data plan")
+    old_task = task_manager.create(
+        "Old execution step",
+        session_id=loop.session_id,
+        plan_id=old_plan["id"],
+        status="in_progress",
+        dataset_inputs=["old_data"],
+    )
+    loop.context.refresh_workspace_scope()
+    observed = {}
+
+    def fake_stream(message, turn_context=""):
+        with use_agent_context(loop.context):
+            observed["datasets"] = workspace.list_datasets()
+        yield {"type": "text_delta", "text": "ready"}
+
+    loop.stream_turn = fake_stream
+
+    class Manager:
+        @staticmethod
+        def get_or_create(session_id=None, model_id=None):
+            return loop
+
+    app = create_app()
+    app.config.update(TESTING=True, agent_manager=Manager())
+    with app.test_client() as client:
+        uploaded = _upload(client, filename="next.csv", content=b"x\n2\n")
+        response = client.post(
+            "/api/chat",
+            json={"session_id": loop.session_id, "message": "continue", "uploads": [uploaded]},
+            buffered=True,
+        )
+
+    assert response.status_code == 200
+    assert {"next", "next__raw"} <= set(observed["datasets"])
+    assert task_manager.get_active_plan_id(loop.session_id) == ""
+    assert task_manager.get(old_task["id"])["status"] == "superseded"
+
+
+def test_failed_upload_ingestion_restores_plan_scope_and_removes_partial_datasets(
+    isolated_storage,
+    monkeypatch,
+):
+    import json
+    import pandas as pd
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.session.task_manager import task_manager
+    from data_agent.session.workspace import workspace
+    from data_agent.tools import data_io
+    from data_agent.web.app import create_app
+
+    monkeypatch.setattr(task_manager, "_dir", isolated_storage.workspace_resolved / "tasks")
+    monkeypatch.setattr(task_manager, "_next_id_val", 0)
+    loop = AgentLoop(client=object(), session_id="upload-rollback")
+    with use_agent_context(loop.context):
+        workspace.add("old_data", pd.DataFrame({"x": [1]}))
+    old_plan = task_manager.create_plan(session_id=loop.session_id, goal="Old data plan")
+    old_task = task_manager.create(
+        "Old execution step",
+        session_id=loop.session_id,
+        plan_id=old_plan["id"],
+        plan_status="active",
+        analysis_plan_id=old_plan["id"],
+        step_id="step_old",
+        combination_mode="independent",
+        dataset_inputs=["old_data"],
+    )
+    task_manager.update(old_task["id"], status="in_progress")
+    loop.context.refresh_workspace_scope()
+
+    def fail_after_partial_load(_path, name):
+        workspace.add(f"{name}__raw", pd.DataFrame({"x": [2]}))
+        workspace.add(name, pd.DataFrame({"x": [2]}))
+        return "Error: derived analysis copy failed"
+
+    monkeypatch.setattr(data_io, "load_data", fail_after_partial_load)
+
+    class Manager:
+        @staticmethod
+        def get_or_create(session_id=None, model_id=None):
+            return loop
+
+    app = create_app()
+    app.config.update(TESTING=True, agent_manager=Manager())
+    with app.test_client() as client:
+        uploaded = _upload(client, filename="broken.csv", content=b"x\n2\n")
+        response = client.post(
+            "/api/chat",
+            json={"session_id": loop.session_id, "message": "continue", "uploads": [uploaded]},
+        )
+
+    assert response.status_code == 422
+    assert task_manager.get_active_plan_id(loop.session_id) == old_plan["id"]
+    restored_task = task_manager.get(old_task["id"])
+    assert restored_task["status"] == "in_progress"
+    assert restored_task["plan_status"] == "active"
+    assert loop.context.workspace_scope.plan_id == old_plan["id"]
+    with use_agent_context(loop.context):
+        assert set(workspace.list_datasets()) == {"old_data"}
+    record_path = (
+        isolated_storage.sessions_resolved
+        / loop.session_id
+        / "uploads"
+        / uploaded["upload_id"]
+        / "upload.json"
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["status"] == "failed"
+    assert "derived analysis copy failed" in record["error"]
+
+
+def test_metadata_publication_failure_restores_prior_workspace_metadata(
+    isolated_storage,
+    monkeypatch,
+):
+    import pandas as pd
+    from data_agent.agent.context import use_agent_context
+    from data_agent.agent.loop import AgentLoop
+    from data_agent.session.task_manager import task_manager
+    from data_agent.session.workspace import workspace
+    from data_agent.web.app import create_app
+    from data_agent.web.blueprints import uploads as uploads_module
+
+    monkeypatch.setattr(task_manager, "_dir", isolated_storage.workspace_resolved / "tasks")
+    monkeypatch.setattr(task_manager, "_next_id_val", 0)
+    loop = AgentLoop(client=object(), session_id="upload-metadata-rollback")
+    with use_agent_context(loop.context):
+        workspace.add("old_data", pd.DataFrame({"x": [1]}))
+        workspace.save_meta(loop.session_id)
+    meta_path = isolated_storage.sessions_resolved / loop.session_id / "workspace_meta.json"
+    meta_before = meta_path.read_bytes()
+    old_plan = task_manager.create_plan(session_id=loop.session_id, goal="Old plan")
+    old_task = task_manager.create(
+        "Old step", session_id=loop.session_id, plan_id=old_plan["id"],
+    )
+    loop.context.refresh_workspace_scope()
+
+    monkeypatch.setattr(
+        uploads_module,
+        "_update_ingestion_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("metadata record write failed")),
+    )
+
+    class Manager:
+        @staticmethod
+        def get_or_create(session_id=None, model_id=None):
+            return loop
+
+    app = create_app()
+    app.config.update(TESTING=True, agent_manager=Manager())
+    with app.test_client() as client:
+        uploaded = _upload(client, filename="next.csv", content=b"x\n2\n")
+        response = client.post(
+            "/api/chat",
+            json={"session_id": loop.session_id, "message": "continue", "uploads": [uploaded]},
+        )
+
+    assert response.status_code == 422
+    assert meta_path.read_bytes() == meta_before
+    assert task_manager.get_active_plan_id(loop.session_id) == old_plan["id"]
+    assert task_manager.get(old_task["id"])["status"] == "pending"
+    with use_agent_context(loop.context):
+        assert set(workspace.list_datasets()) == {"old_data"}
+
+
 def test_claimed_upload_cannot_be_rebound_to_another_session(isolated_storage):
     from data_agent.web.app import create_app
     from data_agent.web.blueprints.uploads import bind_uploads_to_session

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from data_agent.llm import client as client_module
-from data_agent.llm.client import LLMClient, Response
+from data_agent.llm.client import HardRequestTimeout, LLMClient, Response
 from data_agent.llm.request_policy import RequestPolicy
 
 
@@ -79,6 +79,42 @@ def test_chat_returns_partial_text_truncation_without_escalation():
     assert calls == [2000]
     assert response.text == "partial answer"
     assert response.finish_reason == "length"
+
+
+def test_provider_busy_classes_are_retryable_but_host_deadline_is_not():
+    import litellm
+
+    assert litellm.RateLimitError in LLMClient._RETRYABLE
+    assert litellm.ServiceUnavailableError in LLMClient._RETRYABLE
+    assert HardRequestTimeout not in LLMClient._RETRYABLE
+
+
+def test_retryable_provider_busy_uses_bounded_exponential_backoff():
+    class ProviderBusy(Exception):
+        pass
+
+    calls = []
+    waits = []
+
+    def busy_then_ready(**_kwargs):
+        calls.append(len(calls) + 1)
+        if len(calls) < 3:
+            raise ProviderBusy("provider is busy")
+        return _litellm_response("ready", "stop")
+
+    client = LLMClient(
+        model_id="test/model",
+        transport=busy_then_ready,
+        request_policy=RequestPolicy(max_attempts=3, retry_delay_seconds=2),
+    )
+    client._RETRYABLE = (ProviderBusy,)
+    client._cancelled.wait = lambda seconds: waits.append(seconds) or False
+
+    response = client.chat([{"role": "user", "content": "q"}])
+
+    assert response.text == "ready"
+    assert calls == [1, 2, 3]
+    assert waits == [2, 4]
 
 
 def test_explicit_policy_supplies_the_rung_when_budget_is_omitted(monkeypatch):

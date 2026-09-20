@@ -28,7 +28,12 @@ def test_offline_tool_surface_smoke() -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=90,
+        # This process imports and executes the full ML/plotting tool surface.
+        # A cold Windows run is normally ~80s on the acceptance host, leaving
+        # the former 90s limit vulnerable to scheduler noise while all 104
+        # assertions still progress. Keep a finite bound without making a
+        # healthy cold-cache run flaky.
+        timeout=180,
         check=False,
     )
 

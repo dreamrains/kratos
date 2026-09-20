@@ -6,6 +6,11 @@ These instructions are mandatory for local browser acceptance, especially after 
 
 ### 1. Verify the rehearsal service before touching the browser
 
+- Before launching, run `git worktree list --porcelain` and verify the selected
+  worktree contains both `.venv\Scripts\python.exe` and
+  `scripts\testing\run_p7_browser_rehearsal.py`.  Check that the chosen run
+  directory does not exist and that the port is not already listening.  These
+  are launch preconditions, not reasons to invent a different entry point.
 - Use the existing Provider-disabled entry point only:
 
   ```powershell
@@ -13,6 +18,14 @@ These instructions are mandatory for local browser acceptance, especially after 
   ```
 
 - The run directory must not already exist. Prefer starting the command as a long-lived Codex exec session and retain both its exec-session ID and the listening OS PID. Poll that same exec session during the batch. A detached `Start-Process -WindowStyle Hidden` may be used only when its PID and redirected stdout/stderr are retained; do not assume it survived a turn interruption or context compaction.
+- On Windows, `CreateProcessWithLogonW failed: 1909` is a command-host launch
+  failure: the rehearsal child did not start.  Do not retry the same default
+  command channel, change ports, switch launch methods, or debug the browser.
+  First verify that no PID/listener/run directory was created, then rerun the
+  exact command once through the approved elevated exec channel and retain its
+  exec-session ID.  If an interruption occurs after a launch returned a
+  session ID, poll that session and the health endpoint before considering any
+  restart.
 - Verify `http://127.0.0.1:<port>/__p7__/health` before navigating. The response must contain `"ok": true` and `"provider_enabled": false`.
 - Recheck the health endpoint before every major matrix group and immediately after any interrupted turn. If the page says the site cannot be reached or shows `Failed to fetch`, check the retained exec session/PID, listening port, health endpoint, stdout, and stderr first. Those messages mean the frontend could not reach the local service until proven otherwise; do not troubleshoot the page, upload control, fixture, or browser security policy until the service is healthy.
 - Never enable Provider transport for this rehearsal. At the end, verify `runtime.jsonl` has zero `forbidden_provider_transport` events and report actual Provider initiated calls as 0.

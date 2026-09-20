@@ -202,6 +202,64 @@ def test_supersede_active_plan_includes_stale_pending_tasks(tmp_path):
     assert [t["id"] for t in history] == [old_task["id"]]
 
 
+def test_new_data_retires_the_exact_active_plan_and_preserves_completed_history(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", project_name="P", goal="Old basis")
+    pending = mgr.create(
+        "Pending old step", session_id="s1", project_name="P", plan_id=plan["id"]
+    )
+    completed = mgr.create(
+        "Completed old step", session_id="s1", project_name="P", plan_id=plan["id"]
+    )
+    mgr.update(completed["id"], status="completed")
+
+    result = mgr.retire_active_plan_for_new_data("s1", "P")
+
+    assert result["retired"] is True
+    assert result["plan_id"] == plan["id"]
+    assert result["reason"] == "new_data_upload"
+    assert [task["id"] for task in result["tasks"]] == [pending["id"]]
+    assert mgr.get_active_plan_id("s1", "P") == ""
+    assert mgr.get(pending["id"])["status"] == "superseded"
+    assert mgr.get(completed["id"])["status"] == "completed"
+
+
+def test_failed_new_data_transition_restores_exact_plan_and_task_state(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    plan = mgr.create_plan(session_id="s1", project_name="P", goal="Old basis")
+    pending = mgr.create(
+        "Pending old step", session_id="s1", project_name="P", plan_id=plan["id"],
+        plan_status="active", limitations="keep me",
+    )
+    retirement = mgr.retire_active_plan_for_new_data("s1", "P")
+
+    restored = mgr.restore_retired_plan(retirement)
+
+    assert restored == {
+        "restored": True,
+        "reason": "ingestion_failed",
+        "plan_id": plan["id"],
+    }
+    assert mgr.get_active_plan_id("s1", "P") == plan["id"]
+    assert mgr.get(pending["id"])["status"] == "pending"
+    assert mgr.get(pending["id"])["plan_status"] == "active"
+    assert mgr.get(pending["id"])["limitations"] == "keep me"
+
+
+def test_failed_new_data_transition_never_overwrites_a_successor_plan(tmp_path):
+    mgr = TaskManager(tasks_dir=tmp_path / "tasks")
+    old = mgr.create_plan(session_id="s1", goal="Old")
+    mgr.create("Old step", session_id="s1", plan_id=old["id"])
+    retirement = mgr.retire_active_plan_for_new_data("s1")
+    successor = mgr.create_plan(session_id="s1", goal="Successor")
+
+    restored = mgr.restore_retired_plan(retirement)
+
+    assert restored["restored"] is False
+    assert restored["reason"] == "successor_plan_active"
+    assert mgr.get_active_plan_id("s1") == successor["id"]
+
+
 def test_complete_matching_task_from_evidence(tmp_path):
     mgr = TaskManager(tasks_dir=tmp_path / "tasks")
     plan = mgr.create_plan(

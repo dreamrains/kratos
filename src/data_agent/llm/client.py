@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import contextvars
+import queue
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Optional
 
@@ -16,6 +19,10 @@ from data_agent.llm.routing import normalize_model_id
 
 
 logger = logging.getLogger(__name__)
+
+
+class HardRequestTimeout(TimeoutError):
+    """Host wall-clock deadline; intentionally not retryable while work may still be in flight."""
 
 
 class ToolCall:
@@ -162,7 +169,74 @@ class LLMClient:
         # Disable nested SDK retries: every physical attempt traverses this seam.
         if self._cancelled.is_set():
             raise RuntimeError("LLM request cancelled before admission")
-        return (self.transport or completion)(**{**kwargs, "num_retries": 0})
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+        def invoke():
+            try:
+                result_queue.put((True, (self.transport or completion)(
+                    **{**kwargs, "num_retries": 0}
+                )))
+            except BaseException as exc:
+                result_queue.put((False, exc))
+
+        request_context = contextvars.copy_context()
+        worker = threading.Thread(
+            target=lambda: request_context.run(invoke),
+            name="llm-request-deadline",
+            daemon=True,
+        )
+        worker.start()
+        try:
+            ok, value = result_queue.get(timeout=float(self.timeout))
+        except queue.Empty as exc:
+            raise HardRequestTimeout(
+                f"Provider request exceeded host wall-clock deadline of {self.timeout:g}s"
+            ) from exc
+        if not ok:
+            raise value
+        return value
+
+    def _iter_stream_with_deadline(self, stream):
+        """Pump a provider iterator behind the same host-owned wall-clock boundary."""
+
+        events: queue.Queue = queue.Queue()
+
+        def pump():
+            try:
+                for chunk in stream:
+                    events.put(("item", chunk))
+            except BaseException as exc:
+                events.put(("error", exc))
+            finally:
+                events.put(("done", None))
+
+        stream_context = contextvars.copy_context()
+        threading.Thread(
+            target=lambda: stream_context.run(pump),
+            name="llm-stream-deadline",
+            daemon=True,
+        ).start()
+        deadline = time.monotonic() + float(self.timeout)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                close_stream(stream)
+                raise HardRequestTimeout(
+                    f"Provider stream exceeded host wall-clock deadline of {self.timeout:g}s"
+                )
+            try:
+                kind, value = events.get(timeout=remaining)
+            except queue.Empty as exc:
+                close_stream(stream)
+                raise HardRequestTimeout(
+                    f"Provider stream exceeded host wall-clock deadline of {self.timeout:g}s"
+                ) from exc
+            if kind == "item":
+                yield value
+            elif kind == "error":
+                raise value
+            else:
+                return
 
     def _base_kwargs(self, messages, tools=None, system=None):
         # Persistence/UI identity is local metadata, not a Provider field.
@@ -260,7 +334,7 @@ class LLMClient:
         try:
             if self._cancelled.is_set():
                 return
-            for chunk in stream:
+            for chunk in self._iter_stream_with_deadline(stream):
                 if self._cancelled.is_set():
                     return
                 usage = getattr(chunk, "usage", None)
