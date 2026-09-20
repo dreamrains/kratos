@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 from data_agent.llm.request_policy import ONE_SHOT
@@ -62,3 +63,12 @@ def test_m02_contract_accepts_only_disclosed_receipt_bound_fitted_scenarios():
     assert "未做留出验证/回测/外部验证" in prompt
     assert "host-recomputed" in oracles
     assert "0.05 percentage point" in oracles
+
+
+def test_preflight_stdout_is_ascii_safe_without_losing_unicode_content():
+    launcher = _launcher_module()
+
+    output = launcher._stdout_manifest("passed", {"label": "R² 拟合情景"})
+
+    output.encode("ascii")
+    assert json.loads(output) == {"preflight": "passed", "label": "R² 拟合情景"}

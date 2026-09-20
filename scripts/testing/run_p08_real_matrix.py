@@ -45,6 +45,11 @@ def _sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _stdout_manifest(status: str, manifest: dict[str, Any]) -> str:
+    """Return console-safe JSON while freeze.json retains readable UTF-8 text."""
+    return json.dumps({"preflight": status, **manifest}, ensure_ascii=True)
+
+
 def _write_csv(path: Path, columns: list[str], rows: list[list[Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -218,12 +223,12 @@ def main() -> None:
     run_dir = args.run_dir.resolve()
     if args.preflight:
         manifest = _prepare(root, run_dir, args.call_cap, args.port)
-        print(json.dumps({"preflight": "passed", **manifest}, ensure_ascii=False))
+        print(_stdout_manifest("passed", manifest))
         return
     if not args.authorized:
         raise SystemExit("real Provider serving requires --authorized")
     manifest = _load_frozen_preflight(root, run_dir, args.call_cap, args.port)
-    print(json.dumps({"preflight": "revalidated", **manifest}, ensure_ascii=False))
+    print(_stdout_manifest("revalidated", manifest))
 
     import data_agent.llm.client as client_module
     _install_one_shot_request_policy(client_module)
