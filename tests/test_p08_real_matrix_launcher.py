@@ -30,3 +30,35 @@ def test_acceptance_launcher_forces_one_physical_attempt_for_every_client():
 
     assert FakeClient().request_policy is ONE_SHOT
     assert FakeClient(request_policy=object()).request_policy is ONE_SHOT
+
+
+def test_preflight_contract_freezes_complete_prompts_oracles_and_browser_protocol():
+    launcher = _launcher_module()
+    root = Path(__file__).parents[1]
+
+    contract = launcher._frozen_matrix_contract(root, 5215)
+
+    assert contract["matrix"] == ["M01", "M02", "M03", "M04", "M05", "M06"]
+    assert contract["operator_protocol"]["browser"] == "Codex built-in browser / iab"
+    assert contract["operator_protocol"]["service_port"] == 5215
+    assert contract["matrix_plan"]["sha256"].startswith("sha256:")
+    assert contract["contract_file"]["sha256"].startswith("sha256:")
+    assert set(contract["scenario_inputs"]) == set(contract["matrix"])
+    for scenario in contract["scenario_inputs"].values():
+        assert scenario["prompts"]
+        assert scenario["hard_oracles"]
+        assert scenario["actions"]
+
+
+def test_m02_contract_accepts_only_disclosed_receipt_bound_fitted_scenarios():
+    launcher = _launcher_module()
+    contract = launcher._frozen_matrix_contract(Path(__file__).parents[1], 5215)
+
+    prompt = contract["scenario_inputs"]["M02"]["prompts"][0]
+    oracles = "\n".join(contract["scenario_inputs"]["M02"]["hard_oracles"])
+
+    assert "拟合情景" in prompt
+    assert "R²" in prompt
+    assert "未做留出验证/回测/外部验证" in prompt
+    assert "host-recomputed" in oracles
+    assert "0.05 percentage point" in oracles

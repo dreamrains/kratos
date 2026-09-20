@@ -21,6 +21,24 @@ from typing import Any
 
 
 DEFAULT_CALL_CAP = 120
+MATRIX_IDS = ["M01", "M02", "M03", "M04", "M05", "M06"]
+MATRIX_SCHEMA_VERSION = "p08.real_matrix.v2"
+MATRIX_CONTRACT_PATH = Path("scripts/testing/p08_real_matrix_contract.json")
+
+
+def _frozen_matrix_contract(root: Path, port: int) -> dict[str, Any]:
+    contract_path = (root / MATRIX_CONTRACT_PATH).resolve()
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    if contract.get("matrix") != MATRIX_IDS or set(contract.get("scenario_inputs", {})) != set(MATRIX_IDS):
+        raise SystemExit("P08 matrix contract is incomplete or out of order")
+    plan_path = (root / contract["matrix_plan"]["path"]).resolve()
+    contract["matrix_plan"]["sha256"] = _sha256(plan_path)
+    contract["contract_file"] = {
+        "path": MATRIX_CONTRACT_PATH.as_posix(),
+        "sha256": _sha256(contract_path),
+    }
+    contract["operator_protocol"]["service_port"] = port
+    return contract
 
 
 def _sha256(path: Path) -> str:
@@ -69,7 +87,7 @@ def _configure_isolation(run_dir: Path) -> None:
     })
 
 
-def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
+def _prepare(root: Path, run_dir: Path, call_cap: int, port: int) -> dict[str, Any]:
     tmp_root = (root / "tmp").resolve()
     if not run_dir.is_relative_to(tmp_root) or run_dir.exists():
         raise SystemExit("run directory must be a fresh path inside repository tmp")
@@ -87,7 +105,7 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
     if not cfg.api_base or not cfg.api_key:
         raise SystemExit("real Provider configuration is incomplete")
     manifest = {
-        "schema_version": "p08.real_matrix.v1",
+        "schema_version": MATRIX_SCHEMA_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_commit": _git_head(root),
         "launcher_digest": _sha256(Path(__file__).resolve()),
@@ -95,8 +113,8 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
         "model": cfg.model_id,
         "provider_endpoint": cfg.api_base,
         "call_cap": call_cap,
-        "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
         "fixtures": {path.name: _sha256(path) for path in sorted(fixtures.glob("*.csv"))},
+        **_frozen_matrix_contract(root, port),
         "workspace_dir": str(workspace.relative_to(root)),
         "sessions_dir": str(sessions.relative_to(root)),
         "provider_ledger": str((run_dir / "provider-calls.jsonl").relative_to(root)),
@@ -105,7 +123,7 @@ def _prepare(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
     return manifest
 
 
-def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int) -> dict[str, Any]:
+def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int, port: int) -> dict[str, Any]:
     """Revalidate one preflight before serving it; never regenerate its inputs."""
     freeze_path = run_dir / "freeze.json"
     if not freeze_path.is_file():
@@ -114,12 +132,12 @@ def _load_frozen_preflight(root: Path, run_dir: Path, call_cap: int) -> dict[str
         raise SystemExit("authorized serving refuses a run directory with an existing Provider ledger")
     manifest = json.loads(freeze_path.read_text(encoding="utf-8"))
     expected = {
-        "schema_version": "p08.real_matrix.v1",
+        "schema_version": MATRIX_SCHEMA_VERSION,
         "source_commit": _git_head(root),
         "launcher_digest": _sha256(Path(__file__).resolve()),
         "request_policy": "one_shot",
         "call_cap": call_cap,
-        "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
+        **_frozen_matrix_contract(root, port),
     }
     for key, value in expected.items():
         if manifest.get(key) != value:
@@ -199,12 +217,12 @@ def main() -> None:
     root = Path(__file__).resolve().parents[2]
     run_dir = args.run_dir.resolve()
     if args.preflight:
-        manifest = _prepare(root, run_dir, args.call_cap)
+        manifest = _prepare(root, run_dir, args.call_cap, args.port)
         print(json.dumps({"preflight": "passed", **manifest}, ensure_ascii=False))
         return
     if not args.authorized:
         raise SystemExit("real Provider serving requires --authorized")
-    manifest = _load_frozen_preflight(root, run_dir, args.call_cap)
+    manifest = _load_frozen_preflight(root, run_dir, args.call_cap, args.port)
     print(json.dumps({"preflight": "revalidated", **manifest}, ensure_ascii=False))
 
     import data_agent.llm.client as client_module

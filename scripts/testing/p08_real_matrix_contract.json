@@ -1,0 +1,134 @@
+{
+  "matrix": ["M01", "M02", "M03", "M04", "M05", "M06"],
+  "matrix_plan": {
+    "path": "docs/superpowers/validation/2026-09-07-p08-full-matrix-validation-plan.md"
+  },
+  "operator_protocol": {
+    "browser": "Codex built-in browser / iab",
+    "service_port": null,
+    "scenario_order": ["M01", "M02", "M03", "M04", "M05", "M06"],
+    "session_policy": "fresh isolated session per scenario",
+    "upload_policy": "click the visible upload label, await the Browser filechooser, and upload every scenario fixture in one setFiles call using absolute paths",
+    "failure_policy": "record ordinary scenario failures and continue; stop only for global service unavailability, session/data isolation failure, event integrity failure, evidence escalation, or accounting failure",
+    "mutation_policy": "no code, prompt, fixture, oracle, model, endpoint, budget, or ledger changes during the batch; no partial reruns",
+    "confirmation_action": "M06: when the frozen cost-scope question appears, select B. 代金券成本 + 渠道成本 and resume exactly once"
+  },
+  "scenario_inputs": {
+    "M01": {
+      "fixtures": ["M01-sales.csv"],
+      "prompts": [
+        "请分析当前上传的销售订单数据，给出已验证的关键业务事实和有条件的行动建议。请明确数据范围、单位、来源、限制、建议的触发条件和停止条件；不要把描述性结果写成因果结论或总体外推。\n分析文件: M01-sales.csv"
+      ],
+      "actions": ["refresh"],
+      "hard_oracles": [
+        "12 records and total amount 120",
+        "amount unit remains unknown",
+        "range/source/limits retained",
+        "conditional advice has trigger and stop conditions",
+        "no causal or population overclaim",
+        "refresh is consistent"
+      ]
+    },
+    "M02": {
+      "fixtures": ["M02-retention.csv"],
+      "prompts": [
+        "请计算并解释 D1 至 D7 留存，并判断当前证据对 D30 能支持到什么程度。D30 可以保持未知；如果使用 curve fitting 外推，只能作为拟合情景，必须逐一命名模型族、报告拟合度 R²、明确说明未做留出验证/回测/外部验证，并展示不同模型的敏感性，不得写成已经验证的预测。\n分析文件: M02-retention.csv"
+      ],
+      "actions": ["export_markdown", "refresh"],
+      "hard_oracles": [
+        "D1-D7 values are correct and D7 is 10%",
+        "D30 remains unknown or is an explicitly labelled receipt-bound fitted scenario",
+        "every D30 scenario value is host-recomputed from the named receipt family and parameters within 0.05 percentage point",
+        "a fitted scenario reports family, R-squared, no holdout/backtest/external validation, and cross-family sensitivity",
+        "computed results, fitted scenarios, and evidence insufficiency are separated",
+        "one terminal state; export and refresh are consistent"
+      ]
+    },
+    "M03": {
+      "fixtures": [
+        "M03-source-1.csv",
+        "M03-source-4.csv",
+        "M03-source-3.csv",
+        "M03-source-2.csv",
+        "M03-source-5.csv",
+        "M03-source-6.csv"
+      ],
+      "prompts": [
+        "请分别比较当前六个来源在 2026-09-01 与 2026-09-02 的金额变化，并保留全部来源。正文逐来源给出两日金额、绝对变化、相对变化和记录数；如内容需要折叠，请明确列出未展开项并保证导出可访问完整事实。\n分析文件: M03-source-1.csv\n分析文件: M03-source-4.csv\n分析文件: M03-source-3.csv\n分析文件: M03-source-2.csv\n分析文件: M03-source-5.csv\n分析文件: M03-source-6.csv"
+      ],
+      "actions": ["compact_context", "export_markdown", "refresh"],
+      "hard_oracles": [
+        "all six sources retained",
+        "values are 10 to 11 through 60 to 66",
+        "total is 210 to 231",
+        "absolute change, relative change, and record count are present per source",
+        "adjacent dates are not called 同比",
+        "compact/export/refresh are consistent"
+      ]
+    },
+    "M04": {
+      "fixtures": ["M04-hyp-v1.csv", "M04-hyp-v2.csv"],
+      "prompts": [
+        "请基于当前 v1 数据提出并检验至少两种竞争性假设，使用真实工具记录支持证据、反证、冲突和仍未解决之处；只做描述性判断，不写成因果结论。\n分析文件: M04-hyp-v1.csv",
+        "现在把 M04-hyp-v2.csv 作为同一业务对象的新数据版本载入。请保留 v1 的假设与证据审计，重新判断哪些关系已失效、哪些仍未决，不得把 v1 证据升级为 v2 结论。\n分析文件: M04-hyp-v2.csv"
+      ],
+      "actions": ["inspect_workbench", "refresh"],
+      "hard_oracles": [
+        "no method-name confirmation",
+        "v1 10 to 20 to 20 and v2 10 to 10 to 10 are correct",
+        "structured plan, evidence records, and competing hypotheses exist",
+        "support/refutation/conflict/unresolved states are auditable",
+        "v1 evidence becomes stale or excluded for v2",
+        "failed v2 upload restores v1 metadata, upload records, plan, tasks, and authoritative scope",
+        "no cross-version evidence upgrade"
+      ]
+    },
+    "M05": {
+      "fixtures": ["M01-sales.csv"],
+      "prompts": [
+        "请先基于当前订单给出一份证据受限的事实摘要，明确计算并列出订单记录数与 amount 总额。\n分析文件: M01-sales.csv",
+        "请改成业务负责人表达，强调可行动含义，但不要改变数字、范围、限制和证据等级。",
+        "请改成分析师表达，保留指标、计算和来源绑定，但不要改变数字、范围、限制和证据等级。",
+        "请改成管理者表达，突出决策条件，但不要改变数字、范围、限制和证据等级。",
+        "请用大白话重述，但不要改变数字、范围、限制和证据等级。",
+        "请恢复技术表达，列出计算方法与证据边界，但不要改变数字、范围、限制和证据等级。"
+      ],
+      "actions": ["export_markdown", "refresh"],
+      "hard_oracles": [
+        "all six expression rounds retain 12 records and total 120",
+        "date range and unknown unit remain unchanged",
+        "limits and evidence grade remain unchanged",
+        "technical methods and sources are recoverable",
+        "no unsupported affirmative data-origin or population inference",
+        "examples, questions, and explicit origin denials do not trigger provenance rejection",
+        "CV and arithmetic statements remain internally consistent",
+        "export and refresh are consistent"
+      ]
+    },
+    "M06": {
+      "fixtures": ["M01-sales.csv"],
+      "prompts": [
+        "请分析名为 missing_orders 的数据集；如果不存在，请明确说明缺口，并只给一个具体下一步动作，不要列出多个替代路径，不要编造结果或宣称完成。",
+        "请评估促销净收益。净收益的成本口径可能是仅扣代金券成本，也可能同时扣除渠道成本；这个选择会改变结果，请先提出一个具体业务口径问题。用户选择后，再根据当前数据说明哪些结果已计算、哪些未计算、哪些证据不足，不得把用户选择当作缺失数据的替代证据。\n分析文件: M01-sales.csv"
+      ],
+      "actions": [
+        "select B. 代金券成本 + 渠道成本",
+        "resume_once",
+        "export_markdown",
+        "refresh"
+      ],
+      "hard_oracles": [
+        "missing dataset response does not fabricate and gives exactly one concrete next action",
+        "only a real business-semantic gap suspends",
+        "confirmation integrity is ok and resolves once",
+        "computed total 120 is separate from uncomputed uplift/cost/net benefit",
+        "not_computed and evidence_insufficient are separate",
+        "no unsupported affirmative data-origin or population inference",
+        "host enforces a 120 second request deadline",
+        "SSE keepalive and client recovery do not create duplicate terminal events",
+        "one terminal state and paired tool messages",
+        "export and refresh are consistent"
+      ]
+    }
+  }
+}
