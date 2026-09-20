@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11, pytest, existing `scripts/testing/run_regression.py`, Flask/SSE, existing Provider-disabled browser rehearsal, Git.
 
+**Status (2026-09-20):** Tasks 1—5 and the local documentation/static-verification objective are complete. The three semantic implementation units were committed together as `4bae5b0` rather than as the three example commits below; this execution difference is recorded instead of rewriting history. The incomplete post-guard path is covered by deterministic sync/stream contracts, while the complete Provider-disabled E3 used the existing frozen browser matrix. `b33587b` and `9a3031e` closed physical-source aliasing and immutable receipt binding found during the broader local acceptance. Latest evidence is `tmp/p08-fo-r4` (2713 passed, 1 skipped, 0 failures) and `tmp/p08-br-r3` (complete B01—B06, IC-B01—IC-B06, CONTENT-B03/B07; Provider initiated calls=0). A new E4 zero-call freeze and authorization gate remain deliberately unchecked until after the status-document commit; historical E4 remains `executed_failed / not_accepted`.
+
 ---
 
 ## File map
@@ -25,7 +27,7 @@
 - Modify: `tests/test_publication_synthesis.py:540-750`
 - Test: `tests/test_publication_synthesis.py`
 
-- [ ] **Step 1: Add the legal paraphrase corpus**
+- [x] **Step 1: Add the legal paraphrase corpus**
 
 Add one `pytest.mark.parametrize` contract with at least 30 distinct legal clauses. It must include all historical forms and new grammatical families, including:
 
@@ -70,7 +72,7 @@ def test_n01_legal_d30_paraphrases_publish(text):
     assert validate_final_narrative(text, _retention_packet()) is None
 ```
 
-- [ ] **Step 2: Add the violation corpus**
+- [x] **Step 2: Add the violation corpus**
 
 Add at least 15 affirmative violations covering numeric, percentage, direction, state, point estimate, mixed negation, and unbound-source claims:
 
@@ -101,7 +103,7 @@ def test_n03_affirmative_d30_claims_are_rejected(text):
     assert validate_final_narrative(text, _retention_packet()) is not None
 ```
 
-- [ ] **Step 3: Run the new tests and verify RED**
+- [x] **Step 3: Run the new tests and verify RED**
 
 Run:
 
@@ -119,7 +121,7 @@ Expected: at least the three new legal forms reproduced during diagnosis fail wi
 - Test: `tests/test_value_preservation_p7_boundaries.py`
 - Test: `tests/test_p08_boundary_finalization.py`
 
-- [ ] **Step 1: Add a focused affirmative payload helper**
+- [x] **Step 1: Add a focused affirmative payload helper**
 
 Replace the `predicts` trigger plus rescue-family branching with a helper whose only responsibility is determining whether the clause publishes an affirmative payload for the matched point:
 
@@ -142,7 +144,7 @@ def _asserts_time_point_payload(clause: str, match: re.Match[str]) -> bool:
 
 Direction matching is applied only to the suffix beginning at the matched time point. A failure outside these defined numeric/rate/direction/state payloads returns to design review rather than adding a generic “prediction word means claim” trigger.
 
-- [ ] **Step 2: Simplify `_extrapolation_issues` around the helper**
+- [x] **Step 2: Simplify `_extrapolation_issues` around the helper**
 
 For each matched time point:
 
@@ -155,7 +157,7 @@ if not _asserts_time_point_payload(clause, match):
 
 Then reuse the existing bound/unbound observation-range checks unchanged. Remove constants that become unused solely because they rescued noun-like prediction mentions.
 
-- [ ] **Step 3: Run focused GREEN verification**
+- [x] **Step 3: Run focused GREEN verification**
 
 Run:
 
@@ -166,7 +168,7 @@ Run:
 
 Expected: all selected tests pass; observed-source D30 values and conditional actions remain allowed, while numeric/directional/unbound violations remain rejected.
 
-- [ ] **Step 4: Commit the M02 unit**
+- [x] **Step 4: Commit the M02 unit**
 
 ```powershell
 git add -- src/data_agent/agent/publication_synthesis.py tests/test_publication_synthesis.py
@@ -181,7 +183,7 @@ Do not stage unrelated files.
 - Modify: `tests/test_publication_synthesis.py:270-330`
 - Modify: `src/data_agent/agent/publication_synthesis.py:1435-1560,1813-1835`
 
-- [ ] **Step 1: Add provenance RED contracts**
+- [x] **Step 1: Add provenance RED contracts**
 
 Add parameterized unsupported assertions and bounded statements:
 
@@ -204,7 +206,7 @@ BOUNDED_PROVENANCE_STATEMENTS = [
 
 Assert that unsupported affirmative classifications yield `unsupported_data_origin_inference`, while bounded statements and ordinary source identities do not.
 
-- [ ] **Step 2: Run provenance tests and verify RED**
+- [x] **Step 2: Run provenance tests and verify RED**
 
 Run:
 
@@ -214,7 +216,7 @@ Run:
 
 Expected: “测试数据/机器生成/合成数据” affirmative cases fail because current code returns no issue; bounded statements remain green.
 
-- [ ] **Step 3: Implement clause-level provenance structure**
+- [x] **Step 3: Implement clause-level provenance structure**
 
 Introduce separate subject, predicate, and uncertainty patterns rather than full-sentence rescue patterns:
 
@@ -234,7 +236,7 @@ _PROVENANCE_UNCERTAINTY = re.compile(
 
 Change `_unsupported_data_semantics_issues(text, packet)` to reject a clause only when subject + predicate are present, the clause lacks uncertainty, and `_packet_supports_provenance(packet, predicate)` cannot find a matching controlled fact. The helper inspects only facts whose path contains `provenance`, `origin`, `source_type`, `data_kind`, or `generation_method`, then compares the normalized predicate token with that fact value. It must not search arbitrary narrative summaries, treat the model’s answer as evidence, or add persistent fields.
 
-- [ ] **Step 4: Run provenance and full publication tests GREEN**
+- [x] **Step 4: Run provenance and full publication tests GREEN**
 
 Run:
 
@@ -244,7 +246,7 @@ Run:
 
 Expected: complete file passes; existing CV, YoY, missing-value, currency, source-binding, arithmetic, and coverage contracts remain green.
 
-- [ ] **Step 5: Commit the provenance unit**
+- [x] **Step 5: Commit the provenance unit**
 
 ```powershell
 git add -- src/data_agent/agent/publication_synthesis.py tests/test_publication_synthesis.py
@@ -258,7 +260,7 @@ git commit -m "Require evidence for provenance classifications"
 - Modify: `src/data_agent/agent/loop.py:2098-2175,3188-3210,3612-3635`
 - Modify: `tests/test_execution_control.py:430-840`
 
-- [ ] **Step 1: Add post-guard RED tests**
+- [x] **Step 1: Add post-guard RED tests**
 
 Add tests proving these states:
 
@@ -282,7 +284,7 @@ def test_complete_repair_clears_post_guard_failure():
 
 Also assert the guard system message count remains exactly one.
 
-- [ ] **Step 2: Run guard tests and verify RED**
+- [x] **Step 2: Run guard tests and verify RED**
 
 Run:
 
@@ -292,7 +294,7 @@ Run:
 
 Expected: current code either clears gaps solely because the guard flag is set or lacks `_analysis_quality_failure_after_guard`; tests fail for that reason.
 
-- [ ] **Step 3: Implement one-repair recheck**
+- [x] **Step 3: Implement one-repair recheck**
 
 - Remove the early `_turn_final_guard_injected` return from `_competing_hypothesis_quality_gaps`.
 - Make `_should_continue_for_analysis_quality` refresh `_turn_analysis_quality_gaps` on every candidate, inject only when gaps exist and no guard has yet been used, and clear stale gaps when structures are complete.
@@ -308,7 +310,7 @@ def _analysis_quality_failure_after_guard(self) -> str | None:
 
 - In sync and stream terminal paths, call the helper immediately after the one-time continuation check. Return/yield the existing error form and stop without persisting or publishing the rejected candidate.
 
-- [ ] **Step 4: Run guard and execution-control GREEN tests**
+- [x] **Step 4: Run guard and execution-control GREEN tests**
 
 Run:
 
@@ -318,7 +320,7 @@ Run:
 
 Expected: all tests pass; one guard only, complete repair publishes, incomplete repair returns one explicit failure, confirmation/tool pairing contracts remain unchanged.
 
-- [ ] **Step 5: Commit the M04 unit**
+- [x] **Step 5: Commit the M04 unit**
 
 ```powershell
 git add -- src/data_agent/agent/loop.py tests/test_analysis_quality_guard_scope.py tests/test_execution_control.py
@@ -330,7 +332,7 @@ git commit -m "Fail closed on incomplete hypothesis audits"
 **Files:**
 - No production edits unless a reproduced regression requires returning to its owning RED/GREEN task.
 
-- [ ] **Step 1: Run targeted publication/quality regression in a fresh run-dir**
+- [x] **Step 1: Run targeted publication/quality regression in a fresh run-dir**
 
 Run with the existing isolated runner and a new directory:
 
@@ -340,13 +342,13 @@ Run with the existing isolated runner and a new directory:
 
 Expected: 0 failures and Provider network prohibited.
 
-- [ ] **Step 2: Run the broader contract group in a second fresh run-dir**
+- [x] **Step 2: Run the broader contract group in a second fresh run-dir**
 
 Include analysis flow, hypotheses, confirmation, content binding, SSE lifecycle, compaction, and artifact publication files used by R16/R17. Record the exact file list and output in the implementation record.
 
 Expected: 0 failures and Provider network prohibited.
 
-- [ ] **Step 3: Run full-offline once in a fresh run-dir**
+- [x] **Step 3: Run full-offline once in a fresh run-dir**
 
 ```powershell
 .venv\Scripts\python.exe scripts/testing/run_regression.py full-offline --run-dir tmp/p08-semantic-convergence-full-offline-1
@@ -354,7 +356,7 @@ Expected: 0 failures and Provider network prohibited.
 
 Expected: 0 failures; any ordinary test failure is recorded and the suite completes. Stop only for the existing isolation/evidence/service integrity gates.
 
-- [ ] **Step 4: Run Provider-disabled browser rehearsal**
+- [x] **Step 4: Run Provider-disabled browser rehearsal**
 
 Start the existing rehearsal entry with a new run-dir and use the Codex built-in browser. Exercise B02/B02-NEG with at least three new legal paraphrases and one illegal value/direction candidate; exercise B04 through one complete structured repair and one deliberately incomplete scripted repair; recheck upload binding, refresh, export, console, terminal uniqueness, and persisted state.
 
@@ -372,11 +374,11 @@ Expected: legal boundaries publish, illegal claims are revised or rejected, comp
 - Modify: `docs/superpowers/validation/2026-09-06-value-preservation-stage-records.md`
 - Modify: `docs/audit/2026-09-09-answer-intent-integration-record.md`
 
-- [ ] **Step 1: Record evidence boundaries**
+- [x] **Step 1: Record evidence boundaries**
 
 Record RED/GREEN commands, exact targeted/full-offline results, browser sessions/run-dir, Provider initiated calls=0, commits, and the fact that P08/IC5/AC40 remain `executed_failed / not_accepted` until a new E4 succeeds.
 
-- [ ] **Step 2: Run final static verification**
+- [x] **Step 2: Run final static verification**
 
 ```powershell
 git diff --check
@@ -385,7 +387,7 @@ git status --short --branch
 
 Expected: no whitespace errors; only named documentation changes remain before the documentation commit.
 
-- [ ] **Step 3: Commit named documentation files**
+- [x] **Step 3: Commit named documentation files**
 
 ```powershell
 git add -- docs/superpowers/plans/2026-09-06-analysis-value-preservation-plan.md docs/superpowers/plans/2026-09-07-intent-clarification-plan.md docs/superpowers/plans/2026-09-08-answer-content-optimization-plan.md docs/superpowers/validation/2026-09-06-analysis-value-preservation-acceptance.md docs/superpowers/validation/2026-09-07-intent-clarification-acceptance.md docs/superpowers/validation/2026-09-08-answer-content-acceptance.md docs/superpowers/validation/2026-09-06-value-preservation-stage-records.md docs/audit/2026-09-09-answer-intent-integration-record.md

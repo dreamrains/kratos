@@ -878,3 +878,15 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 隔离回归：`tmp/p08-post-r16-targeted-1` **165 passed**；`tmp/p08-post-r16-targeted-2` **173 passed、9 warnings**；`tmp/p08-post-r16-full-offline-1` **2644 passed、1 skipped、16 warnings**。full-offline runner 禁止 Provider 网络。
 - Provider-disabled 内置浏览器：`tmp/p08-post-r16-browser-2`。上传 `F-SALES.csv` 后，显式文件引用在发送与刷新后均恰好一次，上传 binding 保留；B04 会话 `bef7b32130de` completed，持久化为 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 会话 `92fd8c99b127` completed，保留 D7=10% 和 D30 证据边界，未出现无依据“D30 留存预计为 5%”。
 - 浏览器控制台 error/warning 为 0；`runtime.jsonl` 的 `server_start.provider_enabled=false`，没有 `forbidden_provider_transport`，真实 Provider initiated calls=0。服务已关闭。本地证据不升级 E4；新批次必须重新冻结并取得新的精确授权。未 push、部署、staging 或生产验证。
+
+## P08-R18：语义问题类收敛实现与本地验证（Codex，2026-09-19 至 2026-09-20）
+
+阶段 / 状态：**语义收敛代码与本地 E1/E2/full-offline/E3 已完成；P08 / IC5 / AC40 的 E4 仍为 executed_failed / not_accepted。** 没有真实 Provider 调用。
+
+- `main@4bae5b0dbf24c8c7e30971f747378ac8b5b0f76e` 在既有发布门、一次修订和 Stage3C0B 状态内实现问题类修复：越界时间点只有发布肯定数值/方向/状态 payload 才拒绝；数据来源分类需要受控 provenance 事实或明确不确定性；显式竞争假设候选在一次 guard 后仍缺 plan/hypothesis/evidence relation 时以 `analysis_audit_incomplete` 失败关闭。30+ 合法、15+ 非法改述以及 provenance、同步/流式终态契约进入现有 pytest。三个计划单元实际合并在该提交中，没有新增测试框架、模型审核调用、探针或账本。
+- 首轮隔离证据：`tmp/p08-semantic-convergence-targeted-1` 为 194 passed；`tmp/p08-semantic-convergence-contracts-1` 为 377 passed；`tmp/p08-semantic-convergence-full-offline-1` 为 2708 passed、1 skipped、0 failures。后续 broader / targeted / full-offline 运行用于吸收浏览器暴露的同源别名与收据绑定问题，不能把中间运行单独当作最终候选证据。
+- `main@b33587b4933ec1b756fbcd2525ba9583900f295f` 按物理来源去重同一上传文件的加载别名，避免同一文件被不同 dataset alias 误报为范围歧义。`main@9a3031e27b6cd03d03d7dffd2a6116fde0181fd9` 使用 tool call ID 哈希与结果内容哈希生成有界不可变详情路径，并让统计投影显式绑定当前 receipt ID；相同内容可共享文件，但收据身份不再混淆，旧收据保持兼容。
+- 收据修复聚焦回归为 17 passed 与 44 passed。最终新隔离 full-offline `tmp/p08-fo-r4` 的 JUnit 为 2714 tests、0 failures、0 errors、1 skipped，即 2713 passed、1 skipped；runner 禁止 Provider 网络。
+- 最终 Provider-disabled 内置浏览器目录 `tmp/p08-br-r3`，端口 5214、服务 PID 10724，完整执行 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07。B04 会话 `51edc7d3fb12` 完成第 2—13 步同会话链并保留 supports、refutes、未决与版本变化后的 stale；CONTENT-B03 `a11f217e0d87` 和 CONTENT-B07 `7befcd866b19` 的刷新/导出/呈现保持。B06 的工具、保存和预算负路径分别保持 completed、unknown/OSError、failed 边界。浏览器控制台 0 error / 0 warning。
+- `tmp/p08-br-r3/runtime.jsonl` 的 `server_start.provider_enabled=false`，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。`main@fa9e8965998e0e9f10f208862336fb77c122dd49` 只记录上述本地验收，没有产品代码变化。
+- 证据边界：本节只把最新本地 E3 记为 passed_local，不把 R16 或更早真实批次改写为通过。所有旧冻结、授权、调用余额和会话均已消耗；新的 E4 必须在状态文档提交后重新冻结精确 commit、模型、端点、fixture/提示/oracle 矩阵、120 次物理调用上限、账本路径与内置浏览器协议，并取得新的明确授权。未执行 push、部署、staging 或生产验证。

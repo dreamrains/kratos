@@ -1,6 +1,6 @@
 # 真实 Provider 验收语义收敛：开发设计
 
-日期：2026-09-19｜版本：v0.1｜状态：**设计已确认，等待书面规格复核；尚未修改产品代码，当前 E4 冻结暂停使用**。
+日期：2026-09-19｜版本：v0.2｜状态：**设计已实现并完成本地 E1/E2/full-offline/E3 验证；新的 E4 尚未冻结或授权，历史 E4 仍为 `executed_failed / not_accepted`**。
 
 关联：[分析价值保留计划](../plans/2026-09-06-analysis-value-preservation-plan.md)｜[必要澄清计划](../plans/2026-09-07-intent-clarification-plan.md)｜[回答内容计划](../plans/2026-09-08-answer-content-optimization-plan.md)｜[阶段记录](../validation/2026-09-06-value-preservation-stage-records.md)｜[整合记录](../../audit/2026-09-09-answer-intent-integration-record.md)。
 
@@ -109,3 +109,10 @@ R5—R16 六个完整 E4 批次共发生 470 次真实 Provider 调用，通过�
 3. M04 guard 后复查 RED → 同步/流式失败关闭最小实现 → loop 契约 GREEN。
 4. 两组定向回归 → full-offline → Provider-disabled 内置浏览器 B02/B02-NEG、B04、内容与上传绑定复核。
 5. 更新计划、验收矩阵、阶段记录和整合记录；提交后废止旧冻结，再准备新的零调用冻结。
+
+## 8. 2026-09-20 实施与证据状态
+
+- `main@4bae5b0` 已按本设计实现三项语义收敛：正向 payload 驱动的越界时间点门、provenance 证据/不确定性绑定、一次 M04 guard 后复查并以 `analysis_audit_incomplete` 失败关闭。对应语料与同步/流式契约进入现有 pytest；三个实现单元实际合并在同一提交中，没有伪造计划示例中的三个独立提交。
+- `main@b33587b` 进一步按物理来源去重同一上传文件的加载别名；`main@9a3031e` 以确切收据 ID 绑定内容寻址详情，关闭复用 tool call ID 时误选收据的问题，并保留旧收据兼容。
+- 最新完整本地验证对应产品提交 `9a3031e`：聚焦回归 17 passed 与 44 passed；`tmp/p08-fo-r4` 为 2713 passed、1 skipped、0 failures。Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07；控制台 0 error / 0 warning，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。
+- `main@fa9e896` 只追加上述本地验收记录，没有产品代码变化。本地证据不等同于真实 Provider、staging、production 或 deployment 证据；R16 及更早授权均已消耗，不得复用冻结、余额或会话。下一步只能在状态文档提交后为精确新提交执行零调用 E4 preflight，再等待新的精确授权。
