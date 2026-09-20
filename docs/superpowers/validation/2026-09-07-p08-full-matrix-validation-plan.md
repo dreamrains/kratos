@@ -1,7 +1,7 @@
 # P08：真实浏览器与真实 Provider 全矩阵验证方案
 
 日期：2026-09-07
-状态：`executed_incomplete / not_accepted`（最新 R19 因产品侧上传/运行链路未完成 M01—M06 全矩阵；不得归为外部未决，结果见[阶段记录 P08-R19](2026-09-06-value-preservation-stage-records.md)）
+状态：`executed_failed / not_accepted`（最新 R21 已按冻结身份完整执行 M01—M06，但六个场景均出现产品级失败；不得归为外部未决，结果见[阶段记录 P08-R21](2026-09-06-value-preservation-stage-records.md)）
 
 ## 1. 背景与调整
 

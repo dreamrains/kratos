@@ -912,3 +912,24 @@ P8 仍要求 B01—B06 全部通过、源码冻结与用户的新真实 Provider
 - 验收治理：P08 改为执行/生命周期、证据/主张有效性、分析价值/需求覆盖、传输/持久化/呈现一致性四维记录；`external_inconclusive` 仅限外部不可判定且产品 deadline、恢复、账本和终态均通过，不能掩盖产品卡死、上传失败或状态不闭合。
 - 隔离回归：最终 targeted `tmp/p08-post-r19-remediation-targeted-2` 为 **203 passed**；最终 full-offline `tmp/p08-post-r19-remediation-full-offline-3` 为 **2717 passed、1 skipped、16 warnings**。中间 `full-offline-2` 为 2716 passed、1 failed、1 skipped：失败仅为 104 项工具 smoke 超过固定 90 秒子进程上限；直接运行 104/104 通过，`tmp/p08-post-r19-tool-surface-diagnostic-2` 在保留全部断言并把有限 cold-cache 上限调整为 180 秒后为 **1 passed（71.97 秒）**。runner 强制禁止 Provider，实际 Provider initiated calls=0。
 - 证据边界：没有启动内置浏览器，没有真实 Provider 调用，没有 push、部署、staging 或生产验证。完成代码审计并提交后，仍须先进行零调用 preflight；任何真实 Provider 执行都需要用户针对新精确身份重新授权。
+
+## P08-R21：`8ca3985` 真实 Provider 内置浏览器完整批次（Codex，2026-09-21）
+
+阶段 / 状态：**完整批次有效，但 M01—M06 全部为 `product_failed`；P08 / IC5 / AC40 为 `executed_failed / not_accepted`。** 严格按 M01→M06 执行；普通失败后继续，批次内未修代码、未改变 fixture/提示/oracle、未局部重跑，也未追加探针。
+
+- 精确身份：`main@8ca3985931f680a77e6cf7519d0f7e7a1eea319d`；冻结文件 `tmp/p08-real-provider-20260921-8ca3985-r1/freeze.json`，SHA-256 `8f3607d094836d673524e51424e4cb3210e930aa9b17257d7632bb7a210f881b`；matrix schema `p08.real_matrix.v2`；模型 `openai/deepseek-flash`；端点 `https://api.deepseek.com`；物理调用上限 120；账本 `tmp/p08-real-provider-20260921-8ca3985-r1/provider-calls.jsonl`。
+- 启动与收尾：Codex 内置浏览器，端口 5215，服务 PID 22480，长生命周期 exec session `74525`；标准输出/错误保留在该 exec session，没有单独重定向文件。批次结束后已停止精确 PID，并确认端口 5215 关闭。浏览器控制台为 0 error / 0 warning。
+- 账本闭合：SHA-256 `05bd47432b0184cb78e0d4294c632a1d852d454f1f2f939098a62a3a3e907b5b`；**86 started / 86 dispatched / 0 failed / 0 denied**，最大调用号 86，剩余 34 次；所有 started 均有同号 dispatched。分场景调用范围：M01 1—6（6），M02 7—13（7），M03 14—25（12），M04 26—55（30），M05 56—74（19），M06 75—86（12）。没有 Provider HTTP 失败或 120 秒 deadline 事件，因此本轮失败不能归因于 Provider 不可用。
+
+| 场景 | 会话 | 执行 / 生命周期 | 证据 / 主张有效性 | 分析价值 / 需求覆盖 | 传输 / 持久化 / 呈现 |
+| --- | --- | --- | --- | --- | --- |
+| M01 | `a3e5bd3e8eb3` | `product_failed`：在事实汇总后错误进入未要求的 `data_quality_confirmation`，最终 `suspended` | `product_failed`：把未知来源数据称为“典型的模板/占位符特征” | `passed`：12 条、合计 120、单位未知及限制均保留 | `passed`：上传为 loaded，刷新后正文与确认均保留 |
+| M02 | `8885cd032ffe` | `product_failed`：四个工具均报 `workspace_scope_authoritative_downgrade`，`run_state=failed` | `passed`：D30 保持未知，未制造数值；D1—D7 与 D7=10% 正确 | `product_failed`：工具链未执行，任务 0/4 | `passed`：刷新保留；会话 Markdown 与发布报告均由服务端生成并可取回 |
+| M03 | `52a61396f8e6` | `passed`：六文件一次上传，分析与压缩请求执行完成 | `passed`：六源 10→11 至 60→66、210→231、各 +10% 均正确 | `passed`：来源、记录数、绝对变化与限制完整 | `product_failed`：压缩摘要错误声称“无数据加载/无分析步骤”；`export-reply` 返回 HTTP 400，仅留下发布报告 |
+| M04 | `ef2694420c2e` | `product_failed`：v1 与同会话 v2 均成功加载，但两轮均因任务未终态而 `analysis_audit_incomplete`，最终 `failed` | `product_failed`：未形成要求的结构化竞争假设关系；Workbench 只有 6 条已失效待验证发现 | `product_failed`：v1/v2 数值读取正确，但竞争假设验证和版本后重评未闭合 | `passed`：v2 上传、旧证据失效和状态持久化均可见；本轮没有复现上传卡死 |
+| M05 | `97830b1a4db7` | `passed`：同会话六轮表达均完成 | `product_failed`：大白话轮把未知金额单位升级为“块” | `product_failed`：多轮把 12 个日期称为“11 天”，产生内部口径错误 | `passed`：刷新保留；会话 Markdown 与发布报告均生成并可取回 |
+| M06 | `f078e653d2b0` | `product_failed`：缺失数据分支没有遵守“恰好一个下一步动作”；后续上传、一次确认与恢复本身 completed | `passed`：成本选择未被当成事实；收入 120，缺失成本不计算，促销增量证据不足 | `product_failed`：第一分支同时给出上传、告知路径/名称等多个动作 | `passed`：文件一次上传成功；确认仅一条且事件链唯一；刷新和两类导出保留，无卡死 |
+
+- 会话持久化汇总：M01 `suspended`、M02 `failed`、M03 `completed`、M04 `failed`、M05 `completed`、M06 `completed`。上传记录均为 `loaded`；M04 的 v2 和 M06 的后续文件均实际上传成功。报告数依次为 0、2、1、0、2、2。浏览器下载事件未发出，但除 M03 的明确 HTTP 400 外，M02/M05/M06 的服务端导出 POST 与报告 GET 均为 200，故分别记录浏览器呈现现象与服务端落地事实，不互相替代。
+- 根因证据指向三个产品层：一是生命周期/任务状态不统一（M01 错误确认、M02 作用域降级、M04 有收据但任务不终态）；二是派生视图未绑定已接受事实快照（M03 压缩摘要和导出）；三是语义不变量仍依赖自然文本而非宿主确定性约束（M01 来源、M05 单位/日期跨度、M06 单动作）。86 次调用全部正常派发且浏览器控制台无异常，不能把这些现象解释为随机 Provider 或浏览器故障。
+- 证据边界：本轮只证明上述提交、模型和端点下的本地真实浏览器＋真实 Provider 行为，不代表 staging、生产或部署。授权与本轮额度已经消耗；没有 push、部署或产品代码修改。后续不得把任一局部修复或离线结果写回本节，也不得复用本轮身份、授权、账本或剩余额度。
