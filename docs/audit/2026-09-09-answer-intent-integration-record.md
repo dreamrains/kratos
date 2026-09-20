@@ -170,3 +170,13 @@
 - 隔离测试：`tmp/p08-post-r16-targeted-1` 为 **165 passed**；`tmp/p08-post-r16-targeted-2` 为 **173 passed、9 warnings**；`tmp/p08-post-r16-full-offline-1` 为 **2644 passed、1 skipped、16 warnings、0 failures**。runner 禁止 Provider 网络。
 - Provider-disabled 内置浏览器目录 `tmp/p08-post-r16-browser-2`：上传 `F-SALES.csv` 后，显式文件引用在发送及刷新后均恰好一次，上传绑定保留；B04 会话 `bef7b32130de` completed，API 持久化 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 会话 `92fd8c99b127` completed，最终保留 D7=10% 与 D30 证据边界，刷新后不存在无依据“D30 留存预计为 5%”。
 - 浏览器控制台 error/warning 为 0；`runtime.jsonl` 记录 `provider_enabled=false`，无 `forbidden_provider_transport`，真实 Provider initiated calls=0。5197 本地服务已关闭。该 E1/E2/E3 证据不改写第 17 节 E4 失败结论；新的完整 M01—M06 尚未冻结或授权。本轮未 push、未部署。
+
+## 19. 收据绑定修复与联合本地验收（2026-09-20）
+
+- 产品与流程提交：`main@9a3031e`。结构化工具结果使用“工具调用 ID 哈希 + 结果内容哈希”的有界不可变路径；相同调用 ID 的不同结果不再覆盖。相同调用 ID 且内容完全相同的多张收据可以共享详情文件，但统计投影必须显式绑定正在校验的收据 ID；旧收据继续走原路径/摘要兼容分支。项目根 `AGENTS.md` 同步固定内置浏览器、上传、服务健康、`Failed to fetch` 排查和多轮 B03/B04 操作，不增加测试框架、探针、模型审核或账本。
+- 根因复现：首个完整浏览器目录 `tmp/p08-br-r2` 的 B04 会话 `5c208784ac68` 在同一脚本轮复用 `p7-1-compare_periods` 且返回相同内容，两张合法收据共享同一详情文件。旧读取器固定返回最后一张收据，校验前一张时误报 `Statistical detail does not match selected receipt`。这不是模型语义失败；其余矩阵完成后才统一修复。
+- 离线证据：收据/生命周期聚焦回归 17 passed；兼容性与统计投影回归 44 passed；新隔离 full-offline `tmp/p08-fo-r4` 为 **2713 passed、1 skipped、16 warnings、0 failures**，runner 禁止 Provider 网络。
+- 修复后完整内置浏览器批次：`tmp/p08-br-r3`，端口 5214，服务 PID 10724，既有 Provider-disabled 入口。B01—B06、IC-B01—IC-B06、CONTENT-B03/B07 全部执行；B04 会话 `51edc7d3fb12` 保留结构化支持、反证、未决和数据版本变化后的 `stale`，终态 `completed`。B06-TOOL `eb2a1790baef` 为 `completed` 且不发布结论；B06-SAVE `687bbb8914c8` 为预期 `unknown/OSError`；B06-BUDGET `261bdfbb3653` 为预期 `failed`；其余场景均为 `completed`。
+- 澄清与内容：IC-B03/B04 会话 `4264d1c3bf84` 只对成本范围暂停，同范围复用、窗口变化重问；`ic-b05-legacy` 的旧方法审批保持 `policy_retired`，skip 未授权分母；IC-B06-METHOD `6f9d4d086ea7` 不阻塞，IC-B06-SEMANTIC `8eddf0eb5101` 只产生一个恢复终态。B03 `042bb49d0b67` 与 CONTENT-B03 `a11f217e0d87` 的对话导出各 9620 字节、发布报告各 9390 字节，均含 `src_1`—`src_6`、逐来源金额、日期和记录数。CONTENT-B07 `7befcd866b19` 刷新前后均有表格、KaTeX、Plotly/备用链接和 120/12，文档宽度与 740 像素视口相等。
+- 运行边界：浏览器控制台 error/warning 为 0；`runtime.jsonl` 为 `server_start.provider_enabled=false`、`scripted_round=74`、`auxiliary_call=149`、`forbidden_provider_transport=0`，因此实际 Provider initiated calls=0。此前页面的 `Failed to fetch` 已确认是旧的本地 Flask 进程退出、端口无监听和 health connection refused，不是上传文件或浏览器安全策略；复验改用持久 exec 会话并在分组前检查 health 后未复发。
+- 结论：当前本地 E1/E2/E3 与联合浏览器验收完成。历史 R16 的 P08/IC5/AC40 真实 Provider 状态仍为 **executed_failed / not_accepted**；本节没有执行真实 Provider、push、部署、staging 或生产验证。下一次 E4 必须基于新的精确提交重新冻结并取得新的单次明确授权。

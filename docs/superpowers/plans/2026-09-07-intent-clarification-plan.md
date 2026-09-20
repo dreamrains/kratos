@@ -108,3 +108,9 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 
 - R16：`main@b833501` 按冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306` 完整执行 M01—M06，账本 72 started / 72 dispatched。M06 的成本口径确认只选择并恢复一次、事件完整，但最终把缺失成本写成“后者当前为零”；M04 没有方法许可确认，却缺少结构化计划、假设集与竞争证据闭环。连同 M01/M02/M03 的失败，IC5 仍为 `executed_failed / not_accepted`。
 - R17：`main@1dd19e8` 未改变确认决策与复用流程；它修复缺失归零、竞争假设结构化收敛及相关发布边界，并对上传引用做精确去重。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定复核通过，真实 Provider initiated calls=0。新的 IC5/E4 尚未冻结或授权。
+
+## 10. 2026-09-20 联合本地验收收口
+
+`main@9a3031e`、`tmp/p08-fo-r4` 为 2713 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 IC-B01—IC-B06。方法许可不阻塞；成本范围、窗口、复购分母和自然周等真实业务语义正常暂停；同范围决定复用，范围变化重问；旧审批为 `policy_retired`，skip 不授权；确认恢复和终态唯一。`forbidden_provider_transport=0`，实际 Provider initiated calls=0。
+
+因此 IC4/最新本地 E3 保持 `passed_local`；IC5 的历史真实 Provider 仍为 `executed_failed / not_accepted`，没有用本地结果改写。下一次 IC5 必须重新冻结精确提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，并取得新的单次明确授权。

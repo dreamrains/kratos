@@ -317,3 +317,9 @@ P1—P6：各自必测正反例通过、相关回归通过、阶段记录齐全�
 - R16 结果：只有 M05 passed；M01/M02/M03/M04/M06 failed。失败分别落在无证据数据来源、非预测边界误拒、“同比例”误判及样例推断、结构化竞争证据未收敛、缺失成本归零；另有上传文件引用重复。调用、会话、工具消息和终态证据闭合，但 P08 仍为 `executed_failed / not_accepted`。
 - R17 修复：`main@1dd19e8` 使用既有发布修订、计划/假设状态和上传 binding 修复上述已知缺口，没有增加新的流程、测试框架、探针、模型审核调用或记录机制。隔离回归 165 passed 与 173 passed；full-offline `tmp/p08-post-r16-full-offline-1` 为 2644 passed、1 skipped、16 warnings。
 - R17 E3：Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 中，上传引用发送与刷新后均恰好一次；B04 持久化 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 保留 D7=10% 且不发布 D30 数值。控制台无 error/warning，真实 Provider initiated calls=0。该证据不升级 R16 E4；新的完整批次尚未冻结或授权。
+
+## 18. 2026-09-20 收据绑定修复与完整 E3
+
+- `main@9a3031e` 以确切收据 ID 读取内容寻址详情，关闭相同调用 ID/相同结果共享文件时误选最后收据的问题，同时保留旧收据兼容。聚焦回归 17 passed 与 44 passed；`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped、0 failures。
+- Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07。B04 会话 `51edc7d3fb12` 包含 supports、refutes、未决和版本变化后的 stale；B06 工具失败不发布，保存失败为 `unknown`，预算耗尽为 `failed`。其余会话均 completed；浏览器控制台 0 error/warning。
+- `runtime.jsonl` 为 `provider_enabled=false`、`forbidden_provider_transport=0`，实际 Provider initiated calls=0。本节将最新本地 E3 记为 passed_local，不改写历史 P08/E4 的 `executed_failed / not_accepted`。

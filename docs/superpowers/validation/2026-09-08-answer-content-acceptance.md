@@ -220,3 +220,11 @@ R14 失败项本地修复证据：`main@6d6f7e0fc2e1090df9e64b1b052b466e6060e7a9
 R16 E4：`main@b8335015414737c27e4c3deba1f7ba5737f61a13`、冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`、模型 `openai/deepseek-v4-flash`、账本 72 started / 72 dispatched，账本 SHA-256 `CE11CB969C4133237FCB033EF6DCB63679BEB1DB9C114CFAF6999F397534299F`。只有 M05 通过；M01 无依据来源，M02 的 D7=10% / D30 非预测边界被误拒，M03 的六来源事实保留但“同比例”被误判且推断构造样例，M04 正文完成而结构化竞争证据未收敛，M06 把缺失成本归零。同批确认上传文件引用重复展示。AC40 保持 `executed_failed / not_accepted`。
 
 R17 本地修复：`main@1dd19e8`。隔离回归为 165 passed 与 173 passed；full-offline `tmp/p08-post-r16-full-offline-1` 为 2644 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 中，文件引用发送和刷新后均恰好一次；B04 持久化 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet；B02/B02-NEG 保留 D7=10% 并拒绝 D30 无依据数值。控制台无 error/warning，真实 Provider initiated calls=0。该证据不升级 AC40/E4；下一批尚未冻结或授权。
+
+## 9. 2026-09-20 完整内容 E3 复验
+
+`main@9a3031e` 修复内容寻址详情在复用调用 ID 时的收据身份选择；聚焦回归 17 passed 与 44 passed，`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped。Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行共用矩阵和 CONTENT-B03/B07。
+
+CONTENT-B03 会话 `a11f217e0d87` 的刷新正文、9620 字节对话 Markdown 和 9390 字节发布报告均保留 `src_1`—`src_6`、逐来源金额、日期和记录数；CONTENT-B07 `7befcd866b19` 在刷新前后均渲染表格、KaTeX、Plotly/备用链接和 120/12，文档宽度等于 740 像素视口宽度。浏览器控制台 0 error/warning，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。
+
+本节确认 AC01—AC39/最新本地 E3 仍为 passed_local；AC40 的历史真实 Provider 批次继续为 `executed_failed / not_accepted`。没有执行新的真实 Provider、push、部署、staging 或生产验证。

@@ -115,3 +115,9 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 
 - R16：`main@b833501` 按冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306` 完整执行 M01—M06，账本 72 started / 72 dispatched。只有 M05 通过；M01 无依据来源，M02 合规非预测边界被误拒，M03 “同比例”误判及样例推断，M04 结构化竞争证据未收敛，M06 缺失成本归零。同批确认上传文件引用在会话中重复展示。因此 AC40 保持 `executed_failed / not_accepted`。
 - R17：`main@1dd19e8` 沿用既有一次修订、分析状态和上传 binding，修复上述确定性边界与结构化收敛，并仅补齐缺少的精确文件引用。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 验证上传引用发送/刷新均为一次，B02/B02-NEG 与 B04 完成，控制台无 error/warning，真实 Provider initiated calls=0。新的 AC40/E4 尚未冻结或授权。
+
+## 9. 2026-09-20 联合本地验收收口
+
+`main@9a3031e` 关闭不可变结果详情在复用调用 ID 时的收据身份歧义；`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped。完整 Provider-disabled 内置浏览器目录 `tmp/p08-br-r3` 中，B03 和 CONTENT-B03 的对话导出均为 9620 字节、发布报告均为 9390 字节，全部包含 `src_1`—`src_6`、金额、日期和记录数；CONTENT-B07 刷新前后均保留表格、KaTeX、Plotly/备用链接和 120/12，740 像素视口无整页横向溢出。控制台 0 error/warning，实际 Provider initiated calls=0。
+
+CP0—CP6 与最新本地 E3 保持 `completed_local / passed_local`；AC40 的历史真实 Provider 批次仍为 `executed_failed / not_accepted`。本次没有真实 Provider、push、部署、staging 或生产验证，下一次 E4 仍须新冻结和新授权。

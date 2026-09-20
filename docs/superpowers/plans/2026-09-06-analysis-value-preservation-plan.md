@@ -325,3 +325,9 @@ P3 / P4 的实现可以在接口冻结后独立开展，但合入顺序仍需逐
 M05 passed；M01/M02/M03/M04/M06 failed。M01 含无证据“人为规则数据”；M02 的正确 D30 非预测边界被误拒；M03 把“同比例”误识别为同比并推断构造样例；M04 正文完成但计划/假设/竞争证据没有结构化收敛；M06 在正确区分缺失后又写“后者当前为零”。同批还确认上传文件引用在部分会话重复展示。六会话工具消息配对、终态和账本完整，普通失败后继续完成矩阵，不能把 M05 单项通过拼接为整体通过。
 
 `main@1dd19e813b3c9d7c2f26caf06952fbe41a16c9ee` 在既有发布修订、分析状态和上传绑定内完成修复：识别否定预测边界；区分“同比例”与同比；阻止无证据样例/人为规则来源及缺失值归零；显式竞争假设任务要求已有计划、假设集及含竞争关系的证据；前端仅补齐尚未出现的精确文件引用。没有新增流程、测试框架、探针、模型审核调用或记录机制。隔离回归 165 passed 与 173 passed；full-offline 为 2644 passed、1 skipped、16 warnings。Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 验证文件引用发送与刷新后各仅一次，B04 形成 1 plan、1 evidence record、1 hypothesis set、1 relation record、1 publication packet，B02/B02-NEG 保留 D7=10% 并拒绝 D30 无依据数值；控制台无 error/warning，真实 Provider initiated calls=0。新的 E4 尚未冻结或授权。
+
+## 18. 2026-09-20 联合本地验收收口
+
+`main@9a3031e` 修复相同 Provider 工具调用 ID 下的不可变结果收据绑定：不同内容使用不同有界详情路径，相同内容可共享文件但保持收据身份独立，统计投影按确切收据校验；旧收据兼容保留。`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped、16 warnings。
+
+修复后以 Provider-disabled 内置浏览器完整执行 `tmp/p08-br-r3` 的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07。B04 完成支持、反证、未决和版本变化后 stale；B06 的 completed/unknown/failed 边界正确；B03/CONTENT-B03 的压缩、刷新和导出保留六来源事实；CONTENT-B07 的表格、公式、图表、刷新和宽度通过。控制台 0 error/warning，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。P08 仅升级为最新本地 E3 通过；历史 E4 仍为 `executed_failed / not_accepted`，下一次真实 Provider 仍须新冻结和新授权。

@@ -168,3 +168,9 @@ E3 必须使用真实页面、实际 HTTP/SSE 和隔离会话，不用截图 moc
 - R16：`main@b833501`、冻结 SHA-256 `a018f0dfb96eeb07c697713b8d36e5a151d15de0ebb403447036a51d6b892306`，账本 72 started / 72 dispatched。M06 对真实 `metric_definition` 成本口径暂停、选择和恢复各一次，确认事件完整；但最终文本把仍缺失的成本写成“后者当前为零”。M04 无方法许可确认，却没有形成可审计的计划/假设/竞争证据闭环。连同其他内容失败，IC5 为 `executed_failed / not_accepted`。
 - R17：`main@1dd19e8` 保留既有确认决定、回复级 binding、失败回滚和终态语义，修复缺失归零及结构化收敛，并去除上传引用重复。隔离回归 165 passed 与 173 passed，full-offline 2644 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-post-r16-browser-2` 的 B02/B02-NEG、B04 与上传绑定复核完成，Provider initiated calls=0。
 - 证据边界：R17 只关闭本地 E1/E2/E3，不把 IC5 写成通过。下一次 E4 必须重新冻结精确提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，并取得新的单次明确授权。
+
+## 11. 2026-09-20 完整 IC4/E3 复验
+
+- 运行身份：`main@9a3031e`；full-offline `tmp/p08-fo-r4` 为 2713 passed、1 skipped。Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 IC-B01—IC-B06，而非仅复验失败项。
+- IC-B01 与 IC-B06-METHOD 没有因方法名称暂停；IC-B03/B04 只对成本范围和窗口暂停，同范围复用且范围变化重问；`ic-b05-legacy` 保留 `policy_retired`，skip 未授权分母；IC-B06-SEMANTIC 只恢复一次。确认、会话和终态持久化完整。
+- 浏览器控制台 0 error/warning；`forbidden_provider_transport=0`，实际 Provider initiated calls=0。IC4/最新本地 E3 为 passed_local；IC5 历史 E4 保持 `executed_failed / not_accepted`，新的真实 Provider 批次未冻结或授权。
