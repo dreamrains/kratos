@@ -1494,7 +1494,7 @@ def _period_label_issues(text: str) -> list[dict[str, str]]:
 
 
 _CURRENCY_VALUE = re.compile(
-    r"(?:[¥￥]\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|块钱|块|人民币|RMB|CNY))",
+    r"(?:[¥￥]\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元(?![素件年宵旦])|块钱|块(?![头地装])|人民币|RMB|CNY))",
     re.I,
 )
 _CURRENCY_NEGATION = re.compile(r"不能|不可|不应|不得|不是|并非|不能称为|不能写成")

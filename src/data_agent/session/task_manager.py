@@ -7,7 +7,9 @@ Task 是持久化工作项，LLM 完全控制生命周期，系统只做存取�
 from __future__ import annotations
 
 import json
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -64,6 +66,21 @@ class TaskManager:
     def __init__(self, tasks_dir: Optional[Path] = None):
         self._dir = tasks_dir
         self._next_id_val = 0
+        # Tool calls in one block execute in a ThreadPoolExecutor, so plan
+        # authority mutations genuinely interleave. All check-then-act
+        # transitions on the active plan must hold this reentrant lock.
+        self._authority_lock = threading.RLock()
+
+    @contextmanager
+    def authority_guard(self, session_id: str = "", project_name: str = ""):
+        """Serialize compound plan-authority transitions.
+
+        The arguments are for readability at call sites; a single process-wide
+        lock keeps the critical sections strictly ordered, which is the
+        invariant the concurrent-supersede failure broke.
+        """
+        with self._authority_lock:
+            yield
 
     @property
     def dir(self) -> Path:
@@ -364,84 +381,86 @@ class TaskManager:
         resolver reject the newly derived analysis dataset and, worse, lets a
         later narrative reuse tasks whose dataset contract is no longer current.
         """
+        with self._authority_lock:
 
-        active_plan_id = self.get_active_plan_id(session_id, project_name)
-        if not active_plan_id:
+            active_plan_id = self.get_active_plan_id(session_id, project_name)
+            if not active_plan_id:
+                return {
+                    "retired": False,
+                    "plan_id": "",
+                    "reason": reason,
+                    "session_id": session_id,
+                    "project_name": project_name,
+                    "tasks": [],
+                }
+            task_snapshots = [
+                dict(task)
+                for task in self._session_project_tasks(
+                    session_id=session_id,
+                    project_name=project_name,
+                    include_stale=True,
+                )
+                if task.get("plan_id") == active_plan_id
+                and task.get("status") in ("pending", "blocked", "in_progress")
+            ]
+            self._supersede_active_plan(
+                session_id=session_id,
+                project_name=project_name,
+                superseded_by=reason,
+            )
+            active = self._read_active_plans()
+            active.pop(self._plan_key(session_id, project_name), None)
+            self._write_active_plans(active)
             return {
-                "retired": False,
-                "plan_id": "",
+                "retired": True,
+                "plan_id": active_plan_id,
                 "reason": reason,
                 "session_id": session_id,
                 "project_name": project_name,
-                "tasks": [],
+                "tasks": task_snapshots,
             }
-        task_snapshots = [
-            dict(task)
-            for task in self._session_project_tasks(
-                session_id=session_id,
-                project_name=project_name,
-                include_stale=True,
-            )
-            if task.get("plan_id") == active_plan_id
-            and task.get("status") in ("pending", "blocked", "in_progress")
-        ]
-        self._supersede_active_plan(
-            session_id=session_id,
-            project_name=project_name,
-            superseded_by=reason,
-        )
-        active = self._read_active_plans()
-        active.pop(self._plan_key(session_id, project_name), None)
-        self._write_active_plans(active)
-        return {
-            "retired": True,
-            "plan_id": active_plan_id,
-            "reason": reason,
-            "session_id": session_id,
-            "project_name": project_name,
-            "tasks": task_snapshots,
-        }
 
     def restore_retired_plan(self, retirement: dict) -> dict:
         """Compensate a failed new-data transition without overwriting successors."""
+        with self._authority_lock:
 
-        if not isinstance(retirement, dict) or not retirement.get("retired"):
-            return {"restored": False, "reason": "nothing_retired"}
-        session_id = str(retirement.get("session_id") or "")
-        project_name = str(retirement.get("project_name") or "")
-        plan_id = str(retirement.get("plan_id") or "")
-        reason = str(retirement.get("reason") or "new_data_upload")
-        current_plan_id = self.get_active_plan_id(session_id, project_name)
-        if current_plan_id == plan_id:
-            return {"restored": False, "reason": "already_restored", "plan_id": plan_id}
-        if current_plan_id:
-            return {
-                "restored": False,
-                "reason": "successor_plan_active",
-                "plan_id": current_plan_id,
-            }
-
-        originals = [task for task in retirement.get("tasks") or [] if isinstance(task, dict)]
-        current_tasks: list[tuple[dict, dict]] = []
-        for original in originals:
-            current = self.get(int(original.get("id") or 0))
-            if (
-                current is None
-                or current.get("plan_id") != plan_id
-                or current.get("status") != "superseded"
-                or current.get("superseded_by") != reason
-            ):
+            if not isinstance(retirement, dict) or not retirement.get("retired"):
+                return {"restored": False, "reason": "nothing_retired"}
+            session_id = str(retirement.get("session_id") or "")
+            project_name = str(retirement.get("project_name") or "")
+            plan_id = str(retirement.get("plan_id") or "")
+            reason = str(retirement.get("reason") or "new_data_upload")
+            current_plan_id = self.get_active_plan_id(session_id, project_name)
+            if current_plan_id == plan_id:
+                return {"restored": False, "reason": "already_restored", "plan_id": plan_id}
+            if current_plan_id:
                 return {
                     "restored": False,
-                    "reason": "retired_task_changed",
-                    "plan_id": plan_id,
+                    "reason": "successor_plan_active",
+                    "plan_id": current_plan_id,
                 }
-            current_tasks.append((current, original))
 
-        for _current, original in current_tasks:
-            self._save(dict(original))
-        self._set_active_plan_id(plan_id, session_id, project_name)
-        return {"restored": True, "reason": "ingestion_failed", "plan_id": plan_id}
+            originals = [task for task in retirement.get("tasks") or [] if isinstance(task, dict)]
+            current_tasks: list[tuple[dict, dict]] = []
+            for original in originals:
+                current = self.get(int(original.get("id") or 0))
+                if (
+                    current is None
+                    or current.get("plan_id") != plan_id
+                    or current.get("status") != "superseded"
+                    or current.get("superseded_by") != reason
+                ):
+                    return {
+                        "restored": False,
+                        "reason": "retired_task_changed",
+                        "plan_id": plan_id,
+                    }
+                current_tasks.append((current, original))
+
+            for _current, original in current_tasks:
+                self._save(dict(original))
+            self._set_active_plan_id(plan_id, session_id, project_name)
+            return {"restored": True, "reason": "ingestion_failed", "plan_id": plan_id}
 
     def active_plan_has_live_stage_tasks(self, session_id: str = "", project_name: str = "") -> bool:
         """True when the active plan still has non-terminal Stage3C0B tasks.
@@ -480,27 +499,40 @@ class TaskManager:
         terminal state with the closure reason instead of pretending the steps
         completed.
         """
-        plan_id = self.get_active_plan_id(session_id, project_name)
-        if not plan_id:
-            return []
-        closed: list[int] = []
-        for task in self._session_project_tasks(
-            session_id=session_id, project_name=project_name, include_stale=True
-        ):
-            if task.get("plan_id") != plan_id:
-                continue
-            if task.get("status") in {"pending", "blocked", "in_progress"}:
-                record = dict(task)
-                record["status"] = "closed_by_publication"
-                record["closure_reason"] = reason
-                self._save(record)
-                closed.append(int(record.get("id") or 0))
-        active = self._read_active_plans()
-        active.pop(self._plan_key(session_id, project_name), None)
-        self._write_active_plans(active)
-        return closed
+        with self._authority_lock:
+            plan_id = self.get_active_plan_id(session_id, project_name)
+            if not plan_id:
+                return []
+            closed: list[int] = []
+            for task in self._session_project_tasks(
+                session_id=session_id, project_name=project_name, include_stale=True
+            ):
+                if task.get("plan_id") != plan_id:
+                    continue
+                if task.get("status") in {"pending", "blocked", "in_progress"}:
+                    record = dict(task)
+                    record["status"] = "closed_by_publication"
+                    record["closure_reason"] = reason
+                    self._save(record)
+                    closed.append(int(record.get("id") or 0))
+            active = self._read_active_plans()
+            active.pop(self._plan_key(session_id, project_name), None)
+            self._write_active_plans(active)
+            return closed
 
     def create_plan(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        goal: str = "",
+        source: str = "",
+        analysis_spec_id: str = "",
+        workflow_id: str = "",
+    ) -> dict:
+        with self._authority_lock:
+            return self._create_plan_locked(session_id, project_name, goal, source, analysis_spec_id, workflow_id)
+
+    def _create_plan_locked(
         self,
         session_id: str = "",
         project_name: str = "",
