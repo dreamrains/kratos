@@ -114,3 +114,16 @@ IC0 必须以当前 HEAD 重新映射接口，不能把规划时的行号、字�
 `main@9a3031e`、`tmp/p08-fo-r4` 为 2713 passed、1 skipped；Provider-disabled 内置浏览器 `tmp/p08-br-r3` 完整执行 IC-B01—IC-B06。方法许可不阻塞；成本范围、窗口、复购分母和自然周等真实业务语义正常暂停；同范围决定复用，范围变化重问；旧审批为 `policy_retired`，skip 不授权；确认恢复和终态唯一。`forbidden_provider_transport=0`，实际 Provider initiated calls=0。
 
 因此 IC4/最新本地 E3 保持 `passed_local`；IC5 的历史真实 Provider 仍为 `executed_failed / not_accepted`，没有用本地结果改写。下一次 IC5 必须重新冻结精确提交、模型、端点、fixture、完整提示、矩阵、预算和账本路径，并取得新的单次明确授权。
+
+## 11. 2026-09-21 目标校准附录
+
+用户裁决把确认目标校准为：**只有真实业务语义缺口才可暂停用户**（IC 原则），且判定必须是封闭类信号；权威表述由宿主渲染。开放语义（数据性质、措辞类）转条件式指引而非挂起。
+
+据此完成的目标校准实现（均 TDD，main 上 9 提交 `dac451d`→`9dbba60`）：
+
+- IC-3.x（用户负担）：M01 型"数据性质"问题（ask_user_question 问"这数据是示例还是真实"）不再挂起——`decision.is_data_nature_question` 两极同现判定（unreal/real/coverage 极词，选项集与问题文本任一命中），命中即 advisory 并指引条件式发布（示例→仅演示流程；真实→补齐口径/窗口前提；发布包按"未经证实"渲染来源状态）。RED 回放自 Codex 批次真实轨迹 `tmp/p08-real-provider-20260921-8ca3985-r1/sessions/a3e5bd3e8eb3`。单位/分母/时间窗等合法缺口保持 CONFIRMATION；已解决的回答仍按 REUSED 复用（优先级高于降级）。
+- IC-§5（一次修订）：`unsupported_yoy_label` 与来源断言同入 revision-only 集——挂起不再是开放语义的出口，一次修订后宿主标注放行。
+- IC-§7（事件完整性）：压缩摘要保真（确定性执行台账 + 一次修订 + 兜底骨架）；压缩 ACK 不再窃取回复组身份（导出双产物恢复）；修订候选落盘审计可达。
+- 客观判定：`scripts/testing/p08_scenario_audit.py` 的 `confirmations_authorized` 检查以 `AUTHORIZED_CONFIRMATION_TYPES`（仅 M06 业务口径类）为准；数据性质类确认记录按未授权计。
+
+新目录隔离 full-offline 回执：`main@9dbba60`，`tmp/p08-p16-fixloop-full-offline-1`，2812 tests / 0 errors / 0 failures / 1 skipped。主树 test_execution_control 5 失败经干净 worktree 二分证实为本机状态污染（各提交均 33/33 通过），非确认运行时回归。

@@ -121,3 +121,16 @@ CP3/CP4 仅在 CP2 契约稳定后可独立开发；这不是创建子代理或�
 `main@9a3031e` 关闭不可变结果详情在复用调用 ID 时的收据身份歧义；`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped。完整 Provider-disabled 内置浏览器目录 `tmp/p08-br-r3` 中，B03 和 CONTENT-B03 的对话导出均为 9620 字节、发布报告均为 9390 字节，全部包含 `src_1`—`src_6`、金额、日期和记录数；CONTENT-B07 刷新前后均保留表格、KaTeX、Plotly/备用链接和 120/12，740 像素视口无整页横向溢出。控制台 0 error/warning，实际 Provider initiated calls=0。
 
 CP0—CP6 与最新本地 E3 保持 `completed_local / passed_local`；AC40 的历史真实 Provider 批次仍为 `executed_failed / not_accepted`。本次没有真实 Provider、push、部署、staging 或生产验证，下一次 E4 仍须新冻结和新授权。
+
+## 10. 2026-09-21 目标校准附录
+
+用户裁决把内容目标校准为：权威表述（单位/披露/来源状态）**由宿主渲染**，不解析模型散文；硬门只许封闭类检查，开放语义"召回→一次修订→advisory"；验收分层，6/6 全 oracle 硬过不再是可用门槛。
+
+据此完成的目标校准实现（均 TDD，RED 素材优先取真实失败轨迹回放，main 上 9 提交 `dac451d`→`9dbba60`）：
+
+- CR02/CR04（绑定数字一致）：`同比`标签跨年判定改绑 compare_periods 回执；审计端 `_find_compare_periods_receipts` 以 tool_outputs 结构化范围为权威，散文年份挖掘与 `同比(?!例)` 冗余表达式退役。
+- CR06（导出一致）：导出 conversation Markdown 双产物恢复——压缩 ACK（"好的，继续。"）不再窃取回复组身份（r1/r3 双批次 M03 真实 unbound_reply 通路；真实受损会话复验恢复）；展示复用按封闭类身份门（ready+answer_sha256+指纹一致）而非 R15 措辞正则，正则外措辞的终答不再跳过全量叙事校验（R15 M05"120 块"泄漏通路收口）。
+- 内容保真：压缩摘要携带确定性执行台账（Codex M03 会话 52a61396f8e6"未包含执行结果"失实摘要回放；两次失实兜底骨架替换）；被拒修订候选全文落盘 `sessions/<sid>/publication_rejected/`，且不进证据库（r2 M02 泄漏：user_correction 误分类可检索）。
+- §5（不伪精确）：`single_next_step_advisory` 价值维软检查（r1 M06"下一步（单一动作）"）；审计 oracle 全部引用 VP/IC/CP 原则号，目标漂移可检。
+
+新目录隔离 full-offline 回执：`main@9dbba60`，`tmp/p08-p16-fixloop-full-offline-1`，2812 tests / 0 errors / 0 failures / 1 skipped（235.3s，junit.xml 在档）。

@@ -331,3 +331,17 @@ M05 passed；M01/M02/M03/M04/M06 failed。M01 含无证据“人为规则数据�
 `main@9a3031e` 修复相同 Provider 工具调用 ID 下的不可变结果收据绑定：不同内容使用不同有界详情路径，相同内容可共享文件但保持收据身份独立，统计投影按确切收据校验；旧收据兼容保留。`tmp/p08-fo-r4` full-offline 为 2713 passed、1 skipped、16 warnings。
 
 修复后以 Provider-disabled 内置浏览器完整执行 `tmp/p08-br-r3` 的 B01—B06、IC-B01—IC-B06、CONTENT-B03/B07。B04 完成支持、反证、未决和版本变化后 stale；B06 的 completed/unknown/failed 边界正确；B03/CONTENT-B03 的压缩、刷新和导出保留六来源事实；CONTENT-B07 的表格、公式、图表、刷新和宽度通过。控制台 0 error/warning，`forbidden_provider_transport=0`，实际 Provider initiated calls=0。P08 仅升级为最新本地 E3 通过；历史 E4 仍为 `executed_failed / not_accepted`，下一次真实 Provider 仍须新冻结和新授权。
+
+## 19. 2026-09-21 目标校准附录
+
+用户裁决把本计划的价值目标校准为分层判定：**硬门只许封闭类检查**（数字/协议状态/回执绑定/产物存在），开放语义一律"召回→一次修订→advisory"；权威表述（单位/披露/来源状态）由宿主渲染，不解析模型散文；验收分层（阻断/非阻断），6/6 全 oracle 硬过不再是可用门槛。M02 类内容按四级证据判（观察/描述拟合/情景外推/可信预测），前三级允许、第四级需留出回测。
+
+据此完成的目标校准实现（均 TDD，RED 先行，main 上 9 提交 `dac451d`→`9dbba60`）：
+
+- VP-4.1（口径正确）：`同比`标签的跨年判定改绑 compare_periods 回执（publication contract 投影的结构化日期范围），散文日期挖掘与 `同比(?!例)` 子串判定退役；运行时发现为 revision-only（一次修订后放行）。
+- VP-4.1（允许标注的待验证解释）：范围概括句按回执 min/max 包络核对、族值双向配对（此前提交 2dafc69）；外推语义门自 R18 极性反转后经 R19/R20/R21 三批真实数据确认收敛。
+- VP-G6（能力不回退）：M01 型"数据性质"问题（示例/真实）降级为条件式发布指引而非挂起（两极词表判定，单极不降级）；scope 降级死亡、task_create 双权威、工具发现性已在 cfd8fb6…89623e6 修复并经双批次复验。
+- 四维验收落地为 `scripts/testing/p08_scenario_audit.py`（五维机械断言 + oracle 引用计划原则）；新增 `single_next_step_advisory`（价值维软检查，r1 M06"下一步（单一动作）"校准，12 会话零误报）。
+- 被拒发布候选全文落盘至 `sessions/<sid>/publication_rejected/`，且不再作为 evidence 泄漏进 knowledge.sqlite3（r2 M02 真实泄漏通路：`user_correction` 误分类 + 可检索注入）。
+
+新目录隔离 full-offline 回执：`main@9dbba60`，`tmp/p08-p16-fixloop-full-offline-1`，2812 tests / 0 errors / 0 failures / 1 skipped（235.3s，junit.xml 在档）。主树 test_execution_control 等失败经干净 worktree 逐提交二分证实为本机 sessions/workspace 状态污染，非代码回归。
