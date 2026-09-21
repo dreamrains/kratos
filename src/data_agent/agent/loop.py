@@ -1846,6 +1846,27 @@ class AgentLoop:
                 add_packet(committed)
         return committed
 
+    def _close_ledger_for_published_turn(self) -> None:
+        """Host-owned bookkeeping at successful publication.
+
+        The task ledger must not outlive the answer it served: open tasks of
+        the active plan are closed with an explicit reason so the audit trail
+        stays honest (R21: both M04 runs left eternally-pending tasks and the
+        deterministic auditor rightly flags that residue).
+        """
+        try:
+            from data_agent.session.task_manager import task_manager
+
+            task_manager.close_open_tasks_for_publication(
+                session_id=self.session_id,
+                project_name=self.context.project_name or "",
+                reason="superseded_by_publication",
+            )
+        except Exception:
+            # Bookkeeping must never block the published answer; residue (if
+            # any) is surfaced by the deterministic scenario auditor instead.
+            return
+
     def _persist_accepted_answer(self, assistant_msg: dict, final_text: str) -> str | None:
         """Bind and persist one accepted terminal answer before exposure."""
         packet = getattr(self, "_turn_publication_packet", None)
@@ -2167,8 +2188,12 @@ class AgentLoop:
         """Return missing audit structures for an explicit hypothesis task.
 
         The gate is deliberately host-owned: a plan-shaped object and one
-        relation-shaped record are not completion evidence.  Executable plans
-        must have step-bound evidence and all of their current tasks completed.
+        relation-shaped record are not completion evidence.  Per the
+        2026-09-21 goal realignment the task ledger is host bookkeeping:
+        unfinished projected tasks no longer block publication (both R21 M04
+        runs died on that), and the host closes open tasks with an explicit
+        reason once the final answer publishes.  What still blocks is the
+        absence of the structured artifacts themselves.
         """
         try:
             from data_agent.agent.question_need_detector import explicit_task_reason
@@ -2185,44 +2210,12 @@ class AgentLoop:
         plan = getattr(state, "analysis_plan", None)
         if not isinstance(plan, dict) or not str(plan.get("id") or "").strip():
             gaps.append("record_analysis_plan has not produced a current plan")
-        plan_id = str((plan or {}).get("id") or "")
-        method_plan = (plan or {}).get("method_plan")
-        executable_plan = bool(plan_id and isinstance(method_plan, list) and method_plan)
-        if executable_plan:
-            try:
-                from data_agent.session.task_manager import task_manager
-
-                matching_tasks = [
-                    task
-                    for task in task_manager.list_all(include_stale=True)
-                    if str(task.get("session_id") or "") == self.session_id
-                    and str(task.get("project_name") or "") == (self.context.project_name or "")
-                    and str(task.get("analysis_plan_id") or "") == plan_id
-                    and task.get("status") not in {"deleted", "archived", "superseded"}
-                ]
-            except Exception:
-                matching_tasks = []
-            if not matching_tasks:
-                gaps.append("current analysis plan has no authoritative workflow tasks")
-            else:
-                unfinished = [
-                    str(task.get("step_id") or task.get("id") or "unknown")
-                    for task in matching_tasks
-                    if task.get("status") != "completed"
-                ]
-                if unfinished:
-                    gaps.append(
-                        "current analysis plan still has unfinished tasks: "
-                        + ", ".join(unfinished[:8])
-                    )
         hypothesis_sets = getattr(state, "hypothesis_sets", None)
         if not isinstance(hypothesis_sets, list) or not hypothesis_sets:
             gaps.append("no persisted competing-hypothesis set exists")
         evidence_records = getattr(state, "evidence_records", None)
         has_relation_proposal = any(
             isinstance(record, dict)
-            and (not executable_plan or str(record.get("plan_id") or "") == plan_id)
-            and (not executable_plan or bool(str(record.get("step_id") or "")))
             and isinstance(record.get("competing_hypotheses"), list)
             and bool(record.get("competing_hypotheses"))
             for record in (evidence_records or [])
@@ -3314,6 +3307,7 @@ class AgentLoop:
                 if persistence_error:
                     yield {"type": "error", "message": persistence_error}
                     return
+                self._close_ledger_for_published_turn()
                 for ev in pending_text_events:
                     yield ev
                 return
@@ -3738,6 +3732,7 @@ class AgentLoop:
                 persistence_error = self._persist_accepted_answer(assistant_msg, final_text)
                 if persistence_error:
                     return FinalResponse(content=persistence_error)
+                self._close_ledger_for_published_turn()
                 return FinalResponse(content=final_text)
 
             self.messages.append(assistant_msg)

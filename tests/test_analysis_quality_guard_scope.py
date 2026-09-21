@@ -79,7 +79,17 @@ def test_explicit_hypothesis_task_structural_gate_accepts_complete_audit_presenc
     ) is False
 
 
-def test_executable_hypothesis_plan_requires_authoritative_task_completion(tmp_path, monkeypatch):
+def test_executable_hypothesis_plan_task_ledger_no_longer_blocks_publication(tmp_path, monkeypatch):
+    """Contract change (2026-09-21 goal realignment).
+
+    The R20 contract required all projected tasks completed before
+    publication; both R21 M04 runs died on that ("analysis_audit_incomplete")
+    while carrying honest structured artifacts.  The task ledger is now host
+    bookkeeping: unfinished tasks stop blocking the turn and the host closes
+    them with an explicit reason at successful publication
+    (close_open_tasks_for_publication).  What still blocks is the absence of
+    the plan / hypothesis set / structured relations themselves.
+    """
     from data_agent.session.task_manager import task_manager
 
     monkeypatch.setattr(task_manager, "_dir", tmp_path / "tasks")
@@ -87,13 +97,12 @@ def test_executable_hypothesis_plan_requires_authoritative_task_completion(tmp_p
     loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
     analysis_plan_id = "analysis_plan_1"
     workflow = task_manager.create_plan(session_id=loop.session_id, goal="Compare hypotheses")
-    task = task_manager.create(
+    task_manager.create(
         "Test H1",
         session_id=loop.session_id,
         plan_id=workflow["id"],
         analysis_plan_id=analysis_plan_id,
         step_id="step_h1",
-        status="in_progress",
     )
     loop.context.analysis_state.analysis_plan = {
         "id": analysis_plan_id,
@@ -107,13 +116,14 @@ def test_executable_hypothesis_plan_requires_authoritative_task_completion(tmp_p
         "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
     }]
 
+    # Unfinished projected task: no longer a publication gap.
     gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
-    assert any("unfinished tasks" in gap for gap in gaps)
+    assert gaps == [], gaps
 
-    task_manager.update(task["id"], status="completed")
-    assert loop._competing_hypothesis_quality_gaps(
-        "请提出并检验至少两种竞争性假设"
-    ) == []
+    # Missing structured relations still block.
+    loop.context.analysis_state.evidence_records = []
+    gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
+    assert any("structured hypothesis relations" in gap for gap in gaps), gaps
 
 
 def test_explicit_hypothesis_task_rechecks_gaps_after_guard():

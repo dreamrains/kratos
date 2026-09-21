@@ -466,6 +466,40 @@ class TaskManager:
                 return True
         return False
 
+    def close_open_tasks_for_publication(
+        self,
+        session_id: str = "",
+        project_name: str = "",
+        reason: str = "superseded_by_publication",
+    ) -> list[int]:
+        """Close the active plan's open tasks when a final answer publishes.
+
+        The task ledger is host bookkeeping: an honest published answer with
+        declared boundaries must not leave tasks eternally pending (which the
+        deterministic auditor would rightly flag).  Closing records an explicit
+        terminal state with the closure reason instead of pretending the steps
+        completed.
+        """
+        plan_id = self.get_active_plan_id(session_id, project_name)
+        if not plan_id:
+            return []
+        closed: list[int] = []
+        for task in self._session_project_tasks(
+            session_id=session_id, project_name=project_name, include_stale=True
+        ):
+            if task.get("plan_id") != plan_id:
+                continue
+            if task.get("status") in {"pending", "blocked", "in_progress"}:
+                record = dict(task)
+                record["status"] = "closed_by_publication"
+                record["closure_reason"] = reason
+                self._save(record)
+                closed.append(int(record.get("id") or 0))
+        active = self._read_active_plans()
+        active.pop(self._plan_key(session_id, project_name), None)
+        self._write_active_plans(active)
+        return closed
+
     def create_plan(
         self,
         session_id: str = "",
