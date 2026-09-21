@@ -715,6 +715,12 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
         else:
             break
 
+    # 第 1.5 步：剔除压缩合成 ACK（P1-6 子项 4）——它在合并清洗前被剔除，
+    # 否则与紧随的真实回答合并成一条，回答的 reply_id 丢失、导出失配。
+    from data_agent.session.public_messages import drop_compaction_acks
+
+    messages = drop_compaction_acks(messages)
+
     # 第二步：合并连续同 role 的 user/assistant 消息
     merged: list[dict] = [messages[0]]
     for msg in messages[1:]:

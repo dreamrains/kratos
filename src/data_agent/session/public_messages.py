@@ -7,10 +7,48 @@ import json
 import uuid
 
 
+_ACK_CONTENT = "好的，继续。"
+_COMPACTED_MARKER = "[Context compressed at turn boundary"
+
+
+def _is_compaction_ack(messages: list[dict], index: int) -> bool:
+    """The synthetic compaction ACK adjacent to the compressed-context marker.
+
+    compact_history inserts this assistant message right after the compressed
+    user message.  It is machinery, not an assistant statement: left in the
+    grouping it steals the reply-group identity (a fresh uuid propagated over
+    the surviving messages' persisted ids) and prepends itself to the grouped
+    content, so a client holding the pre-compaction turn identity can no
+    longer match its reply (P1-6 item 4, real M03 export failures).
+    """
+    message = messages[index]
+    if message.get("role") != "assistant":
+        return False
+    if str(message.get("content") or "").strip() != _ACK_CONTENT:
+        return False
+    if index == 0:
+        return False
+    previous = messages[index - 1]
+    return (
+        previous.get("role") == "user"
+        and str(previous.get("content") or "").lstrip().startswith(_COMPACTED_MARKER)
+    )
+
+
+def drop_compaction_acks(messages: list[dict]) -> list[dict]:
+    """Return the message list without the synthetic compaction ACK entries."""
+    return [
+        message for index, message in enumerate(messages)
+        if not _is_compaction_ack(messages, index)
+    ]
+
+
 def assign_reply_ids(messages: list[dict]) -> None:
     """Persist one server-owned identity per assistant reply across tool steps."""
     current = None
-    for message in messages:
+    for index, message in enumerate(messages):
+        if _is_compaction_ack(messages, index):
+            continue
         if message.get("role") == "user":
             current = None
         elif message.get("role") == "assistant":
@@ -24,6 +62,8 @@ def public_messages(messages: list[dict], session_id: str = "") -> list[dict]:
     for index, message in enumerate(messages):
         item = dict(message)
         if item.get("publication_rejected") is True:
+            continue
+        if _is_compaction_ack(messages, index):
             continue
         if item.get("role") == "user":
             current_reply = None
