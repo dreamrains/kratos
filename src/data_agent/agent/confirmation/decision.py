@@ -7,6 +7,8 @@ the stable logical decision identity used for reuse. No I/O, no model calls.
 
 from __future__ import annotations
 
+import re
+
 from typing import Any, Iterable, Mapping
 
 # Design §3: the decision kinds that can justify asking the user. A method
@@ -62,6 +64,55 @@ _MISLABELED_BUSINESS_HINTS = (
     ("time_window", ("时间窗口", "比较窗口", "观察窗口", "统计周期")),
     ("denominator", ("分母口径", "复购分母", "转化分母")),
 )
+
+# P1-5b 数据性质问题的两极词表：与发布侧 publication_synthesis 的
+# _PROVENANCE_KINDS 语义轴对齐（示例/测试/合成/占位 vs 真实/全量，外加
+# 覆盖轴 抽样/部分）。这类问题问的是数据集的来源类别，答案不改变任何
+# 已计算数值——只改变读者的解读框架，而来源状态本就由宿主在发布包按
+# "未经证实"渲染。判定要求两极同时在场（选项集或问题文本任一），
+# 单极命中不降级：单位/分母/时间窗等合法业务缺口不含这些极词。
+_DATA_NATURE_UNREAL_POLE = re.compile(
+    r"示例|样例|模板|占位|测试数据|测试用|演示|示意|合成数据|机器生成|虚构|"
+    r"人为规则数据|人工构造|构造样例|构造示例|脱敏|模拟数据",
+    re.I,
+)
+_DATA_NATURE_REAL_POLE = re.compile(r"真实数据|真实业务|实际业务|全量数据|原始数据|真实完整", re.I)
+_DATA_NATURE_COVERAGE_POLE = re.compile(r"抽样|部分数据", re.I)
+
+
+def is_data_nature_question(candidate: Any) -> bool:
+    """True when the question only asks which provenance kind the data is.
+
+    P1-5b：M01 型"这数据是示例还是真实"问题不构成需要用户确认的业务
+    缺口——其答案不改变任何已计算数值，只选择读者解读框架，且来源状态
+    由发布合同按"未经证实"标注。命中即由策略降级为条件式发布指引。
+    判定基于结构化信号（选项集）与问题文本的两极同现；召回失败时退回
+    原有挂起行为，误伤方向由两极同现要求抑制。
+    """
+    params: Mapping[str, Any] = getattr(candidate, "resolution_params", {}) or {}
+    option_blob = " ".join(
+        " ".join(filter(None, (option.label, option.value, option.description)))
+        for option in (getattr(candidate, "options", None) or ())
+    )
+    question_blob = " ".join(
+        str(params.get(key) or "")
+        for key in ("question", "missing_value", "blocking_reason")
+    )
+
+    def _poles(text: str) -> tuple[bool, bool, bool]:
+        return (
+            bool(_DATA_NATURE_UNREAL_POLE.search(text)),
+            bool(_DATA_NATURE_REAL_POLE.search(text)),
+            bool(_DATA_NATURE_COVERAGE_POLE.search(text)),
+        )
+
+    for blob in (option_blob, question_blob):
+        if not blob:
+            continue
+        unreal, real, coverage = _poles(blob)
+        if unreal and (real or coverage):
+            return True
+    return False
 
 
 def _explicit_method_permission(text: str) -> bool:

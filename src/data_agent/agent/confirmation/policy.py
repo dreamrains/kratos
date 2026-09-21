@@ -8,6 +8,7 @@ from typing import Iterable
 
 from data_agent.agent.confirmation.decision import (
     default_is_host_verified,
+    is_data_nature_question,
     is_method_approval_shaped,
     represents_business_gap,
     stable_decision_key,
@@ -62,6 +63,18 @@ class QuestionPolicy:
         if is_method_approval_shaped(candidate):
             return self._nonblocking(
                 "方法选择是系统内部决策，不构成需要用户确认的业务缺口。",
+                allow_advisory,
+            )
+
+        if is_data_nature_question(candidate):
+            # P1-5b：数据性质（示例/测试/真实/抽样）不由提问确立，也不改变
+            # 任何已计算数值——来源状态由发布合同按"未经证实"渲染，转为
+            # 条件式发布指引而不是挂起。
+            return self._nonblocking(
+                "数据性质（示例/测试/真实/抽样）不需要用户确认：请按来源未知"
+                "直接以条件式指引发布——若为示例/测试数据则结论仅演示流程、"
+                "不作业务解读；若为真实数据则先满足字段口径与时间窗等前提再"
+                "扩展分析；发布包会按'未经证实'标注来源状态。",
                 allow_advisory,
             )
 
