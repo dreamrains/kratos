@@ -1036,7 +1036,9 @@ def test_presentation_followup_reuses_only_current_bound_publication_snapshot():
     assert packet["status"] == "ready"
     assert reused is not None
     assert reused["snapshot_digest"] == packet["snapshot_digest"]
-    assert loop._latest_publication_packet_for_presentation("请分析另一个业务问题") is None
+    # P1-6 子项 3：复用按身份门而非措辞门判定——无本轮回据的任何终答
+    # （包括新问题措辞）都以绑定快照为校验锚，不再静默跳过叙事校验。
+    assert loop._latest_publication_packet_for_presentation("请分析另一个业务问题") is not None
 
     loop._turn_publication_packet = None
     published, error = loop._render_terminal_publication(
@@ -1047,6 +1049,47 @@ def test_presentation_followup_reuses_only_current_bound_publication_snapshot():
 
     loop.context.workspace.add("orders", pd.DataFrame({"amount": [20, 20]}))
     assert loop._latest_publication_packet_for_presentation("请用大白话重述") is None
+
+
+def test_presentation_followup_outside_followup_phrases_still_validates():
+    """P1-6 子项 3（R15 M05"120 块"真实泄漏通路）。
+
+    展示类跟进的措辞不在 R15 词表（改成/重述/大白话…）内时，快照复用
+    不得静默跳过——无本轮回执的终答仍须按绑定快照过全量叙事校验。
+    复用按封闭类身份门（ready + answer_sha256 + 指纹一致）判定，不再按
+    开放类措辞判定；有本轮回据的轮次仍走全新建包。
+    """
+    import pandas as pd
+    from data_agent.agent.publication_synthesis import publication_contract
+
+    loop = AgentLoop(client=None, session_id="presentation_unphrased")
+    loop.context.workspace.add("orders", pd.DataFrame({"amount": [10, 10]}))
+    identity = loop.context.workspace.get_data_identity("orders")
+    receipt = _receipt("describe_dataset", "tr_profile_unphrased", {
+        "shape": {"rows": 2, "columns": 1},
+        "observation_window": {},
+    })
+    receipt["data_identities"] = {"orders": identity}
+    receipt["publication_contract"] = publication_contract(
+        "describe_dataset", {"observation_window": {}}, args={"name": "orders"},
+    )
+    loop.context.analysis_state.add_tool_receipt(receipt)
+    loop.context.turn_receipt_ids = ["tr_profile_unphrased"]
+    loop._turn_successful_publication_tools = {"describe_dataset"}
+    packet = loop._prepare_publication_packet("给出事实摘要", persist=False)
+    packet["answer_sha256"] = "sha256:accepted"
+    loop.context.analysis_state.add_publication_packet(packet)
+
+    loop._turn_publication_packet = None
+    # 真实跟进轮在新 turn 会重置跟踪状态：无本轮回据 → 只剩复用分支
+    loop._reset_turn_tracking()
+    published, error = loop._render_terminal_publication(
+        "请把刚才的结论整理成一份正式的书面汇报",
+        "订单合计约 120 块。",
+        persist=False,
+    )
+    assert published is None
+    assert error is not None and "unconfirmed_currency_unit" in error
 
 
 # ── P4 (D03): evidence coverage and recoverable packet selection (E01–E05, E09–E10) ──

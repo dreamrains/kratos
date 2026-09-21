@@ -103,13 +103,6 @@ _PUBLICATION_EVIDENCE_TOOLS = _SUBSTANTIVE_TOOLS | {
     "interpret_dataset",
 }
 
-_PRESENTATION_FOLLOWUP = re.compile(
-    r"(?:改成|换成).{0,16}(?:表达|视角|版本)|"
-    r"(?:重述|重新表述|恢复).{0,16}(?:技术|业务|分析师|管理者|大白话|表达)|"
-    r"用大白话(?:重述|说明|解释)?",
-    re.I,
-)
-
 _ANALYSIS_QUALITY_GUARD_MESSAGE = (
     "<analysis_quality_guard>\n"
     "The user requested analysis, but this turn has only loaded or profiled data. "
@@ -1489,13 +1482,14 @@ class AgentLoop:
         return bool(getattr(self, "_turn_successful_publication_tools", set()))
 
     def _latest_publication_packet_for_presentation(self, user_input: str) -> dict | None:
-        """Reuse the last accepted snapshot for a presentation-only follow-up.
+        """Reuse the last accepted snapshot for a no-evidence follow-up turn.
 
-        The answer may change emphasis, but only while every bound dataset still
-        has the same fingerprint. A data-version change disables reuse.
+        P1-6 item 3 (real R15 M05 "120 块" leak): reuse is gated by closed-class
+        identity only (ready + answer_sha256 + every bound dataset fingerprint
+        unchanged), never by matching presentation phrasing - a wording outside
+        the retired regex list used to skip reuse and thereby skip the whole
+        narrative validation for the turn's final answer.
         """
-        if not _PRESENTATION_FOLLOWUP.search(str(user_input or "")):
-            return None
         state = getattr(self.context, "analysis_state", None)
         packets = list(getattr(state, "publication_packets", []) or []) if state is not None else []
         for packet in reversed(packets):
