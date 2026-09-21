@@ -876,6 +876,25 @@ registry = ToolRegistry()
         "keyword": {"description": "搜索关键词（中文或英文）"},
     },
 )
+def _tool_search_haystack(tool) -> str:
+    """Normalized searchable text: name, description and parameter identifiers.
+
+    Underscores collapse to spaces so multi-word English keywords match snake_case
+    tool and parameter names; parameter names are included because contract
+    fields (e.g. ``competing_hypotheses``) are the only English anchor for tools
+    whose descriptions are Chinese.
+    """
+    parts: list[str] = [tool.name, tool.description or ""]
+    for attr in ("parameters", "parameters_schema", "schema", "schema_overrides"):
+        value = getattr(tool, attr, None)
+        if isinstance(value, dict):
+            try:
+                parts.append(json.dumps(value, ensure_ascii=False))
+            except (TypeError, ValueError):
+                continue
+    return " ".join(parts).lower().replace("_", " ")
+
+
 def tool_search(keyword: str) -> str:
     """搜索工具注册中心，返回名称或描述匹配的工具。"""
     if not keyword.strip():
@@ -887,13 +906,24 @@ def tool_search(keyword: str) -> str:
     registry._ensure_discovered()
 
     kw = keyword.lower().strip()
+    # Token coverage: every keyword token must appear in the normalized
+    # haystack. The historical whole-substring match could never hit
+    # snake_case identifiers from a spaced English phrase ("analysis plan"
+    # vs record_analysis_plan), which stranded the model without the plan
+    # tool (R21 GLM M04).
+    tokens = [token for token in re.split(r"[\s,;/]+", kw.replace("_", " ")) if token]
     matches = []
     for tool in registry._tools.values():
+        haystack = _tool_search_haystack(tool)
+        if not haystack:
+            continue
         score = 0
-        if kw in tool.name.lower():
-            score += 2
-        if kw in tool.description.lower():
-            score += 1
+        if kw and kw in tool.name.lower():
+            score += 4  # exact whole-keyword hit on the name ranks first
+        hit_tokens = sum(1 for token in tokens if token in haystack)
+        if tokens and hit_tokens == len(tokens):
+            score += 2 * hit_tokens
+            score += 1 if kw in (tool.description or "").lower() else 0
         if score > 0:
             matches.append({
                 "name": tool.name,
