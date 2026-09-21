@@ -37,6 +37,11 @@ class EvidenceStore:
                 content = self._message_content(message)
                 if not content:
                     continue
+                if message.get("publication_rejected") is True:
+                    # P2-1：被拒发布候选不进入证据库——它未通过发布合同，
+                    # 不是可检索证据（真实泄漏：候选散文因含"不是"曾被
+                    # 误分类为 user_correction 并可被检索注入未来上下文）。
+                    continue
                 kind = self._evidence_kind_for_message(message)
                 evidence_id = f"ev_{session_id}_{idx}"
                 conn.execute(

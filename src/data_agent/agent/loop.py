@@ -1561,15 +1561,45 @@ class AgentLoop:
         self.messages.append({"role": "system", "content": _FINALIZATION_RECOVERY_MESSAGE})
         return True
 
+    def _persist_rejected_publication(self, assistant_msg: dict, error: str) -> None:
+        """Persist every rejected publication candidate for audit (P2-1).
+
+        Real r2 M02 trajectory: from the second rejection on, the candidate's
+        full text existed only inside the failure notification quote - the
+        audit trail could not reach it. The dump is host bookkeeping; a write
+        failure must never block the already-failing publication path.
+        """
+        try:
+            from datetime import datetime
+
+            out_dir = get_config().sessions_resolved / self.session_id / "publication_rejected"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            body = (
+                f"# 被拒发布候选 {stamp}\n\n"
+                f"## 校验错误\n\n{error or 'publication contract violation'}\n\n"
+                f"## 候选全文\n\n{assistant_msg.get('content') or ''}\n"
+            )
+            (out_dir / f"candidate_{stamp}.md").write_text(body, encoding="utf-8")
+        except Exception as exc:
+            logger.warning(
+                "Rejected publication candidate dump failed",
+                extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
+            )
+
     def _recover_publication_narrative(self, assistant_msg: dict, error: str) -> bool:
         """Keep one rejected answer internal and request one bounded rewrite."""
         if getattr(self, "_turn_publication_recovery_used", False):
+            # P2-1：恢复额度用尽的拒绝同样落盘，候选全文不得只存在于
+            # 失败通知的引文里。
+            self._persist_rejected_publication(assistant_msg, error)
             return False
         self._turn_publication_recovery_used = True
         if "unsupported_data_origin_inference" in str(error or ""):
             # Revision-only finding: after this one rewrite request the
             # origin lexicon stops blocking; the host annotates instead.
             self._turn_origin_revision_issued = True
+        self._persist_rejected_publication(assistant_msg, error)
         rejected = dict(assistant_msg)
         rejected["publication_rejected"] = True
         self.messages.append(rejected)
