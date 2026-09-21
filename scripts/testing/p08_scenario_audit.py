@@ -96,11 +96,14 @@ MECHANICAL_ORACLES: list[dict] = [
      "principle": "CP-§5(unknown 不得写成已知)/CP-§6(避免过度保守)", "type": "advisory_unit"},
     {"id": "origin_lean_advisory", "scenario": "*", "dim": "value", "blocking": False,
      "principle": "VP-4.1(来源断言需依据)/CP-§6(区分 invalid 与 unassessed)", "type": "advisory_origin"},
+    {"id": "single_next_step_advisory", "scenario": "*", "dim": "value", "blocking": False,
+     "principle": "CP-§5(条件式建议而非排他式单一路径)", "type": "advisory_next_step"},
 ]
 
 _KNOWN_CHECK_TYPES = {
     "run_state", "pairing", "confirmations", "ledger", "numeric", "export",
     "tasks", "extrapolation", "yoy", "advisory_unit", "advisory_origin",
+    "advisory_next_step",
 }
 _KNOWN_DIMS = {"execution", "evidence", "value", "transfer", "declaration"}
 
@@ -239,6 +242,12 @@ def _oracle_meta(check_id: str) -> dict:
 _ADVISORY_UNIT = re.compile(r"\d\s*(?:块钱|块)|(?:升级|换算)成?\s*(?:元|块)")
 _ADVISORY_ORIGIN = re.compile(
     r"(?:像是|更像|疑似|极可能|大概率|更可能)[^。；;\n]{0,16}(?:样例|占位|模板|测试数据|构造|合成)", re.I
+)
+_SINGLE_NEXT_STEP = re.compile(
+    r"唯一(?:的)?(?:下一步|选项|路径|办法|出路|行动|动作)|"
+    r"下一步[（(]单一动作[）)]|"
+    r"只有(?:一条|一个)(?:路|途径|选项|下一步|办法)",
+    re.I,
 )
 _UNCERTAINTY_ESCAPE = re.compile(
     r"未知|不能|无法|非观测|未观测|情景|假设|待确认|未验证|不是预测", re.I
@@ -510,6 +519,18 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
     checks.append(_check(
         not origin_hits, o["id"],
         f"origin_lean_candidates={len(origin_hits)}", o["blocking"], o["dim"], o["principle"],
+    ))
+
+    # 11. P2-2 排他式"唯一下一步"框架（价值维软检查，永不阻断）：
+    # 把单一路径写成唯一选项（真实 r1 M06"下一步（单一动作）"）压缩了
+    # 用户的决策空间；条件式指引（触发/停止条件）不计。
+    o = _oracle_meta("single_next_step_advisory")
+    next_step_hits = _SINGLE_NEXT_STEP.findall(final_text)
+    checks.append(_check(
+        not next_step_hits, o["id"],
+        f"exclusive_next_step_candidates={len(next_step_hits)}" if next_step_hits
+        else "no exclusive next-step framing",
+        o["blocking"], o["dim"], o["principle"],
     ))
 
     return {"session": sdir.name, "scenario": scenario, "checks": checks}

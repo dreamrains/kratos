@@ -277,3 +277,43 @@ class TestYoyReceiptBinding:
         verdict = audit_session(sdir, scenario="M03", actions=[])
         yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
         assert yoy["passed"]
+
+
+M06_SUMMARY = "请分析名为 missing_orders 的数据集"
+
+
+class TestSingleNextStepAdvisory:
+    """P2-2：M06"唯一下一步"进价值维软检查。
+
+    RED 素材为 r1 批次 M06 终稿："下一步（单一动作）：请提供……"——把
+    单一路径写成排他式唯一下一步。按治理分层，这是价值维开放语义：
+    召回式软检查（advisory，永不阻断），条件式指引（触发/停止条件）不计。
+    """
+
+    def _m06_session(self, tmp_path, sid, final_text):
+        return _make_session(tmp_path, sid, summary=M06_SUMMARY, messages=[
+            {"role": "user", "content": M06_SUMMARY},
+            {"role": "assistant", "content": final_text},
+        ])
+
+    def test_exclusive_next_step_is_advisory_value_finding(self, tmp_path):
+        sdir = self._m06_session(
+            tmp_path, "s_m06_single",
+            "缺失字段使净收益不可算；合计 120 条订单可确认。\n"
+            "下一步（单一动作）：请提供含 voucher_cost 与 channel_cost 的数据文件。",
+        )
+        verdict = audit_session(sdir, scenario="M06", actions=[])
+        check = [c for c in verdict["checks"] if c["check"] == "single_next_step_advisory"][0]
+        assert not check["passed"]
+        # 软检查永不阻断
+        assert not check["blocking"]
+
+    def test_conditional_guidance_without_exclusive_framing_passes(self, tmp_path):
+        sdir = self._m06_session(
+            tmp_path, "s_m06_cond",
+            "合计 120 条订单可确认。条件性建议：若需净收益，触发条件是补充"
+            "voucher_cost 字段；若不做成本核算，当前描述性结论已可交付，停止条件为数据不变。",
+        )
+        verdict = audit_session(sdir, scenario="M06", actions=[])
+        check = [c for c in verdict["checks"] if c["check"] == "single_next_step_advisory"][0]
+        assert check["passed"]
