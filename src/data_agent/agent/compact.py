@@ -202,6 +202,68 @@ def write_transcript(session_id: str, messages: list[dict]) -> Path:
     return path
 
 
+_LEDGER_ARG_KEYS = ("name", "path", "dataset", "metric", "period_a", "period_b", "file")
+
+
+def _argument_anchor(raw_arguments) -> str:
+    if isinstance(raw_arguments, str):
+        try:
+            parsed = json.loads(raw_arguments)
+        except json.JSONDecodeError:
+            return ""
+    else:
+        parsed = raw_arguments
+    if not isinstance(parsed, dict):
+        return ""
+    for key in _LEDGER_ARG_KEYS:
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:60]
+    return ""
+
+
+def _execution_ledger(messages: list[dict]) -> list[str]:
+    """Closed-class execution facts: tool name in call order with an argument anchor.
+
+    Deterministically extracted so no generated summary can turn executed
+    history into "nothing was executed" (P1-6 item 2, real M03 52a61396f8e6).
+    """
+    entries: list[str] = []
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            function = (call or {}).get("function") or {}
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            anchor = _argument_anchor(function.get("arguments"))
+            entries.append(f"{name}({anchor})" if anchor else name)
+    return entries
+
+
+def _execution_ledger_block(ledger: list[str]) -> str:
+    if not ledger:
+        return ""
+    lines = [f"- {entry}" for entry in ledger[:30]]
+    if len(ledger) > 30:
+        lines.append(f"- …另有 {len(ledger) - 30} 次调用，完整序列见 transcript")
+    return (
+        "\n\n[Deterministically preserved execution ledger — context, not evidence]\n"
+        + "\n".join(lines)
+    )
+
+
+def _summary_acknowledges_execution(summary: str, ledger: list[str]) -> bool:
+    """Closed recall signals: a digit, or a ledger tool-name mention."""
+    if not ledger:
+        return True
+    if re.search(r"\d", summary):
+        return True
+    tool_names = {entry.split("(", 1)[0] for entry in ledger}
+    return any(name in summary for name in tool_names)
+
+
 def _preserved_identity_and_obligations(messages: list[dict]) -> str:
     """Carry source identity and explicit user obligations across LLM compaction.
 
@@ -372,7 +434,44 @@ def compact_history(
         system="你是数据分析对话摘要专家。压缩对话时保留所有数值结论、分析方法和数据引用，去除闲聊和重复内容。用结构化列表输出。",
     )
 
-    summary = (resp.text or "") + _preserved_identity_and_obligations(early)
+    # P1-6 子项 2（真实 M03 52a61396f8e6 失实摘要）：摘要是否写到位是开放
+    # 语义——召回式检查命中后给一次带确定性台账的修订机会；两次失实则以
+    # 确定性骨架替换，"已执行"不可能被写成"未执行"。
+    ledger = _execution_ledger(early)
+    summary_text = resp.text or ""
+    if not _summary_acknowledges_execution(summary_text, ledger):
+        correction_prompt = (
+            "你上一稿摘要与确定性执行台账矛盾：对话历史中确实存在下列已执行调用。\n"
+            "请重写摘要，必须涵盖台账中的执行事实及其数值结论，"
+            "不得声称历史未包含数据加载结果或执行过程。\n\n"
+            "确定性执行台账：\n"
+            + "\n".join(f"- {entry}" for entry in ledger)
+            + "\n\n原始对话（可能截断）：\n"
+            + conv_text
+        )
+        try:
+            retry = client.chat(
+                messages=[{"role": "user", "content": correction_prompt}],
+                system="你是数据分析对话摘要专家。压缩对话时保留所有数值结论、分析方法和数据引用，去除闲聊和重复内容。用结构化列表输出。",
+            )
+            if _summary_acknowledges_execution(retry.text or "", ledger):
+                summary_text = retry.text
+        except Exception as exc:
+            logger.warning("Compaction summary revision failed", extra={
+                "extra_data": {"session_id": session_id, "error": str(exc)},
+            })
+        if not _summary_acknowledges_execution(summary_text, ledger):
+            summary_text = (
+                "## 数据分析对话历史结构化摘要（确定性兜底）\n"
+                "> 摘要模型未能保留执行事实；以下为宿主确定性记录的执行台账。\n"
+                + "\n".join(f"- 已执行 {entry}" for entry in ledger[:30])
+            )
+
+    summary = (
+        summary_text
+        + _execution_ledger_block(ledger)
+        + _preserved_identity_and_obligations(early)
+    )
 
     if focus:
         summary += f"\n\nFocus to preserve: {focus}"
