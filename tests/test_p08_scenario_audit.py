@@ -59,6 +59,7 @@ def _make_ledger(run_dir: Path, calls: list[dict]) -> None:
 
 M01_SUMMARY = "请分析当前上传的销售订单数据，给出已验证的关键业务事实和有条件的行动建议。"
 M01_EXPORT_REPORT = "conversation_Assistant_Reply_x.md"
+M03_SUMMARY = "请分别比较当前六个来源"
 
 
 class TestOracleContractConsistency:
@@ -224,3 +225,55 @@ class TestRulerCalibrationGaps:
         assert all(c["passed"] for c in v6["checks"] if c["check"] == "confirmations_authorized")
         failed = [c["check"] for c in v1["checks"] if c["blocking"] and not c["passed"]]
         assert "confirmations_authorized" in failed
+
+
+class TestYoyReceiptBinding:
+    """P1-6：同比标签的跨年判定来自 compare_periods 回执，不再挖散文年份。"""
+
+    _SAME_YEAR = {
+        "period_a": {"label": "本期", "range": ["2026-09-01", "2026-09-02"]},
+        "period_b": {"label": "对比期", "range": ["2026-09-08", "2026-09-09"]},
+    }
+    _CROSS_YEAR = {
+        "period_a": {"label": "去年同周", "range": ["2025-09-01", "2025-09-07"]},
+        "period_b": {"label": "本周", "range": ["2026-09-01", "2026-09-07"]},
+    }
+
+    def _m03_session(self, tmp_path, sid, final_text, receipt):
+        sdir = _make_session(tmp_path, sid, summary=M03_SUMMARY, messages=[
+            {"role": "user", "content": M03_SUMMARY},
+            {"role": "assistant", "content": final_text},
+        ])
+        _write_json(sdir / "tool_outputs" / "compare_periods_1.json", receipt)
+        return sdir
+
+    def test_sameyear_receipt_with_yoy_label_is_blocking_even_with_prose_years(self, tmp_path):
+        """R16 通路收口：散文出现两个年份不再放行，判定只认回执。"""
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_r",
+            "2025 与 2026 两个年度口径合并后六来源合计 210 与 231，金额同比增长 10%。",
+            self._SAME_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        failed = [c["check"] for c in verdict["checks"] if c["blocking"] and not c["passed"]]
+        assert "yoy_requires_crossyear_receipt" in failed
+
+    def test_crossyear_receipt_supports_yoy_label_without_prose_years(self, tmp_path):
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_ok",
+            "六来源合计 210 与 231；金额同比增长 10%。",
+            self._CROSS_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
+        assert yoy["passed"]
+
+    def test_same_proportional_wording_is_not_a_yoy_label(self, tmp_path):
+        sdir = self._m03_session(
+            tmp_path, "s_yoy_prop",
+            "各来源同比例上升：合计 210 与 231。",
+            self._SAME_YEAR,
+        )
+        verdict = audit_session(sdir, scenario="M03", actions=[])
+        yoy = [c for c in verdict["checks"] if c["check"] == "yoy_requires_crossyear_receipt"][0]
+        assert yoy["passed"]

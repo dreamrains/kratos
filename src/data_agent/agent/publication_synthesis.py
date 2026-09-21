@@ -1505,43 +1505,59 @@ def _significance_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
     return []
 
 
-_YOY_LABEL = re.compile(r"同比(?!例)")
+def _clause_uses_yoy_label(clause: str) -> bool:
+    """Lexical recall only: 同比 as its own word (“同比例” is a different word)."""
+    return "同比" in clause and "同比例" not in clause
 
 
-def _period_label_issues(text: str) -> list[dict[str, str]]:
-    """Reject a YoY label when the narrative only names non-YoY dates.
+def _cross_year_compare_periods(scope: dict) -> bool:
+    """Cross-year determination from the compare_periods receipt only.
 
-    This is deliberately narrow: without at least two explicit ISO dates the
-    checker leaves the wording unassessed.  When dates are explicit, ``同比``
-    requires a same-month/day pair in different years; adjacent days must be
-    described as a relative or day-over-day change instead.
+    The contract projects each period's date range; 同比 is supported when the
+    receipt compares the same calendar day (month/day) in different years.
     """
-    if _YOY_LABEL.search(text) is None:
-        return []
-    dates: list[date] = []
-    for year, month, day in _ISO_DATE.findall(text):
+    if not isinstance(scope, dict) or str(scope.get("tool") or "") != "compare_periods":
+        return False
+    window = scope.get("observation_window")
+    if not isinstance(window, dict):
+        return False
+    starts: list[date] = []
+    for key in ("period_a", "period_b"):
+        period = window.get(key)
+        raw = period.get("range") if isinstance(period, dict) else None
+        if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+            return False
         try:
-            dates.append(date(int(year), int(month), int(day)))
+            starts.append(date.fromisoformat(str(raw[0])[:10]))
         except ValueError:
-            continue
-    if len(dates) < 2:
+            return False
+    left, right = starts
+    return left.month == right.month and left.day == right.day and left.year != right.year
+
+
+def _period_label_issues(text: str, scopes: list[dict]) -> list[dict[str, str]]:
+    """A 同比 label must agree with the compare_periods receipt (P1-6).
+
+    Cross-year-ness is determined by the receipt's structured period ranges,
+    never mined from narrative prose (the 同比(?!例) substring verdict is
+    retired).  Without a cross-year compare_periods receipt the label goes
+    through one revision request and is then advisory - label detection is
+    lexical recall and must not terminally block.
+    """
+    if not any(_clause_uses_yoy_label(clause) for clause in _split_claims(text)):
         return []
-    has_yoy_pair = any(
-        left.month == right.month
-        and left.day == right.day
-        and left.year != right.year
-        for index, left in enumerate(dates)
-        for right in dates[index + 1:]
-    )
-    if has_yoy_pair:
+    if any(_cross_year_compare_periods(scope) for scope in scopes if isinstance(scope, dict)):
         return []
     return [{
         "code": "unsupported_yoy_label",
         "span": next(
-            (clause.strip()[:80] for clause in _split_claims(text) if _YOY_LABEL.search(clause)),
+            (clause.strip()[:80] for clause in _split_claims(text) if _clause_uses_yoy_label(clause)),
             "同比",
         ),
-        "reason": "正文使用了“同比”，但列出的日期不是跨年同期；请改为相对变化或与实际周期一致的表述。",
+        "reason": (
+            "正文使用了“同比”，但发布包没有跨年同期的 compare_periods 回执支撑；"
+            "请改为相对变化或与实际周期一致的表述，或补充跨年对比回执后再使用该标签。"
+        ),
     }]
 
 
@@ -2082,7 +2098,7 @@ def validate_final_narrative_issues(text: str, packet: dict | None = None) -> li
     issues.extend(_significance_issues(text_value, scopes))
     issues.extend(_currency_unit_issues(text_value, scopes))
     issues.extend(_future_window_issues(text_value, scopes))
-    issues.extend(_period_label_issues(text_value))
+    issues.extend(_period_label_issues(text_value, scopes))
     issues.extend(_arithmetic_issues(text_value))
     issues.extend(_unsupported_data_semantics_issues(text_value, packet or {}))
     issues.extend(_missing_value_zero_issues(text_value))
@@ -2108,7 +2124,7 @@ def validate_final_narrative(text: str, packet: dict | None = None) -> str | Non
 # Origin-class findings are lexical RECALL only (2026-09-21 realignment):
 # they request one revision, never terminal rejection.  Closed-class findings
 # block on every pass.
-_REVISION_ONLY_CODES = {"unsupported_data_origin_inference"}
+_REVISION_ONLY_CODES = {"unsupported_data_origin_inference", "unsupported_yoy_label"}
 
 
 def drop_revision_only_issues(

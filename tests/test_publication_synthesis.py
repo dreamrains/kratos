@@ -584,6 +584,18 @@ def _receipt_with_args(tool_name, receipt_id, data, args=None):
     }
 
 
+def _compare_periods_scope(a_start, a_end, b_start, b_end):
+    """compare_periods 回执投影：跨年判定只认这里的结构化日期范围。"""
+    return {
+        "schema_version": "publication_scope.v1",
+        "tool": "compare_periods",
+        "observation_window": {
+            "period_a": {"range": [a_start, a_end]},
+            "period_b": {"range": [b_start, b_end]},
+        },
+    }
+
+
 def _retention_packet(extra_receipts=(), substantive=None):
     state = AnalysisSessionState(session_id="n_series_packet")
     # P7-F01/R1：曲线来源必须携带 dataset 身份，主张按来源绑定范围检查。
@@ -763,41 +775,6 @@ class TestNSeriesPublication:
 
         assert validate_final_narrative(text, _retention_packet()) is None
 
-
-def test_provenance_question_is_not_misread_as_an_asserted_origin():
-    assert validate_final_narrative(
-        "请确认该文件是完整、抽样还是测试数据？", _retention_packet()
-    ) is None
-
-
-def test_ordinary_sample_size_language_is_not_a_provenance_classification():
-    assert validate_final_narrative(
-        "The observed sample size is 7, so uncertainty remains high.", _retention_packet()
-    ) is None
-
-
-@pytest.mark.parametrize("text", [
-    "下面用一个样例说明计算过程。",
-    "附上演示数据的加载代码。",
-    "这不是占位数据，是真实流水。",
-    "请问这是不是测试数据？",
-])
-def test_non_assertive_or_negated_provenance_mentions_publish(text):
-    issues = validate_final_narrative_issues(text, _retention_packet())
-
-    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
-
-
-@pytest.mark.parametrize("text", [
-    "该文件是单一取值的样例数据。",
-    "数据来源分类：占位数据。",
-    "当前交付的这份文件属于测试数据。",
-])
-def test_provenance_taxonomy_rejects_unsupported_assertions_without_phrase_enumeration(text):
-    error = validate_final_narrative(text, _retention_packet())
-    assert error is not None
-    assert "unsupported_data_origin_inference" in error
-
     def test_n01_boundary_statement_with_d30_publishes(self):
         packet = _retention_packet()
         assert validate_final_narrative(
@@ -857,21 +834,44 @@ def test_provenance_taxonomy_rejects_unsupported_assertions_without_phrase_enume
             "D7 留存为 10%。建议继续收集至第30天再验证。", packet,
         ) is None
 
-    def test_n02_adjacent_dates_cannot_be_labeled_yoy(self):
-        error = validate_final_narrative(
-            "2026-09-01 与 2026-09-02 的金额均同比增长 10%。",
+    def test_n02_yoy_label_backed_by_crossyear_receipt_publishes(self):
+        packet = {"publication_scope": [
+            _compare_periods_scope("2025-09-01", "2025-09-07", "2026-09-01", "2026-09-07"),
+        ]}
+        assert validate_final_narrative("金额同比增长 10%。", packet) is None
+
+    def test_n02_yoy_label_with_sameyear_receipt_is_revision_only(self):
+        """R16 M03 真实场景：相邻日回执被标成"同比"。"""
+        packet = {"publication_scope": [
+            _compare_periods_scope("2026-09-01", "2026-09-02", "2026-09-08", "2026-09-09"),
+        ]}
+        issues = validate_final_narrative_issues(
+            "2026-09-01 与 2026-09-02 的金额均同比增长 10%。", packet,
         )
-        assert error is not None
-        assert "同比" in error
+        codes = {issue["code"] for issue in issues}
+        assert "unsupported_yoy_label" in codes
+        from data_agent.agent.publication_synthesis import drop_revision_only_issues
+
+        blocking, _revision_only = drop_revision_only_issues(issues)
+        assert "unsupported_yoy_label" not in {issue["code"] for issue in blocking}
+
+    def test_n02_yoy_label_without_receipt_is_revision_only_not_verdict_from_prose(self):
+        """跨年日期只出现在散文里：不再按散文日期对判定放行（删子串法）。"""
+        issues = validate_final_narrative_issues(
+            "2025-09-01 与 2026-09-01 相比，金额同比增长 10%。",
+        )
+        assert "unsupported_yoy_label" in {issue["code"] for issue in issues}
+        from data_agent.agent.publication_synthesis import drop_revision_only_issues
+
+        blocking, _revision_only = drop_revision_only_issues(issues)
+        assert "unsupported_yoy_label" not in {issue["code"] for issue in blocking}
 
     def test_n02_same_proportional_growth_is_not_a_yoy_label(self):
+        packet = {"publication_scope": [
+            _compare_periods_scope("2026-09-01", "2026-09-02", "2026-09-08", "2026-09-09"),
+        ]}
         assert validate_final_narrative(
-            "2026-09-01 至 2026-09-02，各来源均同比例上升 10%。",
-        ) is None
-
-    def test_n02_same_calendar_day_across_years_may_be_labeled_yoy(self):
-        assert validate_final_narrative(
-            "2025-09-01 与 2026-09-01 相比，金额同比增长 10%。",
+            "2026-09-01 至 2026-09-02，各来源均同比例上升 10%。", packet,
         ) is None
 
     def test_n03_unsupported_d30_prediction_rejected(self):
@@ -1050,6 +1050,41 @@ def test_presentation_followup_reuses_only_current_bound_publication_snapshot():
 
 
 # ── P4 (D03): evidence coverage and recoverable packet selection (E01–E05, E09–E10) ──
+
+
+def test_provenance_question_is_not_misread_as_an_asserted_origin():
+    assert validate_final_narrative(
+        "请确认该文件是完整、抽样还是测试数据？", _retention_packet()
+    ) is None
+
+
+def test_ordinary_sample_size_language_is_not_a_provenance_classification():
+    assert validate_final_narrative(
+        "The observed sample size is 7, so uncertainty remains high.", _retention_packet()
+    ) is None
+
+
+@pytest.mark.parametrize("text", [
+    "下面用一个样例说明计算过程。",
+    "附上演示数据的加载代码。",
+    "这不是占位数据，是真实流水。",
+    "请问这是不是测试数据？",
+])
+def test_non_assertive_or_negated_provenance_mentions_publish(text):
+    issues = validate_final_narrative_issues(text, _retention_packet())
+
+    assert not any(issue["code"] == "unsupported_data_origin_inference" for issue in issues)
+
+
+@pytest.mark.parametrize("text", [
+    "该文件是单一取值的样例数据。",
+    "数据来源分类：占位数据。",
+    "当前交付的这份文件属于测试数据。",
+])
+def test_provenance_taxonomy_rejects_unsupported_assertions_without_phrase_enumeration(text):
+    error = validate_final_narrative(text, _retention_packet())
+    assert error is not None
+    assert "unsupported_data_origin_inference" in error
 
 
 def _six_question_receipts() -> list[dict]:

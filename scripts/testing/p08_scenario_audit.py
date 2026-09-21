@@ -276,6 +276,52 @@ def _find_curve_receipt(tool_outputs_dir: Path) -> dict | None:
     return None
 
 
+def _find_compare_periods_receipts(tool_outputs_dir: Path) -> list[dict]:
+    """All compare_periods receipts (period_a/period_b carrying date ranges)."""
+    receipts: list[dict] = []
+    if not tool_outputs_dir.exists():
+        return receipts
+    for path in sorted(tool_outputs_dir.glob("*.json")):
+        data = _read_json(path)
+        if not isinstance(data, dict):
+            continue
+
+        def walk(node):
+            if isinstance(node, dict):
+                pa, pb = node.get("period_a"), node.get("period_b")
+                if (
+                    isinstance(pa, dict) and isinstance(pb, dict)
+                    and isinstance(pa.get("range"), list) and isinstance(pb.get("range"), list)
+                ):
+                    receipts.append(node)
+                    return
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(data)
+    return receipts
+
+
+def _receipt_is_cross_year(receipt: dict) -> bool:
+    """P1-6：跨年判定只认回执里的结构化日期范围，不挖散文年份。"""
+    from datetime import date as _date
+
+    starts = []
+    for key in ("period_a", "period_b"):
+        raw = (receipt.get(key) or {}).get("range") or []
+        if len(raw) < 2:
+            return False
+        try:
+            starts.append(_date.fromisoformat(str(raw[0])[:10]))
+        except ValueError:
+            return False
+    left, right = starts
+    return left.month == right.month and left.day == right.day and left.year != right.year
+
+
 def _family_value(fit: dict, x: float) -> float | None:
     params = fit.get("parameters") or {}
     try:
@@ -439,17 +485,16 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
 
     # 8. 同比 label requires a cross-year period receipt (blocking)
     o = _oracle_meta("yoy_requires_crossyear_receipt")
-    yoy_clauses = [
-        clause for clause in re.split(r"[。；;\n]", final_text)
-        if re.search(r"同比", clause) and not re.search(r"同比(?!例)", clause) is None
-    ]
-    yoy_ok = True
-    if yoy_clauses:
-        years: set[str] = set(re.findall(r"(20\d{2})", final_text))
-        yoy_ok = len(years) >= 2
+    yoy_labelled = any(
+        "同比" in clause and "同比例" not in clause
+        for clause in re.split(r"[。；;\n]", final_text)
+    )
+    period_receipts = _find_compare_periods_receipts(sdir / "tool_outputs")
+    crossyear_count = sum(1 for receipt in period_receipts if _receipt_is_cross_year(receipt))
+    yoy_ok = not yoy_labelled or crossyear_count > 0
     checks.append(_check(
         yoy_ok, o["id"],
-        f"yoy_clauses={len(yoy_clauses)} years={sorted(years) if yoy_clauses else []}",
+        f"yoy_labelled={yoy_labelled} crossyear_receipts={crossyear_count}",
         o["blocking"], o["dim"], o["principle"],
     ))
 
