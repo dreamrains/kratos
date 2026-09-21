@@ -1086,7 +1086,17 @@ def render_verified_appendix(packet: dict[str, Any]) -> str:
     if packet.get("limitations"):
         lines.append("- 边界：" + "；".join(str(value) for value in packet["limitations"]))
     for source in packet.get("sources", []):
-        scenario = source.get("scenario_extrapolation") if isinstance(source, dict) else None
+        if not isinstance(source, dict):
+            continue
+        if packet.get("provenance_unverified"):
+            # Host-rendered authoritative provenance status: the receipt does
+            # not declare data origin, so prose origin judgements stay
+            # explicitly unconfirmed instead of being policed by lexicon.
+            lines.append(
+                "- 数据来源状态：回执未声明数据来源；正文中的来源判断**未经证实**"
+                "（宿主标注，请以数据提供方确认为准）。"
+            )
+        scenario = source.get("scenario_extrapolation")
         if isinstance(scenario, dict) and scenario.get("validation") == "none":
             families = [
                 f"{model.get('family')}（R²={model.get('r_squared')}）"
@@ -1650,7 +1660,7 @@ _PROVENANCE_ASSERTION = re.compile(
     r"(?:是|为|属于|由|并非|不是|不属于|大概率|极可能|很可能|疑为|显然|说明|表明|呈现出)"
     r"[^。；;\n]{0,24}"
     r"(?:测试数据|机器生成|合成数据|synthetic|人为规则数据|人工构造|构造样例|构造示例|"
-    r"脱敏数据?|占位数据?|样例数据?|示意数据?|演示数据?|真实账本|真账本)",
+    r"脱敏数据?|占位(?:数据|符)?|模板(?:数据|特征)?|样例数据?|示意数据?|演示数据?|真实账本|真账本)",
     re.I,
 )
 _PROVENANCE_UNCERTAINTY = re.compile(
@@ -1670,7 +1680,7 @@ _PROVENANCE_KINDS = {
     "synthetic": re.compile(r"合成数据|\bsynthetic\b", re.I),
     "constructed": re.compile(r"人为规则数据|人工构造|构造(?:样例|示例)|manually?[_ -]?constructed", re.I),
     "masked": re.compile(r"脱敏|masked|anonymi[sz]ed", re.I),
-    "placeholder": re.compile(r"占位|placeholder", re.I),
+    "placeholder": re.compile(r"占位|模板|placeholder|template", re.I),
     "sample": re.compile(r"样例数据|示意数据?|演示数据?|sample[_ -]?data|demo[_ -]?data", re.I),
     "not_real_ledger": re.compile(r"并非真实账本|不是真账本|不是实际账本|not[_ -]?real[_ -]?ledger", re.I),
 }
@@ -2093,3 +2103,18 @@ def validate_final_narrative(text: str, packet: dict | None = None) -> str | Non
             detail += f'（位置：“{issue["span"]}”）'
         details.append(f"[{issue['code']}] {detail}")
     return "最终回答同时存在以下发布问题，请在同一次修订中全部处理：\n" + "\n".join(details)
+
+
+# Origin-class findings are lexical RECALL only (2026-09-21 realignment):
+# they request one revision, never terminal rejection.  Closed-class findings
+# block on every pass.
+_REVISION_ONLY_CODES = {"unsupported_data_origin_inference"}
+
+
+def drop_revision_only_issues(
+    issues: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Split findings into (blocking, revision-only)."""
+    blocking = [issue for issue in issues if issue.get("code") not in _REVISION_ONLY_CODES]
+    revision_only = [issue for issue in issues if issue.get("code") in _REVISION_ONLY_CODES]
+    return blocking, revision_only

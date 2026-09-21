@@ -1473,6 +1473,7 @@ class AgentLoop:
         self._turn_finalization_mode = False
         self._turn_finalization_recovery_used = False
         self._turn_publication_recovery_used = False
+        self._turn_origin_revision_issued = False
         self._turn_synthesis_policy_injected = False
         self._turn_synthesis_policy_instruction = ""
         self._turn_publication_packet = None
@@ -1571,6 +1572,10 @@ class AgentLoop:
         if getattr(self, "_turn_publication_recovery_used", False):
             return False
         self._turn_publication_recovery_used = True
+        if "unsupported_data_origin_inference" in str(error or ""):
+            # Revision-only finding: after this one rewrite request the
+            # origin lexicon stops blocking; the host annotates instead.
+            self._turn_origin_revision_issued = True
         rejected = dict(assistant_msg)
         rejected["publication_rejected"] = True
         self.messages.append(rejected)
@@ -1949,6 +1954,20 @@ class AgentLoop:
                 packet["answer_bindings"] = bindings
                 apply_answer_binding_coverage(packet, bindings)
             error = validate_final_narrative(visible_text, packet)
+            if error and getattr(self, "_turn_origin_revision_issued", False):
+                # Second pass after the origin revision: origin-class findings
+                # no longer block; the host annotates the appendix instead.
+                from data_agent.agent.publication_synthesis import (
+                    drop_revision_only_issues,
+                    validate_final_narrative_issues,
+                )
+
+                blocking, _revision_only = drop_revision_only_issues(
+                    validate_final_narrative_issues(visible_text, packet)
+                )
+                if not blocking:
+                    packet["provenance_unverified"] = True
+                    error = None
             if binding_issues:
                 binding_error = "\n".join(
                     f"[{issue['code']}] {issue['reason']}（位置：{issue['span']}）"
