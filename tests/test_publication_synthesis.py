@@ -712,12 +712,21 @@ class TestNSeriesPublication:
         wrong = AUDITABLE_D30_SCENARIO.replace("12.83%", "5%")
         assert validate_final_narrative(wrong, _retention_packet()) is not None
 
-    def test_n03_scenario_requires_validation_and_sensitivity_disclosures(self):
-        incomplete = (
+    def test_n03_prose_disclosures_no_longer_required(self):
+        """Contract change (2026-09-21 realignment).
+
+        The R20 contract required 情景/R²=/未验证/敏感性 phrases in the prose;
+        the gate conjunction is retired because the host renders the
+        disclosure block itself (render_verified_appendix).  Arithmetic
+        remains decisive: see test_scenario_envelope_and_disclosure.py for
+        the new positive/negative pair (prose without disclosures passes,
+        wrong arithmetic still rejects).
+        """
+        text = (
             "假设 D1-D7 的幂律关系延续，幂律模型 R²=0.97。"
             "幂律情景下 D30 留存约为 12.83%。"
         )
-        assert validate_final_narrative(incomplete, _retention_packet()) is not None
+        assert validate_final_narrative(text, _retention_packet()) is None
 
     def test_n03_inline_multi_family_sensitivity_recomputes_each_value(self):
         packet = _retention_packet_for_fits([

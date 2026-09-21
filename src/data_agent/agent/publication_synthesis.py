@@ -1085,6 +1085,25 @@ def render_verified_appendix(packet: dict[str, Any]) -> str:
             lines.append(f"  - {fact['path']}: {fact['value']}")
     if packet.get("limitations"):
         lines.append("- 边界：" + "；".join(str(value) for value in packet["limitations"]))
+    for source in packet.get("sources", []):
+        scenario = source.get("scenario_extrapolation") if isinstance(source, dict) else None
+        if isinstance(scenario, dict) and scenario.get("validation") == "none":
+            families = [
+                f"{model.get('family')}（R²={model.get('r_squared')}）"
+                for model in scenario.get("models") or []
+                if isinstance(model, dict) and model.get("family")
+            ]
+            # Host-rendered disclosure: guaranteed by construction, not policed
+            # in the model's prose.  Same principle as the unit boundary.
+            lines.append(
+                "### 拟合情景披露（宿主渲染）\n"
+                f"- 本轮情景数值由回执 `{source.get('tool_name') or 'tool'}`"
+                f"（收据 `{source.get('receipt_id') or '-'}`）的拟合参数演算，"
+                "仅描述观测区间内的拟合；"
+                "**未做留出验证、未做回测、未做外部数据验证**，不得表述为已验证预测。\n"
+                "- 模型族间存在敏感性差异：" + "、".join(families) + "；"
+                "观测区间外的取值完全由模型族选择决定。"
+            )
     return "\n".join(lines)
 
 
@@ -1182,15 +1201,11 @@ def _asserts_time_point_payload(clause: str, match: re.Match) -> bool:
     )
 
 
-_SCENARIO_DISCLOSURE = re.compile(r"情景|假设|外推估算|scenario|what[- ]?if", re.I)
-_FIT_QUALITY_DISCLOSURE = re.compile(r"R\s*[²2^]\s*(?:=|为|[:：])", re.I)
-_NO_VALIDATION_DISCLOSURE = re.compile(
-    r"未(?:做|经|进行)?(?:留出|回测|验证)|无(?:留出|回测|验证)|"
-    r"没有(?:留出|回测|验证)|D\s*\d+[^。；;\n]{0,20}(?:未观测|未验证)|"
-    r"not\s+(?:validated|backtested)|no\s+(?:holdout|validation|backtest)",
-    re.I,
-)
-_SENSITIVITY_DISCLOSURE = re.compile(r"敏感性|不同模型|模型间|区间|sensitivity", re.I)
+# Prose disclosure regexes retired 2026-09-21: the host renders the
+# disclosure block itself (render_verified_appendix); arithmetic remains
+# the only gate requirement for fitted scenarios.
+
+_PCT = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*%")
 _FAMILY_LABELS = {
     "power": re.compile(r"幂律|power", re.I),
     "exponential": re.compile(r"指数|exponential", re.I),
@@ -1246,8 +1261,15 @@ def _scenario_family_values(
         if family in seen:
             return None
         next_start = occurrences[index + 1][0] if index + 1 < len(occurrences) else len(clause)
-        segment = clause[start:next_start]
-        value_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*%", segment)
+        # Bidirectional binding.  "0.014%（指数）" puts the value BEFORE the
+        # family name inside a parenthetical; "指数约 0.014%" puts it after.
+        # A leading value binds only when the family is parenthesized, so a
+        # trailing value belonging to the PREVIOUS family is never stolen.
+        value_match = None
+        if start > 0 and clause[start - 1] in "（(":
+            value_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*%", clause[max(0, start - 14):start])
+        if value_match is None:
+            value_match = re.search(r"([-+]?\d+(?:\.\d+)?)\s*%", clause[start:next_start])
         if value_match is None:
             return None
         pairs.append((by_family[family], float(value_match.group(1)) / 100))
@@ -1276,37 +1298,57 @@ def _is_auditable_scenario_extrapolation(
     match: re.Match,
     scope: dict,
 ) -> bool:
-    """Allow a fitted scenario only when its assumptions and arithmetic are auditable.
+    """Allow a fitted scenario only when its arithmetic is receipt-auditable.
 
-    This is intentionally not a forecast escape hatch.  The host requires a
-    scenario label, a named fitted family, R-squared, explicit absence of
-    validation, and sensitivity language; it also recomputes the displayed
-    percentage from the receipt-bound model parameters.
+    This is intentionally not a forecast escape hatch.  The decisive check is
+    closed-class arithmetic: every displayed percentage must recompute from
+    the receipt-bound model parameters (family named inline), or — for range
+    summaries that reference the fitted families without naming them — fall
+    inside the receipt-computed min/max envelope.  Prose disclosure phrases
+    are no longer required here: the host renders the disclosure block
+    itself (see render_verified_appendix), so disclosure is guaranteed by
+    construction instead of policed by regex.
     """
 
     scenario = scope.get("scenario_extrapolation")
     if not isinstance(scenario, dict) or scenario.get("validation") != "none":
         return False
-    if not all(pattern.search(text) for pattern in (
-        _SCENARIO_DISCLOSURE,
-        _FIT_QUALITY_DISCLOSURE,
-        _NO_VALIDATION_DISCLOSURE,
-        _SENSITIVITY_DISCLOSURE,
-    )):
-        return False
     models = [model for model in scenario.get("models") or [] if isinstance(model, dict)]
+    x_value = float(match.group(1))
     pairs = _scenario_family_values(clause, match, models)
-    if not pairs:
+    if pairs:
+        for model, reported in pairs:
+            if not isinstance(model.get("r_squared"), (int, float)):
+                return False
+            expected = _scenario_model_value(model, x_value)
+            if expected is None or abs(reported - expected) > 0.0005:
+                return False
+        return True
+    # Range-summary clause: the families live elsewhere (typically the table
+    # above); every reported value must sit inside the envelope the receipt
+    # families actually produce at this point.
+    return _range_envelope_ok(clause, models, x_value)
+
+
+_RANGE_MARKER = re.compile(
+    r"从|到|至|—|–|~|之间|区间|不同模型|多模型|三族|各族|模型间|curve", re.I
+)
+
+
+def _range_envelope_ok(clause: str, models: list[dict], x_value: float) -> bool:
+    values = [float(m.group(1)) / 100 for m in _PCT.finditer(clause)]
+    if len(values) < 2 or not _RANGE_MARKER.search(clause):
         return False
-    for model, reported in pairs:
-        if not isinstance(model.get("r_squared"), (int, float)):
-            return False
-        expected = _scenario_model_value(model, float(match.group(1)))
-        if expected is None or abs(reported - expected) > 0.0005:
-            return False
-    # Accept ordinary percentage display rounding (0.05 percentage point),
-    # never an arbitrary value merely dressed up with caveats.
-    return True
+    family_values = [
+        value
+        for value in (_scenario_model_value(model, x_value) for model in models)
+        if value is not None
+    ]
+    if not family_values:
+        return False
+    low, high = min(family_values), max(family_values)
+    tolerance = 0.0005
+    return all(low - tolerance <= value <= high + tolerance for value in values)
 
 
 def _markdown_table_time_point_claims(text: str) -> list[str]:
