@@ -443,6 +443,29 @@ class TaskManager:
         self._set_active_plan_id(plan_id, session_id, project_name)
         return {"restored": True, "reason": "ingestion_failed", "plan_id": plan_id}
 
+    def active_plan_has_live_stage_tasks(self, session_id: str = "", project_name: str = "") -> bool:
+        """True when the active plan still has non-terminal Stage3C0B tasks.
+
+        An active structured plan is the single task authority: only the
+        sanctioned retire path (new-data upload) or structured re-projection
+        may replace it.  Silent supersede from manual/llm plan creation is
+        what turned a transient scope refresh into a permanent error phase
+        (R21 Codex M02 session death).
+        """
+        plan_id = self.get_active_plan_id(session_id, project_name)
+        if not plan_id:
+            return False
+        for task in self._session_project_tasks(
+            session_id=session_id, project_name=project_name, include_stale=True
+        ):
+            if task.get("plan_id") != plan_id:
+                continue
+            if task.get("status") in {"deleted", "archived", "superseded", "completed"}:
+                continue
+            if str(task.get("analysis_plan_id") or "") or str(task.get("step_id") or ""):
+                return True
+        return False
+
     def create_plan(
         self,
         session_id: str = "",
@@ -453,6 +476,15 @@ class TaskManager:
         workflow_id: str = "",
     ) -> dict:
         active_plan_id = self.get_active_plan_id(session_id, project_name)
+        if (
+            active_plan_id
+            and source != "analysis_plan"
+            and self.active_plan_has_live_stage_tasks(session_id, project_name)
+        ):
+            raise RuntimeError(
+                "cannot supersede an active structured plan with live stage tasks "
+                "from a non-structured plan; finish or explicitly retire it instead"
+            )
         existing_versions = [
             int(t.get("plan_version") or 1)
             for t in self._session_project_tasks(

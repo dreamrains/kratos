@@ -251,6 +251,22 @@ def task_create(
         task_manager.list_active_for_scope(session_id=_session_id(), project_name=_project_name())
         if active_plan_id else []
     )
+    if active_plan_id and task_manager.active_plan_has_live_stage_tasks(
+        _session_id(), _project_name()
+    ):
+        # The projected plan already owns the task authority for this analysis.
+        # Manual task creation used to silently supersede it, which the scope
+        # resolver then read as "tasks without stage tasks" (legacy) and the
+        # transition guard turned into a permanent error phase.
+        return json.dumps({
+            "error": (
+                "当前存在未完成的结构化分析计划（record_analysis_plan 已投影任务）。"
+                "请勿手动创建重复任务：按步骤用 record_evidence_record 记录证据，"
+                "或重新提交修订后的 record_analysis_plan。"
+            ),
+            "error_type": "active_stage_plan_task_create_refused",
+            "active_plan_id": active_plan_id,
+        }, ensure_ascii=False)
     active_plan_version = max([int(t.get("plan_version") or 1) for t in active_tasks], default=1)
     common_fields = {
         "workflow_id": workflow_id or current_spec.get("workflow_id", ""),
