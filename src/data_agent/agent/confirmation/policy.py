@@ -8,7 +8,6 @@ from typing import Iterable
 
 from data_agent.agent.confirmation.decision import (
     default_is_host_verified,
-    is_data_nature_question,
     is_method_approval_shaped,
     represents_business_gap,
     stable_decision_key,
@@ -66,15 +65,14 @@ class QuestionPolicy:
                 allow_advisory,
             )
 
-        if is_data_nature_question(candidate):
-            # P1-5b：数据性质（示例/测试/真实/抽样）不由提问确立，也不改变
-            # 任何已计算数值——来源状态由发布合同按"未经证实"渲染，转为
-            # 条件式发布指引而不是挂起。
+        if (
+            candidate.resolution_params.get("confirmation_type") == "data_quality_confirmation"
+            and not self._has_host_field_risk(candidate)
+        ):
             return self._nonblocking(
-                "数据性质（示例/测试/真实/抽样）不需要用户确认：请按来源未知"
-                "直接以条件式指引发布——若为示例/测试数据则结论仅演示流程、"
-                "不作业务解读；若为真实数据则先满足字段口径与时间窗等前提再"
-                "扩展分析；发布包会按'未经证实'标注来源状态。",
+                "缺少宿主可核验的字段风险与计算依赖，不据此暂停。请保留已核实"
+                "的观察，按来源和覆盖范围未经证实给出条件式指引；需要改变计算"
+                "值的具体字段口径应由宿主风险证据支持后再确认。",
                 allow_advisory,
             )
 
@@ -113,6 +111,15 @@ class QuestionPolicy:
             else RequestDisposition.REJECTED
         )
         return PolicyResult(disposition=disposition, reason=reason)
+
+    @staticmethod
+    def _has_host_field_risk(candidate: QuestionCandidate) -> bool:
+        params = candidate.resolution_params
+        return bool(
+            candidate.source == "question_need_detector"
+            and params.get("host_risk_fields")
+            and params.get("host_affected_routes")
+        )
 
     @staticmethod
     def _matching_resolution(

@@ -172,6 +172,15 @@ def _with_decision_context(params: dict[str, Any], request: Any, *, source: str)
         or _request_value(request, "missing_value", ""),
     }
     context = decision_context_from_payload(payload)
+    if source == "question_need_detector":
+        # Only this deterministic producer derives field risk from cleaning
+        # receipts and route dependencies. Model-supplied risk_fields in a
+        # direct ask must never certify its own blocking impact.
+        risk_fields = _text_items(_request_value(request, "risk_fields", ()))
+        affected_routes = _text_items(_request_value(request, "affected_routes", ()))
+        if risk_fields and affected_routes:
+            params["host_risk_fields"] = risk_fields
+            params["host_affected_routes"] = affected_routes
     if (
         str(params.get("confirmation_type") or "").strip() in METHOD_DECISION_KINDS
         and context["decision_kind"]
@@ -194,6 +203,12 @@ def _with_decision_context(params: dict[str, Any], request: Any, *, source: str)
         if context.get(key):
             params.setdefault(key, context[key])
     return params
+
+
+def _text_items(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _apply_stable_decision_key(candidate: QuestionCandidate) -> QuestionCandidate:

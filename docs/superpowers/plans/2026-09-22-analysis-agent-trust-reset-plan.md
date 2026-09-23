@@ -539,6 +539,14 @@ split=0/保留原历史；新增聚焦测试最终为 10 项（修正前版本 1
 
 ### Phase 3：确认政策类型化，以 M01 为样板
 
+开工审查见 `docs/audit/2026-09-23-trust-reset-phase3-confirmation-review.md`：已跨 IC0—IC4、
+R8/R10/R11/R16 M06、Codex/R20/R4 M01 与内部 `risk_fields` 生产者对照。
+用户已裁决：模型直接提出而无宿主计算风险证据的 `data_quality_confirmation` 降为条件式指引；
+内部带 `risk_fields + affected_routes` 的清洗门及明确成本/分母/窗口等业务缺口仍暂停。
+Phase 3 离线切片已改用来源和宿主风险证据，删除数据性质两极词表；跨历史确认/路由回归
+196 passed；最终 fresh fail-closed full-offline 为 2844 passed、1 skipped（详见审查记录）。
+浏览器和真实模型证据仍分别独立记录。
+
 - 用 confirmation kind 和结构化 business gap 决定是否暂停；
 - 数据性质问题转条件式指引，不因“真实值”等词语挂起；
 - 真正会改变计算值的成本、窗口、分母、scope 决定仍可暂停；
