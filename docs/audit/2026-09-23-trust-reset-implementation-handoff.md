@@ -87,3 +87,11 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 定向五组测试 **180 passed**；首轮 `tmp/tprb16` **2904 passed、1 skipped、16 warnings**，但执行中又收紧了审计身份检查，因此**不作为最终代码时点收据**。最终 fresh `tmp/tprb17` 全量离线 **2905 passed、1 skipped、16 warnings、0 failures**；JUnit `tests=2906/failures=0/errors=0/skipped=1`，SHA256 `41C04E855B46FE6DAD2E3E0ABC4FEBF839E5389902E8693E16206E50AA503954`，runner `provider_calls=forbidden`。这仅是 E2，本轮真实 Provider initiated calls=0，未启动浏览器 E3。根工作树存在本阶段待提交的文档/代码/测试，提交时只 stage 明名文件。
 
 **不能切默认或称 A/B 完成**：R4 M03 六来源的结论/图表产物仍不等于原始字段，R4 M04 竞争假设关系尚无同快照权威投影，R16 M05 方法上下文及 R11 正确否定边界尚未达到当前 typed 核心的等价保留。独立 99% 的现行完整散文误放仍在，因为正式门有意未动。接下来应在历史正反矩阵校准中补齐这些宿主所有者，或遇无法从当前结构重建的关键解释时先请用户裁决；不能用 Shadow 随机总审或词表补丁兜底。C 的真实 Shadow 调度/成本/误删校准和 D 的正式处置/E3 必须分别另过门；E4 仍需新精确冻结与显式授权。无 push/部署。
+
+## 13. A+B 第二离线切片：范围、图表产物、假设审计（2026-09-24）
+
+用户确认“先做默认关闭的离线投影”。完整 RED、结构替代、旧门退役目标和限界见 `docs/audit/2026-09-24-trust-reset-offline-core-projection.md`。`render_trusted_core_preview` 现在从当前 source/scope 同回执匹配后展示 R11 型观测范围、R16 型日期/行数/未确认单位及“未证实统计推断”；没有 D30 自造值、百分比/币种换算或从 `run_python` 的 false 标志推断完全没做统计。显式 `build_publication_packet(..., offline_trust_projection=True)` 在**同 packet/digest**中记录当前会话已创建图表的 artifact-only 引用和当前 plan 的假设关系审计，默认 false；AgentLoop 未启用，`publication_packet_prompt` 对离线包直接拒绝。历史旧 artifact 无同快照条件则不投影，不创建第二 planner、账本或通道。
+
+发现并阻止了模型自报 `delta/method/p_value` 的升级路径：假设状态只有同指标当前 `compare_periods` 回执的 A/B/差额与日期通过既有宿主复算、与记录变化相符时才可成为描述性支持/反驳。模型伪造因果方法和显著性字段被剥离；其他工具的关系留未决。图表仅证明同会话成功产物存在，不证明图中结论。**R4 M03 六来源业务结论、M04 非闭合比较方法的关系、R16 M05 旧方法表并未被本轮自动重建**，A 的历史价值校准仍未过门；正式 99% 误放仍在待退役发布门上，不能借离线代码当已修。
+
+定向 **217 passed**。`tmp/tprb18` 为投影实现前范围切片完整离线 **2909 passed/1 skipped**，JUnit SHA256 `F95412FFFF266FA6835F56BBE0BCC755EDEBD30D9A6EC216AAFB473DF5A21AA3`；`tmp/tprb19` 在投影完成后 **2913 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `3C4812DF580B04D638FB47D6CC46E16823EEBA2B9FFE5DB5D3E5B700C76C5FF3`，但运行后又收紧了“无显式本轮 receipt IDs 不投影”。**最终 fresh `tmp/tprb20`** 为 **2913 passed/1 skipped/16 warnings/0 failures**，JUnit `tests=2914/failures=0/errors=0/skipped=1`、SHA256 `1506832913636E32A2569E7C54D46149C60B806D7865F70100704DFE3025AA18`，runner `provider_calls=forbidden`，真实 Provider initiated calls=0。E2 不等于 E3/E4，未做浏览器/真实 Provider/push/部署。下一步应做跨 R7—R21/R4/R16 的离线可信核心价值对照，明确哪些仍需结构化迁移或用户取舍；C/D 保持独立门。

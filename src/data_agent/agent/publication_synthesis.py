@@ -635,6 +635,181 @@ def _select_sources(
     return sorted(selected), omitted, coverage
 
 
+def _build_offline_trust_projection(
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Project current artifacts into the existing packet, never the live path."""
+    from pathlib import Path
+    from data_agent.config import get_config
+    from data_agent.session.history import list_artifacts
+    from data_agent.agent.hypotheses import update_hypotheses_from_evidence
+
+    session_id = str(getattr(state, "session_id", "") or "")
+    projected: dict[str, list[dict[str, Any]]] = {"charts": [], "hypotheses": []}
+    # Without an explicit current-turn receipt selection, historical session
+    # artifacts cannot be distinguished from this answer's evidence snapshot.
+    if not session_id or not allowed_receipts:
+        return projected
+    sessions_root = get_config().sessions_resolved.resolve()
+    session_root = (sessions_root / session_id).resolve()
+    if not session_root.is_relative_to(sessions_root) or session_root == sessions_root:
+        return projected
+    chart_root = (session_root / "charts").resolve()
+    try:
+        registered = {
+            item.get("path") for item in list_artifacts(session_id)
+            if isinstance(item, dict) and item.get("type") == "chart"
+        }
+    except (OSError, ValueError, TypeError):
+        registered = set()
+    for receipt in getattr(state, "tool_receipts", []) or []:
+        if (not isinstance(receipt, dict) or receipt.get("tool_name") != "create_chart"
+                or receipt.get("id") not in allowed_receipts):
+            continue
+        lines = str(receipt.get("result_preview") or "").splitlines()
+        first_line = lines[0] if lines else ""
+        if not first_line.startswith("Chart saved: "):
+            continue
+        artifact_ref = first_line.removeprefix("Chart saved: ").strip()
+        if artifact_ref not in registered:
+            continue
+        prefix = f"sessions/{session_id}/charts/"
+        if not artifact_ref.startswith(prefix):
+            continue
+        filename = artifact_ref[len(prefix):]
+        if not filename or "/" in filename or "\\" in filename or not filename.endswith(".html"):
+            continue
+        chart_path = (chart_root / filename).resolve()
+        if not chart_path.is_relative_to(chart_root) or not chart_path.is_file():
+            continue
+        try:
+            content = chart_path.read_bytes()
+        except OSError:
+            continue
+        projected["charts"].append({
+            "path": artifact_ref,
+            "receipt_id": str(receipt["id"]),
+            "sha256": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "status": "artifact_only",
+        })
+
+    current_plan = getattr(state, "analysis_plan", None)
+    plan_id = str(current_plan.get("id") or "") if isinstance(current_plan, dict) else ""
+    if not plan_id:
+        return projected
+    source_by_id = {
+        str(source.get("receipt_id")): source for source in packet.get("sources", [])
+        if isinstance(source, dict) and source.get("receipt_id")
+    }
+    def verified_measurements(record: dict[str, Any]) -> list[dict[str, Any]]:
+        """Only an existing closed comparison can authorize a direction."""
+        verified = []
+        for measurement in record.get("measurements") or []:
+            if not isinstance(measurement, dict):
+                continue
+            metric = measurement.get("metric")
+            delta = measurement.get("delta")
+            if not isinstance(metric, str) or not metric or isinstance(delta, bool):
+                continue
+            expected = _decimal_number(str(delta))
+            if expected is None or not expected.is_finite():
+                continue
+            for receipt_id in record.get("tool_receipt_ids") or []:
+                source = source_by_id.get(receipt_id)
+                if not isinstance(source, dict) or source.get("tool_name") != "compare_periods":
+                    continue
+                fact_ids = {
+                    fact.get("path"): fact.get("fact_id")
+                    for fact in source.get("facts", []) if isinstance(fact, dict)
+                }
+                refs = [fact_ids.get(f"metrics.{metric}.{field}") for field in ("period_a", "period_b", "diff")]
+                if not all(isinstance(ref, str) and ref for ref in refs):
+                    continue
+                claim_id = "claim_offline_relation"
+                block = {
+                    "claim_id": claim_id, "exact_text": f"[[claim:{claim_id}]]",
+                    "claim_type": "comparison", "status": "computed", "unit_status": "not_confirmed",
+                    "receipt_ref": receipt_id, "requirement_refs": [], "fact_refs": refs,
+                    "derived_refs": [],
+                }
+                resolved = _comparison_binding_values(block, packet)
+                if resolved is not None and resolved[0] == metric and resolved[3][2] == expected:
+                    # Only the metric and recomputed change may influence the
+                    # hypothesis gate. Model-supplied p-values or methods do
+                    # not inherit authority from this descriptive receipt.
+                    verified.append({"metric": metric, "delta": float(resolved[3][2])})
+                    break
+        return verified
+
+    current_evidence = []
+    for record in getattr(state, "evidence_records", []) or []:
+        if not isinstance(record, dict) or record.get("plan_id") != plan_id:
+            continue
+        receipt_ids = record.get("tool_receipt_ids")
+        bindings = record.get("result_bindings")
+        if (not isinstance(receipt_ids, list) or not receipt_ids
+                or not all(isinstance(item, str) for item in receipt_ids)
+                or not set(receipt_ids) <= source_by_id.keys()
+                or not isinstance(bindings, list) or len(bindings) != len(receipt_ids)
+                or {item.get("receipt_id") for item in bindings if isinstance(item, dict)} != set(receipt_ids)):
+            continue
+        if any(
+            not isinstance(binding, dict)
+            or binding.get("receipt_id") not in receipt_ids
+            or binding.get("result_sha256") != (
+                source_by_id[binding["receipt_id"]].get("structured_result_sha256")
+                or source_by_id[binding["receipt_id"]].get("result_sha256")
+            )
+            or binding.get("data_identities") != source_by_id[binding["receipt_id"]].get("data_identities")
+            for binding in bindings
+        ):
+            continue
+        # Receipt identity alone is not enough: model-filled measurement.delta
+        # must match a host-recomputed, same-metric comparison before it can
+        # change a hypothesis verdict in the trusted-core preview.
+        checked = dict(record)
+        checked["measurements"] = verified_measurements(record)
+        checked["method"] = "compare_periods"
+        current_evidence.append(checked)
+    artifact_root = (session_root / "tool_outputs").resolve()
+    for ref in getattr(state, "hypothesis_sets", []) or []:
+        if not isinstance(ref, dict) or ref.get("plan_id") != plan_id:
+            continue
+        try:
+            path = Path(str(ref.get("artifact_path") or "")).resolve()
+            if not path.is_relative_to(artifact_root) or path.suffix.lower() != ".json":
+                continue
+            raw = path.read_bytes()
+            if len(raw) > 1_000_000:
+                continue
+            hypothesis_set = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if (not isinstance(hypothesis_set, dict)
+                or hypothesis_set.get("id") != ref.get("id")
+                or hypothesis_set.get("plan_id") != plan_id
+                or hypothesis_set.get("dataset") != ref.get("dataset")):
+            continue
+        try:
+            refreshed = update_hypotheses_from_evidence(hypothesis_set, current_evidence)
+        except (KeyError, TypeError, ValueError):
+            continue
+        for hypothesis in refreshed.get("hypotheses", []):
+            if (not isinstance(hypothesis, dict)
+                    or not isinstance(hypothesis.get("decision_rule"), dict)
+                    or not hypothesis.get("id")):
+                continue
+            projected["hypotheses"].append({
+                "set_id": str(ref["id"]),
+                "hypothesis_id": str(hypothesis["id"]),
+                "status": str(hypothesis.get("status") or "proposed"),
+                "supporting_evidence_ids": list(hypothesis.get("supporting_evidence_ids") or []),
+                "conflicting_evidence_ids": list(hypothesis.get("conflicting_evidence_ids") or []),
+                "artifact_sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+            })
+    return projected
+
+
 def build_publication_packet(
     state: Any,
     *,
@@ -643,6 +818,7 @@ def build_publication_packet(
     receipt_ids: Iterable[str] | None = None,
     requirement_ids: Iterable[str] | None = None,
     phase: str = "final",
+    offline_trust_projection: bool = False,
 ) -> dict[str, Any]:
     """Build the bounded evidence hand-off used by the finalization round."""
     substantive = set(substantive_tools)
@@ -893,6 +1069,10 @@ def build_publication_packet(
             else {}
         ),
     }
+    if offline_trust_projection:
+        packet_body["offline_trust_projection"] = _build_offline_trust_projection(
+            state, allowed_receipts if receipt_ids is not None else set(), packet_body,
+        )
     # A model sees a preview packet, while terminal publication rebuilds it
     # as final. Bind the model block to the evidence body, not that presentation
     # phase. Any late receipt, scope, requirement or version change still
@@ -940,6 +1120,8 @@ def _collect_limitations(sources: list[dict[str, Any]], evidence: list[dict[str,
 
 def publication_packet_prompt(packet: dict[str, Any]) -> str:
     """Prompt-only representation; facts remain untrusted data, never instructions."""
+    if "offline_trust_projection" in packet:
+        raise ValueError("offline trust projection is not a model prompt")
     # The durable packet keeps a closed omission universe.  The model-facing
     # view remains within the existing context budget by summarizing optional
     # omitted rows and then dropping lowest-priority optional groups whole.
@@ -2799,6 +2981,75 @@ def render_trusted_core_preview(
                 group_lines.append(f"  - `{path.replace('`', '')}`: {value.replace(chr(10), ' ')}")
     if group_lines:
         sections.append("回执事实原样摘录（未赋予指标结论身份）：\n" + "\n".join(group_lines))
+    scope_lines: list[str] = []
+    for scope in packet.get("publication_scope", []):
+        if not isinstance(scope, dict):
+            continue
+        receipt_id = scope.get("receipt_id")
+        owners = [
+            source for source in packet.get("sources", [])
+            if isinstance(source, dict) and source.get("receipt_id") == receipt_id
+            and source.get("tool_name") == scope.get("tool")
+        ]
+        if not isinstance(receipt_id, str) or not receipt_id or len(owners) != 1:
+            continue
+        tool_name = scope.get("tool")
+        row = [f"- 回执 `{receipt_id}`，工具 `{tool_name}`"]
+        observed = scope.get("observed_x_range")
+        if (
+            isinstance(observed, list) and len(observed) == 2
+            and all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value) for value in observed)
+            and observed[0] <= observed[1]
+        ):
+            row.append(f"观测 x={observed[0]:g}—{observed[1]:g}")
+            scenario = scope.get("scenario_extrapolation")
+            if (scope.get("extrapolation_allowed") is False
+                    and isinstance(scenario, dict) and scenario.get("validation") == "none"):
+                row.append("区间外拟合情景未经验证，不作为预测")
+        window = scope.get("observation_window")
+        if isinstance(window, dict):
+            start, end = window.get("start"), window.get("end")
+            if isinstance(start, str) and isinstance(end, str):
+                try:
+                    start_day, end_day = date.fromisoformat(start), date.fromisoformat(end)
+                except ValueError:
+                    pass
+                else:
+                    if start_day <= end_day:
+                        row.append(f"回执观测窗口 {start_day.isoformat()}—{end_day.isoformat()}")
+        denominators = scope.get("denominators")
+        if isinstance(denominators, dict):
+            for key in ("source_rows", "complete_case_rows", "paired_sample_size", "excluded_unpaired_units", "aligned_rows"):
+                value = denominators.get(key)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    row.append(f"{key}={value}（回执字段）")
+        if scope.get("unit_status") == "not_confirmed":
+            row.append("单位未确认，不换算为百分比或币种")
+        if scope.get("inference_performed") is False:
+            row.append("该回执未证实统计推断")
+        if len(row) > 1:
+            scope_lines.append("；".join(row) + "。")
+    if scope_lines:
+        sections.append("回执计算边界（不替代指标结论）：\n" + "\n".join(scope_lines))
+    projection = packet.get("offline_trust_projection")
+    if isinstance(projection, dict):
+        chart_lines = [
+            f"- [[chart:{chart['path']}]]（已创建产物，不证明图中分析结论）"
+            for chart in projection.get("charts", [])
+            if isinstance(chart, dict) and chart.get("status") == "artifact_only"
+        ]
+        if chart_lines:
+            sections.append("当前会话图表产物：\n" + "\n".join(chart_lines))
+        hypothesis_lines = [
+            f"- 假设 `{item['hypothesis_id']}`：{item['status']}；"
+            f"支持证据 {', '.join(item.get('supporting_evidence_ids') or []) or '无'}；"
+            f"反证 {', '.join(item.get('conflicting_evidence_ids') or []) or '无'}。"
+            for item in projection.get("hypotheses", [])
+            if isinstance(item, dict) and item.get("hypothesis_id") and item.get("status")
+        ]
+        if hypothesis_lines:
+            sections.append("竞争假设关系审计（不等于业务结论）：\n" + "\n".join(hypothesis_lines))
     gap_lines: list[str] = []
     for group in packet.get("omitted_groups", []):
         if (isinstance(group, dict) and group.get("reason") == "budget"

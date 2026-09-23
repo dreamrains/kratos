@@ -5,7 +5,10 @@ import json
 
 from data_agent.agent.publication_audit import simulate_shadow_actions, validate_shadow_audit
 from data_agent.agent.publication_synthesis import render_trusted_core_preview
-from data_agent.agent.publication_synthesis import parse_answer_bindings
+from data_agent.agent.publication_synthesis import (
+    build_publication_packet, parse_answer_bindings, publication_contract,
+)
+from data_agent.agent.analysis_state import AnalysisSessionState
 
 
 def _typed_packet():
@@ -191,3 +194,72 @@ def test_offline_revision_is_only_a_claim_id_and_stale_normalization_is_ignored(
     simulated_stale = simulate_shadow_actions(packet, stale)
     assert simulated_stale["status"] == "audit_unavailable"
     assert simulated_stale["targeted_revision_claim_ids"] == []
+
+
+def test_r11_scope_preview_keeps_observation_boundary_without_future_value():
+    packet = _typed_packet()
+    packet["answer_bindings"]["blocks"] = []
+    packet["publication_scope"][0]["extrapolation_allowed"] = False
+    preview = render_trusted_core_preview(packet, packet["answer_bindings"])
+    assert "1" in preview["text"] and "7" in preview["text"]
+    assert "观测" in preview["text"] and "未经验证" in preview["text"]
+    assert "D30" not in preview["text"] and "10%" not in preview["text"]
+
+
+def test_r16_scope_preview_keeps_method_window_rows_and_unknown_unit():
+    packet = {
+        "snapshot_digest": "sha256:r16-m05", "requirements": [],
+        "sources": [{"receipt_id": "tr_m05", "tool_name": "run_python", "facts": []}],
+        "publication_scope": [{
+            "receipt_id": "tr_m05", "tool": "run_python",
+            "analysis_unit": "not_reported", "unit_status": "not_confirmed",
+            "inference_performed": False, "claim_ceiling": "descriptive",
+            "observation_window": {"start": "2026-01-01", "end": "2026-01-12"},
+            "denominators": {"source_rows": 12},
+        }],
+    }
+    preview = render_trusted_core_preview(packet, None)
+    assert "run_python" in preview["text"]
+    assert "2026-01-01" in preview["text"] and "2026-01-12" in preview["text"]
+    assert "12" in preview["text"] and "单位未确认" in preview["text"]
+    assert "未证实统计推断" in preview["text"]
+
+
+def test_scope_preview_rejects_foreign_receipt_and_tool_mismatch():
+    packet = {
+        "snapshot_digest": "sha256:scope", "requirements": [],
+        "sources": [{"receipt_id": "tr_current", "tool_name": "run_python", "facts": []}],
+        "publication_scope": [
+            {"receipt_id": "tr_old", "tool": "run_python", "unit_status": "not_confirmed"},
+            {"receipt_id": "tr_current", "tool": "forecast", "unit_status": "not_confirmed"},
+        ],
+    }
+    preview = render_trusted_core_preview(packet, None)
+    assert "tr_old" not in preview["text"]
+    assert "forecast" not in preview["text"]
+    assert "单位未确认" not in preview["text"]
+
+
+def test_scope_preview_uses_actual_packet_contract_without_promoting_raw_result():
+    result = {
+        "source_rows": 12,
+        "observation_window": {"start": "2026-01-01", "end": "2026-01-12"},
+        "claim_ceiling": "descriptive", "unit_status": "not_confirmed",
+    }
+    state = AnalysisSessionState("method-preview")
+    state.add_tool_receipt({
+        "id": "tr_method", "tool_name": "run_python",
+        "result_sha256": "sha256:result", "result_preview": "computed",
+        "publication_facts": [{"path": "source_rows", "value": "12"}],
+        "publication_contract": publication_contract("run_python", result),
+    })
+    packet = build_publication_packet(
+        state, user_input="说明观测范围和单位", substantive_tools={"run_python"},
+    )
+    preview = render_trusted_core_preview(packet, None)
+    assert "2026-01-01—2026-01-12" in preview["text"]
+    assert "source_rows=12" in preview["text"]
+    assert "单位未确认" in preview["text"]
+    assert "未证实统计推断" in preview["text"]
+    assert preview["accepted_claim_ids"] == []
+    assert all(item.get("answer_coverage") != "answered" for item in packet["requirements"])
