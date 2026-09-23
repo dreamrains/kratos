@@ -243,6 +243,26 @@ def test_cr03_matching_observed_claim_is_rendered_from_its_own_receipt():
     assert render_bound_claims(clean, packet, bindings) == "复购率：0.2（回执原始数值尺度；单位未确认）"
 
 
+def test_cr03_observed_zero_is_a_result_not_a_missing_value():
+    packet = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 0}}),
+        user_input="1. 收入", substantive_tools={"run_python"},
+    )
+    placeholder = "[[claim:claim_zero]]"
+    fact = next(item for item in packet["sources"][0]["facts"] if item["path"] == "收入.value")
+    block = {
+        "claim_id": "claim_zero", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": placeholder,
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [fact["fact_id"]], "derived_refs": [],
+    }
+    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [block]), packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert not validate_final_narrative_issues(clean, packet)
+    assert "收入：0" in render_bound_claims(clean, packet, bindings)
+
+
 def test_cr03_non_numeric_receipt_value_is_not_an_observed_numeric_answer():
     packet = build_publication_packet(
         _state_with_metrics({"复购率": {"value": "unknown"}}),
@@ -257,3 +277,33 @@ def test_cr03_non_numeric_receipt_value_is_not_an_observed_numeric_answer():
         "derived_refs": [],
     }])
     assert any(item["code"] == "invalid_observed_binding" for item in parse_answer_bindings(text, packet)[2])
+
+
+def test_cr03_derived_binding_survives_real_packet_build_and_renders_in_place():
+    state = _state_with_metrics({"留存人数": {"value": 1142.4}})
+    state.add_evidence_record({
+        "id": "ev_retained", "claim": "留存人数由人数和比率计算",
+        "tool_receipt_ids": ["tr_metrics"],
+        "measurements": [
+            {"id": "population", "value": 22400, "unit": "count", "population_scope": "new_users", "time_scope": "2026-09", "data_identity": "v1"},
+            {"id": "rate", "value": "0.051", "unit": "ratio", "population_scope": "new_users", "time_scope": "2026-09", "data_identity": "v1"},
+        ],
+        "derived_measurements": [{
+            "id": "dm_retained", "operation": "product", "operand_refs": ["population", "rate"],
+            "result": "1142.4", "unit": "count", "scope_ref": "new_users_2026_09",
+        }],
+    })
+    packet = build_publication_packet(state, user_input="1. 留存人数", substantive_tools={"run_python"})
+    placeholder = "[[claim:claim_retained]]"
+    fact = next(item for item in packet["sources"][0]["facts"] if item["path"] == "留存人数.value")
+    block = {
+        "claim_id": "claim_retained", "claim_type": "derived_metric", "status": "computed",
+        "unit_status": "not_confirmed", "exact_text": placeholder,
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [fact["fact_id"]], "derived_refs": ["dm_retained"],
+    }
+    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [block]), packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert not validate_final_narrative_issues(clean, packet)
+    assert "留存人数：1142.4" in render_bound_claims(clean, packet, bindings)

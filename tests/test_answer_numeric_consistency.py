@@ -4,6 +4,7 @@ from data_agent.agent.evidence_contracts import validate_derived_measurements
 from data_agent.agent.publication_synthesis import (
     apply_answer_binding_coverage,
     parse_answer_bindings,
+    render_bound_claims,
     validate_final_narrative_issues,
 )
 
@@ -134,3 +135,114 @@ def test_ac29_multiple_issue_classes_are_returned_together():
     }
     issues = validate_final_narrative_issues("22400人×5.1%=1.14万人。", packet)
     assert {issue["code"] for issue in issues} >= {"arithmetic_mismatch", "missing_answer_requirement"}
+
+
+def _tool_owned_derived_packet():
+    packet = _bound_packet(
+        [_measurement("population", 22400), _measurement("rate", "0.051", "ratio")],
+        _derived("product", ["population", "rate"], "1142.4", "count"),
+    )
+    packet["sources"] = [{
+        "receipt_id": "tr_result",
+        "facts": [{
+            "fact_id": "f_retained_count", "path": "留存人数.value",
+            "value": "1142.4", "unit": "unknown",
+        }],
+    }]
+    packet["evidence"][0]["tool_receipt_ids"] = ["tr_result"]
+    return packet
+
+
+def _typed_derived_text(packet):
+    placeholder = "[[claim:claim_retained_count]]"
+    return placeholder + "\n```answer-bindings\n" + json.dumps({
+        "schema_version": "answer_bindings.v1",
+        "packet_digest": packet["snapshot_digest"],
+        "blocks": [{
+            "claim_id": "claim_retained_count", "claim_type": "derived_metric",
+            "status": "computed", "unit_status": "not_confirmed",
+            "exact_text": placeholder,
+            "requirement_refs": ["rq_count"],
+            "fact_refs": ["f_retained_count"],
+            "derived_refs": ["dm_result"],
+        }],
+    }, ensure_ascii=False) + "\n```"
+
+
+def test_cr03_derived_metric_needs_tool_owned_metric_fact_and_host_rendering():
+    packet = _tool_owned_derived_packet()
+    clean, bindings, issues = parse_answer_bindings(_typed_derived_text(packet), packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert not validate_final_narrative_issues(clean, packet)
+    assert packet["requirements"][0]["answer_coverage"] == "answered"
+    assert "留存人数：1142.4" in render_bound_claims(clean, packet, bindings)
+
+
+def test_cr03_model_label_alone_cannot_make_unrelated_fact_a_derived_answer():
+    packet = _tool_owned_derived_packet()
+    packet["sources"][0]["facts"][0]["path"] = "收入.value"
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+    )
+
+
+def test_cr03_derived_result_must_match_tool_fact_and_receipt_link():
+    packet = _tool_owned_derived_packet()
+    packet["sources"][0]["facts"][0]["value"] = "999"
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+    )
+    packet = _tool_owned_derived_packet()
+    packet["evidence"][0]["tool_receipt_ids"] = []
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+    )
+
+
+def test_cr03_derived_binding_rejects_cross_version_operands_and_unit_promotion():
+    packet = _tool_owned_derived_packet()
+    packet["evidence"][0]["measurements"][1]["data_identity"] = "v2"
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+    )
+    packet = _tool_owned_derived_packet()
+    promoted = _typed_derived_text(packet).replace('"unit_status": "not_confirmed"', '"unit_status": "confirmed"')
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(promoted, packet)[2]
+    )
+
+
+def test_cr03_derived_operands_must_match_current_tool_dataset_version():
+    packet = _tool_owned_derived_packet()
+    packet["sources"][0]["data_identities"] = {"orders": {"version_id": "v2", "fingerprint": "hash_v2"}}
+    assert any(
+        issue["code"] == "invalid_derived_binding"
+        for issue in parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+    )
+    packet["sources"][0]["data_identities"]["orders"]["version_id"] = "v1"
+    assert not parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+
+
+def test_cr03_unrelated_measurement_version_does_not_block_owned_derivation():
+    packet = _tool_owned_derived_packet()
+    packet["sources"][0]["data_identities"] = {"orders": {"version_id": "v1"}}
+    packet["evidence"][0]["measurements"].append(_measurement("unrelated", 8, identity="v2"))
+    assert not parse_answer_bindings(_typed_derived_text(packet), packet)[2]
+
+
+def test_cr03_derived_zero_remains_a_computed_result():
+    packet = _tool_owned_derived_packet()
+    packet["sources"][0]["facts"][0]["value"] = 0
+    packet["evidence"][0]["measurements"][1]["value"] = 0
+    packet["evidence"][0]["derived_measurements"][0]["result"] = 0
+    clean, bindings, issues = parse_answer_bindings(_typed_derived_text(packet), packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert not validate_final_narrative_issues(clean, packet)
+    assert "留存人数：0" in render_bound_claims(clean, packet, bindings)
