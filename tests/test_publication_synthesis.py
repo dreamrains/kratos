@@ -212,6 +212,70 @@ def test_evidenced_turn_without_publication_packet_never_releases_raw_answer(mon
     assert error and "publication_packet_unavailable" in error
 
 
+def test_cr07_exhausted_revision_keeps_only_independent_verified_claims():
+    loop = AgentLoop(client=None, session_id="publication_partial_claims")
+    loop._reset_turn_tracking()
+    packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="请回答收入和复购率", substantive_tools={"run_python"},
+    )
+    loop._turn_publication_packet = packet
+    revenue, repeat = packet["requirements"]
+    fact_id = next(item["fact_id"] for item in packet["sources"][0]["facts"] if item["path"] == "收入.value")
+    visible = "[[claim:claim_revenue]]。\n复购率为20%。\n[[claim:claim_repeat]]。"
+    candidate = visible + "\n```answer-bindings\n" + json.dumps({
+        "schema_version": "answer_bindings.v1", "packet_digest": packet["snapshot_digest"],
+        "blocks": [
+            {"claim_id": "claim_revenue", "claim_type": "observed_fact", "status": "observed",
+             "exact_text": "[[claim:claim_revenue]]", "requirement_refs": [revenue["id"]],
+             "fact_refs": [fact_id], "derived_refs": []},
+            {"claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
+             "exact_text": "[[claim:claim_repeat]]", "requirement_refs": [repeat["id"]],
+             "fact_refs": [fact_id], "derived_refs": []},
+        ],
+    }, ensure_ascii=False) + "\n```"
+    first_published, first_error = loop._render_finalized_publication(candidate)
+    assert first_published is None and first_error
+    loop._turn_publication_recovery_used = True
+    published, error = loop._render_finalized_publication(candidate)
+    assert error is None
+    assert published and "收入：100" in published
+    assert "复购率" in published and "未能核验" in published
+    assert "20%" not in published
+    assert "[[claim:" not in published and "answer-bindings" not in published
+    assert packet["requirements"][1]["answer_coverage"] != "answered"
+
+
+def test_cr07_exhausted_revision_without_any_verified_claim_stays_closed():
+    loop = AgentLoop(client=None, session_id="publication_no_partial_claims")
+    loop._reset_turn_tracking()
+    loop._turn_publication_packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    loop._turn_publication_recovery_used = True
+    published, error = loop._render_finalized_publication("复购率为20%。")
+    assert published is None and error
+
+
+def test_cr07_scenario_claim_cannot_credit_an_unrelated_requirement(monkeypatch):
+    import data_agent.agent.publication_synthesis as synthesis
+
+    packet = {
+        "snapshot_digest": "sha256:current",
+        "requirements": [{"id": "rq_revenue", "label": "收入"}],
+    }
+    bindings = {"blocks": [{
+        "claim_type": "scenario_extrapolation", "exact_text": "[[claim:scenario]]",
+        "requirement_refs": ["rq_revenue"],
+    }]}
+    monkeypatch.setattr(synthesis, "render_bound_claims", lambda *_args: "宿主核验的情景表")
+    partial, _ = synthesis.render_verified_partial_answer(packet, bindings)
+    assert partial and "宿主核验的情景表" in partial
+    assert "收入" in partial and "未能核验" in partial
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
 def test_terminal_publication_rebuilds_a_ready_preview_after_late_evidence():
     loop = AgentLoop(client=None, session_id="publication_refresh")
     loop._reset_turn_tracking()

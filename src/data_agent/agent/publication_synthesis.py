@@ -2391,6 +2391,56 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
     return rendered
 
 
+def render_verified_partial_answer(
+    packet: dict[str, Any], bindings: dict[str, Any] | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """After bounded revision fails, retain only independently host-rendered claims."""
+    accepted: list[dict[str, Any]] = []
+    rendered: list[str] = []
+    covered: set[str] = set()
+    for block in (bindings or {}).get("blocks", []):
+        if block.get("claim_type") not in {"observed_fact", "derived_metric", "scenario_extrapolation"}:
+            continue
+        requirement_refs = (
+            [str(ref) for ref in block.get("requirement_refs", [])]
+            if block.get("claim_type") in {"observed_fact", "derived_metric"} else []
+        )
+        if any(ref in covered for ref in requirement_refs):
+            continue
+        try:
+            item_text = render_bound_claims(block["exact_text"], packet, {"blocks": [block]})
+        except (KeyError, TypeError, ValueError, StopIteration):
+            continue
+        if not item_text or _CLAIM_PLACEHOLDER.search(item_text):
+            continue
+        rendered.append(item_text)
+        accepted.append(block)
+        covered.update(requirement_refs)
+    if not rendered:
+        return None, None
+    gaps = []
+    for requirement in packet.get("requirements", []):
+        if not isinstance(requirement, dict):
+            continue
+        if str(requirement.get("id") or "") in covered:
+            requirement["answer_coverage"] = "answered"
+            requirement["coverage_check"] = "checked"
+            continue
+        requirement["answer_coverage"] = "unassessed"
+        requirement["coverage_check"] = "unassessed"
+        label = str(requirement.get("label") or "").strip()
+        if label:
+            gaps.append(f"- {label}：本次发布未能核验该项候选结果，未将其作为已回答事实。")
+    body = "已核验的独立结果：\n\n" + "\n\n".join(rendered)
+    if gaps:
+        body += "\n\n尚未核验的子问题：\n" + "\n".join(gaps)
+    return body, {
+        "schema_version": "answer_bindings.v1",
+        "packet_digest": packet.get("snapshot_digest"),
+        "blocks": accepted,
+    }
+
+
 def apply_answer_binding_coverage(packet: dict[str, Any], bindings: dict[str, Any] | None) -> None:
     mapped = {
         ref: block

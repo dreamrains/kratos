@@ -1974,6 +1974,7 @@ class AgentLoop:
             from data_agent.agent.publication_synthesis import (
                 parse_answer_bindings,
                 render_bound_claims,
+                render_verified_partial_answer,
                 validate_final_narrative,
             )
 
@@ -2003,6 +2004,14 @@ class AgentLoop:
                 )
                 error = "\n".join(filter(None, [error, binding_error]))
             if error:
+                if getattr(self, "_turn_publication_recovery_used", False):
+                    partial, verified_bindings = render_verified_partial_answer(packet, bindings)
+                    if partial is not None and verified_bindings is not None:
+                        packet["answer_bindings"] = verified_bindings
+                        turn_state = getattr(self.context, "turn_state", None)
+                        if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
+                            turn_state.pending_fallback_resolution = False
+                        return partial, None
                 return None, error
             # The free prose has passed its existing checks. A typed claim's
             # placeholder is now replaced at its own position by receipt-only

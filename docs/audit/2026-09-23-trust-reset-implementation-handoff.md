@@ -45,3 +45,7 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 ## 5. 派生 claim 后续检查点（Shadow 仍未启动）
 
 用户确认模型可填的 EvidenceRecord `metric/claim_key` 不能单独授权 `answered`；仅同一当前工具回执的指标 fact 身份有效。第二个插入切片已沿用 `answer_bindings.v1` 增加 `derived_metric` 的工具 fact + derived ref + 宿主复算/版本/同值检查，并在占位符原位渲染原始尺度；版本核对只覆盖该派生真正引用的操作数，不因无关测量阻断。详细 RED、退役旧门及限制见 `docs/audit/2026-09-23-trust-reset-derived-claim-slice.md`。定向五文件 189 passed；`tmp/tprb7` 在最终作用域收窄前全量离线 2869 passed、1 skipped、16 warnings、0 failed，JUnit SHA256 `52B5AE03893D2ABD388A7C250DA44A77B7FCF1139495BAF66F958D38501B85E2`，只证明前一代码快照。最终实现 `tmp/tprb8` 完整离线为 **2870 passed、1 skipped、16 warnings、0 failed**，JUnit `tests=2871/errors=0/failures=0/skipped=1`，SHA256 `C573A466350818F1AFF8722DCDDB2C45ADDE9D13015B5C4F82251060D13A15DF`，runner `provider_calls=forbidden`。这仍是 E2；未跑浏览器、真实 Provider，也未把 Shadow 接入发布。后续继续从比较/拟合及单一问题覆盖的历史正反例推进，先给 RED/结构化替代/旧门退役，再改代码。
+
+## 6. CR07 独立可信 claim 的失败后保留
+
+第三个插入切片针对“有一条错误 binding，修订一次后仍失败，正确 claim 也被全局错误吞掉”的实测 RED。只在修订额度已用尽且当前候选失败时，宿主从同快照已通过 parser 的 typed blocks 逐条重新验证/渲染；无效块与自由原文不复制，未核验子问题保持 `unassessed` 并在正文原位列出，连一个可信块都没有则继续非成功。这个边界不会增加模型调用，也不把末尾免责声明当纠错。详细历史、三联门和限制见 `docs/audit/2026-09-23-trust-reset-partial-publication-slice.md`。相关六文件 205 passed；`tmp/tprb9` 最终完整离线 **2873 passed、1 skipped、16 warnings、0 failed**，JUnit `tests=2874/errors=0/failures=0/skipped=1`，SHA256 `4054E729530292EBF93DCA89172363813E2DEE5A7E6AE59CC34F8611293B1F90`，runner `provider_calls=forbidden`。浏览器 E3、真实 Provider E4、Shadow 调度/处置仍未启动。
