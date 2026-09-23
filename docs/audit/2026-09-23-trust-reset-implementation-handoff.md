@@ -95,3 +95,9 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 发现并阻止了模型自报 `delta/method/p_value` 的升级路径：假设状态只有同指标当前 `compare_periods` 回执的 A/B/差额与日期通过既有宿主复算、与记录变化相符时才可成为描述性支持/反驳。模型伪造因果方法和显著性字段被剥离；其他工具的关系留未决。图表仅证明同会话成功产物存在，不证明图中结论。**R4 M03 六来源业务结论、M04 非闭合比较方法的关系、R16 M05 旧方法表并未被本轮自动重建**，A 的历史价值校准仍未过门；正式 99% 误放仍在待退役发布门上，不能借离线代码当已修。
 
 定向 **217 passed**。`tmp/tprb18` 为投影实现前范围切片完整离线 **2909 passed/1 skipped**，JUnit SHA256 `F95412FFFF266FA6835F56BBE0BCC755EDEBD30D9A6EC216AAFB473DF5A21AA3`；`tmp/tprb19` 在投影完成后 **2913 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `3C4812DF580B04D638FB47D6CC46E16823EEBA2B9FFE5DB5D3E5B700C76C5FF3`，但运行后又收紧了“无显式本轮 receipt IDs 不投影”。**最终 fresh `tmp/tprb20`** 为 **2913 passed/1 skipped/16 warnings/0 failures**，JUnit `tests=2914/failures=0/errors=0/skipped=1`、SHA256 `1506832913636E32A2569E7C54D46149C60B806D7865F70100704DFE3025AA18`，runner `provider_calls=forbidden`，真实 Provider initiated calls=0。E2 不等于 E3/E4，未做浏览器/真实 Provider/push/部署。下一步应做跨 R7—R21/R4/R16 的离线可信核心价值对照，明确哪些仍需结构化迁移或用户取舍；C/D 保持独立门。
+
+## 14. 防上下文失焦检查点与下一离线 RED（2026-09-24）
+
+用户要求把新进展写回主计划，避免只盯最近中断的 R4 或因上下文压缩反复做词表修补。主计划 §0.1、Phase 6 四门、§9 完成定义和历史交接边界已同步更新；完整跨历史矩阵与下个 RED/结构替代/退役目标见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md`。本次只读核对 `main@b7e1f981b395a3a5007998013422886b8958487e`、clean/ahead 60，R4 目录仍在；不把原计划 §2.3 的两份旧未跟踪文件说成现存用户 dirty。
+
+新的结构缝隙不是某一个措辞：R4 M03 历史 `synthesize_time_series` 回执有 102 facts/34 groups 和六源版本身份，但最终 packet 只选择 `record_evidence_record`，故当前可信核心即使能渲染 packet 也拿不到那些金额。此为**历史证据**，须在当前 HEAD 以同轮/同版本/后到证据回执的最小夹具先复现；若当前已闭合就不改代码。下一切片仅属 A+B 离线：先验证入包/遗漏是否保留当前综合事实与跨轮旧版本隔离，再对照 R11/R16 正例、R4 分项及无据 99% 负例；不让原始字段/模型 EvidenceRecord 标签自动成为 `answered`。正式发布路径、Shadow 调度、审计处置、E3/E4 均未获此次文档更新授权。
