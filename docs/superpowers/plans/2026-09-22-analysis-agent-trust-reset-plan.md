@@ -555,9 +555,16 @@ Phase 3 离线切片已改用来源和宿主风险证据，删除数据性质两
 
 ### Phase 4：宿主任务台账收口
 
+当前 HEAD 的复核见 `docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md`：
+R21 M02 scope 降级和 M04 未完成 task 全局阻断均已有对应修复；现有 receipt、
+publication packet 与 TaskManager 已是事后事实源，相关离线回归 214 passed。
+用户确认显式竞争假设任务仍需结构化 plan 与假设/证据关系；只是未完成 task 状态
+不能阻断独立可信 claim。当前不为路线图另建 journal 或改动产品代码；若发现当前
+HEAD 的剩余 RED，再对对应旧门做最小修复，不把历史 RED 误称为现行失败。
+
 - 仅从已发生的工具调用、`turn_receipt_ids`、analysis-state 收据和数据版本事后推导 journal；
 - journal 不产生目标、方法、步骤、未来任务、工具选择或执行顺序，禁止演化为第二 planner；
-- 模型不再承担计划 JSON 正确性；
+- 模型 plan/task JSON 不作为所有独立 claim 的全局发布许可证；显式竞争假设任务仍需原始 P5 要求的结构化 plan 和假设/证据关系；
 - claim 可独立完成、声明缺口或降级；
 - 移除“一个任务未完成导致全部已验证内容无法发布”的耦合；
 - 保留审计需要的可追踪性，不重建第二 planner。
@@ -656,7 +663,7 @@ Phase 3 离线切片已改用来源和宿主风险证据，删除数据性质两
 2. M01 是否挂起不再依赖“真实值”等自然语言 token；
 3. M02 的权威外推数值完全由 claim/回执重算和宿主渲染，不解析散文配对；
 4. M03 压缩只使用规范历史，刷新和导出不丢执行结果；
-5. 模型无需正确维护第二套 planner/task JSON 才能发布已验证 claim；
+5. 模型无需正确维护第二套 planner/task JSON 才能发布独立已验证 claim；显式竞争假设任务的结构化 plan 与假设/证据关系仍需满足原始 P5 审计要求；
 6. 高风险正文不再依靠末尾免责声明纠错；
 7. LLM 审计输出结构化 finding，不能覆盖确定性失败，不能新增事实；
 8. 审计最多一次定向修订和一次最终复核，不形成循环；
