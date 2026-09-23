@@ -6,6 +6,8 @@ from data_agent.agent.publication_synthesis import (
     extract_publication_fact_groups,
     extract_publication_facts,
     parse_answer_bindings,
+    apply_answer_binding_coverage,
+    render_bound_claims,
     update_requirement_lifecycle,
     validate_final_narrative_issues,
 )
@@ -48,7 +50,22 @@ def test_ac17_nine_items_allow_eight_answers_and_one_specific_gap():
     state = _state_with_metrics({label: {"value": index} for index, label in enumerate(labels, 1)})
     request = "\n".join(f"{index}. {label}" for index, label in enumerate(labels, 1))
     packet = build_publication_packet(state, user_input=request, substantive_tools={"run_python"})
-    answer = "。".join([f"{label}为{index}" for index, label in enumerate(labels[:8], 1)] + ["指标9缺少分母，证据不足"])
+    blocks = []
+    for index, requirement in enumerate(packet["requirements"][:8], 1):
+        fact = next(
+            fact for fact in packet["sources"][0]["facts"]
+            if fact["path"] == f"指标{index}.value"
+        )
+        blocks.append({
+            "claim_id": f"claim_metric_{index}", "claim_type": "observed_fact",
+            "status": "observed", "exact_text": f"[[claim:claim_metric_{index}]]",
+            "requirement_refs": [requirement["id"]], "fact_refs": [fact["fact_id"]],
+            "derived_refs": [],
+        })
+    visible = "。".join([block["exact_text"] for block in blocks] + ["指标9缺少分母，证据不足"])
+    answer, bindings, binding_issues = parse_answer_bindings(visible + "\n\n" + _binding(packet, blocks), packet)
+    assert not binding_issues
+    packet["answer_bindings"] = bindings
     assert not [issue for issue in validate_final_narrative_issues(answer, packet) if issue["code"] == "missing_answer_requirement"]
 
 
@@ -113,3 +130,130 @@ def test_ac21_binding_is_removed_and_stale_or_malformed_protocol_is_not_trusted(
     stale = text.replace(packet["snapshot_digest"], "sha256:old")
     assert parse_answer_bindings(stale, packet)[2][0]["code"] == "stale_answer_bindings"
     assert parse_answer_bindings(visible + "\n```answer-bindings\n{bad}\n```", packet)[2][0]["code"] == "invalid_answer_bindings_json"
+
+
+def test_cr03_unbound_number_cannot_answer_an_explicit_requirement():
+    packet = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 100}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    issues = validate_final_narrative_issues("复购率为20%。", packet)
+    assert any(item["code"] == "missing_answer_requirement" for item in issues)
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
+def test_cr03_gap_marker_cannot_launder_an_unbound_number():
+    packet = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 100}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    issues = validate_final_narrative_issues("复购率为20%，缺少分母。", packet)
+    assert any(item["code"] == "missing_answer_requirement" for item in issues)
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
+def test_cr03_later_gap_cannot_launder_an_earlier_numeric_claim():
+    packet = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 100}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    issues = validate_final_narrative_issues("复购率为20%。复购率缺少分母，证据不足。", packet)
+    assert any(item["code"] == "unbound_requirement_numeric" for item in issues)
+
+
+def test_cr03_valid_bound_claim_does_not_exempt_a_second_raw_number():
+    packet = build_publication_packet(
+        _state_with_metrics({"复购率": {"value": 0.2}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    placeholder = "[[claim:claim_repeat]]"
+    visible = placeholder + "。复购率另有40%的结果。"
+    text = visible + "\n\n" + _binding(packet, [{
+        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": placeholder,
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
+        "derived_refs": [],
+    }])
+    clean, bindings, binding_issues = parse_answer_bindings(text, packet)
+    assert not binding_issues
+    packet["answer_bindings"] = bindings
+    issues = validate_final_narrative_issues(clean, packet)
+    assert any(item["code"] == "unbound_requirement_numeric" for item in issues)
+
+
+def test_cr03_current_but_unrelated_fact_cannot_authorize_requirement():
+    packet = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 100}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    visible = "复购率为20%。"
+    text = visible + "\n\n" + _binding(packet, [{
+        "exact_text": visible,
+        "claim_type": "observed_fact",
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
+        "derived_refs": [],
+    }])
+    _, bindings, issues = parse_answer_bindings(text, packet)
+    assert any(item["code"] == "invalid_observed_binding" for item in issues)
+    apply_answer_binding_coverage(packet, bindings)
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
+def test_cr03_wrong_value_cannot_authorize_correct_fact_reference():
+    packet = build_publication_packet(
+        _state_with_metrics({"复购率": {"value": 0.2}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    visible = "复购率为40%。"
+    text = visible + "\n\n" + _binding(packet, [{
+        "exact_text": visible,
+        "claim_type": "observed_fact",
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
+        "derived_refs": [],
+    }])
+    _, bindings, issues = parse_answer_bindings(text, packet)
+    assert any(item["code"] == "invalid_observed_binding" for item in issues)
+    apply_answer_binding_coverage(packet, bindings)
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
+def test_cr03_matching_observed_claim_is_rendered_from_its_own_receipt():
+    packet = build_publication_packet(
+        _state_with_metrics({"复购率": {"value": 0.2}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    placeholder = "[[claim:claim_repeat]]"
+    text = placeholder + "\n\n" + _binding(packet, [{
+        "claim_id": "claim_repeat",
+        "claim_type": "observed_fact",
+        "status": "observed",
+        "exact_text": placeholder,
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
+        "derived_refs": [],
+    }])
+    clean, bindings, issues = parse_answer_bindings(text, packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert not validate_final_narrative_issues(clean, packet)
+    assert packet["requirements"][0]["answer_coverage"] == "answered"
+    assert render_bound_claims(clean, packet, bindings) == "复购率：0.2（回执原始数值尺度；单位未确认）"
+
+
+def test_cr03_non_numeric_receipt_value_is_not_an_observed_numeric_answer():
+    packet = build_publication_packet(
+        _state_with_metrics({"复购率": {"value": "unknown"}}),
+        user_input="1. 复购率", substantive_tools={"run_python"},
+    )
+    placeholder = "[[claim:claim_repeat]]"
+    text = placeholder + "\n\n" + _binding(packet, [{
+        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": placeholder,
+        "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [packet["sources"][0]["facts"][0]["fact_id"]],
+        "derived_refs": [],
+    }])
+    assert any(item["code"] == "invalid_observed_binding" for item in parse_answer_bindings(text, packet)[2])

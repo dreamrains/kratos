@@ -3,12 +3,14 @@ from data_agent.agent.loop import AgentLoop
 from data_agent.agent.publication_synthesis import (
     build_publication_packet,
     extract_publication_facts,
+    parse_answer_bindings,
     render_publication_receipt_markdown,
     render_verified_appendix,
     validate_final_narrative,
     validate_final_narrative_issues,
 )
 from datetime import date, timedelta
+import json
 
 import pytest
 
@@ -184,6 +186,32 @@ def test_terminal_publication_prepares_the_packet_without_waiting_for_wrap_up():
     assert loop.context.analysis_state.publication_packets[-1]["status"] == "ready"
 
 
+def test_publication_validator_failure_never_releases_original_candidate(monkeypatch):
+    import data_agent.agent.publication_synthesis as synthesis
+
+    loop = AgentLoop(client=None, session_id="publication_validator_failure")
+    loop._reset_turn_tracking()
+    loop._turn_publication_packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="请回答复购率", substantive_tools={"run_python"},
+    )
+    monkeypatch.setattr(synthesis, "validate_final_narrative", lambda *_args: 1 / 0)
+    candidate = "复购率为20%，但没有任何复购回执。"
+    published, error = loop._render_finalized_publication(candidate)
+    assert published is None
+    assert error and "publication_render_error" in error
+
+
+def test_evidenced_turn_without_publication_packet_never_releases_raw_answer(monkeypatch):
+    loop = AgentLoop(client=None, session_id="publication_packet_failure")
+    loop._reset_turn_tracking()
+    monkeypatch.setattr(loop, "_has_publishable_turn_evidence", lambda: True)
+    monkeypatch.setattr(loop, "_prepare_publication_packet", lambda *_args, **_kwargs: None)
+    published, error = loop._render_terminal_publication("请回答复购率", "复购率为20%。")
+    assert published is None
+    assert error and "publication_packet_unavailable" in error
+
+
 def test_terminal_publication_rebuilds_a_ready_preview_after_late_evidence():
     loop = AgentLoop(client=None, session_id="publication_refresh")
     loop._reset_turn_tracking()
@@ -201,12 +229,27 @@ def test_terminal_publication_rebuilds_a_ready_preview_after_late_evidence():
         "limitations": [],
     })
 
-    published, error = loop._render_terminal_publication(
-        "分析收入和复购率", "收入为100，复购率为20%。",
-    )
+    candidate_packet = loop._prepare_publication_packet("分析收入和复购率", persist=False)
+    blocks = []
+    for index, (receipt_id, label) in enumerate(((early_id, "收入"), (late_id, "复购率")), 1):
+        source = next(item for item in candidate_packet["sources"] if item["receipt_id"] == receipt_id)
+        fact = next(item for item in source["facts"] if item["path"] == "value")
+        requirement = next(item for item in candidate_packet["requirements"] if item["label"] == label)
+        blocks.append({
+            "claim_id": f"claim_metric_{index}", "claim_type": "observed_fact",
+            "status": "observed", "exact_text": f"[[claim:claim_metric_{index}]]",
+            "requirement_refs": [requirement["id"]], "fact_refs": [fact["fact_id"]],
+            "derived_refs": [],
+        })
+    answer = "，".join(block["exact_text"] for block in blocks) + "。\n\n```answer-bindings\n" + json.dumps({
+        "schema_version": "answer_bindings.v1", "packet_digest": candidate_packet["snapshot_digest"],
+        "blocks": blocks,
+    }, ensure_ascii=False) + "\n```"
+    published, error = loop._render_terminal_publication("分析收入和复购率", answer)
 
     assert error is None
     assert published
+    assert "收入：100" in published and "复购率：0.2" in published
     final = loop.context.analysis_state.publication_packets[-1]
     assert final["phase"] == "final"
     assert final["snapshot_digest"] != preview["snapshot_digest"]
@@ -393,15 +436,37 @@ def test_explicit_subquestion_requires_visible_result_or_specific_gap():
 
     assert [item["label"] for item in packet["requirements"]] == ["收入", "复购率"]
     missing = validate_final_narrative_issues("收入为100元。", packet)
-    complete = validate_final_narrative_issues("收入为100元，复购率为20%。", packet)
-    explicit_gap = validate_final_narrative_issues("收入为100元；复购率因缺少用户分母而无法计算。", packet)
+    blocks = []
+    for index, requirement in enumerate(packet["requirements"], 1):
+        fact = next(item for item in packet["sources"][0]["facts"] if item["path"] == f"{requirement['label']}.value")
+        blocks.append({
+            "claim_id": f"claim_metric_{index}", "claim_type": "observed_fact",
+            "status": "observed", "exact_text": f"[[claim:claim_metric_{index}]]",
+            "requirement_refs": [requirement["id"]], "fact_refs": [fact["fact_id"]], "derived_refs": [],
+        })
+    complete_text = "，".join(block["exact_text"] for block in blocks)
+    bound_complete = complete_text + "\n```answer-bindings\n" + json.dumps({
+        "schema_version": "answer_bindings.v1", "packet_digest": packet["snapshot_digest"], "blocks": blocks,
+    }, ensure_ascii=False) + "\n```"
+    complete, bindings, binding_issues = parse_answer_bindings(bound_complete, packet)
+    assert not binding_issues
+    packet["answer_bindings"] = bindings
+    complete_issues = validate_final_narrative_issues(complete, packet)
+    gap_text = blocks[0]["exact_text"] + "；复购率因缺少用户分母而无法计算。"
+    bound_gap = gap_text + "\n```answer-bindings\n" + json.dumps({
+        "schema_version": "answer_bindings.v1", "packet_digest": packet["snapshot_digest"], "blocks": blocks[:1],
+    }, ensure_ascii=False) + "\n```"
+    explicit_gap, gap_bindings, gap_binding_issues = parse_answer_bindings(bound_gap, packet)
+    assert not gap_binding_issues
+    packet["answer_bindings"] = gap_bindings
+    gap_issues = validate_final_narrative_issues(explicit_gap, packet)
 
     assert any(
         issue["code"] == "missing_answer_requirement" and issue["span"] == "复购率"
         for issue in missing
     )
-    assert not any(issue["code"] == "missing_answer_requirement" for issue in complete)
-    assert not any(issue["code"] == "missing_answer_requirement" for issue in explicit_gap)
+    assert not any(issue["code"] == "missing_answer_requirement" for issue in complete_issues)
+    assert not any(issue["code"] == "missing_answer_requirement" for issue in gap_issues)
 
 
 def test_requirement_keyword_without_result_or_gap_is_not_complete():

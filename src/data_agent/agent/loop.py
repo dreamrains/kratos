@@ -1972,16 +1972,15 @@ class AgentLoop:
             return final_text, None
         try:
             from data_agent.agent.publication_synthesis import (
-                apply_answer_binding_coverage,
                 parse_answer_bindings,
                 render_bound_claims,
                 validate_final_narrative,
             )
 
             visible_text, bindings, binding_issues = parse_answer_bindings(final_text, packet)
+            packet.pop("answer_bindings", None)
             if bindings is not None:
                 packet["answer_bindings"] = bindings
-                apply_answer_binding_coverage(packet, bindings)
             error = validate_final_narrative(visible_text, packet)
             if error and getattr(self, "_turn_origin_revision_issued", False):
                 # Second pass after the origin revision: origin-class findings
@@ -2023,9 +2022,7 @@ class AgentLoop:
                 "Publication synthesis rendering skipped",
                 extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
             )
-            if "```answer-bindings" in final_text.lower() or "[[claim:" in final_text:
-                return None, "[publication_render_error] 结构化答案绑定未能安全验证，未发布原始候选。"
-            return final_text, None
+            return None, "[publication_render_error] 发布校验未能完成，未发布未经验证的候选正文。"
 
     def _render_terminal_publication(
         self,
@@ -2043,7 +2040,8 @@ class AgentLoop:
         """
         packet = None
         prior_packet = getattr(self, "_turn_publication_packet", None)
-        if self._has_publishable_turn_evidence() or (
+        requires_current_packet = self._has_publishable_turn_evidence()
+        if requires_current_packet or (
             isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
         ):
             # Always rebuild here.  A ready preview packet may predate late
@@ -2062,6 +2060,10 @@ class AgentLoop:
             if not error and published_text is not None and persist:
                 self._commit_publication_packet(packet, published_text)
             return published_text, error
+        if requires_current_packet or (
+            isinstance(prior_packet, dict) and prior_packet.get("status") == "ready"
+        ):
+            return None, "[publication_packet_unavailable] 本轮证据快照未能完成，未发布未经验证的候选正文。"
         return final_text, None
 
     def _maybe_replan_after_data_load(self, user_input: str) -> None:
