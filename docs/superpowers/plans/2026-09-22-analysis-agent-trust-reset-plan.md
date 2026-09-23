@@ -571,6 +571,12 @@ HEAD 的剩余 RED，再对对应旧门做最小修复，不把历史 RED 误称
 
 ### Phase 5：LLM 审计 Shadow 模式
 
+离线协议首切片见 `docs/audit/2026-09-23-trust-reset-phase5-shadow-protocol.md`：
+当前仅验证 `publication_audit.v1` 的快照/答案身份、typed M02 claim 与同 claim 的
+evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接入审计模型调度，
+未调用 Provider，也未完成全类型 claim 校准；聚焦 178 passed、full-offline 2851 passed / 1 skipped。
+不能标为完整 Shadow 验收。
+
 - 实现 `publication_audit.v1` 协议和宿主验证；
 - 默认只记录 finding，不改变用户可见发布；
 - 使用历史候选校准误删、漏检、动作和成本；
