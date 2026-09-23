@@ -514,6 +514,19 @@ split=0/保留原历史；新增聚焦测试最终为 10 项（修正前版本 1
 
 ### Phase 2：建立 claim/renderer 垂直切片，以 M02 为第一样板
 
+状态（2026-09-23）：本地垂直切片完成 E1/E2，尚未执行 E3/真实 Provider 验收。
+实现前 HEAD 基线 `cdfcc1a`；fresh full-offline `tmp/trust-reset-phase2-full-offline-1` 为
+2831 passed、1 skipped、16 warnings、0 failures，明确排除被保留但已否决的未跟踪测试；
+`provider_calls=forbidden`。不得把它升级为浏览器或自然模型结果。
+
+开工审查（2026-09-23）：须先读 `docs/audit/2026-09-23-trust-reset-phase2-cross-history-review.md`。
+该审查跨 R7—R21、R4、`2dafc69`/`bd42678` 和历史本地回归，发现现有 `render_verified_appendix()`
+只被测试调用、生产 packet 的情景字段又在 `publication_scope` 而非 renderer 所读的 `sources`。
+因此“宿主披露已进入正文”不能作为既成事实。用户已于 2026-09-23 确认：R4 旧候选用于证明旧门误拒，
+通过条件是内容等价的 typed-binding/宿主渲染版本，而非旧文本原字节绕过散文门；单位未确认时只显示
+原始数值尺度，不从列名猜百分比。实现与当前证据见上述审查第 5 节；Phase 2 已有隔离全量 E2，
+尚未完成浏览器 E3 或真实 Provider 验收。
+
 - 从现有 `answer_bindings.v1` 向后兼容扩展最小 claim 字段，不新增平行通道；
 - 保留 `blocks/exact_text/requirement_refs/fact_refs/derived_refs` 和当前宿主校验，增加 `claim_type/status/unit_status` 等 typed 状态；
 - 工期按四个增量面估算：schema/parser 兼容、M02 binding 生产、宿主 renderer、回放与旧门退役；不再估算新的传输、存储或模型协议通道；

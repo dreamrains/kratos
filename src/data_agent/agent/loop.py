@@ -1970,6 +1970,7 @@ class AgentLoop:
             from data_agent.agent.publication_synthesis import (
                 apply_answer_binding_coverage,
                 parse_answer_bindings,
+                render_bound_claims,
                 validate_final_narrative,
             )
 
@@ -2000,6 +2001,13 @@ class AgentLoop:
                 error = "\n".join(filter(None, [error, binding_error]))
             if error:
                 return None, error
+            # The free prose has passed its existing checks. A typed claim's
+            # placeholder is now replaced at its own position by receipt-only
+            # content; this is not a post-hoc disclaimer for incorrect prose.
+            try:
+                visible_text = render_bound_claims(visible_text, packet, bindings)
+            except Exception as exc:
+                return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
             # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
             # 拒答（如“无法预测 D30”）完成本轮，待解析状态随之满足。
             turn_state = getattr(self.context, "turn_state", None)
@@ -2011,6 +2019,8 @@ class AgentLoop:
                 "Publication synthesis rendering skipped",
                 extra={"extra_data": {"session_id": self.session_id, "error": str(exc)}},
             )
+            if "```answer-bindings" in final_text.lower() or "[[claim:" in final_text:
+                return None, "[publication_render_error] 结构化答案绑定未能安全验证，未发布原始候选。"
             return final_text, None
 
     def _render_terminal_publication(
