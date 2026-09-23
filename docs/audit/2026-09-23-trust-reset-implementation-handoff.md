@@ -113,3 +113,7 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 跨历史 RED、结构替代与旧门状态详见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §7。R4 M03 综合回执的 102 facts/34 groups **并无两日金额**，金额只在既有 `sources_combined` 派生数据，旧 preview 是文本、旧 EvidenceRecord 是模型自报；因此不能从回执元数据直接称六源数值已保留。新的 `offline_workspace` 参数仅用于默认关闭的离线 packet，须显式选择该综合回执，逐一核对六源和派生数据的当前 identity、父版本及派生帧实际指纹，再从现有派生帧读取恰好两日的逐源值并用 Decimal 复算变化。单位未确认，首日为零则百分比不适用；不跨源合计，不标记 `answered`。无 workspace、漏选、旧源版本、派生版本错配或伪造身份都不投影；此数据进入同一 packet digest，离线包仍不能被模型 prompt 使用。
 
 初始三项 RED 为未支持 `offline_workspace`；最终三文件定向 **21 passed**。fresh `tmp/tprb23` 全量离线 **2918 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `4D7B0B628E445EA60C09393B46519CD97B155D4D615C2F590F2EE7192B4B55F2`，runner `provider_calls=forbidden`，真实 Provider initiated 0。正式发布、AgentLoop、Shadow C、处置 D、E3/E4 均未改变。下一阶段仍须校准 R11/R16 的正确解释/方法价值、R4 M04 非闭合关系与有效 binding 旁无据 99% 的误放；不能把这个特例表格升格为 A 门完成。
+
+## 17. 跨历史反查后避免“专用表格循环”
+
+R16 完整批次 M05 已通过，但其 `transform_data(group_aggregate)` 回执只有派生数据集名/列名/行数等元数据，旧终局 packet 只有两条 facts=0 的 `preview_data`。这与 R4 M03“已生成结果在 workspace、发布包没有数值”的根型相似；继续为每个工具写一张特殊离线表会使重置退化为另一类逐例补丁。具体只读证据与下一通用派生快照契约建议见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §8。这个建议还没有代码或正式发布授权；下一实施切片先和用户校准通用边界、跨历史正反 RED 与旧门退役，再决定是否扩展 A+B。现有六源预览维持默认关闭，不能被误读为 R16 方法语义或 CR03/CR04 一般完成。

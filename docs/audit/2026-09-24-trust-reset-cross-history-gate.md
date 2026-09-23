@@ -56,3 +56,9 @@ RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均
 预览原位显示每源日期、原始尺度金额、绝对/相对变化、源/有效行数及单位未确认，并标注“描述性预览，不自动授权已回答”；`accepted_claim_ids=[]`。这仍未给出用户子问题到 claim 的确定性绑定，也未恢复 R16 的方法解释或 M04 非闭合假设关系。**旧门尚未退役**：正式完整候选仍可能放行无绑定 99%；离线 packet 仍不能进入模型 prompt，AgentLoop、正式发布与 Shadow 调度均不变。R11/R16 正例、R4 部分轨迹、R7—R21 错误单位/版本/算术仍共同构成下一默认策略校准面，不以此六源样本代表总体完成。
 
 当前三文件定向为 **21 passed**（含旧 R11/R16 边界、99%/审计动作及新增零分母/伪身份负例）。最终 fresh `tmp/tprb23` full-offline **2918 passed、1 skipped、16 warnings、0 failures**（186.00s），JUnit SHA256 `4D7B0B628E445EA60C09393B46519CD97B155D4D615C2F590F2EE7192B4B55F2`，runner `provider_calls=forbidden`；不能用前一 HEAD 的 `tmp/tprb22` 代替。真实 Provider initiated 0；E3/E4 未执行。
+
+## 8. 跨历史复核后的架构提醒：不能无限叠加专用表格
+
+同轮只读复查 **R16 完整真实批次中已通过的 M05**（`tmp/p08-real-provider-20260914-b833501-r1/sessions/58da9082dc02`）：它有 `transform_data(group_aggregate)` 的回执，事实字段仅为 operation、`rows=1`、派生数据集名和列名；旧终局 packet 的 `sources` 却仅有两条 `preview_data`、两者 `facts=0`。12/120 与方法表存在于旧自然正文和工作空间数据，不在旧 packet 的数值 fact 中。故六源专用表格虽然解决一个离线正例，却**不能单独满足** CP 的一般“结果与方法上下文保留”目标。R11 的正确 D7/无 D30 同形正例、R7—R21 的错误单位/算术/版本轨迹也不能用六源表推断已通过。
+
+下一步在增加 `transform_data` 等第二张专用表之前，应先审查一个**通用的、仍在现有 packet 内的派生结果快照契约**：仅宿主已执行工具、同轮选中的回执与 current workspace 的派生 identity/父版本/结果摘要闭合时，才将受预算约束的数值结果和方法边界作为结构化数据投影；工具专属计算规则再决定哪些 claim 能被复算和授权。它不能从自然正文、`preview_data` 文本或模型 EvidenceRecord 回填，不能重建第二 planner/账本。此处是**设计建议，尚未实现或获准切正式路径**；在讨论和跨历史 RED 前，不继续照着每次失败新增一族表格。

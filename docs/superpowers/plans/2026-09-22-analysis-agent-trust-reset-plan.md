@@ -19,6 +19,7 @@
 - 下一切片的跨历史正反矩阵、R4 M03 “综合结果存在但终局 packet 未选中”结构缝隙与测试/停止门，见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md`；该旧轨迹须在当前 HEAD 的最小化形状复现，不能预判为现行缺陷。
 - 在 `ac84dd8` 后的 A+B 小切片，当前构包器也证实 `synthesize_time_series` 被允许工具集合排除；仅在显式选中回执的默认关闭离线 packet 中纳入综合事实组，普通构包/AgentLoop 不变。RED、17 项定向与最终 fresh `tmp/tprb22` 2914 passed/1 skipped/16 warnings 见上述跨历史记录 §6。该结果只是 E2，原始字段不授权 `answered`，也不证明 R4 旧终局选择机制已全修。
 - 后续 A+B 离线数值切片发现综合回执本身只有覆盖/版本元数据、没有两日金额；只在显式 `offline_workspace` 的默认关闭离线 packet 中核对六源及派生帧当前身份和实际指纹，再读取既有 copy-on-write 派生结果复算逐源变化，不解析旧 `preview_data` 文本、不跨来源合计、不授权 `answered`。RED/GREEN 与 fresh `tmp/tprb23` 2918 passed/1 skipped 见跨历史记录 §7；AgentLoop/正式发布/Shadow 均未改变。A 的价值保留和正式误放双门仍未完成。
+- 跨历史反查 R16 **已通过** M05：`transform_data(group_aggregate)` 也只把派生数据集名、列名、行数写入旧回执，旧终局 packet 的两条 `preview_data` 均 facts=0；六源专用离线表不能据此视为一般价值保留。继续前先审查现有 packet 内的通用、身份闭合的派生结果快照契约及正反 RED，防止按工具/失败逐张补表；建议与未授权边界见跨历史记录 §8。
 
 ## 0. 本次重置要解决什么
 
