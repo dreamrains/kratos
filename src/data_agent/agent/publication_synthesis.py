@@ -1033,6 +1033,7 @@ def publication_packet_prompt(packet: dict[str, Any]) -> str:
         "Do not expose receipt ids, internal paths, raw JSON, or Python object representations unless the user explicitly asks for technical audit details.\n"
         "For every hard item in requirements, answer it with a supported result or state its specific evidence gap in the visible narrative. A single_direct_candidate with metric_identity_status=unassessed is only a request-side proposal: do not invent a metric result or turn an open request into a mandatory numeric gap. Respect publication_scope: distinguish row/user/calendar denominators, do not infer a currency from an unlabeled amount, do not extrapolate beyond observed windows, and never claim statistical insignificance without a performed test. Missing values have unknown impact unless a justified bound was computed.\n"
         "For an explicit requirement answered by a directly matching observed fact, place a unique [[claim:claim_ID]] placeholder in the visible answer and append one fenced answer-bindings JSON block. Use schema_version answer_bindings.v1, this packet binding_digest as packet_digest, and a block with claim_id, claim_type=observed_fact, status=observed, exact_text equal to the placeholder, one requirement_ref, one matching fact_ref, and derived_refs=[]. For a derived_metric use status=computed, unit_status=not_confirmed, one requirement_ref, one matching tool fact_ref and one derived_ref from evidence linked to the same receipt; the tool fact's numeric value must equal the host-recomputed derivation. The host renders the receipt's raw value and discloses unconfirmed units in place. If the tool fact path cannot directly identify the requested metric, state the specific gap instead of claiming that a nearby number or model-authored EvidenceRecord label answers it. For other supported optional bindings use the same answer_bindings.v1 block; only cite ids present in this packet. This block is internal and will be removed before display.\n"
+        "For a descriptive compare_periods result in sources, you may place a unique claim placeholder and bind claim_type=comparison, status=computed, unit_status=not_confirmed, receipt_ref of that source, requirement_refs=[], derived_refs=[], and three ordered fact_refs for one metric's metrics.<metric>.period_a, period_b, and diff. Only use facts from the same current receipt and its publication_scope windows. The host checks the difference and renders the table in place; do not write the comparison numbers, dates, percent change, significance, or causal explanation as unbound prose. If the closed comparison shape is unavailable, leave it unassessed.\n"
         f"{scenario_binding_note}"
         "A descriptive curve cannot establish individual behavior, product genre, stable core users, or intervention ROI. Excluding zero values is a calculation policy, not proof they are unobserved. Date-column coverage is not the data collection cutoff. Do not call selection bias small without a computed bound.\n"
         f"{payload}\n"
@@ -1985,6 +1986,10 @@ _OBSERVED_BINDING_FIELDS = {
     "fact_refs", "derived_refs",
 }
 _DERIVED_BINDING_FIELDS = _OBSERVED_BINDING_FIELDS | {"unit_status"}
+_COMPARISON_BINDING_FIELDS = {
+    "claim_id", "exact_text", "claim_type", "status", "unit_status",
+    "receipt_ref", "requirement_refs", "fact_refs", "derived_refs",
+}
 
 
 def _bound_metric_fact(
@@ -2122,6 +2127,106 @@ def _derived_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str
     fact_value = _decimal_number("" if raw_value is None else str(raw_value))
     if result is None or fact_value is None or result != fact_value:
         return "工具回执数值与派生复算结果不一致。"
+    return None
+
+
+def _comparison_binding_values(
+    block: dict[str, Any], packet: dict[str, Any],
+) -> tuple[str, list[str], list[int], list[Decimal]] | None:
+    """Resolve one executed compare_periods metric and its two time windows."""
+    if set(block) != _COMPARISON_BINDING_FIELDS:
+        return None
+    claim_id = block.get("claim_id")
+    if not isinstance(claim_id, str) or not _SCENARIO_CLAIM_ID.fullmatch(claim_id):
+        return None
+    if (
+        block.get("exact_text") != f"[[claim:{claim_id}]]"
+        or block.get("claim_type") != "comparison"
+        or block.get("status") != "computed"
+        or block.get("unit_status") != "not_confirmed"
+        or block.get("requirement_refs") != []
+        or block.get("derived_refs") != []
+    ):
+        return None
+    receipt_ref = block.get("receipt_ref")
+    fact_refs = block.get("fact_refs")
+    if (
+        not isinstance(receipt_ref, str) or not receipt_ref
+        or not isinstance(fact_refs, list) or len(fact_refs) != 3
+        or len(set(str(ref) for ref in fact_refs)) != 3
+    ):
+        return None
+    sources = [
+        source for source in packet.get("sources", [])
+        if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
+        and source.get("tool_name") == "compare_periods"
+    ]
+    scopes = [
+        scope for scope in packet.get("publication_scope", [])
+        if isinstance(scope, dict) and scope.get("receipt_id") == receipt_ref
+        and scope.get("tool") == "compare_periods"
+        and scope.get("unit_status") == "not_confirmed"
+    ]
+    if len(sources) != 1 or len(scopes) != 1:
+        return None
+    source, scope = sources[0], scopes[0]
+    facts = [
+        next((fact for fact in source.get("facts", []) if isinstance(fact, dict)
+              and fact.get("fact_id") == ref), None)
+        for ref in fact_refs
+    ]
+    if any(fact is None for fact in facts):
+        return None
+    match = re.fullmatch(r"metrics\.(.+)\.period_a", str(facts[0].get("path") or ""))
+    if not match:
+        return None
+    metric = match.group(1)
+    if len(metric) > 120 or any(ord(character) < 32 for character in metric):
+        return None
+    if [fact.get("path") for fact in facts[1:]] != [
+        f"metrics.{metric}.period_b", f"metrics.{metric}.diff",
+    ]:
+        return None
+    values = [
+        _decimal_number("" if fact.get("value") is None else str(fact.get("value")))
+        for fact in facts
+    ]
+    if any(value is None or not value.is_finite() for value in values):
+        return None
+    if abs(values[1] - values[0] - values[2]) > Decimal("0.00015"):
+        # compare_periods rounds all three fields to four decimal places.
+        return None
+    windows = scope.get("observation_window")
+    denominators = scope.get("denominators")
+    if not isinstance(windows, dict) or not isinstance(denominators, dict):
+        return None
+    labels: list[str] = []
+    day_counts: list[int] = []
+    for period in ("period_a", "period_b"):
+        bounds = windows.get(period)
+        days = denominators.get(period)
+        if (
+            not isinstance(bounds, list) or len(bounds) != 2
+            or not all(isinstance(item, str) for item in bounds)
+            or not isinstance(days, dict)
+            or isinstance(days.get("day_count"), bool)
+            or not isinstance(days.get("day_count"), int)
+        ):
+            return None
+        try:
+            first, last = (date.fromisoformat(item) for item in bounds)
+        except ValueError:
+            return None
+        if first > last or days["day_count"] != (last - first).days + 1:
+            return None
+        labels.append(f"{first.isoformat()}—{last.isoformat()}")
+        day_counts.append(days["day_count"])
+    return metric, labels, day_counts, values
+
+
+def _comparison_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str | None:
+    if _comparison_binding_values(block, packet) is None:
+        return "时段比较必须绑定同一当前回执的同一指标 A/B/差额、可复算数值及完整时间范围。"
     return None
 
 
@@ -2304,11 +2409,12 @@ def parse_answer_bindings(
                 "reason": "答案绑定片段不唯一，或引用不属于当前快照。",
             })
             continue
-        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric"}:
+        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison"}:
             claim_type = block.get("claim_type")
             problem = (
                 _observed_binding_issue(block, packet) if claim_type == "observed_fact"
                 else _derived_binding_issue(block, packet) if claim_type == "derived_metric"
+                else _comparison_binding_issue(block, packet) if claim_type == "comparison"
                 else _scenario_binding_issue(block, packet)
             )
             claim_id = str(block.get("claim_id") or "")
@@ -2319,6 +2425,7 @@ def parse_answer_bindings(
                     "code": (
                         "invalid_observed_binding" if claim_type == "observed_fact"
                         else "invalid_derived_binding" if claim_type == "derived_metric"
+                        else "invalid_comparison_binding" if claim_type == "comparison"
                         else "invalid_scenario_binding"
                     ),
                     "span": exact[:80] or str(index),
@@ -2329,6 +2436,7 @@ def parse_answer_bindings(
             fields = (
                 _OBSERVED_BINDING_FIELDS if claim_type == "observed_fact"
                 else _DERIVED_BINDING_FIELDS if claim_type == "derived_metric"
+                else _COMPARISON_BINDING_FIELDS if claim_type == "comparison"
                 else _SCENARIO_BINDING_FIELDS
             )
             accepted.append({key: block[key] for key in fields if key in block})
@@ -2341,7 +2449,7 @@ def parse_answer_bindings(
     }
     bound_placeholders = {
         block["exact_text"] for block in accepted
-        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric"}
+        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison"}
     }
     for placeholder in _CLAIM_PLACEHOLDER.findall(clean):
         if placeholder not in bound_placeholders:
@@ -2361,6 +2469,26 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
     """
     rendered = str(text or "")
     for block in (bindings or {}).get("blocks", []):
+        if block.get("claim_type") == "comparison":
+            resolved = _comparison_binding_values(block, packet)
+            if resolved is None:
+                raise ValueError("时段比较的事实或范围在渲染前失效")
+            metric, windows, day_counts, values = resolved
+            safe_metric = metric.replace("\\", "\\\\").replace("|", "\\|")
+            delta = values[1] - values[0]
+            lines = [
+                f"{safe_metric}：已观察两时段的原始数值比较（单位未确认）",
+                "",
+                "| 时段 | 回执日期范围 | 日历天数 | 原始数值 |",
+                "|---|---|---:|---:|",
+                f"| 基准期 | {windows[0]} | {day_counts[0]} | {values[0]} |",
+                f"| 对比期 | {windows[1]} | {day_counts[1]} | {values[1]} |",
+                f"| 差额（对比期−基准期） | — | — | {delta} |",
+            ]
+            if day_counts[0] != day_counts[1]:
+                lines.append("两区间天数不同；这里仅比较原始数值，不代表日均变化。")
+            rendered = rendered.replace(block["exact_text"], "\n".join(lines), 1)
+            continue
         if block.get("claim_type") == "derived_metric":
             problem = _derived_binding_issue(block, packet)
             if problem:
@@ -2450,7 +2578,7 @@ def render_verified_partial_answer(
     rendered: list[str] = []
     covered: set[str] = set()
     for block in (bindings or {}).get("blocks", []):
-        if block.get("claim_type") not in {"observed_fact", "derived_metric", "scenario_extrapolation"}:
+        if block.get("claim_type") not in {"observed_fact", "derived_metric", "comparison", "scenario_extrapolation"}:
             continue
         requirement_refs = (
             [str(ref) for ref in block.get("requirement_refs", [])]
