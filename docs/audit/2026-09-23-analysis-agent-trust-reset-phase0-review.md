@@ -1,7 +1,7 @@
 # 中文数据分析 Agent 可信发布架构重置：Phase 0 证据复核与实施交接
 
 日期：2026-09-23
-状态：Phase 0 completed；等待用户确认后才可进入 Phase 1
+状态：Phase 0 completed；用户已确认继续，Phase 1 canonical history 实施中
 仓库：`D:\Project\Daily\data-agent`
 本次核验 HEAD：`main@5176c41103ee1b1c77b4b44331d8225fb49890be`
 
@@ -399,4 +399,113 @@ Phase 1 退出前再跑相关子集和隔离 full-offline。Provider-disabled �
 - 现有未提交重构文档/测试包含明确被本轮否决的关键词补丁和“附录兜底正文错误”路径，不能实施；
 - Phase 1 应保持极小：只建立 canonical history snapshot、revision/hash、完整 turn 边界和 CAS，不触碰发布语义或其他阶段。
 
-等待用户确认本文件及上述计划修订后，才开始 Phase 1 RED；确认不构成 Provider、push 或部署授权。
+用户已在后续消息中确认可以吸收补充并继续推进。该确认只授权本地计划修订和后续本地实施；
+不构成 Provider、push 或部署授权。
+
+## 12. 2026-09-23 用户补充复核与计划校准
+
+### 12.1 `answer_bindings.v1` 是 Phase 2 的既有种子
+
+用户指出 claim 通道不应从零新建。复核确认：
+
+- `publication_synthesis.py` 已提示模型输出 `answer_bindings.v1`；
+- 当前 parser 已校验 terminal binding block、packet digest、`exact_text` 唯一性以及
+  `requirement_refs/fact_refs/derived_refs` 是否属于当前 packet；
+- `test_answer_content_coverage.py` 与 `test_answer_numeric_consistency.py` 已覆盖 schema、旧快照、
+  exact-text 和数值一致性；
+- R4 M03 transcript 的终稿确实自发输出了 `schema_version=answer_bindings.v1`、blocks、exact_text、
+  fact_refs 和 derived_refs。
+
+因此 Phase 2 应从该协议向后兼容扩展 `claim_type/status/unit_status` 等 typed 字段，不新建平行 claim
+通道。这样会显著缩小 Phase 2：重点变成 schema extension、M02 typed claim、宿主重算/renderer 和旧门退役，
+而不是重新设计模型—宿主传输协议。
+
+需要保留一个精确证据边界：R4 transcript 中的原始块使用通用 `json` fence 和 `snapshot_digest` 字段，
+而当前 parser 契约使用 `answer-bindings` fence 和 `packet_digest`。现有落盘材料足以证明“模型会生成该结构，
+代码已有校验通道”，但不能仅凭 transcript 断言该原始块已按当前 parser 规范化接纳。Phase 2 首个 RED 应把
+R4 原始终稿、host parser 和最终 packet 中的 normalized binding 三者固定为同一回放契约。
+
+### 12.2 Phase 4 journal 只做事后簿记
+
+接受用户提出的硬边界。Phase 4 复用 `turn_receipt_ids`、analysis-state receipts 以及 `4a6493f`/
+`89623e6` 的 plan-authority/互斥基础，但 journal 只记录：
+
+- 已执行的工具调用；
+- 已产生且可绑定的收据；
+- 数据版本与 scope；
+- 对应 claim 已闭合、未闭合、降级或 gap 的状态。
+
+journal 不生成目标、方法、步骤、未来任务、下一工具或执行顺序；也不能因为自己推导出未闭合项就授权新执行。
+一旦承担这些职责，就已经成为第二 planner，必须停止该设计。
+
+### 12.3 历史测试背景已扩展为累积证据
+
+后续不能只用 2812 项最近 full-offline 和 R4 不完整批次解释系统。已把仓库内可追溯测试史纳入背景：
+
+| 时段 | 代表性收据 | 对本次重置的意义 |
+|---|---|---|
+| 2026-08-25 Slice 0—7 | 2181 passed/11 skipped；多组 50—446 项切片回归；本地 Flask/浏览器、Workbench、导出；同时保留 Slice 3 全量挂起和旧 Web collection 失败 | 说明功能面和历史恢复面很宽，Phase 1 不能只过新测试 |
+| 2026-08-27/28 | 6 failed/2216 passed 后修复为 2342 passed/9 skipped；Provider-disabled 浏览器链路 | 说明 Windows checkout、runner 和浏览器生命周期都曾产生非语义失败 |
+| 2026-09-06 | 2393 passed/3 skipped 的隔离 full-offline | 建立 fail-closed Provider-disabled 回归入口 |
+| 2026-09-08—20 | 2585、2569、2644、2713 等 full-offline；129、268、285+、301 等定向；B/IC/CONTENT 本地浏览器矩阵 | 说明内容、确认、导出和 reply binding 都是 canonical-history 回归消费者 |
+| P08 R10—R21 | 多轮真实 Provider 完整失败或不完整批次 | 形成散文误拒、结构化状态、任务权威、单位、上传和终态的真实失败库 |
+| 2026-09-19—22 | 2708、2717、2812 等 full-offline；R4 82 次已调度调用 | 最近绿灯仍未阻止 R4 暴露 M01/M02/M03，证明测试数量不能替代结构正确性 |
+
+历史绿灯只用于确定回归面，不平移为当前 HEAD 证据；历史失败也不得被后续局部绿灯覆盖。每阶段仍需
+当前源码的 RED、定向 GREEN、隔离 full-offline 和相应浏览器/Provider 层级证据。
+
+## 13. Phase 1 启动记录
+
+实施前固定的三项边界：
+
+| 项目 | 已冻结内容 |
+|---|---|
+| RED | R4 M03 transcript 27 条消息，旧 `_find_safe_boundary(..., 10)` 实测为 1，early 只有用户请求 |
+| 结构化替代 | `CanonicalHistorySnapshot(messages, revision, sha256, message_count)`；压缩 input identity；写回 CAS |
+| 退役旧行为 | 内存直接覆写、message-count 比例 merge、单个用户轮内切分、无 revision/hash 写回 |
+
+当前已新增聚焦 pytest `tests/test_canonical_history_compaction.py`，并完成一次实现前直接断言 RED：
+
+```text
+message_count=27
+old_split=1
+has_canonical_snapshot=False
+has_cas_conflict=False
+```
+
+仓库当前 `.venv` 已变为 Python 3.14 且未安装 pytest；现有隔离 Python 3.12 与桌面运行时也没有 pytest。
+这属于测试宿主缺失，不能记作产品测试失败或通过，也不得通过联网安装依赖绕过环境边界。实现过程可以先运行
+compileall 和同解释器纯函数/临时目录检查，正式 pytest/full-offline 收据必须在既有 runner 环境恢复后补齐。
+
+### 13.1 当前实现与临时验证结果
+
+已完成的最小实现面：
+
+- `history.py`：增加 canonical JSON+JSONL snapshot、内容 SHA-256、单调 revision、进程内历史锁、原子单文件写入和 revision/hash CAS；
+- `history.py`：merge protection 改为精确 hash/prefix 判定；相同长度但内容不同不再由内存覆盖磁盘；legacy 会话首次安全写入时补 identity；
+- `compact.py`：只允许在新 user turn 前分割；单个长工具轮找不到完整早期轮时保留全部历史，不调用 summary LLM；
+- `compact.py`：transcript sidecar 记录 input revision/hash、message count 和真实 split index；
+- Web `/api/compact`：从 canonical snapshot 而非 manager cache 读取；写回前 CAS；冲突返回 409，保留并发新消息且不污染 compact state；
+- `agent_manager.py`：从磁盘恢复后同步 `_last_jsonl_idx`，避免把已恢复历史再次当作新增 JSONL 尾部；
+- 新增聚焦测试覆盖 R4 M03、JSON+JSONL、同长度 hash 差异、append revision、CAS、legacy 升级、divergent cache、Web canonical read 和 Web 冲突。
+
+静态与直接离线检查：
+
+```text
+compileall: PASS
+R4 M03 messages: 27
+new split_index: 0
+summary LLM calls: 0
+append revision: 2
+safe-save revision: 3
+stale CAS write: rejected
+temporary Web compact: 200
+temporary Web concurrent compact: 409
+```
+
+第一次临时检查因 transcript 目录没有随 history 根一起重定向，在仓库 `sessions/m03` 生成了两份本轮测试文件。
+已核对精确路径后删除这两个文件及其空目录；它们不可恢复但可由同一测试重建，未触碰其他 session。
+随后测试同时重定向 history、transcripts 和 tool outputs，全部产物只存在于系统临时目录并在退出时清理。
+
+Phase 1 尚不能标为完成：正式 pytest 定向集合、既有相关回归和隔离 full-offline 仍因当前环境没有 pytest
+而未运行。恢复既有 runner 后必须先运行这些测试；在此之前不进入 Phase 2，也不提交产品实现为完成态。
