@@ -5,6 +5,7 @@ from data_agent.agent.publication_synthesis import (
     extract_publication_facts,
     parse_answer_bindings,
     render_publication_receipt_markdown,
+    render_verified_partial_answer,
     render_verified_appendix,
     validate_final_narrative,
     validate_final_narrative_issues,
@@ -210,6 +211,51 @@ def test_evidenced_turn_without_publication_packet_never_releases_raw_answer(mon
     published, error = loop._render_terminal_publication("请回答复购率", "复购率为20%。")
     assert published is None
     assert error and "publication_packet_unavailable" in error
+
+
+def test_single_direct_metric_without_matching_receipt_stays_unassessed_without_host_gap():
+    loop = AgentLoop(client=None, session_id="publication_single_metric_gap")
+    loop._reset_turn_tracking()
+    packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="请回答复购率", substantive_tools={"run_python"},
+    )
+    loop._turn_publication_packet = packet
+    published, error = loop._render_finalized_publication("当前无法确定复购率。")
+    assert error is None
+    assert published == "当前无法确定复购率。"
+    assert packet["requirements"][0]["answer_coverage"] == "unassessed"
+
+
+def test_open_direct_request_for_conclusion_is_not_recast_as_missing_metric():
+    loop = AgentLoop(client=None, session_id="publication_open_conclusion")
+    loop._reset_turn_tracking()
+    packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="请给出结论", substantive_tools={"run_python"},
+    )
+    loop._turn_publication_packet = packet
+    published, error = loop._render_finalized_publication("这份数据仅能支持描述性结论。")
+    assert error is None
+    assert published == "这份数据仅能支持描述性结论。"
+
+
+def test_cr07_soft_single_candidate_is_not_listed_as_failed_hard_requirement():
+    packet = build_publication_packet(
+        _packet_state([_receipt("run_python", "tr_revenue", {"收入": {"value": 100}})]),
+        user_input="请回答收入和复购率", substantive_tools={"run_python"},
+    )
+    revenue, soft = packet["requirements"]
+    soft["origin"] = "single_direct_candidate"
+    soft["metric_identity_status"] = "unassessed"
+    fact_id = next(item["fact_id"] for item in packet["sources"][0]["facts"] if item["path"] == "收入.value")
+    partial, _ = render_verified_partial_answer(packet, {"blocks": [{
+        "claim_id": "claim_revenue", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": "[[claim:claim_revenue]]", "requirement_refs": [revenue["id"]],
+        "fact_refs": [fact_id], "derived_refs": [],
+    }]})
+    assert partial and "收入：100" in partial
+    assert "复购率" not in partial
 
 
 def test_cr07_exhausted_revision_keeps_only_independent_verified_claims():

@@ -49,3 +49,9 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 ## 6. CR07 独立可信 claim 的失败后保留
 
 第三个插入切片针对“有一条错误 binding，修订一次后仍失败，正确 claim 也被全局错误吞掉”的实测 RED。只在修订额度已用尽且当前候选失败时，宿主从同快照已通过 parser 的 typed blocks 逐条重新验证/渲染；无效块与自由原文不复制，未核验子问题保持 `unassessed` 并在正文原位列出，连一个可信块都没有则继续非成功。这个边界不会增加模型调用，也不把末尾免责声明当纠错。详细历史、三联门和限制见 `docs/audit/2026-09-23-trust-reset-partial-publication-slice.md`。相关六文件 205 passed；`tmp/tprb9` 最终完整离线 **2873 passed、1 skipped、16 warnings、0 failed**，JUnit `tests=2874/errors=0/failures=0/skipped=1`，SHA256 `4054E729530292EBF93DCA89172363813E2DEE5A7E6AE59CC34F8611293B1F90`，runner `provider_calls=forbidden`。浏览器 E3、真实 Provider E4、Shadow 调度/处置仍未启动。
+
+## 7. 单项请求、真实会话与意图识别复核
+
+用户补充提示本地真实会话及既有意图识别。本轮只读核对 `sessions/9810fe7bacf6`、`9959216b6a4a`、`8ddfa3029b15` 等不同形态，以及 `TurnIntent`/`llm_intent`：现有意图只输出粗粒度路由/歧义；`analysis_spec.metrics` 在真实会话里可为泛化 `retention` 或占位 `target_metric`，均不能担当指标身份。样本不当正确答案 oracle，也不只盯中断 R4。详细 RED、初版“请给出结论”误伤、用户第二次裁决、结构化替代与残余风险见 `docs/audit/2026-09-23-trust-reset-single-metric-intent-slice.md`。
+
+用户最终裁决仅当前工具回执的唯一精确指标身份能把单项候选升级为可硬验 requirement；无匹配或多义时 `unassessed`，不自动输出指标缺口。初版直接句式自动缺口渲染因误伤已撤销，反例保留；CR07 局部发布也不能把软候选列为失败硬项。此切片沿用现有 requirement 与 `answer_bindings.v1`，不增加意图模型调用或新的词表；定向五文件最终 **199 passed**。`tmp/tprb10` 的 2879 passed/1 skipped/16 warnings 仅证明局部发布边界再次收窄前的源码快照。最终 fresh `tmp/tprb11` 全量离线为 **2880 passed、1 skipped、16 warnings、0 failed**；JUnit `tests=2881/errors=0/failures=0/skipped=1`，SHA256 `0F35FBBAC0E71C1F9003846D5C46C742B15E8E7660B54F5F68198042C69A86BB`，runner `provider_calls=forbidden`。无同名回执时的自由散文无据数字仍是未关闭的通用 claim 发布缺口，不能把此切片记为完整 CR03/Shadow 通过。确切提交待本切片收尾后补记；E3/E4 仍未做，真实 Provider 仍需新精确冻结和显式授权。

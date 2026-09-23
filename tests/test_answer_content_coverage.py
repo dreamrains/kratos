@@ -8,6 +8,7 @@ from data_agent.agent.publication_synthesis import (
     parse_answer_bindings,
     apply_answer_binding_coverage,
     render_bound_claims,
+    extract_explicit_requirements,
     update_requirement_lifecycle,
     validate_final_narrative_issues,
 )
@@ -43,6 +44,66 @@ def test_ac16_two_explicit_requirements_cannot_be_satisfied_by_one_metric():
     )
     issues = validate_final_narrative_issues("收入为100元。", packet)
     assert any(issue["code"] == "missing_answer_requirement" and issue["span"] == "复购率" for issue in issues)
+
+
+def test_cr03_single_direct_metric_request_is_a_requirement_with_receipt_identity():
+    state = _state_with_metrics({"复购率": {"value": 0.2}})
+    ids = update_requirement_lifecycle(state, "请回答复购率", source_message_ref="msg_single")
+    assert len(ids) == 1
+    packet = build_publication_packet(
+        state, user_input="请回答复购率", substantive_tools={"run_python"}, requirement_ids=ids,
+    )
+    assert [(item["id"], item["label"]) for item in packet["requirements"]] == [(ids[0], "复购率")]
+    assert packet["requirements"][0]["metric_identity_status"] == "verified"
+    assert any(item["code"] == "missing_answer_requirement" for item in validate_final_narrative_issues("目前只给出方法说明。", packet))
+    placeholder = "[[claim:claim_repeat]]"
+    fact_id = next(item["fact_id"] for item in packet["sources"][0]["facts"] if item["path"] == "复购率.value")
+    clean, bindings, issues = parse_answer_bindings(placeholder + "\n\n" + _binding(packet, [{
+        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": placeholder, "requirement_refs": ids, "fact_refs": [fact_id], "derived_refs": [],
+    }]), packet)
+    assert not issues
+    packet["answer_bindings"] = bindings
+    assert validate_final_narrative_issues(clean, packet) == []
+    assert render_bound_claims(clean, packet, bindings) == "复购率：0.2（回执原始数值尺度；单位未确认）"
+
+
+def test_cr03_single_metric_cannot_borrow_unrelated_current_receipt():
+    state = _state_with_metrics({"收入": {"value": 100}})
+    packet = build_publication_packet(state, user_input="请回答复购率", substantive_tools={"run_python"})
+    assert [item["label"] for item in packet["requirements"]] == ["复购率"]
+    assert packet["requirements"][0]["metric_identity_status"] == "unassessed"
+    assert packet["requirements"][0]["evidence_coverage"] == "unassessed"
+    fact_id = packet["sources"][0]["facts"][0]["fact_id"]
+    _, _, binding_issues = parse_answer_bindings("[[claim:claim_repeat]]\n\n" + _binding(packet, [{
+        "claim_id": "claim_repeat", "claim_type": "observed_fact", "status": "observed",
+        "exact_text": "[[claim:claim_repeat]]", "requirement_refs": [packet["requirements"][0]["id"]],
+        "fact_refs": [fact_id], "derived_refs": [],
+    }]), packet)
+    assert any(item["code"] == "invalid_observed_binding" for item in binding_issues)
+    assert packet["requirements"][0]["answer_coverage"] != "answered"
+
+
+def test_cr03_single_direct_zero_and_ambiguous_receipts_keep_distinct_status():
+    zero = build_publication_packet(
+        _state_with_metrics({"收入": {"value": 0}}),
+        user_input="请回答收入", substantive_tools={"run_python"},
+    )
+    assert zero["requirements"][0]["metric_identity_status"] == "verified"
+    state = _state_with_metrics({"收入": {"value": 100}})
+    state.add_tool_receipt({
+        "id": "tr_second", "tool_name": "run_python", "result_sha256": "sha256:second",
+        "structured_result_sha256": "sha256:second", "result_preview": "another result",
+        "publication_facts": extract_publication_facts({"收入": {"value": 200}}, max_facts=500),
+        "publication_contract": {"schema_version": "publication_scope.v1", "tool": "run_python"},
+    })
+    ambiguous = build_publication_packet(state, user_input="请回答收入", substantive_tools={"run_python"})
+    assert ambiguous["requirements"][0]["metric_identity_status"] == "unassessed"
+
+
+def test_cr03_open_analysis_and_fitted_curve_are_not_single_metric_requirements():
+    for request in ("请分析整体情况", "拟合留存曲线并说明边界", "请比较两个渠道的表现"):
+        assert extract_explicit_requirements(request) == []
 
 
 def test_ac17_nine_items_allow_eight_answers_and_one_specific_gap():
