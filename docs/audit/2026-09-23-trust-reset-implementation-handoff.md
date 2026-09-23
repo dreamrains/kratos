@@ -75,3 +75,15 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 ## 10. 双轨离线校准：不能立即默认纯可信核心（2026-09-24）
 
 用户已确认先离线比较完整候选与现有宿主可信核心，正式默认策略仍待后续裁决。只读首轮结果见 `docs/audit/2026-09-24-trust-reset-dual-track-calibration.md`：核心剔除了“有效比较绑定＋独立无据99%”中的错误数字，并保留 typed M02 三族/AC17 八事实；AC17 模型写的“缺少分母”变成通用未核验，但该夹具**未证明分母真的缺失**，不能把它当正确内容误删。R11 正确 D7/无 D30 散文、R4 M03 六来源表/图和 M04 竞争假设正文因尚无可接纳 typed 占位符会生成空核心。R16 完整真实批次中已通过的 M05（12/120、未知量纲、方法表）也无 typed 占位符，核心为空；另三份本地旧会话同样无 typed，占格式覆盖背景而非正确性 oracle。故不能以“立刻只发 fallback”解决误放，否则造成原始价值目标偏离；下一步须先设计同一回执/packet 上可重建的**有宿主证据的**具体 gap、多来源事实/产物、假设关系与方法上下文，并继续对照跨 R7—R21 正反证据。校准本身没有改变代码或正式发布，也没有浏览器/Provider 调用。
+
+## 11. Phase 6 进入门与合并范围评估
+
+用户随后选择保持正式发布不变、先补足可信核心，并询问能否与 Phase 6 一起推进。`docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md` 给出按阻碍范围划分的完整清单和四个有限门：A 可信核心合成、B 纯宿主离线 claim 级动作、C 显式 Shadow 调度及校准、D 经另次裁决后的受限发布处置与 E3。**A+B 可以合并开发为 `phase6_preparatory_offline`，但不能把当前只有纯协议 validator 的 Phase 5 或未校准的动作称为 Phase 6 已上线。**现行 `publication_audit.py` 仅绑定 M02 情景 finding；无绑定 99% 没有可操作 claim ID；旧 `render_verified_partial_answer` 对多来源/假设/方法的重建不完整。这是具体依赖，而非笼统“总是无法进入下一阶段”。E4 仍需新冻结/显式授权。
+
+## 12. A+B 首个离线切片与剩余门（2026-09-24）
+
+用户显式选择 **A+B 合并启动离线准备、C/D 另设门**。见 `docs/audit/2026-09-24-trust-reset-phase6-entry-assessment.md` 的 RED/结构替代/退役目标。当前代码新增纯预览 `render_trusted_core_preview`：复用已验证 typed claim 的宿主渲染，摘录与 packet `facts` 一致的跨来源原始事实组，另从宿主预算/扫描状态说明特定遗漏；事实组只作为未赋予 `answered` 的上下文，不把模型的“缺少分母”当真。`publication_audit.py` 对全部当前 typed 家族用同快照确定性校验绑定，再提供 `simulate_shadow_actions`：仅离线模拟 claim 级 keep/downgrade/mark_unassessed/remove 及定向修订 ID，不复制 `reason_untrusted`，不改变正式出版。错配指标、伪造情景、外来引用与过期审计均不得处置；独立可信 claim 应保留。旧 Shadow 伪夹具因此改成 R4 M02 等价有效结构，不能把仅有 ID/回执名当作有效 binding。
+
+定向五组测试 **180 passed**；首轮 `tmp/tprb16` **2904 passed、1 skipped、16 warnings**，但执行中又收紧了审计身份检查，因此**不作为最终代码时点收据**。最终 fresh `tmp/tprb17` 全量离线 **2905 passed、1 skipped、16 warnings、0 failures**；JUnit `tests=2906/failures=0/errors=0/skipped=1`，SHA256 `41C04E855B46FE6DAD2E3E0ABC4FEBF839E5389902E8693E16206E50AA503954`，runner `provider_calls=forbidden`。这仅是 E2，本轮真实 Provider initiated calls=0，未启动浏览器 E3。根工作树存在本阶段待提交的文档/代码/测试，提交时只 stage 明名文件。
+
+**不能切默认或称 A/B 完成**：R4 M03 六来源的结论/图表产物仍不等于原始字段，R4 M04 竞争假设关系尚无同快照权威投影，R16 M05 方法上下文及 R11 正确否定边界尚未达到当前 typed 核心的等价保留。独立 99% 的现行完整散文误放仍在，因为正式门有意未动。接下来应在历史正反矩阵校准中补齐这些宿主所有者，或遇无法从当前结构重建的关键解释时先请用户裁决；不能用 Shadow 随机总审或词表补丁兜底。C 的真实 Shadow 调度/成本/误删校准和 D 的正式处置/E3 必须分别另过门；E4 仍需新精确冻结与显式授权。无 push/部署。

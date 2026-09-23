@@ -2750,6 +2750,81 @@ def render_verified_partial_answer(
     }
 
 
+def render_trusted_core_preview(
+    packet: dict[str, Any], bindings: dict[str, Any] | None,
+    *, excluded_claim_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Offline, non-publishing view of host-rendered claims and receipt facts.
+
+    Raw fact groups are explicitly context, never credited as answered claims.
+    This does not replace the current publication path or interpret model prose.
+    """
+    from copy import deepcopy
+
+    local_packet = deepcopy(packet)
+    selected = deepcopy(bindings) if isinstance(bindings, dict) else {"blocks": []}
+    selected["blocks"] = [
+        block for block in selected.get("blocks", [])
+        if isinstance(block, dict) and block.get("claim_id") not in excluded_claim_ids
+    ]
+    partial, accepted = render_verified_partial_answer(local_packet, selected)
+    sections = [partial] if partial else []
+    receipt_ids = {
+        str(source.get("receipt_id") or "")
+        for source in packet.get("sources", []) if isinstance(source, dict)
+    }
+    group_lines: list[str] = []
+    for source in packet.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        receipt_id = str(source.get("receipt_id") or "")
+        fact_pairs = {
+            (str(fact.get("path") or ""), str(fact.get("value") or ""))
+            for fact in source.get("facts", []) if isinstance(fact, dict)
+        }
+        for group in source.get("fact_groups", []):
+            if not isinstance(group, dict) or group.get("receipt_id") != receipt_id:
+                continue
+            fields = group.get("fields")
+            if not isinstance(fields, list) or not fields:
+                continue
+            pairs = [
+                (str(field.get("path") or ""), str(field.get("value") or ""))
+                for field in fields if isinstance(field, dict)
+            ]
+            if len(pairs) != len(fields) or not all(path and (path, value) in fact_pairs for path, value in pairs):
+                continue
+            group_lines.append(f"- 回执 `{receipt_id}`，事实组 `{group.get('group_id')}`（原始字段；不等于已回答）：")
+            for path, value in pairs:
+                group_lines.append(f"  - `{path.replace('`', '')}`: {value.replace(chr(10), ' ')}")
+    if group_lines:
+        sections.append("回执事实原样摘录（未赋予指标结论身份）：\n" + "\n".join(group_lines))
+    gap_lines: list[str] = []
+    for group in packet.get("omitted_groups", []):
+        if (isinstance(group, dict) and group.get("reason") == "budget"
+                and group.get("receipt_id") in receipt_ids and group.get("group_id")):
+            gap_lines.append(
+                f"- 回执 `{group['receipt_id']}` 的事实组 `{group['group_id']}`"
+                "因事实预算未纳入当前快照；不能据此宣称已回答。"
+            )
+    for source in packet.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        scan = source.get("scan") or {}
+        if isinstance(scan, dict) and scan.get("scan_incomplete") is True:
+            count = scan.get("omitted_count")
+            count_text = f"，至少省略 {count} 组" if isinstance(count, int) and count > 0 else ""
+            gap_lines.append(f"- 回执 `{source.get('receipt_id')}` 的事实扫描未完成{count_text}。")
+    if gap_lines:
+        sections.append("宿主可核验的上下文缺口：\n" + "\n".join(gap_lines))
+    return {
+        "status": "preview_only",
+        "text": "\n\n".join(sections),
+        "accepted_claim_ids": [block["claim_id"] for block in (accepted or {}).get("blocks", [])],
+        "publication_effect": "none",
+    }
+
+
 def apply_answer_binding_coverage(packet: dict[str, Any], bindings: dict[str, Any] | None) -> None:
     mapped = {
         ref: block

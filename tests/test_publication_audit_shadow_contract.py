@@ -11,13 +11,32 @@ def _packet():
         "answer_sha256": "sha256:accepted-answer",
         "sources": [{"receipt_id": "tr_m02", "tool_name": "curve_fitting"},
                     {"receipt_id": "tr_unrelated", "tool_name": "basic_stats"}],
+        "publication_scope": [{
+            "receipt_id": "tr_m02", "tool": "curve_fitting",
+            "observed_x_range": [1.0, 7.0], "unit_status": "not_confirmed",
+            "claim_ceiling": "descriptive", "scenario_extrapolation": {
+                "status": "descriptive_fit_only", "validation": "none",
+                "models": [{
+                    "family": "exponential",
+                    "parameters": {"a": 0.73892193, "b": -0.28583215},
+                    "r_squared": 0.99946726,
+                }],
+            },
+        }],
         "answer_bindings": {
             "schema_version": "answer_bindings.v1",
+            "packet_digest": "sha256:current-snapshot",
             "blocks": [{
                 "claim_id": "claim_m02_d30",
+                "exact_text": "[[claim:claim_m02_d30]]",
                 "claim_type": "scenario_extrapolation",
                 "status": "unvalidated",
+                "unit_status": "not_confirmed",
+                "validation_status": "none",
                 "receipt_ref": "tr_m02",
+                "time_point": 30,
+                "families": ["exponential"],
+                "requirement_refs": [],
                 "fact_refs": [],
                 "derived_refs": [],
             }],
