@@ -46,3 +46,13 @@
 进入代码基线 `main@ac84dd8`。`test_current_six_source_synthesis_facts_enter_only_explicit_offline_packet` 的 RED 为 `StopIteration`：普通与离线 packet 都无法在 `sources` 找到显式选中的 `tr_six`。结构替代只在 `offline_trust_projection=True` **且调用方传了显式 receipt IDs** 时把 `synthesize_time_series` 加入构包可选工具；仍使用原有成功回执、fact group/预算、省略清单、packet digest，不触碰 AgentLoop 的普通工具集合或模型 prompt。六个源的原始字段可在可信核心预览，但 `accepted_claim_ids=[]`；不存在显式 ID、或 ID 未选中时不进入。此离线 API 本身尚不证明所传 ID 与当前 workspace 版本一致，不能用它授权业务结论。正常 packet 仍刻意不含它，离线 packet 仍被 `publication_packet_prompt` 拒绝。
 
 因此旧门**尚未退役**，本切片也没有声称六来源业务比较已经 `answered`。独立 99% 的正式误放和 R11/R16 的旧方法解释损失仍是双轨校准项。定向两文件 17 passed；`tmp/tprb21` 全量离线 **2914 passed、1 skipped、16 warnings、0 failures**（182.43s），JUnit SHA256 `DE7FCF4CB7FE6CBDD39590B644FB371615A8AAC1CC0DA74DF08F7AA38BD742B0`，但其后增加了 packet digest 测试断言，故它不是最终树的收据。**最终 fresh `tmp/tprb22`** 全量离线 **2914 passed、1 skipped、16 warnings、0 failures**（183.99s），JUnit SHA256 `D689F1C2FD27A52EC7098B051DCA55884A66F8CAC7939FE74E71B3D9E490030D`，runner `provider_calls=forbidden`。本轮真实 Provider initiated 0；未运行 E3 或 E4。下一步须验证同快照六源两日金额/行数的宿主计算身份及版本，再决定如何原位渲染；只凭字段入包、图表或模型 evidence claim 不能升格。
+
+## 7. 第二条 RED/GREEN：六源金额不在回执，须核对既有派生数据版本
+
+进入基线 `main@508a580`。先只读查 R4 M03 原始结构：`synthesize_time_series` 的 102 facts/34 groups 是覆盖、日期、行数、来源和派生身份，**不含六源两日金额**；`preview_data(sources_combined)` 的金额只在文本 `result_preview`，`publication_facts=[]`。旧 EvidenceRecord 的金额/变化由模型填写，不能把它当宿主计算授权。源工具 `src/data_agent/tools/multifile.py` 已在 workspace 生成 `sources_combined` 的 copy-on-write 派生帧。因此下一步不是解析预览文本或补词表，而是仅在离线构包中读取这一**已有派生结果**并核对身份。
+
+RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均为 `build_publication_packet()` 不接受 `offline_workspace`，说明现有 packet 无宿主所有的数值通道。结构替代：可选 `offline_workspace` 只在 `offline_trust_projection=True` 生效；必须有显式选中的成功综合回执、同 packet source/result hash、`multi_file_time_synthesis.v1` 与 descriptive 状态、六源/派生数据的完整当前 identity、派生帧实际 fingerprint、同序父版本、两日递增日期、覆盖窗口/行数和零缺失。仅从同版本现存派生帧读取每源两日值，用 Decimal 复算绝对/相对变化并纳入**同一 packet digest**。无 workspace、无 ID、任一源或派生版本改变、伪造身份/非有限值则不投影；首日为零时百分比为不适用。当前只处理 2—12 来源且恰好两日的有限表格，其他形状保留 `unassessed`，不静默做跨来源合计或单位换算。
+
+预览原位显示每源日期、原始尺度金额、绝对/相对变化、源/有效行数及单位未确认，并标注“描述性预览，不自动授权已回答”；`accepted_claim_ids=[]`。这仍未给出用户子问题到 claim 的确定性绑定，也未恢复 R16 的方法解释或 M04 非闭合假设关系。**旧门尚未退役**：正式完整候选仍可能放行无绑定 99%；离线 packet 仍不能进入模型 prompt，AgentLoop、正式发布与 Shadow 调度均不变。R11/R16 正例、R4 部分轨迹、R7—R21 错误单位/版本/算术仍共同构成下一默认策略校准面，不以此六源样本代表总体完成。
+
+当前三文件定向为 **21 passed**（含旧 R11/R16 边界、99%/审计动作及新增零分母/伪身份负例）。最终 fresh `tmp/tprb23` full-offline **2918 passed、1 skipped、16 warnings、0 failures**（186.00s），JUnit SHA256 `4D7B0B628E445EA60C09393B46519CD97B155D4D615C2F590F2EE7192B4B55F2`，runner `provider_calls=forbidden`；不能用前一 HEAD 的 `tmp/tprb22` 代替。真实 Provider initiated 0；E3/E4 未执行。

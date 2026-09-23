@@ -635,8 +635,139 @@ def _select_sources(
     return sorted(selected), omitted, coverage
 
 
+def _project_offline_aligned_tables(
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any,
+) -> list[dict[str, Any]]:
+    """Read an existing two-date derived frame only when all receipt identities match."""
+    import pandas as pd
+    from data_agent.session.workspace import Workspace
+
+    selected = {
+        str(source.get("receipt_id") or ""): source
+        for source in packet.get("sources", []) if isinstance(source, dict)
+    }
+    tables = []
+    for receipt in getattr(state, "tool_receipts", []) or []:
+        if (not isinstance(receipt, dict) or receipt.get("tool_name") != "synthesize_time_series"
+                or receipt.get("id") not in allowed_receipts
+                or receipt.get("id") not in selected):
+            continue
+        source = selected[receipt["id"]]
+        if (source.get("tool_name") != "synthesize_time_series"
+                or not receipt.get("result_sha256")
+                or source.get("result_sha256") != receipt.get("result_sha256")):
+            continue
+        facts = receipt.get("publication_facts") or []
+        if not isinstance(facts, list) or any(not isinstance(fact, dict) for fact in facts):
+            continue
+        paths = [str(fact.get("path") or "") for fact in facts]
+        if len(paths) != len(set(paths)):
+            continue
+        values = {str(fact.get("path") or ""): str(fact.get("value") or "") for fact in facts}
+        if (values.get("method_contract") != "multi_file_time_synthesis.v1"
+                or values.get("status") != "supported"
+                or values.get("claim_ceiling") != "descriptive"
+                or values.get("aligned_rows") != "2"):
+            continue
+        names = []
+        for index in range(12):
+            name = values.get(f"source_datasets[{index}]")
+            if not name:
+                break
+            names.append(name)
+        if (len(names) < 2 or len(names) != len(set(names))
+                or any(path.startswith("source_datasets[") and path not in {
+                    f"source_datasets[{index}]" for index in range(len(names))
+                } for path in paths)):
+            continue
+        derived_name = values.get("derived_dataset")
+        identities = receipt.get("data_identities")
+        if (not derived_name or derived_name in names or not isinstance(identities, dict)
+                or set(identities) != {*names, derived_name}):
+            continue
+        try:
+            current = {name: offline_workspace.get_data_identity(name) for name in [*names, derived_name]}
+            frame = offline_workspace.get(derived_name)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+        if (not isinstance(frame, pd.DataFrame)
+                or any(not isinstance(current.get(name), dict) or not current[name]
+                       or current[name] != identities[name] for name in current)
+                or list(frame.columns) != ["date", *names]
+                or len(frame) != 2):
+            continue
+        derived = current[derived_name]
+        try:
+            frame_fingerprint = Workspace._frame_fingerprint(frame)
+        except (TypeError, ValueError):
+            continue
+        if (derived.get("version_id") != values.get("derived_identity.version_id")
+                or derived.get("fingerprint") != values.get("derived_identity.fingerprint")
+                or derived.get("parent_version_ids") != [current[name].get("version_id") for name in names]
+                or frame_fingerprint != derived.get("fingerprint")):
+            continue
+        if any(
+            current[name].get("version_id") != values.get(f"source_identities.{name}.version_id")
+            or current[name].get("fingerprint") != values.get(f"source_identities.{name}.fingerprint")
+            or values.get(f"missing_aligned_dates.{name}") != "0"
+            for name in names
+        ):
+            continue
+        try:
+            parsed_dates = pd.to_datetime(frame["date"], errors="raise")
+            dates = [item.date().isoformat() for item in parsed_dates]
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if len(dates) != 2 or dates[0] >= dates[1]:
+            continue
+
+        def plain(value: Decimal) -> str:
+            output = format(value, "f")
+            return output.rstrip("0").rstrip(".") if "." in output else output
+
+        rows = []
+        for name in names:
+            if (values.get(f"coverage.{name}.start") != dates[0]
+                    or values.get(f"coverage.{name}.end") != dates[1]
+                    or not values.get(f"coverage.{name}.metric")):
+                break
+            try:
+                source_rows = int(values.get(f"coverage.{name}.rows", ""))
+                effective_rows = int(values.get(f"coverage.{name}.effective_rows", ""))
+            except ValueError:
+                break
+            if not (source_rows >= effective_rows >= 2):
+                break
+            first = _decimal_number(str(frame.iloc[0][name]))
+            second = _decimal_number(str(frame.iloc[1][name]))
+            if first is None or second is None or not first.is_finite() or not second.is_finite():
+                break
+            change = second - first
+            try:
+                relative = change * Decimal(100) / first if first else None
+                relative_text = plain(relative.quantize(Decimal("0.0001"))) if relative is not None else None
+            except (InvalidOperation, OverflowError, ZeroDivisionError):
+                break
+            rows.append({
+                "dataset": name, "metric": values[f"coverage.{name}.metric"],
+                "period_a": plain(first), "period_b": plain(second),
+                "absolute_change": plain(change),
+                "relative_change_percent": relative_text,
+                "source_rows": source_rows, "effective_rows": effective_rows,
+                "unit_status": "not_confirmed",
+            })
+        if len(rows) != len(names):
+            continue
+        tables.append({
+            "receipt_id": receipt["id"], "result_sha256": receipt["result_sha256"],
+            "derived_dataset": derived_name, "derived_version_id": derived["version_id"],
+            "dates": dates, "rows": rows, "status": "descriptive_preview_only",
+        })
+    return tables
+
+
 def _build_offline_trust_projection(
-    state: Any, allowed_receipts: set[str], packet: dict[str, Any],
+    state: Any, allowed_receipts: set[str], packet: dict[str, Any], offline_workspace: Any = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Project current artifacts into the existing packet, never the live path."""
     from pathlib import Path
@@ -646,6 +777,11 @@ def _build_offline_trust_projection(
 
     session_id = str(getattr(state, "session_id", "") or "")
     projected: dict[str, list[dict[str, Any]]] = {"charts": [], "hypotheses": []}
+    if offline_workspace is not None:
+        projected["aligned_tables"] = (
+            _project_offline_aligned_tables(state, allowed_receipts, packet, offline_workspace)
+            if allowed_receipts else []
+        )
     # Without an explicit current-turn receipt selection, historical session
     # artifacts cannot be distinguished from this answer's evidence snapshot.
     if not session_id or not allowed_receipts:
@@ -819,6 +955,7 @@ def build_publication_packet(
     requirement_ids: Iterable[str] | None = None,
     phase: str = "final",
     offline_trust_projection: bool = False,
+    offline_workspace: Any = None,
 ) -> dict[str, Any]:
     """Build the bounded evidence hand-off used by the finalization round."""
     substantive = set(substantive_tools)
@@ -1078,6 +1215,7 @@ def build_publication_packet(
     if offline_trust_projection:
         packet_body["offline_trust_projection"] = _build_offline_trust_projection(
             state, allowed_receipts if receipt_ids is not None else set(), packet_body,
+            offline_workspace=offline_workspace,
         )
     # A model sees a preview packet, while terminal publication rebuilds it
     # as final. Bind the model block to the evidence body, not that presentation
@@ -3040,6 +3178,29 @@ def render_trusted_core_preview(
         sections.append("回执计算边界（不替代指标结论）：\n" + "\n".join(scope_lines))
     projection = packet.get("offline_trust_projection")
     if isinstance(projection, dict):
+        aligned_lines = []
+        for table in projection.get("aligned_tables", []):
+            if (not isinstance(table, dict) or table.get("status") != "descriptive_preview_only"
+                    or not isinstance(table.get("dates"), list) or len(table["dates"]) != 2):
+                continue
+            aligned_lines.append(
+                f"- 回执 `{table.get('receipt_id')}`，已有派生数据 `{table.get('derived_dataset')}`，"
+                f"日期 {table['dates'][0]}—{table['dates'][1]}（同版本描述性预览；不自动授权已回答）："
+            )
+            for row in table.get("rows", []):
+                if not isinstance(row, dict):
+                    continue
+                relative = row.get("relative_change_percent")
+                relative_text = f"{relative}%" if isinstance(relative, str) else "首日为零，变化比例不适用"
+                aligned_lines.append(
+                    f"  - `{row.get('dataset')}` / `{row.get('metric')}`："
+                    f"{row.get('period_a')}→{row.get('period_b')}；"
+                    f"绝对变化 {row.get('absolute_change')}；相对变化 {relative_text}；"
+                    f"原始记录 {row.get('source_rows')}，有效记录 {row.get('effective_rows')}；"
+                    "单位未确认。"
+                )
+        if aligned_lines:
+            sections.append("当前派生数据两日对照（不跨来源合计，不等于已回答）：\n" + "\n".join(aligned_lines))
         chart_lines = [
             f"- [[chart:{chart['path']}]]（已创建产物，不证明图中分析结论）"
             for chart in projection.get("charts", [])

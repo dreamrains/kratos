@@ -107,3 +107,9 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 阶段 RED/结构替代/旧门边界见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §6。当前 `_SUBSTANTIVE_TOOLS` 与 `_PUBLICATION_EVIDENCE_TOOLS` 排除了 `synthesize_time_series`，故即使构包时给出该 ID，综合事实也先被工具集合门排除。新增测试 RED 为 `StopIteration`；最小修复仅在 `offline_trust_projection=True` 且调用方传了显式 receipt IDs 时，允许同一构包器纳入该成功回执的 fact groups/省略项和 digest。普通包、AgentLoop、模型 prompt、正式发布没有改变；预览显示原始字段但 `accepted_claim_ids=[]`。这不是从旧模型 claim 中恢复六源业务结论，也不证明调用方 ID 与当前 workspace 版本同一。
 
 两文件定向 **17 passed**；`tmp/tprb21` full-offline **2914 passed、1 skipped、16 warnings、0 failures**，但在最后一条 digest 测试断言前，不作为最终树收据。**最终 fresh `tmp/tprb22`** 为 **2914 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `D689F1C2FD27A52EC7098B051DCA55884A66F8CAC7939FE74E71B3D9E490030D`，runner `provider_calls=forbidden`、真实 Provider initiated 0。E3/E4 仍未做；A 的六源同版本计算/渲染、R11/R16 正确价值保留与无据 99% 的正式发布边界未闭合，B 仍为离线模拟，C/D 仍独立授权门。下阶段先把可复算的六源结果与原始字段区分，再决定是否需要窄的宿主表格；不能把工具集合放宽当成完成 CR03/CR04。
+
+## 16. A+B 第四离线切片：同版本派生帧的两日描述表（2026-09-24）
+
+跨历史 RED、结构替代与旧门状态详见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §7。R4 M03 综合回执的 102 facts/34 groups **并无两日金额**，金额只在既有 `sources_combined` 派生数据，旧 preview 是文本、旧 EvidenceRecord 是模型自报；因此不能从回执元数据直接称六源数值已保留。新的 `offline_workspace` 参数仅用于默认关闭的离线 packet，须显式选择该综合回执，逐一核对六源和派生数据的当前 identity、父版本及派生帧实际指纹，再从现有派生帧读取恰好两日的逐源值并用 Decimal 复算变化。单位未确认，首日为零则百分比不适用；不跨源合计，不标记 `answered`。无 workspace、漏选、旧源版本、派生版本错配或伪造身份都不投影；此数据进入同一 packet digest，离线包仍不能被模型 prompt 使用。
+
+初始三项 RED 为未支持 `offline_workspace`；最终三文件定向 **21 passed**。fresh `tmp/tprb23` 全量离线 **2918 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `4D7B0B628E445EA60C09393B46519CD97B155D4D615C2F590F2EE7192B4B55F2`，runner `provider_calls=forbidden`，真实 Provider initiated 0。正式发布、AgentLoop、Shadow C、处置 D、E3/E4 均未改变。下一阶段仍须校准 R11/R16 的正确解释/方法价值、R4 M04 非闭合关系与有效 binding 旁无据 99% 的误放；不能把这个特例表格升格为 A 门完成。
