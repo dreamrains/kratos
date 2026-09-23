@@ -1034,6 +1034,7 @@ def publication_packet_prompt(packet: dict[str, Any]) -> str:
         "For every hard item in requirements, answer it with a supported result or state its specific evidence gap in the visible narrative. A single_direct_candidate with metric_identity_status=unassessed is only a request-side proposal: do not invent a metric result or turn an open request into a mandatory numeric gap. Respect publication_scope: distinguish row/user/calendar denominators, do not infer a currency from an unlabeled amount, do not extrapolate beyond observed windows, and never claim statistical insignificance without a performed test. Missing values have unknown impact unless a justified bound was computed.\n"
         "For an explicit requirement answered by a directly matching observed fact, place a unique [[claim:claim_ID]] placeholder in the visible answer and append one fenced answer-bindings JSON block. Use schema_version answer_bindings.v1, this packet binding_digest as packet_digest, and a block with claim_id, claim_type=observed_fact, status=observed, exact_text equal to the placeholder, one requirement_ref, one matching fact_ref, and derived_refs=[]. For a derived_metric use status=computed, unit_status=not_confirmed, one requirement_ref, one matching tool fact_ref and one derived_ref from evidence linked to the same receipt; the tool fact's numeric value must equal the host-recomputed derivation. The host renders the receipt's raw value and discloses unconfirmed units in place. If the tool fact path cannot directly identify the requested metric, state the specific gap instead of claiming that a nearby number or model-authored EvidenceRecord label answers it. For other supported optional bindings use the same answer_bindings.v1 block; only cite ids present in this packet. This block is internal and will be removed before display.\n"
         "For a descriptive compare_periods result in sources, you may place a unique claim placeholder and bind claim_type=comparison, status=computed, unit_status=not_confirmed, receipt_ref of that source, requirement_refs=[], derived_refs=[], and three ordered fact_refs for one metric's metrics.<metric>.period_a, period_b, and diff. Only use facts from the same current receipt and its publication_scope windows. The host checks the difference and renders the table in place; do not write the comparison numbers, dates, percent change, significance, or causal explanation as unbound prose. If the closed comparison shape is unavailable, leave it unassessed.\n"
+        "For an observation-only curve_fitting result, without any future-point scenario, you may place a unique claim placeholder and bind claim_type=descriptive_fit, status=descriptive, unit_status=not_confirmed, validation_status=none, receipt_ref of the current curve_fitting source, families listing every returned model family, and requirement_refs=fact_refs=derived_refs=[]. The host renders all fit parameters, R², observed x range, effective point count, and validation limits in place. Do not supply display values or describe this as a prediction, significance test, causal result, or extrapolation.\n"
         f"{scenario_binding_note}"
         "A descriptive curve cannot establish individual behavior, product genre, stable core users, or intervention ROI. Excluding zero values is a calculation policy, not proof they are unobserved. Date-column coverage is not the data collection cutoff. Do not call selection bias small without a computed bound.\n"
         f"{payload}\n"
@@ -1990,6 +1991,7 @@ _COMPARISON_BINDING_FIELDS = {
     "claim_id", "exact_text", "claim_type", "status", "unit_status",
     "receipt_ref", "requirement_refs", "fact_refs", "derived_refs",
 }
+_DESCRIPTIVE_FIT_BINDING_FIELDS = _SCENARIO_BINDING_FIELDS - {"time_point"}
 
 
 def _bound_metric_fact(
@@ -2230,6 +2232,103 @@ def _comparison_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> 
     return None
 
 
+def _descriptive_fit_binding_values(
+    block: dict[str, Any], packet: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], float, float, int] | None:
+    """Resolve all observed-range fits from one executed curve receipt."""
+    if set(block) != _DESCRIPTIVE_FIT_BINDING_FIELDS:
+        return None
+    claim_id = block.get("claim_id")
+    if not isinstance(claim_id, str) or not _SCENARIO_CLAIM_ID.fullmatch(claim_id):
+        return None
+    if (
+        block.get("exact_text") != f"[[claim:{claim_id}]]"
+        or block.get("claim_type") != "descriptive_fit"
+        or block.get("status") != "descriptive"
+        or block.get("unit_status") != "not_confirmed"
+        or block.get("validation_status") != "none"
+        or block.get("requirement_refs") != []
+        or block.get("fact_refs") != []
+        or block.get("derived_refs") != []
+    ):
+        return None
+    receipt_ref = block.get("receipt_ref")
+    sources = [
+        source for source in packet.get("sources", [])
+        if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
+        and source.get("tool_name") == "curve_fitting"
+    ]
+    scopes = [
+        scope for scope in packet.get("publication_scope", [])
+        if isinstance(scope, dict) and scope.get("receipt_id") == receipt_ref
+        and scope.get("tool") == "curve_fitting"
+    ]
+    if not isinstance(receipt_ref, str) or not receipt_ref or len(sources) != 1 or len(scopes) != 1:
+        return None
+    scope = scopes[0]
+    scenario = scope.get("scenario_extrapolation")
+    if (
+        scope.get("claim_ceiling") != "descriptive"
+        or scope.get("unit_status") != "not_confirmed"
+        or scope.get("zero_value_semantics") != "unknown"
+        or not isinstance(scenario, dict)
+        or scenario.get("status") != "descriptive_fit_only"
+        or scenario.get("validation") != "none"
+    ):
+        return None
+    point_count = scenario.get("effective_n")
+    observed = scope.get("observed_x_range")
+    if (
+        isinstance(point_count, bool) or not isinstance(point_count, int) or point_count < 5
+        or not isinstance(observed, list) or len(observed) != 2
+    ):
+        return None
+    try:
+        first, last = (float(value) for value in observed)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not all(math.isfinite(value) for value in (first, last)) or first > last:
+        return None
+    models = scenario.get("models")
+    families = block.get("families")
+    if (
+        not isinstance(models, list) or not models
+        or not isinstance(families, list) or len(families) != len(models)
+        or any(not isinstance(family, str) for family in families)
+        or len(set(families)) != len(families)
+    ):
+        return None
+    model_families: list[str] = []
+    for model in models:
+        if (
+            not isinstance(model, dict)
+            or not isinstance(model.get("family"), str)
+            or model.get("family") not in {"power", "exponential", "logarithmic"}
+        ):
+            return None
+        params = model.get("parameters")
+        if not isinstance(params, dict) or set(params) != {"a", "b"}:
+            return None
+        if any(isinstance(value, bool) for value in (params["a"], params["b"], model.get("r_squared"))):
+            return None
+        try:
+            numbers = [float(params["a"]), float(params["b"]), float(model.get("r_squared"))]
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not all(math.isfinite(value) for value in numbers) or numbers[2] > 1:
+            return None
+        model_families.append(model["family"])
+    if len(set(model_families)) != len(models) or set(families) != set(model_families):
+        return None
+    return scope, models, first, last, point_count
+
+
+def _descriptive_fit_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str | None:
+    if _descriptive_fit_binding_values(block, packet) is None:
+        return "描述拟合须绑定同一当前曲线回执的全部模型族、有限参数、观测范围及未验证状态。"
+    return None
+
+
 def _scenario_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str | None:
     """Validate a closed, receipt-owned scenario before any host rendering."""
     if set(block) - _SCENARIO_BINDING_FIELDS:
@@ -2409,12 +2508,13 @@ def parse_answer_bindings(
                 "reason": "答案绑定片段不唯一，或引用不属于当前快照。",
             })
             continue
-        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison"}:
+        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison", "descriptive_fit"}:
             claim_type = block.get("claim_type")
             problem = (
                 _observed_binding_issue(block, packet) if claim_type == "observed_fact"
                 else _derived_binding_issue(block, packet) if claim_type == "derived_metric"
                 else _comparison_binding_issue(block, packet) if claim_type == "comparison"
+                else _descriptive_fit_binding_issue(block, packet) if claim_type == "descriptive_fit"
                 else _scenario_binding_issue(block, packet)
             )
             claim_id = str(block.get("claim_id") or "")
@@ -2426,6 +2526,7 @@ def parse_answer_bindings(
                         "invalid_observed_binding" if claim_type == "observed_fact"
                         else "invalid_derived_binding" if claim_type == "derived_metric"
                         else "invalid_comparison_binding" if claim_type == "comparison"
+                        else "invalid_descriptive_fit_binding" if claim_type == "descriptive_fit"
                         else "invalid_scenario_binding"
                     ),
                     "span": exact[:80] or str(index),
@@ -2437,6 +2538,7 @@ def parse_answer_bindings(
                 _OBSERVED_BINDING_FIELDS if claim_type == "observed_fact"
                 else _DERIVED_BINDING_FIELDS if claim_type == "derived_metric"
                 else _COMPARISON_BINDING_FIELDS if claim_type == "comparison"
+                else _DESCRIPTIVE_FIT_BINDING_FIELDS if claim_type == "descriptive_fit"
                 else _SCENARIO_BINDING_FIELDS
             )
             accepted.append({key: block[key] for key in fields if key in block})
@@ -2449,7 +2551,7 @@ def parse_answer_bindings(
     }
     bound_placeholders = {
         block["exact_text"] for block in accepted
-        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison"}
+        if block.get("claim_type") in {"scenario_extrapolation", "observed_fact", "derived_metric", "comparison", "descriptive_fit"}
     }
     for placeholder in _CLAIM_PLACEHOLDER.findall(clean):
         if placeholder not in bound_placeholders:
@@ -2469,6 +2571,29 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
     """
     rendered = str(text or "")
     for block in (bindings or {}).get("blocks", []):
+        if block.get("claim_type") == "descriptive_fit":
+            resolved = _descriptive_fit_binding_values(block, packet)
+            if resolved is None:
+                raise ValueError("描述拟合的回执或范围在渲染前失效")
+            _, models, first, last, point_count = resolved
+            rows = [
+                "已观察区间内的描述拟合（原始数值尺度；单位未确认）：",
+                "",
+                "| 模型族 | a | b | R²（观测区间内） |",
+                "|---|---:|---:|---:|",
+            ]
+            for model in models:
+                params = model["parameters"]
+                rows.append(
+                    f"| {model['family']} | {params['a']} | {params['b']} | {model['r_squared']} |"
+                )
+            rows.append(
+                f"\n仅观察 x={first:g}—{last:g}，有效拟合点 {point_count}。"
+                "未做留出验证、回测或外部验证；拟合度不构成区间外预测、显著性或因果证据。"
+                "零值含义未确认，零值处理口径不能证明其未观测。"
+            )
+            rendered = rendered.replace(block["exact_text"], "\n".join(rows), 1)
+            continue
         if block.get("claim_type") == "comparison":
             resolved = _comparison_binding_values(block, packet)
             if resolved is None:
@@ -2578,7 +2703,7 @@ def render_verified_partial_answer(
     rendered: list[str] = []
     covered: set[str] = set()
     for block in (bindings or {}).get("blocks", []):
-        if block.get("claim_type") not in {"observed_fact", "derived_metric", "comparison", "scenario_extrapolation"}:
+        if block.get("claim_type") not in {"observed_fact", "derived_metric", "comparison", "descriptive_fit", "scenario_extrapolation"}:
             continue
         requirement_refs = (
             [str(ref) for ref in block.get("requirement_refs", [])]
