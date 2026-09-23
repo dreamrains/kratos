@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import uuid
 import threading
+from dataclasses import dataclass
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +17,29 @@ from data_agent.config import get_config
 
 logger = logging.getLogger(__name__)
 _artifact_manifest_lock = threading.RLock()
+_history_lock = threading.RLock()
+
+
+def _history_synchronized(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with _history_lock:
+            return func(*args, **kwargs)
+    return wrapper
+
+
+@dataclass(frozen=True)
+class CanonicalHistorySnapshot:
+    """One deterministic view of the persisted JSON + JSONL conversation."""
+
+    messages: list[dict]
+    revision: int
+    sha256: str
+    message_count: int
+
+
+class CanonicalHistoryConflict(RuntimeError):
+    """Raised when a caller tries to replace a stale history snapshot."""
 
 
 def _sessions_dir() -> Path:
@@ -71,6 +97,90 @@ def _read_jsonl(path: Path) -> list[dict]:
     return messages
 
 
+def _history_sha256(messages: list[dict]) -> str:
+    payload = json.dumps(
+        messages,
+        default=str,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _read_meta_file(sdir: Path) -> dict:
+    path = sdir / "meta.json"
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _read_canonical_snapshot(sdir: Path) -> CanonicalHistorySnapshot:
+    messages: list[dict] = []
+    conv_path = sdir / "conversation.json"
+    if conv_path.exists():
+        try:
+            value = json.loads(conv_path.read_text(encoding="utf-8"))
+            if isinstance(value, list):
+                messages.extend(item for item in value if isinstance(item, dict))
+        except (json.JSONDecodeError, OSError):
+            pass
+    messages.extend(_read_jsonl(sdir / "conversation.jsonl"))
+    meta = _read_meta_file(sdir)
+    try:
+        revision = max(0, int(meta.get("history_revision", 0)))
+    except (TypeError, ValueError):
+        revision = 0
+    return CanonicalHistorySnapshot(
+        messages=messages,
+        revision=revision,
+        sha256=_history_sha256(messages),
+        message_count=len(messages),
+    )
+
+
+@_history_synchronized
+def load_canonical_history(session_id: str) -> CanonicalHistorySnapshot:
+    """Read the exact persisted history identity used by compaction and CAS."""
+    return _read_canonical_snapshot(_session_dir(session_id))
+
+
+def _write_json_atomic(path: Path, value: Any) -> None:
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def _refresh_history_identity(sdir: Path, session_id: str) -> CanonicalHistorySnapshot:
+    snapshot = _read_canonical_snapshot(sdir)
+    meta = _read_meta_file(sdir)
+    recorded_sha256 = str(meta.get("history_sha256") or "")
+    try:
+        recorded_revision = max(0, int(meta.get("history_revision", 0)))
+    except (TypeError, ValueError):
+        recorded_revision = 0
+    revision = recorded_revision + (1 if snapshot.sha256 != recorded_sha256 else 0)
+    meta.update({
+        "session_id": meta.get("session_id") or session_id,
+        "saved_at": meta.get("saved_at") or _now_str(),
+        "message_count": snapshot.message_count,
+        "history_revision": revision,
+        "history_sha256": snapshot.sha256,
+    })
+    _write_json_atomic(sdir / "meta.json", meta)
+    return CanonicalHistorySnapshot(
+        messages=snapshot.messages,
+        revision=revision,
+        sha256=snapshot.sha256,
+        message_count=snapshot.message_count,
+    )
+
+
+@_history_synchronized
 def _rotate_jsonl(session_id: str) -> None:
     """JSONL 超过阈值时合并到 conversation.json 并清空 JSONL。"""
     sdir = _session_dir(session_id)
@@ -96,8 +206,10 @@ def _rotate_jsonl(session_id: str) -> None:
         json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     jsonl_path.unlink(missing_ok=True)
+    _refresh_history_identity(sdir, session_id)
 
 
+@_history_synchronized
 def push_message(session_id: str, message: dict) -> None:
     """追加一条消息到 JSONL。快速的 per-turn 持久化。"""
     sdir = _session_dir(session_id)
@@ -115,8 +227,10 @@ def push_message(session_id: str, message: dict) -> None:
             _rotate_jsonl(session_id)
     except OSError:
         pass
+    _refresh_history_identity(sdir, session_id)
 
 
+@_history_synchronized
 def push_messages(session_id: str, messages: list[dict]) -> None:
     """批量追加多条消息到 JSONL。"""
     sdir = _session_dir(session_id)
@@ -136,10 +250,12 @@ def push_messages(session_id: str, messages: list[dict]) -> None:
             _rotate_jsonl(session_id)
     except OSError:
         pass
+    _refresh_history_identity(sdir, session_id)
 
 
 # ── 会话保存与恢复 ────────────────────────────────────────
 
+@_history_synchronized
 def save_session(
     messages: list[dict],
     session_id: str,
@@ -147,6 +263,8 @@ def save_session(
     data_file: str = "",
     extra_meta: Optional[dict] = None,
     merge_protect: bool = True,
+    expected_history_revision: int | None = None,
+    expected_history_sha256: str | None = None,
 ) -> str:
     """保存会话到 sessions/<session_id>/。写入 conversation.json 并清空 JSONL。
 
@@ -154,11 +272,35 @@ def save_session(
     说明会话历史可能在内存中丢失（如 AgentLoop 重建），此时合并而非覆盖。
     """
     sdir = _session_dir(session_id)
+    current = _read_canonical_snapshot(sdir)
+
+    if expected_history_revision is not None or expected_history_sha256 is not None:
+        revision_matches = (
+            expected_history_revision is None
+            or current.revision == expected_history_revision
+        )
+        hash_matches = (
+            expected_history_sha256 is None
+            or current.sha256 == expected_history_sha256
+        )
+        if not revision_matches or not hash_matches:
+            raise CanonicalHistoryConflict(
+                "Canonical history changed before write-back: "
+                f"expected revision={expected_history_revision}, sha256={expected_history_sha256}; "
+                f"actual revision={current.revision}, sha256={current.sha256}"
+            )
 
     # Merge protection: prevent data loss if in-memory messages are incomplete.
     # Rewind is an intentional truncation and must bypass this guard.
     if merge_protect:
         messages = _merge_protect_messages(sdir, messages)
+
+    from data_agent.session.public_messages import assign_reply_ids
+    assign_reply_ids(messages)
+    conv = _serialize_messages(messages)
+    next_sha256 = _history_sha256(conv)
+    recorded_sha256 = str(_read_meta_file(sdir).get("history_sha256") or "")
+    next_revision = current.revision + (1 if next_sha256 != recorded_sha256 else 0)
 
     # 提取会话摘要：第一条非命令用户消息的前 100 字符
     summary = _extract_summary(messages)
@@ -170,6 +312,8 @@ def save_session(
         "tag": tag,
         "data_file": data_file,
         "message_count": len(messages),
+        "history_revision": next_revision,
+        "history_sha256": next_sha256,
         "summary": summary,
         "project_name": None,
     }
@@ -180,25 +324,25 @@ def save_session(
         active_project = project_name if project_name is not None else object_name
         meta["project_name"] = active_project
         meta.update(extra)
-    (sdir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # conversation.json
-    from data_agent.session.public_messages import assign_reply_ids
-    assign_reply_ids(messages)
-    conv = _serialize_messages(messages)
-    (sdir / "conversation.json").write_text(
-        json.dumps(conv, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    # JSONL 已合并到 JSON，删除
+    # Callers may carry legacy metadata, but canonical identity is server-owned.
+    meta["history_revision"] = next_revision
+    meta["history_sha256"] = next_sha256
+    meta["message_count"] = len(conv)
+    # Write the canonical body first. If the metadata write is interrupted,
+    # the content hash still detects the change on the next read/CAS attempt.
+    _write_json_atomic(sdir / "conversation.json", conv)
+    # JSONL 已合并到 JSON，先删除再发布对应 metadata，避免写入中断后
+    # 同一消息同时存在于 JSON 和 JSONL。
     jsonl_path = sdir / "conversation.jsonl"
     jsonl_path.unlink(missing_ok=True)
+    _write_json_atomic(sdir / "meta.json", meta)
 
     _try_index_session_evidence(session_id)
 
     return session_id
 
 
+@_history_synchronized
 def load_session(session_id: str) -> Optional[dict]:
     """加载指定会话。自动检测 JSON/JSONL 格式并合并。自动清洗连续同 role 消息。"""
     sdir = _session_dir(session_id)
@@ -206,8 +350,8 @@ def load_session(session_id: str) -> Optional[dict]:
     conv_path = sdir / "conversation.json"
     jsonl_path = sdir / "conversation.jsonl"
 
-    # 至少要有 meta.json 或 conversation.jsonl 才能加载
-    if not meta_path.exists() and not jsonl_path.exists():
+    # 至少要有一个持久化历史或元数据文件才能加载。
+    if not meta_path.exists() and not conv_path.exists() and not jsonl_path.exists():
         return None
 
     meta = {}
@@ -217,27 +361,17 @@ def load_session(session_id: str) -> Optional[dict]:
         except (json.JSONDecodeError, OSError):
             pass
 
-    # 先读 JSON（旧格式/轮转后快照）
-    messages = []
-    if conv_path.exists():
-        try:
-            messages = json.loads(conv_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # 再读 JSONL（追加的新消息）
-    if jsonl_path.exists():
-        jsonl_messages = _read_jsonl(jsonl_path)
-        if jsonl_messages:
-            messages = messages + jsonl_messages
-
-    messages = _sanitize_messages(messages)
+    snapshot = load_canonical_history(session_id)
+    messages = _sanitize_messages(list(snapshot.messages))
     result = {
         "session_id": session_id,
         "saved_at": meta.get("saved_at", ""),
         "tag": meta.get("tag", ""),
         "data_file": meta.get("data_file", ""),
         "message_count": len(messages),
+        "history_revision": snapshot.revision,
+        "history_sha256": snapshot.sha256,
+        "canonical_message_count": snapshot.message_count,
         "messages": messages,
         "summary": meta.get("summary", ""),
         "project_name": meta.get("project_name") or meta.get("object_name"),
@@ -626,47 +760,43 @@ def list_analyses(session_id: str = "") -> list[dict]:
 # ── 合并保护 ─────────────────────────────────────────────
 
 def _merge_protect_messages(sdir: Path, messages: list[dict]) -> list[dict]:
-    """Prevent save_session from overwriting a more complete conversation.json.
-
-    If the disk file has significantly more messages than in-memory (e.g. due to
-    AgentLoop being recreated without loading history), merge the disk content
-    with new messages instead of overwriting.
-    """
-    conv_path = sdir / "conversation.json"
-    if not conv_path.exists() or not messages:
+    """Keep persisted history authoritative without a message-count heuristic."""
+    existing = _read_canonical_snapshot(sdir).messages
+    if not existing or not messages:
         return messages
 
-    try:
-        existing = json.loads(conv_path.read_text(encoding="utf-8"))
-        if not isinstance(existing, list) or len(existing) <= len(messages):
-            return messages
-
-        # Disk has more messages — likely a restore miss.
-        # Strategy: keep disk history as base, append any genuinely new tail messages.
-        disk_len = len(existing)
-        mem_len = len(messages)
-
-        # If memory messages are a subset (same starting content), use disk + tail
-        if mem_len > 0:
-            # Find overlap: check if the first memory message matches the start of disk
-            # Simple heuristic: if disk is much longer, trust disk and append tail
-            if disk_len > mem_len * 1.5:
-                # Take disk base + any memory messages beyond disk length
-                # (shouldn't exist, but handle gracefully)
-                merged = list(existing)
-                # Append messages that are truly new (beyond disk range)
-                if mem_len > disk_len:
-                    merged.extend(messages[disk_len:])
-                logger.warning(
-                    "Merge protection activated: disk had %d messages, memory had %d. Keeping disk.",
-                    disk_len, mem_len,
-                    extra={"extra_data": {"disk": disk_len, "memory": mem_len}},
-                )
-                return merged
-
+    if _history_sha256(existing) == _history_sha256(messages):
         return messages
-    except (json.JSONDecodeError, OSError):
-        return messages
+
+    shared = min(len(existing), len(messages))
+    disk_prefix = _history_sha256(existing[:shared])
+    memory_prefix = _history_sha256(messages[:shared])
+    if disk_prefix == memory_prefix:
+        # An exact prefix relationship is closed-class: retain the longer tail.
+        return existing if len(existing) > len(messages) else messages
+
+    detail = {
+        "disk_count": len(existing),
+        "memory_count": len(messages),
+        "disk_sha256": _history_sha256(existing),
+        "memory_sha256": _history_sha256(messages),
+    }
+    if len(existing) > len(messages):
+        # A shorter divergent cache cannot prove an authorized truncation.
+        logger.warning(
+            "Merge protection kept longer divergent canonical history",
+            extra={"extra_data": detail},
+        )
+        return existing
+
+    # Equal/longer complete replacements remain a supported save_session
+    # contract (for example memory-candidate reindexing). The content hashes
+    # make the change explicit; concurrent sensitive paths must provide CAS.
+    logger.info(
+        "Canonical history accepted divergent complete replacement",
+        extra={"extra_data": detail},
+    )
+    return messages
 
 
 # ── 摘要提取 ─────────────────────────────────────────────

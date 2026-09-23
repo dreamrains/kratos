@@ -40,6 +40,11 @@ def execute_command(name: str):
 def compact_context():
     """Manually compact the conversation context for a session."""
     from data_agent.agent.compact import estimate_tokens, compact_history, CompactState
+    from data_agent.session.history import (
+        CanonicalHistoryConflict,
+        load_canonical_history,
+        save_session,
+    )
 
     data = request.get_json(silent=True) or {}
     session_id = data.get("session_id")
@@ -53,25 +58,70 @@ def compact_context():
     if not agent_loop:
         return jsonify({"error": f"Session {session_id} not found"}), 404
 
-    before_tokens = estimate_tokens(agent_loop.messages)
+    snapshot = load_canonical_history(session_id)
+    if snapshot.message_count == 0 and agent_loop.messages:
+        return jsonify({
+            "error": "canonical_history_unavailable",
+            "message": "持久化会话历史不可用，未执行压缩。",
+        }), 409
 
-    if len(agent_loop.messages) <= 10:
+    before_tokens = estimate_tokens(snapshot.messages)
+
+    if snapshot.message_count <= 10:
         return jsonify({
             "message": "对话历史较短，无需压缩。",
             "before_tokens": before_tokens,
             "after_tokens": before_tokens,
         })
 
-    agent_loop.messages[:] = compact_history(
+    candidate_state = CompactState(
+        has_compacted=agent_loop._compact_state.has_compacted,
+        last_summary=agent_loop._compact_state.last_summary,
+        recent_files=list(agent_loop._compact_state.recent_files),
+    )
+    compacted = compact_history(
         session_id,
         agent_loop.client,
-        agent_loop.messages,
-        agent_loop._compact_state,
+        snapshot.messages,
+        candidate_state,
         focus=focus,
         token_threshold=0,  # Force compact regardless of threshold
+        history_identity={
+            "history_revision": snapshot.revision,
+            "history_sha256": snapshot.sha256,
+            "canonical_message_count": snapshot.message_count,
+        },
     )
+    if compacted == snapshot.messages:
+        return jsonify({
+            "message": "当前历史没有可独立压缩的完整早期轮次，已保留原对话。",
+            "before_tokens": before_tokens,
+            "after_tokens": before_tokens,
+            "saved": 0,
+            "history_revision": snapshot.revision,
+        })
+
+    try:
+        save_session(
+            compacted,
+            session_id,
+            data_file=agent_loop._last_data_file,
+            extra_meta=agent_loop._build_session_meta(),
+            merge_protect=False,
+            expected_history_revision=snapshot.revision,
+            expected_history_sha256=snapshot.sha256,
+        )
+    except CanonicalHistoryConflict:
+        return jsonify({
+            "error": "canonical_history_conflict",
+            "message": "压缩期间会话已有新消息，已放弃写回并保留最新历史。",
+        }), 409
+
+    written = load_canonical_history(session_id)
+    agent_loop.messages[:] = written.messages
+    agent_loop._last_jsonl_idx = len(agent_loop.messages)
+    agent_loop._compact_state = candidate_state
     agent_loop.invalidate_prompt_cache()
-    agent_loop._auto_save()
 
     after_tokens = estimate_tokens(agent_loop.messages)
 
@@ -80,4 +130,5 @@ def compact_context():
         "before_tokens": before_tokens,
         "after_tokens": after_tokens,
         "saved": before_tokens - after_tokens,
+        "history_revision": written.revision,
     })

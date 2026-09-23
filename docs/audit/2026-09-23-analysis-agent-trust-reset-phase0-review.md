@@ -1,7 +1,7 @@
 # 中文数据分析 Agent 可信发布架构重置：Phase 0 证据复核与实施交接
 
 日期：2026-09-23
-状态：Phase 0 completed；用户已确认继续，Phase 1 canonical history 实施中
+状态：Phase 0 completed；Phase 1 canonical history completed_local，等待提交；Phase 2 未开始
 仓库：`D:\Project\Daily\data-agent`
 本次核验 HEAD：`main@5176c41103ee1b1c77b4b44331d8225fb49890be`
 
@@ -289,6 +289,7 @@ Phase 1 只修会话历史与压缩一致性，不触碰 M02 发布语义、确�
 - `src/data_agent/session/history.py`
 - `src/data_agent/agent/compact.py`
 - `src/data_agent/web/blueprints/commands.py`
+- `src/data_agent/web/blueprints/sessions.py` 中只修改 rewind 的 canonical read/CAS 显式截断路径；
 - 如确有必要，`src/data_agent/web/agent_manager.py` 中只做 cache revision 同步；不得扩展生命周期设计。
 - 对应现有测试文件或一个聚焦的 Phase 1 测试文件；不得新增测试框架。
 
@@ -473,21 +474,22 @@ has_canonical_snapshot=False
 has_cas_conflict=False
 ```
 
-仓库当前 `.venv` 已变为 Python 3.14 且未安装 pytest；现有隔离 Python 3.12 与桌面运行时也没有 pytest。
-这属于测试宿主缺失，不能记作产品测试失败或通过，也不得通过联网安装依赖绕过环境边界。实现过程可以先运行
-compileall 和同解释器纯函数/临时目录检查，正式 pytest/full-offline 收据必须在既有 runner 环境恢复后补齐。
+仓库当时的 `.venv` 是 Python 3.14 且未安装 pytest；现有隔离 Python 3.12 与桌面运行时也没有 pytest。
+这属于测试宿主缺失，不能记作产品测试失败或通过。先完成 compileall 和同解释器纯函数/临时目录检查，
+随后离线恢复 pip，并按 `uv.lock` 中的精确版本安装 pytest，才取得下述正式 pytest/full-offline 收据。
 
 ### 13.1 当前实现与临时验证结果
 
 已完成的最小实现面：
 
 - `history.py`：增加 canonical JSON+JSONL snapshot、内容 SHA-256、单调 revision、进程内历史锁、原子单文件写入和 revision/hash CAS；
-- `history.py`：merge protection 改为精确 hash/prefix 判定；相同长度但内容不同不再由内存覆盖磁盘；legacy 会话首次安全写入时补 identity；
+- `history.py`：merge protection 改为精确 hash/prefix 判定；较短分歧 cache 不能覆盖较长磁盘历史；同长度合法完整替换保留兼容，但 compaction/rewind 必须用 hash+revision CAS；legacy 会话首次安全写入时补 identity；
 - `compact.py`：只允许在新 user turn 前分割；单个长工具轮找不到完整早期轮时保留全部历史，不调用 summary LLM；
 - `compact.py`：transcript sidecar 记录 input revision/hash、message count 和真实 split index；
 - Web `/api/compact`：从 canonical snapshot 而非 manager cache 读取；写回前 CAS；冲突返回 409，保留并发新消息且不污染 compact state；
 - `agent_manager.py`：从磁盘恢复后同步 `_last_jsonl_idx`，避免把已恢复历史再次当作新增 JSONL 尾部；
-- 新增聚焦测试覆盖 R4 M03、JSON+JSONL、同长度 hash 差异、append revision、CAS、legacy 升级、divergent cache、Web canonical read 和 Web 冲突。
+- `sessions.py`：rewind 改为读取 canonical snapshot，并以原 revision/hash 做显式截断 CAS；成功后才刷新 cache；
+- 新增聚焦测试覆盖 R4 M03、JSON+JSONL、同长度 hash 差异、append revision、CAS、legacy 升级、Web canonical read 和 Web 冲突；较短分歧 cache 由既有 merge-protection 测试覆盖。
 
 静态与直接离线检查：
 
@@ -501,11 +503,40 @@ safe-save revision: 3
 stale CAS write: rejected
 temporary Web compact: 200
 temporary Web concurrent compact: 409
+temporary focused harness: 11 passed
 ```
 
 第一次临时检查因 transcript 目录没有随 history 根一起重定向，在仓库 `sessions/m03` 生成了两份本轮测试文件。
 已核对精确路径后删除这两个文件及其空目录；它们不可恢复但可由同一测试重建，未触碰其他 session。
 随后测试同时重定向 history、transcripts 和 tool outputs，全部产物只存在于系统临时目录并在退出时清理。
 
-Phase 1 尚不能标为完成：正式 pytest 定向集合、既有相关回归和隔离 full-offline 仍因当前环境没有 pytest
-而未运行。恢复既有 runner 后必须先运行这些测试；在此之前不进入 Phase 2，也不提交产品实现为完成态。
+### 13.2 正式 pytest 与 full-offline 收据
+
+当前 `.venv` 缺失 pip/pytest。使用 Python 自带 `ensurepip` 离线恢复 pip 后，严格按 `uv.lock` 安装
+`pytest==9.0.3`；安装过程不涉及任何模型或 Provider。随后完成：
+
+| 层级 | 结果 |
+|---|---|
+| 新增 canonical-history 聚焦测试（修正前版本） | 11 passed in 2.91s；最终文件为 10 项，删除了与既有合法替换契约冲突的断言 |
+| compaction/ACK/publication/export/history/rewind/SSE 定向组合 | 73 passed |
+| 受影响完整文件：comprehensive/pipeline/Web/SSE | 312 passed，6 条既有数值边界 warnings |
+| 第一次 full-offline | 2823 passed、5 failed、1 skipped、16 warnings；完整跑完，无中途修复 |
+| 失败归因后聚焦重跑 | 12 passed |
+| 第二次 fresh full-offline | 2821 passed、1 skipped、16 warnings、0 failures，256.55s |
+
+第一次 full-offline 的 5 个失败分成：
+
+1. 1 个真实回归：新 merge protection 把同长度完整替换误判为 stale cache，导致 memory candidate 重索引未更新；
+2. 4 个来自用户保留、但本计划已否决且明确不得进入收集的未跟踪 `tests/test_p08_trust_restructure.py`。
+
+真实回归已修为：hash 检测所有差异；较短分歧 cache 不覆盖较长磁盘；同长度/更长的合法完整保存保持兼容；
+compaction 和 rewind 等并发敏感路径必须提供 revision/hash CAS。原失败、Phase 1 聚焦和既有 merge protection
+共同重跑为 12 passed。
+
+第二次 full-offline 使用新目录 `tmp/trust-reset-phase1-full-offline-2`，通过 pytest 原生
+`--ignore=tests/test_p08_trust_restructure.py` 明确模拟“该用户未跟踪草案不进入收集”的既定边界；其余套件不变。
+JUnit 为 2822 tests、0 failures、0 errors、1 skipped。runner 输出 `provider_calls=forbidden`。
+这是一份带公开排除条件的本地 E1/E2 收据，不是默认脏工作树无条件全绿，也不是浏览器或 Provider 证据。
+
+Phase 1 现可标为 `completed_local`：结构化替代、真实 R4 RED、聚焦 GREEN、既有回归和隔离 full-offline 均闭合。
+Provider-disabled 浏览器留在后续整合门；Phase 2 尚未开始。

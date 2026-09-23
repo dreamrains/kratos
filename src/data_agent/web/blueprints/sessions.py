@@ -8,10 +8,13 @@ from pathlib import Path
 from flask import Blueprint, Response, current_app, jsonify, request, send_file
 
 from data_agent.session.history import (
+    CanonicalHistoryConflict,
     delete_artifact,
     list_artifacts,
     list_sessions,
     load_session,
+    load_canonical_history,
+    save_session,
     delete_session,
     _session_dir,
 )
@@ -180,14 +183,12 @@ def rewind_session(session_id: str):
     manager = current_app.config["agent_manager"]
     loop = manager.get(session_id)
 
-    # Try in-memory loop first, fall back to loading from disk
-    if loop and loop.messages:
-        messages = loop.messages
-    else:
-        data = load_session(session_id)
-        if not data:
-            return jsonify({"error": "Session not found"}), 404
-        messages = data.get("messages", [])
+    # Rewind is an explicit truncation, but its input is still the canonical
+    # persisted snapshot rather than a potentially stale manager cache.
+    snapshot = load_canonical_history(session_id)
+    if snapshot.message_count == 0:
+        return jsonify({"error": "Session not found"}), 404
+    messages = snapshot.messages
 
     rounds = _get_rounds(messages)
     if round_num > len(rounds):
@@ -214,12 +215,9 @@ def rewind_session(session_id: str):
 
     # Save snapshot for undo
     from datetime import datetime
-    snapshots_dir = Path(session_id) / "rewind_snapshots"
-    if not snapshots_dir.is_absolute():
-        from data_agent.config import get_config
-        snapshots_dir = get_config().sessions_resolved / session_id / "rewind_snapshots"
+    snapshots_dir = _session_dir(session_id) / "rewind_snapshots"
     snapshots_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     snapshot_path = snapshots_dir / f"rewind_{ts}.json"
     snapshot_path.write_text(
         json.dumps({"messages": messages, "rewound_at": ts}, default=str, ensure_ascii=False, indent=2),
@@ -228,18 +226,34 @@ def rewind_session(session_id: str):
 
     truncated = messages[:messages_to_keep]
 
-    if loop and loop.messages:
-        loop.messages = truncated
+    # Persist the authorized truncation only if no new message arrived after
+    # the rewind view was computed.
+    try:
+        save_session(
+            truncated,
+            session_id,
+            merge_protect=False,
+            expected_history_revision=snapshot.revision,
+            expected_history_sha256=snapshot.sha256,
+        )
+    except CanonicalHistoryConflict:
+        return jsonify({
+            "error": "canonical_history_conflict",
+            "message": "回退期间会话已有新消息，已保留最新历史。",
+        }), 409
 
-    # Persist the truncated history
-    from data_agent.session.history import save_session
-    save_session(truncated, session_id, merge_protect=False)
+    written = load_canonical_history(session_id)
+    if loop is not None:
+        loop.messages = written.messages
+        loop._last_jsonl_idx = len(written.messages)
+        loop.invalidate_prompt_cache()
 
     return jsonify({
         "message": f"Rewound to before round {round_num}, removed {removed} messages",
         "removed": removed,
         "round": round_num,
         "user_message": user_message_text,
+        "history_revision": written.revision,
     })
 
 

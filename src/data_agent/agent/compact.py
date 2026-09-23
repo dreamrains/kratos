@@ -192,13 +192,23 @@ def micro_compact(session_id: str, messages: list[dict]) -> None:
         )
 
 
-def write_transcript(session_id: str, messages: list[dict]) -> Path:
+def write_transcript(
+    session_id: str,
+    messages: list[dict],
+    *,
+    metadata: dict | None = None,
+) -> Path:
     """保存完整对话记录到 transcript 文件。"""
     out_dir = _session_transcripts_dir(session_id)
-    path = out_dir / f"transcript_{int(time.time())}.jsonl"
+    path = out_dir / f"transcript_{time.time_ns()}.jsonl"
     with path.open("w", encoding="utf-8") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str, ensure_ascii=False) + "\n")
+    if metadata is not None:
+        path.with_suffix(".meta.json").write_text(
+            json.dumps(metadata, default=str, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     return path
 
 
@@ -321,72 +331,21 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 
 def _find_safe_boundary(messages: list[dict], keep_recent: int) -> int:
-    """找到安全的压缩分割点，确保 tool_use/tool_result 对不被拆分。
+    """Split only before a new user turn, never inside one analysis/reply group.
 
-    从 messages[:-keep_recent] 开始向前扫描，如果分割点落在
-    tool result（无对应 tool_use）或 assistant(tool_calls)（无对应 tool result）
-    处，则前移分割点直到安全。
+    A single user turn may contain many assistant/tool blocks followed by its
+    final answer. Keeping more recent context is safer than summarizing only
+    the request while leaving its execution and final answer on the other side.
     """
-    split_idx = len(messages) - keep_recent
-    if split_idx <= 0:
+    target = len(messages) - keep_recent
+    if target <= 0:
         return 0
-
-    max_attempts = keep_recent  # 最多前移 keep_recent 个位置
-    for _ in range(max_attempts):
-        if split_idx <= 0:
-            return 0
-
-        msg = messages[split_idx]
-
-        # Case 1: 分割点处是 tool result → 需要找到对应的 tool_use
-        if msg.get("role") == "tool":
-            tool_call_id = msg.get("tool_call_id", "")
-            if tool_call_id:
-                # 向前找对应的 assistant(tool_calls) 消息
-                for i in range(split_idx - 1, max(split_idx - 20, -1), -1):
-                    m = messages[i]
-                    if m.get("role") == "assistant" and m.get("tool_calls"):
-                        for tc in m["tool_calls"]:
-                            if tc.get("id") == tool_call_id:
-                                # 前移到该 assistant 消息之前
-                                split_idx = i
-                                break
-                        else:
-                            continue
-                        break
-                else:
-                    # 没找到对应的 tool_use，跳过这个 tool result
-                    split_idx -= 1
-                    continue
-            else:
-                split_idx -= 1
-                continue
-
-        # Case 2: 分割点处是 assistant 且包含 tool_calls → 需要包含后续 tool results
-        elif msg.get("role") == "assistant" and msg.get("tool_calls"):
-            tool_call_ids = {tc.get("id") for tc in msg["tool_calls"] if tc.get("id")}
-            if tool_call_ids:
-                # 向后找对应的 tool result
-                found_ids = set()
-                for i in range(split_idx + 1, min(split_idx + 20, len(messages))):
-                    m = messages[i]
-                    if m.get("role") == "tool" and m.get("tool_call_id") in tool_call_ids:
-                        found_ids.add(m["tool_call_id"])
-                    if found_ids == tool_call_ids:
-                        break
-                # 如果后续 tool result 不在 recent 范围内，前移分割点
-                if found_ids != tool_call_ids:
-                    split_idx -= 1
-                    continue
-            # 前移到该 assistant 消息之前
-            split_idx -= 1
-            continue
-
-        # Case 3: 分割点处是 user 或 assistant（无 tool_calls）→ 安全
-        else:
-            break
-
-    return split_idx
+    for index in range(target, 0, -1):
+        if messages[index].get("role") == "user":
+            while index > 0 and messages[index - 1].get("role") == "system":
+                index -= 1
+            return index
+    return 0
 
 
 def compact_history(
@@ -396,18 +355,31 @@ def compact_history(
     state: CompactState,
     focus: Optional[str] = None,
     token_threshold: int = 100_000,
+    history_identity: dict | None = None,
 ) -> list[dict]:
     """压缩早期对话历史为 LLM 生成的摘要。先保存 transcript。"""
-
-    # 保存完整 transcript 以便恢复
-    transcript_path = write_transcript(session_id, messages)
-    logger.info(f"Transcript saved: {transcript_path}")
 
     keep_recent = 10
     if len(messages) <= keep_recent:
         return messages
 
     split_idx = _find_safe_boundary(messages, keep_recent)
+    transcript_meta = dict(history_identity or {})
+    transcript_meta.update({
+        "message_count": len(messages),
+        "split_index": split_idx,
+        "early_message_count": split_idx,
+        "recent_message_count": len(messages) - split_idx,
+    })
+    # Save the exact input and its identity before any lossy summary attempt.
+    transcript_path = write_transcript(session_id, messages, metadata=transcript_meta)
+    logger.info(f"Transcript saved: {transcript_path}")
+    if split_idx <= 0:
+        logger.info("Compaction skipped: no complete earlier turn", extra={
+            "extra_data": {"session_id": session_id, "message_count": len(messages)},
+        })
+        return messages
+
     early = messages[:split_idx]
     recent = messages[split_idx:]
 

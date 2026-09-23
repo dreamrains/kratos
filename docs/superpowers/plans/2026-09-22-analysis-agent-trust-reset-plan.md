@@ -499,9 +499,15 @@ injection。
 
 先处理 M03，因为会话历史不可信时，后续审计输入也不可信。
 
-- 复现“内存消息少于持久历史”的 web 集成路径；
+状态（2026-09-23）：`completed_local`，实现提交待创建。R4 M03 的旧 split=1 已由完整 turn 边界修为
+split=0/保留原历史；新增聚焦测试最终为 10 项（修正前版本 11 passed），受影响完整文件 312 passed。fresh full-offline
+`tmp/trust-reset-phase1-full-offline-2` 为 2821 passed、1 skipped、16 warnings、0 failures；该运行明确排除
+用户保留且本计划已否决的未跟踪 `tests/test_p08_trust_restructure.py`，Provider calls forbidden。
+
+- 复现 R4 M03 单个完整用户轮被错误切成 `early=1` 的 web 集成路径；不伪称已证明内存历史短于持久历史；
 - 建立单一规范历史和 revision/hash；
 - 压缩、刷新、导出共用同一规范源；
+- rewind 继续是显式授权截断，但必须从 canonical snapshot 读取并用 revision/hash CAS 写回；
 - 回放 M03 R4 轨迹；
 - 验证摘要含执行结果且不污染 reply identity；
 - 验证 conversation/publication 双产物。
