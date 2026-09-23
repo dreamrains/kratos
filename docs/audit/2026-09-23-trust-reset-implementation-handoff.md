@@ -101,3 +101,9 @@ Phase 5 最终 JUnit：`tmp/trust-reset-phase5-protocol-full-offline-1/junit.xml
 用户要求把新进展写回主计划，避免只盯最近中断的 R4 或因上下文压缩反复做词表修补。主计划 §0.1、Phase 6 四门、§9 完成定义和历史交接边界已同步更新；完整跨历史矩阵与下个 RED/结构替代/退役目标见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md`。本次只读核对 `main@b7e1f981b395a3a5007998013422886b8958487e`、clean/ahead 60，R4 目录仍在；不把原计划 §2.3 的两份旧未跟踪文件说成现存用户 dirty。
 
 新的结构缝隙不是某一个措辞：R4 M03 历史 `synthesize_time_series` 回执有 102 facts/34 groups 和六源版本身份，但最终 packet 只选择 `record_evidence_record`，故当前可信核心即使能渲染 packet 也拿不到那些金额。此为**历史证据**，须在当前 HEAD 以同轮/同版本/后到证据回执的最小夹具先复现；若当前已闭合就不改代码。下一切片仅属 A+B 离线：先验证入包/遗漏是否保留当前综合事实与跨轮旧版本隔离，再对照 R11/R16 正例、R4 分项及无据 99% 负例；不让原始字段/模型 EvidenceRecord 标签自动成为 `answered`。正式发布路径、Shadow 调度、审计处置、E3/E4 均未获此次文档更新授权。
+
+## 15. A+B 第三离线切片：显式综合回执可进入预览包（2026-09-24）
+
+阶段 RED/结构替代/旧门边界见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §6。当前 `_SUBSTANTIVE_TOOLS` 与 `_PUBLICATION_EVIDENCE_TOOLS` 排除了 `synthesize_time_series`，故即使构包时给出该 ID，综合事实也先被工具集合门排除。新增测试 RED 为 `StopIteration`；最小修复仅在 `offline_trust_projection=True` 且调用方传了显式 receipt IDs 时，允许同一构包器纳入该成功回执的 fact groups/省略项和 digest。普通包、AgentLoop、模型 prompt、正式发布没有改变；预览显示原始字段但 `accepted_claim_ids=[]`。这不是从旧模型 claim 中恢复六源业务结论，也不证明调用方 ID 与当前 workspace 版本同一。
+
+两文件定向 **17 passed**；`tmp/tprb21` full-offline **2914 passed、1 skipped、16 warnings、0 failures**，但在最后一条 digest 测试断言前，不作为最终树收据。**最终 fresh `tmp/tprb22`** 为 **2914 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `D689F1C2FD27A52EC7098B051DCA55884A66F8CAC7939FE74E71B3D9E490030D`，runner `provider_calls=forbidden`、真实 Provider initiated 0。E3/E4 仍未做；A 的六源同版本计算/渲染、R11/R16 正确价值保留与无据 99% 的正式发布边界未闭合，B 仍为离线模拟，C/D 仍独立授权门。下阶段先把可复算的六源结果与原始字段区分，再决定是否需要窄的宿主表格；不能把工具集合放宽当成完成 CR03/CR04。

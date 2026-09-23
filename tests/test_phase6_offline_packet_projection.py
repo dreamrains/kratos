@@ -43,6 +43,48 @@ def test_projection_is_default_off_and_offline_packet_cannot_be_model_prompt(tmp
         publication_packet_prompt(projected)
 
 
+def test_current_six_source_synthesis_facts_enter_only_explicit_offline_packet():
+    state = _state("six_source_projection")
+    state.tool_receipts.append({
+        "id": "tr_six", "tool_name": "synthesize_time_series",
+        "result_sha256": "sha256:six", "result_preview": "six aligned sources",
+        "data_identities": {"combined": {"version_id": "v_current"}},
+        "publication_facts": [
+            {"path": f"sources.source_{index}.amount.day_2", "value": str(index * 11)}
+            for index in range(1, 7)
+        ],
+        "publication_contract": publication_contract(
+            "synthesize_time_series", {"aligned_rows": 2},
+        ),
+    })
+    normal = build_publication_packet(
+        state, user_input="保留全部六个来源", substantive_tools={"run_python"},
+        receipt_ids=["tr_data", "tr_six"],
+    )
+    assert [source["receipt_id"] for source in normal["sources"]] == ["tr_data"]
+    projected = build_publication_packet(
+        state, user_input="保留全部六个来源", substantive_tools={"run_python"},
+        receipt_ids=["tr_data", "tr_six"], offline_trust_projection=True,
+    )
+    assert projected["snapshot_digest"] != normal["snapshot_digest"]
+    synthesis = next(source for source in projected["sources"] if source["receipt_id"] == "tr_six")
+    assert len(synthesis["facts"]) == 6
+    preview = render_trusted_core_preview(projected, None)
+    assert "sources.source_1.amount.day_2" in preview["text"]
+    assert "sources.source_6.amount.day_2" in preview["text"]
+    assert preview["accepted_claim_ids"] == []
+    without_explicit_turn = build_publication_packet(
+        state, user_input="保留全部六个来源", substantive_tools={"run_python"},
+        offline_trust_projection=True,
+    )
+    assert all(source["receipt_id"] != "tr_six" for source in without_explicit_turn["sources"])
+    without_selected_receipt = build_publication_packet(
+        state, user_input="保留全部六个来源", substantive_tools={"run_python"},
+        receipt_ids=["tr_data"], offline_trust_projection=True,
+    )
+    assert all(source["receipt_id"] != "tr_six" for source in without_selected_receipt["sources"])
+
+
 def test_current_registered_chart_is_previewed_as_artifact_not_business_fact(tmp_path):
     cfg = get_config()
     old = cfg.sessions_dir

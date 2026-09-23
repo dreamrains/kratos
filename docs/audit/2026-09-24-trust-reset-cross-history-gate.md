@@ -19,7 +19,7 @@
 
 只读检查 R4 M03 `sessions/50e734df7af7/analysis_state.json`：`tr_3e70ccb10380` 的 `synthesize_time_series` 回执有 102 个 `publication_facts`、34 个 `publication_fact_groups`，绑定 `sources_combined` 及六个源的版本/指纹，`publication_contract.observation_window` 也逐源写出两日各两行。然而该会话的最终 `publication_packets[-1].sources` 只有 `tr_4ee00ec935b1`（`record_evidence_record`）；它的 facts 是统计细节缺口与证据 ID，不是六来源两日金额表。旧 evidence 的 claim/measurement 写有六来源数值，但由模型填写，不能凭此直接授权可信核心。当前构包器按 `receipt_ids` 先过滤可选回执，再 `_select_sources`；因此若当前轮/终局 receipt selection 没有综合回执，新增 renderer 再强也无法从该 packet 重建六来源。
 
-这是可离线验证的**入包/回执选择问题**，不是“补一句提示词”或“让 Shadow 批准旧证据”。不能为解决它偷偷从全会话挑任意旧回执：必须限定同一规范历史 turn、scope/版本、结果 digest 和显式需求，且保留预算/遗漏清单。也不能从上传原始文件静默重算，绕过已有工具/收据。下一切片先用 R4 的最小化形状写 RED，确认当前 HEAD 是否仍会选择掉当前有效的综合回执；若历史旧代码形状不再可复现，记录为历史风险而不是现行缺陷。
+这是可离线验证的**入包/回执选择问题**，不是“补一句提示词”或“让 Shadow 批准旧证据”。当前 `loop.py` 的 `_SUBSTANTIVE_TOOLS` / `_PUBLICATION_EVIDENCE_TOOLS` 均不含 `synthesize_time_series`，而 `_prepare_publication_packet` 依该集合调用构包器；所以即使调用方显式选了该综合回执，也会在工具集合门被排除。R4 历史最终包是否还有其他同轮追踪问题仍未证明。不能为解决它偷偷从全会话挑任意旧回执：必须限定本轮显式 receipt IDs、scope/版本、结果 digest 和显式需求，且保留预算/遗漏清单。也不能从上传原始文件静默重算，绕过已有工具/收据。
 
 ## 3. 下一离线切片的可执行边界
 
@@ -40,3 +40,9 @@
 ## 5. 续接时先核实
 
 重读根 `AGENTS.md`、主计划及三份原始计划；`git worktree list --porcelain`、`git rev-parse HEAD`、`git status --short --branch`；只读核对 R4 目录和 R16/R11 历史收据；阅读 [实现交接](2026-09-23-trust-reset-implementation-handoff.md) 第 10—13 节及 [离线投影记录](2026-09-24-trust-reset-offline-core-projection.md)。旧文档中的 `main@5176c41`、两份未跟踪文件和“只做 Phase 0”是历史快照，不得用来覆盖当前状态。提交仅 stage 明名文件，不删改用户新 dirty；当前没有完整 E3 或新 E4。
+
+## 6. 第一条 RED/GREEN：仅离线纳入显式选中的综合回执
+
+进入代码基线 `main@ac84dd8`。`test_current_six_source_synthesis_facts_enter_only_explicit_offline_packet` 的 RED 为 `StopIteration`：普通与离线 packet 都无法在 `sources` 找到显式选中的 `tr_six`。结构替代只在 `offline_trust_projection=True` **且调用方传了显式 receipt IDs** 时把 `synthesize_time_series` 加入构包可选工具；仍使用原有成功回执、fact group/预算、省略清单、packet digest，不触碰 AgentLoop 的普通工具集合或模型 prompt。六个源的原始字段可在可信核心预览，但 `accepted_claim_ids=[]`；不存在显式 ID、或 ID 未选中时不进入。此离线 API 本身尚不证明所传 ID 与当前 workspace 版本一致，不能用它授权业务结论。正常 packet 仍刻意不含它，离线 packet 仍被 `publication_packet_prompt` 拒绝。
+
+因此旧门**尚未退役**，本切片也没有声称六来源业务比较已经 `answered`。独立 99% 的正式误放和 R11/R16 的旧方法解释损失仍是双轨校准项。定向两文件 17 passed；`tmp/tprb21` 全量离线 **2914 passed、1 skipped、16 warnings、0 failures**（182.43s），JUnit SHA256 `DE7FCF4CB7FE6CBDD39590B644FB371615A8AAC1CC0DA74DF08F7AA38BD742B0`，但其后增加了 packet digest 测试断言，故它不是最终树的收据。**最终 fresh `tmp/tprb22`** 全量离线 **2914 passed、1 skipped、16 warnings、0 failures**（183.99s），JUnit SHA256 `D689F1C2FD27A52EC7098B051DCA55884A66F8CAC7939FE74E71B3D9E490030D`，runner `provider_calls=forbidden`。本轮真实 Provider initiated 0；未运行 E3 或 E4。下一步须验证同快照六源两日金额/行数的宿主计算身份及版本，再决定如何原位渲染；只凭字段入包、图表或模型 evidence claim 不能升格。

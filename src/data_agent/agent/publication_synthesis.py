@@ -823,6 +823,12 @@ def build_publication_packet(
     """Build the bounded evidence hand-off used by the finalization round."""
     substantive = set(substantive_tools)
     allowed_receipts = {str(receipt_id) for receipt_id in (receipt_ids or []) if str(receipt_id)}
+    # The aligned multi-source result is contextual evidence, not an answered
+    # claim or a new substantive-analysis gate.  Admit it only for the
+    # explicitly selected offline projection; the production packet remains
+    # unchanged until the value/safety calibration is complete.
+    if offline_trust_projection and allowed_receipts:
+        substantive.add("synthesize_time_series")
     receipts = list(getattr(state, "tool_receipts", []) or [])
     eligible = [
         receipt for receipt in receipts
