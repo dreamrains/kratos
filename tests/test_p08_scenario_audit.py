@@ -72,6 +72,20 @@ class TestOracleContractConsistency:
 
 
 class TestSessionVerdicts:
+    def test_m02_numeric_text_is_unassessed_without_unit_evidence(self, tmp_path):
+        sdir = _make_session(
+            tmp_path, "s_m02", summary="请计算并解释 D1 至 D7 留存",
+            messages=[
+                {"role": "user", "content": "请计算并解释 D1 至 D7 留存"},
+                {"role": "assistant", "content": "D1 为 55%，D7 为 10%。"},
+            ],
+        )
+        verdict = audit_session(sdir, scenario="M02", actions=[])
+        check = next(c for c in verdict["checks"] if c["check"] == "answer_numeric_oracles")
+        assert check["passed"] is False
+        assert check["blocking"] is False
+        assert "unassessed" in check["detail"]
+
     def test_clean_session_passes_all_blocking_checks(self, tmp_path):
         sdir = _make_session(
             tmp_path, "s_clean", summary=M01_SUMMARY,

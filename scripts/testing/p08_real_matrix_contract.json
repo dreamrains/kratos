@@ -36,9 +36,9 @@
       ],
       "actions": ["export_markdown", "refresh"],
       "hard_oracles": [
-        "D1-D7 values are correct and D7 is 10%",
+        "D1-D7 values match source raw scale (D7=0.10); unit/scale remains not_confirmed unless explicit source or user-confirmed unit evidence authorizes conversion to percent",
         "D30 remains unknown or is an explicitly labelled receipt-bound fitted scenario",
-        "every D30 scenario value is host-recomputed from the named receipt family and parameters within 0.05 percentage point",
+        "every D30 scenario value is host-recomputed from the named receipt family and parameters within 0.0005 on source raw scale; use percentage-point tolerance only when explicit unit/scale evidence authorizes conversion",
         "a fitted scenario reports family, R-squared, no holdout/backtest/external validation, and cross-family sensitivity",
         "computed results, fitted scenarios, and evidence insufficiency are separated",
         "one terminal state; export and refresh are consistent"
@@ -79,7 +79,6 @@
         "structured plan, evidence records, and competing hypotheses exist",
         "support/refutation/conflict/unresolved states are auditable",
         "v1 evidence becomes stale or excluded for v2",
-        "failed v2 upload restores v1 metadata, upload records, plan, tasks, and authoritative scope",
         "no cross-version evidence upgrade"
       ]
     },

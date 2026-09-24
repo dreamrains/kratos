@@ -52,7 +52,9 @@ AUTHORIZED_CONFIRMATION_TYPES = {
 
 NUMERIC_ORACLES = {
     "M01": ["12", "120"],
-    "M02": ["55", "10"],
+    # A text token cannot establish whether 0.10 was rendered on raw scale or
+    # silently converted to 10%; M02 is explicitly unassessed below.
+    "M02": [],
     "M03": ["210", "231"],
     "M04": [],
     "M05": ["12", "120"],
@@ -413,14 +415,23 @@ def audit_session(sdir: Path, scenario: str, actions: list[str] | None = None) -
         o["blocking"], o["dim"], o["principle"],
     ))
 
-    # 4. numeric oracles present in the final answer (blocking)
+    # 4. Numeric token presence is only a coarse check. M02 needs a
+    # receipt-bound raw-scale/unit review; do not falsely pass 10% or reject
+    # 0.10 from a substring search.
     o = _oracle_meta("answer_numeric_oracles")
-    missing = [tok for tok in NUMERIC_ORACLES.get(scenario, []) if tok not in final_text]
-    checks.append(_check(
-        not missing, o["id"],
-        f"missing_tokens={missing}" if missing else "numeric oracles present",
-        o["blocking"], o["dim"], o["principle"],
-    ))
+    if scenario == "M02":
+        checks.append(_check(
+            False, o["id"],
+            "unassessed: review raw-scale D1-D7, unit evidence, and receipt-bound D30",
+            False, o["dim"], o["principle"],
+        ))
+    else:
+        missing = [tok for tok in NUMERIC_ORACLES.get(scenario, []) if tok not in final_text]
+        checks.append(_check(
+            not missing, o["id"],
+            f"missing_tokens={missing}" if missing else "numeric oracles present",
+            o["blocking"], o["dim"], o["principle"],
+        ))
 
     # 5. export dual artifacts (blocking when the scenario exports)
     o = _oracle_meta("export_dual_artifacts")

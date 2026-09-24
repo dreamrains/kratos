@@ -62,7 +62,18 @@ def test_m02_contract_accepts_only_disclosed_receipt_bound_fitted_scenarios():
     assert "R²" in prompt
     assert "未做留出验证/回测/外部验证" in prompt
     assert "host-recomputed" in oracles
-    assert "0.05 percentage point" in oracles
+    assert "D7=0.10" in oracles
+    assert "unit/scale remains not_confirmed" in oracles
+    assert "0.0005 on source raw scale" in oracles
+
+
+def test_m04_contract_does_not_claim_unfrozen_failed_upload_rollback():
+    launcher = _launcher_module()
+    contract = launcher._frozen_matrix_contract(Path(__file__).parents[1], 5215)
+
+    scenario = contract["scenario_inputs"]["M04"]
+    assert "failed_v2_upload" not in scenario["actions"]
+    assert not any("failed v2 upload" in oracle for oracle in scenario["hard_oracles"])
 
 
 def test_preflight_stdout_is_ascii_safe_without_losing_unicode_content():

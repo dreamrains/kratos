@@ -31,3 +31,9 @@
 4. Phase 5 仍无真实 Shadow 调度；Phase 6 仍只有 A+B 默认关闭离线准备，C 校准与 D 发布策略另设门；Phase 7 尚不能开始。下一步**不是**继续堆离线 `unassessed` 字段或词表：先同用户裁决上述 E4 oracle/动作差异，再用既有 `run_p08_real_matrix.py --preflight` 在新精确 HEAD 上零调用冻结模型、端点、固定 prompts/fixtures/oracles、预算、账本和运行目录；核对 manifest 后再单独请求真实 Provider 授权。未获授权，不得调用 `--authorized` 或真实 Provider。E4 结束后对照 R7—R21/R16/R4 聚类问题，再决定是否调整结构边界，不按一个失败补关键词。
 
 本轮没有产品源码、发布默认、审计调用或 Provider 配置变更。上述 M02/M04 是**待裁决的冻结契约差异**，尚未修改契约，也未创建 E4 run-dir/ledger。
+
+后续裁决（2026-09-24）：用户同意按上述建议修订 M02/M04，并授权在修订完成、精确零调用冻结且可行性核对通过后执行**本次**真实 Provider 批次，无须为同一冻结再次中断索取授权。授权不覆盖改模型/端点/预算/矩阵、扩大场景、补做探针、失败后局部重跑、push/部署；任何此类变化需重新冻结和确认。本段不改变本文件所记 `e05d957` E3 的源码时点证据。
+
+修订时发现既有 `p08_scenario_audit.py` 的 M02 机械数字门仅搜索 `55`/`10`，对 `0.10` 与 `10%` 不具尺度识别能力。它已改为明示 `unassessed`、非阻断，真实 M02 必须检查同一源/回执/包/正文；未用新的关键词把旧误判搬到另一种写法。修改后须重新跑完整离线并以新 HEAD 冻结；修改前一次 full-offline 的 2962 passed/1 skipped 是中间时点，不作最终源码证明。
+
+修订后定向矩阵/审计器测试 **25 passed**；fresh `tmp/trust-reset-fo-20260924-contract-r2` 全量离线 **2963 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2964/failures=0/errors=0/skipped=1`、SHA256 `4AD327F5EC398580B74B2178495FC51E50869087033C9CD25B2F4C6855E942FD`，runner `provider_calls=forbidden`。这仍只是 E2，不证明自然模型会按原始尺度作答；M02 机械项为 `unassessed` 正是为了避免把它误报为通过。
