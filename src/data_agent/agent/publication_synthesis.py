@@ -2976,7 +2976,8 @@ def _descriptive_fit_binding_values(
         or block.get("unit_status") != "not_confirmed"
         or block.get("validation_status") != "none"
         or block.get("requirement_refs") != []
-        or block.get("fact_refs") != []
+        or not isinstance(block.get("fact_refs"), list)
+        or (block["fact_refs"] and _curve_observed_endpoint(block, packet) is None)
         or block.get("derived_refs") != []
     ):
         return None
@@ -3049,6 +3050,62 @@ def _descriptive_fit_binding_values(
     if len(set(model_families)) != len(models) or set(families) != set(model_families):
         return None
     return scope, models, first, last, point_count
+
+
+def _curve_observed_endpoint(
+    block: dict[str, Any], packet: dict[str, Any],
+) -> tuple[Decimal, Decimal] | None:
+    """Resolve one x/y pair from the same selected curve receipt and point."""
+    refs = block.get("fact_refs")
+    if (not isinstance(refs, list) or len(refs) != 2
+            or not all(isinstance(ref, str) and ref for ref in refs)
+            or len(set(refs)) != 2):
+        return None
+    sources = [
+        source for source in packet.get("sources", [])
+        if isinstance(source, dict) and source.get("receipt_id") == block.get("receipt_ref")
+        and source.get("tool_name") == "curve_fitting"
+    ]
+    scopes = [
+        scope for scope in packet.get("publication_scope", [])
+        if isinstance(scope, dict) and scope.get("receipt_id") == block.get("receipt_ref")
+        and scope.get("tool") == "curve_fitting"
+    ]
+    if len(sources) != 1 or len(scopes) != 1:
+        return None
+    dataset = str(scopes[0].get("source_dataset") or "")
+    identities = sources[0].get("data_identities")
+    identity = identities.get(dataset) if isinstance(identities, dict) else None
+    if (
+        not dataset or not isinstance(identity, dict)
+        or not str(identity.get("version_id") or "")
+        or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", str(identity.get("fingerprint") or ""))
+        or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", str(sources[0].get("result_sha256") or ""))
+        or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", str(sources[0].get("structured_result_sha256") or ""))
+    ):
+        return None
+    facts = [
+        fact for fact in sources[0].get("facts", [])
+        if isinstance(fact, dict) and fact.get("fact_id") in refs
+    ]
+    if len(facts) != 2 or {fact.get("fact_id") for fact in facts} != set(refs):
+        return None
+    paths = [re.fullmatch(r"points\[(\d+)\]\.(x|y)", str(fact.get("path") or "")) for fact in facts]
+    if any(match is None for match in paths):
+        return None
+    if paths[0].group(1) != paths[1].group(1) or {match.group(2) for match in paths} != {"x", "y"}:
+        return None
+    by_field = {match.group(2): fact for match, fact in zip(paths, facts)}
+    x = _decimal_number(str(by_field["x"].get("value") or ""))
+    y = _decimal_number(str(by_field["y"].get("value") or ""))
+    observed = scopes[0].get("observed_x_range")
+    if (x is None or y is None or not x.is_finite() or not y.is_finite()
+            or not isinstance(observed, list) or len(observed) != 2):
+        return None
+    last = _decimal_number(str(observed[1]))
+    if last is None or x != last:
+        return None
+    return x, y
 
 
 def _descriptive_fit_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> str | None:
@@ -3315,6 +3372,15 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
                 rows.append(
                     f"| {model['family']} | {params['a']} | {params['b']} | {model['r_squared']} |"
                 )
+            if block["fact_refs"]:
+                endpoint = _curve_observed_endpoint(block, packet)
+                if endpoint is None:
+                    raise ValueError("描述拟合的观测端点在渲染前失效")
+                x, y = endpoint
+                rows.append(
+                    f"\n已执行回执的观测端点 x={format(x.normalize(), 'f')}："
+                    f"原始数值 {format(y.normalize(), 'f')}（单位未确认）。"
+                )
             rows.append(
                 f"\n仅观察 x={first:g}—{last:g}，有效拟合点 {point_count}。"
                 "未做留出验证、回测或外部验证；拟合度不构成区间外预测、显著性或因果证据。"
@@ -3421,6 +3487,93 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             rows.append("存在负值情景；需按指标定义判断其是否具有业务可解释性。")
         rendered = rendered.replace(block["exact_text"], "\n".join(rows), 1)
     return rendered
+
+
+def produce_m02_receipt_claim_candidate(
+    packet: dict[str, Any], receipt_ref: str, *, scenario_time_point: int | None = None,
+) -> str | None:
+    """Default-off, receipt-only M02 candidate for local production-path replay.
+
+    No user-request coverage is inferred. The caller must explicitly select
+    the executed receipt and, if wanted, the out-of-range scenario point.
+    This candidate contains only host-rendered placeholders and is never
+    inserted into the ordinary model publication path by this function.
+    """
+    if not isinstance(packet, dict) or packet.get("status") != "ready":
+        return None
+    sources = [
+        source for source in packet.get("sources", [])
+        if isinstance(source, dict) and source.get("receipt_id") == receipt_ref
+        and source.get("tool_name") == "curve_fitting"
+    ]
+    scopes = [
+        scope for scope in packet.get("publication_scope", [])
+        if isinstance(scope, dict) and scope.get("receipt_id") == receipt_ref
+        and scope.get("tool") == "curve_fitting"
+    ]
+    if len(sources) != 1 or len(scopes) != 1:
+        return None
+    source, scope = sources[0], scopes[0]
+    observed = scope.get("observed_x_range")
+    if not isinstance(observed, list) or len(observed) != 2:
+        return None
+    last = _decimal_number(str(observed[1]))
+    if last is None or not last.is_finite():
+        return None
+    endpoint_pairs: list[list[str]] = []
+    by_index: dict[str, dict[str, dict[str, Any]]] = {}
+    for fact in source.get("facts", []):
+        if not isinstance(fact, dict):
+            continue
+        match = re.fullmatch(r"points\[(\d+)\]\.(x|y)", str(fact.get("path") or ""))
+        if match:
+            by_index.setdefault(match.group(1), {})[match.group(2)] = fact
+    for pair in by_index.values():
+        if set(pair) != {"x", "y"}:
+            continue
+        x = _decimal_number(str(pair["x"].get("value") or ""))
+        if x is not None and x == last:
+            endpoint_pairs.append([str(pair["x"].get("fact_id") or ""), str(pair["y"].get("fact_id") or "")])
+    if len(endpoint_pairs) != 1 or not all(endpoint_pairs[0]):
+        return None
+    scenario = scope.get("scenario_extrapolation")
+    if not isinstance(scenario, dict) or not isinstance(scenario.get("models"), list):
+        return None
+    families = [model.get("family") for model in scenario["models"] if isinstance(model, dict)]
+    if len(families) != len(scenario["models"]):
+        return None
+    stem = hashlib.sha256(str(receipt_ref).encode("utf-8")).hexdigest()[:12]
+    fit_id = f"claim_m02_fit_{stem}"
+    fit = {
+        "claim_id": fit_id, "exact_text": f"[[claim:{fit_id}]]",
+        "claim_type": "descriptive_fit", "status": "descriptive",
+        "unit_status": "not_confirmed", "validation_status": "none",
+        "receipt_ref": receipt_ref, "families": families,
+        "requirement_refs": [], "fact_refs": endpoint_pairs[0], "derived_refs": [],
+    }
+    if _descriptive_fit_binding_issue(fit, packet):
+        return None
+    blocks = [fit]
+    if scenario_time_point is not None:
+        scenario_id = f"claim_m02_scenario_{stem}"
+        scenario_block = {
+            **fit, "claim_id": scenario_id, "exact_text": f"[[claim:{scenario_id}]]",
+            "claim_type": "scenario_extrapolation", "status": "unvalidated",
+            "time_point": scenario_time_point, "fact_refs": [],
+        }
+        if _scenario_binding_issue(scenario_block, packet):
+            return None
+        blocks.append(scenario_block)
+    digest = packet.get("binding_digest") or packet.get("snapshot_digest")
+    if not isinstance(digest, str) or not digest:
+        return None
+    payload = {"schema_version": "answer_bindings.v1", "packet_digest": digest, "blocks": blocks}
+    return (
+        "\n\n".join(block["exact_text"] for block in blocks)
+        + "\n\n```answer-bindings\n"
+        + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        + "\n```"
+    )
 
 
 def render_bound_claims_with_trace(
