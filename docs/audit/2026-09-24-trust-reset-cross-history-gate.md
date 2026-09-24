@@ -98,3 +98,13 @@ RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均
 退役旧门的目标未变：一条有效 binding 不应授权整篇自由散文。**正式旧门本切片尚未退役**；普通 packet、AgentLoop、真实 Shadow、审计处置和 Provider 不变。当前离线结构仍不能从历史旧会话直接生成新 typed binding；R11 百分比单位、R16 方法适当性、R4 M04 错别名关系和独立无据 99% 的正式误放保持未闭合。下一步须对跨历史正反候选分别记录原始值/单位/方法/关系/具体缺口的保留与误放；只有宿主验证过的指标身份才能给 `answered`。未做真实会话回写或旧 pickle 载入重放。
 
 定向八文件最终 **197 passed**，包括曲线/趋势错版本和错列、任意文本遮蔽、超点数明确遗漏、聚合参数与执行表达式不一致不展示，以及既有六源/Shadow/正式发布边界。最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2927/failures=0/errors=0/skipped=1`，SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`；runner `provider_calls=forbidden`，实际 Provider initiated calls=0。仍仅 E2，不是当前 HEAD 的完整浏览器 E3、真实 Provider E4、staging/production 或旧会话重放。下一门不可再靠一个离线 fixture 的 100% 扩大适用范围；须把历史正确价值与错误结论分开校准，再讨论默认策略。
+
+## 12. 第七 A+B 离线切片：模型提议目标、宿主核对结果身份
+
+用户批准后从 `main@83dac2fb3d97c8d45c7a704517b4de31f4763577` clean 工作树进入。跨历史动机不是单一 R4 失败：R11 完整批次的 `curve_fitting` 同回执确有 `day=7, retention=0.1`，但旧正确自然句“10%”缺百分比单位身份；R16 已通过 M05 的原始值及方法仍不能由一个工具标签全量恢复；R4 M03/M04 的派生帧和错误假设别名要求版本/关系硬边界；有效绑定旁独立 99% 的正式误放尚在。R7—R21 的错单位、错版本、错算术和正确否定句误拒也保留为后续双向校准面。
+
+本切片 RED：新增选择器测试初跑因 `validate_offline_target_selectors` 不存在而在导入阶段失败。结构化替代物没有另建通道，而是离线解释现有 `answer_bindings.v1.blocks[]` 的提议字段 `target_selector={receipt_ref,dataset_version_id,x_column,y_column,x_value,expected_y}`。宿主要求 packet binding digest 一致、字段和状态闭合，并在同一默认关闭的 `executed_results` 中找到唯一 `curve_fitting` 结果，再核对回执 ID、结果 SHA、数据版本、输入列、点对以及原 source 的 `points[i].x/y`。错列、错点、错数值、跨回执、旧版本、旧 digest、投影/原事实不一致均拒绝。通过只产出原始尺度数值、`unit_status=not_confirmed`、`target_status=verified_result_identity`、`answer_coverage=unassessed`、`publication_effect=none`；未建立独立可信的用户子问题关系，不允许模型自报 requirement 变成 `answered`。正式 `parse_answer_bindings` 仍拒绝试验字段，普通 packet/AgentLoop/用户可见发布、Shadow 和 Provider 均不使用它。
+
+本切片将来要退役的旧门仍是“一条有效 binding 为整篇自由散文背书”，而不是当前已退役任何词表门或削弱回执/版本/数值硬门。它**没有**让 R11 0.1 自动变成 10%，也没有修复正式 99% 误放、R16 方法解释或 M04 非闭合假设。后续 A 门需用历史正反候选审查可信结果、具体宿主缺口、产物与解释保留；如果身份不足，保留 `unassessed` 并讨论工具契约，而非从旧正文回填。B 的动作仍只纯离线；C 真 Shadow 调度与校准、D 正式策略及完整 E3/E4 各自独立。
+
+本切片定向七文件 **188 passed**；fresh `tmp/tprb27` full-offline **2930 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2931/failures=0/errors=0/skipped=1`、SHA256 `0790E1759F31306768DBA9456465834080DD7DD592C9F2E7F10A4D9ABCBED1B0`，runner `provider_calls=forbidden`，真实 Provider initiated 0。没有 E3/E4、旧会话实际重放或正式发布策略切换；该试验不是 Phase 6 完成或 Phase 7 启动证据。

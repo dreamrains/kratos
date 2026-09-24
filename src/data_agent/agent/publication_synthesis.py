@@ -3341,6 +3341,110 @@ def render_verified_partial_answer(
     }
 
 
+def validate_offline_target_selectors(
+    packet: dict[str, Any], bindings: dict[str, Any],
+) -> dict[str, Any]:
+    """Check model-proposed point targets against one projected tool result.
+
+    This is an offline identity check, not answer coverage or publication.
+    The live answer-bindings parser deliberately does not accept the selector.
+    """
+    outcome: dict[str, Any] = {"publication_effect": "none", "results": [], "issues": []}
+    projection = packet.get("offline_trust_projection")
+    if (not isinstance(projection, dict) or not isinstance(bindings, dict)
+            or bindings.get("schema_version") != "answer_bindings.v1"
+            or bindings.get("packet_digest") != packet.get("binding_digest")
+            or not isinstance(bindings.get("blocks"), list)
+            or len(bindings["blocks"]) > 32):
+        outcome["issues"].append({"code": "invalid_offline_selector_snapshot"})
+        return outcome
+    results = projection.get("executed_results")
+    if not isinstance(results, list):
+        outcome["issues"].append({"code": "missing_executed_results"})
+        return outcome
+    seen: set[str] = set()
+    selector_fields = {
+        "receipt_ref", "dataset_version_id", "x_column", "y_column", "x_value", "expected_y",
+    }
+    block_fields = {
+        "claim_id", "exact_text", "claim_type", "status", "requirement_refs",
+        "fact_refs", "derived_refs", "target_selector",
+    }
+    for index, block in enumerate(bindings["blocks"]):
+        issue = {"code": "unverified_offline_target", "block_index": index}
+        if not isinstance(block, dict) or set(block) != block_fields:
+            outcome["issues"].append(issue)
+            continue
+        claim_id = block.get("claim_id")
+        selector = block.get("target_selector")
+        if (not isinstance(claim_id, str) or not _SCENARIO_CLAIM_ID.fullmatch(claim_id)
+                or claim_id in seen or block.get("exact_text") != f"[[claim:{claim_id}]]"
+                or block.get("claim_type") != "observed_fact"
+                or block.get("status") != "unassessed"
+                or block.get("requirement_refs") != []
+                or block.get("fact_refs") != [] or block.get("derived_refs") != []
+                or not isinstance(selector, dict) or set(selector) != selector_fields
+                or any(not isinstance(value, str) or not value or len(value) > 128
+                       for value in selector.values())):
+            outcome["issues"].append(issue)
+            continue
+        seen.add(claim_id)
+        x_value = _decimal_number(selector["x_value"])
+        expected_y = _decimal_number(selector["expected_y"])
+        if (x_value is None or not x_value.is_finite()
+                or expected_y is None or not expected_y.is_finite()):
+            outcome["issues"].append(issue)
+            continue
+        matches = [
+            result for result in results
+            if isinstance(result, dict)
+            and result.get("status") == "context_only"
+            and result.get("tool_name") == "curve_fitting"
+            and result.get("receipt_id") == selector["receipt_ref"]
+            and result.get("dataset_version_id") == selector["dataset_version_id"]
+            and result.get("input_columns") == {
+                "x": selector["x_column"], "y": selector["y_column"],
+            }
+        ]
+        if len(matches) != 1 or not isinstance(matches[0].get("observations"), list):
+            outcome["issues"].append(issue)
+            continue
+        sources = [
+            source for source in packet.get("sources", [])
+            if isinstance(source, dict)
+            and source.get("receipt_id") == selector["receipt_ref"]
+            and source.get("tool_name") == "curve_fitting"
+            and source.get("result_sha256") == matches[0].get("result_sha256")
+        ]
+        if len(sources) != 1 or matches[0].get("unit_status") != "not_confirmed":
+            outcome["issues"].append(issue)
+            continue
+        facts = {
+            fact.get("path"): fact.get("value")
+            for fact in sources[0].get("facts", []) if isinstance(fact, dict)
+        }
+        points = [
+            point for point_index, point in enumerate(matches[0]["observations"])
+            if isinstance(point, dict)
+            and _decimal_number(str(point.get("x") or "")) == x_value
+            and _decimal_number(str(point.get("y") or "")) == expected_y
+            and _decimal_number(str(facts.get(f"points[{point_index}].x") or "")) == x_value
+            and _decimal_number(str(facts.get(f"points[{point_index}].y") or "")) == expected_y
+        ]
+        if len(points) != 1:
+            outcome["issues"].append(issue)
+            continue
+        outcome["results"].append({
+            "claim_id": claim_id, "target_status": "verified_result_identity",
+            "answer_coverage": "unassessed", "receipt_id": matches[0]["receipt_id"],
+            "dataset_version_id": matches[0]["dataset_version_id"],
+            "x_column": selector["x_column"], "y_column": selector["y_column"],
+            "x_value": points[0]["x"], "raw_value": points[0]["y"],
+            "unit_status": matches[0]["unit_status"],
+        })
+    return outcome
+
+
 def render_trusted_core_preview(
     packet: dict[str, Any], bindings: dict[str, Any] | None,
     *, excluded_claim_ids: frozenset[str] = frozenset(),

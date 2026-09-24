@@ -139,3 +139,11 @@ R16 完整批次 M05 已通过，但其 `transform_data(group_aggregate)` 回执
 R11 的历史正确 10% 仍只可在新离线结构展示为原始 0.1（单位未确认）；R4 M04 旧 evidence 的假设 ID 错配仍 `unassessed`；R16 旧会话没有在新 HEAD 重放。三份原始需求的价值保留与无据内容剔除双门尚未过，不能把本切片的 E2 当作 A+B 结束或默认发布授权。最终测试收据见跨历史记录 §11 的后续补记。
 
 最终 E2：八文件定向 **197 passed**；fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，`provider_calls=forbidden`、真实 Provider initiated 0。E3/E4、正式发布策略切换、push 和部署均未进行；下次续接先核实精确 HEAD/dirty 及跨历史记录 §11，不得凭旧 §17/§19 的“待裁决”反向撤销用户现已批准的离线工作。
+
+## 21. 第七 A+B 离线切片与 Phase 6→7 接续门
+
+用户已批准基于现有 `answer_bindings.v1` 的离线 typed 目标选择器。进入基线 `main@83dac2fb3d97c8d45c7a704517b4de31f4763577`、clean/ahead 67。RED、结构替代物、旧门和跨历史边界详见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §12。实现仅提供纯离线 `validate_offline_target_selectors`：回执/版本/列/点/原始值及同 source 事实闭合，可记已验证的**结果身份**，但用户子问题覆盖仍 `unassessed`；正式 parser 拒绝该字段，AgentLoop 不调用。没有真实 Provider、模型 Shadow 调用、正式策略切换或浏览器 E3。定向七文件 **188 passed**；fresh `tmp/tprb27` full-offline **2930 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `0790E1759F31306768DBA9456465834080DD7DD592C9F2E7F10A4D9ABCBED1B0`，Provider transport forbidden、initiated 0；仍仅 E2。
+
+继续顺序：先对 R11 正确边界、R16 已通过 M05、R4 M03/M04 分项与 R7—R21 正反候选做同 packet 离线双轨，逐项标出可信值/方法/具体宿主缺口/关系的来源和无法恢复原因；随后才能评估 A 的价值保留与独立 99% 剔除是否同时满足。B 仍须验证 claim 级动作、故障回退、一次修订预算但保持 `publication_effect=none`。C 需独立 Shadow 调度、版本化提示/digest、统一 Provider 账本/预算、超时降级及误删/漏检校准；任何真实 Provider 执行前另做精确冻结并取得新的显式授权。D 的默认切换、受限处置、确定性复核和完整 Provider-disabled E3 还需用户单独裁决；E4 再另冻另授。Phase 7 只在旧检查族已有结构化所有者和回放证据后逐族启动，绝不能一次性删光散文门。**此时不能称 Phase 6 已完成或 Phase 7 已进入。**
+
+给后续规划的粗估：在 A 的信息缺口不需要新增上游工具契约、C 的 Provider 冻结/授权及时取得、E3 未发现新系统级故障的前提下，A/B 跨历史校准及补齐约 1–2 周，C 的调度/离线校准及受控真实验证约 1–2 周，D 的裁决后接入/完整本地验收约 1–2 周，合计 **约 3–6 个工程周才可能进入 Phase 7**。这是工作量级估计，不是已获授权的日历日期；外部授权等待、原始需求价值无法从现有宿主证据重建、或 E3/E4 失败会延长。若 A 出现“可信且有用”不可同时实现的结构缺口，先向用户呈报取舍，不靠新词表或 Shadow 总审批抢工期。

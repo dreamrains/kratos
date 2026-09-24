@@ -25,6 +25,7 @@
 - 第五切片后在 `main@f2ea7e3` 只读对照 R11、R16、R4 M03/M04 与独立 99%：R11 `curve_fitting` 已执行点对给出原始 D7=0.1 但无百分比单位授权；R16 聚合值在派生帧、方法明细未入出版 facts；R4 M04 v2 趋势事实存在但旧 evidence 假设别名与真实 ID 不一致。详见跨历史记录 §10。下一步应先裁决“同一 packet 内的通用已执行结果身份及敏感字段/单位披露边界”，而非加第三张工具专用表；这尚未进入代码或正式门。
 - 用户已批准上述方向；第六 A+B 离线切片把 `curve_fitting` 点对及 `analyze_time_series` 描述字段的执行身份按回执/参数/数据版本/实际指纹投影进同一默认关闭 packet，R16 聚合方法参数还需与派生 identity 的表达式闭合。任意文本单元格默认遮蔽；单位未证实只显示原始尺度。RED 和仍未闭合的价值/发布门见跨历史记录 §11。它不授权 `answered`、假设关系、真实 Shadow、正式策略或 Provider。
 - 第六切片最终 fresh `tmp/tprb26` full-offline **2926 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `C2C6027389668BD902FC96100509A98F81FB88D237C20E07BAF989C383711C17`，Provider transport forbidden、实际 initiated 0。该 E2 不证明 R11 的 10% 单位、R16 旧方法表等价保留或 M04 关系已授权，也不替代 E3/E4；正式独立 99% 误放仍待默认策略门。
+- 用户批准在现有 `answer_bindings.v1` 上做**默认关闭、纯离线目标选择器试验**。第七 A+B 切片从 `main@83dac2fb3d97c8d45c7a704517b4de31f4763577` clean 状态进入：模型提议回执/数据版本/横纵列/点/期望原始值，宿主与同 packet 的已执行结果及原回执事实逐项核对；通过只记 `verified_result_identity`，`answer_coverage=unassessed`、`publication_effect=none`。无可信用户子问题绑定时不标 `answered`；正式 parser 仍拒绝该试验字段。RED、跨历史边界和最终 fresh `tmp/tprb27` **2930 passed/1 skipped/16 warnings/0 failures** 收据见跨历史记录 §12。R11 10% 单位、R16 方法价值、M04 假设 ID、正式独立 99% 仍未闭合；不可把试验等同 A 门通过或 Phase 7 开始。
 
 ## 0. 本次重置要解决什么
 
@@ -608,7 +609,7 @@ evidence refs；无绑定意见 advisory，`overall` 不影响发布。尚未接
 
 | 门 | 交付和退出条件 | 目前状态 |
 |---|---|---|
-| A 可信核心 | 在同一 packet/回执上重建可信事实、**宿主证实**的具体缺口、必要范围/单位/方法边界、产物与假设审计；跨历史正反候选同时检查价值保留与无据结论移除。原始字段、图表存在、模型标签均不自动授权 `answered` | 离线预览局部具备；R4 M03 六来源结论、M04 非闭合关系、R16 M05 方法表与 R11 原句等价保留未证明；不得切默认 |
+| A 可信核心 | 在同一 packet/回执上重建可信事实、**宿主证实**的具体缺口、必要范围/单位/方法边界、产物与假设审计；跨历史正反候选同时检查价值保留与无据结论移除。原始字段、图表存在、模型标签均不自动授权 `answered` | 离线预览及目标身份校验局部具备，但后者只到 `unassessed`；R4 M03 六来源结论、M04 非闭合关系、R16 M05 方法表与 R11 原句等价保留未证明；不得切默认 |
 | B 离线动作 | 仅同快照有效 typed claim/evidence 可模拟 claim 级 keep/downgrade/unassessed/remove/定向修订；独立可信 claim 保留、故障回退可复核，`publication_effect=none` | 纯函数初切片具备；不代表真实审计或处置完成 |
 | C 真 Shadow | 独立版本化提示、输入/输出 digest、统一 Provider 账本/预算、显式开启/超时降级；历史正反候选校准误删、漏检、动作、成本；整个 Shadow 不改可见发布 | 未开始；任何真实 Provider 调用另需精确冻结和用户显式授权 |
 | D 正式处置 | 用户另行裁决默认发布切换；仅受限 claim 动作，确定性复核与最多一次定向修订；完整 Provider-disabled 浏览器 E3，E4 另冻结/授权 | 未授权、未开始 |

@@ -3,7 +3,9 @@
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
-from data_agent.agent.publication_synthesis import build_publication_packet, render_trusted_core_preview
+from data_agent.agent.publication_synthesis import (
+    build_publication_packet, render_trusted_core_preview, validate_offline_target_selectors,
+)
 from data_agent.session.workspace import Workspace
 
 
@@ -120,3 +122,76 @@ def test_point_budget_is_reported_without_partial_observation_claim():
     assert projection["executed_results"] == []
     assert projection["result_omissions"] == [{"receipt_id": "tr_curve", "reason": "point_budget"}]
     assert "超出当前离线" in render_trusted_core_preview(packet, None)["text"]
+
+
+def _target_binding(packet, *, receipt="tr_curve", x_col="day", y_col="retention",
+                    x="7", y="0.1", version=None):
+    curve = packet["offline_trust_projection"]["executed_results"][0]
+    return {
+        "schema_version": "answer_bindings.v1", "packet_digest": packet["binding_digest"],
+        "blocks": [{
+            "claim_id": "claim_d7", "exact_text": "[[claim:claim_d7]]",
+            "claim_type": "observed_fact", "status": "unassessed",
+            "requirement_refs": [], "fact_refs": [], "derived_refs": [],
+            "target_selector": {
+                "receipt_ref": receipt, "dataset_version_id": version or curve["dataset_version_id"],
+                "x_column": x_col, "y_column": y_col, "x_value": x, "expected_y": y,
+            },
+        }],
+    }
+
+
+def test_offline_selector_verifies_same_receipt_raw_point_but_not_answer_coverage():
+    state, workspace = _state_and_workspace()
+    packet = _packet(state, workspace, ["tr_curve", "tr_trend"])
+    checked = validate_offline_target_selectors(packet, _target_binding(packet))
+    assert checked["publication_effect"] == "none"
+    assert checked["results"] == [{
+        "claim_id": "claim_d7", "target_status": "verified_result_identity",
+        "answer_coverage": "unassessed", "receipt_id": "tr_curve",
+        "dataset_version_id": packet["offline_trust_projection"]["executed_results"][0]["dataset_version_id"],
+        "x_column": "day", "y_column": "retention", "x_value": "7", "raw_value": "0.1",
+        "unit_status": "not_confirmed",
+    }]
+    assert render_trusted_core_preview(packet, None)["accepted_claim_ids"] == []
+
+
+def test_offline_selector_rejects_wrong_column_point_receipt_version_and_stale_packet():
+    state, workspace = _state_and_workspace()
+    packet = _packet(state, workspace, ["tr_curve", "tr_trend"])
+    variants = [
+        {"x_col": "retention"}, {"y_col": "amount"}, {"x": "30"},
+        {"y": "0.99"}, {"receipt": "tr_trend"}, {"version": "stale"},
+    ]
+    for variant in variants:
+        checked = validate_offline_target_selectors(packet, _target_binding(packet, **variant))
+        assert checked["results"] == [], variant
+        assert checked["issues"], variant
+    stale = _target_binding(packet)
+    stale["packet_digest"] = "sha256:stale"
+    assert validate_offline_target_selectors(packet, stale)["results"] == []
+
+
+def test_offline_selector_does_not_promote_model_requirement_or_live_parser():
+    state, workspace = _state_and_workspace()
+    packet = _packet(state, workspace, ["tr_curve"])
+    binding = _target_binding(packet)
+    binding["blocks"][0]["requirement_refs"] = ["model_says_d7"]
+    assert validate_offline_target_selectors(packet, binding)["results"] == []
+    binding["blocks"][0]["requirement_refs"] = []
+    from data_agent.agent.publication_synthesis import parse_answer_bindings
+    import json
+    answer = "[[claim:claim_d7]]\n```answer-bindings\n" + json.dumps(binding) + "\n```"
+    _, accepted, issues = parse_answer_bindings(answer, packet)
+    assert accepted["blocks"] == []
+    assert issues
+
+
+def test_offline_selector_cannot_use_projection_value_without_same_receipt_fact():
+    state, workspace = _state_and_workspace()
+    packet = _packet(state, workspace, ["tr_curve"])
+    binding = _target_binding(packet)
+    source = next(item for item in packet["sources"] if item["receipt_id"] == "tr_curve")
+    point = next(item for item in source["facts"] if item["path"] == "points[1].y")
+    point["value"] = "0.99"
+    assert validate_offline_target_selectors(packet, binding)["results"] == []
