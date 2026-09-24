@@ -72,3 +72,19 @@ RED：新增 `test_phase6_offline_multisource_table.py` 三项初始失败，均
 本切片**没有退役正式旧门**。退役目标仍是“一条有效 binding 使整篇无绑定散文获得事实权威”；正式 AgentLoop、默认发布、Shadow 调度和审计处置保持原样。A 的 R11 正确边界、R16 方法解释、M04 非闭合关系和宿主证实的具体缺口尚未等价重建；B 仍只有 `publication_effect=none` 的离线动作。下一门先以同一历史正反矩阵评估快照的价值保留、敏感字段/预算/遗漏呈现、指标身份如何授权 claim，才能讨论 A 结束或 C/D。E3/E4、真实 Provider、push、部署均未获此次授权。
 
 三项新增测试初始 RED 后，发布/离线投影/审计相关七文件定向 **192 passed**。第一次完整 `tmp/tprb24` 为 **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `60F86AB2F5AFA98E8D1756004948206A9BD58BB84D9928239CA16E64776D4767`；其后审查发现预算超限静默遗漏，故这份收据**不是最终代码时点**。补入同 packet `snapshot_omissions` 与预览说明后，定向仍 **192 passed**；最终 fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2922/failures=0/errors=0/skipped=1`，SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，runner `provider_calls=forbidden`，本轮实际 Provider initiated calls=0。它仍只属 E2；没有完整 E3/E4 或生产验收。期间只读复核 R16 原始回执 `tr_fb774270b1c9` 的 `group_aggregate`、七列及父/派生版本链与夹具契约一致；没有把旧会话自然回答当作新 renderer 通过证据。
+
+## 10. 第五切片后跨历史所有者复核：下一步不是第三张专用表
+
+2026-09-24 从 `main@f2ea7e3db1da5d3263fd8a0859afa6c4cf355e75`、clean/ahead 65 只读复核。它是上一提交后的证据检查，不更改正式发布、离线代码或旧会话。重读三份原始 VP/IC/CP 的门：正确已执行分析不得因发布误拒消失；真实业务语义才暂停；明确子问题要可信结果或**有宿主证据**的具体缺口，同时独立无据事实不能借一个有效 binding 放行。R4 是中断批次，仍须以 R7—R21 及 R16 完整批次的正反结果为背景。
+
+| 样本/当前保留 | 原始宿主所有者与欠缺 | 禁止的捷径 |
+|---|---|---|
+| R11 完整批次 M02：正确给出 D7=10%、拒绝 D30，旧散文被误拒；当前离线核心只保留观测 x=1—7 与未验证外推边界 | `tmp/p08-real-provider-20260913-fe83160-r1/sessions/72b58ee16e69` 的 `curve_fitting` 回执 `tr_1536f8a2e4a5` 有已执行参数 `x_col=day,y_col=retention`、同回执 `points[6].x=7, points[6].y=0.1`、当前数据版本与 descriptive/no extrapolation scope；该拒绝会话 `publication_packets=0`，没有可重用的终局包，且未提供可核验的百分比单位身份。可把 **0.1 原始尺度的 D7 观察**作为待校准结构候选，不能仅凭旧正文输出“10% 已回答” | 不从“D7”字面或模型自报标签反向猜指标，不把 0.1 自动乘百，不恢复旧散文原字节 |
+| R16 完整批次 M05 **passed**：当前合成离线夹具可预览 12/120 原始字段、单位未确认，但方法表尚未重建 | `tmp/p08-real-provider-20260914-b833501-r1/sessions/58da9082dc02` 的 `transform_data` 回执 `tr_fb774270b1c9` 只有 `operation=group_aggregate`、一行、七个列名及 `M01-sales`→`M01-sales_totals` 父/派生身份；具体执行表达式留在同版本 workspace identity，旧终局 packet 仅两条 facts=0 的 `preview_data`。本轮没有把旧 pickle 载入新包作真实重放 | 不把列名或模型旧方法表当作方法验证；不说 R16 已在当前 HEAD 重新通过 |
+| R4 中断批次 M03：合成六源两日帧离线可复算逐源数值，artifact-only 图表可投影 | 旧会话 `50e734df7af7` 的综合回执有版本/覆盖而无金额；金额在派生帧，历史终局只选 `record_evidence_record`。当前投影要求显式选中且 workspace 同版本，**尚未证明历史最终 receipt 选择已修** | 不把六源字段可见或模型 EvidenceRecord 数值算作全项 answered，不跨未确认单位的来源合计 |
+| R4 中断批次 M04：旧正文解释 v1/v2，但当前离线关系投影只对同指标可复算的 `compare_periods` 闭合 | `f2db8a75de3d` 的 v2 `analyze_time_series` 回执 `tr_08de4cb55518` 给出 amount 均值 10、std=0、slope=0、direction=flat；v2 假设集的实际 ID 为 `hypotheses_m04_hyp_v2_..._h1` 等，而旧 evidence 的关系目标写 `h_trend`、`h_level_shift`，并不匹配这些 ID。即使值可信，关系授权仍缺假设身份/谓词的宿主闭合 | 不把模型 evidence 的 refutes 文本或旧 H1/H2 别名直接写为已反驳；不取消显式 plan 审计门 |
+| 当前 typed 正反夹具：有效 claim 可保留，旁边独立无据 99% 可从离线核心剔除 | 现行正式完整候选仍可放行该 99%；R7—R21 还见错误单位、CV 算术、来源/版本混淆和正确 D30 否定句误拒 | 不用一个绑定给整篇散文授权，也不靠新词表或末尾免责声明兜底 |
+
+**下一 RED（尚未执行）**应同组验证三类结果形状：`curve_fitting` 的执行参数＋点对、`transform_data` 的同版本派生帧、`analyze_time_series` 的趋势字段与假设 ID。正例分别是原始尺度点值、聚合字段、无趋势事实可见；负例是错列/错版本/错回执、未确认单位换算、假设别名错配、无据 99% 仍不进核心。对照旧通过项要分别记“原始值保留、方法边界保留、用户子问题 answered、正确缺口”，不能用正文长度或测试总数代替。
+
+推荐的**结构化替代方向，待裁决后实现**：仍在现有 publication packet 和 `answer_bindings.v1` 内，抽象“已执行结果身份”（回执参数、输出 facts 或同版本派生帧、目标列/指标、单位状态、范围），把不同工具的结果映射为受预算的宿主拥有上下文；只有工具同名身份及可复核运算能进一步授权 `answered`，否则 `unassessed`。这比按 R11/R16/M04 各加一个专用 renderer 更接近 VP/CP 原目标。旧门退役目标仍是自由散文整体获权威，确定性回执/数值/版本门不退。该方向会扩展离线投影的结果类型，并触及任意 `transform_data` 小帧可能含敏感原始文本的披露策略；在隐私/粒度预算与单位授权未定前，**不把上一切片默认开启或接入 AgentLoop**。若要求同时恢复历史“10%”、R16 完整方法表及 M04 关系，但这些身份在旧回执中不足，必须请用户就继续 `unassessed` 与新增宿主契约作明确取舍，不能偷偷从旧正文回填。

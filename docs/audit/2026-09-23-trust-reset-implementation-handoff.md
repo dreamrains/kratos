@@ -125,3 +125,9 @@ R16 完整批次 M05 已通过，但其 `transform_data(group_aggregate)` 回执
 这不是 A/B 或原始 VP/IC/CP 的完成证明。R11 正确 D7/无 D30、R4 M03 图表/M04 非闭合假设、R16 完整 M05 方法表、R7—R21 错误单位/版本/算术及独立无据 99% 误放仍必须双向对照；尤其不能为补价值而从模型旧正文回填事实或让 Shadow 总审批。C 的真实 Shadow 调度、D 的默认发布切换、E3/E4 各需独立门。下一次续接先复核 HEAD/dirty、§9 和主计划 §0.1/Phase 6 四门，再检查定向与最新 full-offline 收据，不以本段取代历史矩阵。
 
 本切片最终 E2 收据：定向七文件 **192 passed**；fresh `tmp/tprb25` full-offline **2921 passed、1 skipped、16 warnings、0 failures**，JUnit SHA256 `06D71A3A7B812D80B5C98FE9E36D1C9D31296FF12D9731CF136801629E8A8900`，`provider_calls=forbidden`、实际 Provider initiated 0。`tmp/tprb24` 也全绿，但在预算遗漏说明补入前运行，不能替代最终收据。未经新精确冻结/显式授权，不启动真实 Provider；未运行浏览器 E3、push 或部署。
+
+## 19. 第五切片后跨历史所有者复核与下一裁决
+
+从 `main@f2ea7e3` clean 状态只读核对 R11 完整 M02、R16 已通过 M05、R4 中断 M03/M04 和当前独立 99% 正反夹具；事实、未闭合身份与拟议 RED/替代物/旧门见 `docs/audit/2026-09-24-trust-reset-cross-history-gate.md` §10。关键区别：R11 的 D7=0.1 有 `curve_fitting` 回执参数 `day/retention` 和成对点值，但无确认百分比单位，旧会话也没有终局 packet；R16 的聚合数值在派生帧、执行方法细节未进出版 facts；R4 M04 的新版本趋势事实有工具回执，却不能凭旧 evidence 的 `h_trend`/`h_level_shift` 别名授权真实假设 ID 的反驳。当前共用派生快照只对其中一类结果形状提供上下文，因此**不能因为 E2 全绿就切默认核心**。
+
+下一步建议先裁决是否扩展同一 packet 的默认关闭“已执行结果身份”离线契约，并限定文本/行粒度的敏感字段披露、单位未证实只显示原始尺度、错误假设 ID 保持 `unassessed`。这不是新 planner/账本或模型审核；但它超出上一切片的派生帧快照类型，故先说明权衡再写代码。正式门的独立 99% 误放、C/D、E3/E4 仍原样未授权。
