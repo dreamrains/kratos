@@ -119,4 +119,6 @@ R16 完整批次 M05 的会话 `58da9082dc02` 还证明这不是 R11 单句特�
 
 当前源码已核对所有者边界：`session.history.load_canonical_history` 提供消息字节、revision 和 SHA 身份，不解释子问题语义；`loop` 的 `update_requirement_lifecycle` 只保存 `extract_explicit_requirements` 的确定性结果，R11 复合句及 R16 首轮自然请求均未留下要求记录。旧归档早于当前 lifecycle 实现，不能据它单独断言当前多轮行为必败；但当前提取器对 R11 真实文本返回空已复现。`analysis_spec.metrics` 等模型字段仍只是线索。下一步若要补“事实结果 ↔ 用户子问题”的权威关系，应先定义由谁确认语义、如何在多轮继承和版本变化时撤销，再做当前 HEAD 的最小 RED；不可把 canonical history 的字节正确性误当语义覆盖已解决。
 
+R11 的旧 `dataset_contract_detail.json` 还显示 `field_roles.metrics=[day,retention]`、`rate_metrics=[]`，`data_understanding.v1` 仅列出两列类型与七行，没有百分比单位定义；不能把列名 `retention` 或 0.1 的数值范围当作“10%”授权。此处需要的是上游可验证的指标/单位身份，不是发布时按名字或大小猜单位。旧归档只作缺口定位，不替代当前 HEAD 的 E3/E4。
+
 最终 fresh `tmp/tprb28` full-offline **2931 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2932/failures=0/errors=0/skipped=1`、SHA256 `72B8C65B0ACED19F647B5AE7C346CA47472E0AAE3F7D0C3A5FC35DE64FE8F289`，runner `provider_calls=forbidden`、真实 Provider initiated 0。本切片没有 E3/E4、旧会话回写或正式处置。
