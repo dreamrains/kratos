@@ -1,11 +1,14 @@
 """Offline executed-result identity must preserve values without granting claims."""
 
+import hashlib
 import pandas as pd
 
 from data_agent.agent.analysis_state import AnalysisSessionState
 from data_agent.agent.publication_synthesis import (
-    build_publication_packet, render_trusted_core_preview, validate_offline_target_selectors,
+    build_publication_packet, render_trusted_core_preview, update_requirement_lifecycle,
+    validate_offline_target_selectors,
 )
+from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
 from data_agent.session.workspace import Workspace
 
 
@@ -195,3 +198,95 @@ def test_offline_selector_cannot_use_projection_value_without_same_receipt_fact(
     point = next(item for item in source["facts"] if item["path"] == "points[1].y")
     point["value"] = "0.99"
     assert validate_offline_target_selectors(packet, binding)["results"] == []
+
+
+def _canonical(messages):
+    return CanonicalHistorySnapshot(
+        messages=messages, revision=2, sha256=_history_sha256(messages),
+        message_count=len(messages),
+    )
+
+
+def test_offline_request_anchor_uses_persisted_user_source_across_style_turn():
+    state, workspace = _state_and_workspace()
+    original = "请回答 retention"
+    later = "请改写表达，但保留原先结果与证据边界"
+    source_ref = "msg_" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    requirement_ids = update_requirement_lifecycle(state, original, source_message_ref=source_ref)
+    assert len(requirement_ids) == 1
+    packet = build_publication_packet(
+        state, user_input=later, substantive_tools=set(), receipt_ids=["tr_curve"],
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    binding = _target_binding(packet)
+    binding["blocks"][0]["requirement_refs"] = requirement_ids
+    history = _canonical([{"role": "user", "content": original},
+                          {"role": "user", "content": later}])
+    checked = validate_offline_target_selectors(packet, binding, canonical_history=history)
+    assert checked["results"][0]["request_anchor_status"] == "verified_source_and_column"
+    assert checked["results"][0]["request_history_sha256"] == history.sha256
+    assert checked["results"][0]["request_history_revision"] == history.revision
+    assert checked["results"][0]["answer_coverage"] == "unassessed"
+    assert checked["results"][0]["unit_status"] == "not_confirmed"
+    assert checked["publication_effect"] == "none"
+
+
+def test_offline_request_anchor_rejects_foreign_history_or_stale_requirement():
+    state, workspace = _state_and_workspace()
+    original = "请回答 retention"
+    source_ref = "msg_" + hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
+    requirement_ids = update_requirement_lifecycle(state, original, source_message_ref=source_ref)
+    packet = _packet(state, workspace, ["tr_curve"])
+    binding = _target_binding(packet)
+    binding["blocks"][0]["requirement_refs"] = requirement_ids
+    history = _canonical([{"role": "user", "content": original},
+                          {"role": "user", "content": packet["question"]}])
+    assert validate_offline_target_selectors(packet, binding, canonical_history=history)["results"]
+    forged = _canonical([{"role": "user", "content": "请回答 revenue"},
+                         {"role": "user", "content": packet["question"]}])
+    assert validate_offline_target_selectors(packet, binding, canonical_history=forged)["results"] == []
+    stale = _canonical(history.messages)
+    object.__setattr__(stale, "sha256", "sha256:stale")
+    assert validate_offline_target_selectors(packet, binding, canonical_history=stale)["results"] == []
+    packet["requirements"][0]["lifecycle_status"] = "retracted"
+    assert validate_offline_target_selectors(packet, binding, canonical_history=history)["results"] == []
+
+
+def test_historical_composite_request_does_not_gain_synthetic_intent_or_percent_unit():
+    state, workspace = _state_and_workspace()
+    historical = (
+        "请计算并解释 D1 至 D7 留存；判断当前数据是否可以预测 D30。"
+        "若不能，请明确区分已计算结果、证据不足与下一步所需数据，不要给出无依据的 D30 数值。"
+    )
+    source_ref = "msg_" + hashlib.sha256(historical.encode("utf-8")).hexdigest()[:12]
+    assert update_requirement_lifecycle(state, historical, source_message_ref=source_ref) == []
+    packet = _packet(state, workspace, ["tr_curve"])
+    binding = _target_binding(packet)
+    assert validate_offline_target_selectors(packet, binding)["results"][0]["unit_status"] == "not_confirmed"
+    workspace.set_metadata("retention", "unit", "percent")
+    assert _packet(state, workspace, ["tr_curve"])["offline_trust_projection"]["executed_results"][0][
+        "unit_status"] == "not_confirmed"
+    binding["blocks"][0]["requirement_refs"] = ["model_invented_requirement"]
+    history = _canonical([{"role": "user", "content": historical},
+                          {"role": "user", "content": packet["question"]}])
+    assert validate_offline_target_selectors(packet, binding, canonical_history=history)["results"] == []
+
+
+def test_historical_multi_turn_style_chain_does_not_invent_missing_requirement():
+    state, workspace = _state_and_workspace()
+    first = "请先基于当前订单给出一份证据受限的事实摘要，明确计算并列出订单记录数与 amount 总额。"
+    later = "请恢复技术表达，列出计算方法与证据边界，但不要改变数字、范围、限制和证据等级。"
+    first_ref = "msg_" + hashlib.sha256(first.encode("utf-8")).hexdigest()[:12]
+    later_ref = "msg_" + hashlib.sha256(later.encode("utf-8")).hexdigest()[:12]
+    assert update_requirement_lifecycle(state, first, source_message_ref=first_ref) == []
+    assert update_requirement_lifecycle(state, later, source_message_ref=later_ref) == []
+    packet = build_publication_packet(
+        state, user_input=later, substantive_tools=set(), receipt_ids=["tr_curve"],
+        offline_trust_projection=True, offline_workspace=workspace,
+    )
+    assert packet["requirements"] == []
+    binding = _target_binding(packet)
+    binding["blocks"][0]["requirement_refs"] = ["claim_from_old_prose"]
+    history = _canonical([{"role": "user", "content": first},
+                          {"role": "user", "content": later}])
+    assert validate_offline_target_selectors(packet, binding, canonical_history=history)["results"] == []

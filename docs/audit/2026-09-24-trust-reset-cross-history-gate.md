@@ -121,4 +121,22 @@ R16 完整批次 M05 的会话 `58da9082dc02` 还证明这不是 R11 单句特�
 
 R11 的旧 `dataset_contract_detail.json` 还显示 `field_roles.metrics=[day,retention]`、`rate_metrics=[]`，`data_understanding.v1` 仅列出两列类型与七行，没有百分比单位定义；不能把列名 `retention` 或 0.1 的数值范围当作“10%”授权。此处需要的是上游可验证的指标/单位身份，不是发布时按名字或大小猜单位。旧归档只作缺口定位，不替代当前 HEAD 的 E3/E4。
 
+## 14. 第八 A+B 离线切片：已有子问题记录的消息来源锚点
+
+用户批准默认关闭的上游指标/单位身份契约原型，并特别要求测试设计服从真实分析场景，而不是为夹具造功能。从 `main@93b652e176ddb3ebc2752f17be8281a7b226ea3c` clean/ahead 70 进入。真实约束先于测试：R11 复合请求有 day=7/retention=0.1 回执，但旧 `answer_requirements=[]`、数据契约无百分比单位；R16 已通过 M05 的会话先问订单数与 amount 总额，再连续改写风格，旧 `answer_requirements=[]`；两者不能靠当前提取器、模型意图或末轮句式补成权威。已有 `session.history` 给消息内容/revision/SHA，`update_requirement_lifecycle` 给已识别要求的 `source_message_ref`/稳定 ID/生命周期；普通 Workspace metadata 可由工具写入，不是可信单位来源。
+
+这一切片的校准面没有收缩为两条正例：R4 M03 的六源金额仍需同版本派生帧，旧自发 `answer_bindings.v1` 种子不含当前占位符和合法 fence；M04 的假设别名与真实 ID 不一致，消息锚点不修关系；R7—R21 的错单位、来源/版本和 CV 算术仍由原有回执/复算硬门约束；正式有效 binding 旁独立 99% 的误放仍待默认策略门。新锚点不应改变这些状态。本次没有把那些旧会话重新执行在当前 HEAD，不能把协议测试当作历史全矩阵通过。
+
+本切片 RED：在现有 `answer_bindings.v1` 的离线目标选择器附上一条已持久化要求，并传 canonical history，三项测试均因函数没有该输入而失败。结构化替代物**不新建要求账本或发布通道**：在既有默认关闭 `validate_offline_target_selectors` 里，可选读取 `CanonicalHistorySnapshot`，重算完整消息 SHA/数量、核对 revision，核对最后用户消息与当前 packet 问题、唯一来源用户消息的 `msg_` 内容哈希、要求的稳定 ID/原文/active 状态，并要求 label 与同版本工具实际 y 列标识符完全同名。结果只增加 `request_anchor_status=verified_source_and_column`、`request_history_sha256` 与 `request_history_revision`；点值仍须逐项核对回执事实，`answer_coverage=unassessed`、`unit_status=not_confirmed`、`publication_effect=none`。这个锚点证明历史消息和列标识符，并**不**证明跨轮语义仍适用、聚合方式正确、中文别名相当于英文列，或数值可以换算百分比。
+
+生产路径可行性也已只读复核：`AgentLoop.run_turn`/structured/stream 三个入口均先把同一 `user_input` 作为 user 消息加入 `self.messages`，`_prepare_analysis_turn` 再对该字符串计算 `msg_` 内容哈希；因此正例的消息锚点不是测试夹具凭空设计的另一个 ID 算法。但本次没有把 canonical history 传入正式发布，也没有证明旧会话能补出缺失的要求记录。
+
+正式接线前还要让 history SHA/revision 与 publication packet 在同一原子快照中绑定，并定义后到用户消息、撤回或数据版本变化时如何失效；当前纯函数只校验传入的 canonical snapshot 自洽并把身份写入离线结果，不声称该 snapshot 是发布瞬间的最新历史。因此不能凭此结果直接放行 `answered`。
+
+负例包括伪造/过期历史 SHA、外来历史、已撤回要求、R11 无要求记录却由模型补 ID、R16 首轮明确问订单数/amount 且末轮只改风格却仍无要求记录，以及把 `unit=percent` 随意写进 Workspace metadata；均不授予新权威。正例仅是已有宿主要求记录的同名列跨表达改写，可证明协议可行，**不是** R11/R16 真实旧会话通过。现行正式 parser 继续拒绝试验字段；普通 packet、AgentLoop、确认系统、用户可见发布、Shadow 和 Provider 路径不变。旧门将来退役的目标仍是一条 binding 给整篇自由散文授权；当前没有退役任何正式门，也没有把 `analysis_spec` 或模型 EvidenceRecord 升为真。
+
+现有来源数据契约没有可验证的单位/尺度字段；confirmation 的 `metric_definition` 记录也未提供通用的“数据版本＋列＋单位/尺度”已确认结构。不能为了让正例变绿而发明上传侧元数据或把可写 Workspace metadata 当来源授权。下一步应把单位/业务决定的真实生产者、版本撤销和需要用户确认的条件单独设计并用实际正反流程校准；在此之前 R11 只可显示原始 0.1 与单位未确认，R16 的 12/120 仍是已投影原始结果而非完整方法/子问题等价保留。若完整 VP/CP 价值目标与这条证据门发生冲突，先与用户讨论；不追加中文拆句词表或 Shadow 总审批。
+
+本切片定向三文件 **173 passed**；`tmp/tprb29` full-offline **2934 passed/1 skipped/16 warnings/0 failures**，但在 revision 和 R16 负例补入前启动，**不是最终代码收据**；`tmp/tprb30` 因测试文件增加真实多轮负例而主动停止，不计最终结果。源码与测试随后冻结，最终 fresh `tmp/tprb31` full-offline **2935 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2936/failures=0/errors=0/skipped=1`、SHA256 `12F55B0200DF5AA216CF1EC5FF67C44B0A2C138B5B2AFE00356F522A46D4B049`，runner `provider_calls=forbidden`、真实 Provider initiated 0。E3/E4、正式默认切换均未运行。
+
 最终 fresh `tmp/tprb28` full-offline **2931 passed、1 skipped、16 warnings、0 failures**，JUnit `tests=2932/failures=0/errors=0/skipped=1`、SHA256 `72B8C65B0ACED19F647B5AE7C346CA47472E0AAE3F7D0C3A5FC35DE64FE8F289`，runner `provider_calls=forbidden`、真实 Provider initiated 0。本切片没有 E3/E4、旧会话回写或正式处置。

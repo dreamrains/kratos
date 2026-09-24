@@ -155,3 +155,9 @@ R11 的历史正确 10% 仍只可在新离线结构展示为原始 0.1（单位�
 更重要的 A 门发现：R11 完整批次 M02 的旧 `answer_requirements` 与终局 `publication_packets` 都为空；当前提取器对真实复合请求也返回空，尽管同回执提供 day=7/retention=0.1。上一切片只能核验工具结果身份，不能把模型意图/旧自然句升为用户子问题权威，更不能将 0.1 无据换算为 10%。继续默认关闭的跨历史离线校准；先寻找已有宿主可验证的用户子问题及单位契约，若确实不存在，应与用户讨论新增上游契约或接受 `unassessed` 的价值损失，不能靠句式词表与 Shadow 总门填空。Phase 6 A/C/D 和 Phase 7 状态不因 B 的预算收紧而改变。
 
 R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数与 amount 总额，后续五轮是要求改变表达而不改变数字/范围/证据，末轮不再重复指标；其 `answer_requirements=[]`。下一 A 门复核必须检查既有 canonical history 是否已有可宿主验证的子问题继承及单位身份，不能仅从末轮文本或模型当前意图重建。详见跨历史记录 §13；若需新增此权威契约，先与用户对照三份原始需求裁决。
+
+## 23. 第八 A+B 离线切片：canonical 来源锚点原型
+
+用户已批准默认关闭的上游指标/单位身份契约原型，并要求以真实分析流程约束测试设计。进入基线 `main@93b652e176ddb3ebc2752f17be8281a7b226ea3c`、clean/ahead 70。RED、真实 R11/R16 限界、结构化替代及退役目标详见跨历史记录 §14。仅扩展现有离线 `validate_offline_target_selectors` 的可选 canonical history 校验：已有宿主持久化要求的来源消息哈希、稳定 ID/active 状态与同名工具列/点值闭合时，返回消息/列锚点和历史 SHA/revision；始终 `answer_coverage=unassessed`、单位未确认、`publication_effect=none`。普通 packet/AgentLoop/正式发布、确认政策、Shadow 和 Provider 均不接入。定向三文件 **173 passed**；`tmp/tprb29` 在最终 revision 检查前启动，不作最终收据，`tmp/tprb30` 因补真实 R16 多轮负例而主动停止；最终 fresh `tmp/tprb31` full-offline **2935 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `12F55B0200DF5AA216CF1EC5FF67C44B0A2C138B5B2AFE00356F522A46D4B049`，Provider transport forbidden、initiated 0。
+
+不要把这个协议正例解释为 R11/R16 真实旧会话修复：两者旧 `answer_requirements=[]`；R11 的来源契约无百分比尺度，R16 的多轮风格任务没有可复核的要求继承关系。Workspace metadata 可由工具写入，不能作为单位确认。下一步若要赋予 `answered` 或单位转换，须先找到/建设真实生产链：来源元数据或已确认业务决定的版本化身份、用户子问题与指标/聚合/范围的关系、跨轮撤销条件；没有该链只能继续 `unassessed`。此项可能改变三份原始计划的价值/确认权衡，应先给用户看实际正反场景和设计取舍，不为某个测试夹具开新词表或隐藏模型审核。

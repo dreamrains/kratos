@@ -3342,11 +3342,13 @@ def render_verified_partial_answer(
 
 
 def validate_offline_target_selectors(
-    packet: dict[str, Any], bindings: dict[str, Any],
+    packet: dict[str, Any], bindings: dict[str, Any], *, canonical_history: Any = None,
 ) -> dict[str, Any]:
     """Check model-proposed point targets against one projected tool result.
 
-    This is an offline identity check, not answer coverage or publication.
+    A canonical history can additionally anchor an existing host-persisted
+    requirement to one exact user message and same-named result column. This
+    does not infer cross-turn intent, metric aliases, units, or answer coverage.
     The live answer-bindings parser deliberately does not accept the selector.
     """
     outcome: dict[str, Any] = {"publication_effect": "none", "results": [], "issues": []}
@@ -3370,6 +3372,50 @@ def validate_offline_target_selectors(
         "claim_id", "exact_text", "claim_type", "status", "requirement_refs",
         "fact_refs", "derived_refs", "target_selector",
     }
+
+    def request_anchor(requirement_ref: str, column: str) -> bool:
+        from data_agent.session.history import CanonicalHistorySnapshot, _history_sha256
+
+        if (not isinstance(canonical_history, CanonicalHistorySnapshot)
+                or not isinstance(canonical_history.messages, list)
+                or not isinstance(canonical_history.revision, int)
+                or canonical_history.revision < 0
+                or canonical_history.message_count != len(canonical_history.messages)
+                or canonical_history.sha256 != _history_sha256(canonical_history.messages)):
+            return False
+        user_messages = [
+            item.get("content") for item in canonical_history.messages
+            if isinstance(item, dict) and item.get("role") == "user"
+            and isinstance(item.get("content"), str)
+        ]
+        if not user_messages or user_messages[-1] != packet.get("question"):
+            return False
+        matching = [
+            item for item in packet.get("requirements", [])
+            if isinstance(item, dict) and item.get("id") == requirement_ref
+            and item.get("lifecycle_status") == "active"
+        ]
+        if len(matching) != 1:
+            return False
+        requirement = matching[0]
+        label = requirement.get("label")
+        source_ref = requirement.get("source_message_ref")
+        if (not isinstance(label, str) or not label
+                or not isinstance(source_ref, str)
+                or label.casefold() != column.casefold()):
+            return False
+        stable_id = "rq_" + hashlib.sha256(
+            json.dumps([source_ref, label], ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:12]
+        if stable_id != requirement_ref or requirement.get("original_text") != label:
+            return False
+        sources = [
+            message for message in user_messages
+            if "msg_" + hashlib.sha256(message.encode("utf-8")).hexdigest()[:12] == source_ref
+            and label in message
+        ]
+        return len(sources) == 1
+
     for index, block in enumerate(bindings["blocks"]):
         issue = {"code": "unverified_offline_target", "block_index": index}
         if not isinstance(block, dict) or set(block) != block_fields:
@@ -3381,7 +3427,8 @@ def validate_offline_target_selectors(
                 or claim_id in seen or block.get("exact_text") != f"[[claim:{claim_id}]]"
                 or block.get("claim_type") != "observed_fact"
                 or block.get("status") != "unassessed"
-                or block.get("requirement_refs") != []
+                or not isinstance(block.get("requirement_refs"), list)
+                or len(block["requirement_refs"]) > 1
                 or block.get("fact_refs") != [] or block.get("derived_refs") != []
                 or not isinstance(selector, dict) or set(selector) != selector_fields
                 or any(not isinstance(value, str) or not value or len(value) > 128
@@ -3393,6 +3440,10 @@ def validate_offline_target_selectors(
         expected_y = _decimal_number(selector["expected_y"])
         if (x_value is None or not x_value.is_finite()
                 or expected_y is None or not expected_y.is_finite()):
+            outcome["issues"].append(issue)
+            continue
+        anchored = bool(block["requirement_refs"])
+        if anchored and not request_anchor(block["requirement_refs"][0], selector["y_column"]):
             outcome["issues"].append(issue)
             continue
         matches = [
@@ -3434,14 +3485,19 @@ def validate_offline_target_selectors(
         if len(points) != 1:
             outcome["issues"].append(issue)
             continue
-        outcome["results"].append({
+        verified = {
             "claim_id": claim_id, "target_status": "verified_result_identity",
             "answer_coverage": "unassessed", "receipt_id": matches[0]["receipt_id"],
             "dataset_version_id": matches[0]["dataset_version_id"],
             "x_column": selector["x_column"], "y_column": selector["y_column"],
             "x_value": points[0]["x"], "raw_value": points[0]["y"],
             "unit_status": matches[0]["unit_status"],
-        })
+        }
+        if anchored:
+            verified["request_anchor_status"] = "verified_source_and_column"
+            verified["request_history_sha256"] = canonical_history.sha256
+            verified["request_history_revision"] = canonical_history.revision
+        outcome["results"].append(verified)
     return outcome
 
 
