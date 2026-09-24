@@ -3286,6 +3286,65 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
     return rendered
 
 
+def render_bound_claims_with_trace(
+    text: str, packet: dict[str, Any], bindings: dict[str, Any] | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Render typed blocks at their original positions and capture host spans.
+
+    The trace is produced during rendering, not inferred by searching the
+    accepted answer later. It is metadata for the existing publication packet,
+    not an extra answer channel or a semantic coverage decision.
+    """
+    value = str(text or "")
+    typed = []
+    seen_ids: set[str] = set()
+    for block in (bindings or {}).get("blocks", []):
+        if not isinstance(block, dict) or block.get("claim_type") not in {
+            "observed_fact", "derived_metric", "comparison", "descriptive_fit",
+            "scenario_extrapolation",
+        }:
+            continue
+        claim_id, placeholder = block.get("claim_id"), block.get("exact_text")
+        if (not isinstance(claim_id, str) or not claim_id or claim_id in seen_ids
+                or not isinstance(placeholder, str) or value.count(placeholder) != 1):
+            raise ValueError("typed claim 无法唯一定位原位占位符")
+        seen_ids.add(claim_id)
+        typed.append((value.index(placeholder), block))
+    if not typed:
+        return render_bound_claims(value, packet, bindings), []
+
+    pieces: list[str] = []
+    entries: list[dict[str, Any]] = []
+    cursor = 0
+    output_length = 0
+    for start, block in sorted(typed, key=lambda item: item[0]):
+        placeholder = block["exact_text"]
+        if start < cursor:
+            raise ValueError("typed claim 占位符重叠")
+        unchanged = value[cursor:start]
+        pieces.append(unchanged)
+        output_length += len(unchanged)
+        rendered_claim = render_bound_claims(placeholder, packet, {"blocks": [block]})
+        if not rendered_claim or rendered_claim == placeholder or _CLAIM_PLACEHOLDER.search(rendered_claim):
+            raise ValueError("typed claim 宿主渲染未完成")
+        pieces.append(rendered_claim)
+        entries.append({
+            "claim_id": block["claim_id"],
+            "start": output_length,
+            "end": output_length + len(rendered_claim),
+            "text_sha256": "sha256:" + hashlib.sha256(rendered_claim.encode("utf-8")).hexdigest(),
+        })
+        output_length += len(rendered_claim)
+        cursor = start + len(placeholder)
+    pieces.append(value[cursor:])
+    rendered = "".join(pieces)
+    # Keep the public answer byte-identical to the existing renderer even if
+    # a future claim family has inter-block behavior this path did not model.
+    if rendered != render_bound_claims(value, packet, bindings):
+        raise ValueError("typed claim 原位渲染与既有 renderer 不一致")
+    return rendered, entries
+
+
 def render_verified_partial_answer(
     packet: dict[str, Any], bindings: dict[str, Any] | None,
 ) -> tuple[str | None, dict[str, Any] | None]:

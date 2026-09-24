@@ -185,3 +185,11 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 ## 27. 已接受答案的默认关闭审计视图，不是 Shadow 调度
 
 用户批准最小 `audit_view` 后实施了 `publication_audit.build_offline_audit_view`。它核验已有 `pub_` 包/正文 SHA、规范历史中同一已接受助手消息、同一包的工具结果 SHA，再用现有 typed parser/renderer 对每个 claim 重建唯一正文片段；只返回 claim/evidence/answer span 与逐字用户来源锚点，`answer_coverage=unassessed`、`publication_effect=none`。没有真实模型调用、AgentLoop 接线或正式发布变更。原 R16 M05 旧终局包离线实测仍是 unavailable/0 claim，不能把结构迁移的测试正例算成历史自然模型成功。该定位证明当前宿主重建文本与接受正文唯一同文，**未新增原位插入 span 持久化**，不能把它夸大为旧自然文本的完整来源证明；独立无据 99% 也尚未被正式门关闭。RED、限界、定向 **26 passed**、最终 fresh `tmp/tprb36` full-offline **2959 passed/1 skipped/16 warnings/0 failures**、JUnit SHA256 `107BFC5CF046543704D01376CB4BD421AC6B746467B61FB54A1C5710AA91A073` 详见 Phase 5/C 校准记录 §6。Provider transport forbidden、真实 initiated 0，仍仅 E2。C 真调度和 D 处置仍须独立门，Provider 仍须新冻结和显式授权。
+
+## 28. 原位 trace 缩小 Phase 5 输入来源缺口，未推进到真 Shadow
+
+从 `main@0fd91d1818c04ea8f06c0503c0e646214433f594` 进入，先复核两个相同宿主渲染 claim 无法靠全文唯一匹配定位，且 §27 的单个匹配不是插入来源证明。新增 RED 为 `render_bound_claims_with_trace` 缺失。最小改动复用原 renderer，在 typed 占位符原位渲染时捕获 claim ID、字符位置和片段 SHA，核对整个答案仍与旧 renderer 字节一致；把 trace 与最终正文 SHA、快照 digest 和规范 JSON digest 放进同一 `pub_` packet。旧候选重试先清掉 trace；离线视图只对已持久化的同包、同规范历史、同工具回执的 trace 赋予位置，允许相同文本在不同位置，缺失/篡改则 unavailable。没有改可见正文、没有接审计调度、没有 Provider 调用、没有第二账本或新 planner。详见 Phase 5/C 校准记录 §7；这不是 R4 的单例措辞补丁。
+
+状态不升级：Phase 5 有协议、校验和默认无人调用的视图，但无版本化真 Shadow 调度/质量/成本证据。Phase 6 的 A 仍缺 R11/R16 正确价值、R4 M03/M04 分项的内容等价保留和独立无据 99% 正式剔除；B 仅纯离线一次修订预算模拟；C 真 Shadow 和 D 正式处置均未通过独立门。进入 Phase 7 前，先对 R7—R21/完整 R16/中断 R4 及本地真实会话做双向可评估率与正误损失校准，确定 A 的可信且有用边界；再完成 C 的版本化提示、同一 Provider 账本/预算、显式开关/超时/零调用保护和真正 Shadow 质量校准；D 需另获正式发布策略裁决、确定性复核和完整 Provider-disabled 内置浏览器 E3。只有每族旧散文门已有结构所有者和双向回放才可逐族开始 Phase 7，真实 Provider E4 另做新冻结并获显式授权。不能把本次 trace 的测试全绿解释为这些门已过。
+
+本切片定向 **28 passed**；最终 fresh `tmp/tprb37` full-offline **2961 passed/1 skipped/16 warnings/0 failures**，JUnit `tests=2962/failures=0/errors=0/skipped=1`、SHA256 `CDBFEC1E100026895F0A3F43DE8FF44C40591331AC73E1568EC5DBBC64597B1E`。入口 `provider_calls=forbidden`、真实 Provider initiated 0；仅 E2，未做 E3/E4、push 或部署。

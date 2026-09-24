@@ -59,3 +59,13 @@
 这是一种**唯一内容重建定位**，不是新持久化的 renderer 插入位置收据；字段显式命名 `location_status=unique_host_reconstruction_match`。它依赖已提交包和助手消息的宿主契约，不能独立证明任意旧自然文本哪几个字节最初由占位符插入。独立自由散文（包括有效 claim 旁的无据 99%）不被赋予 claim 权威，视图标 `unbound_prose_status=not_audited`；这并未修复正式发布误放，未来 D 仍须确定性可信核心/发布策略裁决，不能把未进 view 的散文交给 Shadow `overall` 洗白。跨历史只读调用归档 R16 M05 的当前旧终局包，得到 `status=unavailable, claim_count=0, publication_effect=none`，与上文八会话 0 typed 的盘点一致；它不是 R16 价值保留通过。
 
 将来要退役的旧门仍是“一个有效 binding 让整篇散文可信”和开放语义词表硬拦截；本切片未退役。下一门若要让真实 Shadow 使用 view，须先解决真实候选 typed 覆盖及上述定位的插入来源证明/等价边界，再单独冻结版本化提示、账本与预算；未经新精确冻结和用户显式授权，绝不发真实 Provider 调用。定向 audit-view/原 Shadow 协议/Phase 6 模拟测试 **26 passed**。源码与测试冻结后，fresh `tmp/tprb36` full-offline **2959 passed、1 skipped、16 warnings、0 failures**（435.29s），JUnit `tests=2960/failures=0/errors=0/skipped=1`、SHA256 `107BFC5CF046543704D01376CB4BD421AC6B746467B61FB54A1C5710AA91A073`；runner `provider_calls=forbidden`、真实 Provider initiated 0。仅 E2，不是新 HEAD 的完整浏览器 E3 或真实 Provider E4。
+
+## 7. 当前发布候选的宿主原位渲染追踪（2026-09-24）
+
+这一切片从 `main@0fd91d1818c04ea8f06c0503c0e646214433f594` 进入；仅原位渲染、同一已接受 publication packet 的审计元数据和默认无人调用的离线视图受影响。先有的 RED 是审计视图 §6 只能用全文唯一同文重建：两个独立 claim 渲染出相同文字时均无法定位；单个同文匹配也不能证明文本确实来自占位符替换。新增测试首次收集因缺少 `render_bound_claims_with_trace` 报 `ImportError`。这不是 R4 单例的词句修补：R11 正确 D7/无 D30、R16 已通过 M05、R4 M03 多来源/M04 关系和有效 binding 旁独立无据 99% 仍作为双向历史校准背景，旧自然会话没有新 trace，不能倒填为当前 typed 通过。
+
+结构替代：沿用 `answer_bindings.v1`、现有 renderer、`pub_` packet、正文 SHA、规范历史和回执结果 SHA。宿主在替换每个已验证 typed 占位符的**当时**记录 claim ID、Python 字符串起止位置及渲染片段 SHA；组装结果须与原 renderer 字节相同。trace 连同同快照 digest/最终正文 SHA、自己的规范 JSON digest 写在同一个已接受 packet，不增加账本、模型调用或发布文本；后续候选会清除旧 trace。离线 `audit_view` 仅当已提交包、规范助手消息、回执和 trace 同时闭合时使用该位置；同文两处可区分，缺失、旧包或篡改退回 unavailable。用户原句仍只到 `verbatim_only`，覆盖和语义均 `unassessed`，`publication_effect=none`。恢复用的无 binding 部分答案目前没有可行动审计 trace，这是明确的可评估率缺口，不能补猜。
+
+将来要退役的旧门依然是“一个有效 binding 授权整篇自由散文”及开放语义词表硬门，**本切片没有退役**；数值/版本/单位/回执硬门继续保留。尤其该 trace 只证明 typed 部分的插入来源，不审核旁边的 99%，不证明历史内容等价、真实 Shadow 质量或 Phase 6 A/D 可以切换。下一门应先用真实场景而非只用合成夹具校准 typed 覆盖、旧正确价值与独立误放，再冻结 Shadow 提示/输入 digest/统一预算账本和无调用故障门；如需真实 Provider，另向用户索取新精确冻结后的显式授权。
+
+本切片定向 audit-view/Shadow 协议/Phase 6 模拟 **28 passed**；fresh `tmp/tprb37` full-offline **2961 passed、1 skipped、16 warnings、0 failures**（478.64s），JUnit `tests=2962/failures=0/errors=0/skipped=1`、SHA256 `CDBFEC1E100026895F0A3F43DE8FF44C40591331AC73E1568EC5DBBC64597B1E`。入口声明 `provider_calls=forbidden`，真实 Provider initiated 0；未运行本 HEAD 的 E3/E4、未切正式发布策略。

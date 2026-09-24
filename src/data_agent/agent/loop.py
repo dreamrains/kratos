@@ -1973,11 +1973,12 @@ class AgentLoop:
         try:
             from data_agent.agent.publication_synthesis import (
                 parse_answer_bindings,
-                render_bound_claims,
+                render_bound_claims_with_trace,
                 render_verified_partial_answer,
                 validate_final_narrative,
             )
 
+            packet.pop("answer_render_trace", None)
             visible_text, bindings, binding_issues = parse_answer_bindings(final_text, packet)
             packet.pop("answer_bindings", None)
             if bindings is not None:
@@ -2017,15 +2018,31 @@ class AgentLoop:
             # placeholder is now replaced at its own position by receipt-only
             # content; this is not a post-hoc disclaimer for incorrect prose.
             try:
-                visible_text = render_bound_claims(visible_text, packet, bindings)
+                visible_text, render_entries = render_bound_claims_with_trace(
+                    visible_text, packet, bindings,
+                )
             except Exception as exc:
                 return None, f"[invalid_scenario_binding] 宿主无法复算或渲染绑定情景：{exc}"
+            accepted_text = visible_text.rstrip()
+            trace_body = {
+                "schema_version": "answer_render_trace.v1",
+                "packet_digest": packet.get("snapshot_digest"),
+                "answer_sha256": "sha256:" + hashlib.sha256(accepted_text.encode("utf-8")).hexdigest(),
+                "entries": render_entries,
+            }
+            trace_seed = json.dumps(
+                trace_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            )
+            packet["answer_render_trace"] = {
+                **trace_body,
+                "trace_digest": "sha256:" + hashlib.sha256(trace_seed.encode("utf-8")).hexdigest(),
+            }
             # P08-02：通过发布检查的最终答复是合法的解析结果——带证据边界的
             # 拒答（如“无法预测 D30”）完成本轮，待解析状态随之满足。
             turn_state = getattr(self.context, "turn_state", None)
             if turn_state is not None and getattr(turn_state, "pending_fallback_resolution", False):
                 turn_state.pending_fallback_resolution = False
-            return visible_text.rstrip(), None
+            return accepted_text, None
         except Exception as exc:
             logger.warning(
                 "Publication synthesis rendering skipped",

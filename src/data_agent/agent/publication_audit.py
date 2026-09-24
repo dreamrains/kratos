@@ -169,6 +169,32 @@ def build_offline_audit_view(
         or len(bindings["blocks"]) > 32
     ):
         return unavailable
+    trace = packet.get("answer_render_trace")
+    if (
+        not isinstance(trace, dict)
+        or trace.get("schema_version") != "answer_render_trace.v1"
+        or trace.get("packet_digest") != snapshot_digest
+        or trace.get("answer_sha256") != answer_sha256
+        or not isinstance(trace.get("entries"), list)
+        or len(trace["entries"]) > 32
+    ):
+        return unavailable
+    trace_body = {key: value for key, value in trace.items() if key != "trace_digest"}
+    trace_seed = json.dumps(trace_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if trace.get("trace_digest") != "sha256:" + hashlib.sha256(trace_seed.encode("utf-8")).hexdigest():
+        return unavailable
+    trace_entries: dict[str, dict[str, Any]] = {}
+    for item in trace["entries"]:
+        if (
+            not isinstance(item, dict) or set(item) != {"claim_id", "start", "end", "text_sha256"}
+            or not isinstance(item["claim_id"], str) or not item["claim_id"]
+            or item["claim_id"] in trace_entries
+            or not isinstance(item["start"], int) or isinstance(item["start"], bool)
+            or not isinstance(item["end"], int) or isinstance(item["end"], bool)
+            or not 0 <= item["start"] < item["end"] <= len(accepted_answer)
+        ):
+            return unavailable
+        trace_entries[item["claim_id"]] = item
 
     def request_anchor(block: dict[str, Any]) -> dict[str, Any]:
         refs = block.get("requirement_refs")
@@ -231,16 +257,21 @@ def build_offline_audit_view(
             unlocatable.append(claim_id)
             continue
         refs = allowed_refs[claim_id]
+        trace_item = trace_entries.get(claim_id)
+        if trace_item is None:
+            unlocatable.append(claim_id)
+            continue
+        start, end = trace_item["start"], trace_item["end"]
         if (not host_text or host_text == placeholder or len(host_text) > 4096
-                or accepted_answer.count(host_text) != 1
+                or accepted_answer[start:end] != host_text
+                or trace_item["text_sha256"] != "sha256:" + hashlib.sha256(host_text.encode("utf-8")).hexdigest()
                 or len(refs) > 20 or any(len(ref) > 128 for ref in refs)):
             unlocatable.append(claim_id)
             continue
-        start = accepted_answer.index(host_text)
         claims.append({
             "claim_id": claim_id, "claim_type": block["claim_type"],
-            "answer_span": [start, start + len(host_text)],
-            "location_status": "unique_host_reconstruction_match",
+            "answer_span": [start, end],
+            "location_status": "host_rendered_at_publication",
             "host_rendered_text": host_text, "evidence_refs": sorted(refs),
             "request_anchor": request_anchor(block),
             "answer_coverage": "unassessed",
