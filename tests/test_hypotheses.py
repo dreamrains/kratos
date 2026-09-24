@@ -375,6 +375,7 @@ class TestHypothesisRelations:
         brief = hypotheses_prompt_brief(state, hydrated=[updated])
 
         assert "supported" in brief
+        assert primary["id"] in brief
         assert "未决" in brief or "inconclusive" in brief
         assert "区分" in brief
         assert "已排除" not in brief

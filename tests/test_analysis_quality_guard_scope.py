@@ -12,6 +12,26 @@ def _loop_with(tools_used, intent_type="directed_analysis", readiness="ready"):
     return loop
 
 
+def _current_hypothesis_audit(loop, *, hypothesis_id="set_plan_1_h1", delta=10):
+    loop.context.analysis_state.analysis_plan = {"id": "plan_1"}
+    loop.context.analysis_state.hypothesis_sets = [{
+        "id": "set_plan_1", "plan_id": "plan_1", "dataset": "sales",
+        "hypotheses": [{
+            "id": "set_plan_1_h1", "claim": "销售额发生变化",
+            "claim_type": "descriptive", "verification_level": "verifiable",
+            "decision_rule": {"metrics": ["amount"], "predicate": "changed"},
+        }],
+    }]
+    loop.context.analysis_state.evidence_records = [{
+        "id": "ev_1", "plan_id": "plan_1", "dataset": "sales",
+        "measurements": [{"metric": "amount", "delta": delta}],
+        "competing_hypotheses": [{
+            "hypothesis_id": hypothesis_id, "relation": "supports",
+            "metric": "amount", "observed": "increased",
+        }],
+    }]
+
+
 def test_guard_triggers_when_only_profiling_and_browsing_tools_were_used():
     # Observed in the authorized R07 journey pilot: the model used list_files,
     # which fell outside the profiling whitelist, so a profile-only final
@@ -62,21 +82,80 @@ def test_explicit_hypothesis_task_requires_plan_set_and_structured_relations():
 
 def test_explicit_hypothesis_task_structural_gate_accepts_complete_audit_presence():
     loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
-    loop.context.analysis_state.analysis_plan = {"id": "plan_1"}
-    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_sales_trend_plan_1"}]
-    loop.context.analysis_state.evidence_records = [{
-        "id": "ev_1",
-        "competing_hypotheses": [{
-            "hypothesis_id": "h1",
-            "relation": "supports",
-            "metric": "amount",
-            "observed": "increased",
-        }],
-    }]
+    _current_hypothesis_audit(loop)
 
     assert loop._should_continue_for_analysis_quality(
         "请提出并检验至少两种竞争性假设", "structured answer",
     ) is False
+
+
+def test_r4_relation_alias_does_not_close_current_hypothesis_audit():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    _current_hypothesis_audit(loop, hypothesis_id="h_trend")
+
+    gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
+    assert any("host-validated hypothesis relation" in gap for gap in gaps), gaps
+    loop._turn_analysis_quality_gaps = gaps
+    loop._inject_analysis_quality_guard()
+    guard = loop.messages[-1]["content"]
+    assert "id=set_plan_1_h1" in guard
+    assert "id=h_trend" not in guard
+
+
+def test_hypothesis_brief_excludes_prior_plan_ids():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    _current_hypothesis_audit(loop)
+    loop.context.analysis_state.hypothesis_sets.insert(0, {
+        "id": "set_old", "plan_id": "old_plan", "dataset": "sales",
+        "hypotheses": [{"id": "old_h1", "claim": "旧版本解释", "status": "supported"}],
+    })
+
+    brief = loop._current_plan_hypothesis_brief()
+    assert "id=set_plan_1_h1" in brief
+    assert "old_h1" not in brief
+
+
+def test_guard_round_prompt_replaces_preplan_hypothesis_ids(monkeypatch):
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    _current_hypothesis_audit(loop, hypothesis_id="h_trend")
+    loop._turn_synthesis_policy_instruction = (
+        "keep the analysis policy\n<competing_hypotheses>\nid=old_h1\n</competing_hypotheses>"
+    )
+    loop._turn_final_guard_injected = True
+    loop._turn_analysis_quality_gaps = ["no current-plan host-validated hypothesis relation exists"]
+    monkeypatch.setattr(loop, "_build_system_prompt", lambda: "base prompt")
+    monkeypatch.setattr(loop, "_execution_prompt_hint", lambda: "")
+
+    prompt = loop._get_system_prompt()
+    assert "keep the analysis policy" in prompt
+    assert "id=set_plan_1_h1" in prompt
+    assert "id=old_h1" not in prompt
+
+
+def test_plan_recorded_after_guard_refreshes_existing_hypothesis_producer(monkeypatch):
+    from data_agent.agent import trust_workflow_runtime
+
+    loop = _loop_with(["record_analysis_plan"])
+    loop._turn_synthesis_policy_injected = True
+    loop._turn_final_guard_injected = True
+    loop._turn_analysis_quality_gaps = ["no current-plan host-validated hypothesis relation exists"]
+    calls = []
+    monkeypatch.setattr(
+        trust_workflow_runtime, "maybe_create_hypothesis_set",
+        lambda user_input, intent, state: calls.append((user_input, intent, state)),
+    )
+
+    loop._maybe_inject_synthesis_policy("请提出并检验至少两种竞争性假设")
+    assert len(calls) == 1
+    assert calls[0][2] is loop.context.analysis_state
+
+
+def test_relation_shape_with_conflicting_measurement_does_not_close_audit():
+    loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
+    _current_hypothesis_audit(loop, delta=0)
+
+    gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
+    assert any("host-validated hypothesis relation" in gap for gap in gaps), gaps
 
 
 def test_executable_hypothesis_plan_task_ledger_no_longer_blocks_publication(tmp_path, monkeypatch):
@@ -105,16 +184,10 @@ def test_executable_hypothesis_plan_task_ledger_no_longer_blocks_publication(tmp
         step_id="step_h1",
     )
     loop.context.analysis_state.analysis_plan = {
-        "id": analysis_plan_id,
+        "id": "plan_1",
         "method_plan": [{"step_id": "step_h1"}],
     }
-    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_1"}]
-    loop.context.analysis_state.evidence_records = [{
-        "id": "ev_1",
-        "plan_id": analysis_plan_id,
-        "step_id": "step_h1",
-        "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
-    }]
+    _current_hypothesis_audit(loop)
 
     # Unfinished projected task: no longer a publication gap.
     gaps = loop._competing_hypothesis_quality_gaps("请提出并检验至少两种竞争性假设")
@@ -148,12 +221,7 @@ def test_complete_repair_clears_post_guard_failure():
     loop = _loop_with(["record_analysis_plan", "record_evidence_record"])
     loop._turn_analysis_quality_gaps = ["initial gap"]
     loop._inject_analysis_quality_guard()
-    loop.context.analysis_state.analysis_plan = {"id": "plan_1"}
-    loop.context.analysis_state.hypothesis_sets = [{"id": "hypotheses_plan_1"}]
-    loop.context.analysis_state.evidence_records = [{
-        "id": "ev_1",
-        "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
-    }]
+    _current_hypothesis_audit(loop)
 
     assert loop._should_continue_for_analysis_quality(
         "请提出并检验至少两种竞争性假设", "structured answer",

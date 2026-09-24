@@ -116,7 +116,9 @@ _HYPOTHESIS_QUALITY_GUARD_MESSAGE = (
     "The user explicitly requested competing hypotheses, but the structured audit trail is incomplete: {gaps}. "
     "Continue with tools before answering. Record an analysis plan, keep at least two stable hypotheses, "
     "and attach receipt-backed support/refute proposals through record_evidence_record.competing_hypotheses "
-    "using the hypothesis IDs already shown in <competing_hypotheses>. The host will validate each relation. "
+    "using the current-plan hypothesis IDs in <competing_hypotheses> when available. "
+    "If no IDs are listed yet, record the plan first; the host will show current IDs on the next round. "
+    "The host will validate each relation. "
     "Report unsupported, refuted, supported, contested, inconclusive, or stale exactly as the resulting state shows; "
     "do not ask the user to choose an analysis method and do not invent a verdict.\n"
     "</competing_hypothesis_quality_guard>"
@@ -1032,8 +1034,23 @@ class AgentLoop:
                 self._prompt_cache_key = cache_key
             prompt = self._prompt_cache
             synthesis_instruction = getattr(self, "_turn_synthesis_policy_instruction", "")
+            if getattr(self, "_turn_final_guard_injected", False) and getattr(
+                self, "_turn_analysis_quality_gaps", None
+            ):
+                # The one-time synthesis hint may carry pre-plan IDs. Once
+                # the guard requests repair, only the current-plan brief
+                # below may supply IDs on subsequent tool rounds.
+                synthesis_instruction = synthesis_instruction.partition(
+                    "<competing_hypotheses>"
+                )[0].rstrip()
             if synthesis_instruction:
                 prompt = prompt + "\n\n" + synthesis_instruction
+            if getattr(self, "_turn_final_guard_injected", False) and getattr(
+                self, "_turn_analysis_quality_gaps", None
+            ):
+                brief = self._current_plan_hypothesis_brief()
+                if brief:
+                    prompt = prompt + "\n\n" + brief
             hint = self._execution_prompt_hint()
             if hint:
                 return prompt + f"\n\n<execution_control>\n{hint}\n</execution_control>"
@@ -2128,6 +2145,18 @@ class AgentLoop:
         return "\n".join(profile_lines)
 
     def _maybe_inject_synthesis_policy(self, user_input: str) -> None:
+        if getattr(self, "_turn_final_guard_injected", False) and getattr(
+            self, "_turn_analysis_quality_gaps", None
+        ):
+            # A plan may be recorded after the one-time synthesis hint ran.
+            # Refresh the existing host hypothesis set on that tool round so
+            # the next prompt can expose its new plan-scoped IDs.
+            from data_agent.agent.trust_workflow_runtime import maybe_create_hypothesis_set
+
+            intent = getattr(self, "_last_turn_intent", None)
+            state = getattr(self.context, "analysis_state", None)
+            if intent is not None and state is not None:
+                maybe_create_hypothesis_set(user_input, intent, state)
         if getattr(self, "_turn_synthesis_policy_injected", False):
             return
         intent = getattr(self, "_last_turn_intent", None)
@@ -2307,6 +2336,39 @@ class AgentLoop:
         )
         if not has_relation_proposal:
             gaps.append("no evidence record contains structured hypothesis relations")
+        elif isinstance(plan, dict) and isinstance(hypothesis_sets, list):
+            # The proposal field is not an audit verdict. R4 supplied relation
+            # aliases that matched no persisted hypothesis ID; the old presence
+            # check called that complete even though every set stayed undecided.
+            # Re-run the existing host validator against current-plan sets and
+            # fresh evidence, rather than trusting a model-authored relation.
+            from data_agent.agent.hypotheses import (
+                hydrate_hypothesis_refs,
+                update_hypotheses_from_evidence,
+            )
+            from data_agent.agent.trust_workflow_runtime import (
+                _split_evidence_by_data_freshness,
+                _workspace_data_identities,
+            )
+
+            current_plan_id = str(plan.get("id") or "").strip()
+            fresh_records, _ = _split_evidence_by_data_freshness(
+                [record for record in (evidence_records or []) if isinstance(record, dict)],
+                _workspace_data_identities(),
+            )
+            has_validated_relation = False
+            for hypothesis_set in hydrate_hypothesis_refs(hypothesis_sets):
+                if not current_plan_id or hypothesis_set.get("plan_id") != current_plan_id:
+                    continue
+                refreshed = update_hypotheses_from_evidence(hypothesis_set, fresh_records)
+                if any(
+                    isinstance(hypothesis, dict) and hypothesis.get("evidence_relations")
+                    for hypothesis in (refreshed.get("hypotheses") or [])
+                ):
+                    has_validated_relation = True
+                    break
+            if not has_validated_relation:
+                gaps.append("no current-plan host-validated hypothesis relation exists")
         return gaps
 
     def _analysis_quality_failure_after_guard(self) -> str | None:
@@ -2344,7 +2406,29 @@ class AgentLoop:
             _HYPOTHESIS_QUALITY_GUARD_MESSAGE.format(gaps="; ".join(gaps))
             if gaps else _ANALYSIS_QUALITY_GUARD_MESSAGE
         )
+        if gaps:
+            brief = self._current_plan_hypothesis_brief()
+            if brief:
+                content += "\n" + brief
         self.messages.append({"role": "system", "content": content})
+
+    def _current_plan_hypothesis_brief(self) -> str:
+        """Show only actual IDs belonging to the current structured plan."""
+        state = getattr(self.context, "analysis_state", None)
+        plan = getattr(state, "analysis_plan", None)
+        plan_id = str(plan.get("id") or "").strip() if isinstance(plan, dict) else ""
+        if not plan_id:
+            return ""
+        from data_agent.agent.hypotheses import hydrate_hypothesis_refs, hypotheses_prompt_brief
+
+        refs = getattr(state, "hypothesis_sets", None)
+        if not isinstance(refs, list):
+            return ""
+        current = [
+            item for item in hydrate_hypothesis_refs(refs)
+            if item.get("plan_id") == plan_id
+        ]
+        return hypotheses_prompt_brief(state, hydrated=current) if current else ""
 
     def _last_external_user_message(self) -> str:
         for msg in reversed(self.messages):

@@ -300,6 +300,7 @@ def hypotheses_prompt_brief(state: Any, hydrated: list[dict[str, Any]] | None = 
         heading = _text(hypothesis_set.get("id")) or "hypotheses"
         lines.append(f"- 假设集 {heading}（{_text(hypothesis_set.get('dataset'))}/{_text(hypothesis_set.get('route'))}）：")
         for hypothesis in _list_items(hypothesis_set.get("hypotheses"))[:4]:
+            hypothesis_id = _text(hypothesis.get("id"))
             status = _text(hypothesis.get("status")) or "proposed"
             label = _STATUS_LABELS.get(status, status)
             claim = _text(hypothesis.get("claim"))[:120]
@@ -318,7 +319,7 @@ def hypotheses_prompt_brief(state: Any, hydrated: list[dict[str, Any]] | None = 
                 ][:3]
                 required = ", ".join(required_fields)
                 detail = f"；未决，需区分性证据：{required or '按假设要求补齐字段/方法'}"
-            lines.append(f"  - [{label}|{status}] {claim}{detail}")
+            lines.append(f"  - id={hypothesis_id} [{label}|{status}] {claim}{detail}")
     if not lines:
         return ""
     lines.append(

@@ -4,7 +4,7 @@ Both R21 M04 failures died on analysis_audit_incomplete because projected
 tasks were unfinished, even though the model had produced honest structured
 artifacts and boundary-respecting answers.  Per the 2026-09-21 goal
 realignment the ledger is host bookkeeping: the publication guard keeps
-requiring plan + hypothesis set + structured relations, unfinished tasks
+requiring plan + hypothesis set + host-validated relations, unfinished tasks
 stop blocking the turn, and the host closes open tasks at successful
 publication with an explicit closure reason so the audit trail stays honest.
 """
@@ -26,10 +26,21 @@ def ledger(tmp_path, monkeypatch):
 def _state_with(plan_id: str):
     class _State:
         analysis_plan = {"id": plan_id, "method_plan": [{"step_id": "S1"}]}
-        hypothesis_sets = [{"id": "hypotheses_1"}]
+        hypothesis_sets = [{
+            "id": "hypotheses_1", "plan_id": plan_id, "dataset": "sales",
+            "hypotheses": [{
+                "id": "hypotheses_1_h1", "claim": "销售额变化",
+                "claim_type": "descriptive", "verification_level": "verifiable",
+                "decision_rule": {"metrics": ["amount"], "predicate": "changed"},
+            }],
+        }]
         evidence_records = [{
-            "id": "ev_1",
-            "competing_hypotheses": [{"hypothesis_id": "h1", "relation": "supports"}],
+            "id": "ev_1", "plan_id": plan_id, "dataset": "sales",
+            "measurements": [{"metric": "amount", "delta": 10}],
+            "competing_hypotheses": [{
+                "hypothesis_id": "hypotheses_1_h1", "relation": "supports",
+                "metric": "amount", "observed": "increased",
+            }],
         }]
     return _State()
 

@@ -41,6 +41,8 @@
 - 上述协议最终定向 **26 passed**，fresh `tmp/trust-reset-fo-20260924-contract-r3` full-offline **2964 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `ACF02767CD5613CC8AAD6B021CB94DB6D362CCB6BB2DBFB687948311876C4E7F`，Provider transport forbidden。仍仅 E2；冻结 identity 以随后提交及 `freeze.json` 为准，真实调用尚未发生。
 - **随后时点的 E4 实际结果，不得再沿用上一条“尚未发生”作为当前状态**：`main@b70fbc35` 零调用 preflight 与精确冻结通过后，用户授权的 M01—M06 真实 Provider 批次已在 `tmp/trust-reset-p08-real-20260924-r1` 全顺序执行；M06 的 B 代选又获得用户对当前隔离会话的单独明确授权。最终账本 82 started/82 dispatched/0 failed（上限 120），既有场景审计 `verdict=failed`：M02 无效 answer binding/单位未确认却写百分比，M04 结构化假设关系未闭合。M01/M03/M05/M06 完成不代表语义验收：M03 正确两日表旁错写“七天跨度”，M06 单一步骤旁另给第二路径，四个成功发布 packet 的 typed trace 均为空。R4 旧 M04 有关系形状但实际假设 ID 不匹配、状态仍 inconclusive，也不能作为新 M04 已具可信关系的正例。服务已停止、端口关闭，未局部重跑、未改冻结输入；完整身份、会话映射、导出/刷新、正反价值及下一 RED/替代物/旧门见 `docs/audit/2026-09-24-trust-reset-p08-real-batch-r1.md`。该 E4 是**执行完成、验收失败**，Phase 5 真 Shadow、Phase 6 A/C/D 与 Phase 7 均不升级。下一步先按 R7—R21、R11、R16、R4、本批做双向结构校准；不得围绕本批一个词或格式放宽整篇正文，下一真实 Provider 批次须新冻结与授权。
 
+- 后续 Phase 4 纠偏从 `main@26c223d` 进入：R4 M04 的 `h_trend/h_level_shift` 提议没有匹配真实假设 ID，旧“关系数组非空”门却视为完整；本次 E4 模型又指出 guard 声称已展示的 ID 不在可见提示中。这违反 VP P5 的有效关系审计要求。Phase 4 的“完成”收窄为“task 非全局阻断已收口，**有效关系与真实 ID 展示已完成 E2 纠偏，E3/E4 仍待验**”。沿用既有同 plan、新鲜证据的宿主关系校验、晚到 plan 时刷新同一假设生产者并显示真实 ID，不改普通任务、正式自由散文策略、Shadow 或 Provider。RED、跨历史正反边界、长路径失败收据及最终 fresh `tmp/tp4a2` **2969 passed/1 skipped/16 warnings/0 failures** 见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`；这不更改总阶段顺序或 Phase 6 A/C/D、Phase 7、新 Provider 授权的独立门。
+
 ## 0. 本次重置要解决什么
 
 项目原始目标是一个**可用的中文数据分析 Agent**：能够基于上传数据给出有价值、
@@ -587,12 +589,14 @@ Phase 3 离线切片已改用来源和宿主风险证据，删除数据性质两
 
 ### Phase 4：宿主任务台账收口
 
-当前 HEAD 的复核见 `docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md`：
-R21 M02 scope 降级和 M04 未完成 task 全局阻断均已有对应修复；现有 receipt、
-publication packet 与 TaskManager 已是事后事实源，相关离线回归 214 passed。
+原边界复核见 `docs/audit/2026-09-23-trust-reset-phase4-journal-boundary-review.md`：
+R21 M02 scope 降级和 M04 未完成 task 全局阻断已有修复；现有 receipt、
+publication packet 与 TaskManager 已是事后事实源，当时相关离线回归 214 passed。
 用户确认显式竞争假设任务仍需结构化 plan 与假设/证据关系；只是未完成 task 状态
-不能阻断独立可信 claim。当前不为路线图另建 journal 或改动产品代码；若发现当前
-HEAD 的剩余 RED，再对对应旧门做最小修复，不把历史 RED 误称为现行失败。
+不能阻断独立可信 claim。其后 R4 与本次 E4 对照发现关系形状不等于宿主有效关系、
+guard 未展示真实 ID，因此 Phase 4 在该义务上列为**纠偏验证中**，不再笼统标为完成。
+最小 RED/替代物/待退役旧门见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`；
+不会另建 journal、planner 或更改普通任务的独立可信 claim 发布。
 
 - 仅从已发生的工具调用、`turn_receipt_ids`、analysis-state 收据和数据版本事后推导 journal；
 - journal 不产生目标、方法、步骤、未来任务、工具选择或执行顺序，禁止演化为第二 planner；

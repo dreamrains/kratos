@@ -211,3 +211,9 @@ M04 后续协议裁决：用户同意仅 M04 分两阶段上传；v1 首轮前�
 **E4 判定 `executed_failed / not_accepted`，不是未执行也不是 6/6。** 既有审计器阻断 M02 的未绑定占位符/无成功 publication 导出、M04 的结构化假设审计失败；M02 原始尺度的数值项按修订契约为 `unassessed`，人审确认候选仍误写百分比。M01/M03/M05/M06 最终 run_state 为 completed，但 M03 的两日事实旁错写“七天跨度”，M06 缺失数据集的单一下一步旁再给第二路径；M05 和 M06 还有未证业务解释需逐句核对。四个成功 packet 的 `answer_render_trace.entries=[]`，不能把未走 typed claim 的自然正文当已受 claim 审计。工具消息配对均闭合、浏览器 console 0 warn/error；没有持久化逐条 SSE terminal 序列，不能独立宣称事件恰好一次。
 
 下一实施门暂不接正式发布/Shadow：先把本批与 R7—R21、R11 正确 D7/无 D30、R16 完整通过 M05、R4 中断的六源/假设及独立 99% 双向校准，分别计正确价值保留和无据事实剔除。新 RED 至少含 M02 schema 围栏/ID 与单位不符、M03 可信表格旁错误范围、M04 guard 引用未展示假设 ID 且 R4 关系别名未被真实宿主接受、M06 单步路径和 `amount` 业务口径。结构化替代仍须复用既有 packet/receipt/`answer_bindings.v1`/宿主假设状态；拟退役门是自由散文借单条合法 binding 获整篇权威，不是削弱单位/版本/算术硬门。每个代码切片前先给 RED→替代物→旧门和跨历史正反分母；若必须让可信核心删掉 R11/R16/R4 已证价值，或只能让 Shadow 做整篇随机审批，应停下与用户裁决。Phase 5 真 Shadow、Phase 6 A/C/D 及 Phase 7 仍未完成，本次授权不能用于再跑 Provider、push 或部署。
+
+## 31. Phase 4 纠偏：关系提议须按现有宿主规则闭合
+
+`main@26c223d` 后重读重置总计划及 VP/IC/CP 三计划，跨 R21 的 task 非阻断正例、R4 M04 别名负例与本次完整 E4 M04 缺 ID/缺关系，定位 Phase 4 遗留结构漏洞：旧完成门只看 `competing_hypotheses` 非空，R4 的 `h_trend/h_level_shift` 从未匹配持久假设 ID；`hypotheses_prompt_brief` 也未显示真实 ID。这不是新措辞误判，不能要求模型猜 ID 或撤销显式假设的审计义务。
+
+最小修复沿用既有 hypothesis validator，对当前 plan 和新鲜 EvidenceRecord 重算关系后才认可结构完成；有界摘要及 guard 后续轮次展示当前真实 ID，晚到的 plan 仍用既有宿主生产者刷新。未完成 task 仍不阻断，普通任务和正式自由散文发布不变。详细 RED（3 failed/33 passed）、替代物、退役旧门、最终定向 45 passed、Windows 长路径导致的非产品 full-offline 失败和剩余风险见 `docs/audit/2026-09-24-trust-reset-m04-validated-relation-correction.md`。最终 fresh `tmp/tp4a2` full-offline 为 **2969 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `FB56F3DDF2409BC8B2C301622747ED62E0DAAC472A3BB51C4D7F2A37926C42A0`、Provider forbidden/initiated 0。Phase 4 状态由“笼统完成”改为“task 边界完成，关系审计 E2 纠偏；E3/E4 待验”，不提前进入 Shadow/D/Phase 7；R11/R16/R4 正确价值与独立无据 99% 仍是 A 的双向门。真实 Provider 授权已用完。
