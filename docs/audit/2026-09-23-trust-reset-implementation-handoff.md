@@ -175,3 +175,9 @@ R16 M05 真实会话进一步显示多轮继承义务：首轮问订单记录数
 用户选择先做多轮身份离线契约而不升级单位。精确历史 RED、结构替代、将来退役旧门及跨历史限界见跨历史记录 §16。既有 `intent.py` 可路由轮次，但不能证明用户在后续改写轮继续要求哪个旧指标；R16 首轮/末轮的真实文本在当前 requirement 提取器均为空。新纯离线 `validate_offline_multiturn_metric_links` 只验证旧请求逐字 span、源消息 hash、当前 canonical history 严格包含旧历史、已有旧 packet 与已执行回执/同名列、当前全部涉及数据版本/帧指纹。只从已有 `executed_results` 或 `derived_snapshots` 读取执行身份；不会把模型标签、中文近义词或用户“不要改变数字”推理成指标覆盖。可识别 R16 型 `amount` 字面列及工具函数列表，但始终 `answer_coverage=unassessed`、延续意图未评估、单位未确认、`publication_effect=none`；正式 parser 拒绝新增的离线提议字段。
 
 重要续接事实：生产运行尚不持久化默认关闭的离线 packet，R16 旧终局包也没有该投影；测试用真实六轮文字和同形宿主结果验证协议，**不是**旧 R16 当前 HEAD 的真实通过。若下一步仍只是增加更多只返回 `unassessed` 的选择器，而没有真实用户子问题语义/继承的权威生产者，必须先停下与用户讨论，不要让 Phase 6 变成无限协议原型循环。正式独立无据 99% 误放、R11/R16 完整价值、R4 M03/M04、Shadow C、处置 D、Phase 7 均保持未闭合。定向 **168 passed**；最终 fresh `tmp/tprb35` full-offline **2953 passed/1 skipped/16 warnings/0 failures**，JUnit SHA256 `6700C53EE3CD3FE89B335E1DD2C358935D939C3C31750BC6FC39A0ED0ADFBA90`，Provider transport forbidden、真实 initiated 0，仍仅 E2。详见跨历史记录 §16。
+
+## 26. Phase 5/C 设计与离线校准：引用合法不等于语义真实
+
+用户认可暂停增加 `unassessed` 选择器，先做 Phase 5/C 设计和跨历史离线校准；范围明确**没有真实 Shadow 调度、Provider 调用或正式发布影响**。完整 RED→结构替代→未来旧门及八会话实际 packet 盘点见 `docs/audit/2026-09-24-trust-reset-phase5c-shadow-design-calibration.md`。R4 M02/M03/M04、R11 M02、R14 M05、R16 M05、R21 M02/M04 归档合计 16 份 packet、0 个当前可行动 typed block，不能将其报成当前审计模型质量通过率。现有离线协议对合法 M02 claim/receipt 但虚假回测理由仍标 `claim_evidence_bound`，模拟可建议移除正确 claim，实际 `publication_effect=none`；真实 R16 旧 packet 的虚构 claim 则降 `advisory_only`。这两个结果只证明作用域校验和当前 Shadow 不影响发布，**不证明**语义 finding 正确。
+
+后续先完成真实候选的同快照 claim/答案/用户子问题/回执定位和宿主只读 `audit_view` 设计评审；语义判断不可反向授予数值、单位、`answered` 或覆盖确定性失败。跨历史校准须分别计算误删正确 claim、漏检风险、独立可信内容保留与不可评估率；旧自然文本仅作为内容等价对照，不是当前 typed 回放。C 真实调度与预算/账本另设精确冻结和显式 Provider 授权，D 默认切换及 Phase 7 逐族退役仍独立。此设计记录没有修改运行时代码，不能据此声称 Phase 5/6 完成。
