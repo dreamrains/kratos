@@ -1349,6 +1349,150 @@ def _project_offline_comparison_rows(
     return rows
 
 
+def _confirmed_m02_observation(
+    receipt: dict[str, Any], source: dict[str, Any], scope: dict[str, Any],
+    *, workspace: Any, canonical_history: Any, sessions_root: Any,
+    session_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Close one user-confirmed series against the executed curve and frame."""
+    from data_agent.agent.confirmation.models import AnswerMode, ConfirmationStatus
+    from data_agent.agent.confirmation.runtime import build_measurement_mapping_candidate
+    from data_agent.agent.confirmation.store import ConfirmationStore
+    from data_agent.session.workspace import Workspace
+
+    args = receipt.get("arguments")
+    if not isinstance(args, dict) or not all(
+        isinstance(args.get(key), str) and args[key]
+        for key in ("name", "x_col", "y_col")
+    ):
+        return None
+    dataset, x_column, column = args["name"], args["x_col"], args["y_col"]
+    if (scope.get("source_dataset") != dataset
+            or source.get("receipt_id") != receipt.get("id")
+            or source.get("tool_name") != "curve_fitting"):
+        return None
+    try:
+        frame = workspace.get(dataset)
+        identity = workspace.get_data_identity(dataset)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if (frame is None or not isinstance(identity, dict)
+            or identity.get("fingerprint") != Workspace._frame_fingerprint(frame)
+            or (source.get("data_identities") or {}).get(dataset) != identity
+            or not identity.get("version_id") or not identity.get("source_fingerprint")):
+        return None
+    try:
+        records = ConfirmationStore(sessions_root, session_id).load_records().values()
+    except (OSError, ValueError, TypeError):
+        return None
+    matches = []
+    for record in records:
+        target = record.resolution_params.get("measurement_mapping")
+        if (record.session_id != session_id
+                or record.source != "host_measurement_mapping.v1"
+                or record.status != ConfirmationStatus.RESOLVED
+                or record.answer_mode != AnswerMode.SINGLE_SELECT
+                or record.resolution_action != "record_confirmation_answer"
+                or record.response not in {"fraction", "percentage_points"}
+                or not record.response_id
+                or record.data_version != identity["version_id"]
+                or not isinstance(target, dict)
+                or set(target) != {"dataset", "column", "source_message_ref",
+                                   "exact_span", "x_column", "x_start", "x_end"}
+                or target["dataset"] != dataset
+                or target["column"] != column
+                or target["x_column"] != x_column):
+            continue
+        candidate = build_measurement_mapping_candidate(
+            session_id=session_id, turn_id=record.turn_id,
+            workspace=workspace, canonical_history=canonical_history,
+            source_message_ref=target["source_message_ref"],
+            exact_span=target["exact_span"], dataset=dataset, column=column,
+            x_column=x_column, x_start=target["x_start"], x_end=target["x_end"],
+        )
+        if (candidate is None or record.confirmation_id != candidate.confirmation_id
+                or record.decision_key != candidate.decision_key
+                or record.question != candidate.question
+                or record.options != candidate.options
+                or dict(record.resolution_params) != dict(candidate.resolution_params)):
+            continue
+        matches.append((record, target))
+    if len(matches) != 1:
+        return None
+    record, target = matches[0]
+    start, end = target["x_start"], target["x_end"]
+    scenario = scope.get("scenario_extrapolation")
+    observed = scope.get("observed_x_range")
+    if (not isinstance(scenario, dict)
+            or scenario.get("effective_n") != end - start + 1
+            or not isinstance(observed, list) or len(observed) != 2
+            or _decimal_number(str(observed[0])) != Decimal(start)
+            or _decimal_number(str(observed[1])) != Decimal(end)
+            or len(frame) != end - start + 1):
+        return None
+    by_index: dict[str, dict[str, dict[str, Any]]] = {}
+    for fact in source.get("facts", []):
+        if not isinstance(fact, dict):
+            continue
+        match = re.fullmatch(r"points\[(\d+)\]\.(x|y)", str(fact.get("path") or ""))
+        if match:
+            slot = by_index.setdefault(match.group(1), {})
+            if match.group(2) in slot:
+                return None
+            slot[match.group(2)] = fact
+    if len(by_index) != len(frame):
+        return None
+    actual: dict[Decimal, Decimal] = {}
+    try:
+        for x, y in zip(frame[x_column], frame[column]):
+            x_number, y_number = Decimal(str(x)), Decimal(str(y))
+            if (not x_number.is_finite() or not y_number.is_finite()
+                    or x_number in actual):
+                return None
+            actual[x_number] = y_number
+    except (KeyError, InvalidOperation, TypeError, ValueError):
+        return None
+    if set(actual) != {Decimal(value) for value in range(start, end + 1)}:
+        return None
+    points: list[dict[str, Any]] = []
+    for index in range(len(frame)):
+        pair = by_index.get(str(index))
+        if not isinstance(pair, dict) or set(pair) != {"x", "y"}:
+            return None
+        x = _decimal_number(str(pair["x"].get("value") or ""))
+        y = _decimal_number(str(pair["y"].get("value") or ""))
+        if (x is None or y is None or not x.is_finite() or not y.is_finite()
+                or actual.get(x) != y
+                or not all(isinstance(pair[key].get("fact_id"), str)
+                           and pair[key]["fact_id"] for key in ("x", "y"))):
+            return None
+        points.append({"x": format(x, "f"), "y": format(y, "f"),
+                       "fact_refs": [pair["x"]["fact_id"], pair["y"]["fact_id"]]})
+    points.sort(key=lambda item: Decimal(item["x"]))
+    source_ref, span = target["source_message_ref"], target["exact_span"]
+    requirement_id = "rq_" + hashlib.sha256(
+        json.dumps([source_ref, span], ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:12]
+    requirement = {
+        "id": requirement_id, "label": span, "original_text": span,
+        "source_message_ref": source_ref, "priority": "required",
+        "scope_ref": "confirmed_measurement", "requested_output": "answer_or_specific_gap",
+        "origin": "confirmed_measurement_mapping", "lifecycle_status": "active",
+        "evidence_coverage": "supported", "context_coverage": "included",
+        "answer_coverage": "unassessed", "coverage_check": "unassessed",
+    }
+    context = {
+        "receipt_id": str(receipt["id"]), "requirement_id": requirement_id,
+        "dataset": dataset, "x_column": x_column, "column": column,
+        "x_start": start, "x_end": end, "scale": record.response,
+        "source_message_ref": source_ref, "exact_span": span,
+        "confirmation_id": record.confirmation_id, "response_id": record.response_id,
+        "data_version": identity["version_id"], "fingerprint": identity["fingerprint"],
+        "points": points,
+    }
+    return requirement, context
+
+
 def build_publication_packet(
     state: Any,
     *,
@@ -1359,6 +1503,9 @@ def build_publication_packet(
     phase: str = "final",
     offline_trust_projection: bool = False,
     offline_workspace: Any = None,
+    offline_confirmed_m02: bool = False,
+    canonical_history: Any = None,
+    confirmation_sessions_root: Any = None,
 ) -> dict[str, Any]:
     """Build the bounded evidence hand-off used by the finalization round."""
     substantive = set(substantive_tools)
@@ -1587,6 +1734,23 @@ def build_publication_packet(
         for receipt in eligible
         if receipt.get("publication_contract")
     ]
+    confirmed_observation = None
+    if (offline_confirmed_m02 and offline_workspace is not None
+            and canonical_history is not None and confirmation_sessions_root is not None
+            and len(eligible) == len(sources) == len(publication_scope) == 1
+            and eligible[0].get("tool_name") == "curve_fitting"):
+        resolved = _confirmed_m02_observation(
+            eligible[0], sources[0], publication_scope[0],
+            workspace=offline_workspace, canonical_history=canonical_history,
+            sessions_root=confirmation_sessions_root,
+            session_id=str(getattr(state, "session_id", "") or ""),
+        )
+        if resolved is not None:
+            requirement, confirmed_observation = resolved
+            if any(item.get("id") == requirement["id"] for item in requirements):
+                confirmed_observation = None
+            else:
+                requirements.append(requirement)
     packet_body = {
         "schema_version": SCHEMA_VERSION,
         "extractor_version": EXTRACTOR_VERSION,
@@ -1614,6 +1778,8 @@ def build_publication_packet(
             else {}
         ),
     }
+    if confirmed_observation is not None:
+        packet_body["confirmed_observation"] = confirmed_observation
     if offline_trust_projection:
         packet_body["offline_trust_projection"] = _build_offline_trust_projection(
             state, allowed_receipts if receipt_ids is not None else set(), packet_body,
@@ -2960,6 +3126,84 @@ def _comparison_binding_issue(block: dict[str, Any], packet: dict[str, Any]) -> 
     return None
 
 
+def _curve_confirmed_series(
+    block: dict[str, Any], packet: dict[str, Any],
+) -> tuple[dict[str, Any], list[tuple[Decimal, Decimal]]] | None:
+    context = packet.get("confirmed_observation")
+    refs = block.get("requirement_refs")
+    fact_refs = block.get("fact_refs")
+    if (not isinstance(context, dict) or not isinstance(refs, list)
+            or refs != [context.get("requirement_id")]
+            or context.get("receipt_id") != block.get("receipt_ref")
+            or context.get("scale") not in {"fraction", "percentage_points"}
+            or not isinstance(context.get("points"), list)
+            or not isinstance(fact_refs, list)):
+        return None
+    requirement = next((item for item in packet.get("requirements", [])
+                        if isinstance(item, dict) and item.get("id") == refs[0]), None)
+    if (not isinstance(requirement, dict)
+            or requirement.get("origin") != "confirmed_measurement_mapping"
+            or requirement.get("source_message_ref") != context.get("source_message_ref")
+            or requirement.get("label") != context.get("exact_span")
+            or not context.get("confirmation_id") or not context.get("response_id")):
+        return None
+    sources = [item for item in packet.get("sources", [])
+               if isinstance(item, dict) and item.get("receipt_id") == block.get("receipt_ref")
+               and item.get("tool_name") == "curve_fitting"]
+    if len(sources) != 1:
+        return None
+    identity = (sources[0].get("data_identities") or {}).get(context.get("dataset"))
+    if (not isinstance(identity, dict)
+            or identity.get("version_id") != context.get("data_version")
+            or identity.get("fingerprint") != context.get("fingerprint")):
+        return None
+    facts = {item.get("fact_id"): item for item in sources[0].get("facts", [])
+             if isinstance(item, dict) and isinstance(item.get("fact_id"), str)}
+    points: list[tuple[Decimal, Decimal]] = []
+    expected_refs: list[str] = []
+    start, end = context.get("x_start"), context.get("x_end")
+    if (isinstance(start, bool) or not isinstance(start, int)
+            or isinstance(end, bool) or not isinstance(end, int)
+            or end < start or end - start >= 128
+            or len(context["points"]) != end - start + 1):
+        return None
+    scopes = [item for item in packet.get("publication_scope", [])
+              if isinstance(item, dict) and item.get("receipt_id") == block.get("receipt_ref")
+              and item.get("tool") == "curve_fitting"]
+    if (len(scopes) != 1
+            or not isinstance(scopes[0].get("observed_x_range"), list)
+            or len(scopes[0]["observed_x_range"]) != 2
+            or [_decimal_number(str(value)) for value in scopes[0]["observed_x_range"]]
+            != [Decimal(start), Decimal(end)]
+            or not isinstance(scopes[0].get("scenario_extrapolation"), dict)
+            or scopes[0]["scenario_extrapolation"].get("effective_n")
+            != len(context["points"])):
+        return None
+    for position, point in enumerate(context["points"]):
+        if not isinstance(point, dict) or set(point) != {"x", "y", "fact_refs"}:
+            return None
+        pair = point["fact_refs"]
+        if (not isinstance(pair, list) or len(pair) != 2
+                or not all(isinstance(ref, str) and ref in facts for ref in pair)):
+            return None
+        x_fact, y_fact = facts[pair[0]], facts[pair[1]]
+        x_path = re.fullmatch(r"points\[(\d+)\]\.x", str(x_fact.get("path") or ""))
+        y_path = re.fullmatch(r"points\[(\d+)\]\.y", str(y_fact.get("path") or ""))
+        x = _decimal_number(str(point["x"]))
+        y = _decimal_number(str(point["y"]))
+        if (x_path is None or y_path is None or x_path.group(1) != y_path.group(1)
+                or x is None or y is None or not x.is_finite() or not y.is_finite()
+                or x != Decimal(start + position)
+                or _decimal_number(str(x_fact.get("value") or "")) != x
+                or _decimal_number(str(y_fact.get("value") or "")) != y):
+            return None
+        points.append((x, y))
+        expected_refs.extend(pair)
+    if fact_refs != expected_refs or len(set(fact_refs)) != len(fact_refs):
+        return None
+    return context, points
+
+
 def _descriptive_fit_binding_values(
     block: dict[str, Any], packet: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], float, float, int] | None:
@@ -2975,9 +3219,12 @@ def _descriptive_fit_binding_values(
         or block.get("status") != "descriptive"
         or block.get("unit_status") != "not_confirmed"
         or block.get("validation_status") != "none"
-        or block.get("requirement_refs") != []
+        or not isinstance(block.get("requirement_refs"), list)
         or not isinstance(block.get("fact_refs"), list)
-        or (block["fact_refs"] and _curve_observed_endpoint(block, packet) is None)
+        or (block["requirement_refs"] == [] and block["fact_refs"]
+            and _curve_observed_endpoint(block, packet) is None)
+        or (block["requirement_refs"] != []
+            and _curve_confirmed_series(block, packet) is None)
         or block.get("derived_refs") != []
     ):
         return None
@@ -3361,8 +3608,13 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
             if resolved is None:
                 raise ValueError("描述拟合的回执或范围在渲染前失效")
             _, models, first, last, point_count = resolved
+            confirmed_series = (
+                _curve_confirmed_series(block, packet)
+                if block.get("requirement_refs") else None
+            )
             rows = [
-                "已观察区间内的描述拟合（原始数值尺度；单位未确认）：",
+                ("已确认指标身份及尺度的观测序列；以下拟合仍仅为描述："
+                 if confirmed_series else "已观察区间内的描述拟合（原始数值尺度；单位未确认）："),
                 "",
                 "| 模型族 | a | b | R²（观测区间内） |",
                 "|---|---:|---:|---:|",
@@ -3372,7 +3624,17 @@ def render_bound_claims(text: str, packet: dict[str, Any], bindings: dict[str, A
                 rows.append(
                     f"| {model['family']} | {params['a']} | {params['b']} | {model['r_squared']} |"
                 )
-            if block["fact_refs"]:
+            if confirmed_series:
+                context, points = confirmed_series
+                requirement = next(item for item in packet["requirements"]
+                                   if item.get("id") == context["requirement_id"])
+                rows.extend(["", f"{requirement['label']}（用户确认的指标与尺度）：",
+                             "", f"| {context['x_column']} | {context['column']} |",
+                             "|---:|---:|"])
+                for x, y in points:
+                    display = y * 100 if context["scale"] == "fraction" else y
+                    rows.append(f"| {format(x, 'f')} | {format(display.normalize(), 'f')}% |")
+            elif block["fact_refs"]:
                 endpoint = _curve_observed_endpoint(block, packet)
                 if endpoint is None:
                     raise ValueError("描述拟合的观测端点在渲染前失效")
@@ -3494,7 +3756,8 @@ def produce_m02_receipt_claim_candidate(
 ) -> str | None:
     """Default-off, receipt-only M02 candidate for local production-path replay.
 
-    No user-request coverage is inferred. The caller must explicitly select
+    Request coverage is absent unless the same packet contains a complete,
+    user-confirmed observation identity. The caller must explicitly select
     the executed receipt and, if wanted, the out-of-range scenario point.
     This candidate contains only host-rendered placeholders and is never
     inserted into the ordinary model publication path by this function.
@@ -3544,12 +3807,21 @@ def produce_m02_receipt_claim_candidate(
         return None
     stem = hashlib.sha256(str(receipt_ref).encode("utf-8")).hexdigest()[:12]
     fit_id = f"claim_m02_fit_{stem}"
+    confirmed = packet.get("confirmed_observation")
+    if isinstance(confirmed, dict) and confirmed.get("receipt_id") == receipt_ref:
+        confirmation_refs = [confirmed.get("requirement_id")]
+        confirmed_fact_refs = [ref for point in confirmed.get("points", [])
+                               if isinstance(point, dict) for ref in point.get("fact_refs", [])]
+    else:
+        confirmation_refs = []
+        confirmed_fact_refs = endpoint_pairs[0]
     fit = {
         "claim_id": fit_id, "exact_text": f"[[claim:{fit_id}]]",
         "claim_type": "descriptive_fit", "status": "descriptive",
         "unit_status": "not_confirmed", "validation_status": "none",
         "receipt_ref": receipt_ref, "families": families,
-        "requirement_refs": [], "fact_refs": endpoint_pairs[0], "derived_refs": [],
+        "requirement_refs": confirmation_refs, "fact_refs": confirmed_fact_refs,
+        "derived_refs": [],
     }
     if _descriptive_fit_binding_issue(fit, packet):
         return None
@@ -3559,7 +3831,7 @@ def produce_m02_receipt_claim_candidate(
         scenario_block = {
             **fit, "claim_id": scenario_id, "exact_text": f"[[claim:{scenario_id}]]",
             "claim_type": "scenario_extrapolation", "status": "unvalidated",
-            "time_point": scenario_time_point, "fact_refs": [],
+            "time_point": scenario_time_point, "requirement_refs": [], "fact_refs": [],
         }
         if _scenario_binding_issue(scenario_block, packet):
             return None
@@ -3647,7 +3919,9 @@ def render_verified_partial_answer(
             continue
         requirement_refs = (
             [str(ref) for ref in block.get("requirement_refs", [])]
-            if block.get("claim_type") in {"observed_fact", "derived_metric"} else []
+            if block.get("claim_type") in {"observed_fact", "derived_metric"}
+            or (block.get("claim_type") == "descriptive_fit"
+                and _curve_confirmed_series(block, packet) is not None) else []
         )
         if any(ref in covered for ref in requirement_refs):
             continue
@@ -4326,6 +4600,10 @@ def apply_answer_binding_coverage(packet: dict[str, Any], bindings: dict[str, An
         for ref in block.get("requirement_refs", [])
         if block.get("claim_type") in {"observed_fact", "derived_metric"}
     }
+    for block in (bindings or {}).get("blocks", []):
+        if (block.get("claim_type") == "descriptive_fit"
+                and _curve_confirmed_series(block, packet) is not None):
+            mapped[block["requirement_refs"][0]] = block
     for requirement in packet.get("requirements", []):
         if not isinstance(requirement, dict):
             continue

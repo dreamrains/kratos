@@ -124,7 +124,7 @@ def test_existing_question_tool_uses_host_mapping_candidate(tmp_path, monkeypatc
 def _bundle(workspace):
     dataset = anchor_offline_measurement_dataset({
         "dataset": "retention", "dataset_contract_id": "duc_retention", "grain": "day",
-        "rows": 2, "columns": [{"name": "day", "type": "int64"},
+        "rows": len(workspace.get("retention")), "columns": [{"name": "day", "type": "int64"},
                                {"name": "retention", "type": "float64"}],
     }, workspace=workspace)
     return build_data_understanding_bundle(datasets=[dataset], quality_findings=[],
@@ -182,3 +182,60 @@ def test_raw_or_unconfirmed_answer_does_not_certify_unit(tmp_path):
             confirmation_records=[record], canonical_history=history,
         )
         assert projected["datasets"][0]["measurement_mappings"] == []
+
+
+def test_one_confirmation_covers_explicit_numeric_axis_and_scale(tmp_path):
+    workspace, history, source_ref = _scenario()
+    workspace.add("retention", pd.DataFrame({
+        "day": list(range(1, 8)),
+        "retention": [0.55, 0.42, 0.31, 0.24, 0.18, 0.13, 0.10],
+    }))
+    candidate = _candidate(workspace, history, source_ref,
+                           x_column="day", x_start=1, x_end=7)
+    assert candidate is not None
+    assert "day" in candidate.question and "1 到 7" in candidate.question
+    assert _candidate(workspace, history, source_ref,
+                      x_column="day", x_start=1, x_end=8) is None
+    assert _candidate(workspace, history, source_ref,
+                      x_column="other", x_start=1, x_end=7) is None
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    service.request(candidate)
+    record = service.respond("session_1", candidate.confirmation_id, "fraction",
+                             service.checkpoint("session_1").version, "answer_axis")
+    assert record.response == "fraction"
+    projected = project_persisted_measurement_contract(
+        _bundle(workspace), workspace=workspace, session_id="session_1",
+        sessions_root=tmp_path, canonical_history=history,
+    )
+    assert projected["datasets"][0]["measurement_mappings"][0]["scale"] == "fraction"
+
+
+def test_existing_question_tool_confirms_axis_and_scale_together(tmp_path, monkeypatch):
+    workspace, history, _ = _scenario()
+    workspace.add("retention", pd.DataFrame({
+        "day": list(range(1, 8)),
+        "retention": [0.55, 0.42, 0.31, 0.24, 0.18, 0.13, 0.10],
+    }))
+    service = ConfirmationService(tmp_path, action_registry=build_action_registry())
+    loop = AgentLoop(session_id="session_1")
+    loop.context.workspace = workspace
+    loop.messages = list(history.messages)
+    monkeypatch.setattr(loop, "_confirmation_runtime", lambda: service)
+    target = {"exact_span": _SPAN, "dataset": "retention", "column": "retention",
+              "x_column": "day", "x_start": 1, "x_end": 7}
+    with use_agent_context(loop.context):
+        result = loop._suspend_for_confirmation_request(
+            UserConfirmationRequired(question="模型伪造", options=[],
+                                     measurement_mapping=json.dumps(target, ensure_ascii=False)),
+            turn_id="tool_axis",
+        )
+    record = service.get("session_1", result.confirmation_id)
+    assert "day" in record.question and "1 到 7" in record.question
+    assert "模型伪造" not in record.question
+    with use_agent_context(loop.context):
+        rejected = loop._suspend_for_confirmation_request(
+            UserConfirmationRequired(question="模型伪造", options=[],
+                                     measurement_mapping=json.dumps({**target, "x_end": 8}, ensure_ascii=False)),
+            turn_id="tool_invalid_axis",
+        )
+    assert isinstance(rejected, str) and "未评估" in rejected

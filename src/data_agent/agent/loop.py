@@ -2510,7 +2510,10 @@ class AgentLoop:
                 target = json.loads(request.measurement_mapping)
             except (TypeError, ValueError):
                 target = None
-            if not isinstance(target, dict) or set(target) != {"exact_span", "dataset", "column"}:
+            if (not isinstance(target, dict)
+                    or set(target) not in ({"exact_span", "dataset", "column"},
+                                           {"exact_span", "dataset", "column", "x_column",
+                                            "x_start", "x_end"})):
                 return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"
             span = target["exact_span"]
             if not isinstance(span, str):
@@ -2533,6 +2536,8 @@ class AgentLoop:
                 workspace=self.context.workspace, canonical_history=history,
                 source_message_ref=source_ref, exact_span=span,
                 dataset=target["dataset"], column=target["column"],
+                x_column=target.get("x_column", ""),
+                x_start=target.get("x_start"), x_end=target.get("x_end"),
             )
             if candidate is None:
                 return "该指标映射未通过宿主校验；保持单位和子问题覆盖未评估。"

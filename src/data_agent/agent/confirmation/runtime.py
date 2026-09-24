@@ -75,7 +75,8 @@ def build_required_question_candidate(
 def build_measurement_mapping_candidate(
     *, session_id: str, turn_id: str, workspace: Any,
     canonical_history: Any, source_message_ref: str,
-    exact_span: str, dataset: str, column: str,
+    exact_span: str, dataset: str, column: str, x_column: str = "",
+    x_start: int | None = None, x_end: int | None = None,
 ) -> QuestionCandidate | None:
     """Offer one version-scoped business mapping decision from a real user span.
 
@@ -97,6 +98,13 @@ def build_measurement_mapping_candidate(
                        and not any(ord(char) < 32 for char in value)
                        for value in (session_id, turn_id, source_message_ref,
                                      exact_span, dataset, column))
+            or not isinstance(x_column, str)
+            or len(x_column) > 120
+            or any(ord(char) < 32 for char in x_column)
+            or (bool(x_column) != (x_start is not None and x_end is not None))
+            or (x_column and (isinstance(x_start, bool) or not isinstance(x_start, int)
+                              or isinstance(x_end, bool) or not isinstance(x_end, int)
+                              or x_start > x_end or x_end - x_start >= 128))
             or not source_message_ref.startswith("msg_")
             or not isinstance(workspace, (Workspace, WorkspaceProxy))):
         return None
@@ -117,14 +125,29 @@ def build_measurement_mapping_candidate(
     if (frame is None or not isinstance(identity, dict)
             or list(frame.columns).count(column) != 1
             or not is_numeric_dtype(frame[column])
+            or (x_column and (x_column == column
+                              or list(frame.columns).count(x_column) != 1
+                              or not is_numeric_dtype(frame[x_column])))
             or not isinstance(identity.get("version_id"), str)
             or not identity["version_id"]
             or not identity.get("source_fingerprint")
             or identity.get("fingerprint") != Workspace._frame_fingerprint(frame)):
         return None
+    if x_column:
+        try:
+            in_range = frame[frame[x_column].between(x_start, x_end, inclusive="both")]
+            values = list(in_range[x_column])
+            integer_values = [int(value) for value in values]
+        except (TypeError, ValueError):
+            return None
+        if (len(values) != x_end - x_start + 1
+                or set(integer_values) != set(range(x_start, x_end + 1))
+                or any(value != integer for value, integer in zip(values, integer_values))):
+            return None
     version_id = identity["version_id"]
     seed = json.dumps([session_id, source_message_ref, exact_span, dataset,
-                       column, version_id], ensure_ascii=False, separators=(",", ":"))
+                       column, x_column, x_start, x_end, version_id],
+                      ensure_ascii=False, separators=(",", ":"))
     decision_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
     occurrence_id = hashlib.sha256(f"{decision_id}|{turn_id}".encode("utf-8")).hexdigest()[:24]
     options = (
@@ -139,7 +162,10 @@ def build_measurement_mapping_candidate(
         decision_key=f"measurement:{decision_id}",
         source="host_measurement_mapping.v1", operation="confirm_measurement",
         question=(f"你提到的「{exact_span}」是否对应数据「{dataset}」中的"
-                  f"「{column}」列？如果对应，请选择该列的数值尺度。"),
+                  + (f"「{x_column}」列从 {x_start} 到 {x_end} 的每个整数点，"
+                     f"及「{column}」数值列？"
+                     if x_column else f"「{column}」列？")
+                  + "如果对应，请选择数值列的尺度。"),
         decision_impact="该映射会改变回答的指标身份和数值呈现。",
         answer_mode=AnswerMode.SINGLE_SELECT, options=options,
         blocking_surfaces=("measurement_mapping",), skippable=True,
@@ -154,6 +180,8 @@ def build_measurement_mapping_candidate(
                 "dataset": dataset, "column": column,
                 "source_message_ref": source_message_ref,
                 "exact_span": exact_span,
+                **({"x_column": x_column, "x_start": x_start, "x_end": x_end}
+                   if x_column else {}),
             },
         },
         data_version=version_id,

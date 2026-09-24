@@ -573,7 +573,9 @@ def project_offline_measurement_contract(
             target = record.resolution_params.get("measurement_mapping")
             if not isinstance(target, dict):
                 continue
-            if set(target) == {"dataset", "column", "source_message_ref", "exact_span"}:
+            if set(target) in ({"dataset", "column", "source_message_ref", "exact_span"},
+                               {"dataset", "column", "source_message_ref", "exact_span",
+                                "x_column", "x_start", "x_end"}):
                 from data_agent.agent.confirmation.runtime import build_measurement_mapping_candidate
 
                 candidate = build_measurement_mapping_candidate(
@@ -581,7 +583,8 @@ def project_offline_measurement_contract(
                     workspace=workspace, canonical_history=canonical_history,
                     source_message_ref=target["source_message_ref"],
                     exact_span=target["exact_span"], dataset=name,
-                    column=target["column"],
+                    column=target["column"], x_column=target.get("x_column", ""),
+                    x_start=target.get("x_start"), x_end=target.get("x_end"),
                 )
                 if (candidate is None or record.confirmation_id != candidate.confirmation_id
                         or record.decision_key != candidate.decision_key
@@ -670,7 +673,9 @@ def project_persisted_measurement_contract(
         if record.source == "host_measurement_mapping.v1"
         and isinstance(record.resolution_params.get("measurement_mapping"), dict)
         and set(record.resolution_params["measurement_mapping"])
-        == {"dataset", "column", "source_message_ref", "exact_span"}
+        in ({"dataset", "column", "source_message_ref", "exact_span"},
+            {"dataset", "column", "source_message_ref", "exact_span",
+             "x_column", "x_start", "x_end"})
     )
     return project_offline_measurement_contract(
         bundle, workspace=workspace, session_id=session_id,
